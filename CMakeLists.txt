@@ -232,6 +232,12 @@ add_library(engine_runtime STATIC
     src/models/miotts/causal_lm.cpp
     src/models/miotts/session.cpp
     src/models/miotts/loader.cpp
+    src/models/moss_tts_local/assets.cpp
+    src/models/moss_tts_local/backbone.cpp
+    src/models/moss_tts_local/depth_transformer.cpp
+    src/models/moss_tts_local/generator.cpp
+    src/models/moss_tts_local/loader.cpp
+    src/models/moss_tts_local/processor.cpp
     src/models/voxcpm2/assets.cpp
     src/models/voxcpm2/audiovae.cpp
     src/models/voxcpm2/generator.cpp
@@ -537,6 +543,15 @@ add_executable(vibevoice_finetune_overlay_check
 target_link_libraries(vibevoice_finetune_overlay_check PRIVATE engine_runtime ggml)
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(moss_tts_local_smoke
+    tests/moss_tts_local/moss_tts_local_smoke.cpp
+)
+
+target_link_libraries(moss_tts_local_smoke PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 if (ENGINE_BUILD_WARMBENCH)
