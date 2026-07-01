@@ -234,6 +234,8 @@ add_library(engine_runtime STATIC
     src/models/miotts/loader.cpp
     src/models/moss_tts_local/assets.cpp
     src/models/moss_tts_local/backbone.cpp
+    src/models/moss_tts_local/codec_decoder.cpp
+    src/models/moss_tts_local/codec_quantizer.cpp
     src/models/moss_tts_local/depth_transformer.cpp
     src/models/moss_tts_local/generator.cpp
     src/models/moss_tts_local/loader.cpp
@@ -552,6 +554,24 @@ add_executable(moss_tts_local_smoke
 target_link_libraries(moss_tts_local_smoke PRIVATE engine_runtime ggml)
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(codec_dequant_parity
+    tests/moss_tts_local/codec_dequant_parity.cpp
+)
+
+target_link_libraries(codec_dequant_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(codec_dequant_parity PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(codec_decode_parity
+    tests/moss_tts_local/codec_decode_parity.cpp
+)
+
+target_link_libraries(codec_decode_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(codec_decode_parity PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 if (ENGINE_BUILD_WARMBENCH)
