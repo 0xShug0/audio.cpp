@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -26,6 +27,11 @@ public:
     using Object = std::unordered_map<std::string, Value>;
 
     Value() = default;
+    Value(const Value & other);
+    Value & operator=(const Value & other);
+    Value(Value && other) noexcept;
+    Value & operator=(Value && other) noexcept;
+    ~Value();
 
     static Value make_null();
     static Value make_bool(bool value);
@@ -58,8 +64,8 @@ private:
     bool bool_value_ = false;
     double number_value_ = 0.0;
     std::string string_value_;
-    Array array_value_;
-    Object object_value_;
+    std::unique_ptr<Array> array_value_;
+    std::unique_ptr<Object> object_value_;
 };
 
 Value parse(std::string_view text);

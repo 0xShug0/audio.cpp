@@ -3,6 +3,7 @@ name: Linux Build
 on:
   push:
     branches:
+      - ci/**
       - main
       - release-0.1
   pull_request:

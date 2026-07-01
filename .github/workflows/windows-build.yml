@@ -1,0 +1,36 @@
+name: windows-build
+
+on:
+  push:
+    branches:
+      - ci/**
+      - main
+      - release-0.1
+  pull_request:
+    branches:
+      - main
+      - release-0.1
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Windows CPU
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build audiocpp_cli
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1 `
+            -Preset windows-cpu-release `
+            -Target audiocpp_cli
+
+      - name: Build audiocpp_server
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1 `
+            -Preset windows-cpu-release `
+            -Target audiocpp_server

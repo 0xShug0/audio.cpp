@@ -1,0 +1,41 @@
+name: mac-build
+
+on:
+  push:
+    branches:
+      - ci/**
+      - main
+      - release-0.1
+  pull_request:
+    branches:
+      - main
+      - release-0.1
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: macOS CPU
+    runs-on: macos-14
+
+    env:
+      BUILD_DIR: build/ci-macos-cpu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DENGINE_ENABLE_CUDA=OFF \
+            -DENGINE_ENABLE_VULKAN=OFF \
+            -DENGINE_ENABLE_METAL=OFF \
+            -DENGINE_ENABLE_OPENMP=OFF \
+            -DGGML_OPENMP=OFF
+
+      - name: Build
+        run: |
+          cmake --build "$BUILD_DIR" \
+            --parallel "$(sysctl -n hw.logicalcpu)" \
+            --target audiocpp_cli audiocpp_server

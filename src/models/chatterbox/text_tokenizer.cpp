@@ -1,11 +1,10 @@
 #include "engine/models/chatterbox/text_tokenizer.h"
 
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/io/json.h"
 #include "unicode.h"
 
 #include <algorithm>
 #include <cctype>
-#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
@@ -32,30 +31,6 @@ struct ChatterboxEnglishTokenizerModel {
 
 namespace {
 
-struct JsonValue {
-    enum class Type {
-        Null,
-        Bool,
-        Number,
-        String,
-        Array,
-        Object,
-    };
-
-    Type type = Type::Null;
-    bool bool_value = false;
-    double number_value = 0.0;
-    std::string string_value;
-    std::vector<JsonValue> array_value;
-    std::unordered_map<std::string, JsonValue> object_value;
-};
-
-void skip_ws(std::string_view text, size_t & pos) {
-    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])) != 0) {
-        ++pos;
-    }
-}
-
 void append_utf8_codepoint(std::string & out, uint32_t codepoint) {
     if (codepoint <= 0x7FU) {
         out.push_back(static_cast<char>(codepoint));
@@ -79,267 +54,7 @@ void append_utf8_codepoint(std::string & out, uint32_t codepoint) {
         out.push_back(static_cast<char>(0x80U | (codepoint & 0x3FU)));
         return;
     }
-    throw std::runtime_error("invalid unicode codepoint in tokenizer json");
-}
-
-uint32_t parse_hex4(std::string_view text, size_t & pos) {
-    if (pos + 4 > text.size()) {
-        throw std::runtime_error("truncated json unicode escape");
-    }
-    uint32_t value = 0;
-    for (int i = 0; i < 4; ++i) {
-        value <<= 4U;
-        const char ch = text[pos++];
-        if (ch >= '0' && ch <= '9') {
-            value |= static_cast<uint32_t>(ch - '0');
-        } else if (ch >= 'a' && ch <= 'f') {
-            value |= static_cast<uint32_t>(10 + (ch - 'a'));
-        } else if (ch >= 'A' && ch <= 'F') {
-            value |= static_cast<uint32_t>(10 + (ch - 'A'));
-        } else {
-            throw std::runtime_error("invalid hex digit in tokenizer json unicode escape");
-        }
-    }
-    return value;
-}
-
-std::string parse_json_string(std::string_view text, size_t & pos) {
-    skip_ws(text, pos);
-    if (pos >= text.size() || text[pos] != '"') {
-        throw std::runtime_error("expected json string");
-    }
-    ++pos;
-    std::string out;
-    while (pos < text.size()) {
-        const char ch = text[pos++];
-        if (ch == '\\') {
-            if (pos >= text.size()) {
-                throw std::runtime_error("invalid json escape");
-            }
-            const char esc = text[pos++];
-            switch (esc) {
-            case '"':
-            case '\\':
-            case '/':
-                out.push_back(esc);
-                break;
-            case 'b':
-                out.push_back('\b');
-                break;
-            case 'f':
-                out.push_back('\f');
-                break;
-            case 'n':
-                out.push_back('\n');
-                break;
-            case 'r':
-                out.push_back('\r');
-                break;
-            case 't':
-                out.push_back('\t');
-                break;
-            case 'u': {
-                uint32_t codepoint = parse_hex4(text, pos);
-                if (codepoint >= 0xD800U && codepoint <= 0xDBFFU) {
-                    if (pos + 2 > text.size() || text[pos] != '\\' || text[pos + 1] != 'u') {
-                        throw std::runtime_error("missing low surrogate in tokenizer json");
-                    }
-                    pos += 2;
-                    const uint32_t low = parse_hex4(text, pos);
-                    if (low < 0xDC00U || low > 0xDFFFU) {
-                        throw std::runtime_error("invalid low surrogate in tokenizer json");
-                    }
-                    codepoint = 0x10000U + (((codepoint - 0xD800U) << 10U) | (low - 0xDC00U));
-                }
-                append_utf8_codepoint(out, codepoint);
-                break;
-            }
-            default:
-                throw std::runtime_error("unsupported json escape");
-            }
-            continue;
-        }
-        if (ch == '"') {
-            return out;
-        }
-        out.push_back(ch);
-    }
-    throw std::runtime_error("unterminated json string");
-}
-
-double parse_json_number(std::string_view text, size_t & pos) {
-    skip_ws(text, pos);
-    const size_t begin = pos;
-    while (pos < text.size()) {
-        const char ch = text[pos];
-        if ((ch >= '0' && ch <= '9') || ch == '-' || ch == '+' || ch == '.' || ch == 'e' || ch == 'E') {
-            ++pos;
-            continue;
-        }
-        break;
-    }
-    if (begin == pos) {
-        throw std::runtime_error("expected json number");
-    }
-    return std::stod(std::string(text.substr(begin, pos - begin)));
-}
-
-JsonValue parse_json_value(std::string_view text, size_t & pos);
-
-JsonValue parse_json_array(std::string_view text, size_t & pos) {
-    skip_ws(text, pos);
-    if (pos >= text.size() || text[pos] != '[') {
-        throw std::runtime_error("expected json array");
-    }
-    ++pos;
-    JsonValue value;
-    value.type = JsonValue::Type::Array;
-    while (true) {
-        skip_ws(text, pos);
-        if (pos >= text.size()) {
-            throw std::runtime_error("unterminated json array");
-        }
-        if (text[pos] == ']') {
-            ++pos;
-            return value;
-        }
-        value.array_value.push_back(parse_json_value(text, pos));
-        skip_ws(text, pos);
-        if (pos < text.size() && text[pos] == ',') {
-            ++pos;
-            continue;
-        }
-        if (pos < text.size() && text[pos] == ']') {
-            ++pos;
-            return value;
-        }
-        throw std::runtime_error("invalid json array");
-    }
-}
-
-JsonValue parse_json_object(std::string_view text, size_t & pos) {
-    skip_ws(text, pos);
-    if (pos >= text.size() || text[pos] != '{') {
-        throw std::runtime_error("expected json object");
-    }
-    ++pos;
-    JsonValue value;
-    value.type = JsonValue::Type::Object;
-    while (true) {
-        skip_ws(text, pos);
-        if (pos >= text.size()) {
-            throw std::runtime_error("unterminated json object");
-        }
-        if (text[pos] == '}') {
-            ++pos;
-            return value;
-        }
-        const auto key = parse_json_string(text, pos);
-        skip_ws(text, pos);
-        if (pos >= text.size() || text[pos] != ':') {
-            throw std::runtime_error("expected ':' in json object");
-        }
-        ++pos;
-        value.object_value.emplace(key, parse_json_value(text, pos));
-        skip_ws(text, pos);
-        if (pos < text.size() && text[pos] == ',') {
-            ++pos;
-            continue;
-        }
-        if (pos < text.size() && text[pos] == '}') {
-            ++pos;
-            return value;
-        }
-        throw std::runtime_error("invalid json object");
-    }
-}
-
-JsonValue parse_json_value(std::string_view text, size_t & pos) {
-    skip_ws(text, pos);
-    if (pos >= text.size()) {
-        throw std::runtime_error("unexpected end of json");
-    }
-    const char ch = text[pos];
-    if (ch == '{') {
-        return parse_json_object(text, pos);
-    }
-    if (ch == '[') {
-        return parse_json_array(text, pos);
-    }
-    if (ch == '"') {
-        JsonValue value;
-        value.type = JsonValue::Type::String;
-        value.string_value = parse_json_string(text, pos);
-        return value;
-    }
-    if (text.substr(pos, 4) == "null") {
-        pos += 4;
-        return JsonValue{};
-    }
-    if (text.substr(pos, 4) == "true") {
-        pos += 4;
-        JsonValue value;
-        value.type = JsonValue::Type::Bool;
-        value.bool_value = true;
-        return value;
-    }
-    if (text.substr(pos, 5) == "false") {
-        pos += 5;
-        JsonValue value;
-        value.type = JsonValue::Type::Bool;
-        value.bool_value = false;
-        return value;
-    }
-    JsonValue value;
-    value.type = JsonValue::Type::Number;
-    value.number_value = parse_json_number(text, pos);
-    return value;
-}
-
-const JsonValue & require_object_field(const JsonValue & value, const char * field) {
-    if (value.type != JsonValue::Type::Object) {
-        throw std::runtime_error("expected json object");
-    }
-    const auto it = value.object_value.find(field);
-    if (it == value.object_value.end()) {
-        throw std::runtime_error(std::string("missing tokenizer json field: ") + field);
-    }
-    return it->second;
-}
-
-std::string require_string_field(const JsonValue & value, const char * field) {
-    const auto & out = require_object_field(value, field);
-    if (out.type != JsonValue::Type::String) {
-        throw std::runtime_error(std::string("expected string tokenizer json field: ") + field);
-    }
-    return out.string_value;
-}
-
-const std::vector<JsonValue> & require_array_field(const JsonValue & value, const char * field) {
-    const auto & out = require_object_field(value, field);
-    if (out.type != JsonValue::Type::Array) {
-        throw std::runtime_error(std::string("expected array tokenizer json field: ") + field);
-    }
-    return out.array_value;
-}
-
-const std::unordered_map<std::string, JsonValue> & require_map_field(const JsonValue & value, const char * field) {
-    const auto & out = require_object_field(value, field);
-    if (out.type != JsonValue::Type::Object) {
-        throw std::runtime_error(std::string("expected object tokenizer json field: ") + field);
-    }
-    return out.object_value;
-}
-
-int32_t as_i32(const JsonValue & value) {
-    if (value.type != JsonValue::Type::Number) {
-        throw std::runtime_error("expected numeric tokenizer json value");
-    }
-    const double rounded = std::round(value.number_value);
-    if (std::fabs(value.number_value - rounded) > 1.0e-6) {
-        throw std::runtime_error("expected integer tokenizer json value");
-    }
-    return static_cast<int32_t>(rounded);
+    throw std::runtime_error("invalid unicode codepoint in chatterbox tokenizer");
 }
 
 std::vector<std::string> split_utf8_codepoints(const std::string & text) {
@@ -563,19 +278,17 @@ std::vector<int32_t> encode_marked_text(
 
 std::shared_ptr<const ChatterboxEnglishTokenizerModel> load_chatterbox_english_tokenizer(
     const std::filesystem::path & tokenizer_path) {
-    const auto json_text = engine::io::read_text_file(tokenizer_path);
-    size_t pos = 0;
-    const auto root = parse_json_value(json_text, pos);
-    const auto & model = require_object_field(root, "model");
-    if (require_string_field(model, "type") != "BPE") {
+    const auto root = engine::io::json::parse_file(tokenizer_path);
+    const auto & model = root.require("model");
+    if (model.require("type").as_string() != "BPE") {
         throw std::runtime_error("Chatterbox English tokenizer expects BPE model");
     }
-    const auto & vocab_map = require_map_field(model, "vocab");
-    const auto & merges = require_array_field(model, "merges");
+    const auto & vocab_map = model.require("vocab").as_object();
+    const auto & merges = model.require("merges").as_array();
     auto tokenizer = std::make_shared<ChatterboxEnglishTokenizerModel>();
     tokenizer->vocab.reserve(vocab_map.size());
     for (const auto & [piece, id_value] : vocab_map) {
-        tokenizer->vocab.emplace(piece, as_i32(id_value));
+        tokenizer->vocab.emplace(piece, static_cast<int32_t>(id_value.as_i64()));
     }
     tokenizer->unk_id = tokenizer->vocab.at("[UNK]");
     tokenizer->start_id = tokenizer->vocab.at("[START]");
@@ -583,28 +296,26 @@ std::shared_ptr<const ChatterboxEnglishTokenizerModel> load_chatterbox_english_t
 
     int32_t rank = 0;
     for (const auto & item : merges) {
-        if (item.type != JsonValue::Type::String) {
-            throw std::runtime_error("expected tokenizer merge string");
-        }
-        const auto sep = item.string_value.find(' ');
+        const auto & merge = item.as_string();
+        const auto sep = merge.find(' ');
         if (sep == std::string::npos) {
             throw std::runtime_error("invalid tokenizer merge pair");
         }
         tokenizer->merge_ranks.emplace(
-            std::make_pair(item.string_value.substr(0, sep), item.string_value.substr(sep + 1)),
+            std::make_pair(merge.substr(0, sep), merge.substr(sep + 1)),
             rank++);
     }
 
-    const auto & added_tokens = require_array_field(root, "added_tokens");
+    const auto & added_tokens = root.require("added_tokens").as_array();
     for (const auto & item : added_tokens) {
-        if (item.type != JsonValue::Type::Object) {
+        if (!item.is_object()) {
             continue;
         }
-        const auto content_it = item.object_value.find("content");
-        if (content_it == item.object_value.end() || content_it->second.type != JsonValue::Type::String) {
+        const auto * content = item.find("content");
+        if (content == nullptr || !content->is_string()) {
             continue;
         }
-        tokenizer->special_tokens.push_back(content_it->second.string_value);
+        tokenizer->special_tokens.push_back(content->as_string());
     }
     std::sort(
         tokenizer->special_tokens.begin(),

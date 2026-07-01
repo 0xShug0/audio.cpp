@@ -121,6 +121,38 @@ Value Value::make_null() {
     return {};
 }
 
+Value::Value(const Value & other)
+    : kind_(other.kind_),
+      bool_value_(other.bool_value_),
+      number_value_(other.number_value_),
+      string_value_(other.string_value_) {
+    if (other.array_value_) {
+        array_value_ = std::make_unique<Array>(*other.array_value_);
+    }
+    if (other.object_value_) {
+        object_value_ = std::make_unique<Object>(*other.object_value_);
+    }
+}
+
+Value & Value::operator=(const Value & other) {
+    if (this == &other) {
+        return *this;
+    }
+    kind_ = other.kind_;
+    bool_value_ = other.bool_value_;
+    number_value_ = other.number_value_;
+    string_value_ = other.string_value_;
+    array_value_ = other.array_value_ ? std::make_unique<Array>(*other.array_value_) : nullptr;
+    object_value_ = other.object_value_ ? std::make_unique<Object>(*other.object_value_) : nullptr;
+    return *this;
+}
+
+Value::Value(Value && other) noexcept = default;
+
+Value & Value::operator=(Value && other) noexcept = default;
+
+Value::~Value() = default;
+
 Value Value::make_bool(bool value) {
     Value out;
     out.kind_ = Kind::Bool;
@@ -145,14 +177,14 @@ Value Value::make_string(std::string value) {
 Value Value::make_array(Array value) {
     Value out;
     out.kind_ = Kind::Array;
-    out.array_value_ = std::move(value);
+    out.array_value_ = std::make_unique<Array>(std::move(value));
     return out;
 }
 
 Value Value::make_object(Object value) {
     Value out;
     out.kind_ = Kind::Object;
-    out.object_value_ = std::move(value);
+    out.object_value_ = std::make_unique<Object>(std::move(value));
     return out;
 }
 
@@ -221,14 +253,14 @@ const Value::Array & Value::as_array() const {
     if (!is_array()) {
         throw std::runtime_error("json value is not an array");
     }
-    return array_value_;
+    return *array_value_;
 }
 
 const Value::Object & Value::as_object() const {
     if (!is_object()) {
         throw std::runtime_error("json value is not an object");
     }
-    return object_value_;
+    return *object_value_;
 }
 
 const Value & Value::require(const std::string & key) const {
@@ -243,8 +275,8 @@ const Value * Value::find(const std::string & key) const noexcept {
     if (!is_object()) {
         return nullptr;
     }
-    const auto it = object_value_.find(key);
-    return it == object_value_.end() ? nullptr : &it->second;
+    const auto it = object_value_->find(key);
+    return it == object_value_->end() ? nullptr : &it->second;
 }
 
 Value parse(std::string_view text) {

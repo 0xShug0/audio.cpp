@@ -5,7 +5,7 @@
 
 namespace engine::sampling {
 
-std::vector<float> generate_normal_noise(size_t count, uint32_t seed, float scale) {
+std::vector<float> generate_normal_noise(std::size_t count, uint32_t seed, float scale) {
     std::mt19937 rng(seed);
     std::normal_distribution<float> dist(0.0F, scale);
     std::vector<float> values(count);
