@@ -22,11 +22,21 @@ public:
 
     std::vector<float> decode(const std::vector<std::vector<int32_t>> & codes) const;
 
+    // Quantizes the encoder latent into codes: the inverse of decode(). `hidden`
+    // is [frames, code_dim] feature-last (row-major: frame * code_dim + channel),
+    // matching the codec encoder's output. Mirrors the RLFQ forward pass
+    // (input_proj -> per-quantizer in_proj -> L2-normalized nearest code ->
+    // residual subtraction) and returns the [num_quantizers][frames] code matrix.
+    std::vector<std::vector<int32_t>> encode(const std::vector<float> & hidden, int64_t frames) const;
+
 private:
     struct Codebook {
-        std::vector<float> table;       // [codebook_size, codebook_dim] row-major
-        std::vector<float> out_weight;  // [rvq_dim, codebook_dim] row-major
-        std::vector<float> out_bias;    // [rvq_dim]
+        std::vector<float> table;             // [codebook_size, codebook_dim] row-major
+        std::vector<float> table_normalized;  // [codebook_size, codebook_dim], L2-normalized rows (encode)
+        std::vector<float> out_weight;        // [rvq_dim, codebook_dim] row-major
+        std::vector<float> out_bias;          // [rvq_dim]
+        std::vector<float> in_weight;         // [codebook_dim, rvq_dim] row-major (encode)
+        std::vector<float> in_bias;           // [codebook_dim] (encode)
     };
 
     int64_t codebook_size_ = 0;
@@ -37,6 +47,8 @@ private:
     std::vector<Codebook> codebooks_;
     std::vector<float> output_weight_;  // [code_dim, rvq_dim] row-major
     std::vector<float> output_bias_;    // [code_dim]
+    std::vector<float> input_weight_;   // [rvq_dim, code_dim] row-major (encode)
+    std::vector<float> input_bias_;     // [rvq_dim] (encode)
 };
 
 }  // namespace engine::models::moss_tts_local

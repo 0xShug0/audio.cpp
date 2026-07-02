@@ -15,8 +15,10 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -65,6 +67,7 @@ int main(int argc, char ** argv) {
         const int threads = int_arg(argc, argv, "--threads", 8);
         const int max_frames = int_arg(argc, argv, "--frames", 12);
         const auto weight_type = parse_weight_type(arg_value(argc, argv, "--weight-type", "native"));
+        const std::string dump_path = arg_value(argc, argv, "--dump", "");
 
         constexpr size_t kBackboneWeightContextBytes = 64ull * 1024 * 1024;
         constexpr size_t kBackboneGraphArenaBytes = 512ull * 1024 * 1024;
@@ -91,6 +94,46 @@ int main(int argc, char ** argv) {
 
         engine::models::moss_tts_local::MossGenerator generator(assets, backbone, depth);
         engine::models::moss_tts_local::MossTextProcessor processor(assets);
+
+        // Optional: build a voice-clone prefix from a reference-codes CSV ([nq, frames],
+        // e.g. the encoder's enc_codes.csv) and dump the [seq, 1+nq] input_ids so it can be
+        // diffed against the Python processor. Isolates the clone-prefix assembly.
+        const std::string clone_ref = arg_value(argc, argv, "--clone-ref", "");
+        if (!clone_ref.empty()) {
+            const int64_t n_vq = assets->config.num_codebooks;
+            std::ifstream csv(clone_ref);
+            if (!csv) {
+                throw std::runtime_error("cannot open clone-ref csv: " + clone_ref);
+            }
+            std::vector<std::vector<int32_t>> ref_rows;
+            std::string line;
+            while (std::getline(csv, line)) {
+                if (line.empty()) {
+                    continue;
+                }
+                std::vector<int32_t> row;
+                std::stringstream ss(line);
+                std::string cell;
+                while (std::getline(ss, cell, ',')) {
+                    row.push_back(std::stoi(cell));
+                }
+                ref_rows.push_back(std::move(row));
+            }
+            ref_rows.resize(static_cast<size_t>(n_vq));  // first n_vq codebooks
+            const auto clone_prefix = processor.build_clone_prefix(text, ref_rows);
+            const std::string dump = arg_value(argc, argv, "--dump", "clone_prefix_cpp.csv");
+            std::ofstream out(dump);
+            const size_t seq = clone_prefix.text_tokens.size();
+            for (size_t row = 0; row < seq; ++row) {
+                out << clone_prefix.text_tokens[row];
+                for (int64_t cb = 0; cb < n_vq; ++cb) {
+                    out << "," << clone_prefix.audio_codes[row * static_cast<size_t>(n_vq) + static_cast<size_t>(cb)];
+                }
+                out << "\n";
+            }
+            std::cout << "clone_prefix rows=" << seq << " -> " << dump << "\n";
+            return 0;
+        }
 
         const auto prefix = processor.build_generation_prefix(text);
         std::cout << "prompt_tokens=" << prefix.text_tokens.size() << "\n";
@@ -140,6 +183,20 @@ int main(int argc, char ** argv) {
                 std::cout << (codebook == 0 ? "" : ",") << frames.front()[static_cast<size_t>(codebook)];
             }
             std::cout << "]\n";
+        }
+
+        if (!dump_path.empty()) {
+            std::ofstream dump(dump_path);
+            if (!dump) {
+                throw std::runtime_error("failed to open dump file: " + dump_path);
+            }
+            for (const auto & frame : frames) {
+                for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
+                    dump << (codebook == 0 ? "" : ",") << frame[static_cast<size_t>(codebook)];
+                }
+                dump << "\n";
+            }
+            std::cout << "dumped " << frames.size() << " frames x " << n_vq << " codes to " << dump_path << "\n";
         }
         return 0;
     } catch (const std::exception & error) {

@@ -2,6 +2,7 @@
 
 #include "engine/framework/tokenizers/llama_bpe.h"
 
+#include <functional>
 #include <stdexcept>
 #include <utility>
 
@@ -55,13 +56,65 @@ std::filesystem::path require_path(
 
 }  // namespace
 
+// A decoder row carries a text-channel id plus n_vq audio-channel codes. Text rows pad the
+// audio channels; audio rows carry the reference codes with the given text-channel slot.
+struct RowBuilder {
+    std::vector<int32_t> text_tokens;
+    std::vector<int32_t> audio_codes;
+    int64_t n_vq;
+    int32_t audio_pad;
+
+    void push_text_token(int32_t id) {
+        text_tokens.push_back(id);
+        audio_codes.insert(audio_codes.end(), static_cast<size_t>(n_vq), audio_pad);
+    }
+    void push_text_ids(const std::vector<int32_t> & ids) {
+        for (const int32_t id : ids) {
+            push_text_token(id);
+        }
+    }
+};
+
 struct MossTextProcessor::Impl {
     std::shared_ptr<const MossTTSLocalAssets> assets;
     std::shared_ptr<engine::tokenizers::LlamaBpeTokenizer> tokenizer;
 
-    void append_encoded(std::vector<int32_t> & tokens, const std::string & text) const {
-        const auto ids = tokenizer->encode(text);
-        tokens.insert(tokens.end(), ids.begin(), ids.end());
+    RowBuilder make_row_builder() const {
+        RowBuilder builder;
+        builder.n_vq = assets->config.num_codebooks;
+        builder.audio_pad = static_cast<int32_t>(assets->config.audio_pad_token_id);
+        return builder;
+    }
+
+    void push_text(RowBuilder & builder, const std::string & text) const {
+        builder.push_text_ids(tokenizer->encode(text));
+    }
+
+    // Emits the shared <user_inst> scaffold. `emit_reference` fills the "- Reference(s):"
+    // slot: text-only passes "None"; the clone path emits the reference audio rows.
+    MossGenerationPrefix build_prefix(
+        const std::string & text,
+        const std::optional<std::string> & language,
+        const std::function<void(RowBuilder &)> & emit_reference) const {
+        const auto & config = assets->config;
+        RowBuilder builder = make_row_builder();
+        builder.push_text_token(static_cast<int32_t>(config.im_start_token_id));
+        push_text(builder, kUserRolePrefix);
+        push_text(builder, kUserReferencePrefix);
+        emit_reference(builder);
+        push_text(builder, render_after_reference(language));
+        push_text(builder, text);
+        push_text(builder, kUserInstSuffix);
+        builder.push_text_token(static_cast<int32_t>(config.im_end_token_id));
+        push_text(builder, kAssistantTurnPrefix);
+        builder.push_text_token(static_cast<int32_t>(config.im_start_token_id));
+        push_text(builder, kAssistantRolePrefix);
+        builder.push_text_token(static_cast<int32_t>(config.audio_start_token_id));
+
+        MossGenerationPrefix prefix;
+        prefix.text_tokens = std::move(builder.text_tokens);
+        prefix.audio_codes = std::move(builder.audio_codes);
+        return prefix;
     }
 };
 
@@ -85,28 +138,42 @@ MossTextProcessor::~MossTextProcessor() = default;
 MossGenerationPrefix MossTextProcessor::build_generation_prefix(
     const std::string & text,
     const std::optional<std::string> & language) const {
+    return impl_->build_prefix(text, language, [this](RowBuilder & builder) {
+        impl_->push_text(builder, kNoneValue);
+    });
+}
+
+MossGenerationPrefix MossTextProcessor::build_clone_prefix(
+    const std::string & text,
+    const std::vector<std::vector<int32_t>> & reference_codes,
+    const std::optional<std::string> & language) const {
     const auto & config = impl_->assets->config;
+    const int64_t n_vq = config.num_codebooks;
+    if (static_cast<int64_t>(reference_codes.size()) != n_vq) {
+        throw std::runtime_error("MOSS-TTS-Local clone prefix expects num_codebooks reference rows");
+    }
+    const size_t frames = reference_codes.empty() ? 0 : reference_codes.front().size();
+    if (frames == 0) {
+        throw std::runtime_error("MOSS-TTS-Local clone prefix requires a non-empty reference");
+    }
+    for (const auto & row : reference_codes) {
+        if (row.size() != frames) {
+            throw std::runtime_error("MOSS-TTS-Local clone reference codebooks must be equal length");
+        }
+    }
 
-    std::vector<int32_t> tokens;
-    tokens.push_back(static_cast<int32_t>(config.im_start_token_id));
-    impl_->append_encoded(tokens, kUserRolePrefix);
-    impl_->append_encoded(tokens, kUserReferencePrefix);
-    impl_->append_encoded(tokens, kNoneValue);
-    impl_->append_encoded(tokens, render_after_reference(language));
-    impl_->append_encoded(tokens, text);
-    impl_->append_encoded(tokens, kUserInstSuffix);
-    tokens.push_back(static_cast<int32_t>(config.im_end_token_id));
-    impl_->append_encoded(tokens, kAssistantTurnPrefix);
-    tokens.push_back(static_cast<int32_t>(config.im_start_token_id));
-    impl_->append_encoded(tokens, kAssistantRolePrefix);
-    tokens.push_back(static_cast<int32_t>(config.audio_start_token_id));
-
-    MossGenerationPrefix prefix;
-    prefix.text_tokens = std::move(tokens);
-    prefix.audio_codes.assign(
-        prefix.text_tokens.size() * static_cast<size_t>(config.num_codebooks),
-        static_cast<int32_t>(config.audio_pad_token_id));
-    return prefix;
+    return impl_->build_prefix(text, language, [&](RowBuilder & builder) {
+        // "- Reference(s):" slot -> audio_start, one audio_user_slot row per reference
+        // frame carrying that frame's codes, then audio_end.
+        builder.push_text_token(static_cast<int32_t>(config.audio_start_token_id));
+        for (size_t frame = 0; frame < frames; ++frame) {
+            builder.text_tokens.push_back(static_cast<int32_t>(config.audio_user_slot_token_id));
+            for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
+                builder.audio_codes.push_back(reference_codes[static_cast<size_t>(codebook)][frame]);
+            }
+        }
+        builder.push_text_token(static_cast<int32_t>(config.audio_end_token_id));
+    });
 }
 
 }  // namespace engine::models::moss_tts_local

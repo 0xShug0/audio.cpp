@@ -18,10 +18,12 @@ struct MossGenerationPrefix {
     std::vector<int32_t> audio_codes;
 };
 
-// Reproduces the text-only branch of MossTTSLocalProcessor: it renders the <user_inst>
-// template, byte-level BPE encodes each piece with the Qwen tokenizer, and splices in the
-// im_start/im_end/audio_start ids to open the assistant audio turn. Reference-audio voice
-// cloning is a later phase and is intentionally not handled here.
+// Reproduces the direct-generation branch of MossTTSLocalProcessor: it renders the
+// <user_inst> template, byte-level BPE encodes each piece with the Qwen tokenizer, and
+// splices in the im_start/im_end/audio_start ids to open the assistant audio turn. The
+// voice-clone variant additionally embeds a reference speaker's RLFQ codes under
+// "- Reference(s):" (audio_start, audio_user_slot rows carrying the codes, audio_end),
+// mirroring MossTTSLocalProcessor._build_generation_or_voice_clone_codes.
 class MossTextProcessor {
 public:
     explicit MossTextProcessor(std::shared_ptr<const MossTTSLocalAssets> assets);
@@ -32,6 +34,13 @@ public:
 
     MossGenerationPrefix build_generation_prefix(
         const std::string & text,
+        const std::optional<std::string> & language = std::nullopt) const;
+
+    // Builds a voice-clone prompt. reference_codes is [num_codebooks][frames] as produced
+    // by MossCodecEncoder for the reference speaker.
+    MossGenerationPrefix build_clone_prefix(
+        const std::string & text,
+        const std::vector<std::vector<int32_t>> & reference_codes,
         const std::optional<std::string> & language = std::nullopt) const;
 
 private:

@@ -5,6 +5,7 @@
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -80,6 +81,33 @@ MossLocalTransformerConfig parse_local_config(const engine::io::json::Value & va
     return config;
 }
 
+std::filesystem::path huggingface_hub_root() {
+    if (const char * hf_home = std::getenv("HF_HOME")) {
+        return std::filesystem::path(hf_home) / "hub";
+    }
+    const char * home = std::getenv("USERPROFILE");
+    if (home == nullptr) {
+        home = std::getenv("HOME");
+    }
+    if (home == nullptr) {
+        throw std::runtime_error("MOSS-TTS-Local cannot locate the Hugging Face cache: no HF_HOME/USERPROFILE/HOME");
+    }
+    return std::filesystem::path(home) / ".cache" / "huggingface" / "hub";
+}
+
+std::string repo_id_to_cache_folder(const std::string & repo_id) {
+    // "Org/Name" -> "models--Org--Name" (Hugging Face hub cache naming).
+    std::string folder = "models--";
+    for (const char ch : repo_id) {
+        if (ch == '/') {
+            folder += "--";
+        } else {
+            folder += ch;
+        }
+    }
+    return folder;
+}
+
 }  // namespace
 
 MossTTSLocalAssetPaths resolve_moss_tts_local_assets(const std::filesystem::path & model_path) {
@@ -148,6 +176,30 @@ std::shared_ptr<const MossTTSLocalAssets> load_moss_tts_local_assets(const std::
     }
     assets.model_weights = assets::open_tensor_source(assets.paths.model_weights_path);
     return std::make_shared<MossTTSLocalAssets>(std::move(assets));
+}
+
+std::filesystem::path resolve_moss_codec_dir(const MossTTSLocalAssets & assets) {
+    if (assets.paths.audio_tokenizer_root.has_value() &&
+        engine::io::is_existing_file(*assets.paths.audio_tokenizer_root / "config.json")) {
+        return *assets.paths.audio_tokenizer_root;
+    }
+    const std::string & repo_id = assets.config.audio_tokenizer_name_or_path;
+    if (repo_id.empty()) {
+        throw std::runtime_error(
+            "MOSS-TTS-Local audio tokenizer not found: no local audio_tokenizer/ and no repo id in config");
+    }
+    const auto snapshots = huggingface_hub_root() / repo_id_to_cache_folder(repo_id) / "snapshots";
+    if (!engine::io::is_existing_directory(snapshots)) {
+        throw std::runtime_error(
+            "MOSS-TTS-Local codec not found in Hugging Face cache: " + snapshots.string() +
+            " (download " + repo_id + " or place it under the model's audio_tokenizer/ directory)");
+    }
+    for (const auto & entry : std::filesystem::directory_iterator(snapshots)) {
+        if (entry.is_directory() && engine::io::is_existing_file(entry.path() / "config.json")) {
+            return entry.path();
+        }
+    }
+    throw std::runtime_error("MOSS-TTS-Local codec snapshot with config.json not found under " + snapshots.string());
 }
 
 }  // namespace engine::models::moss_tts_local

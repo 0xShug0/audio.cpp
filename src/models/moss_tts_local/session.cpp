@@ -1,0 +1,223 @@
+#include "engine/models/moss_tts_local/session.h"
+
+#include "engine/framework/audio/resampling.h"
+#include "engine/framework/runtime/options.h"
+#include "engine/models/moss_tts_local/assets.h"
+
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace engine::models::moss_tts_local {
+namespace {
+
+constexpr size_t kBackboneWeightContextBytes = 64ull * 1024 * 1024;
+constexpr size_t kBackboneGraphArenaBytes = 1024ull * 1024 * 1024;
+constexpr size_t kDepthWeightContextBytes = 16ull * 1024 * 1024;
+constexpr size_t kDepthGraphArenaBytes = 64ull * 1024 * 1024;
+constexpr size_t kCodecWeightContextBytes = 256ull * 1024 * 1024;
+constexpr size_t kCodecGraphArenaBytes = 1536ull * 1024 * 1024;
+constexpr size_t kEncoderWeightContextBytes = 256ull * 1024 * 1024;
+constexpr size_t kEncoderGraphArenaBytes = 2048ull * 1024 * 1024;
+constexpr int kCodecSampleRate = 48000;
+
+// Prepares a speaker reference for the codec encoder, mirroring the processor's
+// encode_audios_from_wav front end: de-interleave, force stereo (mono duplicated),
+// resample to 48 kHz with the torchaudio sinc-Hann kernel, then loudness-normalize the
+// whole clip to -20 dBFS (power) with a +/-3 dB gain clamp.
+std::vector<std::vector<float>> reference_to_codec_stereo(const runtime::AudioBuffer & audio) {
+    const int channels = std::max(1, audio.channels);
+    const int64_t frames = channels > 0 ? static_cast<int64_t>(audio.samples.size()) / channels : 0;
+    if (frames <= 0) {
+        throw std::runtime_error("MOSS-TTS-Local voice reference audio is empty");
+    }
+
+    // De-interleave into per-channel streams, then force exactly two channels
+    // (mono is duplicated; extra channels are dropped) before resampling.
+    std::vector<std::vector<float>> stereo(2, std::vector<float>(static_cast<size_t>(frames)));
+    for (int64_t t = 0; t < frames; ++t) {
+        const float left = audio.samples[static_cast<size_t>(t * channels)];
+        const float right = channels > 1 ? audio.samples[static_cast<size_t>(t * channels + 1)] : left;
+        stereo[0][static_cast<size_t>(t)] = left;
+        stereo[1][static_cast<size_t>(t)] = right;
+    }
+
+    if (audio.sample_rate != kCodecSampleRate) {
+        if (audio.sample_rate <= 0) {
+            throw std::runtime_error("MOSS-TTS-Local voice reference has an invalid sample rate");
+        }
+        for (auto & channel : stereo) {
+            channel = engine::audio::resample_mono_torchaudio_sinc_hann(
+                channel, audio.sample_rate, kCodecSampleRate);
+        }
+    }
+
+    double sum_sq = 0.0;
+    size_t count = 0;
+    for (const auto & channel : stereo) {
+        for (const float value : channel) {
+            sum_sq += static_cast<double>(value) * value;
+        }
+        count += channel.size();
+    }
+    if (count > 0) {
+        const double mean_sq = sum_sq / static_cast<double>(count);
+        const double current_dbfs = 10.0 * std::log10(mean_sq + 1.0e-9);
+        const double gain = std::max(-3.0, std::min(-20.0 - current_dbfs, 3.0));
+        const float factor = static_cast<float>(std::pow(10.0, gain / 20.0));
+        for (auto & channel : stereo) {
+            for (float & value : channel) {
+                value *= factor;
+            }
+        }
+    }
+    return stereo;
+}
+
+std::shared_ptr<const MossTTSLocalAssets> require_assets(std::shared_ptr<const MossTTSLocalAssets> assets) {
+    if (assets == nullptr) {
+        throw std::runtime_error("MOSS-TTS-Local session requires assets");
+    }
+    return assets;
+}
+
+MossGenerationOptions generation_options_from_request(const runtime::TaskRequest & request) {
+    MossGenerationOptions options;
+    if (const auto value = runtime::parse_i64_option(request.options, {"max_frames", "max_tokens"})) {
+        if (*value <= 0) {
+            throw std::runtime_error("MOSS-TTS-Local max_tokens must be positive");
+        }
+        options.max_new_frames = *value;
+    }
+    if (const auto value = runtime::find_option(request.options, {"do_sample"})) {
+        options.do_sample = runtime::parse_bool_option(*value, "do_sample");
+    }
+    if (const auto value = runtime::parse_float_option(request.options, {"audio_temperature", "temperature"})) {
+        options.audio_temperature = *value;
+    }
+    if (const auto value = runtime::parse_int_option(request.options, {"audio_top_k", "top_k"})) {
+        options.audio_top_k = *value;
+    }
+    if (const auto value = runtime::parse_float_option(request.options, {"audio_top_p", "top_p"})) {
+        options.audio_top_p = *value;
+    }
+    if (const auto value =
+            runtime::parse_float_option(request.options, {"audio_repetition_penalty", "repetition_penalty"})) {
+        options.audio_repetition_penalty = *value;
+    }
+    options.seed = runtime::parse_u32_option(request.options, {"seed"}).value_or(runtime::random_u32_seed());
+    return options;
+}
+
+}  // namespace
+
+MossTTSLocalSession::MossTTSLocalSession(
+    runtime::TaskSpec task,
+    runtime::SessionOptions options,
+    std::shared_ptr<const MossTTSLocalAssets> assets)
+    : RuntimeSessionBase(options),
+      task_(task),
+      assets_(require_assets(std::move(assets))) {
+    backbone_ = std::make_unique<MossBackboneRuntime>(
+        assets_,
+        execution_context(),
+        kBackboneGraphArenaBytes,
+        kBackboneWeightContextBytes,
+        assets::TensorStorageType::Native);
+    depth_ = std::make_unique<MossDepthTransformer>(
+        assets_, execution_context(), kDepthGraphArenaBytes, kDepthWeightContextBytes);
+    processor_ = std::make_unique<MossTextProcessor>(assets_);
+    codec_ = std::make_unique<MossCodecDecoder>(
+        resolve_moss_codec_dir(*assets_),
+        execution_context(),
+        assets_->config.num_codebooks,
+        kCodecWeightContextBytes,
+        kCodecGraphArenaBytes);
+    generator_ = std::make_unique<MossGenerator>(assets_, *backbone_, *depth_);
+}
+
+std::string MossTTSLocalSession::family() const {
+    return "moss_tts_local";
+}
+
+runtime::VoiceTaskKind MossTTSLocalSession::task_kind() const {
+    return task_.task;
+}
+
+runtime::RunMode MossTTSLocalSession::run_mode() const {
+    return task_.mode;
+}
+
+void MossTTSLocalSession::prepare(const runtime::SessionPreparationRequest & request) {
+    (void) request;
+    mark_prepared();
+}
+
+runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & request) {
+    if (!request.text_input.has_value() || request.text_input->text.empty()) {
+        throw std::runtime_error("MOSS-TTS-Local requires text input");
+    }
+    const bool has_reference = request.voice.has_value() && request.voice->speaker.has_value() &&
+        request.voice->speaker->audio.has_value();
+
+    std::optional<std::string> language;
+    const std::string & language_tag = request.text_input->language;
+    if (!language_tag.empty() && language_tag != "Auto") {
+        language = language_tag;
+    }
+
+    const auto options = generation_options_from_request(request);
+    MossGenerationPrefix prefix;
+    if (has_reference) {
+        const auto stereo = reference_to_codec_stereo(*request.voice->speaker->audio);
+        if (encoder_ == nullptr) {
+            encoder_ = std::make_unique<MossCodecEncoder>(
+                resolve_moss_codec_dir(*assets_),
+                execution_context(),
+                assets_->config.num_codebooks,
+                kEncoderWeightContextBytes,
+                kEncoderGraphArenaBytes);
+        }
+        const auto reference_codes = encoder_->encode(stereo);
+        prefix = processor_->build_clone_prefix(request.text_input->text, reference_codes, language);
+    } else {
+        prefix = processor_->build_generation_prefix(request.text_input->text, language);
+    }
+    const auto frames = generator_->generate(prefix.text_tokens, prefix.audio_codes, options);
+    if (frames.empty()) {
+        throw std::runtime_error("MOSS-TTS-Local generated no audio frames");
+    }
+
+    const int64_t num_codebooks = assets_->config.num_codebooks;
+    std::vector<std::vector<int32_t>> codes(
+        static_cast<size_t>(num_codebooks), std::vector<int32_t>(frames.size()));
+    for (size_t frame = 0; frame < frames.size(); ++frame) {
+        for (int64_t codebook = 0; codebook < num_codebooks; ++codebook) {
+            codes[static_cast<size_t>(codebook)][frame] = frames[frame][static_cast<size_t>(codebook)];
+        }
+    }
+
+    const auto channels = codec_->decode(codes);
+    const int channel_count = static_cast<int>(channels.size());
+    const size_t samples_per_channel = channels.empty() ? 0 : channels.front().size();
+
+    runtime::AudioBuffer audio;
+    audio.sample_rate = static_cast<int>(codec_->sampling_rate());
+    audio.channels = channel_count;
+    audio.samples.resize(samples_per_channel * static_cast<size_t>(channel_count));
+    for (size_t sample = 0; sample < samples_per_channel; ++sample) {
+        for (int channel = 0; channel < channel_count; ++channel) {
+            audio.samples[sample * static_cast<size_t>(channel_count) + static_cast<size_t>(channel)] =
+                channels[static_cast<size_t>(channel)][sample];
+        }
+    }
+
+    runtime::TaskResult result;
+    result.audio_output = std::move(audio);
+    return result;
+}
+
+}  // namespace engine::models::moss_tts_local

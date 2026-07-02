@@ -235,11 +235,13 @@ add_library(engine_runtime STATIC
     src/models/moss_tts_local/assets.cpp
     src/models/moss_tts_local/backbone.cpp
     src/models/moss_tts_local/codec_decoder.cpp
+    src/models/moss_tts_local/codec_encoder.cpp
     src/models/moss_tts_local/codec_quantizer.cpp
     src/models/moss_tts_local/depth_transformer.cpp
     src/models/moss_tts_local/generator.cpp
     src/models/moss_tts_local/loader.cpp
     src/models/moss_tts_local/processor.cpp
+    src/models/moss_tts_local/session.cpp
     src/models/voxcpm2/assets.cpp
     src/models/voxcpm2/audiovae.cpp
     src/models/voxcpm2/generator.cpp
@@ -572,6 +574,15 @@ add_executable(codec_decode_parity
 target_link_libraries(codec_decode_parity PRIVATE engine_runtime ggml)
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(codec_decode_parity PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(codec_encode_parity
+    tests/moss_tts_local/codec_encode_parity.cpp
+)
+
+target_link_libraries(codec_encode_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 if (ENGINE_BUILD_WARMBENCH)

@@ -1,0 +1,208 @@
+#include "engine/models/moss_tts_local/codec_encoder.h"
+
+#include "engine/framework/core/module.h"
+#include "engine/models/moss_tts_local/codec_quantizer.h"
+#include "engine/models/moss_tts_local/codec_transformer.h"
+
+#include <ggml-backend.h>
+#include <ggml.h>
+
+#include <memory>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace engine::models::moss_tts_local {
+namespace {
+
+namespace cd = codec_detail;
+
+// Encoder ProjectedTransformer stages, mirroring the v2 codec config.json
+// encoder_kwargs (modules encoder.1/3/5/7/9/11). Each transformer is preceded by
+// a PatchedPretransform downsample of factor `patch` (module 2*i); the first one
+// (patch 240) turns the interleaved waveform into frames, the rest halve the
+// frame count. context is the local-attention window at that stage's frame rate
+// (mirror of the decoder's contexts, reversed).
+constexpr cd::TransformerSpec kEncoderSpecs[] = {
+    {240, 384, 768, 12, 12, 3072, 400, 240},
+    {768, 384, 768, 12, 12, 3072, 400, 2},
+    {768, 384, 768, 12, 12, 3072, 400, 2},
+    {768, 384, 768, 12, 12, 3072, 400, 2},
+    {768, 640, 768, 12, 12, 3072, 250, 2},
+    {1280, 768, 1280, 20, 32, 5120, 125, 2},
+};
+
+constexpr size_t kNumTransformers = sizeof(kEncoderSpecs) / sizeof(kEncoderSpecs[0]);
+
+// PatchedPretransform (encode/downsample): [1, l, d] -> [1, l/patch, d*patch].
+// Packs `patch` consecutive frames into the feature dim, matching
+// x.reshape(b, d, -1, h).permute(0, 1, 3, 2).reshape(b, d * h, -1) (conv layout),
+// i.e. output feature (d_idx*patch + h_idx) at time lt = input feature d_idx at
+// time lt*patch + h_idx. This is the exact inverse of the decoder's upsample.
+core::TensorValue patch_downsample(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    int64_t patch) {
+    auto contiguous = cd::ensure_contiguous(ctx, input);
+    const int64_t total_length = contiguous.shape.dims[1];
+    const int64_t channels = contiguous.shape.dims[2];
+    const int64_t length = total_length / patch;
+    ggml_tensor * reshaped = ggml_reshape_3d(ctx.ggml, contiguous.tensor, channels, patch, length);
+    ggml_tensor * permuted = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, reshaped, 1, 0, 2, 3));
+    ggml_tensor * packed = ggml_reshape_2d(ctx.ggml, permuted, channels * patch, length);
+    return core::wrap_tensor(
+        packed, core::TensorShape::from_dims({1, length, channels * patch}), GGML_TYPE_F32);
+}
+
+}  // namespace
+
+struct MossCodecEncoder::Impl {
+    ggml_backend_t backend = nullptr;
+    core::BackendType backend_type = core::BackendType::Cpu;
+    size_t graph_arena_bytes = 0;
+    std::unique_ptr<MossCodecDequantizer> quantizer;
+    std::unique_ptr<core::BackendWeightStore> store;
+    std::vector<cd::TransformerWeights> transformers;
+};
+
+MossCodecEncoder::MossCodecEncoder(
+    const std::filesystem::path & codec_dir,
+    core::ExecutionContext & execution_context,
+    int64_t num_quantizers,
+    size_t weight_context_bytes,
+    size_t graph_arena_bytes)
+    : impl_(std::make_unique<Impl>()) {
+    impl_->backend = execution_context.backend();
+    if (impl_->backend == nullptr) {
+        throw std::runtime_error("MOSS codec encoder backend is not initialized");
+    }
+    impl_->backend_type = execution_context.backend_type();
+    impl_->graph_arena_bytes = graph_arena_bytes;
+    impl_->quantizer = std::make_unique<MossCodecDequantizer>(codec_dir, num_quantizers);
+
+    cd::CodecShards shards(codec_dir);
+    impl_->store = std::make_unique<core::BackendWeightStore>(
+        impl_->backend, impl_->backend_type, "moss_tts_local.codec.encoder", weight_context_bytes);
+    impl_->transformers.reserve(kNumTransformers);
+    for (size_t index = 0; index < kNumTransformers; ++index) {
+        impl_->transformers.push_back(cd::load_transformer(
+            *impl_->store, shards, kEncoderSpecs[index], "encoder", static_cast<int64_t>(2 * index + 1)));
+    }
+    impl_->store->upload();
+}
+
+MossCodecEncoder::~MossCodecEncoder() = default;
+
+std::vector<std::vector<int32_t>> MossCodecEncoder::encode(
+    const std::vector<std::vector<float>> & channels) const {
+    if (channels.size() != 2) {
+        throw std::runtime_error("MOSS codec encoder requires stereo (2-channel) input");
+    }
+    if (channels[0].size() != channels[1].size()) {
+        throw std::runtime_error("MOSS codec encoder channels must have equal length");
+    }
+    const int64_t raw_per_channel = static_cast<int64_t>(channels[0].size());
+    if (raw_per_channel <= 0) {
+        throw std::runtime_error("MOSS codec encoder requires a non-empty waveform");
+    }
+
+    // Pad each channel up to a multiple of the downsample rate, then interleave
+    // the two channels into one stream (even = left, odd = right), matching the
+    // codec's _flatten_channels_for_codec.
+    const int64_t frames = (raw_per_channel + cd::kSamplesPerFrame - 1) / cd::kSamplesPerFrame;
+    const int64_t per_channel = frames * cd::kSamplesPerFrame;
+    const int64_t interleaved = per_channel * 2;
+    std::vector<float> waveform(static_cast<size_t>(interleaved), 0.0F);
+    for (int64_t i = 0; i < raw_per_channel; ++i) {
+        waveform[static_cast<size_t>(2 * i)] = channels[0][static_cast<size_t>(i)];
+        waveform[static_cast<size_t>(2 * i + 1)] = channels[1][static_cast<size_t>(i)];
+    }
+
+    ggml_init_params params{impl_->graph_arena_bytes, nullptr, true};
+    std::unique_ptr<ggml_context, cd::GgmlContextDeleter> graph_ctx(ggml_init(params));
+    if (graph_ctx == nullptr) {
+        throw std::runtime_error("failed to initialize MOSS codec encoder graph context");
+    }
+    core::ModuleBuildContext ctx{graph_ctx.get(), "moss_tts_local.codec.encode", impl_->backend_type};
+
+    // Input is the interleaved waveform as a single-feature stream [1, L, 1].
+    auto input_tensor =
+        core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, interleaved, 1}));
+    ggml_set_input(input_tensor.tensor);
+
+    struct StageInput {
+        ggml_tensor * positions;
+        std::vector<int32_t> position_host;
+        ggml_tensor * mask;
+        std::vector<float> mask_host;
+    };
+    std::vector<StageInput> stage_inputs;
+    stage_inputs.reserve(impl_->transformers.size());
+
+    auto hidden = input_tensor;
+    int64_t steps = interleaved;
+    for (const auto & transformer : impl_->transformers) {
+        // Downsample first (encoder order), then run the transformer at the
+        // reduced frame count.
+        hidden = patch_downsample(ctx, hidden, transformer.spec.patch);
+        steps /= transformer.spec.patch;
+
+        auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
+        ggml_set_input(positions.tensor);
+        auto mask =
+            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, steps}));
+        ggml_set_input(mask.tensor);
+
+        StageInput stage;
+        stage.positions = positions.tensor;
+        stage.position_host.resize(static_cast<size_t>(steps));
+        for (int64_t i = 0; i < steps; ++i) {
+            stage.position_host[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+        }
+        stage.mask = mask.tensor;
+        stage.mask_host = cd::causal_context_mask(steps, transformer.spec.context);
+        stage_inputs.push_back(std::move(stage));
+
+        hidden = cd::run_transformer(ctx, hidden, transformer, positions, mask, steps);
+    }
+
+    hidden = cd::ensure_contiguous(ctx, hidden);
+    ggml_set_output(hidden.tensor);
+
+    ggml_cgraph * graph = ggml_new_graph_custom(graph_ctx.get(), 131072, false);
+    ggml_build_forward_expand(graph, hidden.tensor);
+
+    ggml_gallocr_t gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(impl_->backend));
+    if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+        }
+        throw std::runtime_error("failed to allocate MOSS codec encoder forward graph");
+    }
+
+    ggml_backend_tensor_set(input_tensor.tensor, waveform.data(), 0, waveform.size() * sizeof(float));
+    for (const auto & stage : stage_inputs) {
+        ggml_backend_tensor_set(
+            stage.positions, stage.position_host.data(), 0, stage.position_host.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(
+            stage.mask, stage.mask_host.data(), 0, stage.mask_host.size() * sizeof(float));
+    }
+
+    const ggml_status status = ggml_backend_graph_compute(impl_->backend, graph);
+    ggml_backend_synchronize(impl_->backend);
+    if (status != GGML_STATUS_SUCCESS) {
+        ggml_gallocr_free(gallocr);
+        throw std::runtime_error("MOSS codec encoder forward graph compute failed");
+    }
+
+    // hidden is [1, frames, code_dim] feature-last; ggml memory order is
+    // channel-fastest, i.e. flat[frame * code_dim + channel] -- exactly the
+    // layout MossCodecDequantizer::encode expects.
+    std::vector<float> latent(static_cast<size_t>(steps * cd::kCodeDim));
+    ggml_backend_tensor_get(hidden.tensor, latent.data(), 0, latent.size() * sizeof(float));
+    ggml_gallocr_free(gallocr);
+
+    return impl_->quantizer->encode(latent, steps);
+}
+
+}  // namespace engine::models::moss_tts_local

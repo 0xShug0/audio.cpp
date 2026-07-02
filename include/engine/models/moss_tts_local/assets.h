@@ -75,4 +75,9 @@ MossTTSLocalAssetPaths resolve_moss_tts_local_assets(const std::filesystem::path
 MossTTSLocalConfig load_moss_tts_local_config(const std::filesystem::path & model_path);
 std::shared_ptr<const MossTTSLocalAssets> load_moss_tts_local_assets(const std::filesystem::path & model_path);
 
+// Locates the MOSS-Audio-Tokenizer-v2 codec weights: prefers a local audio_tokenizer/
+// directory next to the model, otherwise resolves the Hugging Face hub cache snapshot for
+// the repo id recorded in config (audio_tokenizer_name_or_path).
+std::filesystem::path resolve_moss_codec_dir(const MossTTSLocalAssets & assets);
+
 }  // namespace engine::models::moss_tts_local

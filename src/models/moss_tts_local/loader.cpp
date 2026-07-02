@@ -2,10 +2,13 @@
 
 #include "engine/framework/io/filesystem.h"
 #include "engine/models/moss_tts_local/assets.h"
+#include "engine/models/moss_tts_local/session.h"
 
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace engine::models::moss_tts_local {
@@ -69,6 +72,42 @@ std::vector<runtime::NamedAsset> discover_weight_assets(const std::filesystem::p
     return runtime::discover_named_assets(root, {"model.safetensors"});
 }
 
+class MossTTSLocalLoadedModel final : public runtime::ILoadedVoiceModel {
+public:
+    MossTTSLocalLoadedModel(
+        runtime::ModelMetadata metadata,
+        runtime::CapabilitySet capabilities,
+        std::shared_ptr<const MossTTSLocalAssets> assets)
+        : metadata_(std::move(metadata)),
+          capabilities_(std::move(capabilities)),
+          assets_(std::move(assets)) {}
+
+    const runtime::ModelMetadata & metadata() const noexcept override {
+        return metadata_;
+    }
+
+    const runtime::CapabilitySet & capabilities() const noexcept override {
+        return capabilities_;
+    }
+
+    std::unique_ptr<runtime::IVoiceTaskSession> create_task_session(
+        const runtime::TaskSpec & task,
+        const runtime::SessionOptions & options) const override {
+        if (task.mode != runtime::RunMode::Offline) {
+            throw std::runtime_error("MOSS-TTS-Local only supports offline sessions");
+        }
+        if (task.task != runtime::VoiceTaskKind::Tts) {
+            throw std::runtime_error("MOSS-TTS-Local only supports the Tts task");
+        }
+        return std::make_unique<MossTTSLocalSession>(task, options, assets_);
+    }
+
+private:
+    runtime::ModelMetadata metadata_;
+    runtime::CapabilitySet capabilities_;
+    std::shared_ptr<const MossTTSLocalAssets> assets_;
+};
+
 class MossTTSLocalLoader final : public runtime::IVoiceModelLoader {
 public:
     std::string family() const override {
@@ -104,8 +143,9 @@ public:
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        (void) request;
-        throw std::runtime_error("MOSS-TTS-Local generation is not implemented yet");
+        const auto root = resolve_model_root(request.model_path);
+        return std::make_unique<MossTTSLocalLoadedModel>(
+            moss_tts_local_metadata(), moss_tts_local_capabilities(), load_moss_tts_local_assets(root));
     }
 };
 
