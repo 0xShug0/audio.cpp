@@ -389,9 +389,9 @@ audiocpp_cli --task tts --family vibevoice --model models/VibeVoice-1.5B --backe
 | `--temperature` | float | `1.0` | Decoder sampling temperature. |
 | `--top-k` | integer | `50` | Decoder top-k sampling limit. |
 | `--top-p` | float | `1.0` | Decoder nucleus sampling limit. |
-| `--load-option vibevoice.lora=<path>` | PEFT adapter dir or `.safetensors` | not set | Merge a LoRA adapter into the decoder linears at load time. Adapter dims must match the base model size. |
+| `--load-option vibevoice.lora=<path>` | fine-tune adapter dir | not set | Overlay a fine-tune at load time: the language-model LoRA is delta-merged into the decoder linears, and the diffusion head and acoustic/semantic connectors (when present in the adapter dir) replace their base tensors. Dims must match the base model size. |
 | `--load-option vibevoice.lora_scale=<float>` | float | `lora_alpha / r` | Override the LoRA merge scale from `adapter_config.json`. |
 
-A LoRA is merged into the base weights at load time, so it composes with the `vibevoice.*_weight_type` quantization options and adds no per-step cost. Use a 1.5B adapter with `VibeVoice-1.5B` and a 7B adapter with `VibeVoice-7B`; a size mismatch is rejected with a descriptive error.
+The adapter follows the PEFT training layout: `adapter_model.safetensors` + `adapter_config.json` for the language-model LoRA, plus optional `diffusion_head/model.safetensors` (or `diffusion_head_full.bin`), `acoustic_connector/pytorch_model.bin`, and `semantic_connector/pytorch_model.bin` for the fully fine-tuned components. Everything is applied at load time, so it composes with the `vibevoice.*_weight_type` quantization options and adds no per-step cost; the overlay is logged with `--log`. Use a 1.5B adapter with `VibeVoice-1.5B` and a 7B adapter with `VibeVoice-7B`; a size mismatch is rejected with a descriptive error. The same option may instead be passed as `--session-option vibevoice.lora` (but not via both at once).
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.

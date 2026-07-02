@@ -28,25 +28,6 @@ std::shared_ptr<const VibeVoiceAssets> require_assets(std::shared_ptr<const Vibe
     return assets;
 }
 
-std::shared_ptr<const VibeVoiceAssets> apply_lora_option(
-    std::shared_ptr<const VibeVoiceAssets> assets,
-    const runtime::SessionOptions & options) {
-    const auto lora_path = runtime::find_option(options.options, {"vibevoice.lora"});
-    if (!lora_path.has_value() || lora_path->empty()) {
-        return assets;
-    }
-    float scale_override = -1.0F;
-    if (const auto value = runtime::parse_finite_float_option(options.options, {"vibevoice.lora_scale"})) {
-        if (*value <= 0.0F) {
-            throw std::runtime_error("VibeVoice vibevoice.lora_scale must be positive");
-        }
-        scale_override = *value;
-    }
-    auto updated = std::make_shared<VibeVoiceAssets>(*assets);
-    updated->model_weights = make_lora_merged_tensor_source(assets->model_weights, *lora_path, scale_override);
-    return updated;
-}
-
 void validate_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
     if (storage_type == engine::assets::TensorStorageType::Native ||
         storage_type == engine::assets::TensorStorageType::F32 ||
@@ -217,7 +198,7 @@ VibeVoiceSession::VibeVoiceSession(
     std::shared_ptr<const VibeVoiceAssets> assets)
     : runtime::RuntimeSessionBase(require_supported_backend_options(options)),
       task_(task),
-      assets_(apply_lora_option(require_assets(std::move(assets)), options)),
+      assets_(apply_vibevoice_finetune_options(require_assets(std::move(assets)), options.options)),
       text_tokenizer_(assets_),
       audio_tokenizer_(
           assets_,

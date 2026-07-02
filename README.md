@@ -23,7 +23,7 @@ Highlights:
 ## News
 
 > [!IMPORTANT]
-> **2026-07-01:** VibeVoice 7B joins the 1.5B model, and decoder LoRA adapters can now be merged at load time through `--load-option vibevoice.lora`.
+> **2026-07-01:** VibeVoice 7B joins the 1.5B model, and full fine-tune adapters — language-model LoRA plus fine-tuned diffusion head and acoustic/semantic connectors — can now be merged at load time through `--load-option vibevoice.lora`.
 
 > [!IMPORTANT]
 > **2026-06-30:** VibeVoice 1.5B is now released in the framework, bringing long-form, multi-speaker dialogue TTS into the normal audio.cpp model surface.

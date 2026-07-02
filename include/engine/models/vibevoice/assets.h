@@ -111,6 +111,9 @@ struct VibeVoiceAssets {
     std::shared_ptr<const assets::TensorSource> model_weights;
     float speech_scaling_factor = 1.0F;
     float speech_bias_factor = 0.0F;
+    // Set once a fine-tune adapter has been overlaid onto model_weights, so the same adapter is
+    // not applied twice (e.g. via both --load-option and --session-option).
+    bool fine_tune_applied = false;
 };
 
 VibeVoiceAssetPaths resolve_vibevoice_assets(const std::filesystem::path & model_path);

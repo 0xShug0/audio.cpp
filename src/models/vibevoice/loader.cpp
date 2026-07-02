@@ -1,6 +1,7 @@
 #include "engine/models/vibevoice/loader.h"
 
 #include "engine/framework/io/filesystem.h"
+#include "engine/models/vibevoice/lora.h"
 #include "engine/models/vibevoice/session.h"
 
 #include <stdexcept>
@@ -111,7 +112,9 @@ public:
             {"vibevoice.connector_weight_type", "native|f32|f16|bf16|q8_0", "Acoustic and semantic connector weight storage type."},
             {"vibevoice.decoder_weight_type", "native|f32|f16|bf16|q8_0", "Language decoder weight storage type."},
             {"vibevoice.diffusion_head_weight_type", "native|f32|f16|bf16|q8_0", "Diffusion prediction head weight storage type."},
-            {"vibevoice.lora", "path", "PEFT LoRA adapter directory or safetensors merged into the decoder weights."},
+        };
+        inspection.cli.load_options = {
+            {"vibevoice.lora", "path", "Fine-tune adapter dir (LM LoRA + diffusion head + acoustic/semantic connectors) merged at load time."},
             {"vibevoice.lora_scale", "float", "LoRA merge scale override; defaults to lora_alpha / r."},
         };
         inspection.discovered_configs = discover_config_assets(request);
@@ -120,7 +123,10 @@ public:
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_vibevoice_model(resolve_model_root(request.model_path));
+        auto assets = apply_vibevoice_finetune_options(
+            load_vibevoice_assets(resolve_model_root(request.model_path)), request.options);
+        return std::make_unique<VibeVoiceLoadedModel>(
+            vibevoice_metadata(*assets), vibevoice_capabilities(), std::move(assets));
     }
 };
 
