@@ -29,7 +29,8 @@ Highlights:
 
 > [!IMPORTANT]
 > **2026-07-02:** Music generation and source separation expanded in the released framework surface: ACE-Step 1.5 Turbo/Base, HeartMuLa, Stable Audio 3 Small Music/SFX and Medium, Mel-Band RoFormer, and HTDemucs are now available through the normal audio.cpp CLI/framework paths.
-  **2026-07-02:** VibeVoice 7B joins the 1.5B model, and full fine-tune adapters — language-model LoRA plus fine-tuned diffusion head and acoustic/semantic connectors — can now be merged at load time through `--load-option vibevoice.lora`.
+>
+> **2026-07-02:** VibeVoice 7B joins the 1.5B model, and full fine-tune adapters — language-model LoRA plus fine-tuned diffusion head and acoustic/semantic connectors — can now be merged at load time through `--load-option vibevoice.lora`.
 
 > [!IMPORTANT]
 > **2026-06-30:** VibeVoice 1.5B is now released in the framework, bringing long-form, multi-speaker dialogue TTS into the normal audio.cpp model surface.
