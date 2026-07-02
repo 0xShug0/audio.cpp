@@ -566,6 +566,9 @@ public:
     }
 
     ~F0Runner() {
+        if (weights_ != nullptr && graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(weights_->execution_context->backend(), graph_);
+        }
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
@@ -635,6 +638,9 @@ public:
     }
 
     ~BackendRunner() {
+        if (weights_ != nullptr && graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(weights_->execution_context->backend(), graph_);
+        }
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
@@ -712,6 +718,12 @@ public:
         out.samples = static_cast<int64_t>(out.waveform.size());
         out.sample_rate = weights_->config.sampling_rate;
         return out;
+    }
+
+    void release_runtime_cache() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        f0_runner_.reset();
+        backend_runner_.reset();
     }
 
 private:
@@ -954,6 +966,13 @@ std::vector<float> HiftVocoderComponent::predict_f0(const std::vector<float> & m
         throw std::runtime_error("HiFT component is not initialized");
     }
     return state_->runner->predict_f0(mel, frames);
+}
+
+void HiftVocoderComponent::release_runtime_cache() const {
+    if (state_ == nullptr || state_->runner == nullptr) {
+        throw std::runtime_error("HiFT component is not initialized");
+    }
+    state_->runner->release_runtime_cache();
 }
 
 }  // namespace engine::modules

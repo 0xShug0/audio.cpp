@@ -9,6 +9,9 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -16,7 +19,7 @@ namespace engine::models::chatterbox {
 
 namespace {
 
-constexpr int64_t kDefaultTextChunkSize = 256;
+constexpr int64_t kDefaultTextChunkSize = 128;
 
 ChatterboxVoiceCloneConfig make_voice_clone_config(
     const std::unordered_map<std::string, std::string> & options) {
@@ -75,6 +78,12 @@ bool float_equal(float lhs, float rhs) {
     return std::fabs(lhs - rhs) <= 1.0e-6f;
 }
 
+bool same_audio_buffer(const runtime::AudioBuffer & lhs, const runtime::AudioBuffer & rhs) {
+    return lhs.sample_rate == rhs.sample_rate &&
+        lhs.channels == rhs.channels &&
+        lhs.samples == rhs.samples;
+}
+
 bool same_voice_clone_config(const ChatterboxVoiceCloneConfig & lhs, const ChatterboxVoiceCloneConfig & rhs) {
     return float_equal(lhs.exaggeration, rhs.exaggeration) &&
         float_equal(lhs.guidance_scale, rhs.guidance_scale) &&
@@ -113,6 +122,7 @@ std::unique_ptr<ChatterboxTtsComponent> make_chatterbox_component_for_language(
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType t3_weight_storage_type,
     engine::assets::TensorStorageType component_weight_storage_type,
+    bool mem_saver,
     const std::string & language) {
     const bool use_multilingual = chatterbox_language_uses_multilingual_t3(language);
     return std::make_unique<ChatterboxTtsComponent>(
@@ -145,7 +155,8 @@ std::unique_ptr<ChatterboxTtsComponent> make_chatterbox_component_for_language(
             execution_context,
             component_weight_storage_type),
         make_prompt_prep_config(options),
-        execution_context);
+        execution_context,
+        mem_saver);
 }
 
 std::shared_ptr<const ChatterboxAssetPaths> require_assets(std::shared_ptr<const ChatterboxAssetPaths> assets) {
@@ -182,6 +193,8 @@ void validate_chatterbox_options(const runtime::SessionOptions & options) {
         if (key.rfind("chatterbox.", 0) == 0 &&
             key != "chatterbox.weight_type" &&
             key != "chatterbox.t3_weight_type" &&
+            key != "chatterbox.conditionals_cache_slots" &&
+            key != "chatterbox.mem_saver" &&
             key != "chatterbox.encoder_condition_samples" &&
             key != "chatterbox.decoder_condition_samples" &&
             key != "chatterbox.t3_speech_cond_prompt_len") {
@@ -209,7 +222,37 @@ engine::assets::TensorStorageType resolve_component_weight_storage_type(const ru
     return storage_type;
 }
 
+std::size_t resolve_conditionals_cache_slots(const runtime::SessionOptions & options) {
+    constexpr int64_t kDefaultConditionalsCacheSlots = 1;
+    const int64_t slots = runtime::parse_i64_option(
+        options.options,
+        {"chatterbox.conditionals_cache_slots", "conditionals_cache_slots"})
+        .value_or(kDefaultConditionalsCacheSlots);
+    if (slots < 0) {
+        throw std::runtime_error("chatterbox.conditionals_cache_slots must be non-negative");
+    }
+    if (static_cast<std::uint64_t>(slots) > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw std::runtime_error("chatterbox.conditionals_cache_slots is too large");
+    }
+    return static_cast<std::size_t>(slots);
+}
+
+bool resolve_mem_saver(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"chatterbox.mem_saver", "mem_saver"})) {
+        return runtime::parse_bool_option(*value, "chatterbox.mem_saver");
+    }
+    return false;
+}
+
 }  // namespace
+
+bool ChatterboxConditionalsCacheKeyEqual::operator()(
+    const ChatterboxConditionalsCacheKey & lhs,
+    const ChatterboxConditionalsCacheKey & rhs) const {
+    return lhs.language == rhs.language &&
+        float_equal(lhs.exaggeration, rhs.exaggeration) &&
+        same_audio_buffer(lhs.reference_audio, rhs.reference_audio);
+}
 
 ChatterboxSession::ChatterboxSession(
     runtime::TaskSpec task,
@@ -219,7 +262,9 @@ ChatterboxSession::ChatterboxSession(
       task_(std::move(task)),
       assets_(require_assets(std::move(assets))),
       t3_weight_storage_type_(resolve_t3_weight_storage_type(this->options())),
-      component_weight_storage_type_(resolve_component_weight_storage_type(this->options())) {
+      component_weight_storage_type_(resolve_component_weight_storage_type(this->options())),
+      mem_saver_(resolve_mem_saver(this->options())),
+      conditionals_cache_(resolve_conditionals_cache_slots(this->options())) {
     if (task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("Chatterbox session only supports --task clon");
     }
@@ -251,19 +296,47 @@ void ChatterboxSession::prepare(const runtime::SessionPreparationRequest & reque
     }
     const auto session_config = make_voice_clone_config(request.options, request.text->language);
     voice_clone_config_ = session_config;
-    component_ = make_chatterbox_component_for_language(
-        *assets_,
-        this->options(),
-        execution_context(),
-        t3_weight_storage_type_,
-        component_weight_storage_type_,
-        session_config.language);
-    const auto prompt_prep_started = std::chrono::steady_clock::now();
-    cached_conditionals_ = component_->prepare_voice_clone_conditionals(
-        *request.voice->speaker->audio,
-        session_config);
-    cached_prompt_prep_ms_ =
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - prompt_prep_started).count();
+    if (!component_ || !component_language_.has_value() || *component_language_ != session_config.language) {
+        component_.reset();
+        component_language_.reset();
+        component_ = make_chatterbox_component_for_language(
+            *assets_,
+            this->options(),
+            execution_context(),
+            t3_weight_storage_type_,
+            component_weight_storage_type_,
+            mem_saver_,
+            session_config.language);
+        component_language_ = session_config.language;
+        cached_conditionals_.reset();
+        conditionals_cache_.clear();
+    }
+    const auto & reference_audio = *request.voice->speaker->audio;
+    ChatterboxConditionalsCacheKey conditionals_key{
+        reference_audio,
+        session_config.exaggeration,
+        session_config.language,
+    };
+    const auto * conditionals_cache_entry = conditionals_cache_.find(conditionals_key);
+    const bool conditionals_cache_hit =
+        conditionals_cache_entry != nullptr;
+    engine::debug::trace_log_scalar("chatterbox.conditionals.cache_hit", conditionals_cache_hit ? 1 : 0);
+    engine::debug::trace_log_scalar(
+        "chatterbox.conditionals.cache_slots",
+        static_cast<int64_t>(conditionals_cache_.capacity()));
+    if (conditionals_cache_hit) {
+        cached_conditionals_ = *conditionals_cache_entry;
+        cached_prompt_prep_ms_ = 0.0;
+    } else {
+        const auto prompt_prep_started = std::chrono::steady_clock::now();
+        auto prepared_conditionals = component_->prepare_voice_clone_conditionals(
+            reference_audio,
+            session_config);
+        cached_conditionals_ = prepared_conditionals;
+        conditionals_cache_.put(std::move(conditionals_key), std::move(prepared_conditionals));
+        cached_prompt_prep_ms_ =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - prompt_prep_started).count();
+    }
     mark_prepared();
 }
 

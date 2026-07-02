@@ -199,6 +199,7 @@ public:
         uint64_t seed,
         uint64_t prior_noise_values,
         const std::vector<float> & cache_source) const;
+    void release_runtime_cache() const;
 
 private:
     struct State;

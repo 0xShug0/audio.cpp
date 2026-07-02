@@ -180,6 +180,9 @@ public:
     }
 
     ~S3TokenEmbeddingGraph() {
+        if (execution_context_ != nullptr && graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(execution_context_->backend(), graph_);
+        }
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
@@ -274,6 +277,9 @@ public:
     }
 
     ~S3Token2MelPrepareGraph() {
+        if (execution_context_ != nullptr && graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(execution_context_->backend(), graph_);
+        }
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
@@ -427,6 +433,11 @@ S3GenSessionCache::S3GenSessionCache(engine::core::BackendConfig backend)
 S3GenSessionCache::~S3GenSessionCache() = default;
 S3GenSessionCache::S3GenSessionCache(S3GenSessionCache &&) noexcept = default;
 S3GenSessionCache & S3GenSessionCache::operator=(S3GenSessionCache &&) noexcept = default;
+
+void S3GenSessionCache::release_runtime_graphs() {
+    state_->release_pre_cfm_graphs();
+    state_->release_cfm_decoder_graphs();
+}
 
 S3Token2MelOutputs compute_s3_token2mel_inference(
     S3GenSessionCache & cache,

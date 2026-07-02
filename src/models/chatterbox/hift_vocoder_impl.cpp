@@ -454,4 +454,11 @@ HiFTVocoderOutputs HiFTVocoderComponent::infer(
     return outputs;
 }
 
+void HiFTVocoderComponent::release_runtime_cache() const {
+    if (state_ == nullptr) {
+        throw std::runtime_error("Chatterbox framework HiFT wrapper is not initialized");
+    }
+    state_->component.release_runtime_cache();
+}
+
 }  // namespace engine::models::chatterbox

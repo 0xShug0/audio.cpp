@@ -78,6 +78,12 @@ std::vector<float> build_positioned_token_embeddings(
 
 namespace engine::models::chatterbox {
 struct T3InferenceComponent::State {
+    void release_runtime_graphs() {
+        std::lock_guard<std::mutex> lock(mutex);
+        runner.reset();
+        prefill_runner.reset();
+    }
+
     void release_runtime_cache() {
         std::lock_guard<std::mutex> lock(mutex);
         owner.reset();
@@ -667,6 +673,10 @@ T3GenerateOutputs T3InferenceComponent::generate_speech_tokens(const T3GenerateR
     outputs.token_count = static_cast<int64_t>(outputs.predicted_tokens.size());
     outputs.prefix_cache_build_ms = prefix_cache_build_ms;
     return outputs;
+}
+
+void T3InferenceComponent::release_runtime_graphs() const {
+    state_->release_runtime_graphs();
 }
 
 void T3InferenceComponent::release_runtime_cache() const {

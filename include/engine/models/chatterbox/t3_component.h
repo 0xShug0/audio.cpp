@@ -22,6 +22,7 @@ public:
         const engine::core::ExecutionContext & execution_context);
 
     T3GenerateOutputs generate_speech_tokens(const T3GenerateRequest & request) const;
+    void release_runtime_graphs() const;
     void release_runtime_cache() const;
 
 private:

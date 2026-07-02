@@ -80,7 +80,8 @@ ChatterboxTtsComponent::ChatterboxTtsComponent(
     std::shared_ptr<const S3FlowDecoderWeights> flow_decoder_weights,
     engine::models::chatterbox::HiFTVocoderComponent vocoder,
     ChatterboxPromptPrepConfig prompt_prep_config,
-    const engine::core::ExecutionContext & execution_context)
+    const engine::core::ExecutionContext & execution_context,
+    bool mem_saver)
     : t3_(
           std::move(t3_weights),
           execution_context),
@@ -94,6 +95,7 @@ ChatterboxTtsComponent::ChatterboxTtsComponent(
       flow_decoder_weights_(std::move(flow_decoder_weights)),
       vocoder_(std::move(vocoder)),
       execution_context_(&execution_context),
+      mem_saver_(mem_saver),
       state_(std::make_shared<State>(execution_context.config())) {
     if (!tokenizer_) {
         throw std::runtime_error("ChatterboxTtsComponent requires text tokenizer");
@@ -204,7 +206,9 @@ ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone_impl(
     engine::debug::timing_log_scalar("chatterbox.voice_clone.t3.next_embed_ms", outputs.t3_next_embed_ms);
     outputs.generated_speech_tokens = t3_outputs.predicted_tokens;
     outputs.cleaned_speech_tokens = clean_generated_speech_tokens_like_python(outputs.generated_speech_tokens);
-    if (execution_context_ != nullptr && execution_context_->uses_host_graph_plan()) {
+    if (mem_saver_) {
+        t3_.release_runtime_graphs();
+    } else if (execution_context_ != nullptr && execution_context_->uses_host_graph_plan()) {
         t3_.release_runtime_cache();
     }
 
@@ -230,6 +234,9 @@ ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone_impl(
     s3gen_timing.token2mel_ms =
         engine::debug::elapsed_ms(token2mel_started);
     const auto token2mel_memory_after = capture_backend_memory_snapshot(execution_context_);
+    if (mem_saver_) {
+        state_->s3_cache.release_runtime_graphs();
+    }
     const uint64_t prior_noise_values =
         static_cast<uint64_t>(mel.channels * (conds.gen.prompt_feat_frames + mel.frames));
     const auto vocoder_memory_before = capture_backend_memory_snapshot(execution_context_);
@@ -243,6 +250,9 @@ ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone_impl(
         {});
     s3gen_timing.vocoder_ms =
         engine::debug::elapsed_ms(vocoder_started);
+    if (mem_saver_) {
+        vocoder_.release_runtime_cache();
+    }
     const auto vocoder_memory_after = capture_backend_memory_snapshot(execution_context_);
     outputs.s3gen_ms =
         engine::debug::elapsed_ms(s3gen_started);

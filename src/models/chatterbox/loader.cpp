@@ -81,6 +81,18 @@ public:
         inspection.capabilities.languages = supported_chatterbox_language_codes();
         inspection.capabilities.supports_speaker_reference = true;
         inspection.capabilities.supports_style_condition = true;
+        inspection.cli.session_options = {
+            {
+                "--session-option chatterbox.conditionals_cache_slots",
+                "n",
+                "Prepared voice-condition cache slots; default 1, set 0 to disable.",
+            },
+            {
+                "--session-option chatterbox.mem_saver=true",
+                "",
+                "Free non-conditional runtime graphs after each request chunk; default false.",
+            },
+        };
         inspection.discovered_configs = discover_config_assets(request);
         inspection.discovered_weights = discover_weight_assets(request);
         return inspection;

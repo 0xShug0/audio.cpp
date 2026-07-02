@@ -94,7 +94,8 @@ public:
         std::shared_ptr<const S3FlowDecoderWeights> flow_decoder_weights,
         engine::models::chatterbox::HiFTVocoderComponent vocoder,
         ChatterboxPromptPrepConfig prompt_prep_config,
-        const engine::core::ExecutionContext & execution_context);
+        const engine::core::ExecutionContext & execution_context,
+        bool mem_saver = false);
 
     ChatterboxVoiceCloneOutputs synthesize_voice_clone(
         const std::string & text,
@@ -125,6 +126,7 @@ private:
     std::shared_ptr<const S3FlowDecoderWeights> flow_decoder_weights_;
     engine::models::chatterbox::HiFTVocoderComponent vocoder_;
     const engine::core::ExecutionContext * execution_context_ = nullptr;
+    bool mem_saver_ = false;
     std::shared_ptr<State> state_;
 };
 

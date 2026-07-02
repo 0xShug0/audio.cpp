@@ -6,16 +6,20 @@
 #include "engine/framework/runtime/registry.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 namespace minitts::server {
 namespace {
 
 using engine::io::json::Value;
+
+using Clock = std::chrono::steady_clock;
 
 std::string json_quote(std::string_view value) {
     return engine::io::json::stringify_string(value);
@@ -108,7 +112,49 @@ std::string base64_encode(const std::vector<uint8_t> & bytes) {
     return base64_encode(bytes.data(), bytes.size());
 }
 
-std::string task_result_json(const engine::runtime::TaskResult & result) {
+double elapsed_ms(Clock::time_point started) {
+    return std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+}
+
+double audio_duration_ms(const engine::runtime::AudioBuffer & audio) {
+    if (audio.sample_rate <= 0 || audio.channels <= 0) {
+        return 0.0;
+    }
+    return 1000.0 * static_cast<double>(audio.samples.size()) /
+        static_cast<double>(audio.sample_rate * audio.channels);
+}
+
+double audio_rtf(double wall_ms, double duration_ms) {
+    return duration_ms > 0.0 ? wall_ms / duration_ms : 0.0;
+}
+
+std::string timing_json(double wall_ms) {
+    std::ostringstream out;
+    out << "{\"wall_ms\":" << wall_ms << "}";
+    return out.str();
+}
+
+std::string timing_json(double wall_ms, const engine::runtime::AudioBuffer & audio) {
+    const double duration_ms = audio_duration_ms(audio);
+    std::ostringstream out;
+    out << "{\"wall_ms\":" << wall_ms
+        << ",\"audio_duration_ms\":" << duration_ms
+        << ",\"rtf\":" << audio_rtf(wall_ms, duration_ms) << "}";
+    return out.str();
+}
+
+std::unordered_map<std::string, std::string> timing_headers(
+    double wall_ms,
+    const engine::runtime::AudioBuffer & audio) {
+    const double duration_ms = audio_duration_ms(audio);
+    return {
+        {"X-AudioCPP-Wall-Ms", std::to_string(wall_ms)},
+        {"X-AudioCPP-Audio-Duration-Ms", std::to_string(duration_ms)},
+        {"X-AudioCPP-RTF", std::to_string(audio_rtf(wall_ms, duration_ms))},
+    };
+}
+
+std::string task_result_json(const engine::runtime::TaskResult & result, double wall_ms) {
     std::ostringstream out;
     out << "{";
     bool first = true;
@@ -196,6 +242,14 @@ std::string task_result_json(const engine::runtime::TaskResult & result) {
                 << ",\"confidence\":" << word.confidence << "}";
         }
         out << "]";
+    }
+    field("timing");
+    if (result.audio_output.has_value()) {
+        out << timing_json(wall_ms, *result.audio_output);
+    } else if (result.named_audio_outputs.size() == 1) {
+        out << timing_json(wall_ms, result.named_audio_outputs.front().audio);
+    } else {
+        out << timing_json(wall_ms);
     }
     out << "}";
     return out.str();
@@ -364,37 +418,55 @@ ServerState::LoadedModel & ServerState::require_model(const Value & body) {
     return *models_.at(it->second);
 }
 
-engine::runtime::TaskResult ServerState::run_model(
+struct ServerState::TimedTaskResult {
+    engine::runtime::TaskResult result;
+    double wall_ms = 0.0;
+};
+
+ServerState::TimedTaskResult ServerState::run_model(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request) {
     std::lock_guard<std::mutex> lock(model.mutex);
     ensure_model_loaded_locked(model);
+    const auto started = Clock::now();
     model.session->prepare(engine::runtime::build_preparation_request(request));
-    return model.offline->run(request);
+    auto result = model.offline->run(request);
+    return TimedTaskResult{std::move(result), elapsed_ms(started)};
 }
 
 HttpResponse ServerState::handle_speech(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto request = build_openai_speech_request(body, request_base_);
-    const auto result = run_model(model, request);
-    const auto wav = encode_pcm16_wav(select_audio_output(result));
+    const auto timed_result = run_model(model, request);
+    const auto & audio = select_audio_output(timed_result.result);
+    const auto wav = encode_pcm16_wav(audio);
     const auto response_format = engine::io::json::optional_string(body, "response_format", "wav");
     if (response_format == "json" || response_format == "b64_json") {
-        return json_response("{\"audio\":" + json_quote(base64_encode(wav)) + ",\"format\":\"wav\"}");
+        return json_response(
+            "{\"audio\":" + json_quote(base64_encode(wav)) +
+            ",\"format\":\"wav\",\"timing\":" + timing_json(timed_result.wall_ms, audio) + "}");
     }
-    return HttpResponse{200, "audio/wav", std::string(reinterpret_cast<const char *>(wav.data()), wav.size()), {}};
+    return HttpResponse{
+        200,
+        "audio/wav",
+        std::string(reinterpret_cast<const char *>(wav.data()), wav.size()),
+        timing_headers(timed_result.wall_ms, audio),
+    };
 }
 
 HttpResponse ServerState::handle_transcription(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto request = build_openai_transcription_request(body, request_base_);
-    const auto result = run_model(model, request);
+    const auto timed_result = run_model(model, request);
+    const auto & result = timed_result.result;
     if (!result.text_output.has_value()) {
         throw std::runtime_error("model result did not contain transcript text");
     }
-    return json_response("{\"text\":" + json_quote(result.text_output->text) + "}");
+    return json_response(
+        "{\"text\":" + json_quote(result.text_output->text) +
+        ",\"timing\":" + timing_json(timed_result.wall_ms) + "}");
 }
 
 HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
@@ -404,7 +476,8 @@ HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
     const auto request = minitts::cli::build_request_from_json(
         request_json != nullptr ? *request_json : body,
         request_base_);
-    return json_response(task_result_json(run_model(model, request)));
+    const auto timed_result = run_model(model, request);
+    return json_response(task_result_json(timed_result.result, timed_result.wall_ms));
 }
 
 std::string ServerState::models_json() const {

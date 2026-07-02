@@ -22,6 +22,8 @@ public:
     S3GenSessionCache(const S3GenSessionCache &) = delete;
     S3GenSessionCache & operator=(const S3GenSessionCache &) = delete;
 
+    void release_runtime_graphs();
+
 private:
     struct State;
     std::unique_ptr<State> state_;

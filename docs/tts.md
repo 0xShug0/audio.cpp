@@ -42,7 +42,7 @@ audiocpp_cli --task clon --family chatterbox --model models/chatterbox --backend
 |---|---|---:|---|
 | `--voice-ref` | WAV path | required | Reference speaker audio. |
 | `--language` | language code | `en` | Text language. |
-| `--text-chunk-size` | integer chars | `256` | Long-form chunk size. |
+| `--text-chunk-size` | integer chars | `128` | Long-form chunk size. |
 | `--guidance-scale` | float | `0.5` | CFG strength. |
 | `--temperature` | float | `0.8` | T3 sampling temperature. |
 | `--top-p` | float | `0.8` | T3 nucleus sampling limit. |

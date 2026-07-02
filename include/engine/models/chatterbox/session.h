@@ -2,15 +2,30 @@
 
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/runtime/cache_slots.h"
 #include "engine/models/chatterbox/assets.h"
 #include "engine/models/chatterbox/conditionals.h"
 #include "engine/models/chatterbox/tts.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <string>
 
 namespace engine::models::chatterbox {
+
+struct ChatterboxConditionalsCacheKey {
+    runtime::AudioBuffer reference_audio;
+    float exaggeration = 0.0f;
+    std::string language;
+};
+
+struct ChatterboxConditionalsCacheKeyEqual {
+    bool operator()(
+        const ChatterboxConditionalsCacheKey & lhs,
+        const ChatterboxConditionalsCacheKey & rhs) const;
+};
 
 class ChatterboxSession final
     : public runtime::RuntimeSessionBase
@@ -35,8 +50,14 @@ private:
     std::shared_ptr<const ChatterboxAssetPaths> assets_;
     engine::assets::TensorStorageType t3_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType component_weight_storage_type_ = engine::assets::TensorStorageType::Native;
+    bool mem_saver_ = false;
     std::unique_ptr<ChatterboxTtsComponent> component_;
+    std::optional<std::string> component_language_;
     std::optional<ChatterboxVoiceCloneConfig> voice_clone_config_;
+    runtime::CacheSlots<
+        ChatterboxConditionalsCacheKey,
+        ChatterboxConditionalsOutputs,
+        ChatterboxConditionalsCacheKeyEqual> conditionals_cache_;
     std::optional<ChatterboxConditionalsOutputs> cached_conditionals_;
     double cached_prompt_prep_ms_ = 0.0;
 };

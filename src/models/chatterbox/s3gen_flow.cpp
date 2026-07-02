@@ -194,7 +194,15 @@ void copy_backend_tensor(
     ggml_backend_tensor_copy(src.tensor, dst.tensor);
 }
 
-void release_graph_resources(ggml_context *& ggml, ggml_backend_buffer_t & buffer) {
+void release_graph_resources(
+    const engine::core::ExecutionContext * execution_context,
+    ggml_cgraph *& graph,
+    ggml_context *& ggml,
+    ggml_backend_buffer_t & buffer) {
+    if (execution_context != nullptr && graph != nullptr) {
+        engine::core::release_backend_graph_resources(execution_context->backend(), graph);
+        graph = nullptr;
+    }
     if (buffer != nullptr) {
         ggml_backend_buffer_free(buffer);
         buffer = nullptr;
@@ -1011,7 +1019,7 @@ private:
         }
 
         ~FlowEncoderEmbedPrelookBackendRunner() {
-            release_graph_resources(ggml_, buffer_);
+            release_graph_resources(execution_context_, graph_, ggml_, buffer_);
         }
 
         void write_input(const std::vector<float> & input) {
@@ -1126,7 +1134,7 @@ private:
             }
 
             ~FlowEncoderAttentionBackendRunner() {
-                release_graph_resources(ggml_, buffer_);
+                release_graph_resources(execution_context_, graph_, ggml_, buffer_);
             }
 
             engine::core::TensorValue & input_tensor() {
@@ -1201,7 +1209,7 @@ private:
             }
 
             ~FlowEncoderFeedForwardBackendRunner() {
-                release_graph_resources(ggml_, buffer_);
+                release_graph_resources(execution_context_, graph_, ggml_, buffer_);
             }
 
             engine::core::TensorValue & input_tensor() {
@@ -1283,7 +1291,7 @@ private:
         }
 
         ~FlowEncoderUpsampleBackendRunner() {
-            release_graph_resources(ggml_, buffer_);
+            release_graph_resources(execution_context_, graph_, ggml_, buffer_);
         }
 
         engine::core::TensorValue & input_tensor() {
@@ -1349,7 +1357,7 @@ private:
         }
 
         ~FlowEncoderAfterNormBackendRunner() {
-            release_graph_resources(ggml_, buffer_);
+            release_graph_resources(execution_context_, graph_, ggml_, buffer_);
         }
 
         engine::core::TensorValue & input_tensor() {
@@ -1403,9 +1411,9 @@ public:
     }
 
     ~FlowDecoderBackendRunner() {
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
+        if (graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(backend_, graph_);
+            graph_ = nullptr;
         }
         if (graph_ggml_ != nullptr) {
             ggml_free(graph_ggml_);
@@ -1429,9 +1437,9 @@ public:
         if (graph_ != nullptr && active_frames_ == frames) {
             return;
         }
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
+        if (graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(backend_, graph_);
+            graph_ = nullptr;
         }
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
@@ -1441,7 +1449,6 @@ public:
             ggml_free(graph_ggml_);
             graph_ggml_ = nullptr;
         }
-        graph_ = nullptr;
         output_tensor_ = {};
         attention_mask_ = {};
         skip_tensor_ = {};
@@ -1480,12 +1487,12 @@ public:
         attention_mask_ =
             engine::core::make_tensor(ctx, GGML_TYPE_F16, engine::core::TensorShape::from_dims({batch_, 8, frames, frames}));
         ggml_set_input(attention_mask_.tensor);
-        if (execution_context_->uses_host_graph_plan()) {
-            ggml_set_output(mu_in_.tensor);
-            ggml_set_output(spks_in_.tensor);
-            ggml_set_output(cond_in_.tensor);
-            ggml_set_output(attention_mask_.tensor);
-        }
+        ggml_set_output(x_in_.tensor);
+        ggml_set_output(mu_in_.tensor);
+        ggml_set_output(time_in_.tensor);
+        ggml_set_output(spks_in_.tensor);
+        ggml_set_output(cond_in_.tensor);
+        ggml_set_output(attention_mask_.tensor);
         auto time_hidden = linear_lastdim(ctx, time_in_, weights.time_mlp_1, writer);
         time_hidden = engine::core::wrap_tensor(ggml_silu(ctx.ggml, time_hidden.tensor), time_hidden.shape, GGML_TYPE_F32);
         time_hidden = linear_lastdim(ctx, time_hidden, weights.time_mlp_2, writer);
@@ -1525,21 +1532,14 @@ public:
 
         graph_ = ggml_new_graph_custom(graph_ggml_, 262144, false);
         ggml_build_forward_expand(graph_, output_tensor_.tensor);
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            throw std::runtime_error("failed to allocate backend graph tensors for S3 flow decoder");
+        }
         if (execution_context_->uses_host_graph_plan()) {
-            gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
-            if (gallocr_ == nullptr) {
-                throw std::runtime_error("failed to initialize graph allocator for S3 flow decoder");
-            }
-            ggml_gallocr_reserve(gallocr_, graph_);
-            if (!ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-                throw std::runtime_error("failed to allocate backend graph tensors for S3 flow decoder");
-            }
             engine::core::prepare_host_graph_plan(*execution_context_, graph_, cpu_plan_);
-        } else {
-            buffer_ = ggml_backend_alloc_ctx_tensors(graph_ggml_, backend_);
-            if (buffer_ == nullptr) {
-                throw std::runtime_error("failed to allocate S3 flow decoder backend tensors");
-            }
         }
         writer.flush();
     }
@@ -1625,7 +1625,6 @@ private:
     const engine::core::ExecutionContext * execution_context_ = nullptr;
     ggml_backend_t backend_ = nullptr;
     ggml_context * graph_ggml_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     engine::core::TensorValue x_in_;

@@ -2,6 +2,8 @@
 #include "http.h"
 #include "runtime.h"
 
+#include "engine/framework/debug/trace.h"
+
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -31,6 +33,7 @@ bool has_arg(int argc, char ** argv, const std::string & name) {
 void print_help() {
     std::cout
         << "audiocpp_server --config <server.json> [--host <ip>] [--port <port>] [--device <id>] [--threads <n>]\n"
+        << "                [--log] [--log-file <path>]\n"
         << "\n"
         << "Endpoints:\n"
         << "  GET  /health\n"
@@ -52,6 +55,11 @@ int main(int argc, char ** argv) {
         if (!config_path.has_value()) {
             throw std::runtime_error("missing required --config argument");
         }
+        const auto log_file = arg_value(argc, argv, "--log-file");
+        engine::debug::configure_logging(engine::debug::LoggingConfig{
+            has_arg(argc, argv, "--log") || log_file.has_value(),
+            log_file,
+        });
 
         auto config = minitts::server::load_server_config(*config_path);
         if (const auto host = arg_value(argc, argv, "--host")) {

@@ -144,6 +144,7 @@ public:
         uint64_t prior_noise_values = 0,
         const std::vector<float> * source_random_values = nullptr) const;
     std::vector<float> predict_f0(const std::vector<float> & mel, int64_t frames) const;
+    void release_runtime_cache() const;
 
 private:
     struct State;

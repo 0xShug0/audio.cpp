@@ -850,6 +850,9 @@ public:
     }
 
     ~T3DecodeBackendRunner() {
+        if (owner_ != nullptr && graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(owner_->backend(), graph_);
+        }
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
             buffer_ = nullptr;
@@ -1167,6 +1170,9 @@ public:
     }
 
     ~T3PrefillBackendRunner() {
+        if (owner_ != nullptr && graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(owner_->backend(), graph_);
+        }
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
             buffer_ = nullptr;
