@@ -338,6 +338,15 @@ VibeVoiceDecoderWeights load_vibevoice_decoder_weights(
         "model.language_model.embed_tokens.weight",
         weight_storage_type,
         {config.vocab_size, config.hidden_size});
+    if (config.tie_word_embeddings) {
+        weights.lm_head = weights.token_embedding;
+    } else {
+        weights.lm_head = weights.store->load_tensor(
+            *assets.model_weights,
+            assets.model_weights->require_tensor_name({"lm_head.weight", "model.lm_head.weight"}),
+            weight_storage_type,
+            {config.vocab_size, config.hidden_size});
+    }
     weights.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
     for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
         weights.layers.push_back(load_layer_weights(
@@ -498,7 +507,7 @@ public:
         hidden_output_ = x.tensor;
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().token_embedding));
+                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
         logits_output_ = logits.tensor;
         ggml_set_output(logits_output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
@@ -761,7 +770,7 @@ private:
             hidden_output_ = x.tensor;
             auto logits = modules::LinearModule(
                               binding::linear_config(config.hidden_size, config.vocab_size, false))
-                              .build(ctx, x, binding::linear_data(constants_, runtime_->weights().token_embedding));
+                              .build(ctx, x, binding::linear_data(constants_, runtime_->weights().lm_head));
             logits_output_ = logits.tensor;
             graph_ = ggml_new_graph_custom(ctx_.get(), 8192, false);
             ggml_set_output(logits_output_);
@@ -1006,7 +1015,7 @@ public:
         hidden_output_ = x.tensor;
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().token_embedding));
+                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
         logits_output_ = logits.tensor;
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
@@ -1202,7 +1211,7 @@ public:
         hidden_output_ = x.tensor;
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().token_embedding));
+                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
         logits_output_ = logits.tensor;
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);

@@ -29,6 +29,7 @@ Highlights:
 
 > [!IMPORTANT]
 > **2026-07-02:** Music generation and source separation expanded in the released framework surface: ACE-Step 1.5 Turbo/Base, HeartMuLa, Stable Audio 3 Small Music/SFX and Medium, Mel-Band RoFormer, and HTDemucs are now available through the normal audio.cpp CLI/framework paths.
+  **2026-07-02:** VibeVoice 7B joins the 1.5B model, and full fine-tune adapters — language-model LoRA plus fine-tuned diffusion head and acoustic/semantic connectors — can now be merged at load time through `--load-option vibevoice.lora`.
 
 > [!IMPORTANT]
 > **2026-06-30:** VibeVoice 1.5B is now released in the framework, bringing long-form, multi-speaker dialogue TTS into the normal audio.cpp model surface.
@@ -68,7 +69,7 @@ Current model status in the framework:
 | **sortformer_diar** | diarization | en | Sortformer-4spk-v1 | **released** |
 | **stable_audio** | music generation, sound generation, audio editing | en | Stable Audio 3 Small Music, Stable Audio 3 Small SFX, Stable Audio 3 Medium | **released** |
 | **vevo2** | TTS, singing generation, voice conversion, singing conversion, editing | en, zh | Vevo2 with Qwen2.5-0.5B AR model | **released** |
-| **vibevoice** | TTS, multi-speaker dialogue TTS | en, zh | VibeVoice-1.5B | **released** |
+| **vibevoice** | TTS, multi-speaker dialogue TTS | en, zh | VibeVoice-1.5B, VibeVoice-7B | **released** |
 | **voxcpm2** | TTS, voice cloning, voice design | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | VoxCPM2-2B, 48 kHz | **released** |
 | audio_flamingo_next | audio understanding, ASR, audio captioning, audio QA | en, multilingual audio understanding | Audio Flamingo Next Instruct, Qwen2-7B based | optimization |
 | higgs_tts | TTS, voice cloning, expressive speech | 100+ languages | Higgs Audio v3 TTS 4B | testing |
@@ -435,6 +436,7 @@ Recommended top-level install packages:
 | `supertonic_3` | Supertonic 3 | **Yes** |
 | `vevo2` | Vevo2 | No |
 | `vibevoice_1_5b` | VibeVoice 1.5B | No |
+| `vibevoice_7b` | VibeVoice 7B | No |
 | `voxcpm2` | VoxCPM2 | No |
 
 > [!WARNING]

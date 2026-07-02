@@ -85,6 +85,7 @@ add_compile_options(
 add_library(engine_runtime STATIC
     src/framework/assets/resource_bundle.cpp
     src/framework/assets/tensor_source.cpp
+    src/framework/assets/torch_bin.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
     src/framework/core/deferred_tensor_writer.cpp
@@ -230,6 +231,7 @@ add_library(engine_runtime STATIC
     src/models/vibevoice/diffusion_sampler.cpp
     src/models/vibevoice/generator.cpp
     src/models/vibevoice/loader.cpp
+    src/models/vibevoice/lora.cpp
     src/models/vibevoice/scheduler.cpp
     src/models/vibevoice/session.cpp
     src/models/vibevoice/tokenizer_audio.cpp
@@ -467,6 +469,24 @@ add_executable(miocodec_wavlm_parity
 )
 
 target_link_libraries(miocodec_wavlm_parity PRIVATE engine_runtime ggml)
+
+add_executable(torch_bin_parity
+    tests/vibevoice/torch_bin_parity.cpp
+)
+
+target_link_libraries(torch_bin_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(torch_bin_parity PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(vibevoice_finetune_overlay_check
+    tests/vibevoice/finetune_overlay_check.cpp
+)
+
+target_link_libraries(vibevoice_finetune_overlay_check PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 if (ENGINE_BUILD_WARMBENCH)
     function(add_engine_warmbench target_name source_file)

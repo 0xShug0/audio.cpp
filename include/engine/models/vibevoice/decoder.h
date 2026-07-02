@@ -92,6 +92,7 @@ struct VibeVoiceDecoderLayerWeights {
 struct VibeVoiceDecoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
+    core::TensorValue lm_head;
     std::vector<VibeVoiceDecoderLayerWeights> layers;
     assets::TensorDataF32 norm;
 };

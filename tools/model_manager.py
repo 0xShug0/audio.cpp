@@ -512,6 +512,52 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
     ),
     ModelPackage(
+        id="vibevoice_7b",
+        display_name="VibeVoice 7B",
+        target_directory="VibeVoice-7B",
+        source=CompositeSnapshotSource(
+            placements=(
+                SnapshotPlacement(
+                    source=SnapshotSource(repo_id="vibevoice/VibeVoice-7B"),
+                    required_files=(
+                        "config.json",
+                        "model.safetensors.index.json",
+                        "model-00001-of-00010.safetensors",
+                        "model-00002-of-00010.safetensors",
+                        "model-00003-of-00010.safetensors",
+                        "model-00004-of-00010.safetensors",
+                        "model-00005-of-00010.safetensors",
+                        "model-00006-of-00010.safetensors",
+                        "model-00007-of-00010.safetensors",
+                        "model-00008-of-00010.safetensors",
+                        "model-00009-of-00010.safetensors",
+                        "model-00010-of-00010.safetensors",
+                        "preprocessor_config.json",
+                    ),
+                ),
+            ),
+        ),
+        required_files=(
+            "config.json",
+            "model.safetensors.index.json",
+            "model-00001-of-00010.safetensors",
+            "model-00002-of-00010.safetensors",
+            "model-00003-of-00010.safetensors",
+            "model-00004-of-00010.safetensors",
+            "model-00005-of-00010.safetensors",
+            "model-00006-of-00010.safetensors",
+            "model-00007-of-00010.safetensors",
+            "model-00008-of-00010.safetensors",
+            "model-00009-of-00010.safetensors",
+            "model-00010-of-00010.safetensors",
+            "preprocessor_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+        ),
+    ),
+    ModelPackage(
         id="higgs_audio_v3_tts_4b",
         display_name="Higgs Audio v3 TTS 4B",
         target_directory="higgs-audio-v3-tts-4b",
@@ -1305,7 +1351,9 @@ def install_composite_snapshot(
             convert_moss_tts_weights(staged_package_root)
         elif package.id in {"irodori_tts_500m_v3", "irodori_tts_600m_v3_voice_design"}:
             convert_irodori_dacvae_weights(staged_package_root.parent / "Semantic-DACVAE-Japanese-32dim")
-        elif package.id == "vibevoice_1_5b":
+        elif package.id in {"vibevoice_1_5b", "vibevoice_7b"}:
+            # VibeVoice 1.5B and 7B share the same Qwen2.5 tokenizer, and neither
+            # upstream repo ships the tokenizer files, so both reuse one bundle.
             copy_bundled_model_manager_assets(
                 "vibevoice_1_5b",
                 staged_package_root,

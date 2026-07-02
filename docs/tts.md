@@ -358,18 +358,21 @@ audiocpp_cli --task tts --family supertonic --model models/supertonic-3 --backen
 
 ## VibeVoice
 
-VibeVoice 1.5B is a long-form multi-speaker TTS model. Prompts use speaker-labeled lines, and speaker reference WAVs are provided in the same order as the speaker ids.
+VibeVoice is a long-form multi-speaker TTS model, available in 1.5B and 7B sizes. Prompts use speaker-labeled lines, and speaker reference WAVs are provided in the same order as the speaker ids.
 
 | Field | Value |
 |---|---|
 | Family | `vibevoice` |
-| Model directory | `models/VibeVoice-1.5B` |
+| Model directory | `models/VibeVoice-1.5B` (or `models/VibeVoice-7B`) |
 | Task | `tts` |
 | Modes | `offline` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Up to four speaker reference WAVs through `voice_samples` |
 | Text format | Lines like `Speaker 1: ... Speaker 2: ...`; ids are normalized internally |
 | Long-form | No text chunking; generation uses the model long-form path |
+| LoRA | Optional PEFT decoder adapter through `--load-option vibevoice.lora` |
+
+Both sizes share the same CLI surface and the same Qwen2.5 tokenizer; the 7B is simply larger (hidden size 3584 vs 1536) and needs a matching 7B LoRA if one is used.
 
 ```bash
 audiocpp_cli --task tts --family vibevoice --model models/VibeVoice-1.5B --backend cuda --text "Speaker 1: Hello. Speaker 2: Nice to meet you." --request-option voice_samples=assets/resources/a.wav,assets/resources/b.wav --out out.wav
@@ -386,5 +389,9 @@ audiocpp_cli --task tts --family vibevoice --model models/VibeVoice-1.5B --backe
 | `--temperature` | float | `1.0` | Decoder sampling temperature. |
 | `--top-k` | integer | `50` | Decoder top-k sampling limit. |
 | `--top-p` | float | `1.0` | Decoder nucleus sampling limit. |
+| `--load-option vibevoice.lora=<path>` | fine-tune adapter dir | not set | Overlay a fine-tune at load time: the language-model LoRA is delta-merged into the decoder linears, and the diffusion head and acoustic/semantic connectors (when present in the adapter dir) replace their base tensors. Dims must match the base model size. |
+| `--load-option vibevoice.lora_scale=<float>` | float | `lora_alpha / r` | Override the LoRA merge scale from `adapter_config.json`. |
+
+The adapter follows the PEFT training layout: `adapter_model.safetensors` + `adapter_config.json` for the language-model LoRA, plus optional `diffusion_head/model.safetensors` (or `diffusion_head_full.bin`), `acoustic_connector/pytorch_model.bin`, and `semantic_connector/pytorch_model.bin` for the fully fine-tuned components. Everything is applied at load time, so it composes with the `vibevoice.*_weight_type` quantization options and adds no per-step cost; the overlay is logged with `--log`. Use a 1.5B adapter with `VibeVoice-1.5B` and a 7B adapter with `VibeVoice-7B`; a size mismatch is rejected with a descriptive error. The same option may instead be passed as `--session-option vibevoice.lora` (but not via both at once).
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.

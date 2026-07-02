@@ -173,17 +173,30 @@ VibeVoiceDiffusionHeadConfig parse_diffusion_head_config(const engine::io::json:
     return config;
 }
 
+int64_t require_acoustic_vae_dim(const engine::io::json::Value & root) {
+    // VibeVoice-7B's config.json spells this key "acostic_vae_dim".
+    for (const char * key : {"acoustic_vae_dim", "acostic_vae_dim"}) {
+        if (const auto * value = root.find(key); value != nullptr) {
+            return value->as_i64();
+        }
+    }
+    throw std::runtime_error("VibeVoice config is missing acoustic_vae_dim");
+}
+
 VibeVoiceConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
     VibeVoiceConfig config;
     config.model_type = json::optional_string(root, "model_type", "");
     require_string_value(config.model_type, "vibevoice", "model_type");
     config.torch_dtype = json::optional_string(root, "torch_dtype", config.torch_dtype);
-    config.acoustic_vae_dim = json::require_i64(root, "acoustic_vae_dim");
+    config.acoustic_vae_dim = require_acoustic_vae_dim(root);
     config.semantic_vae_dim = json::require_i64(root, "semantic_vae_dim");
     config.acoustic_tokenizer = parse_tokenizer_config(root.require("acoustic_tokenizer_config"), "acoustic tokenizer");
     config.semantic_tokenizer = parse_tokenizer_config(root.require("semantic_tokenizer_config"), "semantic tokenizer");
     config.decoder = parse_decoder_config(root.require("decoder_config"));
+    // VibeVoice-7B carries tie_word_embeddings at the top level, unlike the 1.5B decoder config.
+    config.decoder.tie_word_embeddings =
+        json::optional_bool(root, "tie_word_embeddings", config.decoder.tie_word_embeddings);
     config.diffusion_head = parse_diffusion_head_config(root.require("diffusion_head_config"));
     require_positive(config.acoustic_vae_dim, "acoustic_vae_dim");
     require_positive(config.semantic_vae_dim, "semantic_vae_dim");
@@ -416,6 +429,10 @@ void validate_weight_anchors(const VibeVoiceAssets & assets) {
     const auto & weights = *assets.model_weights;
     const auto & decoder = config.decoder;
     require_tensor_metadata(weights, "model.language_model.embed_tokens.weight", {decoder.vocab_size, decoder.hidden_size});
+    if (!decoder.tie_word_embeddings) {
+        const auto lm_head_name = weights.require_tensor_name({"lm_head.weight", "model.lm_head.weight"});
+        require_tensor_metadata(weights, lm_head_name, {decoder.vocab_size, decoder.hidden_size});
+    }
     require_tensor_metadata(weights, "model.language_model.norm.weight", {decoder.hidden_size});
     require_tensor_metadata(weights, "model.language_model.layers.0.self_attn.q_proj.weight", {decoder.hidden_size, decoder.hidden_size});
     require_tensor_metadata(
