@@ -175,41 +175,44 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
         throw std::runtime_error("MOSS-TTS-Local generation audio codes must be [seq, n_vq]");
     }
 
-    std::vector<int32_t> sequence_text = text_tokens;
-    std::vector<int32_t> sequence_audio = audio_codes;
     std::vector<std::vector<int32_t>> generated_frames;
     std::vector<std::vector<int32_t>> code_history(static_cast<size_t>(n_vq));
     std::mt19937 rng(options.seed);
 
-    for (int64_t frame = 0; frame < options.max_new_frames; ++frame) {
-        const int64_t steps = static_cast<int64_t>(sequence_text.size());
-
-        // Fuse the summed audio-codebook embeddings into an additive bias so the backbone
-        // only has to embed the text channel in the graph.
-        std::vector<float> audio_bias(static_cast<size_t>(steps * hidden), 0.0F);
-        for (int64_t position = 0; position < steps; ++position) {
-            float * bias_row = audio_bias.data() + static_cast<size_t>(position) * hidden;
-            for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
-                const int32_t code = sequence_audio[static_cast<size_t>(position * n_vq + codebook)];
-                if (code == pad_code) {
-                    continue;
-                }
-                const float * embedding =
-                    audio_embeddings_[static_cast<size_t>(codebook)].data() + static_cast<size_t>(code) * hidden;
-                for (int64_t index = 0; index < hidden; ++index) {
-                    bias_row[index] += embedding[index];
-                }
+    // Sums the audio-codebook embeddings for one decoder row into the additive bias the
+    // backbone expects (padding codes contribute nothing).
+    const auto bias_for = [&](const int32_t * codes) {
+        std::vector<float> bias(static_cast<size_t>(hidden), 0.0F);
+        for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
+            const int32_t code = codes[codebook];
+            if (code == pad_code) {
+                continue;
+            }
+            const float * embedding =
+                audio_embeddings_[static_cast<size_t>(codebook)].data() + static_cast<size_t>(code) * hidden;
+            for (int64_t index = 0; index < hidden; ++index) {
+                bias[static_cast<size_t>(index)] += embedding[index];
             }
         }
+        return bias;
+    };
 
-        const std::vector<float> backbone_hidden = backbone_.forward_prefill_fused(sequence_text, audio_bias);
-        std::vector<float> local_hidden(
-            backbone_hidden.end() - hidden,
-            backbone_hidden.end());
+    // Prefill the whole prompt in a single batched forward (fills the cache in one pass
+    // instead of one graph launch per token), then generate one row at a time from the cache.
+    // The last prompt position's hidden state seeds the first generated frame.
+    const int64_t prefix_len = static_cast<int64_t>(text_tokens.size());
+    backbone_.begin_generation(prefix_len + options.max_new_frames);
+    std::vector<float> prefix_bias(static_cast<size_t>(prefix_len * hidden), 0.0F);
+    for (int64_t position = 0; position < prefix_len; ++position) {
+        const std::vector<float> row = bias_for(audio_codes.data() + position * n_vq);
+        std::copy(row.begin(), row.end(), prefix_bias.begin() + position * hidden);
+    }
+    std::vector<float> last_hidden = backbone_.prefill(text_tokens, prefix_bias);
 
+    for (int64_t frame = 0; frame < options.max_new_frames; ++frame) {
         // Seed the depth transformer with the backbone hidden state (local position 0).
-        std::vector<float> local_embeds = local_hidden;
-        local_hidden = depth_.forward(local_embeds, 1);
+        std::vector<float> local_embeds = last_hidden;
+        std::vector<float> local_hidden = depth_.forward(local_embeds, 1);
 
         // Binary gate: continue with the assistant slot or stop on the audio-end token.
         std::vector<float> gate_logits = project(local_text_head_, local_hidden, 2, hidden);
@@ -243,9 +246,9 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
         }
         generated_frames.push_back(frame_codes);
 
-        // Append the emitted frame as the next decoder row (assistant slot + codes).
-        sequence_text.push_back(assistant_slot);
-        sequence_audio.insert(sequence_audio.end(), frame_codes.begin(), frame_codes.end());
+        // Append the emitted frame as the next decoder row (assistant slot + codes) and
+        // advance the backbone cache; the returned hidden seeds the next frame.
+        last_hidden = backbone_.step(assistant_slot, bias_for(frame_codes.data()));
     }
 
     return generated_frames;

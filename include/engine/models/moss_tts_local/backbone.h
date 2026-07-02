@@ -29,19 +29,26 @@ public:
 
     int64_t hidden_size() const noexcept;
 
-    // Runs the backbone over a prefill sequence of text token ids and returns the
-    // final hidden states as [steps, hidden_size] row-major float.
-    std::vector<float> forward_prefill(const std::vector<int32_t> & token_ids) const;
-
-    // Same as forward_prefill, but adds the per-position audio-codebook embedding sum
-    // (audio_bias, [steps * hidden_size] row-major) to the text embedding before the
-    // decoder stack. This mirrors MossTTSLocalModel._build_inputs_embeds.
-    std::vector<float> forward_prefill_fused(
-        const std::vector<int32_t> & token_ids,
-        const std::vector<float> & audio_bias) const;
+    // Incremental (KV-cached) generation. Call begin_generation once to size and allocate the
+    // per-layer cache, prefill the prompt in a single batched forward, then step one position
+    // at a time. This runs generation in O(T) work per step instead of the O(T^2) cost of
+    // re-forwarding the whole sequence every frame.
+    //
+    // begin_generation sizes the cache for max_positions and builds the reusable
+    // single-position step graph.
+    void begin_generation(int64_t max_positions) const;
+    // prefill forwards the whole prompt at once, writes every position's K/V into the cache,
+    // and returns the last position's hidden state ([hidden_size]) to seed the first frame.
+    // audio_bias is the summed audio-codebook embedding per position ([token_ids.size() *
+    // hidden_size] row-major), mirroring MossTTSLocalModel._build_inputs_embeds.
+    std::vector<float> prefill(const std::vector<int32_t> & token_ids, const std::vector<float> & audio_bias) const;
+    // step forwards one fused position (its text token embedded in-graph plus audio_bias_row),
+    // appends that position's K/V to the cache, and returns its hidden state ([hidden_size]).
+    std::vector<float> step(int32_t token_id, const std::vector<float> & audio_bias_row) const;
+    int64_t cached_positions() const noexcept;
 
 private:
-    std::vector<float> run_prefill(const std::vector<int32_t> & token_ids, const float * audio_bias) const;
+    void build_step_graph(int64_t cache_steps) const;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

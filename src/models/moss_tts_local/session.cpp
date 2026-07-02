@@ -1,10 +1,13 @@
 #include "engine/models/moss_tts_local/session.h"
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/resampling.h"
+#include "engine/framework/core/backend.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/models/moss_tts_local/assets.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -77,6 +80,42 @@ std::vector<std::vector<float>> reference_to_codec_stereo(const runtime::AudioBu
     return stereo;
 }
 
+// Hardware-adaptive backbone dtype for the "auto" mode: GPUs run the model's
+// native bf16, while CPU uses f32 (bf16/f16 matmul is poorly accelerated on CPU,
+// so f32 is both faster and more accurate there). Non-CUDA GPU backends keep the
+// stored (native) dtype to stay on the known-good path.
+engine::assets::TensorStorageType resolve_auto_weight_type(engine::core::BackendType backend) {
+    switch (backend) {
+        case engine::core::BackendType::Cpu:
+            return engine::assets::TensorStorageType::F32;
+        case engine::core::BackendType::Cuda:
+            return engine::assets::TensorStorageType::BF16;
+        default:  // Metal, Vulkan, BestAvailable
+            return engine::assets::TensorStorageType::Native;
+    }
+}
+
+// Resolves moss_tts_local.weight_type. Defaults to "auto" (hardware-adaptive per
+// resolve_auto_weight_type); an explicit value (native/f32/f16/bf16/q8_0/...)
+// overrides. Handled here because the generic parser maps "auto" -> Native.
+engine::assets::TensorStorageType option_weight_type(
+    const runtime::SessionOptions & options,
+    const char * key) {
+    std::string value = "auto";
+    const auto it = options.options.find(key);
+    if (it != options.options.end() && !it->second.empty()) {
+        value = it->second;
+    }
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (lowered == "auto") {
+        return resolve_auto_weight_type(options.backend.type);
+    }
+    return engine::assets::parse_tensor_storage_type(value);
+}
+
 std::shared_ptr<const MossTTSLocalAssets> require_assets(std::shared_ptr<const MossTTSLocalAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("MOSS-TTS-Local session requires assets");
@@ -126,7 +165,7 @@ MossTTSLocalSession::MossTTSLocalSession(
         execution_context(),
         kBackboneGraphArenaBytes,
         kBackboneWeightContextBytes,
-        assets::TensorStorageType::Native);
+        option_weight_type(options, "moss_tts_local.weight_type"));
     depth_ = std::make_unique<MossDepthTransformer>(
         assets_, execution_context(), kDepthGraphArenaBytes, kDepthWeightContextBytes);
     processor_ = std::make_unique<MossTextProcessor>(assets_);
