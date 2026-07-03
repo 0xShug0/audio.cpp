@@ -173,6 +173,7 @@ Non-verbal tags are written directly in `--text`. Supported tag spellings includ
 | `--request-option speed=<float>` | float | `1.0` | Speech speed multiplier. |
 | `--request-option audio_chunk_duration_seconds=<float>` | seconds | `15.0` | Audio chunk duration used by the model prompt path. |
 | `--request-option audio_chunk_threshold_seconds=<float>` | seconds | `30.0` | Audio length threshold before model-side chunking. |
+| `--session-option omnivoice.mem_saver=true|false` | bool | `false` | Release staged generator and audio-tokenizer runtime graphs after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 
 ## PocketTTS
 

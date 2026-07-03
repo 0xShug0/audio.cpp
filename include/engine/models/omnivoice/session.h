@@ -72,6 +72,7 @@ private:
     size_t generator_weight_context_bytes_ = 256ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType audio_tokenizer_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType generator_weight_storage_type_ = engine::assets::TensorStorageType::Native;
+    bool mem_saver_ = false;
     OmniVoiceTextTokenizer tokenizer_;
     OmniVoiceAudioTokenizerRuntime audio_tokenizer_;
     OmniVoicePromptBuilder prompt_builder_;

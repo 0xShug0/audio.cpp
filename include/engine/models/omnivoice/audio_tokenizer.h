@@ -40,6 +40,7 @@ public:
         const runtime::AudioBuffer & audio,
         const OmniVoiceReferenceAudioOptions & options);
     runtime::AudioBuffer decode_audio_tokens(const OmniVoiceGeneratedAudioTokens & audio_tokens);
+    void release_runtime_graphs();
     const OmniVoiceAudioTokenizerRuntimeStats & last_stats() const noexcept;
 
 private:

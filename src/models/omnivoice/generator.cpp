@@ -1291,6 +1291,10 @@ void OmniVoiceGeneratorRuntime::seed_rng(uint32_t seed) {
     impl_->rng.seed(seed);
 }
 
+void OmniVoiceGeneratorRuntime::release_runtime_graphs() {
+    impl_->forward_graph.reset();
+}
+
 OmniVoiceGeneratedAudioTokens OmniVoiceGeneratorRuntime::generate(
     const OmniVoicePrompt & prompt,
     const OmniVoiceGenerationOptions & options) {

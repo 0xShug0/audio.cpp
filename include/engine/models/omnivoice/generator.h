@@ -37,6 +37,7 @@ public:
     OmniVoiceGeneratedAudioTokens generate(
         const OmniVoicePrompt & prompt,
         const OmniVoiceGenerationOptions & options);
+    void release_runtime_graphs();
     void seed_rng(uint32_t seed);
     const OmniVoiceGeneratorRuntimeStats & last_stats() const noexcept;
 

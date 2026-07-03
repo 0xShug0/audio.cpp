@@ -39,6 +39,13 @@ engine::assets::TensorStorageType option_weight_type(
     return engine::assets::parse_tensor_storage_type(it->second);
 }
 
+bool mem_saver_from_options(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"omnivoice.mem_saver", "mem_saver"})) {
+        return runtime::parse_bool_option(*value, "omnivoice.mem_saver");
+    }
+    return false;
+}
+
 using Clock = std::chrono::steady_clock;
 
 OmniVoiceGenerationOptions generation_options_from_options(const std::unordered_map<std::string, std::string> & options_map) {
@@ -188,6 +195,7 @@ OmniVoiceSession::OmniVoiceSession(
               options,
               "omnivoice.generator_weight_type",
               option_weight_type(options, "omnivoice.weight_type", engine::assets::TensorStorageType::Native))),
+      mem_saver_(mem_saver_from_options(options)),
       tokenizer_(assets_),
       audio_tokenizer_(
           assets_,
@@ -255,6 +263,9 @@ void OmniVoiceSession::prepare(const runtime::SessionPreparationRequest & reques
             *session_defaults_.reference_audio,
             generation.preprocess_prompt,
             reference_text_provided);
+        if (mem_saver_) {
+            audio_tokenizer_.release_runtime_graphs();
+        }
     }
     mark_prepared();
 }
@@ -282,6 +293,13 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
         reference_encode_ms = engine::debug::elapsed_ms(encode_start, encode_end);
         const auto & tokenizer_stats = audio_tokenizer_.last_stats();
         encoder_graph_rebuilt = tokenizer_stats.encoder_graph_rebuilt;
+        if (mem_saver_) {
+            const auto release_start = Clock::now();
+            audio_tokenizer_.release_runtime_graphs();
+            engine::debug::timing_log_scalar(
+                "omnivoice.reference_release.runtime_graphs_ms",
+                engine::debug::elapsed_ms(release_start, Clock::now()));
+        }
     }
     const auto prompt_start = Clock::now();
     const auto prompt = prompt_builder_.build(omni_request);
@@ -309,6 +327,13 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
             generator_rebuild_ms += generator_stats.rebuild_ms;
         }
         const auto generate_end = Clock::now();
+        if (mem_saver_) {
+            const auto release_start = Clock::now();
+            generator_.release_runtime_graphs();
+            engine::debug::timing_log_scalar(
+                "omnivoice.generator_release.runtime_graphs_ms",
+                engine::debug::elapsed_ms(release_start, Clock::now()));
+        }
         measured_generate_ms = engine::debug::elapsed_ms(generate_start, generate_end);
         const auto decode_start = Clock::now();
         audio = audio_tokenizer_.decode_audio_tokens(generated_tokens);
@@ -318,6 +343,13 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
             decoder_rebuild_ms += tokenizer_stats.decoder_rebuild_ms;
         }
         const auto decode_end = Clock::now();
+        if (mem_saver_) {
+            const auto release_start = Clock::now();
+            audio_tokenizer_.release_runtime_graphs();
+            engine::debug::timing_log_scalar(
+                "omnivoice.decoder_release.runtime_graphs_ms",
+                engine::debug::elapsed_ms(release_start, Clock::now()));
+        }
         measured_decode_ms = engine::debug::elapsed_ms(decode_start, decode_end);
     } else {
         std::vector<std::string> text_chunks;
@@ -382,6 +414,13 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
                 any_generator_graph_rebuilt = any_generator_graph_rebuilt || generator_stats.graph_rebuilt;
                 generator_rebuild_ms += generator_stats.rebuild_ms;
             }
+            if (mem_saver_) {
+                const auto release_start = Clock::now();
+                generator_.release_runtime_graphs();
+                engine::debug::timing_log_scalar(
+                    "omnivoice.generator_release.runtime_graphs_ms",
+                    engine::debug::elapsed_ms(release_start, Clock::now()));
+            }
             chunk_generate_ms += engine::debug::elapsed_ms(chunk_generate_start, chunk_generate_end);
             if (chunk_codebooks == 0) {
                 chunk_codebooks = chunk_tokens.codebooks;
@@ -403,6 +442,13 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
                 const auto & tokenizer_stats = audio_tokenizer_.last_stats();
                 any_decoder_graph_rebuilt = any_decoder_graph_rebuilt || tokenizer_stats.decoder_graph_rebuilt;
                 decoder_rebuild_ms += tokenizer_stats.decoder_rebuild_ms;
+            }
+            if (mem_saver_) {
+                const auto release_start = Clock::now();
+                audio_tokenizer_.release_runtime_graphs();
+                engine::debug::timing_log_scalar(
+                    "omnivoice.decoder_release.runtime_graphs_ms",
+                    engine::debug::elapsed_ms(release_start, Clock::now()));
             }
             chunk_decode_ms += engine::debug::elapsed_ms(chunk_decode_start, chunk_decode_end);
             append_cross_faded_chunk(audio, chunk_audio);

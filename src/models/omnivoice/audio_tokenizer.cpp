@@ -2368,4 +2368,9 @@ runtime::AudioBuffer OmniVoiceAudioTokenizerRuntime::decode_audio_tokens(
     return impl_->decoder_graph->run(audio_tokens);
 }
 
+void OmniVoiceAudioTokenizerRuntime::release_runtime_graphs() {
+    impl_->encoder_graph.reset();
+    impl_->decoder_graph.reset();
+}
+
 }  // namespace engine::models::omnivoice

@@ -645,7 +645,7 @@ For long-form TTS tests, each run uses the same 6,026-character, 1,028-word inpu
 
 ## Runtime Memory Options
 
-Some long-form music generation models expose memory-saver session options such as `ace_step.mem_saver=true`, `heartmula.mem_saver=true`, and `stable_audio.mem_saver=true`. These options keep the default output path unchanged but release staged graph/cache state after request phases to reduce resident VRAM; later requests may rebuild released graphs.
+Some models expose memory-saver session options such as `ace_step.mem_saver=true`, `heartmula.mem_saver=true`, `stable_audio.mem_saver=true`, and `omnivoice.mem_saver=true`. These options keep the default output path unchanged but release staged graph/cache state after request phases to reduce resident VRAM; later requests may rebuild released graphs.
 
 ## Precision/Quantization Support
 
