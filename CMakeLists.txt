@@ -131,6 +131,7 @@ add_library(engine_runtime STATIC
     src/framework/modules/hubert_encoder.cpp
     src/framework/modules/wavlm_encoder.cpp
     src/framework/modules/optimizations/fast_conv_modules.cpp
+    src/framework/modules/optimizations/fast_projection_modules.cpp
     src/framework/modules/recurrent_modules.cpp
     src/framework/modules/streaming_conv_modules.cpp
     src/framework/modules/attention/positional_encoding.cpp
@@ -244,6 +245,35 @@ add_library(engine_runtime STATIC
     src/models/heartmula/mula.cpp
     src/models/heartmula/session.cpp
     src/models/heartmula/tokenizer_text.cpp
+    src/models/irodori_tts/assets.cpp
+    src/models/irodori_tts/codec.cpp
+    src/models/irodori_tts/condition_encoder.cpp
+    src/models/irodori_tts/duration.cpp
+    src/models/irodori_tts/loader.cpp
+    src/models/irodori_tts/rf_dit.cpp
+    src/models/irodori_tts/session.cpp
+    src/models/irodori_tts/tokenizer_text.cpp
+    src/models/index_tts2/assets.cpp
+    src/models/index_tts2/audio_features.cpp
+    src/models/index_tts2/gpt.cpp
+    src/models/index_tts2/loader.cpp
+    src/models/index_tts2/qwen_emotion.cpp
+    src/models/index_tts2/request.cpp
+    src/models/index_tts2/s2mel.cpp
+    src/models/index_tts2/semantic_codec.cpp
+    src/models/index_tts2/semantic_encoder.cpp
+    src/models/index_tts2/session.cpp
+    src/models/index_tts2/style_encoder.cpp
+    src/models/index_tts2/tokenizer_text.cpp
+    src/models/index_tts2/vocoder.cpp
+    src/models/kokoro_tts/assets.cpp
+    src/models/kokoro_tts/decoder.cpp
+    src/models/kokoro_tts/frontend.cpp
+    src/models/kokoro_tts/g2p_en.cpp
+    src/models/kokoro_tts/loader.cpp
+    src/models/kokoro_tts/plbert.cpp
+    src/models/kokoro_tts/predictor.cpp
+    src/models/kokoro_tts/session.cpp
     src/models/qwen3_tts/assets.cpp
     src/models/qwen3_tts/tokenizer_text.cpp
     src/models/qwen3_tts/tokenizer_speech_encoder.cpp
@@ -264,6 +294,16 @@ add_library(engine_runtime STATIC
     src/models/qwen3_asr/postprocess.cpp
     src/models/qwen3_asr/session.cpp
     src/models/qwen3_asr/loader.cpp
+    src/models/parakeet_tdt/assets.cpp
+    src/models/parakeet_tdt/decoder.cpp
+    src/models/parakeet_tdt/frontend.cpp
+    src/models/parakeet_tdt/loader.cpp
+    src/models/parakeet_tdt/longform_encoder.cpp
+    src/models/parakeet_tdt/offline_encoder.cpp
+    src/models/parakeet_tdt/pre_encode.cpp
+    src/models/parakeet_tdt/session.cpp
+    src/models/parakeet_tdt/streaming_encoder.cpp
+    src/models/parakeet_tdt/weights.cpp
     src/models/vevo2/ar.cpp
     src/models/vevo2/assets.cpp
     src/models/vevo2/components.cpp
@@ -338,6 +378,11 @@ add_library(engine_runtime STATIC
     src/models/stable_audio/sampler.cpp
     src/models/stable_audio/session.cpp
     src/models/stable_audio/t5gemma.cpp
+    src/models/supertonic/assets.cpp
+    src/models/supertonic/loader.cpp
+    src/models/supertonic/runtime.cpp
+    src/models/supertonic/session.cpp
+    src/models/supertonic/tokenizer_text.cpp
     src/models/sortformer_diar/assets.cpp
     src/models/sortformer_diar/frontend.cpp
     src/models/sortformer_diar/graph.cpp
