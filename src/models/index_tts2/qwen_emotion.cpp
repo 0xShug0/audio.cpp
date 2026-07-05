@@ -68,13 +68,6 @@ std::vector<float> causal_mask(int64_t steps) {
     return mask;
 }
 
-int32_t argmax_index(const std::vector<float> & logits) {
-    if (logits.empty()) {
-        throw std::runtime_error("IndexTTS2 Qwen emotion argmax requires non-empty logits");
-    }
-    return static_cast<int32_t>(std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())));
-}
-
 std::string chat_prompt_text(const std::string & text) {
     return "System: 文本情感分类<|endoftext|>\n"
            "Human: " + text + "<|endoftext|>\n"
@@ -288,14 +281,18 @@ public:
             keys_.push_back(layer.key->tensor);
             values_.push_back(layer.value->tensor);
         }
-        build_step_source_views();
+        build_layer_source_views();
         auto last = modules::SliceModule({1, prompt_steps_ - 1, 1}).build(ctx, outputs.output);
         last = modules::RMSNormModule({kHidden, kRmsEps, true, false}).build(ctx, last, weights_->final_norm);
         auto logits = modules::LinearModule({kHidden, kVocab, false}).build(ctx, last, {weights_->token_embedding, std::nullopt});
-        logits_ = logits.tensor;
-        ggml_set_output(logits_);
+        auto flat_logits = core::reshape_tensor(
+            ctx,
+            core::ensure_backend_addressable_layout(ctx, logits),
+            core::TensorShape::from_dims({1, kVocab}));
+        next_token_ = ggml_argmax(ctx.ggml, flat_logits.tensor);
+        ggml_set_output(next_token_);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(131072, prompt_steps_ * 4096)), false);
-        ggml_build_forward_expand(graph_, logits_);
+        ggml_build_forward_expand(graph_, next_token_);
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate IndexTTS2 Qwen emotion prefill graph");
@@ -322,7 +319,7 @@ public:
         return weights_.get() == &weights && execution_.backend() == backend && prompt_steps_ == prompt_steps;
     }
 
-    std::vector<float> run(const std::vector<int32_t> & prompt_ids) {
+    int32_t run(const std::vector<int32_t> & prompt_ids) {
         if (static_cast<int64_t>(prompt_ids.size()) != prompt_steps_) {
             throw std::runtime_error("IndexTTS2 Qwen emotion prompt length mismatch");
         }
@@ -338,9 +335,12 @@ public:
             throw std::runtime_error("IndexTTS2 Qwen emotion prefill graph compute failed");
         }
         timing_start = Clock::now();
-        auto logits = core::read_tensor_f32(logits_);
+        const auto next_token = core::read_tensor_i32(next_token_);
         debug::timing_log_scalar("index_tts2.qwen_emotion.prefill.output_read_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
-        return logits;
+        if (next_token.size() != 1) {
+            throw std::runtime_error("IndexTTS2 Qwen emotion prefill argmax output shape mismatch");
+        }
+        return next_token.front();
     }
 
     int64_t prompt_steps() const noexcept {
@@ -351,29 +351,24 @@ public:
         return keys_.size();
     }
 
-    ggml_tensor * key_step_source(size_t step, size_t layer) const {
-        return key_step_sources_.at(step).at(layer);
+    ggml_tensor * key_layer_source(size_t layer) const {
+        return key_layer_sources_.at(layer);
     }
 
-    ggml_tensor * value_step_source(size_t step, size_t layer) const {
-        return value_step_sources_.at(step).at(layer);
+    ggml_tensor * value_layer_source(size_t layer) const {
+        return value_layer_sources_.at(layer);
     }
 
 private:
-    void build_step_source_views() {
+    void build_layer_source_views() {
         const int64_t step_elems = kKvHeads * kHeadDim;
-        key_step_sources_.assign(static_cast<size_t>(prompt_steps_), {});
-        value_step_sources_.assign(static_cast<size_t>(prompt_steps_), {});
-        for (int64_t step = 0; step < prompt_steps_; ++step) {
-            const size_t byte_offset = static_cast<size_t>(step * step_elems) * sizeof(float);
-            auto & key_slot = key_step_sources_[static_cast<size_t>(step)];
-            auto & value_slot = value_step_sources_[static_cast<size_t>(step)];
-            key_slot.reserve(keys_.size());
-            value_slot.reserve(values_.size());
-            for (size_t layer = 0; layer < keys_.size(); ++layer) {
-                key_slot.push_back(ggml_view_1d(ctx_.get(), keys_[layer], step_elems, byte_offset));
-                value_slot.push_back(ggml_view_1d(ctx_.get(), values_[layer], step_elems, byte_offset));
-            }
+        key_layer_sources_.reserve(keys_.size());
+        value_layer_sources_.reserve(values_.size());
+        for (size_t layer = 0; layer < keys_.size(); ++layer) {
+            key_layer_sources_.push_back(
+                ggml_view_1d(ctx_.get(), keys_[layer], prompt_steps_ * step_elems, 0));
+            value_layer_sources_.push_back(
+                ggml_view_1d(ctx_.get(), values_[layer], prompt_steps_ * step_elems, 0));
         }
     }
 
@@ -384,11 +379,11 @@ private:
     ggml_tensor * token_ids_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * mask_ = nullptr;
-    ggml_tensor * logits_ = nullptr;
+    ggml_tensor * next_token_ = nullptr;
     std::vector<ggml_tensor *> keys_;
     std::vector<ggml_tensor *> values_;
-    std::vector<std::vector<ggml_tensor *>> key_step_sources_;
-    std::vector<std::vector<ggml_tensor *>> value_step_sources_;
+    std::vector<ggml_tensor *> key_layer_sources_;
+    std::vector<ggml_tensor *> value_layer_sources_;
     ggml_cgraph * graph_ = nullptr;
     ggml_backend_buffer_t buffer_ = nullptr;
 };
@@ -462,9 +457,13 @@ public:
         build_transfer_views();
         x = modules::RMSNormModule({kHidden, kRmsEps, true, false}).build(ctx, x, weights_->final_norm);
         auto logits = modules::LinearModule({kHidden, kVocab, false}).build(ctx, x, {weights_->token_embedding, std::nullopt});
-        logits_ = logits.tensor;
-        ggml_set_output(logits_);
-        ggml_build_forward_expand(graph_, logits_);
+        auto flat_logits = core::reshape_tensor(
+            ctx,
+            core::ensure_backend_addressable_layout(ctx, logits),
+            core::TensorShape::from_dims({1, kVocab}));
+        next_token_ = ggml_argmax(ctx.ggml, flat_logits.tensor);
+        ggml_set_output(next_token_);
+        ggml_build_forward_expand(graph_, next_token_);
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate IndexTTS2 Qwen emotion decode graph");
@@ -490,17 +489,15 @@ public:
             throw std::runtime_error("IndexTTS2 Qwen emotion decode prefill state shape mismatch");
         }
         kv_cache_.retain_prefix(0);
-        for (int64_t step = 0; step < prefill.prompt_steps(); ++step) {
-            const size_t slot = static_cast<size_t>(step);
-            for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
-                ggml_backend_tensor_copy(prefill.key_step_source(slot, layer), key_destinations_[slot][layer]);
-                ggml_backend_tensor_copy(prefill.value_step_source(slot, layer), value_destinations_[slot][layer]);
-            }
+        const size_t prefix = static_cast<size_t>(prefill.prompt_steps());
+        for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
+            ggml_backend_tensor_copy(prefill.key_layer_source(layer), key_prefix_destinations_[prefix][layer]);
+            ggml_backend_tensor_copy(prefill.value_layer_source(layer), value_prefix_destinations_[prefix][layer]);
         }
         kv_cache_.advance_after_direct_append(prefill.prompt_steps());
     }
 
-    std::vector<float> run_step(int32_t token) {
+    int32_t run_step(int32_t token) {
         if (kv_cache_.valid_steps() >= cache_steps_) {
             throw std::runtime_error("IndexTTS2 Qwen emotion decode cache exhausted");
         }
@@ -519,14 +516,17 @@ public:
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("IndexTTS2 Qwen emotion decode graph compute failed");
         }
-        auto logits = core::read_tensor_f32(logits_);
+        const auto next_token = core::read_tensor_i32(next_token_);
+        if (next_token.size() != 1) {
+            throw std::runtime_error("IndexTTS2 Qwen emotion decode argmax output shape mismatch");
+        }
         const size_t dst_slot = static_cast<size_t>(kv_cache_.valid_steps());
         for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
             ggml_backend_tensor_copy(key_sources_[layer], key_destinations_[dst_slot][layer]);
             ggml_backend_tensor_copy(value_sources_[layer], value_destinations_[dst_slot][layer]);
         }
         kv_cache_.advance_after_direct_append(1);
-        return logits;
+        return next_token.front();
     }
 
 private:
@@ -534,6 +534,8 @@ private:
         const int64_t step_elems = kKvHeads * kHeadDim;
         key_destinations_.assign(static_cast<size_t>(cache_steps_), {});
         value_destinations_.assign(static_cast<size_t>(cache_steps_), {});
+        key_prefix_destinations_.assign(static_cast<size_t>(cache_steps_ + 1), {});
+        value_prefix_destinations_.assign(static_cast<size_t>(cache_steps_ + 1), {});
         for (int64_t slot = 0; slot < cache_steps_; ++slot) {
             const size_t byte_offset = static_cast<size_t>(slot * step_elems) * sizeof(float);
             auto & key_slot = key_destinations_[static_cast<size_t>(slot)];
@@ -545,6 +547,24 @@ private:
                 value_slot.push_back(ggml_view_1d(ctx_.get(), kv_cache_.value_tensor(layer).tensor, step_elems, byte_offset));
             }
         }
+        for (int64_t prefix = 1; prefix <= cache_steps_; ++prefix) {
+            auto & key_prefix = key_prefix_destinations_[static_cast<size_t>(prefix)];
+            auto & value_prefix = value_prefix_destinations_[static_cast<size_t>(prefix)];
+            key_prefix.reserve(key_sources_.size());
+            value_prefix.reserve(value_sources_.size());
+            for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
+                key_prefix.push_back(ggml_view_1d(
+                    ctx_.get(),
+                    kv_cache_.key_tensor(layer).tensor,
+                    prefix * step_elems,
+                    0));
+                value_prefix.push_back(ggml_view_1d(
+                    ctx_.get(),
+                    kv_cache_.value_tensor(layer).tensor,
+                    prefix * step_elems,
+                    0));
+            }
+        }
     }
 
     core::ExecutionContext & execution_;
@@ -554,11 +574,13 @@ private:
     ggml_tensor * token_id_ = nullptr;
     ggml_tensor * position_ = nullptr;
     ggml_tensor * mask_ = nullptr;
-    ggml_tensor * logits_ = nullptr;
+    ggml_tensor * next_token_ = nullptr;
     std::vector<ggml_tensor *> key_sources_;
     std::vector<ggml_tensor *> value_sources_;
     std::vector<std::vector<ggml_tensor *>> key_destinations_;
     std::vector<std::vector<ggml_tensor *>> value_destinations_;
+    std::vector<std::vector<ggml_tensor *>> key_prefix_destinations_;
+    std::vector<std::vector<ggml_tensor *>> value_prefix_destinations_;
     std::vector<ggml_fp16_t> mask_values_;
     engine::runtime::TransformerKVCache kv_cache_;
     ggml_cgraph * graph_ = nullptr;
@@ -606,20 +628,22 @@ IndexTTS2EmotionVector IndexTTS2QwenEmotionRuntime::infer(const std::string & te
         prefill_graph_.reset();
         prefill_graph_ = std::make_unique<PrefillGraph>(*execution_, weights_, prompt_steps, prefill_graph_arena_bytes_);
     }
-    const auto prefill_logits = prefill_graph_->run(prompt_ids);
     const int64_t required_cache_steps = prompt_steps + max_new_tokens;
     if (decode_graph_ == nullptr || !decode_graph_->can_run(*weights_, execution_->backend(), required_cache_steps)) {
         decode_graph_.reset();
         decode_graph_ = std::make_unique<DecodeGraph>(*execution_, weights_, required_cache_steps, decode_graph_arena_bytes_);
     }
+    const int32_t prefill_token = prefill_graph_->run(prompt_ids);
     decode_graph_->import_state(*prefill_graph_);
 
     std::vector<int32_t> generated;
     generated.reserve(static_cast<size_t>(max_new_tokens));
-    int32_t token = argmax_index(prefill_logits);
+    int32_t token = prefill_token;
     double decode_run_ms = 0.0;
+    bool saw_eos = false;
     for (int64_t step = 0; step < max_new_tokens; ++step) {
         if (token == tokenizer_.eos_token_id()) {
+            saw_eos = true;
             break;
         }
         generated.push_back(token);
@@ -627,8 +651,11 @@ IndexTTS2EmotionVector IndexTTS2QwenEmotionRuntime::infer(const std::string & te
             break;
         }
         const auto decode_start = Clock::now();
-        token = argmax_index(decode_graph_->run_step(token));
+        token = decode_graph_->run_step(token);
         decode_run_ms += engine::debug::elapsed_ms(decode_start, Clock::now());
+    }
+    if (!saw_eos && static_cast<int64_t>(generated.size()) >= max_new_tokens) {
+        throw std::runtime_error("IndexTTS2 Qwen emotion decode reached max_new_tokens before EOS");
     }
 
     size_t start = 0;

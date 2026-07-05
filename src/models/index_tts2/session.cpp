@@ -25,7 +25,6 @@ constexpr int64_t kGptDim = 1280;
 constexpr int64_t kStyleDim = 192;
 constexpr int64_t kEmotionCount = 8;
 constexpr int64_t kDiffusionSteps = 25;
-constexpr int64_t kReleaseGptGraphsBeforeCfmFrames = 1024;
 constexpr float kInferenceCfgRate = 0.7F;
 
 std::shared_ptr<const IndexTTS2Assets> require_assets(std::shared_ptr<const IndexTTS2Assets> assets) {
@@ -187,6 +186,12 @@ IndexTTS2Session::IndexTTS2Session(
         options.options, {"index_tts2.emotion_text_decode_graph_arena_mb"}, emotion_text_decode_graph_arena_bytes_);
     weight_context_bytes_ = runtime::parse_size_mb_option(
         options.options, {"index_tts2.weight_context_mb"}, weight_context_bytes_);
+    if (const auto value = runtime::parse_int_option(options.options, {"index_tts2.emotion_text_max_new_tokens"})) {
+        if (*value <= 0) {
+            throw std::runtime_error("index_tts2.emotion_text_max_new_tokens must be positive");
+        }
+        emotion_text_max_new_tokens_ = *value;
+    }
     if (const auto it = options.options.find("index_tts2.weight_type"); it != options.options.end()) {
         matmul_weight_storage_type_ = engine::assets::parse_tensor_storage_type(it->second);
         validate_matmul_weight_storage(matmul_weight_storage_type_, "index_tts2.weight_type");
@@ -203,6 +208,7 @@ IndexTTS2Session::IndexTTS2Session(
             key != "index_tts2.reference_graph_arena_mb" &&
             key != "index_tts2.emotion_text_prefill_graph_arena_mb" &&
             key != "index_tts2.emotion_text_decode_graph_arena_mb" &&
+            key != "index_tts2.emotion_text_max_new_tokens" &&
             key != "index_tts2.weight_context_mb" &&
             key != "index_tts2.weight_type" &&
             key != "index_tts2.conv_weight_type" &&
@@ -259,7 +265,6 @@ IndexTTS2Session::IndexTTS2Session(
         emotion_text_decode_graph_arena_bytes_,
         weight_context_bytes_,
         matmul_weight_storage_type_);
-
     int64_t matrix_rows = 0;
     for (const int64_t count : assets_->config.emo_num) {
         matrix_rows += count;
@@ -293,28 +298,6 @@ void IndexTTS2Session::prepare(const runtime::SessionPreparationRequest & reques
         text = engine::io::trim_ascii_whitespace(text);
         if (text.empty()) {
             throw std::runtime_error("IndexTTS2 request requires text_input or text option");
-        }
-        IndexTTS2GenerationOptions generation;
-        if (const auto value = runtime::parse_int_option(request.options, {"max_tokens"})) {
-            if (*value <= 0) {
-                throw std::runtime_error("IndexTTS2 max_tokens must be positive");
-            }
-            generation.max_mel_tokens = *value;
-        }
-        if (const auto value = runtime::parse_int_option(request.options, {"num_beams"})) {
-            if (*value <= 0) {
-                throw std::runtime_error("IndexTTS2 num_beams must be positive");
-            }
-            generation.num_beams = *value;
-        }
-        const auto text_encoding = tokenizer_.encode_for_inference(
-            text,
-            IndexTTS2Request{}.max_text_tokens_per_segment);
-        for (const auto & segment : text_encoding.segment_token_ids) {
-            gpt_->prepare_generation(
-                static_cast<int64_t>(segment.size()),
-                generation.max_mel_tokens,
-                generation.num_beams);
         }
     }
     mark_prepared();
@@ -460,7 +443,7 @@ std::vector<float> IndexTTS2Session::resolve_emotion_vector(
         if (cache_hit) {
             explicit_weights = emotion_text_weights_cache_->weights;
         } else {
-            explicit_weights = qwen_emotion_->infer(emotion_text).values;
+            explicit_weights = qwen_emotion_->infer(emotion_text, emotion_text_max_new_tokens_).values;
             if (mem_saver_) {
                 qwen_emotion_->release_graphs();
             }
@@ -480,20 +463,22 @@ std::vector<float> IndexTTS2Session::resolve_emotion_vector(
     }
 
     auto scaled_weights = scaled_emotion_weights(explicit_weights, request.emotion_alpha);
-    auto base = gpt_->merge_emotion_vector(
-        speaker.semantic.values,
-        speaker.semantic.frames,
-        emotion.semantic.values,
-        emotion.semantic.frames,
-        1.0F);
     auto matrix = explicit_emotion_matrix_vector(
         scaled_weights,
         speaker.style,
         request.use_random_emotion,
         request.generation.seed);
     const float weight_sum = std::accumulate(scaled_weights.begin(), scaled_weights.end(), 0.0F);
-    for (size_t i = 0; i < matrix.size(); ++i) {
-        matrix[i] += (1.0F - weight_sum) * base[i];
+    if (weight_sum != 1.0F) {
+        auto base = gpt_->merge_emotion_vector(
+            speaker.semantic.values,
+            speaker.semantic.frames,
+            emotion.semantic.values,
+            emotion.semantic.frames,
+            1.0F);
+        for (size_t i = 0; i < matrix.size(); ++i) {
+            matrix[i] += (1.0F - weight_sum) * base[i];
+        }
     }
     return matrix;
 }
@@ -534,8 +519,7 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
     const int64_t code_frames = static_cast<int64_t>(generated.codes.size());
     const int64_t target_frames = static_cast<int64_t>(static_cast<float>(code_frames) * 1.72F);
     const int64_t total_frames = speaker.prompt_condition.frames + target_frames;
-    const bool release_gpt_before_cfm = total_frames >= kReleaseGptGraphsBeforeCfmFrames;
-    if (release_gpt_before_cfm) {
+    if (mem_saver_) {
         gpt_->release_generation_graphs();
     }
 
@@ -561,11 +545,10 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
     s2mel_->prepare_length_regulator(code_frames, target_frames);
     auto generated_condition = s2mel_->regulate_length(content, code_frames, target_frames);
     auto condition = concat_conditions(speaker.prompt_condition, generated_condition);
-    debug::trace_log_scalar("index_tts2.gpt.release_before_cfm", release_gpt_before_cfm);
-    if (release_gpt_before_cfm) {
+    if (mem_saver_) {
         gpt_->release_generation_graphs();
+        s2mel_->release_pre_cfm_graphs();
     }
-    s2mel_->release_pre_cfm_graphs();
     s2mel_->prepare_cfm(total_frames, kInferenceCfgRate > 0.0F);
     auto mel = s2mel_->infer_mel(
         condition,
@@ -578,7 +561,9 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
         segment_seed,
         generated.rng_offset_blocks);
     debug::timing_log_scalar("index_tts2.s2mel.total_ms", engine::debug::elapsed_ms(s2mel_start));
-    s2mel_->release_cfm_graph();
+    if (mem_saver_) {
+        s2mel_->release_cfm_graph();
+    }
 
     const auto vocoder_start = Clock::now();
     auto audio = vocoder_->synthesize(mel.values, mel.frames);
@@ -605,7 +590,8 @@ runtime::TaskResult IndexTTS2Session::run(const runtime::TaskRequest & request) 
     }
 
     const auto & speaker = resolve_speaker_state(*parsed.speaker_audio);
-    debug::trace_log_scalar("index_tts2.emotion_audio.same_as_speaker", same_identity(audio_identity(*emotion_audio), speaker.identity));
+    const bool emotion_same_as_speaker = same_identity(audio_identity(*emotion_audio), speaker.identity);
+    debug::trace_log_scalar("index_tts2.emotion_audio.same_as_speaker", emotion_same_as_speaker);
     const auto & emotion = resolve_emotion_state(*emotion_audio);
     const auto emotion_vector = resolve_emotion_vector(parsed, speaker, emotion);
     if (mem_saver_) {

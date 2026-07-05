@@ -106,6 +106,7 @@ public:
             {"index_tts2.reference_graph_arena_mb", "n", "Reference encoder and codec graph arena size."},
             {"index_tts2.emotion_text_prefill_graph_arena_mb", "n", "Emotion-text prefill graph arena size."},
             {"index_tts2.emotion_text_decode_graph_arena_mb", "n", "Emotion-text cached-step graph arena size."},
+            {"index_tts2.emotion_text_max_new_tokens", "n", "Maximum generated tokens for emotion-text classification; default 256."},
             {"index_tts2.weight_context_mb", "n", "Shared weight context size."},
             {"index_tts2.mem_saver", "true|false", "Release staged reference and conditioning graphs after request phases; default false."},
         };

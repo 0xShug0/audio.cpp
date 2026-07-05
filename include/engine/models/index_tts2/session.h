@@ -91,6 +91,7 @@ private:
     size_t emotion_text_prefill_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
     size_t emotion_text_decode_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t weight_context_bytes_ = 4ull * 1024ull * 1024ull * 1024ull;
+    int64_t emotion_text_max_new_tokens_ = 256;
     engine::assets::TensorStorageType matmul_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     bool mem_saver_ = false;

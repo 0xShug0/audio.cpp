@@ -1459,6 +1459,104 @@
           "audio": "resources/mel_roformer_test_15s.wav"
         }
       ]
+    },
+    {
+      "id": "index_tts2_chinese_voice_clone",
+      "coverage": "IndexTTS2 Chinese voice clone path with CJK tokenizer normalization",
+      "family": "index_tts2",
+      "model": "models/IndexTTS-2",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "chinese_voice_clone",
+          "text": "这个呀，就是我们精心制作准备的纪念品，大家可以看到这个色泽和这个材质啊，哎呀多么的光彩照人。",
+          "language": "zh",
+          "voice_ref": "resources/index_tts2/official_examples/voice_03.wav",
+          "seed": 1245
+        }
+      ]
+    },
+    {
+      "id": "index_tts2_chinese_emotion_text",
+      "coverage": "IndexTTS2 Chinese voice clone with Chinese emotion-text conditioning",
+      "family": "index_tts2",
+      "model": "models/IndexTTS-2",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "chinese_emotion_text",
+          "text": "快躲起来！是他要来了！他要来抓我们了！",
+          "language": "zh",
+          "voice_ref": "resources/index_tts2/official_examples/voice_12.wav",
+          "options": {
+            "use_emotion_text": true,
+            "emotion_text": "你吓死我了！你是鬼吗？",
+            "emotion_alpha": 0.6,
+            "use_random_emotion": false
+          },
+          "seed": 1246
+        }
+      ]
+    },
+    {
+      "id": "index_tts2_longform_voice_clone_6000",
+      "coverage": "IndexTTS2 longform voice clone with 6000-character text and default tokenizer segmentation",
+      "family": "index_tts2",
+      "model": "models/IndexTTS-2",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "longform_voice_clone",
+          "text_repeat": {
+            "text": "The archivist kept her voice steady while reading the witness report aloud, pausing after each sentence so the council could follow the chain of events without losing the emotional thread. ",
+            "chars": 6000
+          },
+          "voice_ref": "resources/index_tts2/official_examples/voice_02.wav",
+          "seed": 1260
+        }
+      ]
+    },
+    {
+      "id": "index_tts2_longform_voice_clone_6000_emotion_text",
+      "coverage": "IndexTTS2 longform voice clone with 6000-character text plus long emotion-text conditioning",
+      "family": "index_tts2",
+      "model": "models/IndexTTS-2",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "longform_voice_clone_emotion_text",
+          "text_repeat": {
+            "text": "The archivist kept her voice steady while reading the witness report aloud, pausing after each sentence so the council could follow the chain of events without losing the emotional thread. ",
+            "chars": 6000
+          },
+          "voice_ref": "resources/index_tts2/official_examples/voice_12.wav",
+          "emotion_repeat": {
+            "text": "Speak with restrained fear, controlled urgency, and a careful softness, as if protecting a secret while trying not to alarm the listener. ",
+            "chars": 2400
+          },
+          "options": {
+            "emotion_alpha": 0.6,
+            "use_random_emotion": false
+          },
+          "seed": 1261
+        }
+      ]
     }
   ],
   "audit_gaps": [

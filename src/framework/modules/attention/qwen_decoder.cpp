@@ -43,9 +43,6 @@ int64_t require_head_dim(const QwenDecoderLayerConfig & config) {
     if (config.num_attention_heads % config.num_key_value_heads != 0) {
         throw std::runtime_error("QwenDecoderLayerConfig.num_attention_heads must be divisible by num_key_value_heads");
     }
-    if (config.num_attention_heads * config.head_dim != config.hidden_size) {
-        throw std::runtime_error("QwenDecoderLayerConfig hidden_size must equal num_attention_heads * head_dim");
-    }
     return config.head_dim;
 }
 
