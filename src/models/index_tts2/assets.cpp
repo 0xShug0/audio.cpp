@@ -364,14 +364,13 @@ IndexTTS2AssetPaths resolve_index_tts2_assets(const std::filesystem::path & mode
     paths.emotion_matrix_path = safetensor_peer(paths.model_root, config.emo_matrix, "emotion matrix safetensors");
     paths.wav2vec2bert_stats_path = safetensor_peer(paths.model_root, config.w2v_stat, "Wav2Vec2BERT stats safetensors");
 
-    const auto cache_root = require_dir(paths.model_root / "hf_cache", "HF cache directory");
-    paths.wav2vec2bert_root = require_dir(cache_root / "w2v-bert-2.0", "Wav2Vec2BERT directory");
+    paths.wav2vec2bert_root = require_dir(paths.model_root / "w2v-bert-2.0", "Wav2Vec2BERT directory");
     paths.wav2vec2bert_config_path = require_file(paths.wav2vec2bert_root / "config.json", "Wav2Vec2BERT config");
     paths.wav2vec2bert_preprocessor_config_path = require_file(paths.wav2vec2bert_root / "preprocessor_config.json", "Wav2Vec2BERT preprocessor config");
     paths.wav2vec2bert_weights_path = require_file(paths.wav2vec2bert_root / "model.safetensors", "Wav2Vec2BERT safetensors");
-    paths.semantic_codec_weights_path = require_file(cache_root / "semantic_codec_model.safetensors", "semantic codec safetensors");
-    paths.campplus_weights_path = require_file(cache_root / "campplus.safetensors", "CAMPPlus safetensors");
-    paths.bigvgan_root = require_dir(cache_root / "bigvgan", "BigVGAN directory");
+    paths.semantic_codec_weights_path = require_file(paths.model_root / "semantic_codec_model.safetensors", "semantic codec safetensors");
+    paths.campplus_weights_path = require_file(paths.model_root / "campplus.safetensors", "CAMPPlus safetensors");
+    paths.bigvgan_root = require_dir(paths.model_root / "bigvgan", "BigVGAN directory");
     paths.bigvgan_config_path = require_file(paths.bigvgan_root / "config.json", "BigVGAN config");
     paths.bigvgan_weights_path = require_file(paths.bigvgan_root / "model.safetensors", "BigVGAN safetensors");
 

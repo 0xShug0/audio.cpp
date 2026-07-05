@@ -250,7 +250,7 @@ void write_sectioned_timing_log(
     }
 }
 
-std::string summary_json(const engine::runtime::TaskResult & result) {
+std::string summary_json(const engine::runtime::TaskResult & result, double wall_ms) {
     if (!result.audio_output.has_value()) {
         throw std::runtime_error("Kokoro warm bench expected audio_output");
     }
@@ -283,6 +283,7 @@ std::string summary_json(const engine::runtime::TaskResult & result) {
     out << "\"rms\":" << (audio.samples.empty() ? 0.0 : std::sqrt(sum_sq / static_cast<double>(audio.samples.size()))) << ",";
     out << "\"min\":" << min_value << ",";
     out << "\"max\":" << max_value << ",";
+    out << "\"synthesize_wall_ms\":" << wall_ms << ",";
     out << "\"first_samples\":[";
     const size_t preview = std::min<size_t>(32, audio.samples.size());
     for (size_t i = 0; i < preview; ++i) {
@@ -411,6 +412,7 @@ int main(int argc, char ** argv) {
 
         std::vector<std::map<std::string, double>> sums(requests.size());
         std::vector<engine::runtime::TaskResult> last_results(requests.size());
+        std::vector<double> last_wall_ms(requests.size(), 0.0);
         for (int i = 0; i < warmup_passes; ++i) {
             clear_file(timing_path);
             (void) session->run(warmup_request);
@@ -424,13 +426,23 @@ int main(int argc, char ** argv) {
         for (size_t request_index = 0; request_index < requests.size(); ++request_index) {
             for (int i = 0; i < iterations; ++i) {
                 clear_file(timing_path);
+                const auto started = std::chrono::steady_clock::now();
                 last_results[request_index] = session->run(requests[request_index]);
+                const auto ended = std::chrono::steady_clock::now();
+                last_wall_ms[request_index] =
+                    std::chrono::duration<double, std::milli>(ended - started).count();
                 const auto metrics = parse_timing_file(timing_path);
                 auto lines = read_timing_lines(timing_path);
+                std::ostringstream wall_stream;
+                wall_stream << std::fixed << std::setprecision(6) << last_wall_ms[request_index];
+                lines.push_back(
+                    "[TIMING ts=" + timestamp_seconds_local() + "] kokoro.synthesize_wall_ms " +
+                    wall_stream.str());
                 log_sections.push_back({
                     "iteration" + std::to_string(i + 1) + ".request" + std::to_string(request_index + 1),
                     std::move(lines),
                 });
+                sums[request_index]["kokoro.synthesize_wall_ms"] += last_wall_ms[request_index];
                 for (const auto & [key, value] : metrics) {
                     sums[request_index][key] += value;
                 }
@@ -442,10 +454,11 @@ int main(int argc, char ** argv) {
         for (size_t request_index = 0; request_index < requests.size(); ++request_index) {
             std::cout << "text[" << request_index << "]=" << texts[request_index] << "\n";
             std::cout << "summary_json[" << request_index << "]="
-                      << summary_json(last_results[request_index]) << "\n";
+                      << summary_json(last_results[request_index], last_wall_ms[request_index]) << "\n";
             if (requests.size() == 1 && request_index == 0) {
                 std::cout << "text=" << texts[request_index] << "\n";
-                std::cout << "summary_json=" << summary_json(last_results[request_index]) << "\n";
+                std::cout << "summary_json="
+                          << summary_json(last_results[request_index], last_wall_ms[request_index]) << "\n";
             }
         }
         std::cout << "timing_out=" << timing_path.string() << "\n";

@@ -314,6 +314,20 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "wav_cosine_min": 0.95,
         "log_mel_cosine_min": 0.95,
     },
+    "supertonic": {
+        "kind": "supertonic",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/supertonic_warm_bench",
+        "python_script": "tests/supertonic/supertonic_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "models/supertonic-3",
+        "case_catalog": "tests/supertonic/supertonic_warm_bench_cases.json",
+        "default_case_name": "long_session_100_500_1024_500",
+        "default_requests_per_session": 4,
+        "default_warmup": 0,
+        "wav_cosine_min": 0.90,
+        "log_mel_cosine_min": 0.90,
+    },
     "vibevoice": {
         "kind": "vibevoice",
         "modes": ["offline"],
@@ -328,6 +342,21 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "wav_cosine_min": 0.90,
         "log_mel_cosine_min": 0.90,
         "length_ratio_is_diagnostic": True,
+    },
+    "irodori_tts": {
+        "kind": "irodori_tts",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/irodori_tts_warm_bench",
+        "python_script": "tests/irodori_tts/irodori_tts_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "models/Irodori-TTS-500M-v3",
+        "case_catalog": "tests/irodori_tts/irodori_tts_warm_bench_cases.json",
+        "default_case_name": "short_emoji",
+        "default_requests_per_session": 1,
+        "default_warmup": 0,
+        "wav_cosine_min": 0.98,
+        "log_mel_cosine_min": 0.98,
+        "cpp_session_options": ["irodori_tts.weight_type=f32", "irodori_tts.codec_weight_type=f32"],
     },
     "heartmula": {
         "kind": "heartmula",
@@ -359,6 +388,23 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "log_mel_cosine_min": 0.90,
         "length_ratio_min": 0.98,
         "cpp_session_options": ["higgs_tts.codec_weight_type=f32"],
+    },
+    "index_tts2": {
+        "kind": "index_tts2",
+        "display_name": "IndexTTS2",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/index_tts2_warm_bench",
+        "python_script": "tests/index_tts2/index_tts2_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "models/IndexTTS-2",
+        "case_catalog": "tests/index_tts2/index_tts2_warm_bench_cases.json",
+        "default_case_name": "voice_clone",
+        "default_requests_per_session": 1,
+        "default_warmup": 0,
+        "cpp_session_options": ["index_tts2.weight_type=f32", "index_tts2.conv_weight_type=f32"],
+        "wav_cosine_min": 0.98,
+        "log_mel_cosine_min": 0.98,
+        "similarity_vote_required": 1,
     },
     "parakeet": {
         "kind": "asr",
@@ -450,6 +496,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-text", default="", help="TTS warmup text passed to both Python and C++ warm benches.")
     parser.add_argument("--clone-audio", default="", help="Reference audio used for voice clone parity.")
     parser.add_argument("--model", default="", help="Override the model path for the selected family.")
+    parser.add_argument("--python-model", default="", help="Override the Python reference model path for the selected family.")
     parser.add_argument(
         "--voice-design-instruct",
         action="append",
@@ -3224,6 +3271,236 @@ def build_vibevoice_commands(
     return python_command, cpp_command
 
 
+def build_irodori_tts_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("Irodori-TTS warmbench is CUDA-only")
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+        "--model-precision",
+        "fp32",
+        "--codec-precision",
+        "fp32",
+    ]
+    cpp_command = [
+        "env",
+        "NVIDIA_TF32_OVERRIDE=0",
+        "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def build_supertonic_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "env",
+        "NVIDIA_TF32_OVERRIDE=0",
+        "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def build_index_tts2_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(args.warmup),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--audio-out-dir",
+        str(scenario_dir / "python_audio"),
+        "--summary-file",
+        str(scenario_dir / "python.summary.json"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "env",
+        "NVIDIA_TF32_OVERRIDE=0",
+        "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(args.warmup),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
 def build_heartmula_commands(
     config: dict[str, Any],
     backend: str,
@@ -3456,7 +3733,7 @@ def validate_sequence_result(summary: dict[str, Any], request_count: int, kind: 
             and len(step.get("stems", [])) > 0
             and isinstance(step.get("metrics", {}), dict)
             for step in steps)
-    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "vibevoice", "heartmula", "higgs_tts"}:
+    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "higgs_tts", "index_tts2"}:
         payload_valid = all(
             isinstance(step.get("stems", []), list)
             and len(step.get("stems", [])) > 0
@@ -3592,10 +3869,22 @@ def run_scenario(
         heartmula_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(heartmula_requests)
         python_command, cpp_command = build_heartmula_commands(scenario_config, backend, args, scenario_dir, heartmula_requests)
+    elif scenario_config["kind"] == "supertonic":
+        supertonic_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(supertonic_requests)
+        python_command, cpp_command = build_supertonic_commands(scenario_config, backend, args, scenario_dir, supertonic_requests)
+    elif scenario_config["kind"] == "irodori_tts":
+        irodori_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(irodori_requests)
+        python_command, cpp_command = build_irodori_tts_commands(scenario_config, backend, args, scenario_dir, irodori_requests)
     elif scenario_config["kind"] == "higgs_tts":
         higgs_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(higgs_requests)
         python_command, cpp_command = build_higgs_tts_commands(scenario_config, backend, args, scenario_dir, higgs_requests)
+    elif scenario_config["kind"] == "index_tts2":
+        index_tts2_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(index_tts2_requests)
+        python_command, cpp_command = build_index_tts2_commands(scenario_config, backend, args, scenario_dir, index_tts2_requests)
     elif scenario_config["kind"] in {"vevo2", "seed_vc"}:
         vevo2_requests, request_manifest = resolve_vevo2_case(config, args)
         python_command, cpp_command = build_vevo2_commands(scenario_config, backend, args, scenario_dir, vevo2_requests)
@@ -3861,7 +4150,7 @@ def run_scenario(
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
             append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
-    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "vibevoice", "heartmula", "higgs_tts"}:
+    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "higgs_tts", "index_tts2"}:
         python_valid = validate_sequence_result(python_summary, args.requests_per_session, scenario_config["kind"])
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, scenario_config["kind"])
         python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")

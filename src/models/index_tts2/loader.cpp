@@ -24,7 +24,8 @@ bool has_index_tts2_assets(const std::filesystem::path & root) {
         && engine::io::is_existing_file(root / "bpe.model")
         && engine::io::is_existing_file(root / "gpt.safetensors")
         && engine::io::is_existing_file(root / "s2mel.safetensors")
-        && engine::io::is_existing_directory(root / "hf_cache");
+        && engine::io::is_existing_directory(root / "w2v-bert-2.0")
+        && engine::io::is_existing_directory(root / "bigvgan");
 }
 
 std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoadRequest & request) {
@@ -42,10 +43,10 @@ std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoad
             "feat1.safetensors",
             "feat2.safetensors",
             "wav2vec2bert_stats.safetensors",
-            "hf_cache/w2v-bert-2.0/model.safetensors",
-            "hf_cache/semantic_codec_model.safetensors",
-            "hf_cache/campplus.safetensors",
-            "hf_cache/bigvgan/model.safetensors",
+            "w2v-bert-2.0/model.safetensors",
+            "semantic_codec_model.safetensors",
+            "campplus.safetensors",
+            "bigvgan/model.safetensors",
             "qwen0.6bemo4-merge/model.safetensors",
         });
 }
@@ -77,9 +78,9 @@ public:
         inspection.metadata.weight_candidates = {
             "gpt.safetensors",
             "s2mel.safetensors",
-            "hf_cache/w2v-bert-2.0/model.safetensors",
-            "hf_cache/semantic_codec_model.safetensors",
-            "hf_cache/bigvgan/model.safetensors",
+            "w2v-bert-2.0/model.safetensors",
+            "semantic_codec_model.safetensors",
+            "bigvgan/model.safetensors",
         };
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
@@ -155,9 +156,9 @@ std::unique_ptr<IndexTTS2LoadedModel> load_index_tts2_model(const std::filesyste
     metadata.weight_candidates = {
         "gpt.safetensors",
         "s2mel.safetensors",
-        "hf_cache/w2v-bert-2.0/model.safetensors",
-        "hf_cache/semantic_codec_model.safetensors",
-        "hf_cache/bigvgan/model.safetensors",
+        "w2v-bert-2.0/model.safetensors",
+        "semantic_codec_model.safetensors",
+        "bigvgan/model.safetensors",
     };
 
     runtime::CapabilitySet capabilities;

@@ -1,0 +1,129 @@
+{
+  "voice_clone": {
+    "requests": [
+      {
+        "text": "The palace is strict, no false rumors, Lady Qi!",
+        "voice_ref": "resources/index_tts2/official_examples/voice_02.wav",
+        "seed": 1234
+      }
+    ]
+  },
+  "chinese_voice_clone": {
+    "requests": [
+      {
+        "text": "这个呀，就是我们精心制作准备的纪念品，大家可以看到这个色泽和这个材质啊，哎呀多么的光彩照人。",
+        "language": "zh",
+        "voice_ref": "resources/index_tts2/official_examples/voice_03.wav",
+        "seed": 1245
+      }
+    ]
+  },
+  "chinese_emotion_text": {
+    "requests": [
+      {
+        "text": "快躲起来！是他要来了！他要来抓我们了！",
+        "language": "zh",
+        "voice_ref": "resources/index_tts2/official_examples/voice_12.wav",
+        "use_emotion_text": true,
+        "emotion_text": "你吓死我了！你是鬼吗？",
+        "emotion_alpha": 0.6,
+        "use_random_emotion": false,
+        "seed": 1246
+      }
+    ]
+  },
+  "emotion_reference": {
+    "requests": [
+      {
+        "text": "The old theater was empty, but every chair still seemed to remember the audience.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_07.wav",
+        "audio": "resources/index_tts2/official_examples/emo_sad.wav",
+        "seed": 1235
+      }
+    ]
+  },
+  "emotion_reference_alpha": {
+    "requests": [
+      {
+        "text": "I tried to sound calm, but the storm outside made every word feel heavier.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_07.wav",
+        "audio": "resources/index_tts2/official_examples/emo_sad.wav",
+        "emotion_alpha": 0.9,
+        "seed": 1236
+      }
+    ]
+  },
+  "emotion_vector": {
+    "requests": [
+      {
+        "text": "I'm sorry, I really did forget, but I promise I will remember the important things.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_09.wav",
+        "emotion_vector": [0.0, 0.0, 0.8, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "use_random_emotion": false,
+        "seed": 1237
+      }
+    ]
+  },
+  "emotion_text": {
+    "requests": [
+      {
+        "text": "Hide quickly. Someone is coming, and I do not think they are here to help us.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_12.wav",
+        "use_emotion_text": true,
+        "emotion_alpha": 0.6,
+        "use_random_emotion": false,
+        "seed": 1238
+      }
+    ]
+  },
+  "emotion_text_description": {
+    "requests": [
+      {
+        "text": "Hide quickly. Someone is coming, and I do not think they are here to help us.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_12.wav",
+        "use_emotion_text": true,
+        "emotion_text": "You scared me. Are you a ghost?",
+        "emotion_alpha": 0.6,
+        "use_random_emotion": false,
+        "seed": 1239
+      }
+    ]
+  },
+  "long_session_changed_requests": {
+    "use_all_requests_by_default": true,
+    "requests": [
+      {
+        "text": "The palace is strict, no false rumors, Lady Qi!",
+        "voice_ref": "resources/index_tts2/official_examples/voice_02.wav",
+        "seed": 1240
+      },
+      {
+        "text": "Please lower your voice. The guards are already listening outside the door.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_02.wav",
+        "seed": 1241
+      },
+      {
+        "text": "I am trying to stay brave, but every shadow in this room feels alive.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_02.wav",
+        "use_emotion_text": true,
+        "emotion_text": "You scared me. Are you a ghost?",
+        "emotion_alpha": 0.6,
+        "use_random_emotion": false,
+        "seed": 1242
+      },
+      {
+        "text": "The old theater was empty, but every chair still seemed to remember the audience.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_07.wav",
+        "audio": "resources/index_tts2/official_examples/emo_sad.wav",
+        "seed": 1243
+      },
+      {
+        "text": "I tried to sound calm, but the storm outside made every word feel heavier.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_07.wav",
+        "audio": "resources/index_tts2/official_examples/emo_sad.wav",
+        "emotion_alpha": 0.9,
+        "seed": 1244
+      }
+    ]
+  }
+}

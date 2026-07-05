@@ -182,10 +182,19 @@ CATALOG: tuple[ModelPackage, ...] = (
     ),
     ModelPackage(
         id="kokoro_82m_bf16",
-        display_name="Kokoro 82M bf16",
-        target_directory="Kokoro-82M-bf16",
-        source=SnapshotSource(repo_id="mlx-community/Kokoro-82M-bf16"),
-        required_files=("config.json", "kokoro-v1_0.safetensors", "voices/af_heart.safetensors"),
+        display_name="Kokoro 82M GGML",
+        target_directory="kokoro-82m-v1_0-ggml",
+        source=SnapshotSource(repo_id="mlx-community/kokoro_mlx"),
+        required_files=(
+            "config.json",
+            "kokoro-v1_0.safetensors",
+            "voices.json",
+            "misaki_en/gb_gold.tsv",
+            "misaki_en/gb_silver.tsv",
+            "misaki_en/us_gold.tsv",
+            "misaki_en/us_silver.tsv",
+            "voices/af_heart.f32",
+        ),
     ),
     ModelPackage(
         id="moss_tts",
@@ -733,6 +742,36 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
     ),
     ModelPackage(
+        id="index_tts2",
+        display_name="IndexTTS2",
+        target_directory="IndexTTS-2",
+        source=SnapshotSource(repo_id="mlx-community/index-tts2-mlx"),
+        required_files=(
+            "config.yaml",
+            "bpe.model",
+            "gpt.safetensors",
+            "s2mel.safetensors",
+            "feat1.safetensors",
+            "feat2.safetensors",
+            "wav2vec2bert_stats.safetensors",
+            "semantic_codec_model.safetensors",
+            "campplus.safetensors",
+            "w2v-bert-2.0/config.json",
+            "w2v-bert-2.0/preprocessor_config.json",
+            "w2v-bert-2.0/model.safetensors",
+            "bigvgan/config.json",
+            "bigvgan/model.safetensors",
+            "qwen0.6bemo4-merge/config.json",
+            "qwen0.6bemo4-merge/generation_config.json",
+            "qwen0.6bemo4-merge/tokenizer.json",
+            "qwen0.6bemo4-merge/tokenizer_config.json",
+            "qwen0.6bemo4-merge/vocab.json",
+            "qwen0.6bemo4-merge/merges.txt",
+            "qwen0.6bemo4-merge/model.safetensors",
+        ),
+        description="Framework-ready IndexTTS2 safetensors layout with shared components at the model root.",
+    ),
+    ModelPackage(
         id="mel_band_roformer",
         display_name="Mel RoFormer MLX",
         target_directory="mel-roformer-mlx",
@@ -1114,6 +1153,16 @@ def validate_required_files(package: ModelPackage, root: Path) -> None:
         raise RuntimeError(f"installed package is missing required files: {missing}")
 
 
+def validate_composite_required_files(package: ModelPackage, staged_root: Path, final_root: Path) -> None:
+    missing = [
+        relative
+        for relative in package.required_files
+        if not normalized_join(staged_root, relative).exists() and not normalized_join(final_root, relative).exists()
+    ]
+    if missing:
+        raise RuntimeError(f"installed package is missing required files: {missing}")
+
+
 def validate_required_files_list(required_files: Iterable[str], root: Path, label: str) -> None:
     missing = [relative for relative in required_files if not (root / relative).exists()]
     if missing:
@@ -1334,9 +1383,12 @@ def install_composite_snapshot(
         staged_package_root = staging_bundle / package.target_directory
         for placement in source.placements:
             destination_root = normalized_join(staged_package_root, placement.target_subdir)
+            final_root = normalized_join(package_root, placement.target_subdir)
+            if final_root.exists() and not overwrite:
+                validate_required_files_list(placement.required_files, final_root, str(final_root))
+                continue
             destination_root.mkdir(parents=True, exist_ok=True)
             install_snapshot_into_dir(placement.source, destination_root, placement.required_files)
-            final_root = normalized_join(package_root, placement.target_subdir)
             staged_roots[final_root] = destination_root
 
         if package.id == "vevo2":
@@ -1350,7 +1402,9 @@ def install_composite_snapshot(
         elif package.id == "moss_tts":
             convert_moss_tts_weights(staged_package_root)
         elif package.id in {"irodori_tts_500m_v3", "irodori_tts_600m_v3_voice_design"}:
-            convert_irodori_dacvae_weights(staged_package_root.parent / "Semantic-DACVAE-Japanese-32dim")
+            dacvae_root = staged_package_root.parent / "Semantic-DACVAE-Japanese-32dim"
+            if dacvae_root.exists():
+                convert_irodori_dacvae_weights(dacvae_root)
         elif package.id in {"vibevoice_1_5b", "vibevoice_7b"}:
             # VibeVoice 1.5B and 7B share the same Qwen2.5 tokenizer, and neither
             # upstream repo ships the tokenizer files, so both reuse one bundle.
@@ -1359,7 +1413,7 @@ def install_composite_snapshot(
                 staged_package_root,
                 ("tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt"),
             )
-        validate_required_files(package, staged_package_root)
+        validate_composite_required_files(package, staged_package_root, package_root)
 
         top_level_roots: list[Path] = []
         for final_root in sorted(staged_roots.keys(), key=lambda path: len(path.parts)):
