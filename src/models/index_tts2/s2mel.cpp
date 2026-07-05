@@ -9,6 +9,8 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
 
+#include <ggml-alloc.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -626,8 +628,19 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 S2Mel GPT layer graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 S2Mel GPT layer input context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.s2mel.gpt_layer", execution_.backend_type()};
-        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames_, kGptDim})).tensor;
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.s2mel.gpt_layer.inputs",
+            execution_.backend_type()};
+        input_ =
+            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames_, kGptDim})).tensor;
+        ggml_set_input(input_);
         auto x = core::wrap_tensor(input_, core::TensorShape::from_dims({1, frames_, kGptDim}), GGML_TYPE_F32);
         x = modules::LinearModule({kGptDim, 256, true}).build(ctx, x, weights_->gpt_layer.linear0);
         x = modules::LinearModule({256, 128, true}).build(ctx, x, weights_->gpt_layer.linear1);
@@ -636,8 +649,15 @@ public:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(8192, frames_ * 128)), false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 S2Mel GPT layer input buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 S2Mel GPT layer graph");
         }
         debug::timing_log_scalar("index_tts2.s2mel.gpt_layer.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
@@ -645,10 +665,7 @@ public:
     }
 
     ~GptLayerGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     int64_t frames() const noexcept {
@@ -680,14 +697,31 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2S2MelWeights> weights_;
     int64_t frames_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
 class IndexTTS2S2MelRuntime::LengthRegulatorGraph {
@@ -714,9 +748,25 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 S2Mel length regulator graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 S2Mel length regulator input context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.s2mel.length_regulator", execution_.backend_type()};
-        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, input_frames_, kContentDim})).tensor;
-        mask_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, output_frames_, kHidden})).tensor;
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.s2mel.length_regulator.inputs",
+            execution_.backend_type()};
+        input_ = core::make_tensor(
+                     input_ctx,
+                     GGML_TYPE_F32,
+                     core::TensorShape::from_dims({1, input_frames_, kContentDim}))
+                     .tensor;
+        mask_ =
+            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, output_frames_, kHidden})).tensor;
+        ggml_set_input(input_);
+        ggml_set_input(mask_);
         auto x = core::wrap_tensor(input_, core::TensorShape::from_dims({1, input_frames_, kContentDim}), GGML_TYPE_F32);
         x = modules::LinearModule({kContentDim, kHidden, true}).build(ctx, x, weights_->length_regulator.content_projection);
         x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
@@ -735,22 +785,28 @@ public:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(32768, output_frames_ * 512)), false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 S2Mel length regulator input buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 S2Mel length regulator graph");
         }
         mask_values_.assign(static_cast<size_t>(output_frames_ * kHidden), 1.0F);
-        core::write_tensor_f32(core::wrap_tensor(mask_, core::TensorShape::from_dims({1, output_frames_, kHidden}), GGML_TYPE_F32), mask_values_);
+        core::write_tensor_f32(
+            core::wrap_tensor(mask_, core::TensorShape::from_dims({1, output_frames_, kHidden}), GGML_TYPE_F32),
+            mask_values_);
         debug::timing_log_scalar("index_tts2.s2mel.length_regulator.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("index_tts2.s2mel.length_regulator.input_frames", input_frames_);
         debug::trace_log_scalar("index_tts2.s2mel.length_regulator.output_frames", output_frames_);
     }
 
     ~LengthRegulatorGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     bool matches(int64_t input_frames, int64_t output_frames) const noexcept {
@@ -782,17 +838,34 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2S2MelWeights> weights_;
     int64_t input_frames_ = 0;
     int64_t output_frames_ = 0;
     std::vector<float> mask_values_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * mask_ = nullptr;
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
 class IndexTTS2S2MelRuntime::CfmGraph {
@@ -820,13 +893,27 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 S2Mel CFM graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 S2Mel CFM input context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.s2mel.cfm", execution_.backend_type()};
-        x_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, kMelChannels, frames_})).tensor;
-        prompt_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, kMelChannels, frames_})).tensor;
-        cond_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, frames_, kHidden})).tensor;
-        style_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, kStyleDim})).tensor;
-        timestep_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_})).tensor;
-        positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, frames_);
+        core::ModuleBuildContext input_ctx{input_ctx_.get(), "index_tts2.s2mel.cfm.inputs", execution_.backend_type()};
+        x_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, kMelChannels, frames_}))
+                 .tensor;
+        prompt_ =
+            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, kMelChannels, frames_})).tensor;
+        cond_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, frames_, kHidden})).tensor;
+        style_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, kStyleDim})).tensor;
+        timestep_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_})).tensor;
+        positions_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({frames_})).tensor;
+        ggml_set_input(x_);
+        ggml_set_input(prompt_);
+        ggml_set_input(cond_);
+        ggml_set_input(style_);
+        ggml_set_input(timestep_);
+        ggml_set_input(positions_);
         auto output = build_cfm_estimator(
             ctx,
             core::wrap_tensor(x_, core::TensorShape::from_dims({batch_, kMelChannels, frames_}), GGML_TYPE_F32),
@@ -840,8 +927,15 @@ public:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(131072, frames_ * 4096)), false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 S2Mel CFM input buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 S2Mel CFM graph");
         }
         positions_values_.assign(static_cast<size_t>(frames_), 0);
@@ -855,10 +949,7 @@ public:
     }
 
     ~CfmGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     bool matches(int64_t frames, bool use_cfg) const noexcept {
@@ -902,11 +993,27 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2S2MelWeights> weights_;
     int64_t frames_ = 0;
     bool use_cfg_ = false;
     int64_t batch_ = 1;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * x_ = nullptr;
     ggml_tensor * prompt_ = nullptr;
@@ -916,7 +1023,8 @@ private:
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
     std::vector<int32_t> positions_values_;
 };
 
