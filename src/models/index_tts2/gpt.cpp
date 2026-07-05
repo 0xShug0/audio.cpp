@@ -2177,6 +2177,12 @@ IndexTTS2GptLatent IndexTTS2GptRuntime::forward_latent(
     return forward_graph_->run(conds, text_tokens, codes);
 }
 
+void IndexTTS2GptRuntime::release_conditioning_graphs() {
+    speaker_conditioning_graph_.reset();
+    emotion_conditioning_graph_.reset();
+    emotion_vector_graph_.reset();
+}
+
 void IndexTTS2GptRuntime::release_generation_graphs() {
     prefill_graph_.reset();
     decode_graph_.reset();

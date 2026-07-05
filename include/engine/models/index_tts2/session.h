@@ -93,6 +93,7 @@ private:
     size_t weight_context_bytes_ = 4ull * 1024ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType matmul_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
+    bool mem_saver_ = false;
 
     IndexTTS2TextTokenizer tokenizer_;
     std::unique_ptr<IndexTTS2Wav2Vec2BertRuntime> semantic_encoder_;

@@ -100,6 +100,27 @@ WavData read_wav_f32(const std::filesystem::path & path) {
         return wav;
     }
 
+    if (audio_format == 1 && bits_per_sample == 24) {
+        if (data.size() % 3 != 0) {
+            throw std::runtime_error("malformed PCM24 WAV data chunk: " + path.string());
+        }
+        const size_t sample_count = data.size() / 3;
+        wav.samples.resize(sample_count);
+        const auto * pcm = reinterpret_cast<const uint8_t *>(data.data());
+        for (size_t i = 0; i < sample_count; ++i) {
+            const size_t offset = i * 3;
+            int32_t value =
+                static_cast<int32_t>(pcm[offset]) |
+                (static_cast<int32_t>(pcm[offset + 1]) << 8) |
+                (static_cast<int32_t>(pcm[offset + 2]) << 16);
+            if ((value & 0x00800000) != 0) {
+                value |= ~0x00FFFFFF;
+            }
+            wav.samples[i] = static_cast<float>(value) / 8388608.0F;
+        }
+        return wav;
+    }
+
     if (audio_format == 3 && bits_per_sample == 32) {
         const size_t sample_count = data.size() / sizeof(float);
         wav.samples.resize(sample_count);
@@ -110,7 +131,7 @@ WavData read_wav_f32(const std::filesystem::path & path) {
         return wav;
     }
 
-    throw std::runtime_error("unsupported WAV encoding in " + path.string() + " (need PCM16 or float32)");
+    throw std::runtime_error("unsupported WAV encoding in " + path.string() + " (need PCM16, PCM24, or float32)");
 }
 
 }  // namespace engine::audio

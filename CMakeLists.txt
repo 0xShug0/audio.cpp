@@ -598,6 +598,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_dsp_test
     )
 
+    add_engine_unittest(wav_reader_test tests/unittests/test_wav_reader.cpp)
+
+    add_test(
+        NAME wav_reader_test
+        COMMAND wav_reader_test
+    )
+
     add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
 
     add_test(

@@ -645,4 +645,9 @@ IndexTTS2EmotionVector IndexTTS2QwenEmotionRuntime::infer(const std::string & te
     return convert_emotion_json(content, text);
 }
 
+void IndexTTS2QwenEmotionRuntime::release_graphs() {
+    prefill_graph_.reset();
+    decode_graph_.reset();
+}
+
 }  // namespace engine::models::index_tts2

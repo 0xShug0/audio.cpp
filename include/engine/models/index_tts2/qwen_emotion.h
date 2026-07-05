@@ -63,6 +63,7 @@ public:
     IndexTTS2QwenEmotionRuntime & operator=(const IndexTTS2QwenEmotionRuntime &) = delete;
 
     IndexTTS2EmotionVector infer(const std::string & text, int64_t max_new_tokens = 2048);
+    void release_graphs();
 
 private:
     class PrefillGraph;

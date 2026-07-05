@@ -76,6 +76,7 @@ public:
     void prepare_codes(int64_t frames);
     IndexTTS2SemanticCodecOutput quantize(const IndexTTS2SemanticEmbedding & semantic);
     IndexTTS2SemanticCodecOutput codes_to_embedding(const std::vector<int32_t> & codes, int64_t frames);
+    void release_graphs();
 
 private:
     class QuantizeGraph;

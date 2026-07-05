@@ -167,6 +167,7 @@ public:
         const std::vector<float> & emotion_semantic,
         int64_t emotion_frames,
         const std::vector<float> & emotion_vector);
+    void release_conditioning_graphs();
     void release_generation_graphs();
 
 private:

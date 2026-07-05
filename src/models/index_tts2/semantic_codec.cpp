@@ -630,4 +630,9 @@ IndexTTS2SemanticCodecOutput IndexTTS2SemanticCodecRuntime::codes_to_embedding(
     return codes_graph_->run(codes);
 }
 
+void IndexTTS2SemanticCodecRuntime::release_graphs() {
+    quantize_graph_.reset();
+    codes_graph_.reset();
+}
+
 }  // namespace engine::models::index_tts2

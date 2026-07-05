@@ -589,4 +589,8 @@ IndexTTS2SemanticEmbedding IndexTTS2Wav2Vec2BertRuntime::encode(const IndexTTS2S
     return graph_->run(features);
 }
 
+void IndexTTS2Wav2Vec2BertRuntime::release_graph() {
+    graph_.reset();
+}
+
 }  // namespace engine::models::index_tts2

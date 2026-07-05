@@ -85,6 +85,7 @@ public:
 
     void prepare(int64_t frames);
     IndexTTS2SemanticEmbedding encode(const IndexTTS2SemanticFeatureOutput & features);
+    void release_graph();
 
 private:
     class Graph;

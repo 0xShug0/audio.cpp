@@ -1,6 +1,7 @@
 #include "engine/models/index_tts2/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
 
 #include <algorithm>
@@ -157,6 +158,13 @@ std::vector<float> scaled_emotion_weights(const std::vector<float> & values, flo
     return out;
 }
 
+bool mem_saver_from_options(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"index_tts2.mem_saver", "mem_saver"})) {
+        return runtime::parse_bool_option(*value, "index_tts2.mem_saver");
+    }
+    return false;
+}
+
 }  // namespace
 
 IndexTTS2Session::IndexTTS2Session(
@@ -187,6 +195,7 @@ IndexTTS2Session::IndexTTS2Session(
         conv_weight_storage_type_ = engine::assets::parse_tensor_storage_type(it->second);
         validate_conv_weight_storage(conv_weight_storage_type_, "index_tts2.conv_weight_type");
     }
+    mem_saver_ = mem_saver_from_options(options);
     for (const auto & [key, _] : options.options) {
         if (key.rfind("index_tts2.", 0) == 0 &&
             key != "index_tts2.gpt_graph_arena_mb" &&
@@ -197,6 +206,7 @@ IndexTTS2Session::IndexTTS2Session(
             key != "index_tts2.weight_context_mb" &&
             key != "index_tts2.weight_type" &&
             key != "index_tts2.conv_weight_type" &&
+            key != "index_tts2.mem_saver" &&
             key != "index_tts2.gpt.cuda_sampling_policy" &&
             key != "index_tts2.s2mel.cuda_sampling_policy") {
             throw std::runtime_error("unknown IndexTTS2 session option: " + key);
@@ -273,32 +283,38 @@ runtime::RunMode IndexTTS2Session::run_mode() const {
 }
 
 void IndexTTS2Session::prepare(const runtime::SessionPreparationRequest & request) {
-    if (request.text.has_value() && request.voice.has_value()) {
-        runtime::TaskRequest task_request;
-        task_request.text_input = request.text;
-        task_request.voice = request.voice;
-        task_request.options = request.options;
-        auto parsed = parse_index_tts2_request(task_request);
-        if (!parsed.speaker_audio.has_value()) {
-            throw std::runtime_error("IndexTTS2 prepare requires speaker audio");
+    if (request.text.has_value() || runtime::find_option(request.options, {"text", "prompt"}).has_value()) {
+        std::string text;
+        if (request.text.has_value()) {
+            text = request.text->text;
+        } else if (const auto value = runtime::find_option(request.options, {"text", "prompt"})) {
+            text = *value;
         }
-        const runtime::AudioBuffer * emotion_audio = &*parsed.speaker_audio;
-        if (parsed.emotion_audio.has_value() &&
-            !parsed.emotion_vector.has_value() &&
-            !parsed.use_emotion_text) {
-            emotion_audio = &*parsed.emotion_audio;
+        text = engine::io::trim_ascii_whitespace(text);
+        if (text.empty()) {
+            throw std::runtime_error("IndexTTS2 request requires text_input or text option");
         }
-        const auto & speaker = resolve_speaker_state(*parsed.speaker_audio);
-        const auto & emotion = resolve_emotion_state(*emotion_audio);
-        (void) resolve_emotion_vector(parsed, speaker, emotion);
+        IndexTTS2GenerationOptions generation;
+        if (const auto value = runtime::parse_int_option(request.options, {"max_tokens"})) {
+            if (*value <= 0) {
+                throw std::runtime_error("IndexTTS2 max_tokens must be positive");
+            }
+            generation.max_mel_tokens = *value;
+        }
+        if (const auto value = runtime::parse_int_option(request.options, {"num_beams"})) {
+            if (*value <= 0) {
+                throw std::runtime_error("IndexTTS2 num_beams must be positive");
+            }
+            generation.num_beams = *value;
+        }
         const auto text_encoding = tokenizer_.encode_for_inference(
-            parsed.text,
-            parsed.max_text_tokens_per_segment);
+            text,
+            IndexTTS2Request{}.max_text_tokens_per_segment);
         for (const auto & segment : text_encoding.segment_token_ids) {
             gpt_->prepare_generation(
                 static_cast<int64_t>(segment.size()),
-                parsed.generation.max_mel_tokens,
-                parsed.generation.num_beams);
+                generation.max_mel_tokens,
+                generation.num_beams);
         }
     }
     mark_prepared();
@@ -333,6 +349,11 @@ const IndexTTS2Session::SpeakerState & IndexTTS2Session::resolve_speaker_state(c
         reference_content,
         reference_codes.frames,
         prepared.mel.frames);
+    if (mem_saver_) {
+        semantic_encoder_->release_graph();
+        semantic_codec_->release_graphs();
+        s2mel_->release_pre_cfm_graphs();
+    }
 
     SpeakerState state;
     state.identity = identity;
@@ -367,6 +388,9 @@ const IndexTTS2Session::EmotionState & IndexTTS2Session::resolve_emotion_state(c
     EmotionState state;
     state.identity = identity;
     state.semantic = semantic_encoder_->encode(prepared.semantic_features);
+    if (mem_saver_) {
+        semantic_encoder_->release_graph();
+    }
     emotion_cache_ = std::move(state);
     debug::timing_log_scalar("index_tts2.emotion_state_ms", engine::debug::elapsed_ms(start));
     return *emotion_cache_;
@@ -437,6 +461,9 @@ std::vector<float> IndexTTS2Session::resolve_emotion_vector(
             explicit_weights = emotion_text_weights_cache_->weights;
         } else {
             explicit_weights = qwen_emotion_->infer(emotion_text).values;
+            if (mem_saver_) {
+                qwen_emotion_->release_graphs();
+            }
             emotion_text_weights_cache_ = EmotionTextWeightsCache{emotion_text, explicit_weights};
         }
     } else if (request.emotion_vector.has_value()) {
@@ -497,6 +524,9 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
 
     const auto gen_start = Clock::now();
     auto generated = gpt_->generate_speech(generation);
+    if (mem_saver_) {
+        gpt_->release_conditioning_graphs();
+    }
     debug::timing_log_scalar("index_tts2.gpt.generate_ms", engine::debug::elapsed_ms(gen_start));
     if (generated.codes.empty()) {
         throw std::runtime_error("IndexTTS2 GPT generated no acoustic codes");
@@ -524,6 +554,9 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
     auto projected = s2mel_->project_gpt_latent(latent.values, latent.frames);
     semantic_codec_->prepare_codes(code_frames);
     auto semantic = semantic_codec_->codes_to_embedding(generated.codes, code_frames);
+    if (mem_saver_) {
+        semantic_codec_->release_graphs();
+    }
     auto content = add_latent_to_semantic(semantic, projected);
     s2mel_->prepare_length_regulator(code_frames, target_frames);
     auto generated_condition = s2mel_->regulate_length(content, code_frames, target_frames);
@@ -575,6 +608,9 @@ runtime::TaskResult IndexTTS2Session::run(const runtime::TaskRequest & request) 
     debug::trace_log_scalar("index_tts2.emotion_audio.same_as_speaker", same_identity(audio_identity(*emotion_audio), speaker.identity));
     const auto & emotion = resolve_emotion_state(*emotion_audio);
     const auto emotion_vector = resolve_emotion_vector(parsed, speaker, emotion);
+    if (mem_saver_) {
+        gpt_->release_conditioning_graphs();
+    }
     const auto text_encoding = tokenizer_.encode_for_inference(
         parsed.text,
         parsed.max_text_tokens_per_segment);
