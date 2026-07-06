@@ -6,6 +6,7 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <cerrno>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -23,6 +24,7 @@ constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 using SocketHandle = int;
@@ -273,6 +275,33 @@ void handle_client(SocketHandle client, IHttpHandler & handler) {
     }
 }
 
+bool wait_for_client(SocketHandle socket, int timeout_ms) {
+    fd_set read_set;
+    FD_ZERO(&read_set);
+    FD_SET(socket, &read_set);
+
+    timeval timeout{};
+    timeout.tv_sec = timeout_ms / 1000;
+    timeout.tv_usec = (timeout_ms % 1000) * 1000;
+
+#ifdef _WIN32
+    const int ready = select(0, &read_set, nullptr, nullptr, &timeout);
+#else
+    const int ready = select(socket + 1, &read_set, nullptr, nullptr, &timeout);
+#endif
+    if (ready < 0) {
+#ifdef _WIN32
+        if (WSAGetLastError() == WSAEINTR) {
+#else
+        if (errno == EINTR) {
+#endif
+            return false;
+        }
+        throw std::runtime_error("server select failed");
+    }
+    return ready > 0 && FD_ISSET(socket, &read_set);
+}
+
 }  // namespace
 
 HttpResponse json_response(std::string body, int status) {
@@ -285,11 +314,14 @@ HttpResponse error_response(int status, const std::string & message, const std::
     return json_response(body, status);
 }
 
-void serve_http(const std::string & host, int port, IHttpHandler & handler) {
+void serve_http(const std::string & host, int port, IHttpHandler & handler, ShutdownRequested shutdown_requested) {
     SocketRuntime sockets;
     auto listen_socket = bind_listen_socket(host, port);
     std::cout << "audiocpp_server listening on http://" << host << ":" << port << "\n";
-    while (true) {
+    while (!shutdown_requested()) {
+        if (!wait_for_client(listen_socket.get(), 250)) {
+            continue;
+        }
         sockaddr_in client_addr{};
 #ifdef _WIN32
         int client_len = sizeof(client_addr);
@@ -301,10 +333,20 @@ void serve_http(const std::string & host, int port, IHttpHandler & handler) {
             reinterpret_cast<sockaddr *>(&client_addr),
             &client_len);
         if (client == kInvalidSocket) {
+#ifdef _WIN32
+            const int error = WSAGetLastError();
+            const bool transient = error == WSAEINTR || error == WSAEWOULDBLOCK;
+#else
+            const bool transient = errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+            if (shutdown_requested() || transient) {
+                continue;
+            }
             throw std::runtime_error("accept failed");
         }
         std::thread(handle_client, client, std::ref(handler)).detach();
     }
+    std::cout << "audiocpp_server stopped\n";
 }
 
 }  // namespace minitts::server

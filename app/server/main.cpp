@@ -4,6 +4,7 @@
 
 #include "engine/framework/debug/trace.h"
 
+#include <csignal>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -11,6 +12,16 @@
 #include <string>
 
 namespace {
+
+volatile std::sig_atomic_t g_shutdown_requested = 0;
+
+void request_shutdown(int) {
+    g_shutdown_requested = 1;
+}
+
+bool shutdown_requested() {
+    return g_shutdown_requested != 0;
+}
 
 std::optional<std::string> arg_value(int argc, char ** argv, const std::string & name) {
     for (int i = 1; i + 1 < argc; ++i) {
@@ -63,6 +74,8 @@ int main(int argc, char ** argv) {
             has_arg(argc, argv, "--log") || log_file.has_value(),
             log_file,
         });
+        std::signal(SIGINT, request_shutdown);
+        std::signal(SIGTERM, request_shutdown);
 
         auto config = minitts::server::load_server_config(*config_path);
         if (const auto host = arg_value(argc, argv, "--host")) {
@@ -85,7 +98,7 @@ int main(int argc, char ** argv) {
         }
 
         minitts::server::ServerState state(config, std::filesystem::current_path());
-        minitts::server::serve_http(config.host, config.port, state);
+        minitts::server::serve_http(config.host, config.port, state, shutdown_requested);
         return 0;
     } catch (const std::exception & ex) {
         std::cerr << "audiocpp_server failed: " << ex.what() << "\n";

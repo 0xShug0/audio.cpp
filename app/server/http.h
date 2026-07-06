@@ -26,8 +26,10 @@ public:
     virtual HttpResponse handle(const HttpRequest & request) = 0;
 };
 
+using ShutdownRequested = bool (*)();
+
 HttpResponse json_response(std::string body, int status = 200);
 HttpResponse error_response(int status, const std::string & message, const std::string & type);
-void serve_http(const std::string & host, int port, IHttpHandler & handler);
+void serve_http(const std::string & host, int port, IHttpHandler & handler, ShutdownRequested shutdown_requested);
 
 }  // namespace minitts::server

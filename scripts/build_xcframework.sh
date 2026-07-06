@@ -13,6 +13,7 @@ DEPLOYMENT_TARGET="13.3"
 JOBS="$(sysctl -n hw.logicalcpu 2>/dev/null || echo 8)"
 CLEAN="OFF"
 LLAMAFILE="ON"
+NATIVE_CPU="ON"
 
 usage() {
     cat <<'EOF'
@@ -35,6 +36,8 @@ Options:
   --universal           Build arm64 and x86_64, then lipo a universal macOS lib.
   --clean               Remove intermediate/output directories first.
   --llamafile ON|OFF    Enable ggml llamafile SGEMM.
+                        Default: ON
+  --native-cpu ON|OFF   Build ggml CPU kernels with native host ISA flags.
                         Default: ON
   -j, --jobs <n>        Parallel build jobs.
   -h, --help            Show this help.
@@ -80,6 +83,10 @@ while [[ $# -gt 0 ]]; do
             LLAMAFILE="$2"
             shift 2
             ;;
+        --native-cpu)
+            NATIVE_CPU="$2"
+            shift 2
+            ;;
         -j|--jobs)
             JOBS="$2"
             shift 2
@@ -114,6 +121,16 @@ case "$LLAMAFILE" in
     off) LLAMAFILE="OFF" ;;
     *)
         echo "--llamafile must be ON or OFF" >&2
+        exit 1
+        ;;
+esac
+
+case "$NATIVE_CPU" in
+    ON|OFF) ;;
+    on) NATIVE_CPU="ON" ;;
+    off) NATIVE_CPU="OFF" ;;
+    *)
+        echo "--native-cpu must be ON or OFF" >&2
         exit 1
         ;;
 esac
@@ -165,6 +182,7 @@ archive_for_arch() {
         -DENGINE_ENABLE_VULKAN=OFF \
         -DENGINE_ENABLE_METAL=ON \
         -DENGINE_ENABLE_LLAMAFILE="$LLAMAFILE" \
+        -DENGINE_ENABLE_NATIVE_CPU="$NATIVE_CPU" \
         -DGGML_METAL_EMBED_LIBRARY=ON \
         -DENGINE_BUILD_TESTS=OFF \
         -DENGINE_BUILD_EXAMPLES=OFF

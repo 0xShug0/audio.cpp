@@ -7,16 +7,17 @@ PRESET ?= windows-cuda-release
 TARGET ?= audiocpp_cli
 JOBS ?=
 VS_INSTALL ?=
+NATIVE_CPU ?=
 
 .PHONY: all build configure cpu cpu-release cuda cuda-debug cuda-release clean presets help
 
 all: cuda
 
 build:
-	$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File "$(BUILD_SCRIPT)" -Preset "$(PRESET)" $(if $(TARGET),-Target "$(TARGET)",) $(if $(JOBS),-Jobs "$(JOBS)",) $(if $(VS_INSTALL),-VsInstall "$(VS_INSTALL)",)
+	$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File "$(BUILD_SCRIPT)" -Preset "$(PRESET)" $(if $(TARGET),-Target "$(TARGET)",) $(if $(JOBS),-Jobs "$(JOBS)",) $(if $(NATIVE_CPU),-NativeCpu "$(NATIVE_CPU)",) $(if $(VS_INSTALL),-VsInstall "$(VS_INSTALL)",)
 
 configure:
-	$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File "$(BUILD_SCRIPT)" -Preset "$(PRESET)" -ConfigureOnly $(if $(VS_INSTALL),-VsInstall "$(VS_INSTALL)",)
+	$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File "$(BUILD_SCRIPT)" -Preset "$(PRESET)" -ConfigureOnly $(if $(NATIVE_CPU),-NativeCpu "$(NATIVE_CPU)",) $(if $(VS_INSTALL),-VsInstall "$(VS_INSTALL)",)
 
 cpu:
 	$(MAKE) -f "$(THIS_MAKEFILE)" build PRESET=windows-cpu-release
@@ -52,5 +53,6 @@ help:
 	@echo Examples:
 	@echo   make -f Makefile.windows cpu JOBS=8
 	@echo   make -f Makefile.windows cuda JOBS=8
+	@echo   make -f Makefile.windows cuda NATIVE_CPU=OFF JOBS=8
 	@echo   make -f Makefile.windows cuda-debug TARGET=audiocpp_cli JOBS=8
 	@echo   make -f Makefile.windows cuda VS_INSTALL="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"

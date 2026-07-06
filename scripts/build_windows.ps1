@@ -6,6 +6,10 @@ param(
     [switch]$ConfigureOnly,
     [switch]$Clean,
     [string]$CudaArchitectures = "auto",
+    [ValidateSet("ON", "OFF")]
+    [string]$NativeCpu = $null,
+    [ValidateSet("ON", "OFF")]
+    [string]$Llamafile = $null,
     [string]$VsInstall = ""
 )
 
@@ -258,7 +262,8 @@ function Get-PresetSettings {
             return @{
                 BuildType = "Release"
                 BuildTests = "OFF"
-                Native = "OFF"
+                Native = "ON"
+                Llamafile = "ON"
                 EnableCuda = "OFF"
                 EnableCudaGraphs = "OFF"
                 CFlagsDebug = ""
@@ -269,7 +274,8 @@ function Get-PresetSettings {
             return @{
                 BuildType = "Debug"
                 BuildTests = "ON"
-                Native = "OFF"
+                Native = "ON"
+                Llamafile = "ON"
                 EnableCuda = "ON"
                 EnableCudaGraphs = "ON"
                 CFlagsDebug = "/O2 /Zi"
@@ -280,7 +286,8 @@ function Get-PresetSettings {
             return @{
                 BuildType = "Release"
                 BuildTests = "OFF"
-                Native = "OFF"
+                Native = "ON"
+                Llamafile = "ON"
                 EnableCuda = "ON"
                 EnableCudaGraphs = "ON"
                 CFlagsDebug = ""
@@ -292,6 +299,7 @@ function Get-PresetSettings {
                 BuildType = "Debug"
                 BuildTests = "ON"
                 Native = "ON"
+                Llamafile = "ON"
                 EnableCuda = "ON"
                 EnableCudaGraphs = "ON"
                 CFlagsDebug = "/O2 /Zi"
@@ -305,6 +313,12 @@ function Get-PresetSettings {
 }
 
 $settings = Get-PresetSettings $Preset
+if ($null -ne $NativeCpu) {
+    $settings.Native = $NativeCpu
+}
+if ($null -ne $Llamafile) {
+    $settings.Llamafile = $Llamafile
+}
 $isCudaPreset = $settings.EnableCuda -eq "ON"
 
 if ($isCudaPreset) {
@@ -350,6 +364,8 @@ Write-Host "Windows SDK: $(Split-Path $mt -Parent)"
 if ($arch -ne "") {
     Write-Host "CUDA architectures: $arch"
 }
+Write-Host "Native CPU optimization: $($settings.Native)"
+Write-Host "llamafile SGEMM: $($settings.Llamafile)"
 
 if ($Clean) {
     $buildDirForClean = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) "build") $Preset
@@ -380,7 +396,8 @@ $configureArgs = @(
     "-DENGINE_ENABLE_VULKAN=OFF",
     "-DENGINE_ENABLE_METAL=OFF",
     "-DGGML_OPENMP=ON",
-    "-DGGML_NATIVE=$($settings.Native)",
+    "-DENGINE_ENABLE_NATIVE_CPU=$($settings.Native)",
+    "-DENGINE_ENABLE_LLAMAFILE=$($settings.Llamafile)",
     "-DENGINE_BUILD_TESTS=$($settings.BuildTests)"
 )
 if ($settings.CFlagsDebug -ne "") {

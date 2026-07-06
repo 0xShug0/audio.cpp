@@ -93,6 +93,8 @@ That default configure is a CPU build unless you enable an accelerator backend e
 
 Use GCC 13 or newer for Linux builds.
 
+Native ggml CPU optimization is enabled by default for local performance. If your compiler or assembler rejects a generated CPU instruction such as `vpdpbusd`, reconfigure with `-DENGINE_ENABLE_NATIVE_CPU=OFF` to build portable CPU kernels.
+
 Common Linux configure examples:
 
 CPU-only:
@@ -111,6 +113,12 @@ Vulkan:
 
 ```bash
 cmake -S . -B build -DENGINE_ENABLE_VULKAN=ON
+```
+
+Portable CPU-kernel fallback:
+
+```bash
+cmake -S . -B build -DENGINE_ENABLE_NATIVE_CPU=OFF
 ```
 
 Build the CLI and server from the configured tree:
@@ -133,6 +141,7 @@ Examples:
 scripts/build_linux.sh --backend cuda --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend vulkan --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --backend cuda --native-cpu OFF --target audiocpp_cli --target audiocpp_server
 ```
 
 Use `--build-dir <dir>` only when you intentionally want a custom output directory.
@@ -170,9 +179,10 @@ If GNU Make is available on Windows:
 ```bash
 make -f Makefile.windows cpu JOBS=16
 make -f Makefile.windows cuda JOBS=16
+make -f Makefile.windows cuda NATIVE_CPU=OFF JOBS=16
 ```
 
-The Windows script configures `build/windows-cuda-release` by default and builds `audiocpp_cli`. CUDA presets enable CUDA, CUDA graphs, OpenMP, Ninja, `/utf-8`, `/EHsc`, MSVC OpenMP SIMD support with `/openmp:experimental`, and the same portable CPU optimization baseline used for the Windows CUDA path. The CPU preset uses the same MSVC/Ninja/OpenMP setup without requiring CUDA. CUDA presets auto-detect the local GPU CUDA architecture when `nvidia-smi` is available.
+The Windows script configures `build/windows-cuda-release` by default and builds `audiocpp_cli`. CUDA presets enable CUDA, CUDA graphs, OpenMP, Ninja, `/utf-8`, `/EHsc`, MSVC OpenMP SIMD support with `/openmp:experimental`, and native CPU optimization by default. The CPU preset uses the same MSVC/Ninja/OpenMP setup without requiring CUDA. CUDA presets auto-detect the local GPU CUDA architecture when `nvidia-smi` is available. Pass `-NativeCpu OFF` or `NATIVE_CPU=OFF` to use portable CPU kernels.
 
 Useful variants:
 
@@ -180,6 +190,7 @@ Useful variants:
 .\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Preset windows-cuda-debug -Target audiocpp_cli
+.\scripts\build_windows.ps1 -NativeCpu OFF -Target audiocpp_cli
 .\scripts\build_windows.ps1 -ConfigureOnly
 .\scripts\build_windows.ps1 -CudaArchitectures 120a-real
 ```
@@ -214,6 +225,7 @@ scripts/build_metal.sh --target audiocpp_server
 scripts/build_metal.sh --build-type Release --archs arm64 --target audiocpp_cli
 scripts/build_metal.sh --with-tests --target audio_dsp_test
 scripts/build_metal.sh --openmp auto --target audiocpp_cli
+scripts/build_metal.sh --native-cpu OFF --target audiocpp_cli
 ```
 
 The built CLI is written to:
@@ -231,6 +243,7 @@ Build options:
 | `ENGINE_ENABLE_METAL` | Enable the ggml Metal backend. Required for `--backend metal`. | `OFF` on most platforms, `ON` on Apple |
 | `ENGINE_ENABLE_LLAMAFILE` | Enable llamafile SGEMM support in ggml CPU builds. | `ON` |
 | `ENGINE_ENABLE_CUDA_GRAPHS` | Enable ggml CUDA graphs support when CUDA is enabled. | `ON` |
+| `ENGINE_ENABLE_NATIVE_CPU` | Build ggml CPU kernels with native host ISA flags such as `-march=native`. Disable this for portable CPU kernels or toolchains that reject generated CPU instructions. | `ON` |
 | `ENGINE_ENABLE_OPENMP` | Enable OpenMP for host-side parallel work. | `ON` |
 | `ENGINE_BUILD_EXAMPLES` | Build example binaries. | `OFF` |
 | `ENGINE_BUILD_TESTS` | Build framework unit tests. | `OFF` |

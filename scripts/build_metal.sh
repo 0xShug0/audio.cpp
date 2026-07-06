@@ -12,6 +12,7 @@ WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
 OPENMP_MODE="off"
 LLAMAFILE="ON"
+NATIVE_CPU="ON"
 METAL_EMBED_LIBRARY="ON"
 DEPLOYMENT_TARGET=""
 ARCHS=""
@@ -35,6 +36,8 @@ Options:
   --openmp ON|OFF|auto     Enable OpenMP host parallelism.
                            Default: OFF
   --llamafile ON|OFF       Enable ggml llamafile SGEMM.
+                           Default: ON
+  --native-cpu ON|OFF      Build ggml CPU kernels with native host ISA flags.
                            Default: ON
   --embed-metal ON|OFF     Embed ggml Metal shader library.
                            Default: ON
@@ -93,6 +96,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --llamafile)
             LLAMAFILE="$(normalize_on_off --llamafile "$2")"
+            shift 2
+            ;;
+        --native-cpu)
+            NATIVE_CPU="$(normalize_on_off --native-cpu "$2")"
             shift 2
             ;;
         --embed-metal)
@@ -194,6 +201,7 @@ CMAKE_CMD=(
     -DENGINE_ENABLE_METAL=ON
     -DENGINE_ENABLE_OPENMP="$ENGINE_ENABLE_OPENMP"
     -DENGINE_ENABLE_LLAMAFILE="$LLAMAFILE"
+    -DENGINE_ENABLE_NATIVE_CPU="$NATIVE_CPU"
     -DGGML_OPENMP="$ENGINE_ENABLE_OPENMP"
     -DGGML_METAL_EMBED_LIBRARY="$METAL_EMBED_LIBRARY"
     -DENGINE_BUILD_TESTS="$WITH_TESTS"
@@ -225,6 +233,7 @@ echo "Including Metal backend: ON"
 echo "Embedding Metal library: $METAL_EMBED_LIBRARY"
 echo "Including OpenMP: $ENGINE_ENABLE_OPENMP"
 echo "Including llamafile: $LLAMAFILE"
+echo "Native CPU optimization: $NATIVE_CPU"
 echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
 echo "Building warmbench: $WITH_WARMBENCH"
