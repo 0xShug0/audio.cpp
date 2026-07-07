@@ -184,6 +184,8 @@ make -f Makefile.windows cuda NATIVE_CPU=OFF JOBS=16
 
 The Windows script configures `build/windows-cuda-release` by default and builds `audiocpp_cli`. CUDA presets enable CUDA, CUDA graphs, OpenMP, Ninja, `/utf-8`, `/EHsc`, MSVC OpenMP SIMD support with `/openmp:experimental`, and native CPU optimization by default. The CPU preset uses the same MSVC/Ninja/OpenMP setup without requiring CUDA. CUDA presets auto-detect the local GPU CUDA architecture when `nvidia-smi` is available. Pass `-NativeCpu OFF` or `NATIVE_CPU=OFF` to use portable CPU kernels.
 
+For Windows prebuilt release zips and CPU compatibility profiles, see [docs/windows_build.md](docs/windows_build.md).
+
 Useful variants:
 
 ```powershell
@@ -588,6 +590,7 @@ The Python-reference side of these tests usually requires more time-consuming se
 ## Projects
 
 - [Pocket TTS Browser Engine](https://github.com/jjmlovesgit/pocket-tts-browser-engine) uses audio.cpp to bring fully local PocketTTS voices into Chrome and Edge through the browser TTS API.
+- [GuideAnts](https://github.com/Elumenotion/GuideAnts) uses audio.cpp as the default local AI stack path for basic ASR and TTS, with planned reusable skills for audio.cpp scenarios and model configurations.
 
 ## Performance Metrics
 
