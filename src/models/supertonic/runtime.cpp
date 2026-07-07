@@ -717,13 +717,11 @@ public:
         core::ModuleBuildContext & ctx,
         core::ModuleBuildContext & tensor_ctx,
         const SupertonicBackendWeights & weights,
-        core::DeferredTensorWriter & tensor_writer,
-        bool cpu_faithful_vector_convnext = false)
+        core::DeferredTensorWriter & tensor_writer)
         : ctx_(ctx),
           tensor_ctx_(tensor_ctx),
           weights_(weights),
           tensor_writer_(tensor_writer),
-          cpu_faithful_vector_convnext_(cpu_faithful_vector_convnext),
           ggml_(ctx.ggml) {}
 
     core::TensorValue duration_predictor(
@@ -953,9 +951,6 @@ private:
         std::optional<core::TensorValue> bias;
         if (!bias_name.empty()) {
             bias = weight(bias_name);
-        }
-        if (!cpu_faithful_vector_convnext_) {
-            return pointwise_conv1d(ctx_, value, wt, bias);
         }
         auto value_btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, value);
         value_btc = core::ensure_backend_addressable_layout(ctx_, value_btc);
@@ -1206,9 +1201,6 @@ private:
         const std::string & prefix,
         const std::vector<int> & dilations,
         const core::TensorValue & mask) {
-        if (!cpu_faithful_vector_convnext_) {
-            return convnext(x, prefix, dilations);
-        }
         for (size_t i = 0; i < dilations.size(); ++i) {
             const std::string p = prefix + ".convnext." + std::to_string(i);
             auto residual = mul(x, mask);
@@ -1375,7 +1367,6 @@ private:
     core::ModuleBuildContext & tensor_ctx_;
     const SupertonicBackendWeights & weights_;
     core::DeferredTensorWriter & tensor_writer_;
-    bool cpu_faithful_vector_convnext_ = false;
     ggml_context * ggml_ = nullptr;
     std::unordered_map<int64_t, core::TensorValue> rotary_positions_;
     std::unordered_map<int64_t, core::TensorValue> relative_position_masks_;
@@ -1917,7 +1908,7 @@ private:
         ggml_set_input(mask_tensor.tensor);
         ggml_set_input(start_step_tensor.tensor);
         ggml_set_input(total_step_tensor.tensor);
-        SupertonicNetwork network(ctx, io_ctx, *weights_, tensor_writer, backend_type_ == core::BackendType::Cpu);
+        SupertonicNetwork network(ctx, io_ctx, *weights_, tensor_writer);
         auto output = network.vector_estimator_steps(
             latent_tensor,
             text_tensor,
