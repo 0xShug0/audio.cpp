@@ -9,6 +9,8 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
+#include <ggml-alloc.h>
+
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -342,9 +344,9 @@ public:
 
 private:
     void release_graph() {
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
         }
         if (ggml_ != nullptr) {
             ggml_free(ggml_);
@@ -379,8 +381,10 @@ private:
         output_ = build_hubert_graph(ctx, input_, *weights_);
         graph_ = ggml_new_graph_custom(ggml_, 131072, false);
         ggml_build_forward_expand(graph_, output_.tensor);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, weights_->execution_context->backend());
-        if (buffer_ == nullptr) {
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->execution_context->backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             release_graph();
             throw std::runtime_error("failed to allocate HuBERT graph tensors");
         }
@@ -391,7 +395,7 @@ private:
     std::shared_ptr<const HubertEncoderWeights> weights_;
     std::mutex mutex_;
     ggml_context * ggml_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     core::TensorValue input_;
     core::TensorValue output_;

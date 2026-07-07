@@ -4,6 +4,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/deferred_tensor_writer.h"
 
+#include <ggml-alloc.h>
 #include <ggml.h>
 
 #include <algorithm>
@@ -549,8 +550,14 @@ public:
 
         graph_ = ggml_new_graph_custom(ggml_, 65536, false);
         ggml_build_forward_expand(graph_, output_tensor_.tensor);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, execution_context_.backend());
-        if (buffer_ == nullptr) {
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            if (gallocr_ != nullptr) {
+                ggml_gallocr_free(gallocr_);
+                gallocr_ = nullptr;
+            }
             ggml_free(ggml_);
             ggml_ = nullptr;
             throw std::runtime_error("failed to allocate backend tensors for CAMPPlus graph");
@@ -559,8 +566,8 @@ public:
     }
 
     ~CampplusBackendRunner() {
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
         }
         if (ggml_ != nullptr) {
             ggml_free(ggml_);
@@ -579,7 +586,7 @@ public:
 private:
     core::ExecutionContext & execution_context_;
     ggml_context * ggml_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     core::TensorValue input_tensor_;
     core::TensorValue output_tensor_;

@@ -5,6 +5,8 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/modules/whisper_embedding.h"
 
+#include <ggml-alloc.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -152,9 +154,9 @@ struct SeedVcWhisperContentEncoder::State {
         : weights(make_whisper_weights(bundle, make_whisper_config(bundle))) {}
 
     ~State() {
-        if (buffer != nullptr) {
-            ggml_backend_buffer_free(buffer);
-            buffer = nullptr;
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+            gallocr = nullptr;
         }
         if (ctx != nullptr) {
             ggml_free(ctx);
@@ -185,8 +187,16 @@ struct SeedVcWhisperContentEncoder::State {
         ggml_set_output(output_tensor);
         graph = ggml_new_graph_custom(ctx, 65536, false);
         ggml_build_forward_expand(graph, output_tensor);
-        buffer = ggml_backend_alloc_ctx_tensors(ctx, bundle.execution_context->backend());
-        if (buffer == nullptr) {
+        gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(bundle.execution_context->backend()));
+        if (gallocr == nullptr ||
+            !ggml_gallocr_reserve(gallocr, graph) ||
+            !ggml_gallocr_alloc_graph(gallocr, graph)) {
+            if (gallocr != nullptr) {
+                ggml_gallocr_free(gallocr);
+                gallocr = nullptr;
+            }
+            ggml_free(ctx);
+            ctx = nullptr;
             throw std::runtime_error("failed to allocate Seed-VC Whisper encoder graph tensors");
         }
     }
@@ -194,7 +204,7 @@ struct SeedVcWhisperContentEncoder::State {
     engine::modules::WhisperEmbeddingWeights weights;
     std::mutex mutex;
     ggml_context * ctx = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
     ggml_cgraph * graph = nullptr;
     ggml_tensor * input_tensor = nullptr;
     ggml_tensor * output_tensor = nullptr;
