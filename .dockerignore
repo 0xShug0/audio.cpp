@@ -1,0 +1,9 @@
+.git/
+.gitignore
+.github/
+examples/
+scripts/
+docs/
+tools/
+build/
+*.md

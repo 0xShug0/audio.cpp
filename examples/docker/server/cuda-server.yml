@@ -1,0 +1,27 @@
+services:
+  audiocpp-server:
+    image: local/audiocpp:full-cuda
+    build:
+      context: ../../../
+      dockerfile: .devops/cuda.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "8080:8080"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./../models:/models:ro
+      - ./server.json:/app/server.json:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: ["gpu"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    command: ["server", "--config", "/app/server.json"]

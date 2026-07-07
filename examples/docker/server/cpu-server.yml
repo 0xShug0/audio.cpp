@@ -1,0 +1,20 @@
+services:
+  audiocpp-server:
+    image: local/audiocpp:full-cpu
+    build:
+      context: ../../../
+      dockerfile: .devops/cpu.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./../models:/models:ro
+      - ./server.json:/app/server.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    command: ["server", "--config", "/app/server.json", "--backend", "cpu"]
