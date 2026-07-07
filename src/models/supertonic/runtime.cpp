@@ -16,6 +16,8 @@
 #include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
+#include "ggml-alloc.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -67,6 +69,7 @@ constexpr size_t kSupertonicDurationArenaBytes = 256ull * 1024ull * 1024ull;
 constexpr size_t kSupertonicTextArenaBytes = 1024ull * 1024ull * 1024ull;
 constexpr size_t kSupertonicVectorArenaBytes = 8192ull * 1024ull * 1024ull;
 constexpr size_t kSupertonicVocoderArenaBytes = 2048ull * 1024ull * 1024ull;
+constexpr size_t kSupertonicIoArenaBytes = 64ull * 1024ull * 1024ull;
 constexpr int kSupertonicVectorStepsPerGraph = 1;
 
 std::vector<int64_t> shape_to_vector(const core::TensorShape & shape) {
@@ -586,13 +589,20 @@ public:
 private:
     struct CachedGraph {
         ~CachedGraph() {
-            if (buffer != nullptr) {
-                ggml_backend_buffer_free(buffer);
+            core::release_backend_graph_resources(backend, graph);
+            if (gallocr != nullptr) {
+                ggml_gallocr_free(gallocr);
+            }
+            if (io_buffer != nullptr) {
+                ggml_backend_buffer_free(io_buffer);
             }
         }
 
+        std::unique_ptr<ggml_context, GgmlContextDeleter> io_ggml;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ggml;
-        ggml_backend_buffer_t buffer = nullptr;
+        ggml_backend_buffer_t io_buffer = nullptr;
+        ggml_gallocr_t gallocr = nullptr;
+        ggml_backend_t backend = nullptr;
         std::vector<int64_t> input_shape;
         core::TensorShape output_shape = {};
         ggml_tensor * input = nullptr;
@@ -612,14 +622,19 @@ private:
         const auto build_start = std::chrono::steady_clock::now();
         auto prepared = std::make_unique<CachedGraph>();
         prepared->input_shape = input_shape;
+        prepared->backend = backend_;
         ggml_init_params params{arena_bytes_, nullptr, true};
+        ggml_init_params io_params{kSupertonicIoArenaBytes, nullptr, true};
+        prepared->io_ggml.reset(ggml_init(io_params));
         prepared->ggml.reset(ggml_init(params));
-        if (prepared->ggml == nullptr) {
+        if (prepared->io_ggml == nullptr || prepared->ggml == nullptr) {
             throw std::runtime_error("failed to initialize Supertonic vocoder GGML context");
         }
 
+        core::ModuleBuildContext io_ctx{prepared->io_ggml.get(), "supertonic.vocoder.io", backend_type_};
         core::ModuleBuildContext ctx{prepared->ggml.get(), "supertonic.vocoder", backend_type_};
-        auto latent = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(input_shape));
+        auto latent = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(input_shape));
+        ggml_set_input(latent.tensor);
         prepared->input = latent.tensor;
         auto output = build_graph(ctx, latent);
         output = core::wrap_tensor(ggml_cont(ctx.ggml, output.tensor), output.shape, output.type);
@@ -628,8 +643,14 @@ private:
         ggml_set_output(prepared->output);
         prepared->graph = ggml_new_graph_custom(ctx.ggml, 65536, false);
         ggml_build_forward_expand(prepared->graph, prepared->output);
-        prepared->buffer = ggml_backend_alloc_ctx_tensors(prepared->ggml.get(), backend_);
-        if (prepared->buffer == nullptr) {
+        prepared->io_buffer = ggml_backend_alloc_ctx_tensors(prepared->io_ggml.get(), backend_);
+        if (prepared->io_buffer == nullptr) {
+            throw std::runtime_error("failed to allocate Supertonic vocoder IO buffer");
+        }
+        prepared->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (prepared->gallocr == nullptr ||
+            !ggml_gallocr_reserve(prepared->gallocr, prepared->graph) ||
+            !ggml_gallocr_alloc_graph(prepared->gallocr, prepared->graph)) {
             throw std::runtime_error("failed to allocate Supertonic vocoder backend graph buffer");
         }
         auto inserted = graphs_.emplace(input_shape, std::move(prepared));
@@ -694,10 +715,12 @@ class SupertonicNetwork {
 public:
     SupertonicNetwork(
         core::ModuleBuildContext & ctx,
+        core::ModuleBuildContext & tensor_ctx,
         const SupertonicBackendWeights & weights,
         core::DeferredTensorWriter & tensor_writer,
         bool cpu_faithful_vector_convnext = false)
         : ctx_(ctx),
+          tensor_ctx_(tensor_ctx),
           weights_(weights),
           tensor_writer_(tensor_writer),
           cpu_faithful_vector_convnext_(cpu_faithful_vector_convnext),
@@ -866,7 +889,7 @@ private:
 
     core::TensorValue constant_scalar(float value, const std::string & label) {
         (void)label;
-        return tensor_writer_.make_f32_tensor(ctx_, core::TensorShape::from_dims({1}), std::vector<float>{value});
+        return tensor_writer_.make_f32_tensor(tensor_ctx_, core::TensorShape::from_dims({1}), std::vector<float>{value});
     }
 
     core::TensorValue add(const core::TensorValue & lhs, const core::TensorValue & rhs) {
@@ -1053,7 +1076,7 @@ private:
             position_values[static_cast<size_t>(i)] = static_cast<float>(i);
         }
         auto positions = tensor_writer_.make_f32_tensor(
-            ctx_,
+            tensor_ctx_,
             core::TensorShape::from_dims({1, 1, frames, 1}),
             position_values);
         return rotary_positions_.emplace(frames, positions).first->second;
@@ -1075,7 +1098,7 @@ private:
             }
         }
         auto mask = tensor_writer_.make_f32_tensor(
-            ctx_,
+            tensor_ctx_,
             core::TensorShape::from_dims({1, 1, frames, frames}),
             values);
         return relative_position_masks_.emplace(key, mask).first->second;
@@ -1294,7 +1317,7 @@ private:
             return *time_frequency_;
         }
         auto frequency = tensor_writer_.make_f32_tensor(
-            ctx_,
+            tensor_ctx_,
             core::TensorShape::from_dims({1, 32}),
             std::vector<float>(values.begin(), values.end()));
         time_frequency_ = frequency;
@@ -1349,6 +1372,7 @@ private:
     }
 
     core::ModuleBuildContext & ctx_;
+    core::ModuleBuildContext & tensor_ctx_;
     const SupertonicBackendWeights & weights_;
     core::DeferredTensorWriter & tensor_writer_;
     bool cpu_faithful_vector_convnext_ = false;
@@ -1413,13 +1437,19 @@ public:
 private:
     struct CachedGraph {
         ~CachedGraph() {
-            if (buffer != nullptr) {
-                ggml_backend_buffer_free(buffer);
+            core::release_backend_graph_resources(backend, graph);
+            if (gallocr != nullptr) {
+                ggml_gallocr_free(gallocr);
+            }
+            if (io_buffer != nullptr) {
+                ggml_backend_buffer_free(io_buffer);
             }
         }
 
+        std::unique_ptr<ggml_context, GgmlContextDeleter> io_ggml;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ggml;
-        ggml_backend_buffer_t buffer = nullptr;
+        ggml_backend_buffer_t io_buffer = nullptr;
+        ggml_gallocr_t gallocr = nullptr;
         std::vector<int64_t> text_shape;
         std::vector<int64_t> text_mask_shape;
         std::vector<int64_t> style_shape;
@@ -1470,15 +1500,21 @@ private:
         graph->backend = backend_;
         graph->threads = threads_;
         ggml_init_params params{arena_bytes_, nullptr, true};
+        ggml_init_params io_params{kSupertonicIoArenaBytes, nullptr, true};
+        graph->io_ggml.reset(ggml_init(io_params));
         graph->ggml.reset(ggml_init(params));
-        if (graph->ggml == nullptr) {
+        if (graph->io_ggml == nullptr || graph->ggml == nullptr) {
             throw std::runtime_error("failed to initialize Supertonic duration predictor context");
         }
+        core::ModuleBuildContext io_ctx{graph->io_ggml.get(), "supertonic.duration_predictor.io", backend_type_};
         core::ModuleBuildContext ctx{graph->ggml.get(), "supertonic.duration_predictor", backend_type_};
-        auto ids_tensor = core::make_tensor(ctx, GGML_TYPE_I32, shape_from_vector(text_shape));
-        auto mask_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(mask_shape));
-        auto style_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(style_shape));
-        SupertonicNetwork network(ctx, *weights_, tensor_writer);
+        auto ids_tensor = core::make_tensor(io_ctx, GGML_TYPE_I32, shape_from_vector(text_shape));
+        auto mask_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(mask_shape));
+        auto style_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(style_shape));
+        ggml_set_input(ids_tensor.tensor);
+        ggml_set_input(mask_tensor.tensor);
+        ggml_set_input(style_tensor.tensor);
+        SupertonicNetwork network(ctx, io_ctx, *weights_, tensor_writer);
         auto output = network.duration_predictor(ids_tensor, mask_tensor, style_tensor);
         output = core::wrap_tensor(ggml_cont(ctx.ggml, output.tensor), output.shape, output.type);
         graph->text_ids = ids_tensor.tensor;
@@ -1489,8 +1525,14 @@ private:
         ggml_set_output(graph->output);
         graph->graph = ggml_new_graph_custom(ctx.ggml, 65536, false);
         ggml_build_forward_expand(graph->graph, graph->output);
-        graph->buffer = ggml_backend_alloc_ctx_tensors(graph->ggml.get(), backend_);
-        if (graph->buffer == nullptr) {
+        graph->io_buffer = ggml_backend_alloc_ctx_tensors(graph->io_ggml.get(), backend_);
+        if (graph->io_buffer == nullptr) {
+            throw std::runtime_error("failed to allocate Supertonic duration predictor IO buffer");
+        }
+        graph->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (graph->gallocr == nullptr ||
+            !ggml_gallocr_reserve(graph->gallocr, graph->graph) ||
+            !ggml_gallocr_alloc_graph(graph->gallocr, graph->graph)) {
             throw std::runtime_error("failed to allocate Supertonic duration predictor backend graph buffer");
         }
         tensor_writer.flush();
@@ -1563,13 +1605,19 @@ public:
 private:
     struct CachedGraph {
         ~CachedGraph() {
-            if (buffer != nullptr) {
-                ggml_backend_buffer_free(buffer);
+            core::release_backend_graph_resources(backend, graph);
+            if (gallocr != nullptr) {
+                ggml_gallocr_free(gallocr);
+            }
+            if (io_buffer != nullptr) {
+                ggml_backend_buffer_free(io_buffer);
             }
         }
 
+        std::unique_ptr<ggml_context, GgmlContextDeleter> io_ggml;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ggml;
-        ggml_backend_buffer_t buffer = nullptr;
+        ggml_backend_buffer_t io_buffer = nullptr;
+        ggml_gallocr_t gallocr = nullptr;
         std::vector<int64_t> text_shape;
         std::vector<int64_t> text_mask_shape;
         std::vector<int64_t> style_shape;
@@ -1620,15 +1668,21 @@ private:
         graph->backend = backend_;
         graph->threads = threads_;
         ggml_init_params params{arena_bytes_, nullptr, true};
+        ggml_init_params io_params{kSupertonicIoArenaBytes, nullptr, true};
+        graph->io_ggml.reset(ggml_init(io_params));
         graph->ggml.reset(ggml_init(params));
-        if (graph->ggml == nullptr) {
+        if (graph->io_ggml == nullptr || graph->ggml == nullptr) {
             throw std::runtime_error("failed to initialize Supertonic text encoder context");
         }
+        core::ModuleBuildContext io_ctx{graph->io_ggml.get(), "supertonic.text_encoder.io", backend_type_};
         core::ModuleBuildContext ctx{graph->ggml.get(), "supertonic.text_encoder", backend_type_};
-        auto ids_tensor = core::make_tensor(ctx, GGML_TYPE_I32, shape_from_vector(text_shape));
-        auto mask_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(mask_shape));
-        auto style_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(style_shape));
-        SupertonicNetwork network(ctx, *weights_, tensor_writer);
+        auto ids_tensor = core::make_tensor(io_ctx, GGML_TYPE_I32, shape_from_vector(text_shape));
+        auto mask_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(mask_shape));
+        auto style_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(style_shape));
+        ggml_set_input(ids_tensor.tensor);
+        ggml_set_input(mask_tensor.tensor);
+        ggml_set_input(style_tensor.tensor);
+        SupertonicNetwork network(ctx, io_ctx, *weights_, tensor_writer);
         auto output = network.text_encoder(ids_tensor, mask_tensor, style_tensor);
         output = core::wrap_tensor(ggml_cont(ctx.ggml, output.tensor), output.shape, output.type);
         graph->text_ids = ids_tensor.tensor;
@@ -1639,8 +1693,14 @@ private:
         ggml_set_output(graph->output);
         graph->graph = ggml_new_graph_custom(ctx.ggml, 65536, false);
         ggml_build_forward_expand(graph->graph, graph->output);
-        graph->buffer = ggml_backend_alloc_ctx_tensors(graph->ggml.get(), backend_);
-        if (graph->buffer == nullptr) {
+        graph->io_buffer = ggml_backend_alloc_ctx_tensors(graph->io_ggml.get(), backend_);
+        if (graph->io_buffer == nullptr) {
+            throw std::runtime_error("failed to allocate Supertonic text encoder IO buffer");
+        }
+        graph->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (graph->gallocr == nullptr ||
+            !ggml_gallocr_reserve(graph->gallocr, graph->graph) ||
+            !ggml_gallocr_alloc_graph(graph->gallocr, graph->graph)) {
             throw std::runtime_error("failed to allocate Supertonic text encoder backend graph buffer");
         }
         tensor_writer.flush();
@@ -1743,13 +1803,19 @@ public:
 private:
     struct CachedGraph {
         ~CachedGraph() {
-            if (buffer != nullptr) {
-                ggml_backend_buffer_free(buffer);
+            core::release_backend_graph_resources(backend, graph);
+            if (gallocr != nullptr) {
+                ggml_gallocr_free(gallocr);
+            }
+            if (io_buffer != nullptr) {
+                ggml_backend_buffer_free(io_buffer);
             }
         }
 
+        std::unique_ptr<ggml_context, GgmlContextDeleter> io_ggml;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ggml;
-        ggml_backend_buffer_t buffer = nullptr;
+        ggml_backend_buffer_t io_buffer = nullptr;
+        ggml_gallocr_t gallocr = nullptr;
         std::vector<int64_t> latent_shape;
         std::vector<int64_t> text_shape;
         std::vector<int64_t> text_mask_shape;
@@ -1829,19 +1895,29 @@ private:
         graph->backend = backend_;
         graph->threads = threads_;
         ggml_init_params params{arena_bytes_, nullptr, true};
+        ggml_init_params io_params{kSupertonicIoArenaBytes, nullptr, true};
+        graph->io_ggml.reset(ggml_init(io_params));
         graph->ggml.reset(ggml_init(params));
-        if (graph->ggml == nullptr) {
+        if (graph->io_ggml == nullptr || graph->ggml == nullptr) {
             throw std::runtime_error("failed to initialize Supertonic vector estimator context");
         }
+        core::ModuleBuildContext io_ctx{graph->io_ggml.get(), "supertonic.vector_estimator.io", backend_type_};
         core::ModuleBuildContext ctx{graph->ggml.get(), "supertonic.vector_estimator", backend_type_};
-        auto latent_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(latent_shape));
-        auto text_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(text_shape));
-        auto text_mask_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(text_mask_shape));
-        auto style_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(style_shape));
-        auto mask_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(mask_shape));
-        auto start_step_tensor = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1}));
-        auto total_step_tensor = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1}));
-        SupertonicNetwork network(ctx, *weights_, tensor_writer, backend_type_ == core::BackendType::Cpu);
+        auto latent_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(latent_shape));
+        auto text_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(text_shape));
+        auto text_mask_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(text_mask_shape));
+        auto style_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(style_shape));
+        auto mask_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, shape_from_vector(mask_shape));
+        auto start_step_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1}));
+        auto total_step_tensor = core::make_tensor(io_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1}));
+        ggml_set_input(latent_tensor.tensor);
+        ggml_set_input(text_tensor.tensor);
+        ggml_set_input(text_mask_tensor.tensor);
+        ggml_set_input(style_tensor.tensor);
+        ggml_set_input(mask_tensor.tensor);
+        ggml_set_input(start_step_tensor.tensor);
+        ggml_set_input(total_step_tensor.tensor);
+        SupertonicNetwork network(ctx, io_ctx, *weights_, tensor_writer, backend_type_ == core::BackendType::Cpu);
         auto output = network.vector_estimator_steps(
             latent_tensor,
             text_tensor,
@@ -1864,8 +1940,14 @@ private:
         ggml_set_output(graph->output);
         graph->graph = ggml_new_graph_custom(ctx.ggml, 262144, false);
         ggml_build_forward_expand(graph->graph, graph->output);
-        graph->buffer = ggml_backend_alloc_ctx_tensors(graph->ggml.get(), backend_);
-        if (graph->buffer == nullptr) {
+        graph->io_buffer = ggml_backend_alloc_ctx_tensors(graph->io_ggml.get(), backend_);
+        if (graph->io_buffer == nullptr) {
+            throw std::runtime_error("failed to allocate Supertonic vector estimator IO buffer");
+        }
+        graph->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (graph->gallocr == nullptr ||
+            !ggml_gallocr_reserve(graph->gallocr, graph->graph) ||
+            !ggml_gallocr_alloc_graph(graph->gallocr, graph->graph)) {
             throw std::runtime_error("failed to allocate Supertonic vector estimator backend graph buffer");
         }
         tensor_writer.flush();
