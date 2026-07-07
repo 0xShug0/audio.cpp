@@ -17,7 +17,7 @@ if str(REFERENCE_KOKORO_ROOT) not in sys.path:
     sys.path.insert(0, str(REFERENCE_KOKORO_ROOT))
 
 kFixedWarmupText = "This is a fixed warmup request for the speech session benchmark."
-kCaseCatalogPath = REPO_ROOT / "tools" / "kokoro_tts" / "kokoro_tts_warm_bench_cases.txt"
+kCaseCatalogPath = REPO_ROOT / "tests" / "kokoro_tts" / "kokoro_tts_warm_bench_cases.txt"
 
 
 def timestamp_seconds_local() -> str:
@@ -182,10 +182,27 @@ def load_reference_model(model_root: Path, device: str):
 
 
 def load_voice_pack(model_root: Path, voice_id: str) -> np.ndarray:
-    voices_json = json.loads((model_root / "voices.json").read_text(encoding="utf-8"))
-    if voice_id not in voices_json:
+    voice_safetensor = model_root / "voices" / f"{voice_id}.safetensors"
+    if voice_safetensor.exists():
+        from safetensors.numpy import load_file
+
+        tensors = load_file(str(voice_safetensor))
+        if "voice" not in tensors:
+            raise RuntimeError(f"Kokoro voice safetensor is missing tensor 'voice': {voice_safetensor}")
+        voice = tensors["voice"].astype(np.float32, copy=False)
+        if voice.ndim == 3 and voice.shape[1] == 1:
+            voice = voice[:, 0, :]
+        if voice.ndim != 2:
+            raise RuntimeError(f"Kokoro voice tensor must be rank 2 or rank 3 with singleton middle dim: {voice.shape}")
+        return voice
+
+    voices_json = model_root / "voices.json"
+    if not voices_json.exists():
+        raise RuntimeError(f"unknown Kokoro voice id or missing voice file: {voice_id}")
+    voices = json.loads(voices_json.read_text(encoding="utf-8"))
+    if voice_id not in voices:
         raise RuntimeError(f"unknown Kokoro voice id: {voice_id}")
-    info = voices_json[voice_id]
+    info = voices[voice_id]
     rows = int(info["rows"])
     cols = int(info["cols"])
     values = np.fromfile(model_root / "voices" / info["path"], dtype=np.float32)

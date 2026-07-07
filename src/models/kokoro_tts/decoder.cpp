@@ -558,10 +558,13 @@ private:
                 ggml_build_forward_expand(graph, output);
                 core::set_backend_threads(backend, n_threads);
                 gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-                if (gallocr == nullptr || !ggml_gallocr_alloc_graph(gallocr, graph)) {
+                if (gallocr == nullptr ||
+                    !ggml_gallocr_reserve(gallocr, graph) ||
+                    !ggml_gallocr_alloc_graph(gallocr, graph)) {
                     throw std::runtime_error("failed to allocate Kokoro source graph tensors");
                 }
             } catch (...) {
+                core::release_backend_graph_resources(backend, graph);
                 if (gallocr) {
                     ggml_gallocr_free(gallocr);
                 }
@@ -574,6 +577,7 @@ private:
         }
 
         ~Session() {
+            core::release_backend_graph_resources(backend, graph);
             if (gallocr) {
                 ggml_gallocr_free(gallocr);
             }
@@ -587,6 +591,9 @@ private:
             const std::vector<float> & noise,
             const std::vector<float> & voiced,
             std::vector<float> & out) {
+            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
+                throw std::runtime_error("failed to restore Kokoro source graph allocation");
+            }
             const double upload_ms = measure_ms([&]() {
                 ggml_backend_tensor_set(phase_in, phase.data(), 0, ggml_nbytes(phase_in));
                 ggml_backend_tensor_set(noise_in, noise.data(), 0, ggml_nbytes(noise_in));
@@ -991,7 +998,8 @@ struct GeneratorGraphSession {
             const double alloc_ms = measure_ms([&]() {
                 gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
                 if (gallocr != nullptr) {
-                    if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
+                    if (!ggml_gallocr_reserve(gallocr, graph) ||
+                        !ggml_gallocr_alloc_graph(gallocr, graph)) {
                         ggml_gallocr_free(gallocr);
                         gallocr = nullptr;
                     }
@@ -1015,6 +1023,7 @@ struct GeneratorGraphSession {
             engine::debug::timing_log_scalar("kokoro.graph.build.decoder_generator_alloc_ms", alloc_ms);
             engine::debug::timing_log_scalar("kokoro.graph.build.decoder_generator_materialize_ms", materialize_ms);
         } catch (...) {
+            core::release_backend_graph_resources(backend, graph);
             if (gallocr) {
                 ggml_gallocr_free(gallocr);
             }
@@ -1027,6 +1036,7 @@ struct GeneratorGraphSession {
     }
 
     ~GeneratorGraphSession() {
+        core::release_backend_graph_resources(backend, graph);
         if (gallocr) {
             ggml_gallocr_free(gallocr);
         }
@@ -1043,8 +1053,12 @@ struct GeneratorGraphSession {
         const HarmonicConditioning & conditioning,
         const std::vector<float> & style) {
         if (decoder_x_tensor == nullptr) {
-            if (decoder_x == nullptr || decoder_x_rows != 512 || decoder_x_cols != decoder_frame_capacity) {
-                throw std::runtime_error("Kokoro generator decoder input shape does not match exact graph capacity");
+            if (decoder_x == nullptr ||
+                decoder_x_rows != 512 ||
+                decoder_x_cols <= 0 ||
+                decoder_x_cols > decoder_frame_capacity ||
+                static_cast<int64_t>(decoder_x->size()) != decoder_x_rows * decoder_x_cols) {
+                throw std::runtime_error("Kokoro generator decoder input shape does not match graph capacity");
             }
         } else if (decoder_x_tensor->ne[1] != 512 ||
                    decoder_x_tensor->ne[0] != decoder_frame_capacity ||
@@ -1058,37 +1072,22 @@ struct GeneratorGraphSession {
             throw std::runtime_error("Kokoro generator conditioning shape does not match exact graph capacity");
         }
 
+        if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
+            throw std::runtime_error("failed to restore Kokoro generator graph allocation");
+        }
         double decoder_upload_ms = 0.0;
-        if (decoder_x_tensor != nullptr &&
-            decoder_x_tensor->ne[0] == decoder_frame_capacity &&
-            decoder_x_cols == decoder_frame_capacity) {
+        if (decoder_x_tensor != nullptr) {
             decoder_upload_ms = measure_ms([&]() {
                 ggml_backend_tensor_copy(decoder_x_tensor, decoder_x_in);
             });
         } else {
             const int64_t valid_decoder_frames = decoder_x_cols;
             std::vector<float> padded_decoder(static_cast<size_t>(512 * decoder_frame_capacity), 0.0f);
-            if (decoder_x_tensor != nullptr) {
-                const int64_t source_frames = decoder_x_tensor->ne[0];
-                std::vector<float> source_decoder(static_cast<size_t>(512 * source_frames), 0.0f);
-                ggml_backend_tensor_get(
-                    decoder_x_tensor,
-                    source_decoder.data(),
-                    0,
-                    static_cast<size_t>(512 * source_frames) * sizeof(float));
-                for (int64_t channel = 0; channel < 512; ++channel) {
-                    std::memcpy(
-                        padded_decoder.data() + static_cast<ptrdiff_t>(channel * decoder_frame_capacity),
-                        source_decoder.data() + static_cast<ptrdiff_t>(channel * source_frames),
-                        static_cast<size_t>(valid_decoder_frames) * sizeof(float));
-                }
-            } else {
-                for (int64_t channel = 0; channel < 512; ++channel) {
-                    std::memcpy(
-                        padded_decoder.data() + static_cast<ptrdiff_t>(channel * decoder_frame_capacity),
-                        decoder_x->data() + static_cast<ptrdiff_t>(channel * valid_decoder_frames),
-                        static_cast<size_t>(valid_decoder_frames) * sizeof(float));
-                }
+            for (int64_t channel = 0; channel < 512; ++channel) {
+                std::memcpy(
+                    padded_decoder.data() + static_cast<ptrdiff_t>(channel * decoder_frame_capacity),
+                    decoder_x->data() + static_cast<ptrdiff_t>(channel * valid_decoder_frames),
+                    static_cast<size_t>(valid_decoder_frames) * sizeof(float));
             }
             decoder_upload_ms = measure_ms([&]() {
                 ggml_backend_tensor_set(decoder_x_in, padded_decoder.data(), 0, ggml_nbytes(decoder_x_in));

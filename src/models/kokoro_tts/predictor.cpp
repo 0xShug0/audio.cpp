@@ -837,7 +837,7 @@ private:
         ggml_backend_t backend = nullptr;
         ggml_context * ctx = nullptr;
         ggml_cgraph * graph = nullptr;
-        ggml_backend_buffer_t buffer = nullptr;
+        ggml_gallocr_t gallocr = nullptr;
         ggml_backend_graph_plan_t plan = nullptr;
         core::TensorValue plbert_hidden_tc = {};
         core::TensorValue valid_mask_tc = {};
@@ -965,6 +965,14 @@ private:
                     ggml_clamp(ctx, rounded.tensor, 1.0f, static_cast<float>(weights->max_dur)),
                     rounded.shape,
                     GGML_TYPE_F32);
+                ggml_set_output(durations_clamped.tensor);
+                if (durations_clamped.tensor->view_src != nullptr) {
+                    ggml_set_output(durations_clamped.tensor->view_src);
+                }
+                ggml_set_output(duration_features_tc.tensor);
+                if (duration_features_tc.tensor->view_src != nullptr) {
+                    ggml_set_output(duration_features_tc.tensor->view_src);
+                }
 
                 graph = ggml_new_graph_custom(ctx, graph_config.graph_node_capacity, false);
                 ggml_build_forward_expand(graph, durations_clamped.tensor);
@@ -972,11 +980,13 @@ private:
 
                 core::set_backend_threads(backend, n_threads);
                 const double alloc_ms = measure_ms([&]() {
-                    buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+                    gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+                    if (gallocr == nullptr ||
+                        !ggml_gallocr_reserve(gallocr, graph) ||
+                        !ggml_gallocr_alloc_graph(gallocr, graph)) {
+                        throw std::runtime_error("failed to allocate Kokoro predictor pre-tail graph tensors");
+                    }
                 });
-                if (!buffer) {
-                    throw std::runtime_error("failed to allocate Kokoro predictor pre-tail tensors");
-                }
                 if (engine::core::uses_host_graph_plan(backend)) {
                     plan = engine::core::create_backend_graph_plan_if_host(backend, graph);
                     if (!plan) {
@@ -1002,8 +1012,10 @@ private:
                     zero_state_upload_ms);
                 engine::debug::timing_log_scalar("kokoro.graph.build.predictor_duration_input_init_ms", input_init_ms);
             } catch (...) {
-                if (buffer) {
-                    ggml_backend_buffer_free(buffer);
+                core::release_backend_graph_resources(backend, graph);
+                if (gallocr) {
+                    ggml_gallocr_free(gallocr);
+                    gallocr = nullptr;
                 }
                 if (ctx) {
                     ggml_free(ctx);
@@ -1017,8 +1029,9 @@ private:
             if (plan) {
                 engine::core::free_backend_graph_plan(backend, plan);
             }
-            if (buffer) {
-                ggml_backend_buffer_free(buffer);
+            core::release_backend_graph_resources(backend, graph);
+            if (gallocr) {
+                ggml_gallocr_free(gallocr);
             }
             if (ctx) {
                 ggml_free(ctx);
@@ -1034,6 +1047,9 @@ private:
             std::vector<float> & duration_features_out) {
             if (valid_token_count <= 0 || valid_token_count > token_count) {
                 throw std::runtime_error("kokoro predictor duration valid token count exceeds prepared capacity");
+            }
+            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
+                throw std::runtime_error("failed to restore Kokoro predictor pre-tail graph allocation");
             }
             const double input_upload_ms = measure_ms([&]() {
                 core::write_tensor_f32(plbert_hidden_tc, plbert_hidden_tc_host);
@@ -1082,7 +1098,7 @@ private:
         ggml_backend_t backend = nullptr;
         ggml_context * ctx = nullptr;
         ggml_cgraph * graph = nullptr;
-        ggml_backend_buffer_t buffer = nullptr;
+        ggml_gallocr_t gallocr = nullptr;
         ggml_backend_graph_plan_t plan = nullptr;
         core::TensorValue input_ids = {};
         core::TensorValue valid_mask_tc = {};
@@ -1188,17 +1204,23 @@ private:
                     use_valid_mask ? &valid_mask_tc : nullptr,
                     zero_state_inputs).sequence;
                 text_features_ct = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(build_ctx, text_lstm_sequence);
+                ggml_set_output(text_features_ct.tensor);
+                if (text_features_ct.tensor->view_src != nullptr) {
+                    ggml_set_output(text_features_ct.tensor->view_src);
+                }
 
                 graph = ggml_new_graph_custom(ctx, graph_config.graph_node_capacity, false);
                 ggml_build_forward_expand(graph, text_features_ct.tensor);
 
                 core::set_backend_threads(backend, n_threads);
                 const double alloc_ms = measure_ms([&]() {
-                    buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+                    gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+                    if (gallocr == nullptr ||
+                        !ggml_gallocr_reserve(gallocr, graph) ||
+                        !ggml_gallocr_alloc_graph(gallocr, graph)) {
+                        throw std::runtime_error("failed to allocate Kokoro predictor text graph tensors");
+                    }
                 });
-                if (!buffer) {
-                    throw std::runtime_error("failed to allocate Kokoro predictor text tensors");
-                }
                 if (engine::core::uses_host_graph_plan(backend)) {
                     plan = engine::core::create_backend_graph_plan_if_host(backend, graph);
                     if (!plan) {
@@ -1221,8 +1243,10 @@ private:
                     zero_state_upload_ms);
                 engine::debug::timing_log_scalar("kokoro.graph.build.predictor_text_input_init_ms", input_init_ms);
             } catch (...) {
-                if (buffer) {
-                    ggml_backend_buffer_free(buffer);
+                core::release_backend_graph_resources(backend, graph);
+                if (gallocr) {
+                    ggml_gallocr_free(gallocr);
+                    gallocr = nullptr;
                 }
                 if (ctx) {
                     ggml_free(ctx);
@@ -1236,8 +1260,9 @@ private:
             if (plan) {
                 engine::core::free_backend_graph_plan(backend, plan);
             }
-            if (buffer) {
-                ggml_backend_buffer_free(buffer);
+            core::release_backend_graph_resources(backend, graph);
+            if (gallocr) {
+                ggml_gallocr_free(gallocr);
             }
             if (ctx) {
                 ggml_free(ctx);
@@ -1247,6 +1272,9 @@ private:
         std::vector<float> run(const std::vector<int32_t> & input_ids_host, int64_t valid_token_count) {
             if (valid_token_count <= 0 || valid_token_count > token_count) {
                 throw std::runtime_error("kokoro predictor text valid token count exceeds prepared capacity");
+            }
+            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
+                throw std::runtime_error("failed to restore Kokoro predictor text graph allocation");
             }
             const double input_upload_ms = measure_ms([&]() {
                 core::write_tensor_i32(input_ids, input_ids_host);
@@ -1395,7 +1423,7 @@ private:
         bool reverse = false;
         KokoroPredictorGraphConfig graph_config = {};
         ggml_context * ctx = nullptr;
-        ggml_backend_buffer_t buffer = nullptr;
+        ggml_gallocr_t gallocr = nullptr;
         ggml_backend_graph_plan_t plan = nullptr;
         ggml_cgraph * graph = nullptr;
         core::TensorValue input = {};
@@ -1462,15 +1490,29 @@ private:
                 sequence_out = outputs.sequence;
                 hidden_out = outputs.hidden;
                 cell_out = outputs.cell;
+                ggml_set_output(sequence_out.tensor);
+                if (sequence_out.tensor->view_src != nullptr) {
+                    ggml_set_output(sequence_out.tensor->view_src);
+                }
+                ggml_set_output(hidden_out.tensor);
+                if (hidden_out.tensor->view_src != nullptr) {
+                    ggml_set_output(hidden_out.tensor->view_src);
+                }
+                ggml_set_output(cell_out.tensor);
+                if (cell_out.tensor->view_src != nullptr) {
+                    ggml_set_output(cell_out.tensor->view_src);
+                }
                 graph = ggml_new_graph_custom(ctx, graph_config.graph_node_capacity, false);
                 ggml_build_forward_expand(graph, sequence_out.tensor);
                 ggml_build_forward_expand(graph, hidden_out.tensor);
                 ggml_build_forward_expand(graph, cell_out.tensor);
 
                 core::set_backend_threads(backend, n_threads);
-                buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
-                if (!buffer) {
-                    throw std::runtime_error("failed to allocate Kokoro tail shared LSTM block tensors");
+                gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+                if (gallocr == nullptr ||
+                    !ggml_gallocr_reserve(gallocr, graph) ||
+                    !ggml_gallocr_alloc_graph(gallocr, graph)) {
+                    throw std::runtime_error("failed to allocate Kokoro tail shared LSTM block graph tensors");
                 }
                 if (engine::core::uses_host_graph_plan(backend)) {
                     plan = engine::core::create_backend_graph_plan_if_host(backend, graph);
@@ -1490,9 +1532,10 @@ private:
                     engine::core::free_backend_graph_plan(backend, plan);
                     plan = nullptr;
                 }
-                if (buffer) {
-                    ggml_backend_buffer_free(buffer);
-                    buffer = nullptr;
+                core::release_backend_graph_resources(backend, graph);
+                if (gallocr) {
+                    ggml_gallocr_free(gallocr);
+                    gallocr = nullptr;
                 }
                 if (ctx) {
                     ggml_free(ctx);
@@ -1506,8 +1549,9 @@ private:
             if (plan) {
                 engine::core::free_backend_graph_plan(backend, plan);
             }
-            if (buffer) {
-                ggml_backend_buffer_free(buffer);
+            core::release_backend_graph_resources(backend, graph);
+            if (gallocr) {
+                ggml_gallocr_free(gallocr);
             }
             if (ctx) {
                 ggml_free(ctx);
@@ -1521,6 +1565,9 @@ private:
             const std::vector<float> & cell) {
             if (valid_frames <= 0 || valid_frames > kBlockFrames) {
                 throw std::runtime_error("kokoro tail shared LSTM block valid frame count is out of range");
+            }
+            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
+                throw std::runtime_error("failed to restore Kokoro tail shared LSTM graph allocation");
             }
             std::vector<float> mask(static_cast<size_t>(kBlockFrames), 0.0f);
             std::fill(mask.begin(), mask.begin() + valid_frames, 1.0f);
@@ -1660,7 +1707,7 @@ private:
         std::vector<TimeMaskInputs> time_masks;
         ggml_cgraph * graph = nullptr;
         ggml_backend_t backend = nullptr;
-        ggml_backend_buffer_t buffer = nullptr;
+        ggml_gallocr_t gallocr = nullptr;
         ggml_backend_graph_plan_t plan = nullptr;
 
         Session(
@@ -1786,9 +1833,11 @@ private:
                                 use_residual_conditioning = false;
                             }
                         }
-                        decoder_x_out = x;
+                        decoder_x_out = ggml_cont(ctx, x);
                     });
                     define_expand_ms = measure_ms([&]() {
+                        ggml_set_output(f0_out);
+                        ggml_set_output(decoder_x_out);
                         graph = ggml_new_graph_custom(ctx, graph_config.graph_node_capacity, false);
                         ggml_build_forward_expand(graph, f0_out);
                         ggml_build_forward_expand(graph, decoder_x_out);
@@ -1797,11 +1846,13 @@ private:
 
                 core::set_backend_threads(backend, n_threads);
                 const double alloc_ms = measure_ms([&]() {
-                    buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+                    gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+                    if (gallocr == nullptr ||
+                        !ggml_gallocr_reserve(gallocr, graph) ||
+                        !ggml_gallocr_alloc_graph(gallocr, graph)) {
+                        throw std::runtime_error("failed to allocate Kokoro predictor tail graph tensors");
+                    }
                 });
-                if (!buffer) {
-                    throw std::runtime_error("failed to allocate Kokoro predictor tail tensors");
-                }
                 if (engine::core::uses_host_graph_plan(backend)) {
                     plan = engine::core::create_backend_graph_plan_if_host(backend, graph);
                     if (!plan) {
@@ -1828,8 +1879,10 @@ private:
                 engine::debug::timing_log_scalar("kokoro.graph.build.predictor_tail_alloc_ms", alloc_ms);
                 engine::debug::timing_log_scalar("kokoro.graph.build.predictor_tail_materialize_ms", materialize_ms);
             } catch (...) {
-                if (buffer) {
-                    ggml_backend_buffer_free(buffer);
+                core::release_backend_graph_resources(backend, graph);
+                if (gallocr) {
+                    ggml_gallocr_free(gallocr);
+                    gallocr = nullptr;
                 }
                 if (ctx) {
                     ggml_free(ctx);
@@ -1843,8 +1896,9 @@ private:
             if (plan) {
                 engine::core::free_backend_graph_plan(backend, plan);
             }
-            if (buffer) {
-                ggml_backend_buffer_free(buffer);
+            core::release_backend_graph_resources(backend, graph);
+            if (gallocr) {
+                ggml_gallocr_free(gallocr);
             }
             if (ctx) {
                 ggml_free(ctx);
@@ -1866,6 +1920,9 @@ private:
             if (static_cast<int64_t>(shared_ct.size()) != weights->predictor.shared.hidden_size * 2 * expanded_encoder_rows ||
                 asr_rows != 512) {
                 throw std::runtime_error("kokoro predictor tail input shape changed");
+            }
+            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
+                throw std::runtime_error("failed to restore Kokoro predictor tail graph allocation");
             }
             const double upload_ms = measure_ms([&]() {
                 std::vector<float> padded_shared(static_cast<size_t>(weights->predictor.shared.hidden_size * 2 * frames), 0.0f);

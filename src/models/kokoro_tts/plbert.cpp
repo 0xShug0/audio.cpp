@@ -248,7 +248,7 @@ struct PlbertSession {
     ggml_tensor * token_type_ids = nullptr;
     ggml_tensor * output = nullptr;
     ggml_cgraph * graph = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
 
     PlbertSession(
         std::shared_ptr<const KokoroWeights> weights_in,
@@ -284,16 +284,22 @@ struct PlbertSession {
 
             ggml_tensor * hidden = plbert_last_hidden_state(ctx, ids, attn_mask, position_ids, token_type_ids, *weights);
             output = project_hidden ? linear_3d(ctx, hidden, weights->bert_encoder) : hidden;
+            ggml_set_output(output);
+            if (output->view_src != nullptr) {
+                ggml_set_output(output->view_src);
+            }
             graph = ggml_new_graph_custom(ctx, 4096, false);
             ggml_build_forward_expand(graph, output);
 
             core::set_backend_threads(backend, n_threads);
             const double alloc_ms = measure_ms([&]() {
-                buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+                gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+                if (gallocr == nullptr ||
+                    !ggml_gallocr_reserve(gallocr, graph) ||
+                    !ggml_gallocr_alloc_graph(gallocr, graph)) {
+                    throw std::runtime_error("failed to allocate Kokoro PL-BERT graph tensors");
+                }
             });
-            if (buffer == nullptr) {
-                throw std::runtime_error("failed to allocate Kokoro PL-BERT tensors");
-            }
             const double fixed_input_upload_ms = measure_ms([&]() {
                 std::vector<int32_t> positions(static_cast<size_t>(token_count), 0);
                 std::vector<int32_t> token_types(static_cast<size_t>(token_count), 0);
@@ -306,9 +312,10 @@ struct PlbertSession {
             engine::debug::timing_log_scalar("kokoro.graph.build.plbert_alloc_ms", alloc_ms);
             engine::debug::timing_log_scalar("kokoro.graph.build.plbert_fixed_input_upload_ms", fixed_input_upload_ms);
         } catch (...) {
-            if (buffer) {
-                ggml_backend_buffer_free(buffer);
-                buffer = nullptr;
+            core::release_backend_graph_resources(backend, graph);
+            if (gallocr) {
+                ggml_gallocr_free(gallocr);
+                gallocr = nullptr;
             }
             ggml_free(ctx);
             ctx = nullptr;
@@ -317,8 +324,9 @@ struct PlbertSession {
     }
 
     ~PlbertSession() {
-        if (buffer) {
-            ggml_backend_buffer_free(buffer);
+        core::release_backend_graph_resources(backend, graph);
+        if (gallocr) {
+            ggml_gallocr_free(gallocr);
         }
         if (ctx) {
             ggml_free(ctx);
@@ -351,6 +359,9 @@ struct PlbertSession {
         std::fill_n(valid_mask.begin(), input_ids.size(), 1);
         const std::vector<ggml_fp16_t> attn_mask_host = build_attention_mask(valid_mask, token_count, 1);
 
+        if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
+            throw std::runtime_error("failed to restore Kokoro PL-BERT graph allocation");
+        }
         ggml_backend_tensor_set(ids, padded_ids.data(), 0, ggml_nbytes(ids));
         ggml_backend_tensor_set(attn_mask, attn_mask_host.data(), 0, ggml_nbytes(attn_mask));
         core::set_backend_threads(backend, n_threads);

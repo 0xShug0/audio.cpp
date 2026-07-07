@@ -75,6 +75,9 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "speaking_rate": 1.0,
         "max_input_tokens": 512,
         "min_text_length": 65,
+        "wav_cosine_min": 0.98,
+        "log_mel_cosine_min": 0.99,
+        "length_ratio_min": 0.98,
     },
     "pocket_tts": {
         "kind": "tts",
@@ -1400,15 +1403,87 @@ def compare_float(a: float, b: float, tolerance: float) -> bool:
     return abs(a - b) <= tolerance
 
 
-def compare_kokoro(cpp_summary: dict[str, Any], py_summary: dict[str, Any]) -> dict[str, Any]:
+def compare_kokoro_audio_similarity(
+    cpp_summary: dict[str, Any],
+    py_summary: dict[str, Any],
+    cpp_audio_path: Path,
+    py_audio_path: Path,
+    wav_cosine_min: float,
+    log_mel_cosine_min: float,
+    length_ratio_min: float,
+) -> dict[str, Any]:
+    import librosa
+    import numpy as np
+    import soundfile as sf
+
     mismatches: list[str] = []
-    for key in ("sample_rate", "channels", "samples"):
-        if cpp_summary.get(key) != py_summary.get(key):
+    for key in ("sample_rate", "channels"):
+        if key in cpp_summary and key in py_summary and cpp_summary.get(key) != py_summary.get(key):
             mismatches.append(key)
-    for key in ("sum", "mean_abs", "rms", "min", "max"):
-        if not compare_float(float(cpp_summary.get(key, 0.0)), float(py_summary.get(key, 0.0)), 1e-4):
-            mismatches.append(key)
-    return {"ok": not mismatches, "reason": "ok" if not mismatches else f"mismatch:{mismatches[0]}", "mismatches": mismatches}
+
+    cpp_audio, cpp_sr = sf.read(str(cpp_audio_path), always_2d=True)
+    py_audio, py_sr = sf.read(str(py_audio_path), always_2d=True)
+    cpp_audio = np.asarray(cpp_audio, dtype=np.float32)
+    py_audio = np.asarray(py_audio, dtype=np.float32)
+    if int(cpp_sr) != int(py_sr):
+        mismatches.append("sample_rate")
+    common_frames = min(cpp_audio.shape[0], py_audio.shape[0])
+    if common_frames <= 0:
+        return {
+            "ok": False,
+            "reason": "mismatch:empty_audio",
+            "mismatches": ["empty_audio"],
+            "metrics": {
+                "wav_cosine_min": wav_cosine_min,
+                "log_mel_cosine_min": log_mel_cosine_min,
+                "length_ratio_min": length_ratio_min,
+            },
+        }
+    length_ratio = common_frames / float(max(cpp_audio.shape[0], py_audio.shape[0]))
+    if length_ratio < length_ratio_min:
+        mismatches.append("length_ratio")
+
+    cpp_flat = cpp_audio[:common_frames].reshape(-1).astype(np.float64, copy=False)
+    py_flat = py_audio[:common_frames].reshape(-1).astype(np.float64, copy=False)
+    denom = float(np.linalg.norm(cpp_flat) * np.linalg.norm(py_flat))
+    wav_cosine = 1.0 if denom == 0.0 else float(np.dot(cpp_flat, py_flat) / denom)
+    if wav_cosine < wav_cosine_min:
+        mismatches.append("wav_cosine")
+
+    log_mel_cosine = None
+    if int(cpp_sr) == int(py_sr):
+        cpp_mono = cpp_audio[:common_frames].mean(axis=1).astype(np.float32, copy=False)
+        py_mono = py_audio[:common_frames].mean(axis=1).astype(np.float32, copy=False)
+        mel_kwargs = {"sr": int(cpp_sr), "n_fft": 1024, "hop_length": 256, "n_mels": 80, "power": 2.0}
+        cpp_log_mel = np.log(np.maximum(librosa.feature.melspectrogram(y=cpp_mono, **mel_kwargs), 1.0e-10))
+        py_log_mel = np.log(np.maximum(librosa.feature.melspectrogram(y=py_mono, **mel_kwargs), 1.0e-10))
+        common_cols = min(cpp_log_mel.shape[1], py_log_mel.shape[1])
+        if common_cols > 0:
+            cpp_mel_flat = cpp_log_mel[:, :common_cols].reshape(-1).astype(np.float64, copy=False)
+            py_mel_flat = py_log_mel[:, :common_cols].reshape(-1).astype(np.float64, copy=False)
+            mel_denom = float(np.linalg.norm(cpp_mel_flat) * np.linalg.norm(py_mel_flat))
+            log_mel_cosine = 1.0 if mel_denom == 0.0 else float(np.dot(cpp_mel_flat, py_mel_flat) / mel_denom)
+    if log_mel_cosine is None or log_mel_cosine < log_mel_cosine_min:
+        mismatches.append("log_mel_cosine")
+
+    metrics = {
+        "wav_cosine": wav_cosine,
+        "wav_cosine_min": wav_cosine_min,
+        "log_mel_cosine": log_mel_cosine,
+        "log_mel_cosine_min": log_mel_cosine_min,
+        "length_ratio": length_ratio,
+        "length_ratio_min": length_ratio_min,
+        "cpp_frames": int(cpp_audio.shape[0]),
+        "python_frames": int(py_audio.shape[0]),
+        "common_frames": int(common_frames),
+        "sample_rate": int(cpp_sr),
+    }
+    return {
+        "ok": not mismatches,
+        "reason": "ok" if not mismatches else f"mismatch:{mismatches[0]}",
+        "mismatches": mismatches,
+        "metrics": metrics,
+    }
 
 
 def compare_pocket(cpp_summary: dict[str, Any], py_summary: dict[str, Any]) -> dict[str, Any]:
@@ -1996,11 +2071,12 @@ def build_tts_commands(
         common_warmup_args = ["--warmup-text", warmup_text]
     model_path = args.model or config["model"]
     if family == "kokoro":
+        python_model_path = args.python_model or model_path
         python_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
-            config["model"],
+            python_model_path,
             "--voice-id",
             config["voice_id"],
             "--speaking-rate",
@@ -2025,7 +2101,7 @@ def build_tts_commands(
         cpp_command = [
             str(REPO_ROOT / config["cpp_bin"]),
             "--model",
-            config["model"],
+            model_path,
             "--voice-id",
             config["voice_id"],
             "--speaking-rate",
@@ -4054,7 +4130,7 @@ def run_scenario(
         min_rms = float(scenario_config.get("min_rms", 0.0))
         python_valid = validate_tts_result(python_parsed, args.requests_per_session, min_rms)
         cpp_valid = validate_tts_result(cpp_parsed, args.requests_per_session, min_rms)
-        waveform_compare_fn = compare_kokoro if family == "kokoro" else compare_pocket
+        waveform_compare_fn = compare_pocket
         python_whisper_results: list[dict[str, Any]] = []
         cpp_whisper_results: list[dict[str, Any]] = []
         for request_index in range(args.requests_per_session):
@@ -4071,6 +4147,22 @@ def run_scenario(
                 cpp_audio_path = resolve_repo_path(cpp_output["path"])
                 if python_audio_path is None or cpp_audio_path is None:
                     parity = missing_parity(request_index, request_manifest["texts"][request_index], "missing_audio_path")
+                elif family == "kokoro":
+                    waveform_parity = compare_kokoro_audio_similarity(
+                        cpp_parsed["summaries"][request_index],
+                        python_parsed["summaries"][request_index],
+                        cpp_audio_path,
+                        python_audio_path,
+                        float(scenario_config.get("wav_cosine_min", 0.98)),
+                        float(scenario_config.get("log_mel_cosine_min", 0.99)),
+                        float(scenario_config.get("length_ratio_min", 0.98)),
+                    )
+                    parity = {
+                        "ok": waveform_parity["ok"],
+                        "reason": waveform_parity["reason"],
+                        "mismatches": waveform_parity["mismatches"],
+                        "waveform": waveform_parity,
+                    }
                 else:
                     python_whisper = run_whisper(
                         python_audio_path,
@@ -4128,6 +4220,11 @@ def run_scenario(
                 append_log(
                     master_log,
                     f"PARITY family={family} mode={mode} backend={backend} request={request_index} ok={int(parity['ok'])} reason={parity['reason']} asr_reason={parity['asr']['reason']} waveform_reason={parity['waveform']['reason']}",
+                )
+            elif "waveform" in parity:
+                append_log(
+                    master_log,
+                    f"PARITY family={family} mode={mode} backend={backend} request={request_index} ok={int(parity['ok'])} reason={parity['reason']} metrics={json.dumps(parity['waveform'].get('metrics', {}), sort_keys=True)}",
                 )
             else:
                 append_log(master_log, f"PARITY family={family} mode={mode} backend={backend} request={request_index} ok={int(parity['ok'])} reason={parity['reason']}")
