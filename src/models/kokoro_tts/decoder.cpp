@@ -591,9 +591,6 @@ private:
             const std::vector<float> & noise,
             const std::vector<float> & voiced,
             std::vector<float> & out) {
-            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
-                throw std::runtime_error("failed to restore Kokoro source graph allocation");
-            }
             const double upload_ms = measure_ms([&]() {
                 ggml_backend_tensor_set(phase_in, phase.data(), 0, ggml_nbytes(phase_in));
                 ggml_backend_tensor_set(noise_in, noise.data(), 0, ggml_nbytes(noise_in));
@@ -1072,9 +1069,6 @@ struct GeneratorGraphSession {
             throw std::runtime_error("Kokoro generator conditioning shape does not match exact graph capacity");
         }
 
-        if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
-            throw std::runtime_error("failed to restore Kokoro generator graph allocation");
-        }
         double decoder_upload_ms = 0.0;
         if (decoder_x_tensor != nullptr) {
             decoder_upload_ms = measure_ms([&]() {

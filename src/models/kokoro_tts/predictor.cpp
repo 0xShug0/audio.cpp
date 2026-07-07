@@ -1048,9 +1048,6 @@ private:
             if (valid_token_count <= 0 || valid_token_count > token_count) {
                 throw std::runtime_error("kokoro predictor duration valid token count exceeds prepared capacity");
             }
-            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
-                throw std::runtime_error("failed to restore Kokoro predictor pre-tail graph allocation");
-            }
             const double input_upload_ms = measure_ms([&]() {
                 core::write_tensor_f32(plbert_hidden_tc, plbert_hidden_tc_host);
                 if (use_valid_mask) {
@@ -1272,9 +1269,6 @@ private:
         std::vector<float> run(const std::vector<int32_t> & input_ids_host, int64_t valid_token_count) {
             if (valid_token_count <= 0 || valid_token_count > token_count) {
                 throw std::runtime_error("kokoro predictor text valid token count exceeds prepared capacity");
-            }
-            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
-                throw std::runtime_error("failed to restore Kokoro predictor text graph allocation");
             }
             const double input_upload_ms = measure_ms([&]() {
                 core::write_tensor_i32(input_ids, input_ids_host);
@@ -1566,9 +1560,6 @@ private:
             if (valid_frames <= 0 || valid_frames > kBlockFrames) {
                 throw std::runtime_error("kokoro tail shared LSTM block valid frame count is out of range");
             }
-            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
-                throw std::runtime_error("failed to restore Kokoro tail shared LSTM graph allocation");
-            }
             std::vector<float> mask(static_cast<size_t>(kBlockFrames), 0.0f);
             std::fill(mask.begin(), mask.begin() + valid_frames, 1.0f);
             core::write_tensor_f32(input, block);
@@ -1836,8 +1827,12 @@ private:
                         decoder_x_out = ggml_cont(ctx, x);
                     });
                     define_expand_ms = measure_ms([&]() {
-                        ggml_set_output(f0_out);
-                        ggml_set_output(decoder_x_out);
+                        for (ggml_tensor * output_tensor : {f0_out, decoder_x_out}) {
+                            ggml_set_output(output_tensor);
+                            for (ggml_tensor * backing = output_tensor->view_src; backing != nullptr; backing = backing->view_src) {
+                                ggml_set_output(backing);
+                            }
+                        }
                         graph = ggml_new_graph_custom(ctx, graph_config.graph_node_capacity, false);
                         ggml_build_forward_expand(graph, f0_out);
                         ggml_build_forward_expand(graph, decoder_x_out);
@@ -1920,9 +1915,6 @@ private:
             if (static_cast<int64_t>(shared_ct.size()) != weights->predictor.shared.hidden_size * 2 * expanded_encoder_rows ||
                 asr_rows != 512) {
                 throw std::runtime_error("kokoro predictor tail input shape changed");
-            }
-            if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
-                throw std::runtime_error("failed to restore Kokoro predictor tail graph allocation");
             }
             const double upload_ms = measure_ms([&]() {
                 std::vector<float> padded_shared(static_cast<size_t>(weights->predictor.shared.hidden_size * 2 * frames), 0.0f);

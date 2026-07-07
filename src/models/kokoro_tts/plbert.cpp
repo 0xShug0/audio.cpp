@@ -249,6 +249,8 @@ struct PlbertSession {
     ggml_tensor * output = nullptr;
     ggml_cgraph * graph = nullptr;
     ggml_gallocr_t gallocr = nullptr;
+    std::vector<int32_t> position_ids_host;
+    std::vector<int32_t> token_type_ids_host;
 
     PlbertSession(
         std::shared_ptr<const KokoroWeights> weights_in,
@@ -300,17 +302,12 @@ struct PlbertSession {
                     throw std::runtime_error("failed to allocate Kokoro PL-BERT graph tensors");
                 }
             });
-            const double fixed_input_upload_ms = measure_ms([&]() {
-                std::vector<int32_t> positions(static_cast<size_t>(token_count), 0);
-                std::vector<int32_t> token_types(static_cast<size_t>(token_count), 0);
-                for (int64_t t = 0; t < token_count; ++t) {
-                    positions[static_cast<size_t>(t)] = static_cast<int32_t>(t);
-                }
-                ggml_backend_tensor_set(position_ids, positions.data(), 0, ggml_nbytes(position_ids));
-                ggml_backend_tensor_set(token_type_ids, token_types.data(), 0, ggml_nbytes(token_type_ids));
-            });
+            position_ids_host.assign(static_cast<size_t>(token_count), 0);
+            token_type_ids_host.assign(static_cast<size_t>(token_count), 0);
+            for (int64_t t = 0; t < token_count; ++t) {
+                position_ids_host[static_cast<size_t>(t)] = static_cast<int32_t>(t);
+            }
             engine::debug::timing_log_scalar("kokoro.graph.build.plbert_alloc_ms", alloc_ms);
-            engine::debug::timing_log_scalar("kokoro.graph.build.plbert_fixed_input_upload_ms", fixed_input_upload_ms);
         } catch (...) {
             core::release_backend_graph_resources(backend, graph);
             if (gallocr) {
@@ -364,6 +361,8 @@ struct PlbertSession {
         }
         ggml_backend_tensor_set(ids, padded_ids.data(), 0, ggml_nbytes(ids));
         ggml_backend_tensor_set(attn_mask, attn_mask_host.data(), 0, ggml_nbytes(attn_mask));
+        ggml_backend_tensor_set(position_ids, position_ids_host.data(), 0, ggml_nbytes(position_ids));
+        ggml_backend_tensor_set(token_type_ids, token_type_ids_host.data(), 0, ggml_nbytes(token_type_ids));
         core::set_backend_threads(backend, n_threads);
         const ggml_status status = engine::core::compute_backend_graph(backend, graph);
         if (status != GGML_STATUS_SUCCESS) {
