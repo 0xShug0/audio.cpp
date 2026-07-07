@@ -645,7 +645,7 @@ public:
         x = modules::LinearModule({kGptDim, 256, true}).build(ctx, x, weights_->gpt_layer.linear0);
         x = modules::LinearModule({256, 128, true}).build(ctx, x, weights_->gpt_layer.linear1);
         x = modules::LinearModule({128, kContentDim, true}).build(ctx, x, weights_->gpt_layer.linear2);
-        output_ = x.tensor;
+        output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(8192, frames_ * 128)), false);
         ggml_build_forward_expand(graph_, output_);
@@ -781,7 +781,7 @@ public:
         x = core::ensure_backend_addressable_layout(ctx, x);
         auto mask = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, output_frames_, kHidden}), GGML_TYPE_F32);
         auto out = modules::MulModule{}.build(ctx, x, mask);
-        output_ = out.tensor;
+        output_ = core::ensure_backend_addressable_layout(ctx, out).tensor;
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(32768, output_frames_ * 512)), false);
         ggml_build_forward_expand(graph_, output_);
@@ -923,7 +923,7 @@ public:
             core::wrap_tensor(timestep_, core::TensorShape::from_dims({batch_}), GGML_TYPE_F32),
             core::wrap_tensor(positions_, core::TensorShape::from_dims({frames_}), GGML_TYPE_I32),
             weights_->cfm);
-        output_ = output.tensor;
+        output_ = core::ensure_backend_addressable_layout(ctx, output).tensor;
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(131072, frames_ * 4096)), false);
         ggml_build_forward_expand(graph_, output_);

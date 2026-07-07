@@ -374,12 +374,25 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 Wav2Vec2-BERT graph context");
         }
+        ggml_init_params input_params{64ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 Wav2Vec2-BERT input context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.wav2vec2bert", execution_.backend_type()};
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.wav2vec2bert.inputs",
+            execution_.backend_type()};
 
-        features_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames_, kFeatureDim})).tensor;
-        keep_mask_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({frames_})).tensor;
-        attention_mask_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kHeads, frames_, frames_})).tensor;
-        distance_ids_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({frames_, frames_})).tensor;
+        features_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames_, kFeatureDim})).tensor;
+        keep_mask_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({frames_})).tensor;
+        attention_mask_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kHeads, frames_, frames_})).tensor;
+        distance_ids_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({frames_, frames_})).tensor;
+        ggml_set_input(features_);
+        ggml_set_input(keep_mask_);
+        ggml_set_input(attention_mask_);
+        ggml_set_input(distance_ids_);
 
         auto x = core::wrap_tensor(features_, core::TensorShape::from_dims({1, frames_, kFeatureDim}), GGML_TYPE_F32);
         auto keep = core::wrap_tensor(keep_mask_, core::TensorShape::from_dims({frames_}), GGML_TYPE_F32);
@@ -396,7 +409,7 @@ public:
         const auto std = broadcast_vector(ctx, weights_->semantic_std, x);
         x = core::wrap_tensor(ggml_sub(ctx.ggml, x.tensor, mean.tensor), x.shape, GGML_TYPE_F32);
         x = core::wrap_tensor(ggml_div(ctx.ggml, x.tensor, std.tensor), x.shape, GGML_TYPE_F32);
-        output_ = x.tensor;
+        output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
 
         const int64_t graph_nodes = std::max<int64_t>(
@@ -404,8 +417,15 @@ public:
             kSemanticOutputHiddenStateIndex * (frames_ * kHeads * 8 + frames_ * 16 + 1024) + 8192);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(graph_nodes), false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 Wav2Vec2-BERT input buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 Wav2Vec2-BERT graph");
         }
 
@@ -418,10 +438,7 @@ public:
     }
 
     ~Graph() {
-        engine::core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     int64_t frames() const noexcept {
@@ -472,14 +489,29 @@ public:
         debug::timing_log_scalar(
             "index_tts2.wav2vec2bert.output_read_ms",
             engine::debug::elapsed_ms(timing_start, Clock::now()));
-        engine::core::release_backend_graph_resources(execution_.backend(), graph_);
         return out;
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     engine::core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2Wav2Vec2BertWeights> weights_;
     int64_t frames_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * features_ = nullptr;
     ggml_tensor * keep_mask_ = nullptr;
@@ -487,7 +519,8 @@ private:
     ggml_tensor * distance_ids_ = nullptr;
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
 std::shared_ptr<const IndexTTS2Wav2Vec2BertWeights> load_index_tts2_wav2vec2bert_weights(

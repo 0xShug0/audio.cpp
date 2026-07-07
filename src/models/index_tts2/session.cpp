@@ -299,6 +299,28 @@ void IndexTTS2Session::prepare(const runtime::SessionPreparationRequest & reques
         if (text.empty()) {
             throw std::runtime_error("IndexTTS2 request requires text_input or text option");
         }
+        IndexTTS2GenerationOptions generation;
+        if (const auto value = runtime::parse_int_option(request.options, {"max_tokens"})) {
+            if (*value <= 0) {
+                throw std::runtime_error("IndexTTS2 max_tokens must be positive");
+            }
+            generation.max_mel_tokens = *value;
+        }
+        if (const auto value = runtime::parse_int_option(request.options, {"num_beams"})) {
+            if (*value <= 0) {
+                throw std::runtime_error("IndexTTS2 num_beams must be positive");
+            }
+            generation.num_beams = *value;
+        }
+        const auto text_encoding = tokenizer_.encode_for_inference(
+            text,
+            IndexTTS2Request{}.max_text_tokens_per_segment);
+        for (const auto & segment : text_encoding.segment_token_ids) {
+            gpt_->prepare_generation(
+                static_cast<int64_t>(segment.size()),
+                generation.max_mel_tokens,
+                generation.num_beams);
+        }
     }
     mark_prepared();
 }
@@ -332,11 +354,6 @@ const IndexTTS2Session::SpeakerState & IndexTTS2Session::resolve_speaker_state(c
         reference_content,
         reference_codes.frames,
         prepared.mel.frames);
-    if (mem_saver_) {
-        semantic_encoder_->release_graph();
-        semantic_codec_->release_graphs();
-        s2mel_->release_pre_cfm_graphs();
-    }
 
     SpeakerState state;
     state.identity = identity;
@@ -348,6 +365,11 @@ const IndexTTS2Session::SpeakerState & IndexTTS2Session::resolve_speaker_state(c
         prepared.campplus_fbank.dims);
     state.prompt_condition = std::move(prompt_condition);
     speaker_cache_ = std::move(state);
+    if (mem_saver_) {
+        semantic_encoder_->release_graph();
+        semantic_codec_->release_graphs();
+        s2mel_->release_pre_cfm_graphs();
+    }
     debug::timing_log_scalar("index_tts2.speaker_state_ms", engine::debug::elapsed_ms(start));
     return *speaker_cache_;
 }
@@ -371,10 +393,10 @@ const IndexTTS2Session::EmotionState & IndexTTS2Session::resolve_emotion_state(c
     EmotionState state;
     state.identity = identity;
     state.semantic = semantic_encoder_->encode(prepared.semantic_features);
+    emotion_cache_ = std::move(state);
     if (mem_saver_) {
         semantic_encoder_->release_graph();
     }
-    emotion_cache_ = std::move(state);
     debug::timing_log_scalar("index_tts2.emotion_state_ms", engine::debug::elapsed_ms(start));
     return *emotion_cache_;
 }
@@ -519,10 +541,6 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
     const int64_t code_frames = static_cast<int64_t>(generated.codes.size());
     const int64_t target_frames = static_cast<int64_t>(static_cast<float>(code_frames) * 1.72F);
     const int64_t total_frames = speaker.prompt_condition.frames + target_frames;
-    if (mem_saver_) {
-        gpt_->release_generation_graphs();
-    }
-
     const auto forward_start = Clock::now();
     auto latent = gpt_->forward_latent(
         generated.speech_conditioning_latent,

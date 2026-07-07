@@ -5,6 +5,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/relative_attention.h"
 #include "engine/framework/modules/lookup_modules.h"
+#include "engine/framework/modules/optimizations/fast_kv_modules.h"
 #include "engine/framework/modules/optimizations/fast_projection_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -657,23 +658,9 @@ Gpt2LayerOutput gpt2_layer_cached_tail(
     k = reshape_heads(ctx, k, kGptHeads, kGptHeadDim);
     v = reshape_heads(ctx, v, kGptHeads, kGptHeadDim);
 
-    const int64_t batch = input.shape.dims[0];
-    const int64_t cache_steps = cache_key.shape.dims[1];
-    const int64_t row_elems = kGptHeads * kGptHeadDim;
-    auto flat_key_cache = core::reshape_tensor(ctx, cache_key, core::TensorShape::from_dims({batch * cache_steps, row_elems}));
-    auto flat_value_cache = core::reshape_tensor(ctx, cache_value, core::TensorShape::from_dims({batch * cache_steps, row_elems}));
-    auto flat_key_row = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, k), core::TensorShape::from_dims({batch, row_elems}));
-    auto flat_value_row = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, v), core::TensorShape::from_dims({batch, row_elems}));
-    auto updated_key = core::wrap_tensor(
-        ggml_set_rows(ctx.ggml, flat_key_cache.tensor, flat_key_row.tensor, cache_slots.tensor),
-        flat_key_cache.shape,
-        GGML_TYPE_F32);
-    auto updated_value = core::wrap_tensor(
-        ggml_set_rows(ctx.ggml, flat_value_cache.tensor, flat_value_row.tensor, cache_slots.tensor),
-        flat_value_cache.shape,
-        GGML_TYPE_F32);
-    updated_key = core::reshape_tensor(ctx, updated_key, cache_key.shape);
-    updated_value = core::reshape_tensor(ctx, updated_value, cache_value.shape);
+    const modules::FastKVSetRowsModule set_rows;
+    auto updated_key = set_rows.build(ctx, cache_key, k, cache_slots);
+    auto updated_value = set_rows.build(ctx, cache_value, v, cache_slots);
 
     auto context = gpt_attention_from_heads(
         ctx,
@@ -995,8 +982,18 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 GPT conditioning graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 GPT conditioning input context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), emotion_ ? "index_tts2.gpt.emo_condition" : "index_tts2.gpt.spk_condition", execution_.backend_type()};
-        semantic_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames_, kSemanticHidden})).tensor;
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            emotion_ ? "index_tts2.gpt.emo_condition.inputs" : "index_tts2.gpt.spk_condition.inputs",
+            execution_.backend_type()};
+        semantic_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames_, kSemanticHidden})).tensor;
+        ggml_set_input(semantic_);
         auto input = core::wrap_tensor(semantic_, core::TensorShape::from_dims({1, frames_, kSemanticHidden}), GGML_TYPE_F32);
         core::TensorValue out;
         if (emotion_) {
@@ -1024,15 +1021,22 @@ public:
                 512,
                 3412);
         }
-        output_ = out.tensor;
+        output_ = core::ensure_backend_addressable_layout(ctx, out).tensor;
         output_frames_ = out.shape.dims[1];
         output_dims_ = out.shape.dims[2];
         ggml_set_output(output_);
 
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(65536, frames_ * 4096 + 8192)), false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 GPT conditioning input buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 GPT conditioning graph");
         }
         debug::timing_log_scalar(
@@ -1044,10 +1048,7 @@ public:
     }
 
     ~ConditioningGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     int64_t frames() const noexcept {
@@ -1092,17 +1093,34 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2GptWeights> weights_;
     int64_t frames_ = 0;
     bool emotion_ = false;
     int64_t output_frames_ = 0;
     int64_t output_dims_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * semantic_ = nullptr;
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
 	};
 
 class IndexTTS2GptRuntime::EmotionVectorGraph {
@@ -1122,27 +1140,41 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 GPT emotion vector graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 GPT emotion vector input context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.gpt.emotion_vector", execution_.backend_type()};
-        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kSemanticHidden})).tensor;
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.gpt.emotion_vector.inputs",
+            execution_.backend_type()};
+        input_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kSemanticHidden})).tensor;
+        ggml_set_input(input_);
         auto x = core::wrap_tensor(input_, core::TensorShape::from_dims({1, kSemanticHidden}), GGML_TYPE_F32);
         x = modules::LinearModule({kSemanticHidden, kModelDim, true, GGML_PREC_F32}).build(ctx, x, weights_->emotion_vec_projection);
         x = modules::LinearModule({kModelDim, kModelDim, true, GGML_PREC_F32}).build(ctx, x, weights_->emotion_layer);
-        output_ = x.tensor;
+        output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 8192, false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 GPT emotion vector input buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 GPT emotion vector graph");
         }
         debug::timing_log_scalar("index_tts2.gpt.emotion_vector.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
     }
 
     ~EmotionVectorGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     std::vector<float> run(const IndexTTS2GptLatent & emotion_conditioning) {
@@ -1164,13 +1196,30 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2GptWeights> weights_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
 struct GptPrefillOutput {
@@ -1200,10 +1249,31 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 GPT prefill graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 GPT prefill input context");
+        }
+        ggml_init_params output_params{16ull * 1024ull * 1024ull, nullptr, true};
+        output_ctx_.reset(ggml_init(output_params));
+        if (output_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 GPT prefill output context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.gpt.prefill", execution_.backend_type()};
-        conds_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kConditionTokens, kModelDim})).tensor;
-        text_ids_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, text_steps_);
-        start_mel_id_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.gpt.prefill.inputs",
+            execution_.backend_type()};
+        core::ModuleBuildContext output_ctx{
+            output_ctx_.get(),
+            "index_tts2.gpt.prefill.outputs",
+            execution_.backend_type()};
+        conds_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kConditionTokens, kModelDim})).tensor;
+        text_ids_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, text_steps_);
+        start_mel_id_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, 1);
+        ggml_set_input(conds_);
+        ggml_set_input(text_ids_);
+        ggml_set_input(start_mel_id_);
         auto conds = core::wrap_tensor(conds_, core::TensorShape::from_dims({1, kConditionTokens, kModelDim}), GGML_TYPE_F32);
         auto text_ids = core::wrap_tensor(text_ids_, core::TensorShape::from_dims({text_steps_}), GGML_TYPE_I32);
         auto text = modules::EmbeddingModule({kTextTokens, kModelDim}).build(ctx, text_ids, weights_->text_embedding);
@@ -1217,23 +1287,46 @@ public:
         mel = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, mel), core::TensorShape::from_dims({1, 1, kModelDim}));
         auto x = modules::ConcatModule({1}).build(ctx, conds, text);
         x = modules::ConcatModule({1}).build(ctx, x, mel);
+        graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(65536, prompt_steps_ * 8192)), false);
         for (const auto & layer : weights_->gpt_layers) {
             auto out = gpt2_layer_full(ctx, x, layer);
             x = out.output;
-            keys_.push_back(out.key.tensor);
-            values_.push_back(out.value.tensor);
+            auto key = core::ensure_backend_addressable_layout(ctx, out.key);
+            auto value = core::ensure_backend_addressable_layout(ctx, out.value);
+            auto * key_output = core::make_tensor(output_ctx, GGML_TYPE_F32, key.shape).tensor;
+            auto * value_output = core::make_tensor(output_ctx, GGML_TYPE_F32, value.shape).tensor;
+            keys_.push_back(key_output);
+            values_.push_back(value_output);
+            ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), key.tensor, key_output));
+            ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), value.tensor, value_output));
         }
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->gpt_final_norm);
         x = modules::SliceModule({1, prompt_steps_ - 1, 1}).build(ctx, x);
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->final_norm);
-        latent_ = x.tensor;
-        logits_ = modules::LinearModule({kModelDim, kMelCodes, true, GGML_PREC_F32}).build(ctx, x, weights_->mel_head).tensor;
+        auto latent = core::ensure_backend_addressable_layout(ctx, x);
+        auto logits = core::ensure_backend_addressable_layout(
+            ctx,
+            modules::LinearModule({kModelDim, kMelCodes, true, GGML_PREC_F32}).build(ctx, x, weights_->mel_head));
+        latent_ = core::make_tensor(output_ctx, GGML_TYPE_F32, latent.shape).tensor;
+        logits_ = core::make_tensor(output_ctx, GGML_TYPE_F32, logits.shape).tensor;
         ggml_set_output(latent_);
         ggml_set_output(logits_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(65536, prompt_steps_ * 8192)), false);
-        ggml_build_forward_expand(graph_, logits_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), latent.tensor, latent_));
+        ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), logits.tensor, logits_));
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 GPT prefill input buffer");
+        }
+        output_buffer_ = ggml_backend_alloc_ctx_tensors(output_ctx_.get(), execution_.backend());
+        if (output_buffer_ == nullptr) {
+            clear_graph();
+            throw std::runtime_error("failed to allocate IndexTTS2 GPT prefill output buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 GPT prefill graph");
         }
         const int32_t start_mel = kStartMelToken;
@@ -1243,10 +1336,7 @@ public:
     }
 
     ~PrefillGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     bool matches(int64_t text_tokens) const noexcept {
@@ -1299,11 +1389,32 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+        if (output_buffer_ != nullptr) {
+            ggml_backend_buffer_free(output_buffer_);
+            output_buffer_ = nullptr;
+        }
+    }
+
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2GptWeights> weights_;
     int64_t text_tokens_ = 0;
     int64_t text_steps_ = 0;
     int64_t prompt_steps_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> output_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * conds_ = nullptr;
     ggml_tensor * text_ids_ = nullptr;
@@ -1313,7 +1424,9 @@ private:
     std::vector<ggml_tensor *> keys_;
     std::vector<ggml_tensor *> values_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
+    ggml_backend_buffer_t output_buffer_ = nullptr;
 };
 
 class IndexTTS2GptRuntime::ForwardGraph {
@@ -1339,10 +1452,22 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 GPT forward graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 GPT forward input context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.gpt.forward", execution_.backend_type()};
-        conds_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kConditionTokens, kModelDim})).tensor;
-        text_ids_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, text_steps_);
-        mel_ids_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, mel_steps_);
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.gpt.forward.inputs",
+            execution_.backend_type()};
+        conds_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kConditionTokens, kModelDim})).tensor;
+        text_ids_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, text_steps_);
+        mel_ids_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, mel_steps_);
+        ggml_set_input(conds_);
+        ggml_set_input(text_ids_);
+        ggml_set_input(mel_ids_);
 
         auto conds = core::wrap_tensor(conds_, core::TensorShape::from_dims({1, kConditionTokens, kModelDim}), GGML_TYPE_F32);
         auto text_ids = core::wrap_tensor(text_ids_, core::TensorShape::from_dims({text_steps_}), GGML_TYPE_I32);
@@ -1366,7 +1491,7 @@ public:
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->gpt_final_norm);
         x = modules::SliceModule({1, kConditionTokens + text_steps_, code_count_}).build(ctx, x);
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->final_norm);
-        output_ = x.tensor;
+        output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
 
         graph_ = ggml_new_graph_custom(
@@ -1374,8 +1499,15 @@ public:
             static_cast<size_t>(std::max<int64_t>(65536, (kConditionTokens + text_steps_ + mel_steps_) * 8192)),
             false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 GPT forward input buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 GPT forward graph");
         }
         debug::timing_log_scalar("index_tts2.gpt.forward.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
@@ -1384,10 +1516,7 @@ public:
     }
 
     ~ForwardGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     bool matches(int64_t text_tokens, int64_t code_count) const noexcept {
@@ -1441,19 +1570,36 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2GptWeights> weights_;
     int64_t text_tokens_ = 0;
     int64_t code_count_ = 0;
     int64_t text_steps_ = 0;
     int64_t mel_steps_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * conds_ = nullptr;
     ggml_tensor * text_ids_ = nullptr;
     ggml_tensor * mel_ids_ = nullptr;
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
 class IndexTTS2GptRuntime::DecodeGraph {
@@ -1486,11 +1632,24 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 GPT decode graph context");
         }
+        ggml_init_params state_params{256ull * 1024ull * 1024ull, nullptr, true};
+        state_ctx_.reset(ggml_init(state_params));
+        if (state_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 GPT decode state context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.gpt.decode", execution_.backend_type()};
-        token_ids_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, beam_count_);
-        mel_positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, beam_count_);
-        cache_slots_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, beam_count_);
-        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, beam_count_);
+        core::ModuleBuildContext state_ctx{
+            state_ctx_.get(),
+            "index_tts2.gpt.decode.state",
+            execution_.backend_type()};
+        token_ids_ = ggml_new_tensor_1d(state_ctx_.get(), GGML_TYPE_I32, beam_count_);
+        mel_positions_ = ggml_new_tensor_1d(state_ctx_.get(), GGML_TYPE_I32, beam_count_);
+        cache_slots_ = ggml_new_tensor_1d(state_ctx_.get(), GGML_TYPE_I32, beam_count_);
+        attention_mask_ = ggml_new_tensor_4d(state_ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, beam_count_);
+        ggml_set_input(token_ids_);
+        ggml_set_input(mel_positions_);
+        ggml_set_input(cache_slots_);
+        ggml_set_input(attention_mask_);
         for (int64_t bank = 0; bank < 2; ++bank) {
             auto & keys = bank_keys_[static_cast<size_t>(bank)];
             auto & values = bank_values_[static_cast<size_t>(bank)];
@@ -1498,11 +1657,11 @@ public:
             values.reserve(weights_->gpt_layers.size());
             for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
                 keys.push_back(core::make_tensor(
-                    ctx,
+                    state_ctx,
                     GGML_TYPE_F32,
                     core::TensorShape::from_dims({beam_count_, cache_steps_, kGptHeads, kGptHeadDim})));
                 values.push_back(core::make_tensor(
-                    ctx,
+                    state_ctx,
                     GGML_TYPE_F32,
                     core::TensorShape::from_dims({beam_count_, cache_steps_, kGptHeads, kGptHeadDim})));
             }
@@ -1510,8 +1669,19 @@ public:
         build_prefix_views();
         build_bank_graph(ctx, 0);
         build_bank_graph(ctx, 1);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        state_buffer_ = ggml_backend_alloc_ctx_tensors(state_ctx_.get(), execution_.backend());
+        if (state_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 GPT decode state buffer");
+        }
+        debug::trace_log_scalar(
+            "index_tts2.gpt.decode.state_buffer_mib",
+            static_cast<double>(ggml_backend_buffer_get_size(state_buffer_)) / (1024.0 * 1024.0));
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, bank_graphs_[0].graph) ||
+            !ggml_gallocr_reserve(gallocr_, bank_graphs_[1].graph) ||
+            !ggml_gallocr_alloc_graph(gallocr_, bank_graphs_[0].graph)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 GPT decode graph");
         }
         attention_mask_values_.assign(static_cast<size_t>(beam_count_ * cache_steps_), ggml_fp32_to_fp16(-INFINITY));
@@ -1524,11 +1694,23 @@ public:
     }
 
     ~DecodeGraph() {
+        clear_graph();
+    }
+
+    void clear_graph() {
         for (auto & graph : bank_graphs_) {
-            core::release_backend_graph_resources(execution_.backend(), graph.graph);
+            if (graph.graph != nullptr) {
+                core::release_backend_graph_resources(execution_.backend(), graph.graph);
+                graph.graph = nullptr;
+            }
         }
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (state_buffer_ != nullptr) {
+            ggml_backend_buffer_free(state_buffer_);
+            state_buffer_ = nullptr;
         }
     }
 
@@ -1613,8 +1795,6 @@ public:
             for (int64_t step = 0; step <= valid_steps; ++step) {
                 row_values[static_cast<size_t>(step)] = visible;
             }
-        }
-        for (int64_t row = 0; row < beam_count_; ++row) {
             cache_slot_values_[static_cast<size_t>(row)] = static_cast<int32_t>(row * cache_steps_ + valid_steps);
         }
         ggml_backend_tensor_set(token_ids_, token_values_.data(), 0, token_values_.size() * sizeof(int32_t));
@@ -1623,6 +1803,9 @@ public:
         ggml_backend_tensor_set(attention_mask_, attention_mask_values_.data(), 0, attention_mask_values_.size() * sizeof(ggml_fp16_t));
 
         auto & graph = bank_graphs_[static_cast<size_t>(child_bank)];
+        if (!ggml_gallocr_alloc_graph(gallocr_, graph.graph)) {
+            throw std::runtime_error("failed to allocate IndexTTS2 GPT decode bank graph");
+        }
         core::set_backend_threads(execution_.backend(), execution_.config().threads);
         const ggml_status status = core::compute_backend_graph(execution_.backend(), graph.graph);
         ggml_backend_synchronize(execution_.backend());
@@ -1668,8 +1851,8 @@ private:
                 const int64_t elems = steps * kGptHeads * kGptHeadDim;
                 const size_t byte_offset = static_cast<size_t>(row * cache_steps_ * kGptHeads * kGptHeadDim) * sizeof(float);
                 for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
-                    key_layers.push_back(ggml_view_1d(ctx_.get(), bank_keys_[static_cast<size_t>(bank)][layer].tensor, elems, byte_offset));
-                    value_layers.push_back(ggml_view_1d(ctx_.get(), bank_values_[static_cast<size_t>(bank)][layer].tensor, elems, byte_offset));
+                    key_layers.push_back(ggml_view_1d(state_ctx_.get(), bank_keys_[static_cast<size_t>(bank)][layer].tensor, elems, byte_offset));
+                    value_layers.push_back(ggml_view_1d(state_ctx_.get(), bank_values_[static_cast<size_t>(bank)][layer].tensor, elems, byte_offset));
                 }
             }
         }
@@ -1691,6 +1874,8 @@ private:
     }
 
     void build_bank_graph(core::ModuleBuildContext & ctx, int64_t bank) {
+        BankGraph graph;
+        graph.graph = ggml_new_graph_custom(ctx_.get(), 65536, false);
         auto token = core::wrap_tensor(token_ids_, core::TensorShape::from_dims({beam_count_}), GGML_TYPE_I32);
         auto x = modules::EmbeddingModule({kMelCodes, kModelDim}).build(ctx, token, weights_->mel_embedding);
         auto pos = core::wrap_tensor(mel_positions_, core::TensorShape::from_dims({beam_count_}), GGML_TYPE_I32);
@@ -1712,9 +1897,7 @@ private:
         }
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->gpt_final_norm);
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->final_norm);
-        BankGraph graph;
         graph.logits = modules::LinearModule({kModelDim, kMelCodes, true, GGML_PREC_F32}).build(ctx, x, weights_->mel_head).tensor;
-        graph.graph = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_set_output(graph.logits);
         ggml_build_forward_expand(graph.graph, graph.logits);
         bank_graphs_[static_cast<size_t>(bank)] = graph;
@@ -1725,6 +1908,7 @@ private:
     int64_t cache_steps_ = 0;
     int64_t beam_count_ = 0;
     int64_t beam_slots_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ids_ = nullptr;
     ggml_tensor * mel_positions_ = nullptr;
@@ -1739,7 +1923,8 @@ private:
     std::vector<int32_t> token_values_;
     std::vector<int32_t> position_values_;
     std::vector<int32_t> cache_slot_values_;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t state_buffer_ = nullptr;
 };
 
 IndexTTS2GptRuntime::IndexTTS2GptRuntime(

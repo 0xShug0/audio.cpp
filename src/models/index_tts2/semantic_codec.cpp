@@ -279,9 +279,19 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 semantic codec quantize graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 semantic codec quantize input context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.semantic_codec.quantize", execution_.backend_type()};
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.semantic_codec.quantize.inputs",
+            execution_.backend_type()};
 
-        semantic_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames_, kHidden})).tensor;
+        semantic_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames_, kHidden})).tensor;
+        ggml_set_input(semantic_);
         auto x = core::wrap_tensor(semantic_, core::TensorShape::from_dims({1, frames_, kHidden}), GGML_TYPE_F32);
         x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
         x = vocos_backbone(ctx, x, weights_->encoder_backbone);
@@ -292,18 +302,26 @@ public:
         auto logits = modules::LinearModule({kCodebookDim, kCodebookSize, false})
                           .build(ctx, latents_btd, {weights_->normalized_codebook, std::nullopt});
         codes_ = argmax_last_dim(ctx, logits).tensor;
-        embedding_ = embed_codes_bct(
+        auto embedding = embed_codes_bct(
             ctx,
             core::wrap_tensor(codes_, core::TensorShape::from_dims({1, frames_}), GGML_TYPE_I32),
-            *weights_).tensor;
+            *weights_);
+        embedding_ = core::ensure_backend_addressable_layout(ctx, embedding).tensor;
         ggml_set_output(codes_);
         ggml_set_output(embedding_);
 
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(65536, frames_ * 2048 + 4096)), false);
         ggml_build_forward_expand(graph_, codes_);
         ggml_build_forward_expand(graph_, embedding_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 semantic codec quantize input buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 semantic codec quantize graph");
         }
         debug::timing_log_scalar(
@@ -313,10 +331,7 @@ public:
     }
 
     ~QuantizeGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     int64_t frames() const noexcept {
@@ -366,15 +381,32 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2SemanticCodecWeights> weights_;
     int64_t frames_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * semantic_ = nullptr;
     ggml_tensor * codes_ = nullptr;
     ggml_tensor * embedding_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
 class IndexTTS2SemanticCodecRuntime::CodesGraph {
@@ -400,18 +432,36 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 semantic codec code graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 semantic codec code input context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.semantic_codec.codes", execution_.backend_type()};
-        codes_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, frames_})).tensor;
-        embedding_ = embed_codes_bct(
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.semantic_codec.codes.inputs",
+            execution_.backend_type()};
+        codes_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, frames_})).tensor;
+        ggml_set_input(codes_);
+        auto embedding = embed_codes_bct(
             ctx,
             core::wrap_tensor(codes_, core::TensorShape::from_dims({1, frames_}), GGML_TYPE_I32),
-            *weights_).tensor;
+            *weights_);
+        embedding_ = core::ensure_backend_addressable_layout(ctx, embedding).tensor;
         ggml_set_output(embedding_);
 
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(4096, frames_ * 64 + 1024)), false);
         ggml_build_forward_expand(graph_, embedding_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 semantic codec code input buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 semantic codec code graph");
         }
         debug::timing_log_scalar(
@@ -421,10 +471,7 @@ public:
     }
 
     ~CodesGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     int64_t frames() const noexcept {
@@ -470,14 +517,31 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2SemanticCodecWeights> weights_;
     int64_t frames_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * codes_ = nullptr;
     ggml_tensor * embedding_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
 std::shared_ptr<const IndexTTS2SemanticCodecWeights> load_index_tts2_semantic_codec_weights(

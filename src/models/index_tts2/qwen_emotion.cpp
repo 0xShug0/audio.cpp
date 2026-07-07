@@ -8,6 +8,8 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/kv_cache.h"
 
+#include <ggml-alloc.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -262,10 +264,31 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 Qwen emotion prefill graph context");
         }
+        ggml_init_params input_params{64ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 Qwen emotion prefill input context");
+        }
+        ggml_init_params output_params{16ull * 1024ull * 1024ull, nullptr, true};
+        output_ctx_.reset(ggml_init(output_params));
+        if (output_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 Qwen emotion prefill output context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.qwen_emotion.prefill", execution_.backend_type()};
-        token_ids_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, prompt_steps_})).tensor;
-        positions_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({prompt_steps_})).tensor;
-        mask_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, prompt_steps_, prompt_steps_})).tensor;
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.qwen_emotion.prefill.inputs",
+            execution_.backend_type()};
+        core::ModuleBuildContext output_ctx{
+            output_ctx_.get(),
+            "index_tts2.qwen_emotion.prefill.outputs",
+            execution_.backend_type()};
+        token_ids_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, prompt_steps_})).tensor;
+        positions_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({prompt_steps_})).tensor;
+        mask_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, prompt_steps_, prompt_steps_})).tensor;
+        ggml_set_input(token_ids_);
+        ggml_set_input(positions_);
+        ggml_set_input(mask_);
         auto x = modules::EmbeddingModule({kVocab, kHidden}).build(
             ctx,
             core::wrap_tensor(token_ids_, core::TensorShape::from_dims({1, prompt_steps_}), GGML_TYPE_I32),
@@ -277,11 +300,17 @@ public:
             weights_->decoder,
             std::nullopt,
             core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, prompt_steps_, prompt_steps_}), GGML_TYPE_F32));
+        graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(131072, prompt_steps_ * 4096)), false);
         for (const auto & layer : outputs.state.layers) {
-            keys_.push_back(layer.key->tensor);
-            values_.push_back(layer.value->tensor);
+            auto key = core::ensure_backend_addressable_layout(ctx, *layer.key);
+            auto value = core::ensure_backend_addressable_layout(ctx, *layer.value);
+            auto * key_output = core::make_tensor(output_ctx, GGML_TYPE_F32, key.shape).tensor;
+            auto * value_output = core::make_tensor(output_ctx, GGML_TYPE_F32, value.shape).tensor;
+            keys_.push_back(key_output);
+            values_.push_back(value_output);
+            ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), key.tensor, key_output));
+            ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), value.tensor, value_output));
         }
-        build_layer_source_views();
         auto last = modules::SliceModule({1, prompt_steps_ - 1, 1}).build(ctx, outputs.output);
         last = modules::RMSNormModule({kHidden, kRmsEps, true, false}).build(ctx, last, weights_->final_norm);
         auto logits = modules::LinearModule({kHidden, kVocab, false}).build(ctx, last, {weights_->token_embedding, std::nullopt});
@@ -289,12 +318,24 @@ public:
             ctx,
             core::ensure_backend_addressable_layout(ctx, logits),
             core::TensorShape::from_dims({1, kVocab}));
-        next_token_ = ggml_argmax(ctx.ggml, flat_logits.tensor);
+        auto * next_token_source = ggml_argmax(ctx.ggml, flat_logits.tensor);
+        next_token_ = core::make_tensor(output_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1})).tensor;
         ggml_set_output(next_token_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(131072, prompt_steps_ * 4096)), false);
-        ggml_build_forward_expand(graph_, next_token_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), next_token_source, next_token_));
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 Qwen emotion prefill input buffer");
+        }
+        output_buffer_ = ggml_backend_alloc_ctx_tensors(output_ctx_.get(), execution_.backend());
+        if (output_buffer_ == nullptr) {
+            clear_graph();
+            throw std::runtime_error("failed to allocate IndexTTS2 Qwen emotion prefill output buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 Qwen emotion prefill graph");
         }
         std::vector<int32_t> positions(static_cast<size_t>(prompt_steps_));
@@ -309,10 +350,7 @@ public:
     }
 
     ~PrefillGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     bool matches(const IndexTTS2QwenEmotionWeights & weights, ggml_backend_t backend, int64_t prompt_steps) const noexcept {
@@ -351,30 +389,41 @@ public:
         return keys_.size();
     }
 
-    ggml_tensor * key_layer_source(size_t layer) const {
-        return key_layer_sources_.at(layer);
-    }
-
-    ggml_tensor * value_layer_source(size_t layer) const {
-        return value_layer_sources_.at(layer);
+    void copy_layer_state_to(size_t layer, ggml_tensor * key_destination, ggml_tensor * value_destination) const {
+        const int64_t values = prompt_steps_ * kKvHeads * kHeadDim;
+        std::vector<float> key(static_cast<size_t>(values));
+        std::vector<float> value(static_cast<size_t>(values));
+        ggml_backend_tensor_get(keys_.at(layer), key.data(), 0, key.size() * sizeof(float));
+        ggml_backend_tensor_get(values_.at(layer), value.data(), 0, value.size() * sizeof(float));
+        ggml_backend_tensor_set(key_destination, key.data(), 0, key.size() * sizeof(float));
+        ggml_backend_tensor_set(value_destination, value.data(), 0, value.size() * sizeof(float));
     }
 
 private:
-    void build_layer_source_views() {
-        const int64_t step_elems = kKvHeads * kHeadDim;
-        key_layer_sources_.reserve(keys_.size());
-        value_layer_sources_.reserve(values_.size());
-        for (size_t layer = 0; layer < keys_.size(); ++layer) {
-            key_layer_sources_.push_back(
-                ggml_view_1d(ctx_.get(), keys_[layer], prompt_steps_ * step_elems, 0));
-            value_layer_sources_.push_back(
-                ggml_view_1d(ctx_.get(), values_[layer], prompt_steps_ * step_elems, 0));
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+        if (output_buffer_ != nullptr) {
+            ggml_backend_buffer_free(output_buffer_);
+            output_buffer_ = nullptr;
         }
     }
 
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2QwenEmotionWeights> weights_;
     int64_t prompt_steps_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> output_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ids_ = nullptr;
     ggml_tensor * positions_ = nullptr;
@@ -382,10 +431,10 @@ private:
     ggml_tensor * next_token_ = nullptr;
     std::vector<ggml_tensor *> keys_;
     std::vector<ggml_tensor *> values_;
-    std::vector<ggml_tensor *> key_layer_sources_;
-    std::vector<ggml_tensor *> value_layer_sources_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
+    ggml_backend_buffer_t output_buffer_ = nullptr;
 };
 
 class IndexTTS2QwenEmotionRuntime::DecodeGraph {
@@ -407,10 +456,31 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2 Qwen emotion decode graph context");
         }
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
+        input_ctx_.reset(ggml_init(input_params));
+        if (input_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 Qwen emotion decode input context");
+        }
+        ggml_init_params state_params{128ull * 1024ull * 1024ull, nullptr, true};
+        state_ctx_.reset(ggml_init(state_params));
+        if (state_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2 Qwen emotion decode state context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2.qwen_emotion.decode", execution_.backend_type()};
-        token_id_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, 1})).tensor;
-        position_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1})).tensor;
-        mask_ = core::make_tensor(ctx, GGML_TYPE_F16, core::TensorShape::from_dims({1, 1, 1, cache_steps_ + 1})).tensor;
+        core::ModuleBuildContext input_ctx{
+            input_ctx_.get(),
+            "index_tts2.qwen_emotion.decode.inputs",
+            execution_.backend_type()};
+        core::ModuleBuildContext state_ctx{
+            state_ctx_.get(),
+            "index_tts2.qwen_emotion.decode.state",
+            execution_.backend_type()};
+        token_id_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, 1})).tensor;
+        position_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1})).tensor;
+        mask_ = core::make_tensor(input_ctx, GGML_TYPE_F16, core::TensorShape::from_dims({1, 1, 1, cache_steps_ + 1})).tensor;
+        ggml_set_input(token_id_);
+        ggml_set_input(position_);
+        ggml_set_input(mask_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 131072, false);
         std::vector<core::TensorValue> cache_keys;
         std::vector<core::TensorValue> cache_values;
@@ -422,11 +492,11 @@ public:
         const auto mask = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, 1, cache_steps_ + 1}), GGML_TYPE_F16);
         for (const auto & layer : weights_->decoder.layers) {
             cache_keys.push_back(core::make_tensor(
-                ctx,
+                state_ctx,
                 GGML_TYPE_F32,
                 core::TensorShape::from_dims({1, cache_steps_ + 1, kKvHeads, kHeadDim})));
             cache_values.push_back(core::make_tensor(
-                ctx,
+                state_ctx,
                 GGML_TYPE_F32,
                 core::TensorShape::from_dims({1, cache_steps_ + 1, kKvHeads, kHeadDim})));
             auto out = modules::QwenDecoderLayerModule({
@@ -449,8 +519,6 @@ public:
                 cache_values.back(),
                 mask);
             x = out.output;
-            key_sources_.push_back(ggml_view_1d(ctx_.get(), out.key.tensor, kKvHeads * kHeadDim, 0));
-            value_sources_.push_back(ggml_view_1d(ctx_.get(), out.value.tensor, kKvHeads * kHeadDim, 0));
         }
         (void)cfg;
         kv_cache_ = engine::runtime::TransformerKVCache(cache_steps_ + 1, kKvHeads * kHeadDim, std::move(cache_keys), std::move(cache_values));
@@ -464,8 +532,19 @@ public:
         next_token_ = ggml_argmax(ctx.ggml, flat_logits.tensor);
         ggml_set_output(next_token_);
         ggml_build_forward_expand(graph_, next_token_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_.backend());
-        if (buffer_ == nullptr) {
+        input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
+        if (input_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 Qwen emotion decode input buffer");
+        }
+        state_buffer_ = ggml_backend_alloc_ctx_tensors(state_ctx_.get(), execution_.backend());
+        if (state_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate IndexTTS2 Qwen emotion decode state buffer");
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            clear_graph();
             throw std::runtime_error("failed to allocate IndexTTS2 Qwen emotion decode graph");
         }
         mask_values_.assign(static_cast<size_t>(cache_steps_ + 1), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
@@ -474,10 +553,7 @@ public:
     }
 
     ~DecodeGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        clear_graph();
     }
 
     bool can_run(const IndexTTS2QwenEmotionWeights & weights, ggml_backend_t backend, int64_t required_steps) const noexcept {
@@ -491,8 +567,7 @@ public:
         kv_cache_.retain_prefix(0);
         const size_t prefix = static_cast<size_t>(prefill.prompt_steps());
         for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
-            ggml_backend_tensor_copy(prefill.key_layer_source(layer), key_prefix_destinations_[prefix][layer]);
-            ggml_backend_tensor_copy(prefill.value_layer_source(layer), value_prefix_destinations_[prefix][layer]);
+            prefill.copy_layer_state_to(layer, key_prefix_destinations_[prefix][layer], value_prefix_destinations_[prefix][layer]);
         }
         kv_cache_.advance_after_direct_append(prefill.prompt_steps());
     }
@@ -530,8 +605,36 @@ public:
     }
 
 private:
+    void clear_graph() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        if (state_buffer_ != nullptr) {
+            ggml_backend_buffer_free(state_buffer_);
+            state_buffer_ = nullptr;
+        }
+        if (input_buffer_ != nullptr) {
+            ggml_backend_buffer_free(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+    }
+
     void build_transfer_views() {
         const int64_t step_elems = kKvHeads * kHeadDim;
+        const size_t scratch_offset = static_cast<size_t>(cache_steps_ * step_elems) * sizeof(float);
+        key_sources_.clear();
+        value_sources_.clear();
+        key_sources_.reserve(weights_->decoder.layers.size());
+        value_sources_.reserve(weights_->decoder.layers.size());
+        for (size_t layer = 0; layer < weights_->decoder.layers.size(); ++layer) {
+            key_sources_.push_back(ggml_view_1d(state_ctx_.get(), kv_cache_.key_tensor(layer).tensor, step_elems, scratch_offset));
+            value_sources_.push_back(ggml_view_1d(state_ctx_.get(), kv_cache_.value_tensor(layer).tensor, step_elems, scratch_offset));
+        }
         key_destinations_.assign(static_cast<size_t>(cache_steps_), {});
         value_destinations_.assign(static_cast<size_t>(cache_steps_), {});
         key_prefix_destinations_.assign(static_cast<size_t>(cache_steps_ + 1), {});
@@ -543,8 +646,8 @@ private:
             key_slot.reserve(key_sources_.size());
             value_slot.reserve(value_sources_.size());
             for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
-                key_slot.push_back(ggml_view_1d(ctx_.get(), kv_cache_.key_tensor(layer).tensor, step_elems, byte_offset));
-                value_slot.push_back(ggml_view_1d(ctx_.get(), kv_cache_.value_tensor(layer).tensor, step_elems, byte_offset));
+                key_slot.push_back(ggml_view_1d(state_ctx_.get(), kv_cache_.key_tensor(layer).tensor, step_elems, byte_offset));
+                value_slot.push_back(ggml_view_1d(state_ctx_.get(), kv_cache_.value_tensor(layer).tensor, step_elems, byte_offset));
             }
         }
         for (int64_t prefix = 1; prefix <= cache_steps_; ++prefix) {
@@ -554,12 +657,12 @@ private:
             value_prefix.reserve(value_sources_.size());
             for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
                 key_prefix.push_back(ggml_view_1d(
-                    ctx_.get(),
+                    state_ctx_.get(),
                     kv_cache_.key_tensor(layer).tensor,
                     prefix * step_elems,
                     0));
                 value_prefix.push_back(ggml_view_1d(
-                    ctx_.get(),
+                    state_ctx_.get(),
                     kv_cache_.value_tensor(layer).tensor,
                     prefix * step_elems,
                     0));
@@ -570,6 +673,8 @@ private:
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2QwenEmotionWeights> weights_;
     int64_t cache_steps_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_id_ = nullptr;
     ggml_tensor * position_ = nullptr;
@@ -584,7 +689,9 @@ private:
     std::vector<ggml_fp16_t> mask_values_;
     engine::runtime::TransformerKVCache kv_cache_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_backend_buffer_t input_buffer_ = nullptr;
+    ggml_backend_buffer_t state_buffer_ = nullptr;
 };
 
 IndexTTS2QwenEmotionRuntime::IndexTTS2QwenEmotionRuntime(
