@@ -24,6 +24,13 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -505,7 +512,35 @@ void run_streaming(
 
 }  // namespace
 
-int main(int argc, char ** argv) {
+#ifdef _WIN32
+namespace {
+
+std::string wide_arg_to_utf8(const wchar_t * arg) {
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, arg, -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 0) {
+        throw std::runtime_error("failed to convert Windows command-line argument to UTF-8");
+    }
+    std::vector<char> buffer(static_cast<size_t>(size), '\0');
+    const int written = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, arg, -1, buffer.data(), size, nullptr, nullptr);
+    if (written != size) {
+        throw std::runtime_error("failed to convert Windows command-line argument to UTF-8");
+    }
+    return std::string(buffer.data());
+}
+
+std::vector<std::string> wide_args_to_utf8(int argc, wchar_t ** wargv) {
+    std::vector<std::string> args;
+    args.reserve(static_cast<size_t>(argc));
+    for (int i = 0; i < argc; ++i) {
+        args.push_back(wide_arg_to_utf8(wargv[i]));
+    }
+    return args;
+}
+
+}  // namespace
+#endif
+
+int audiocpp_cli_main(int argc, char ** argv) {
     try {
         using namespace minitts::cli;
 
@@ -764,3 +799,25 @@ int main(int argc, char ** argv) {
         return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t ** wargv) {
+    try {
+        auto utf8_args = wide_args_to_utf8(argc, wargv);
+        std::vector<char *> argv;
+        argv.reserve(utf8_args.size() + 1);
+        for (auto & arg : utf8_args) {
+            argv.push_back(arg.data());
+        }
+        argv.push_back(nullptr);
+        return audiocpp_cli_main(argc, argv.data());
+    } catch (const std::exception & ex) {
+        std::cerr << "audiocpp_cli failed: " << ex.what() << "\n";
+        return 1;
+    }
+}
+#else
+int main(int argc, char ** argv) {
+    return audiocpp_cli_main(argc, argv);
+}
+#endif
