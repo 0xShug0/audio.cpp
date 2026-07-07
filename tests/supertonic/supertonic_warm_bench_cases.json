@@ -1,4 +1,18 @@
 {
+  "short_len500": {
+    "requests": [
+      {
+        "id": "len500",
+        "length": 500,
+        "text": "Supertonic short CPU request validates the single request warmbench path with clear speech and stable timing. Supertonic short CPU request validates the single request warmbench path with clear speech and stable timing. Supertonic short CPU request validates the single request warmbench path with clear speech and stable timing. Supertonic short CPU request validates the single request warmbench path with clear speech and stable timing. Supertonic short CPU request validates the single request warmbench path.",
+        "language": "en",
+        "voice": "M1",
+        "total_steps": 10,
+        "speed": 1.05,
+        "seed": 1234
+      }
+    ]
+  },
   "long_session_100_500_1024_500": {
     "warmup": {
       "id": "warmup",

@@ -695,10 +695,12 @@ public:
     SupertonicNetwork(
         core::ModuleBuildContext & ctx,
         const SupertonicBackendWeights & weights,
-        core::DeferredTensorWriter & tensor_writer)
+        core::DeferredTensorWriter & tensor_writer,
+        bool cpu_faithful_vector_convnext = false)
         : ctx_(ctx),
           weights_(weights),
           tensor_writer_(tensor_writer),
+          cpu_faithful_vector_convnext_(cpu_faithful_vector_convnext),
           ggml_(ctx.ggml) {}
 
     core::TensorValue duration_predictor(
@@ -831,19 +833,19 @@ private:
         const core::TensorValue & total_step) {
         auto time = time_embedding(current_step, total_step);
         auto latent_pair = modules::ConcatModule({0}).build(ctx_, noisy_latent, noisy_latent);
-        auto x = conv1(latent_pair, "vector_estimator.vector_estimator.tts.ttl.vector_field.proj_in.net.weight", "");
+        auto x = vector_conv1(latent_pair, "vector_estimator.vector_estimator.tts.ttl.vector_field.proj_in.net.weight", "");
         x = mul(x, state.mask_pair);
         for (int group = 0; group < 4; ++group) {
             const int base = group * 6;
-            x = convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(base), {1, 2, 4, 8});
+            x = vector_estimator_convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(base), {1, 2, 4, 8}, state.mask_pair);
             x = add_time_condition(x, time, base + 1);
-            x = convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(base + 2), {1});
+            x = vector_estimator_convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(base + 2), {1}, state.mask_pair);
             x = text_memory_block(x, state.text_pair, state.text_mask_pair, state.mask_pair, base + 3);
-            x = convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(base + 4), {1});
+            x = vector_estimator_convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(base + 4), {1}, state.mask_pair);
             x = style_memory_block(x, state.style_key_pair, state.style_value_pair, state.mask_pair, base + 5);
         }
-        x = convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.last_convnext", {1, 1, 1, 1});
-        x = conv1(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.proj_out.net.weight", "");
+        x = vector_estimator_convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.last_convnext", {1, 1, 1, 1}, state.mask_pair);
+        x = vector_conv1(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.proj_out.net.weight", "");
         x = mul(x, state.mask_pair);
         auto conditional = modules::SliceModule({0, 0, 1}).build(ctx_, x);
         auto unconditional = modules::SliceModule({0, 1, 1}).build(ctx_, x);
@@ -921,6 +923,22 @@ private:
 
     core::TensorValue conv1(const core::TensorValue & value, const std::string & weight_name, const std::string & bias_name) {
         return pointwise_conv1d(ctx_, value, weight(weight_name), bias_name.empty() ? std::optional<core::TensorValue>() : std::optional<core::TensorValue>(weight(bias_name)));
+    }
+
+    core::TensorValue vector_conv1(const core::TensorValue & value, const std::string & weight_name, const std::string & bias_name) {
+        const auto & wt = weight(weight_name);
+        std::optional<core::TensorValue> bias;
+        if (!bias_name.empty()) {
+            bias = weight(bias_name);
+        }
+        if (!cpu_faithful_vector_convnext_) {
+            return pointwise_conv1d(ctx_, value, wt, bias);
+        }
+        auto value_btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, value);
+        value_btc = core::ensure_backend_addressable_layout(ctx_, value_btc);
+        const auto wt_2d = core::reshape_tensor(ctx_, wt, core::TensorShape::from_dims({wt.shape.dims[0], wt.shape.dims[1]}));
+        auto projected = modules::LinearModule({value.shape.dims[1], wt.shape.dims[0], bias.has_value()}).build(ctx_, value_btc, {wt_2d, bias});
+        return modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, projected);
     }
 
     core::TensorValue text_cross_attention(
@@ -1160,6 +1178,32 @@ private:
         return x;
     }
 
+    core::TensorValue vector_estimator_convnext(
+        core::TensorValue x,
+        const std::string & prefix,
+        const std::vector<int> & dilations,
+        const core::TensorValue & mask) {
+        if (!cpu_faithful_vector_convnext_) {
+            return convnext(x, prefix, dilations);
+        }
+        for (size_t i = 0; i < dilations.size(); ++i) {
+            const std::string p = prefix + ".convnext." + std::to_string(i);
+            auto residual = mul(x, mask);
+            auto y = edge_pad_time(ctx_, residual, static_cast<int64_t>(dilations[i]) * 2, static_cast<int64_t>(dilations[i]) * 2);
+            y = depthwise_conv1d(ctx_, y, weight(p + ".dwconv.weight"), weight(p + ".dwconv.bias"), dilations[i]);
+            y = mul(y, mask);
+            y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
+            y = modules::LayerNormModule({x.shape.dims[1], 1.0e-6F, true, true}).build(ctx_, y, {weight(p + ".norm.norm.weight"), weight(p + ".norm.norm.bias")});
+            y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
+            y = vector_conv1(y, p + ".pwconv1.weight", p + ".pwconv1.bias");
+            y = gelu(y);
+            y = vector_conv1(y, p + ".pwconv2.weight", p + ".pwconv2.bias");
+            y = mul(y, weight(p + ".gamma"));
+            x = add(residual, y);
+        }
+        return x;
+    }
+
     core::TensorValue self_encoder(
         core::TensorValue x,
         const core::TensorValue & mask,
@@ -1307,6 +1351,7 @@ private:
     core::ModuleBuildContext & ctx_;
     const SupertonicBackendWeights & weights_;
     core::DeferredTensorWriter & tensor_writer_;
+    bool cpu_faithful_vector_convnext_ = false;
     ggml_context * ggml_ = nullptr;
     std::unordered_map<int64_t, core::TensorValue> rotary_positions_;
     std::unordered_map<int64_t, core::TensorValue> relative_position_masks_;
@@ -1796,7 +1841,7 @@ private:
         auto mask_tensor = core::make_tensor(ctx, GGML_TYPE_F32, shape_from_vector(mask_shape));
         auto start_step_tensor = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1}));
         auto total_step_tensor = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1}));
-        SupertonicNetwork network(ctx, *weights_, tensor_writer);
+        SupertonicNetwork network(ctx, *weights_, tensor_writer, backend_type_ == core::BackendType::Cpu);
         auto output = network.vector_estimator_steps(
             latent_tensor,
             text_tensor,
