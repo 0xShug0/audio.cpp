@@ -59,10 +59,10 @@ Examples for Docker (CUDA and CPU) are available in `examples/docker`.
 
 Generate speech via audio.cpp cli running in Docker.
 
-See [EXAMPLE.md](examples/docker/cli/EXAMPLE.md) in `examples/docker/cli`.
+See [EXAMPLE.md](../examples/docker/cli/EXAMPLE.md) in `examples/docker/cli`.
 
 ### Pocket TTS via Docker Compose
 
 Generate speech via audio.cpp server running in Docker (Compose).
 
-See [EXAMPLE.md](examples/docker/server/EXAMPLE.md) in `examples/docker/server`.
+See [EXAMPLE.md](../examples/docker/server/EXAMPLE.md) in `examples/docker/server`.
