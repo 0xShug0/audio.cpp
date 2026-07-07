@@ -112,11 +112,19 @@ std::vector<float> add_latent_to_semantic(
     if (semantic.frames != latent.frames || semantic.dims != latent.dims || semantic.dims != kSemanticDim) {
         throw std::runtime_error("IndexTTS2 semantic embedding and GPT latent shape mismatch");
     }
-    auto content = channel_first_to_time_major(semantic.embedding_channel_first, semantic.dims, semantic.frames);
-    for (size_t i = 0; i < content.size(); ++i) {
-        content[i] += latent.values[i];
+    if (static_cast<int64_t>(semantic.embedding_channel_first.size()) != semantic.dims * semantic.frames ||
+        static_cast<int64_t>(latent.values.size()) != latent.frames * latent.dims) {
+        throw std::runtime_error("IndexTTS2 semantic embedding and GPT latent value count mismatch");
     }
-    return content;
+    std::vector<float> out(static_cast<size_t>(semantic.frames * semantic.dims));
+    for (int64_t frame = 0; frame < semantic.frames; ++frame) {
+        for (int64_t dim = 0; dim < semantic.dims; ++dim) {
+            out[static_cast<size_t>(frame * semantic.dims + dim)] =
+                semantic.embedding_channel_first[static_cast<size_t>(dim * semantic.frames + frame)] +
+                latent.values[static_cast<size_t>(frame * latent.dims + dim)];
+        }
+    }
+    return out;
 }
 
 std::vector<float> concat_conditions(

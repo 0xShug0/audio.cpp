@@ -87,7 +87,7 @@ struct IndexTTS2GptWeights {
     engine::core::TensorValue mel_pos_embedding;
     engine::modules::LinearWeights emotion_vec_projection;
     engine::modules::LinearWeights emotion_layer;
-    engine::core::TensorValue speed_embedding;
+    std::vector<float> speed_embedding_values;
     std::vector<IndexTTS2Gpt2LayerWeights> gpt_layers;
     engine::modules::NormWeights gpt_final_norm;
     engine::modules::NormWeights final_norm;

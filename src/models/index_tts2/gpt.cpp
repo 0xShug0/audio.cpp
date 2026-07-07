@@ -16,6 +16,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <optional>
 #include <limits>
 #include <numeric>
@@ -674,31 +675,94 @@ Gpt2LayerOutput gpt2_layer_cached_tail(
     return {modules::AddModule{}.build(ctx, x, gpt_mlp(ctx, mlp_in, weights)), k, v};
 }
 
-void apply_repetition_penalty(std::vector<float> & logits, const std::vector<int32_t> & history, float penalty) {
+struct TopPItem {
+    size_t index = 0;
+    float score = 0.0F;
+    float weight = 0.0F;
+};
+
+struct SampleScore {
+    size_t flat_index = 0;
+    float score = 0.0F;
+};
+
+struct RankedSample {
+    size_t score_index = 0;
+    size_t flat_index = 0;
+    double rank = 0.0;
+};
+
+struct IndexTTS2SamplerWorkspace {
+    std::vector<float> scores;
+    std::vector<float> top_k_heap;
+    std::vector<TopPItem> top_p_items;
+    std::vector<uint32_t> seen_tokens;
+    uint32_t seen_generation = 1;
+    std::vector<size_t> finite_score_indices;
+    std::vector<SampleScore> sample_scores;
+    std::vector<RankedSample> ranked_samples;
+    std::vector<size_t> selected_scores;
+};
+
+void apply_repetition_penalty(
+    std::vector<float> & logits,
+    const std::vector<int32_t> & codes,
+    float penalty,
+    IndexTTS2SamplerWorkspace & workspace) {
     if (penalty == 1.0F) {
         return;
     }
     if (!(penalty > 0.0F)) {
         throw std::runtime_error("IndexTTS2 GPT repetition_penalty must be positive");
     }
-    std::vector<uint8_t> seen(logits.size(), 0);
-    for (const int32_t token : history) {
-        if (token < 0 || static_cast<size_t>(token) >= logits.size() || seen[static_cast<size_t>(token)] != 0) {
-            continue;
+    if (workspace.seen_tokens.size() != logits.size()) {
+        workspace.seen_tokens.assign(logits.size(), 0);
+        workspace.seen_generation = 1;
+    } else if (workspace.seen_generation == 0) {
+        std::fill(workspace.seen_tokens.begin(), workspace.seen_tokens.end(), 0);
+        workspace.seen_generation = 1;
+    }
+    const uint32_t generation = workspace.seen_generation++;
+    const auto apply_token = [&](int32_t token) {
+        if (token < 0 || static_cast<size_t>(token) >= logits.size() || workspace.seen_tokens[static_cast<size_t>(token)] == generation) {
+            return;
         }
-        seen[static_cast<size_t>(token)] = 1;
+        workspace.seen_tokens[static_cast<size_t>(token)] = generation;
         float & value = logits[static_cast<size_t>(token)];
         value = value < 0.0F ? value * penalty : value / penalty;
+    };
+    apply_token(kStopTextToken);
+    apply_token(kStartMelToken);
+    for (const int32_t token : codes) {
+        apply_token(token);
     }
 }
 
-std::vector<float> index_tts2_log_probs(
+float kth_largest_threshold(const std::vector<float> & scores, size_t keep_count, std::vector<float> & heap) {
+    heap.clear();
+    heap.reserve(keep_count);
+    const auto greater = std::greater<float>{};
+    for (const float score : scores) {
+        if (heap.size() < keep_count) {
+            heap.push_back(score);
+            std::push_heap(heap.begin(), heap.end(), greater);
+        } else if (score > heap.front()) {
+            std::pop_heap(heap.begin(), heap.end(), greater);
+            heap.back() = score;
+            std::push_heap(heap.begin(), heap.end(), greater);
+        }
+    }
+    return heap.front();
+}
+
+void index_tts2_log_probs(
     const std::vector<float> & logits,
-    const std::vector<int32_t> & history,
+    const std::vector<int32_t> & codes,
     float repetition_penalty,
     int top_k,
     float top_p,
-    float temperature) {
+    float temperature,
+    IndexTTS2SamplerWorkspace & workspace) {
     if (!(temperature > 0.0F)) {
         throw std::runtime_error("IndexTTS2 GPT temperature must be positive");
     }
@@ -714,45 +778,56 @@ std::vector<float> index_tts2_log_probs(
         throw std::runtime_error("IndexTTS2 GPT sampler invalid logit mass");
     }
     const float log_total = std::log(total);
-    std::vector<float> scores(logits.size(), -std::numeric_limits<float>::infinity());
+    auto & scores = workspace.scores;
+    scores.resize(logits.size());
     for (size_t i = 0; i < logits.size(); ++i) {
         scores[i] = logits[i] - max_logit - log_total;
     }
-    apply_repetition_penalty(scores, history, repetition_penalty);
+    apply_repetition_penalty(scores, codes, repetition_penalty, workspace);
     for (float & score : scores) {
         score /= temperature;
     }
     const size_t min_tokens_to_keep = 2;
+    auto & finite_indices = workspace.finite_score_indices;
+    finite_indices.clear();
     if (top_k > 0 && static_cast<size_t>(top_k) < scores.size()) {
         const size_t keep_count = std::max(static_cast<size_t>(top_k), min_tokens_to_keep);
-        auto threshold_values = scores;
-        auto nth = threshold_values.begin() + static_cast<std::ptrdiff_t>(keep_count - 1);
-        std::nth_element(threshold_values.begin(), nth, threshold_values.end(), std::greater<float>());
-        const float threshold = *nth;
-        for (float & score : scores) {
-            if (score < threshold) {
-                score = -std::numeric_limits<float>::infinity();
+        const float threshold = kth_largest_threshold(scores, keep_count, workspace.top_k_heap);
+        float max_score = -std::numeric_limits<float>::infinity();
+        for (size_t i = 0; i < scores.size(); ++i) {
+            if (scores[i] < threshold) {
+                scores[i] = -std::numeric_limits<float>::infinity();
+            } else {
+                finite_indices.push_back(i);
+                max_score = std::max(max_score, scores[i]);
             }
         }
-    }
-    float max_score = -std::numeric_limits<float>::infinity();
-    for (float score : scores) {
-        if (std::isfinite(score)) {
-            max_score = std::max(max_score, score);
+        if (!std::isfinite(max_score)) {
+            throw std::runtime_error("IndexTTS2 GPT sampler has no finite score");
         }
-    }
-    if (!std::isfinite(max_score)) {
-        throw std::runtime_error("IndexTTS2 GPT sampler has no finite score");
+    } else {
+        finite_indices.reserve(scores.size());
+        float max_score = -std::numeric_limits<float>::infinity();
+        for (size_t i = 0; i < scores.size(); ++i) {
+            if (std::isfinite(scores[i])) {
+                finite_indices.push_back(i);
+                max_score = std::max(max_score, scores[i]);
+            }
+        }
+        if (!std::isfinite(max_score)) {
+            throw std::runtime_error("IndexTTS2 GPT sampler has no finite score");
+        }
     }
     if (top_p > 0.0F && top_p < 1.0F) {
-        struct Item { size_t index; float score; float weight; };
-        std::vector<Item> sorted;
-        sorted.reserve(scores.size());
+        auto & sorted = workspace.top_p_items;
+        sorted.clear();
+        sorted.reserve(finite_indices.size());
         float total = 0.0F;
-        for (size_t i = 0; i < scores.size(); ++i) {
-            if (!std::isfinite(scores[i])) {
-                continue;
-            }
+        float max_score = -std::numeric_limits<float>::infinity();
+        for (const size_t i : finite_indices) {
+            max_score = std::max(max_score, scores[i]);
+        }
+        for (const size_t i : finite_indices) {
             const float weight = std::exp(scores[i] - max_score);
             sorted.push_back({i, scores[i], weight});
             total += weight;
@@ -760,7 +835,7 @@ std::vector<float> index_tts2_log_probs(
         if (!(total > 0.0F)) {
             throw std::runtime_error("IndexTTS2 GPT sampler invalid top-p mass");
         }
-        std::sort(sorted.begin(), sorted.end(), [](const Item & lhs, const Item & rhs) {
+        std::sort(sorted.begin(), sorted.end(), [](const TopPItem & lhs, const TopPItem & rhs) {
             if (lhs.score == rhs.score) {
                 return lhs.index < rhs.index;
             }
@@ -769,50 +844,47 @@ std::vector<float> index_tts2_log_probs(
         float cumulative = 0.0F;
         const float remove_mass = 1.0F - top_p;
         const size_t keep_from = sorted.size() > min_tokens_to_keep ? sorted.size() - min_tokens_to_keep : 0;
+        finite_indices.clear();
         for (size_t i = 0; i < sorted.size(); ++i) {
             cumulative += sorted[i].weight / total;
             if (i < keep_from && cumulative <= remove_mass) {
                 scores[sorted[i].index] = -std::numeric_limits<float>::infinity();
+            } else {
+                finite_indices.push_back(sorted[i].index);
             }
         }
     }
-    return scores;
 }
 
-std::vector<size_t> sample_index_tts2_indices(
-    const std::vector<float> & log_scores,
+void sample_index_tts2_indices(
+    const std::vector<SampleScore> & scores,
+    size_t total_score_count,
     size_t count,
     uint64_t seed,
     uint64_t step,
-    const engine::sampling::TorchCudaSamplingPolicy & policy) {
-    struct Ranked {
-        size_t index = 0;
-        double rank = 0.0;
-    };
+    const engine::sampling::TorchCudaSamplingPolicy & policy,
+    std::vector<RankedSample> & ranked,
+    std::vector<size_t> & selected) {
     float max_score = -std::numeric_limits<float>::infinity();
-    for (const float score : log_scores) {
-        if (std::isfinite(score)) {
-            max_score = std::max(max_score, score);
-        }
+    for (const auto & score : scores) {
+        max_score = std::max(max_score, score.score);
     }
     if (!std::isfinite(max_score)) {
         throw std::runtime_error("IndexTTS2 GPT sampler has no finite beam score");
     }
-    std::vector<Ranked> ranked;
-    ranked.reserve(log_scores.size());
-    for (size_t i = 0; i < log_scores.size(); ++i) {
-        if (!std::isfinite(log_scores[i])) {
-            continue;
-        }
-        const float probability = std::exp(log_scores[i] - max_score);
+    ranked.clear();
+    ranked.reserve(scores.size());
+    for (size_t i = 0; i < scores.size(); ++i) {
+        const auto & score = scores[i];
+        const float probability = std::exp(score.score - max_score);
         const float exponential = engine::sampling::torch_cuda_tensor_iterator_exponential_element(
             seed,
-            static_cast<uint64_t>(log_scores.size()),
-            static_cast<uint64_t>(i),
+            static_cast<uint64_t>(total_score_count),
+            static_cast<uint64_t>(score.flat_index),
             step,
             policy.multiprocessor_count,
             policy.max_threads_per_multiprocessor);
-        ranked.push_back({i, static_cast<double>(probability) / static_cast<double>(exponential)});
+        ranked.push_back({i, score.flat_index, static_cast<double>(probability) / static_cast<double>(exponential)});
     }
     if (ranked.empty()) {
         throw std::runtime_error("IndexTTS2 GPT sampler failed to select beam candidates");
@@ -822,18 +894,17 @@ std::vector<size_t> sample_index_tts2_indices(
         ranked.begin(),
         ranked.begin() + static_cast<std::ptrdiff_t>(keep),
         ranked.end(),
-        [](const Ranked & lhs, const Ranked & rhs) {
+        [](const RankedSample & lhs, const RankedSample & rhs) {
             if (lhs.rank == rhs.rank) {
-                return lhs.index < rhs.index;
+                return lhs.flat_index < rhs.flat_index;
             }
             return lhs.rank > rhs.rank;
         });
-    std::vector<size_t> indices;
-    indices.reserve(keep);
+    selected.clear();
+    selected.reserve(keep);
     for (size_t i = 0; i < keep; ++i) {
-        indices.push_back(ranked[i].index);
+        selected.push_back(ranked[i].score_index);
     }
-    return indices;
 }
 
 }  // namespace
@@ -928,7 +999,7 @@ std::shared_ptr<const IndexTTS2GptWeights> load_index_tts2_gpt_weights(
         kModelDim,
         kModelDim,
         true);
-    weights->speed_embedding = weights->store->load_f32_tensor(source, "speed_emb.weight", {2, kModelDim});
+    weights->speed_embedding_values = source.require_f32("speed_emb.weight", {2, kModelDim});
     weights->gpt_layers.reserve(static_cast<size_t>(kGptLayers));
     for (int64_t i = 0; i < kGptLayers; ++i) {
         weights->gpt_layers.push_back(load_gpt2_layer(*weights->store, source, i, matmul_storage_type));
@@ -2074,7 +2145,7 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
                 emotion_vector[static_cast<size_t>(dim)];
         }
     }
-    const auto speed = core::read_tensor_f32(weights_->speed_embedding.tensor);
+    const auto & speed = weights_->speed_embedding_values;
     std::copy_n(speed.data() + static_cast<std::ptrdiff_t>(kModelDim), static_cast<size_t>(kModelDim), conds.data() + static_cast<std::ptrdiff_t>(32 * kModelDim));
     std::copy_n(speed.data(), static_cast<size_t>(kModelDim), conds.data() + static_cast<std::ptrdiff_t>(33 * kModelDim));
     auto prefill = prefill_graph_->run(conds, request.text_tokens);
@@ -2087,7 +2158,6 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
 
     struct Beam {
         std::vector<int32_t> codes;
-        std::vector<int32_t> history;
         std::vector<float> logits;
         int64_t slot = 0;
         int64_t valid_steps = 0;
@@ -2115,8 +2185,6 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
     for (int beam = 0; beam < beam_count; ++beam) {
         decode_graph_->initialize_beam_slot(beam, prefill.kv_state);
         Beam initial;
-        initial.history.push_back(kStopTextToken);
-        initial.history.push_back(kStartMelToken);
         initial.logits = prefill.logits;
         initial.slot = beam;
         initial.valid_steps = prefill_valid_steps;
@@ -2161,85 +2229,100 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
     uint64_t rng_offset_blocks = 0;
     double sampling_ms = 0.0;
     double decode_run_ms = 0.0;
+    IndexTTS2SamplerWorkspace sampler_workspace;
+    std::vector<BeamCandidate> candidates;
+    std::vector<Beam> next_beams;
+    std::vector<int64_t> parent_slots;
+    std::vector<int64_t> child_slots;
+    std::vector<int32_t> next_tokens;
+    candidates.reserve(static_cast<size_t>(2 * beam_count));
+    next_beams.reserve(static_cast<size_t>(beam_count));
+    parent_slots.reserve(static_cast<size_t>(beam_count));
+    child_slots.reserve(static_cast<size_t>(beam_count));
+    next_tokens.reserve(static_cast<size_t>(beam_count));
     for (int step = 0; step < request.max_mel_tokens && !beams.empty(); ++step) {
         const auto sampling_start = Clock::now();
-        std::vector<BeamCandidate> candidates;
-        std::vector<float> flat_scores;
-        flat_scores.reserve(beams.size() * static_cast<size_t>(kMelCodes));
+        candidates.clear();
+        sampler_workspace.sample_scores.clear();
+        sampler_workspace.sample_scores.reserve(beams.size() * static_cast<size_t>(std::max(request.top_k, 1)));
         for (size_t beam_index = 0; beam_index < beams.size(); ++beam_index) {
-            const auto log_probs = index_tts2_log_probs(
+            index_tts2_log_probs(
                 beams[beam_index].logits,
-                beams[beam_index].history,
+                beams[beam_index].codes,
                 request.repetition_penalty,
                 request.top_k,
                 request.top_p,
-                request.temperature);
-            for (float log_prob : log_probs) {
-                flat_scores.push_back(std::isfinite(log_prob) ? beams[beam_index].score + log_prob : -std::numeric_limits<float>::infinity());
+                request.temperature,
+                sampler_workspace);
+            const size_t beam_offset = beam_index * static_cast<size_t>(kMelCodes);
+            for (const size_t token : sampler_workspace.finite_score_indices) {
+                const float log_prob = sampler_workspace.scores[token];
+                sampler_workspace.sample_scores.push_back({beam_offset + token, beams[beam_index].score + log_prob});
             }
         }
-        const size_t keep = std::min<size_t>(static_cast<size_t>(2 * beam_count), flat_scores.size());
-        std::vector<size_t> selected;
+        const size_t flat_score_count = beams.size() * static_cast<size_t>(kMelCodes);
+        const size_t keep = std::min<size_t>(static_cast<size_t>(2 * beam_count), flat_score_count);
         if (request.do_sample) {
             rng_offset_blocks += engine::sampling::torch_cuda_tensor_iterator_offset_blocks(
-                static_cast<uint64_t>(flat_scores.size()),
+                static_cast<uint64_t>(flat_score_count),
                 sampling_policy);
-            selected = sample_index_tts2_indices(
-                flat_scores,
+            sample_index_tts2_indices(
+                sampler_workspace.sample_scores,
+                flat_score_count,
                 keep,
                 request.seed,
                 sample_call_index++,
-                sampling_policy);
-            std::sort(selected.begin(), selected.end(), [&](size_t lhs, size_t rhs) {
-                if (flat_scores[lhs] == flat_scores[rhs]) {
-                    return lhs < rhs;
+                sampling_policy,
+                sampler_workspace.ranked_samples,
+                sampler_workspace.selected_scores);
+            std::sort(sampler_workspace.selected_scores.begin(), sampler_workspace.selected_scores.end(), [&](size_t lhs, size_t rhs) {
+                const auto & lhs_score = sampler_workspace.sample_scores[lhs];
+                const auto & rhs_score = sampler_workspace.sample_scores[rhs];
+                if (lhs_score.score == rhs_score.score) {
+                    return lhs_score.flat_index < rhs_score.flat_index;
                 }
-                return flat_scores[lhs] > flat_scores[rhs];
+                return lhs_score.score > rhs_score.score;
             });
         } else {
-            selected.resize(flat_scores.size());
-            std::iota(selected.begin(), selected.end(), 0);
+            sampler_workspace.selected_scores.resize(sampler_workspace.sample_scores.size());
+            std::iota(sampler_workspace.selected_scores.begin(), sampler_workspace.selected_scores.end(), 0);
+            const size_t finite_keep = std::min(keep, sampler_workspace.selected_scores.size());
             std::partial_sort(
-                selected.begin(),
-                selected.begin() + static_cast<std::ptrdiff_t>(keep),
-                selected.end(),
+                sampler_workspace.selected_scores.begin(),
+                sampler_workspace.selected_scores.begin() + static_cast<std::ptrdiff_t>(finite_keep),
+                sampler_workspace.selected_scores.end(),
                 [&](size_t lhs, size_t rhs) {
-                    if (flat_scores[lhs] == flat_scores[rhs]) {
-                        return lhs < rhs;
+                    const auto & lhs_score = sampler_workspace.sample_scores[lhs];
+                    const auto & rhs_score = sampler_workspace.sample_scores[rhs];
+                    if (lhs_score.score == rhs_score.score) {
+                        return lhs_score.flat_index < rhs_score.flat_index;
                     }
-                    return flat_scores[lhs] > flat_scores[rhs];
+                    return lhs_score.score > rhs_score.score;
                 });
-            selected.resize(keep);
+            sampler_workspace.selected_scores.resize(finite_keep);
         }
-        for (size_t rank = 0; rank < selected.size(); ++rank) {
-            const size_t flat_index = selected[rank];
-            if (!std::isfinite(flat_scores[flat_index])) {
-                continue;
-            }
+        for (size_t rank = 0; rank < sampler_workspace.selected_scores.size(); ++rank) {
+            const auto & selected = sampler_workspace.sample_scores[sampler_workspace.selected_scores[rank]];
+            const size_t flat_index = selected.flat_index;
             const size_t parent = flat_index / static_cast<size_t>(kMelCodes);
             const auto token = static_cast<int32_t>(flat_index % static_cast<size_t>(kMelCodes));
             candidates.push_back({
                 parent,
                 token,
-                flat_scores[flat_index],
+                selected.score,
                 token == kStopMelToken});
         }
         sampling_ms += engine::debug::elapsed_ms(sampling_start, Clock::now());
-        std::vector<Beam> next_beams;
-        next_beams.reserve(static_cast<size_t>(beam_count));
+        next_beams.clear();
         const int next_bank = 1 - active_bank;
-        std::vector<int64_t> parent_slots;
-        std::vector<int64_t> child_slots;
-        std::vector<int32_t> next_tokens;
-        parent_slots.reserve(static_cast<size_t>(beam_count));
-        child_slots.reserve(static_cast<size_t>(beam_count));
-        next_tokens.reserve(static_cast<size_t>(beam_count));
+        parent_slots.clear();
+        child_slots.clear();
+        next_tokens.clear();
         for (size_t rank = 0; rank < candidates.size(); ++rank) {
             const auto & candidate = candidates[rank];
             const Beam & parent = beams[candidate.parent];
             Beam next;
             next.codes = parent.codes;
-            next.history = parent.history;
             next.score = candidate.score;
             if (candidate.finished) {
                 if (static_cast<int>(rank) < beam_count) {
@@ -2249,7 +2332,6 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
                 continue;
             }
             next.codes.push_back(candidate.token);
-            next.history.push_back(candidate.token);
             next.slot = static_cast<int64_t>(next_bank * beam_count + static_cast<int>(next_beams.size()));
             next.valid_steps = parent.valid_steps + 1;
             next.current_end = parent.current_end + 1;
@@ -2287,7 +2369,7 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
             beam_search_done = true;
             break;
         }
-        beams = std::move(next_beams);
+        beams.swap(next_beams);
         active_bank = next_bank;
     }
     debug::timing_log_scalar("index_tts2.gpt.sampling_ms", sampling_ms);
@@ -2349,7 +2431,7 @@ IndexTTS2GptLatent IndexTTS2GptRuntime::forward_latent(
                 emo[static_cast<size_t>(dim)];
         }
     }
-    const auto speed = core::read_tensor_f32(weights_->speed_embedding.tensor);
+    const auto & speed = weights_->speed_embedding_values;
     std::copy_n(speed.data() + static_cast<std::ptrdiff_t>(kModelDim), static_cast<size_t>(kModelDim), conds.data() + static_cast<std::ptrdiff_t>(32 * kModelDim));
     std::copy_n(speed.data(), static_cast<size_t>(kModelDim), conds.data() + static_cast<std::ptrdiff_t>(33 * kModelDim));
 
