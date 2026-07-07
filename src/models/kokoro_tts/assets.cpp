@@ -1,16 +1,20 @@
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/io/binary.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
 #include "engine/models/kokoro_tts/assets.h"
 
 #include "engine/models/kokoro_tts/g2p_en.h"
 
-#include <filesystem>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <string>
+#include <filesystem>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace kokoro_ggml {
@@ -717,7 +721,7 @@ namespace {
 struct KokoroAssetResources {
     assets::ResourceBundle bundle;
     io::json::Value config;
-    io::json::Value voices;
+    std::optional<io::json::Value> voices;
     std::shared_ptr<const assets::TensorSource> weights;
 };
 
@@ -726,16 +730,20 @@ KokoroAssetResources load_asset_resources(const std::filesystem::path & model_ro
     resources.bundle = assets::ResourceBundle(std::filesystem::weakly_canonical(model_root));
     resources.bundle.add_model_files({
         {"config", "config.json"},
-        {"voices", "voices.json"},
         {"weights", "kokoro-v1_0.safetensors"},
+    });
+    resources.bundle.add_model_files({
+        {"voices", "voices.json", false},
     });
     resources.config = resources.bundle.parse_json("config");
     if (!resources.config.is_object()) {
         throw std::runtime_error("Kokoro config root must be an object");
     }
-    resources.voices = resources.bundle.parse_json("voices");
-    if (!resources.voices.is_object()) {
-        throw std::runtime_error("Kokoro voices.json root must be an object");
+    if (resources.bundle.has_file("voices")) {
+        resources.voices = resources.bundle.parse_json("voices");
+        if (!resources.voices->is_object()) {
+            throw std::runtime_error("Kokoro voices.json root must be an object");
+        }
     }
     resources.weights = resources.bundle.open_tensor_source("weights");
     return resources;
@@ -762,30 +770,51 @@ std::vector<float> read_f32_file_exact(const std::filesystem::path & path, size_
     return values;
 }
 
-}  // namespace
-
-std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::path & model_root) {
-    auto resources = load_asset_resources(model_root);
-    const auto & root = resources.bundle.model_root();
-
-    auto assets = std::make_shared<KokoroAssets>();
-    assets->model_root = root;
-    assets->config = std::move(resources.config);
-    assets->model_weights = std::move(resources.weights);
-    assets->context_length = kokoro_ggml::parse_kokoro_config_metadata(assets->config).plbert_max_position_embeddings;
-    assets->english_lexicon_dir = root / "misaki_en";
-    assets->english_g2p_us = std::make_shared<const kokoro_ggml::g2p_en::EnglishG2P>(assets->english_lexicon_dir, false);
-    assets->english_g2p_gb = std::make_shared<const kokoro_ggml::g2p_en::EnglishG2P>(assets->english_lexicon_dir, true);
-
-    const auto * vocab = assets->config.find("vocab");
-    if (vocab == nullptr || !vocab->is_object()) {
-        throw std::runtime_error("Kokoro config.json is missing vocab object");
+KokoroVoicePack load_safetensor_voice_pack(const std::filesystem::path & path) {
+    auto source = engine::assets::open_tensor_source(path);
+    auto tensor = source->require_f32_tensor("voice");
+    KokoroVoicePack pack;
+    pack.id = path.stem().string();
+    pack.language_code = language_code_from_voice_id(pack.id);
+    if (tensor.shape.rank == 2) {
+        pack.rows = tensor.shape.at(0);
+        pack.cols = tensor.shape.at(1);
+    } else if (tensor.shape.rank == 3 && tensor.shape.at(1) == 1) {
+        pack.rows = tensor.shape.at(0);
+        pack.cols = tensor.shape.at(2);
+    } else {
+        throw std::runtime_error("Kokoro voice safetensor must have shape [rows, cols] or [rows, 1, cols]: " + path.string());
     }
-    for (const auto & [symbol, value] : vocab->as_object()) {
-        assets->vocab[symbol] = static_cast<int32_t>(value.as_i64());
+    pack.values = std::move(tensor.values);
+    if (static_cast<int64_t>(pack.values.size()) != pack.rows * pack.cols) {
+        throw std::runtime_error("Kokoro voice safetensor element count mismatch: " + path.string());
     }
+    return pack;
+}
 
-    for (const auto & [voice_id, value] : resources.voices.as_object()) {
+std::vector<std::filesystem::path> discover_voice_safetensors(const std::filesystem::path & root) {
+    const auto voices_dir = root / "voices";
+    if (!engine::io::is_existing_directory(voices_dir)) {
+        throw std::runtime_error("Kokoro official layout requires a voices directory: " + voices_dir.string());
+    }
+    std::vector<std::filesystem::path> paths;
+    for (const auto & entry : std::filesystem::directory_iterator(voices_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".safetensors") {
+            paths.push_back(entry.path());
+        }
+    }
+    std::sort(paths.begin(), paths.end());
+    if (paths.empty()) {
+        throw std::runtime_error("Kokoro voices directory does not contain safetensor voice packs: " + voices_dir.string());
+    }
+    return paths;
+}
+
+void load_manifest_voices(
+    const std::filesystem::path & root,
+    const io::json::Value & voices,
+    std::unordered_map<std::string, KokoroVoicePack> & out) {
+    for (const auto & [voice_id, value] : voices.as_object()) {
         if (!value.is_object()) {
             throw std::runtime_error("Kokoro voice entry must be an object: " + voice_id);
         }
@@ -804,7 +833,45 @@ std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::pa
         pack.values = read_f32_file_exact(
             root / "voices" / path_it->second.as_string(),
             static_cast<size_t>(pack.rows * pack.cols));
-        assets->voices.emplace(voice_id, std::move(pack));
+        out.emplace(voice_id, std::move(pack));
+    }
+}
+
+void load_safetensor_voices(
+    const std::filesystem::path & root,
+    std::unordered_map<std::string, KokoroVoicePack> & out) {
+    for (const auto & path : discover_voice_safetensors(root)) {
+        auto pack = load_safetensor_voice_pack(path);
+        out.emplace(pack.id, std::move(pack));
+    }
+}
+
+}  // namespace
+
+std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::path & model_root) {
+    auto resources = load_asset_resources(model_root);
+    const auto & root = resources.bundle.model_root();
+
+    auto assets = std::make_shared<KokoroAssets>();
+    assets->model_root = root;
+    assets->config = std::move(resources.config);
+    assets->model_weights = std::move(resources.weights);
+    assets->context_length = kokoro_ggml::parse_kokoro_config_metadata(assets->config).plbert_max_position_embeddings;
+    assets->english_g2p_us = std::make_shared<const kokoro_ggml::g2p_en::EnglishG2P>(false);
+    assets->english_g2p_gb = std::make_shared<const kokoro_ggml::g2p_en::EnglishG2P>(true);
+
+    const auto * vocab = assets->config.find("vocab");
+    if (vocab == nullptr || !vocab->is_object()) {
+        throw std::runtime_error("Kokoro config.json is missing vocab object");
+    }
+    for (const auto & [symbol, value] : vocab->as_object()) {
+        assets->vocab[symbol] = static_cast<int32_t>(value.as_i64());
+    }
+
+    if (resources.voices.has_value()) {
+        load_manifest_voices(root, *resources.voices, assets->voices);
+    } else {
+        load_safetensor_voices(root, assets->voices);
     }
 
     return assets;

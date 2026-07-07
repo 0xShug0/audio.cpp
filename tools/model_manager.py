@@ -82,6 +82,7 @@ class SnapshotSource:
     repo_id: str
     revision: str = "main"
     include_prefixes: tuple[str, ...] = ()
+    include_suffixes: tuple[str, ...] = ()
     exclude_prefixes: tuple[str, ...] = ()
 
 
@@ -182,18 +183,17 @@ CATALOG: tuple[ModelPackage, ...] = (
     ),
     ModelPackage(
         id="kokoro_82m_bf16",
-        display_name="Kokoro 82M GGML",
-        target_directory="kokoro-82m-v1_0-ggml",
-        source=SnapshotSource(repo_id="mlx-community/kokoro_mlx"),
+        display_name="Kokoro 82M bf16",
+        target_directory="Kokoro-82M-bf16",
+        source=SnapshotSource(
+            repo_id="mlx-community/Kokoro-82M-bf16",
+            include_prefixes=("config.json", "kokoro-v1_0.safetensors", "voices/"),
+            include_suffixes=(".json", ".safetensors"),
+        ),
         required_files=(
             "config.json",
             "kokoro-v1_0.safetensors",
-            "voices.json",
-            "misaki_en/gb_gold.tsv",
-            "misaki_en/gb_silver.tsv",
-            "misaki_en/us_gold.tsv",
-            "misaki_en/us_silver.tsv",
-            "voices/af_heart.f32",
+            "voices/af_heart.safetensors",
         ),
     ),
     ModelPackage(
@@ -1026,6 +1026,7 @@ def package_payload(package: ModelPackage) -> dict[str, object]:
             "repo_id": source.repo_id,
             "revision": source.revision,
             "include_prefixes": list(source.include_prefixes),
+            "include_suffixes": list(source.include_suffixes),
             "exclude_prefixes": list(source.exclude_prefixes),
         }
         installable = True
@@ -1039,6 +1040,7 @@ def package_payload(package: ModelPackage) -> dict[str, object]:
                     "target_subdir": placement.target_subdir,
                     "required_files": list(placement.required_files),
                     "include_prefixes": list(placement.source.include_prefixes),
+                    "include_suffixes": list(placement.source.include_suffixes),
                     "exclude_prefixes": list(placement.source.exclude_prefixes),
                 }
                 for placement in source.placements
@@ -1122,6 +1124,8 @@ def list_hf_files(source: SnapshotSource) -> list[tuple[str, int | None]]:
         if not isinstance(path, str) or entry_type != "file":
             continue
         if source.include_prefixes and not any(path.startswith(prefix) for prefix in source.include_prefixes):
+            continue
+        if source.include_suffixes and not any(path.endswith(suffix) for suffix in source.include_suffixes):
             continue
         if any(path.startswith(prefix) for prefix in source.exclude_prefixes):
             continue

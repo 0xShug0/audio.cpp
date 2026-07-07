@@ -9,9 +9,13 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_set>
 
 namespace kokoro_ggml::g2p_en {
+
+#include "g2p_en_lexicon.inc"
+
 namespace {
 
 constexpr char kPrimaryStress[] = "ˈ";
@@ -427,21 +431,6 @@ std::vector<std::string> split_non_alpha(const std::string & text) {
     return out;
 }
 
-std::filesystem::path resolve_default_lexicon_dir() {
-    const std::array<std::filesystem::path, 4> candidates = {
-        std::filesystem::path("models/kokoro-82m-v1_0-ggml/misaki_en"),
-        std::filesystem::path("models/misaki_en"),
-        std::filesystem::current_path() / "models/kokoro-82m-v1_0-ggml/misaki_en",
-        std::filesystem::current_path() / "models/misaki_en",
-    };
-    for (const auto & candidate : candidates) {
-        if (std::filesystem::exists(candidate / "us_gold.tsv") || std::filesystem::exists(candidate / "gb_gold.tsv")) {
-            return candidate;
-        }
-    }
-    throw std::runtime_error("failed to locate Kokoro misaki_en lexicon assets");
-}
-
 std::vector<std::string> subtokenize(const std::string & word) {
     std::vector<std::string> tokens;
     size_t i = 0;
@@ -672,13 +661,87 @@ std::vector<std::string> spell_digit_string(const std::string & digits) {
     return out;
 }
 
+template <size_t N>
+std::string_view lexicon_text(const char (&data)[N]) {
+    return std::string_view(data, N - 1);
+}
+
+void add_lexicon_line(
+    const std::string & source,
+    const std::string & line,
+    std::unordered_map<std::string, LexiconEntry> & target) {
+    const auto fields = split_tab(line);
+    if (fields.size() != 3) {
+        throw std::runtime_error("invalid misaki lexicon TSV line in " + source + ": " + line);
+    }
+    auto & entry = target[fields[0]];
+    if (fields[1] == "*") {
+        entry.has_default = true;
+        entry.default_phonemes = fields[2];
+    } else {
+        entry.by_tag[fields[1]] = fields[2] == "~" ? std::optional<std::string>() : std::optional<std::string>(fields[2]);
+    }
+    if (fields[0].size() >= 2) {
+        if (fields[0] == lower_ascii(fields[0])) {
+            const auto capitalized = capitalize_ascii(fields[0]);
+            if (capitalized != fields[0] && target.find(capitalized) == target.end()) {
+                target[capitalized] = entry;
+            }
+        } else if (fields[0] == capitalize_ascii(fields[0])) {
+            const auto lowered = lower_ascii(fields[0]);
+            if (target.find(lowered) == target.end()) {
+                target[lowered] = entry;
+            }
+        }
+    }
+}
+
+void load_lexicon_stream(
+    std::istream & input,
+    const std::string & source,
+    std::unordered_map<std::string, LexiconEntry> & target) {
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        add_lexicon_line(source, line, target);
+    }
+}
+
+void load_lexicon_text(
+    std::string_view text,
+    const std::string & source,
+    std::unordered_map<std::string, LexiconEntry> & target) {
+    size_t begin = 0;
+    while (begin < text.size()) {
+        size_t end = text.find('\n', begin);
+        if (end == std::string_view::npos) {
+            end = text.size();
+        }
+        if (end > begin && text[end - 1] == '\r') {
+            --end;
+        }
+        if (end > begin) {
+            add_lexicon_line(source, std::string(text.substr(begin, end - begin)), target);
+        }
+        begin = end + 1;
+    }
+}
+
 }  // namespace
 
 Lexicon::Lexicon(bool british)
-    : Lexicon(
-          resolve_default_lexicon_dir() / (british ? "gb_gold.tsv" : "us_gold.tsv"),
-          resolve_default_lexicon_dir() / (british ? "gb_silver.tsv" : "us_silver.tsv"),
-          british) {}
+    : british_(british) {
+    load_lexicon_text(
+        british ? lexicon_text(builtin_lexicon::kGbGoldTsv) : lexicon_text(builtin_lexicon::kUsGoldTsv),
+        british ? "embedded gb_gold.tsv" : "embedded us_gold.tsv",
+        golds_);
+    load_lexicon_text(
+        british ? lexicon_text(builtin_lexicon::kGbSilverTsv) : lexicon_text(builtin_lexicon::kUsSilverTsv),
+        british ? "embedded gb_silver.tsv" : "embedded us_silver.tsv",
+        silvers_);
+}
 
 Lexicon::Lexicon(std::filesystem::path gold_tsv, std::filesystem::path silver_tsv, bool british)
     : british_(british) {
@@ -693,36 +756,7 @@ void Lexicon::load_tsv(
     if (!input) {
         throw std::runtime_error("failed to open misaki lexicon TSV: " + path.string());
     }
-    std::string line;
-    while (std::getline(input, line)) {
-        if (line.empty()) {
-            continue;
-        }
-        const auto fields = split_tab(line);
-        if (fields.size() != 3) {
-            throw std::runtime_error("invalid misaki lexicon TSV line: " + line);
-        }
-        auto & entry = target[fields[0]];
-        if (fields[1] == "*") {
-            entry.has_default = true;
-            entry.default_phonemes = fields[2];
-        } else {
-            entry.by_tag[fields[1]] = fields[2] == "~" ? std::optional<std::string>() : std::optional<std::string>(fields[2]);
-        }
-        if (fields[0].size() >= 2) {
-            if (fields[0] == lower_ascii(fields[0])) {
-                const auto capitalized = capitalize_ascii(fields[0]);
-                if (capitalized != fields[0] && target.find(capitalized) == target.end()) {
-                    target[capitalized] = entry;
-                }
-            } else if (fields[0] == capitalize_ascii(fields[0])) {
-                const auto lowered = lower_ascii(fields[0]);
-                if (target.find(lowered) == target.end()) {
-                    target[lowered] = entry;
-                }
-            }
-        }
-    }
+    load_lexicon_stream(input, path.string(), target);
 }
 
 std::optional<std::string> Lexicon::parent_tag(const std::optional<std::string> & tag) {

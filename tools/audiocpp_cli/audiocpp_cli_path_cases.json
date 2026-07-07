@@ -1121,7 +1121,7 @@
       "id": "kokoro_near_cap_reuse",
       "coverage": "Kokoro long-short-long request sizes, frontend, predictor, decoder graph reuse",
       "family": "kokoro_tts",
-      "model": "models/kokoro-82m-v1_0-ggml",
+      "model": "models/Kokoro-82M-bf16",
       "task": "tts",
       "mode": "offline",
       "outputs": [

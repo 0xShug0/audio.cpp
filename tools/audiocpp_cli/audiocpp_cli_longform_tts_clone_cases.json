@@ -119,7 +119,7 @@
       "id": "kokoro_tts_longform",
       "coverage": "Kokoro built-in TTS voice with shared long-form text for chunking and RTF measurement",
       "family": "kokoro_tts",
-      "model": "models/kokoro-82m-v1_0-ggml",
+      "model": "models/Kokoro-82M-bf16",
       "task": "tts",
       "mode": "offline",
       "outputs": [

@@ -17,7 +17,7 @@ std::filesystem::path resolve_model_root(const std::filesystem::path & model_pat
 }
 
 std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoadRequest & request) {
-    return runtime::discover_named_assets(resolve_model_root(request.model_path), {"config.json", "voices.json", "vocab.tsv"});
+    return runtime::discover_named_assets(resolve_model_root(request.model_path), {"config.json", "voices.json"});
 }
 
 std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoadRequest & request) {
@@ -34,8 +34,9 @@ public:
         try {
             const auto root = resolve_model_root(request.model_path);
             return engine::io::is_existing_file(root / "config.json")
-                && engine::io::is_existing_file(root / "voices.json")
                 && engine::io::is_existing_file(root / "kokoro-v1_0.safetensors")
+                && (engine::io::is_existing_file(root / "voices.json")
+                    || engine::io::is_existing_file(root / "voices" / "af_heart.safetensors"))
                 && (!request.family_hint.has_value() || *request.family_hint == family());
         } catch (...) {
             return false;
@@ -48,8 +49,8 @@ public:
         inspection.model_root = root;
         inspection.metadata.family = family();
         inspection.metadata.variant = root.filename().string();
-        inspection.metadata.description = "Kokoro TTS loaded from local extracted assets.";
-        inspection.metadata.config_candidates = {"config.json", "voices.json", "vocab.tsv"};
+        inspection.metadata.description = "Kokoro TTS loaded from the official safetensors layout.";
+        inspection.metadata.config_candidates = {"config.json", "voices.json"};
         inspection.metadata.weight_candidates = {"kokoro-v1_0.safetensors"};
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
@@ -100,8 +101,8 @@ std::unique_ptr<KokoroTTSLoadedModel> load_kokoro_tts_model(const std::filesyste
     runtime::ModelMetadata metadata;
     metadata.family = "kokoro_tts";
     metadata.variant = root.filename().string();
-    metadata.description = "Kokoro TTS loaded from local extracted assets.";
-    metadata.config_candidates = {"config.json", "voices.json", "vocab.tsv"};
+    metadata.description = "Kokoro TTS loaded from the official safetensors layout.";
+    metadata.config_candidates = {"config.json", "voices.json"};
     metadata.weight_candidates = {"kokoro-v1_0.safetensors"};
 
     runtime::CapabilitySet capabilities;

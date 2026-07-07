@@ -265,7 +265,6 @@ struct KokoroAssets {
     int64_t context_length = 512;
     std::unordered_map<std::string, int32_t> vocab;
     std::unordered_map<std::string, KokoroVoicePack> voices;
-    std::filesystem::path english_lexicon_dir;
     std::shared_ptr<const kokoro_ggml::g2p_en::EnglishG2P> english_g2p_us;
     std::shared_ptr<const kokoro_ggml::g2p_en::EnglishG2P> english_g2p_gb;
 };

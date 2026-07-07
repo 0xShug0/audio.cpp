@@ -429,7 +429,7 @@ Recommended top-level install packages:
 | `htdemucs` | HTDemucs | No |
 | `irodori_tts_500m_v3` | Irodori-TTS 500M v3 | No |
 | `irodori_tts_600m_v3_voice_design` | Irodori-TTS 600M v3 VoiceDesign | No |
-| `kokoro_82m_bf16` | Kokoro 82M GGML | **Yes** |
+| `kokoro_82m_bf16` | Kokoro 82M bf16 | **Yes** |
 | `marblenet_vad` | MarbleNet VAD converted layout | No |
 | `mel_band_roformer` | Mel-Band RoFormer MLX | **Yes** |
 | `miocodec_25hz_44k_v2` | MioCodec 25Hz 44.1kHz v2 | No |
