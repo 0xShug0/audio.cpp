@@ -743,6 +743,20 @@ if (ENGINE_BUILD_TESTS)
         COMMAND conv_transpose_fast_path_test
     )
 
+    add_engine_unittest(depthwise_conv1d_exp_test tests/unittests/test_depthwise_conv1d_exp.cpp)
+
+    add_test(
+        NAME depthwise_conv1d_exp_test
+        COMMAND depthwise_conv1d_exp_test
+    )
+
+    add_engine_unittest(supertonic_vector_convnext_exp_test tests/unittests/test_supertonic_vector_convnext_exp.cpp)
+
+    add_test(
+        NAME supertonic_vector_convnext_exp_test
+        COMMAND supertonic_vector_convnext_exp_test
+    )
+
     add_executable(server_multipart_test
         tests/unittests/test_server_multipart.cpp
         app/server/multipart.cpp

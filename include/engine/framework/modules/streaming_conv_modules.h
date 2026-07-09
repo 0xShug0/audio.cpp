@@ -34,6 +34,18 @@ private:
     DepthwiseConv1dConfig config_;
 };
 
+class DepthwiseConv1dModuleExp {
+public:
+    explicit DepthwiseConv1dModuleExp(DepthwiseConv1dConfig config);
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const DepthwiseConv1dWeights & weights) const;
+
+private:
+    DepthwiseConv1dConfig config_;
+};
+
 struct PointwiseConv1dConfig {
     int64_t in_channels = 0;
     int64_t out_channels = 0;

@@ -464,7 +464,7 @@ core::TensorValue depthwise_conv1d(
     const core::TensorValue & weight,
     const core::TensorValue & bias,
     int dilation) {
-    return modules::DepthwiseConv1dModule({
+    return modules::DepthwiseConv1dModuleExp({
         input.shape.dims[1],
         weight.shape.dims[2],
         1,
@@ -858,7 +858,7 @@ private:
         x = mul(x, state.mask_pair);
         for (int group = 0; group < 4; ++group) {
             const int base = group * 6;
-            x = vector_estimator_convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(base), {1, 2, 4, 8}, state.mask_pair);
+            x = vector_estimator_convnext_btc_pointwise(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(base), {1, 2, 4, 8}, state.mask_pair);
             x = add_time_condition(x, time, base + 1);
             x = vector_estimator_convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(base + 2), {1}, state.mask_pair);
             x = text_memory_block(x, state.text_pair, state.text_mask_pair, state.mask_pair, base + 3);
@@ -957,6 +957,20 @@ private:
         const auto wt_2d = core::reshape_tensor(ctx_, wt, core::TensorShape::from_dims({wt.shape.dims[0], wt.shape.dims[1]}));
         auto projected = modules::LinearModule({value.shape.dims[1], wt.shape.dims[0], bias.has_value()}).build(ctx_, value_btc, {wt_2d, bias});
         return modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, projected);
+    }
+
+    core::TensorValue vector_linear_btc(
+        const core::TensorValue & value_btc,
+        const std::string & weight_name,
+        const std::string & bias_name) {
+        const auto & wt = weight(weight_name);
+        std::optional<core::TensorValue> bias;
+        if (!bias_name.empty()) {
+            bias = weight(bias_name);
+        }
+        auto input = core::ensure_backend_addressable_layout(ctx_, value_btc);
+        const auto wt_2d = core::reshape_tensor(ctx_, wt, core::TensorShape::from_dims({wt.shape.dims[0], wt.shape.dims[1]}));
+        return modules::LinearModule({value_btc.shape.last_dim(), wt.shape.dims[0], bias.has_value()}).build(ctx_, input, {wt_2d, bias});
     }
 
     core::TensorValue text_cross_attention(
@@ -1213,6 +1227,32 @@ private:
             y = vector_conv1(y, p + ".pwconv1.weight", p + ".pwconv1.bias");
             y = gelu(y);
             y = vector_conv1(y, p + ".pwconv2.weight", p + ".pwconv2.bias");
+            y = mul(y, weight(p + ".gamma"));
+            x = add(residual, y);
+        }
+        return x;
+    }
+
+    core::TensorValue vector_estimator_convnext_btc_pointwise(
+        core::TensorValue x,
+        const std::string & prefix,
+        const std::vector<int> & dilations,
+        const core::TensorValue & mask) {
+        for (size_t i = 0; i < dilations.size(); ++i) {
+            const std::string p = prefix + ".convnext." + std::to_string(i);
+            auto residual = mul(x, mask);
+            auto y = edge_pad_time(ctx_, residual, static_cast<int64_t>(dilations[i]) * 2, static_cast<int64_t>(dilations[i]) * 2);
+            y = depthwise_conv1d(ctx_, y, weight(p + ".dwconv.weight"), weight(p + ".dwconv.bias"), dilations[i]);
+            y = mul(y, mask);
+            auto y_btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
+            y_btc = modules::LayerNormModule({x.shape.dims[1], 1.0e-6F, true, true}).build(
+                ctx_,
+                y_btc,
+                {weight(p + ".norm.norm.weight"), weight(p + ".norm.norm.bias")});
+            y_btc = vector_linear_btc(y_btc, p + ".pwconv1.weight", p + ".pwconv1.bias");
+            y_btc = gelu(y_btc);
+            y_btc = vector_linear_btc(y_btc, p + ".pwconv2.weight", p + ".pwconv2.bias");
+            y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y_btc);
             y = mul(y, weight(p + ".gamma"));
             x = add(residual, y);
         }
