@@ -130,7 +130,8 @@ class VoxCPM2TextEmbeddingRuntime final {
 public:
   VoxCPM2TextEmbeddingRuntime(
       std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
-      size_t graph_context_bytes);
+      size_t graph_context_bytes,
+      bool mem_saver = false);
   ~VoxCPM2TextEmbeddingRuntime();
 
   std::vector<float> embed_token(int32_t token_id);
@@ -144,7 +145,8 @@ class VoxCPM2PromptPrefillRuntime final {
 public:
   VoxCPM2PromptPrefillRuntime(
       std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
-      size_t graph_context_bytes);
+      size_t graph_context_bytes,
+      bool mem_saver = false);
   ~VoxCPM2PromptPrefillRuntime();
 
   VoxCPM2PromptPrefillOutput run(const VoxCPM2PromptPrefillInput &input);
@@ -158,13 +160,15 @@ class VoxCPM2MiniCPMStepRuntime final {
 public:
   VoxCPM2MiniCPMStepRuntime(
       std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
-      VoxCPM2MiniCPMKind kind, int64_t cache_steps, size_t graph_context_bytes);
+      VoxCPM2MiniCPMKind kind, int64_t cache_steps,
+      size_t graph_context_bytes);
   ~VoxCPM2MiniCPMStepRuntime();
 
   void reset();
   void import_state(const engine::runtime::TransformerKVState &state);
   engine::runtime::TransformerKVState export_state() const;
   VoxCPM2MiniCPMStepOutput run_step(const std::vector<float> &embedding);
+  void release_runtime_memory();
 
 private:
   class Impl;

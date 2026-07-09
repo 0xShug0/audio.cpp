@@ -42,6 +42,7 @@ public:
       const std::optional<runtime::AudioBuffer> &prompt_audio,
       const std::string &prompt_text,
       const std::optional<runtime::AudioBuffer> &reference_audio);
+  void release_runtime_memory();
 
 private:
   class Impl;

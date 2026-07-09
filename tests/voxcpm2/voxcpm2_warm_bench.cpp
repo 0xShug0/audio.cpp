@@ -141,11 +141,11 @@ engine::runtime::TaskRequest make_request(const engine::io::json::Value &object,
   reject_enabled_bool(object, "normalize",
                       "VoxCPM2 C++ warmbench does not implement normalize");
   set_optional_option(request, object, "prompt_text", "prompt_text");
-  set_optional_option(request, object, "cfg_value", "cfg_value");
+  set_optional_option(request, object, "cfg_value", "guidance_scale");
   set_optional_option(request, object, "inference_timesteps",
-                      "inference_timesteps");
-  set_optional_option(request, object, "min_len", "min_len");
-  set_optional_option(request, object, "max_len", "max_len");
+                      "num_inference_steps");
+  set_optional_option(request, object, "min_len", "min_tokens");
+  set_optional_option(request, object, "max_len", "max_tokens");
   set_optional_option(request, object, "retry_badcase", "retry_badcase");
   set_optional_option(request, object, "retry_badcase_max_times",
                       "retry_badcase_max_times");
@@ -298,11 +298,11 @@ int main(int argc, char **argv) {
     auto *offline_session =
         dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(
             session_base.get());
-    auto *voxcpm2_session =
-        dynamic_cast<engine::models::voxcpm2::VoxCPM2Session *>(
+    auto *streaming_session =
+        dynamic_cast<engine::runtime::IStreamingVoiceTaskSession *>(
             session_base.get());
     if (streaming) {
-      if (voxcpm2_session == nullptr) {
+      if (streaming_session == nullptr) {
         throw std::runtime_error(
             "loaded VoxCPM2 session is not streaming-capable");
       }
@@ -317,7 +317,10 @@ int main(int argc, char **argv) {
     session_base->prepare(engine::runtime::build_preparation_request(requests.front()));
     for (int i = 0; i < warmup; ++i) {
       if (streaming) {
-        (void)voxcpm2_session->run_streaming(requests.front());
+        streaming_session->start_stream(requests.front());
+        while (streaming_session->next_stream_event().has_value()) {
+        }
+        (void)streaming_session->finish_stream();
       } else {
         (void)offline_session->run(requests.front());
       }
@@ -336,7 +339,10 @@ int main(int argc, char **argv) {
       for (int iteration = 0; iteration < std::max(1, iterations); ++iteration) {
         const auto started = std::chrono::steady_clock::now();
         if (streaming) {
-          last_result = voxcpm2_session->run_streaming(requests[request_index]);
+          streaming_session->start_stream(requests[request_index]);
+          while (streaming_session->next_stream_event().has_value()) {
+          }
+          last_result = streaming_session->finish_stream();
         } else {
           last_result = offline_session->run(requests[request_index]);
         }

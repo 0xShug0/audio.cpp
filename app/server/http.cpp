@@ -12,6 +12,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -234,6 +235,44 @@ std::string serialize_response(const HttpResponse & response) {
     return header;
 }
 
+std::string serialize_stream_headers(const HttpResponse & response) {
+    std::ostringstream out;
+    out << "HTTP/1.1 " << response.status << " " << status_text(response.status) << "\r\n"
+        << "Content-Type: " << response.content_type << "\r\n"
+        << "Transfer-Encoding: chunked\r\n"
+        << "Cache-Control: no-cache\r\n"
+        << "Connection: close\r\n";
+    for (const auto & [key, value] : response.headers) {
+        out << key << ": " << value << "\r\n";
+    }
+    out << "\r\n";
+    return out.str();
+}
+
+class ChunkedHttpStreamWriter final : public HttpStreamWriter {
+public:
+    explicit ChunkedHttpStreamWriter(SocketHandle socket)
+        : socket_(socket) {}
+
+    void write(std::string_view data) override {
+        if (data.empty()) {
+            return;
+        }
+        std::ostringstream header;
+        header << std::hex << data.size() << "\r\n";
+        send_all(socket_, header.str());
+        send_all(socket_, std::string(data));
+        send_all(socket_, "\r\n");
+    }
+
+    void finish() {
+        send_all(socket_, "0\r\n\r\n");
+    }
+
+private:
+    SocketHandle socket_;
+};
+
 UniqueSocket bind_listen_socket(const std::string & host, int port) {
     UniqueSocket socket_handle(socket(AF_INET, SOCK_STREAM, 0));
     if (socket_handle.get() == kInvalidSocket) {
@@ -265,7 +304,26 @@ void handle_client(SocketHandle client, IHttpHandler & handler) {
     try {
         const auto request = read_http_request(socket.get());
         const auto response = handler.handle(request);
-        send_all(socket.get(), serialize_response(response));
+        if (response.stream_body) {
+            send_all(socket.get(), serialize_stream_headers(response));
+            ChunkedHttpStreamWriter writer(socket.get());
+            try {
+                response.stream_body(writer);
+            } catch (const std::exception & ex) {
+                if (response.content_type.rfind("text/event-stream", 0) == 0) {
+                    const std::string data =
+                        "data: {\"type\":\"error\",\"error\":{\"message\":" +
+                        json_quote(ex.what()) +
+                        "}}\n\n";
+                    writer.write(data);
+                } else {
+                    std::cerr << "audiocpp_server streaming response failed: " << ex.what() << "\n";
+                }
+            }
+            writer.finish();
+        } else {
+            send_all(socket.get(), serialize_response(response));
+        }
     } catch (const std::exception & ex) {
         try {
             send_all(socket.get(), serialize_response(error_response(500, ex.what(), "server_error")));

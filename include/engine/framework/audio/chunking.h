@@ -28,6 +28,7 @@ enum class AudioChunkCounterMode {
 enum class AudioChunkMode {
     Auto,
     Fixed,
+    QuietEnergy,
     Vad,
     None,
 };
@@ -54,6 +55,12 @@ struct VadAudioChunkOptions {
     int64_t padding_samples = 0;
 };
 
+struct QuietEnergyAudioChunkOptions {
+    int64_t chunk_samples = 0;
+    int64_t boundary_context_samples = 0;
+    int64_t min_energy_window_samples = 0;
+};
+
 std::vector<AudioChunkSpan> plan_audio_chunks(int64_t input_samples, const AudioChunkSpec & spec);
 
 AudioChunkMode parse_audio_chunk_mode(
@@ -71,6 +78,10 @@ std::vector<runtime::TimeSpan> plan_vad_audio_chunks(
     const runtime::AudioBuffer & audio,
     runtime::IOfflineVoiceTaskSession & vad_session,
     const VadAudioChunkOptions & options);
+
+std::vector<runtime::TimeSpan> plan_quiet_energy_audio_chunks(
+    const std::vector<float> & mono_samples,
+    const QuietEnergyAudioChunkOptions & options);
 
 runtime::AudioBuffer slice_audio_buffer(
     const runtime::AudioBuffer & audio,

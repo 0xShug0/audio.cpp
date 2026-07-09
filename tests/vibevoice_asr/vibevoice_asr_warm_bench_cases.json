@@ -1,0 +1,226 @@
+{
+  "default": {
+    "warmup": {
+      "audio": "resources/sample_16k.wav",
+      "context": "",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "num_beams": 1,
+      "seed": 1234
+    },
+    "requests": [
+      {
+        "id": "sample_nature",
+        "audio": "resources/sample_16k.wav",
+        "context": "",
+        "max_tokens": 512,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "num_beams": 1,
+        "seed": 1234,
+        "expected_fragments": [
+          "Some call me Nature",
+          "Mother Nature"
+        ]
+      }
+    ]
+  },
+  "context": {
+    "warmup": {
+      "audio": "resources/sample_16k.wav",
+      "context": "The recording is an English narration about nature.",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "num_beams": 1,
+      "seed": 1234
+    },
+    "requests": [
+      {
+        "id": "sample_nature_context",
+        "audio": "resources/sample_16k.wav",
+        "context": "The recording is an English narration about nature.",
+        "max_tokens": 512,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "num_beams": 1,
+        "seed": 1234,
+        "expected_fragments": [
+          "Some call me Nature",
+          "Mother Nature"
+        ]
+      }
+    ]
+  },
+  "beam": {
+    "warmup": {
+      "audio": "resources/sample_16k.wav",
+      "context": "",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "num_beams": 2,
+      "seed": 1234
+    },
+    "requests": [
+      {
+        "id": "sample_nature_beam",
+        "audio": "resources/sample_16k.wav",
+        "context": "",
+        "max_tokens": 512,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "num_beams": 2,
+        "seed": 1234,
+        "expected_fragments": [
+          "Some call me Nature",
+          "Mother Nature"
+        ]
+      }
+    ]
+  },
+  "sampling": {
+    "warmup": {
+      "audio": "resources/sample_16k.wav",
+      "context": "",
+      "max_tokens": 512,
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "top_k": 50,
+      "num_beams": 1,
+      "seed": 1234
+    },
+    "requests": [
+      {
+        "id": "sample_nature_sampling",
+        "audio": "resources/sample_16k.wav",
+        "context": "",
+        "max_tokens": 512,
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "top_k": 50,
+        "num_beams": 1,
+        "seed": 1234,
+        "expected_fragments": [
+          "Some call me Nature",
+          "Mother Nature"
+        ]
+      }
+    ]
+  },
+  "long_streaming": {
+    "warmup": {
+      "audio": "resources/sample_16k.wav",
+      "context": "",
+      "max_tokens": 1024,
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "num_beams": 1,
+      "seed": 1234
+    },
+    "requests": [
+      {
+        "id": "sample_nature_repeated_long",
+        "audio": "resources/sample_16k.wav",
+        "repeat": 5,
+        "context": "The same narration may repeat several times.",
+        "max_tokens": 1024,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "num_beams": 1,
+        "seed": 1234,
+        "expected_fragments": [
+          "Some call me Nature",
+          "Mother Nature"
+        ]
+      }
+    ]
+  },
+  "multi_request": {
+    "use_all_requests_by_default": true,
+    "warmup": {
+      "audio": "resources/sample_16k.wav",
+      "start_sec": 0.0,
+      "end_sec": 6.0,
+      "context": "",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "num_beams": 1,
+      "seed": 1234
+    },
+    "requests": [
+      {
+        "id": "sample_first_half",
+        "audio": "resources/sample_16k.wav",
+        "start_sec": 0.0,
+        "end_sec": 6.0,
+        "context": "",
+        "max_tokens": 512,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "num_beams": 1,
+        "seed": 1234,
+        "expected_fragments": [
+          "Some call me Nature"
+        ]
+      },
+      {
+        "id": "sample_full_context",
+        "audio": "resources/sample_16k.wav",
+        "context": "The speaker is a single narrator.",
+        "max_tokens": 512,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "num_beams": 1,
+        "seed": 1235,
+        "expected_fragments": [
+          "Mother Nature"
+        ]
+      }
+    ]
+  },
+  "multi_sampling": {
+    "use_all_requests_by_default": true,
+    "warmup": {
+      "audio": "resources/sample_16k.wav",
+      "context": "",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "num_beams": 1,
+      "seed": 1234
+    },
+    "requests": [
+      {
+        "id": "sample_greedy_before_sampling",
+        "audio": "resources/sample_16k.wav",
+        "context": "",
+        "max_tokens": 512,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "num_beams": 1,
+        "seed": 1234,
+        "expected_fragments": [
+          "Some call me Nature"
+        ]
+      },
+      {
+        "id": "sample_sampling_after_greedy",
+        "audio": "resources/sample_16k.wav",
+        "context": "",
+        "max_tokens": 512,
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "top_k": 50,
+        "num_beams": 1,
+        "seed": 1234,
+        "expected_fragments": [
+          "Some call me Nature",
+          "Mother Nature"
+        ]
+      }
+    ]
+  }
+}

@@ -4,6 +4,7 @@
 #include "engine/models/voxcpm2/types.h"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -22,6 +23,7 @@ struct VoxCPM2FeatureGeneratorConfig {
   size_t projection_graph_context_bytes = 256ull * 1024ull * 1024ull;
   size_t local_encoder_graph_context_bytes = 512ull * 1024ull * 1024ull;
   size_t dit_graph_context_bytes = 1024ull * 1024ull * 1024ull;
+  bool mem_saver = false;
   engine::assets::TensorStorageType weight_storage_type =
       engine::assets::TensorStorageType::Native;
 };
@@ -42,7 +44,10 @@ public:
   VoxCPM2StreamingResult
   generate_streaming(const std::string &text,
                      const VoxCPM2EncodedPrompt *prompt,
-                     const VoxCPM2GenerationOptions &options);
+                     const VoxCPM2GenerationOptions &options,
+                     const std::function<void(const VoxCPM2StreamingChunk &)>
+                         &chunk_callback = nullptr);
+  void release_runtime_memory();
 
 private:
   class Impl;

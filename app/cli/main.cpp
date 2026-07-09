@@ -1,6 +1,7 @@
 #include "args.h"
 #include "batch.h"
 #include "request.h"
+#include "../streaming/streaming.h"
 #include "../workflow/execution.h"
 #include "../workflow/file_sink.h"
 #include "../workflow/pipeline.h"
@@ -23,6 +24,13 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -96,6 +104,7 @@ void print_task_list_help() {
         << "    --top-p <float>\n"
         << "    --repetition-penalty <float>\n"
         << "    --do-sample true|false\n"
+        << "    --num-beams <n>\n"
         << "    --guidance-scale <float>\n"
         << "    --num-inference-steps <n>\n"
         << "    --text-chunk-size <chars>\n"
@@ -127,7 +136,7 @@ void print_task_list_help() {
         << "    --words-out <json>\n"
         << "    --voice-state-out <safetensors>  Export PocketTTS voice state from --voice-ref\n"
         << "  Streaming:\n"
-        << "    --chunk-size <samples>\n"
+        << "    --mode streaming uses the selected model's default streaming policy\n"
         << "  Utility:\n"
         << "    --inspect\n"
         << "    --list-loaders\n"
@@ -444,56 +453,51 @@ void run_streaming(
     engine::runtime::IStreamingVoiceTaskSession & streaming,
     engine::runtime::IVoiceTaskSession & session,
     engine::runtime::TaskRequest & request) {
-    if (!request.audio_input.has_value()) {
-        throw std::runtime_error("streaming mode requires --audio input");
-    }
-    if (request.audio_input->channels != 1) {
-        const auto mono = engine::audio::mixdown_interleaved_to_mono_average(
-            request.audio_input->samples,
-            request.audio_input->channels);
-        request.audio_input->samples = mono;
-        request.audio_input->channels = 1;
-    }
-    const int chunk_size = minitts::cli::parse_int_arg(argc, argv, "--chunk-size", 512);
-    streaming.reset();
-    const auto & samples = request.audio_input->samples;
-    for (size_t offset = 0; offset < samples.size(); offset += static_cast<size_t>(chunk_size)) {
-        const size_t available = std::min(static_cast<size_t>(chunk_size), samples.size() - offset);
-        std::vector<float> chunk(static_cast<size_t>(chunk_size), 0.0f);
-        std::copy(
-            samples.begin() + static_cast<ptrdiff_t>(offset),
-            samples.begin() + static_cast<ptrdiff_t>(offset + available),
-            chunk.begin());
-        const auto event = streaming.process_audio_chunk({
-            request.audio_input->sample_rate,
-            1,
-            static_cast<int64_t>(offset),
-            std::move(chunk),
-        });
-        for (const auto & activity : event.voice_activity) {
-            std::cout << "event=";
-            switch (activity.kind) {
-            case engine::runtime::VoiceActivityEvent::Kind::SpeechStart:
-                std::cout << "speech_start";
-                break;
-            case engine::runtime::VoiceActivityEvent::Kind::SpeechEnd:
-                std::cout << "speech_end";
-                break;
-            case engine::runtime::VoiceActivityEvent::Kind::SpeechSegment:
-                std::cout << "speech_segment";
-                break;
+    const auto out_dir = minitts::cli::optional_path_arg(argc, argv, "--out-dir");
+    const auto result = minitts::app::run_streaming_task(
+        streaming,
+        request,
+        [&](const engine::runtime::StreamEvent & event) {
+            if (event.partial_text.has_value()) {
+                std::cout << "partial_text=" << event.partial_text->text << "\n";
             }
-            std::cout << " sample=" << activity.sample << " probability=" << activity.probability << "\n";
-        }
-    }
-    const auto result = streaming.finalize();
+            engine::runtime::TaskResult event_result;
+            event_result.audio_output = event.audio_output;
+            event_result.named_audio_outputs = event.named_audio_outputs;
+            event_result.speaker_turns = event.speaker_turns;
+            event_result.word_timestamps = event.word_timestamps;
+            event_result.output_artifacts = event.output_artifacts;
+            minitts::app::emit_task_result(
+                event_result,
+                std::nullopt,
+                out_dir,
+                out_dir,
+                std::nullopt,
+                std::nullopt,
+                std::nullopt);
+            for (const auto & activity : event.voice_activity) {
+                std::cout << "event=";
+                switch (activity.kind) {
+                case engine::runtime::VoiceActivityEvent::Kind::SpeechStart:
+                    std::cout << "speech_start";
+                    break;
+                case engine::runtime::VoiceActivityEvent::Kind::SpeechEnd:
+                    std::cout << "speech_end";
+                    break;
+                case engine::runtime::VoiceActivityEvent::Kind::SpeechSegment:
+                    std::cout << "speech_segment";
+                    break;
+                }
+                std::cout << " sample=" << activity.sample << " probability=" << activity.probability << "\n";
+            }
+        });
     std::cout << "family=" << session.family() << "\n";
     std::cout << "task=" << engine::runtime::to_string(session.task_kind()) << "\n";
     std::cout << "mode=" << engine::runtime::to_string(session.run_mode()) << "\n";
     minitts::app::emit_task_result(
         result,
         minitts::cli::optional_path_arg(argc, argv, "--out"),
-        minitts::cli::optional_path_arg(argc, argv, "--out-dir"),
+        std::nullopt,
         minitts::cli::optional_path_arg(argc, argv, "--out-dir"),
         minitts::cli::optional_path_arg(argc, argv, "--segments-out"),
         minitts::cli::optional_path_arg(argc, argv, "--turns-out"),
@@ -505,7 +509,35 @@ void run_streaming(
 
 }  // namespace
 
-int main(int argc, char ** argv) {
+#ifdef _WIN32
+namespace {
+
+std::string wide_arg_to_utf8(const wchar_t * arg) {
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, arg, -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 0) {
+        throw std::runtime_error("failed to convert Windows command-line argument to UTF-8");
+    }
+    std::vector<char> buffer(static_cast<size_t>(size), '\0');
+    const int written = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, arg, -1, buffer.data(), size, nullptr, nullptr);
+    if (written != size) {
+        throw std::runtime_error("failed to convert Windows command-line argument to UTF-8");
+    }
+    return std::string(buffer.data());
+}
+
+std::vector<std::string> wide_args_to_utf8(int argc, wchar_t ** wargv) {
+    std::vector<std::string> args;
+    args.reserve(static_cast<size_t>(argc));
+    for (int i = 0; i < argc; ++i) {
+        args.push_back(wide_arg_to_utf8(wargv[i]));
+    }
+    return args;
+}
+
+}  // namespace
+#endif
+
+int audiocpp_cli_main(int argc, char ** argv) {
     try {
         using namespace minitts::cli;
 
@@ -764,3 +796,25 @@ int main(int argc, char ** argv) {
         return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t ** wargv) {
+    try {
+        auto utf8_args = wide_args_to_utf8(argc, wargv);
+        std::vector<char *> argv;
+        argv.reserve(utf8_args.size() + 1);
+        for (auto & arg : utf8_args) {
+            argv.push_back(arg.data());
+        }
+        argv.push_back(nullptr);
+        return audiocpp_cli_main(argc, argv.data());
+    } catch (const std::exception & ex) {
+        std::cerr << "audiocpp_cli failed: " << ex.what() << "\n";
+        return 1;
+    }
+}
+#else
+int main(int argc, char ** argv) {
+    return audiocpp_cli_main(argc, argv);
+}
+#endif

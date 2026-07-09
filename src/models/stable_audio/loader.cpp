@@ -127,7 +127,7 @@ public:
             {"seed", "n", "Torch RNG seed."},
         };
         inspection.cli.session_options = {
-            {"stable_audio.max_batch", "n", "Maximum prompt batch size."},
+            {"stable_audio.max_batch", "n", "Maximum prompt batch size; default 1."},
             {"stable_audio.weight_type", "native|f32|f16|bf16|q8_0", "Stable Audio weight storage type."},
             {"stable_audio.mem_saver", "true|false", "Release staged runtime graphs after each request; default false."},
         };

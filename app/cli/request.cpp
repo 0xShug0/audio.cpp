@@ -150,6 +150,9 @@ engine::runtime::TaskRequest build_request_from_json(
     }
 
     request.options = json_options_map(value.find("options"));
+    if (!language.empty()) {
+        set_option(request.options, "language", language);
+    }
     if (const auto route = json_optional_string(value, "task_route")) {
         set_option(request.options, "route", *route);
     }
@@ -206,6 +209,7 @@ engine::runtime::TaskRequest build_request_from_json(
     set_option_from_json_field(request.options, value, "top_p", "top_p");
     set_option_from_json_field(request.options, value, "repetition_penalty", "repetition_penalty");
     set_option_from_json_field(request.options, value, "do_sample", "do_sample");
+    set_option_from_json_field(request.options, value, "num_beams", "num_beams");
     set_option_from_json_field(request.options, value, "guidance_scale", "guidance_scale");
     set_option_from_json_field(request.options, value, "num_inference_steps", "num_inference_steps");
     set_option_from_json_field(request.options, value, "text_chunk_size", "text_chunk_size");
@@ -286,6 +290,9 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
         request.voice = std::move(voice);
     }
     request.options = collect_key_value_args(argc, argv, "--request-option");
+    if (!language.empty()) {
+        set_option(request.options, "language", language);
+    }
     if (const auto route = find_arg(argc, argv, "--task-route")) {
         set_option(request.options, "route", *route);
     }
@@ -319,6 +326,7 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
     set_option_from_arg(argc, argv, "--top-p", "top_p", request.options);
     set_option_from_arg(argc, argv, "--repetition-penalty", "repetition_penalty", request.options);
     set_option_from_arg(argc, argv, "--do-sample", "do_sample", request.options);
+    set_option_from_arg(argc, argv, "--num-beams", "num_beams", request.options);
     set_option_from_arg(argc, argv, "--guidance-scale", "guidance_scale", request.options);
     set_option_from_arg(argc, argv, "--num-inference-steps", "num_inference_steps", request.options);
     set_option_from_arg(argc, argv, "--text-chunk-size", "text_chunk_size", request.options);

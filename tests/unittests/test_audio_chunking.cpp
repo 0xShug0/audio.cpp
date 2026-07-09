@@ -640,6 +640,10 @@ void test_audio_chunk_mode_parser() {
     engine::test::require(
         engine::audio::parse_audio_chunk_mode(options) == engine::audio::AudioChunkMode::Vad,
         "vad audio chunk mode");
+    options["audio_chunk_mode"] = "quiet_energy";
+    engine::test::require(
+        engine::audio::parse_audio_chunk_mode(options) == engine::audio::AudioChunkMode::QuietEnergy,
+        "quiet-energy audio chunk mode");
     options["audio_chunk_mode"] = "none";
     engine::test::require(
         engine::audio::parse_audio_chunk_mode(options) == engine::audio::AudioChunkMode::None,

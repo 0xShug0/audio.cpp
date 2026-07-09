@@ -58,4 +58,13 @@ private:
     std::vector<LayerCache> layers_;
 };
 
+core::TensorValue view_transformer_kv_cache_steps(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & cache,
+    int64_t start,
+    int64_t steps,
+    int64_t heads,
+    int64_t head_dim,
+    const char * label);
+
 }  // namespace engine::runtime

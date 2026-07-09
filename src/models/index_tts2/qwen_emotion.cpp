@@ -46,18 +46,18 @@ struct GgmlContextDeleter {
 };
 
 modules::QwenDecoderStackConfig qwen_config() {
-    return {
-        kHidden,
-        kAttentionHeads,
-        kKvHeads,
-        kHeadDim,
-        kIntermediate,
-        kLayers,
-        kRmsEps,
-        kRopeTheta,
-        GGML_PREC_F32,
-        GGML_PREC_DEFAULT,
-    };
+    modules::QwenDecoderStackConfig config;
+    config.hidden_size = kHidden;
+    config.num_attention_heads = kAttentionHeads;
+    config.num_key_value_heads = kKvHeads;
+    config.head_dim = kHeadDim;
+    config.intermediate_size = kIntermediate;
+    config.layers = kLayers;
+    config.rms_norm_eps = kRmsEps;
+    config.rope_theta = kRopeTheta;
+    config.attention_precision = GGML_PREC_F32;
+    config.projection_precision = GGML_PREC_DEFAULT;
+    return config;
 }
 
 std::vector<float> causal_mask(int64_t steps) {
@@ -489,6 +489,7 @@ public:
             core::wrap_tensor(token_id_, core::TensorShape::from_dims({1, 1}), GGML_TYPE_I32),
             weights_->token_embedding);
         const auto cfg = qwen_config();
+        const modules::QwenDecoderLayerModule layer_module(modules::qwen_decoder_layer_config_from_stack(cfg));
         const auto mask = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, 1, cache_steps_ + 1}), GGML_TYPE_F16);
         for (const auto & layer : weights_->decoder.layers) {
             cache_keys.push_back(core::make_tensor(
@@ -499,17 +500,7 @@ public:
                 state_ctx,
                 GGML_TYPE_F32,
                 core::TensorShape::from_dims({1, cache_steps_ + 1, kKvHeads, kHeadDim})));
-            auto out = modules::QwenDecoderLayerModule({
-                kHidden,
-                kAttentionHeads,
-                kKvHeads,
-                kHeadDim,
-                kIntermediate,
-                kRmsEps,
-                kRopeTheta,
-                GGML_PREC_F32,
-                GGML_PREC_DEFAULT,
-            }).build_with_static_cache_tail(
+            auto out = layer_module.build_with_static_cache_tail(
                 ctx,
                 graph_,
                 x,
@@ -517,10 +508,10 @@ public:
                 layer,
                 cache_keys.back(),
                 cache_values.back(),
+                std::nullopt,
                 mask);
             x = out.output;
         }
-        (void)cfg;
         kv_cache_ = engine::runtime::TransformerKVCache(cache_steps_ + 1, kKvHeads * kHeadDim, std::move(cache_keys), std::move(cache_values));
         build_transfer_views();
         x = modules::RMSNormModule({kHidden, kRmsEps, true, false}).build(ctx, x, weights_->final_norm);

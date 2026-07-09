@@ -8,12 +8,15 @@
 #include "engine/models/citrinet_asr/session.h"
 #include "engine/models/demucs/session.h"
 #include "engine/models/heartmula/loader.h"
+#include "engine/models/higgs_audio_stt/loader.h"
+#include "engine/models/hviske_asr/loader.h"
 #include "engine/models/index_tts2/loader.h"
 #include "engine/models/irodori_tts/loader.h"
 #include "engine/models/kokoro_tts/loader.h"
 #include "engine/models/marblenet_vad/session.h"
 #include "engine/models/miocodec/loader.h"
 #include "engine/models/miotts/loader.h"
+#include "engine/models/nemotron_asr/loader.h"
 #include "engine/models/omnivoice/loader.h"
 #include "engine/models/parakeet_tdt/loader.h"
 #include "engine/models/pocket_tts/loader.h"
@@ -28,6 +31,7 @@
 #include "engine/models/supertonic/loader.h"
 #include "engine/models/vevo2/loader.h"
 #include "engine/models/vibevoice/loader.h"
+#include "engine/models/vibevoice_asr/loader.h"
 #include "engine/models/voxcpm2/loader.h"
 
 #include <algorithm>
@@ -214,8 +218,12 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         engine::models::miotts::make_miotts_loader(),
         engine::models::voxcpm2::make_voxcpm2_loader(),
         engine::models::vibevoice::make_vibevoice_loader(),
+        engine::models::vibevoice_asr::make_vibevoice_asr_loader(),
         engine::models::heartmula::make_heartmula_loader(),
+        engine::models::higgs_audio_stt::make_higgs_audio_stt_loader(),
+        engine::models::hviske_asr::make_hviske_asr_loader(),
         engine::models::irodori_tts::make_irodori_tts_loader(),
+        engine::models::nemotron_asr::make_nemotron_asr_loader(),
         engine::models::pocket_tts::make_pocket_tts_loader(),
         engine::models::qwen3_forced_aligner::make_qwen3_forced_aligner_loader(),
         engine::models::qwen3_asr::make_qwen3_asr_loader(),

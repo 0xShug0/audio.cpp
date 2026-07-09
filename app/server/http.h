@@ -1,6 +1,8 @@
 #pragma once
 
+#include <functional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace minitts::server {
@@ -18,6 +20,13 @@ struct HttpResponse {
     std::string content_type = "application/json";
     std::string body;
     std::unordered_map<std::string, std::string> headers;
+    std::function<void(class HttpStreamWriter &)> stream_body;
+};
+
+class HttpStreamWriter {
+public:
+    virtual ~HttpStreamWriter() = default;
+    virtual void write(std::string_view data) = 0;
 };
 
 class IHttpHandler {

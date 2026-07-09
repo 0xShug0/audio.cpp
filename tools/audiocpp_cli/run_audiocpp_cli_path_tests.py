@@ -312,6 +312,32 @@ def write_sequence_file(case: dict[str, Any], case_dir: Path) -> Path:
     return sequence_path
 
 
+def extract_text_outputs(case: dict[str, Any], stdout: str) -> list[dict[str, str]]:
+    request_ids = [str(request.get("id", f"request_{index}")) for index, request in enumerate(case.get("requests", []))]
+    outputs: list[dict[str, str]] = []
+    request_id = ""
+    for line in stdout.splitlines():
+        if line.startswith("request_id="):
+            request_id = line[len("request_id=") :]
+            continue
+        if not line.startswith("text_output="):
+            continue
+        fallback_id = request_ids[len(outputs)] if len(outputs) < len(request_ids) else f"text_output_{len(outputs)}"
+        outputs.append({
+            "id": request_id if request_id else fallback_id,
+            "text": line[len("text_output=") :],
+        })
+        request_id = ""
+    return outputs
+
+
+def write_text_outputs(case: dict[str, Any], case_dir: Path, stdout: str) -> None:
+    outputs = extract_text_outputs(case, stdout)
+    with (case_dir / "text_outputs.json").open("w", encoding="utf-8") as handle:
+        json.dump({"outputs": outputs}, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+
 def resolve_model_path(models_root: Path, value: str) -> Path:
     path = Path(value)
     if path.is_absolute():
@@ -384,8 +410,13 @@ def verify_case(case: dict[str, Any], case_dir: Path, stdout: str) -> None:
         raise RuntimeError(f"{case['id']} did not produce a non-empty wav")
     if "named_audio" in outputs and len([path for path in wavs if path.stat().st_size > 44]) < 1:
         raise RuntimeError(f"{case['id']} did not produce named wav outputs")
-    if "text" in outputs and "text_output=" not in stdout:
-        raise RuntimeError(f"{case['id']} did not print text_output")
+    if "text" in outputs:
+        text_outputs = extract_text_outputs(case, stdout)
+        if not text_outputs:
+            raise RuntimeError(f"{case['id']} did not print text_output")
+        text_output_path = case_dir / "text_outputs.json"
+        if not text_output_path.exists() or text_output_path.stat().st_size <= 2:
+            raise RuntimeError(f"{case['id']} did not write text_outputs.json")
     if "artifact" in outputs and "artifact=" not in stdout:
         raise RuntimeError(f"{case['id']} did not print an artifact")
     if "artifact" in outputs and "artifact_out[" not in stdout:
@@ -446,6 +477,8 @@ def run_case(args: argparse.Namespace, case: dict[str, Any], out_root: Path) -> 
     stdout = stdout_path.read_text(encoding="utf-8")
     if returncode != 0:
         raise RuntimeError(f"{case['id']} failed with exit code {returncode}; see {case_dir}")
+    if "text" in set(case.get("outputs", [])):
+        write_text_outputs(case, case_dir, stdout)
     verify_case(case, case_dir, stdout)
     result = {
         "id": case["id"],

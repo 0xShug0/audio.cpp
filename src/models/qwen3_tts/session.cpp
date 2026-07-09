@@ -215,6 +215,7 @@ Qwen3TTSSession::Qwen3TTSSession(
     talker_weights_ = talker_.create_weights_runtime(
         assets_,
         options.backend.type,
+        options.backend.device,
         std::max(1, options.backend.threads),
         talker_graph_arena_bytes_,
         talker_constant_context_bytes_,

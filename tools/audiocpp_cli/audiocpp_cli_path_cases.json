@@ -329,6 +329,24 @@
           "seed": 1234,
           "max_tokens": 192,
           "do_sample": false
+        },
+        {
+          "id": "design_short_reuse",
+          "text": "A shorter line should reuse the same designed voice cleanly.",
+          "language": "English",
+          "instruct": "A cheerful young woman with a bright studio voice.",
+          "seed": 1234,
+          "max_tokens": 96,
+          "do_sample": false
+        },
+        {
+          "id": "design_spanish_instruction",
+          "text": "La voz disenada debe sonar tranquila, clara y natural durante esta frase.",
+          "language": "Spanish",
+          "instruct": "A calm bilingual narrator with warm pacing and precise pronunciation.",
+          "seed": 1234,
+          "max_tokens": 160,
+          "do_sample": false
         }
       ]
     },
@@ -350,6 +368,24 @@
           "speaker": "Vivian",
           "seed": 1234,
           "max_tokens": 192,
+          "do_sample": false
+        },
+        {
+          "id": "custom_short_reuse",
+          "text": "This shorter custom voice request should keep Vivian consistent.",
+          "language": "English",
+          "speaker": "Vivian",
+          "seed": 1234,
+          "max_tokens": 96,
+          "do_sample": false
+        },
+        {
+          "id": "custom_dialect_speaker",
+          "text": "这个自定义声音应该保持清晰, 语气自然, 并且在短句中稳定。",
+          "language": "Chinese",
+          "speaker": "Dylan",
+          "seed": 1234,
+          "max_tokens": 160,
           "do_sample": false
         }
       ]
@@ -483,6 +519,31 @@
           "max_tokens": 0,
           "guidance_scale": 2.0,
           "num_inference_steps": 10
+        }
+      ]
+    },
+    {
+      "id": "voxcpm2_streaming_voice_design",
+      "coverage": "VoxCPM2 streaming text-to-speech path with text-embedded voice design, MiniCPM streaming generation, diffusion feature generation, and AudioVAE chunk decode",
+      "family": "voxcpm2",
+      "model": "models/VoxCPM2",
+      "task": "tts",
+      "mode": "streaming",
+      "chunk_size": 512,
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "streaming_voice_design",
+          "text": "(A calm studio narrator with clear articulation) This VoxCPM2 streaming path test checks that the CLI can emit audio chunks for a longer voice design request while preserving a steady speaking style.",
+          "seed": 1234,
+          "max_tokens": 160,
+          "guidance_scale": 2.0,
+          "num_inference_steps": 10,
+          "options": {
+            "retry_badcase": false
+          }
         }
       ]
     },
@@ -1257,7 +1318,7 @@
     },
     {
       "id": "vibevoice_two_speaker_long",
-      "coverage": "VibeVoice 1.5B short two-speaker TTS smoke path with reference voices",
+      "coverage": "VibeVoice 1.5B longer two-speaker TTS path with reference voices",
       "family": "vibevoice",
       "model": "models/VibeVoice-1.5B",
       "task": "tts",
@@ -1267,8 +1328,8 @@
       ],
       "requests": [
         {
-          "id": "short_two_speaker_smoke",
-          "text": "Speaker 1: Hi Frank. The first buoy is online, and the harbor link is clean.\nSpeaker 2: Great. I hear you clearly, and my voice should stay separate.",
+          "id": "long_two_speaker_dialogue",
+          "text": "Speaker 1: Hi Frank. The first buoy is online, the harbor link is clean, and the overnight packet loss finally dropped below one percent.\nSpeaker 2: Great. I hear you clearly, and my voice should stay separate while we walk through the checklist.\nSpeaker 1: The north pier microphone was noisy yesterday, but after the firmware update it is reporting steady levels and no clipped frames.\nSpeaker 2: I will mark that as verified. The backup radio is still on battery power, though, so we should not call the site healthy yet.\nSpeaker 1: Agreed. I also want to test the alert path with a realistic message instead of a single sentence, because the old run was too short to catch turn changes.\nSpeaker 2: That makes sense. Let us keep alternating speakers for a little longer, confirm the same two voices remain stable, and then save this audio as the baseline.",
           "num_inference_steps": 8,
           "guidance_scale": 1.3,
           "seed": 1234,
@@ -1371,6 +1432,274 @@
         {
           "id": "sample",
           "audio": "resources/a.wav"
+        }
+      ]
+    },
+    {
+      "id": "vibevoice_asr_paths",
+      "coverage": "VibeVoice-ASR offline prompt/context, greedy, beam, sampling, and decoder cache reuse paths",
+      "family": "vibevoice_asr",
+      "model": "models/VibeVoice-ASR",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "greedy_no_context",
+          "audio": "resources/sample_16k.wav",
+          "options": {
+            "max_tokens": 512,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 50,
+            "num_beams": 1,
+            "seed": 1234
+          }
+        },
+        {
+          "id": "greedy_with_context",
+          "audio": "resources/sample_16k.wav",
+          "text": "The recording is an English narration about nature.",
+          "options": {
+            "max_tokens": 512,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 50,
+            "num_beams": 1,
+            "seed": 1234
+          }
+        },
+        {
+          "id": "beam_decode",
+          "audio": "resources/sample_16k.wav",
+          "options": {
+            "max_tokens": 512,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 50,
+            "num_beams": 2,
+            "seed": 1234
+          }
+        },
+        {
+          "id": "sampling_decode",
+          "audio": "resources/sample_16k.wav",
+          "options": {
+            "max_tokens": 512,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "top_k": 50,
+            "num_beams": 1,
+            "seed": 1234
+          }
+        }
+      ]
+    },
+    {
+      "id": "vibevoice_asr_structured_segments",
+      "coverage": "VibeVoice-ASR four-speaker structured transcription with segment timestamps and speaker turns",
+      "family": "vibevoice_asr",
+      "model": "models/VibeVoice-ASR",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text",
+        "segments",
+        "turns"
+      ],
+      "requests": [
+        {
+          "id": "four_speaker_timestamps",
+          "audio": "resources/vibevoice_asr/four_speaker_short.wav",
+          "text": "The recording is a short four-speaker studio planning conversation.",
+          "options": {
+            "max_tokens": 1024,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 50,
+            "num_beams": 1,
+            "seed": 1234
+          }
+        }
+      ]
+    },
+    {
+      "id": "higgs_audio_stt_paths",
+      "coverage": "Higgs Audio STT default prompt, custom prompt, enable_thinking on/off, max-token variation, and session reuse paths",
+      "family": "higgs_audio_stt",
+      "model": "models/higgs-audio-v3-stt",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "default_prompt_no_thinking",
+          "audio": "resources/sample_16k.wav",
+          "text": "Transcribe the speech. Output only the spoken words in lowercase with no punctuation.",
+          "options": {
+            "max_tokens": 256,
+            "enable_thinking": false
+          }
+        },
+        {
+          "id": "custom_prompt_thinking",
+          "audio": "resources/sample_16k.wav",
+          "text": "Transcribe the speech carefully. The recording is an English narration about nature.",
+          "options": {
+            "max_tokens": 512,
+            "enable_thinking": true
+          }
+        },
+        {
+          "id": "short_token_budget_no_thinking",
+          "audio": "resources/sample_16k.wav",
+          "text": "Transcribe the speech. Output only the spoken words in lowercase with no punctuation.",
+          "options": {
+            "max_tokens": 128,
+            "enable_thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "hviske_asr_paths",
+      "coverage": "Hviske ASR Danish prompt, punctuation on/off, greedy, sampling, beam decode, and decoder graph reuse paths",
+      "family": "hviske_asr",
+      "model": "models/hviske-v5.3",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "greedy_punctuation",
+          "audio": "resources/hviske_asr/danish_unified_00.wav",
+          "language": "da",
+          "options": {
+            "language": "da",
+            "punctuation": true,
+            "max_tokens": 256,
+            "num_beams": 1,
+            "do_sample": false
+          }
+        },
+        {
+          "id": "greedy_no_punctuation",
+          "audio": "resources/hviske_asr/danish_unified_01.wav",
+          "language": "da",
+          "options": {
+            "language": "da",
+            "punctuation": false,
+            "max_tokens": 256,
+            "num_beams": 1,
+            "do_sample": false
+          }
+        },
+        {
+          "id": "sampling_decode",
+          "audio": "resources/hviske_asr/danish_unified_02.wav",
+          "language": "da",
+          "options": {
+            "language": "da",
+            "punctuation": true,
+            "max_tokens": 256,
+            "num_beams": 1,
+            "do_sample": true,
+            "temperature": 1.0,
+            "top_k": 50,
+            "top_p": 1.0,
+            "seed": 1234
+          }
+        },
+        {
+          "id": "beam_decode",
+          "audio": "resources/hviske_asr/danish_unified_00.wav",
+          "language": "da",
+          "options": {
+            "language": "da",
+            "punctuation": true,
+            "max_tokens": 256,
+            "num_beams": 5,
+            "length_penalty": 1.0,
+            "do_sample": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "nemotron_asr_offline_paths",
+      "coverage": "Nemotron ASR offline encoder, language prompts, lookahead variation, keep-language-tags decode, and session reuse paths",
+      "family": "nemotron_asr",
+      "model": "models/nemotron-3.5-asr-streaming-0.6b",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "english_lookahead_3",
+          "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+          "language": "en-US",
+          "options": {
+            "language": "en-US",
+            "lookahead_tokens": 3,
+            "max_tokens": 256,
+            "streaming": false
+          }
+        },
+        {
+          "id": "english_no_lookahead_tags",
+          "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+          "language": "en-US",
+          "options": {
+            "language": "en-US",
+            "lookahead_tokens": 0,
+            "max_tokens": 256,
+            "streaming": false,
+            "keep_language_tags": true
+          }
+        },
+        {
+          "id": "chinese_lookahead_3",
+          "audio": "resources/nemotron_asr/zh_man_sichuan.wav",
+          "language": "zh-CN",
+          "options": {
+            "language": "zh-CN",
+            "lookahead_tokens": 3,
+            "max_tokens": 256,
+            "streaming": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "nemotron_asr_streaming_paths",
+      "coverage": "Nemotron ASR streaming run mode, streaming encoder/cache path, and chunked input finalization",
+      "family": "nemotron_asr",
+      "model": "models/nemotron-3.5-asr-streaming-0.6b",
+      "task": "asr",
+      "mode": "streaming",
+      "outputs": [
+        "text"
+      ],
+      "chunk_size": 5120,
+      "requests": [
+        {
+          "id": "english_streaming_320ms",
+          "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+          "language": "en-US",
+          "options": {
+            "language": "en-US",
+            "lookahead_tokens": 6,
+            "max_tokens": 256,
+            "keep_language_tags": false
+          }
         }
       ]
     },

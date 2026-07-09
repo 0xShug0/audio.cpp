@@ -4,11 +4,10 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/modules/attention/qwen_causal_decoder.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/framework/modules/optimizations/fast_kv_modules.h"
-#include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
@@ -134,12 +133,6 @@ bool talker_prefill_equal(const Qwen3TalkerPrefill & lhs, const Qwen3TalkerPrefi
     return true;
 }
 
-struct DecoderLayerOutputs {
-    core::TensorValue output;
-    core::TensorValue key;
-    core::TensorValue value;
-};
-
 struct Qwen3TalkerPrefillLogits {
     std::vector<float> values;
     int64_t vocab_size = 0;
@@ -188,96 +181,6 @@ int64_t attention_head_dim(const Config & config) {
     return config.head_dim;
 }
 
-core::TensorValue reshape_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    int64_t heads,
-    int64_t dim) {
-    const auto input_contiguous = core::ensure_backend_addressable_layout(ctx, input);
-    return core::reshape_tensor(
-        ctx,
-        input_contiguous,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
-}
-
-core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::TensorValue & input, int64_t repeats) {
-    if (repeats == 1) {
-        return input;
-    }
-    std::vector<core::TensorValue> heads;
-    heads.reserve(static_cast<size_t>(input.shape.dims[1] * repeats));
-    for (int64_t head = 0; head < input.shape.dims[1]; ++head) {
-        auto one = modules::SliceModule({1, head, 1}).build(ctx, input);
-        for (int64_t rep = 0; rep < repeats; ++rep) {
-            heads.push_back(one);
-        }
-    }
-    auto output = heads.front();
-    for (size_t i = 1; i < heads.size(); ++i) {
-        output = modules::ConcatModule({1}).build(ctx, output, heads[i]);
-    }
-    return output;
-}
-
-core::TensorValue attention_from_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    int64_t dim,
-    const std::optional<core::TensorValue> & attention_mask = std::nullopt) {
-    const modules::MatMulModule matmul;
-    auto scores = matmul.build(ctx, q_heads, modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    core::TensorValue attn;
-    if (attention_mask.has_value()) {
-        scores = core::ensure_backend_addressable_layout(ctx, scores);
-        attn = core::wrap_tensor(
-            ggml_soft_max_ext(
-                ctx.ggml,
-                scores.tensor,
-                attention_mask->tensor,
-                1.0F / std::sqrt(static_cast<float>(dim)),
-                0.0F),
-            scores.shape,
-            GGML_TYPE_F32);
-    } else {
-        scores = core::wrap_tensor(
-            ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(dim))),
-            scores.shape,
-            GGML_TYPE_F32);
-        scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
-        scores = core::ensure_backend_addressable_layout(ctx, scores);
-        attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
-    }
-    return matmul.build(ctx, attn, v_heads);
-}
-
-core::TensorValue flash_attention_from_grouped_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    int64_t dim,
-    const core::TensorValue & attention_mask) {
-    const auto q_contiguous = core::ensure_backend_addressable_layout(ctx, q_heads);
-    const auto k_contiguous = core::ensure_backend_addressable_layout(ctx, k_heads);
-    const auto v_contiguous = core::ensure_backend_addressable_layout(ctx, v_heads);
-    auto * flash = ggml_flash_attn_ext(
-        ctx.ggml,
-        q_contiguous.tensor,
-        k_contiguous.tensor,
-        v_contiguous.tensor,
-        attention_mask.tensor,
-        1.0F / std::sqrt(static_cast<float>(dim)),
-        0.0F,
-        0.0F);
-    ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
-    return core::wrap_tensor(
-        flash,
-        core::TensorShape::from_dims({q_contiguous.shape.dims[0], q_contiguous.shape.dims[2], q_contiguous.shape.dims[1], dim}),
-        GGML_TYPE_F32);
-}
-
 core::TensorValue cache_view(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & cache,
@@ -305,132 +208,58 @@ core::TensorValue cache_view(
 }
 
 template <typename Config>
-DecoderLayerOutputs decoder_layer_with_cache(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & positions,
-    const TalkerLayerWeights & weights,
+modules::QwenCausalDecoderConfig make_qwen_decoder_config(
     const Config & config,
-    common::ConstantTensorCache & constants,
-    const std::optional<core::TensorValue> & prefix_key = std::nullopt,
-    const std::optional<core::TensorValue> & prefix_value = std::nullopt,
-    const std::optional<core::TensorValue> & attention_mask = std::nullopt) {
-    const int64_t dim = attention_head_dim(config);
-    const int64_t kv_repeats = config.num_attention_heads / config.num_key_value_heads;
-    const modules::LinearModule q_proj(
-        binding::linear_config(config.hidden_size, config.num_attention_heads * dim, false));
-    const modules::LinearModule k_proj(
-        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
-    const modules::LinearModule v_proj(
-        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
-    const modules::LinearModule o_proj(
-        binding::linear_config(config.num_attention_heads * dim, config.hidden_size, false));
-    const modules::RMSNormModule hidden_norm({config.hidden_size, config.rms_norm_eps, true, false});
-    const modules::RMSNormModule head_norm({dim, config.rms_norm_eps, true, false});
-    const modules::AddModule add;
-
-    auto attn_in = hidden_norm.build(ctx, input, binding::norm_data(constants, weights.input_norm));
-    auto q = q_proj.build(ctx, attn_in, binding::linear_data(constants, weights.q_proj));
-    auto k = k_proj.build(ctx, attn_in, binding::linear_data(constants, weights.k_proj));
-    auto v = v_proj.build(ctx, attn_in, binding::linear_data(constants, weights.v_proj));
-    q = head_norm.build(ctx, reshape_heads(ctx, q, config.num_attention_heads, dim), binding::norm_data(constants, weights.q_norm));
-    k = head_norm.build(ctx, reshape_heads(ctx, k, config.num_key_value_heads, dim), binding::norm_data(constants, weights.k_norm));
-    v = reshape_heads(ctx, v, config.num_key_value_heads, dim);
-    q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
-    k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    auto all_k = prefix_key.has_value() ? modules::ConcatModule({1}).build(ctx, *prefix_key, k) : k;
-    auto all_v = prefix_value.has_value() ? modules::ConcatModule({1}).build(ctx, *prefix_value, v) : v;
-    auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k), kv_repeats);
-    auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v), kv_repeats);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-    context = core::ensure_backend_addressable_layout(ctx, context);
-    context = core::reshape_tensor(
-        ctx,
-        context,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
-    auto x = add.build(ctx, input, o_proj.build(ctx, context, binding::linear_data(constants, weights.o_proj)));
-
-    auto ff_in = hidden_norm.build(ctx, x, binding::norm_data(constants, weights.post_norm));
-    auto gate = modules::LinearModule(
-                    binding::linear_config(config.hidden_size, config.intermediate_size, false))
-                    .build(ctx, ff_in, binding::linear_data(constants, weights.gate_proj));
-    gate = modules::SiluModule{}.build(ctx, gate);
-    auto up = modules::LinearModule(
-                  binding::linear_config(config.hidden_size, config.intermediate_size, false))
-                  .build(ctx, ff_in, binding::linear_data(constants, weights.up_proj));
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
-    auto ff = modules::LinearModule(
-                  binding::linear_config(config.intermediate_size, config.hidden_size, false))
-                  .build(ctx, gated, binding::linear_data(constants, weights.down_proj));
-    return {add.build(ctx, x, ff), k, v};
+    int64_t logits_size) {
+    modules::QwenCausalDecoderConfig out;
+    out.stack.hidden_size = config.hidden_size;
+    out.stack.num_attention_heads = config.num_attention_heads;
+    out.stack.num_key_value_heads = config.num_key_value_heads;
+    out.stack.head_dim = attention_head_dim(config);
+    out.stack.intermediate_size = config.intermediate_size;
+    out.stack.layers = config.num_hidden_layers;
+    out.stack.rms_norm_eps = config.rms_norm_eps;
+    out.stack.rope_theta = config.rope_theta;
+    out.stack.attention_precision = GGML_PREC_F32;
+    out.stack.use_qk_norm = true;
+    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.transpose_context = true;
+    out.logits_size = logits_size;
+    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    return out;
 }
 
-template <typename Config>
-DecoderLayerOutputs decoder_layer_with_static_cache_tail(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & positions,
-    const TalkerLayerWeights & weights,
-    const Config & config,
+modules::QwenDecoderLayerWeights make_qwen_decoder_layer_weights(
     common::ConstantTensorCache & constants,
-    const core::TensorValue & cache_key,
-    const core::TensorValue & cache_value,
-    const core::TensorValue & cache_slot,
-    const core::TensorValue & attention_mask) {
-    const int64_t dim = attention_head_dim(config);
-    const modules::LinearModule q_proj(
-        binding::linear_config(config.hidden_size, config.num_attention_heads * dim, false));
-    const modules::LinearModule k_proj(
-        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
-    const modules::LinearModule v_proj(
-        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
-    const modules::LinearModule o_proj(
-        binding::linear_config(config.num_attention_heads * dim, config.hidden_size, false));
-    const modules::RMSNormModule hidden_norm({config.hidden_size, config.rms_norm_eps, true, false});
-    const modules::RMSNormModule head_norm({dim, config.rms_norm_eps, true, false});
-    const modules::AddModule add;
+    const TalkerLayerWeights & weights) {
+    modules::QwenDecoderLayerWeights out;
+    out.input_norm = binding::norm_data(constants, weights.input_norm);
+    out.self_attention.q_weight = binding::tensor_data(constants, weights.q_proj);
+    out.self_attention.k_weight = binding::tensor_data(constants, weights.k_proj);
+    out.self_attention.v_weight = binding::tensor_data(constants, weights.v_proj);
+    out.self_attention.out_weight = binding::tensor_data(constants, weights.o_proj);
+    out.q_norm = binding::norm_data(constants, weights.q_norm);
+    out.k_norm = binding::norm_data(constants, weights.k_norm);
+    out.post_norm = binding::norm_data(constants, weights.post_norm);
+    out.mlp.gate_proj = binding::linear_data(constants, weights.gate_proj);
+    out.mlp.up_proj = binding::linear_data(constants, weights.up_proj);
+    out.mlp.down_proj = binding::linear_data(constants, weights.down_proj);
+    return out;
+}
 
-    auto attn_in = hidden_norm.build(ctx, input, binding::norm_data(constants, weights.input_norm));
-    auto q = q_proj.build(ctx, attn_in, binding::linear_data(constants, weights.q_proj));
-    auto k = k_proj.build(ctx, attn_in, binding::linear_data(constants, weights.k_proj));
-    auto v = v_proj.build(ctx, attn_in, binding::linear_data(constants, weights.v_proj));
-    q = head_norm.build(ctx, reshape_heads(ctx, q, config.num_attention_heads, dim), binding::norm_data(constants, weights.q_norm));
-    k = head_norm.build(ctx, reshape_heads(ctx, k, config.num_key_value_heads, dim), binding::norm_data(constants, weights.k_norm));
-    v = reshape_heads(ctx, v, config.num_key_value_heads, dim);
-    q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
-    k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
-
-    const modules::FastKVSetRowsModule set_rows;
-    auto updated_cache_key = set_rows.build(ctx, cache_key, k, cache_slot);
-    auto updated_cache_value = set_rows.build(ctx, cache_value, v, cache_slot);
-
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, updated_cache_key.shape.rank}).build(ctx, updated_cache_key);
-    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, updated_cache_value.shape.rank}).build(ctx, updated_cache_value);
-    auto context = flash_attention_from_grouped_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-    context = core::ensure_backend_addressable_layout(ctx, context);
-    context = core::reshape_tensor(
-        ctx,
-        context,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
-    auto x = add.build(ctx, input, o_proj.build(ctx, context, binding::linear_data(constants, weights.o_proj)));
-
-    auto ff_in = hidden_norm.build(ctx, x, binding::norm_data(constants, weights.post_norm));
-    auto gate = modules::LinearModule(
-                    binding::linear_config(config.hidden_size, config.intermediate_size, false))
-                    .build(ctx, ff_in, binding::linear_data(constants, weights.gate_proj));
-    gate = modules::SiluModule{}.build(ctx, gate);
-    auto up = modules::LinearModule(
-                  binding::linear_config(config.hidden_size, config.intermediate_size, false))
-                  .build(ctx, ff_in, binding::linear_data(constants, weights.up_proj));
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
-    auto ff = modules::LinearModule(
-                  binding::linear_config(config.intermediate_size, config.hidden_size, false))
-                  .build(ctx, gated, binding::linear_data(constants, weights.down_proj));
-    return {add.build(ctx, x, ff), k, v};
+modules::QwenCausalDecoderWeights make_qwen_decoder_weights(
+    common::ConstantTensorCache & constants,
+    const std::vector<TalkerLayerWeights> & layers,
+    const assets::TensorDataF32 & norm,
+    const core::TensorValue & lm_head) {
+    modules::QwenCausalDecoderWeights out;
+    out.stack.layers.reserve(layers.size());
+    for (const auto & layer : layers) {
+        out.stack.layers.push_back(make_qwen_decoder_layer_weights(constants, layer));
+    }
+    out.final_norm = binding::norm_data(constants, norm);
+    out.lm_head = binding::linear_data(constants, lm_head);
+    return out;
 }
 
 float silu(float value) {
@@ -943,6 +772,7 @@ public:
     Qwen3TalkerWeightsRuntime(
         std::shared_ptr<const Qwen3TTSAssets> assets,
         core::BackendType backend_type,
+        int device,
         int threads,
         size_t graph_arena_bytes,
         size_t talker_constant_context_bytes,
@@ -958,7 +788,7 @@ public:
             throw std::runtime_error("Qwen3 talker weights runtime requires positive thread count");
         }
         backend_type_ = backend_type;
-        backend_ = core::init_backend({backend_type_, 0, threads_});
+        backend_ = core::init_backend({backend_type_, device, threads_});
         weights_ = std::make_shared<Qwen3TalkerWeights>(
             load_talker_weights(*assets_, backend_, backend_type_, kTalkerWeightContextBytes, weight_storage_type));
         talker_constants_ = std::make_unique<common::ConstantTensorCache>(
@@ -1045,20 +875,21 @@ public:
         auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_capacity_}), GGML_TYPE_I32);
         auto & constants = weights_->talker_constants();
         constants.begin_graph();
-        for (const auto & layer : tensor_weights.layers) {
-            auto layer_out = decoder_layer_with_cache(ctx, x, positions_value, layer, config, constants);
-            x = layer_out.output;
-            keys_.push_back(layer_out.key.tensor);
-            values_.push_back(layer_out.value.tensor);
+        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config, config.vocab_size))
+                               .build(
+                                   ctx,
+                                   x,
+                                   positions_value,
+                                   make_qwen_decoder_weights(constants, tensor_weights.layers, tensor_weights.norm, tensor_weights.codec_head));
+        for (const auto & layer : decoder_out.state.layers) {
+            if (!layer.key.has_value() || !layer.value.has_value()) {
+                throw std::runtime_error("Qwen3 talker prefill decoder did not return K/V state");
+            }
+            keys_.push_back(layer.key->tensor);
+            values_.push_back(layer.value->tensor);
         }
-        x = modules::SliceModule({1, prompt_capacity_ - 1, 1}).build(ctx, x);
-        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
-                .build(ctx, x, binding::norm_data(constants, tensor_weights.norm));
-        hidden_output_ = x.tensor;
-        auto logits = modules::LinearModule(
-                          binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, x, binding::linear_data(constants, tensor_weights.codec_head));
-        logits_output_ = logits.tensor;
+        hidden_output_ = decoder_out.hidden.tensor;
+        logits_output_ = decoder_out.logits.tensor;
         ggml_set_output(logits_output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, logits_output_);
@@ -1156,7 +987,6 @@ public:
         }
         const auto & config = weights_->assets().config.talker;
         const auto & tensor_weights = weights_->weights();
-        const int64_t head_dim = attention_head_dim(config);
         core::ModuleBuildContext ctx{ctx_.get(), "qwen3_tts.talker.cached_step"};
         auto x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.hidden_size}));
         input_ = x.tensor;
@@ -1170,46 +1000,21 @@ public:
             core::TensorShape::from_dims({1, 1, 1, cache_steps_}),
             GGML_TYPE_F16);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
-        std::vector<core::TensorValue> cache_keys;
-        std::vector<core::TensorValue> cache_values;
-        cache_keys.reserve(static_cast<size_t>(config.num_hidden_layers));
-        cache_values.reserve(static_cast<size_t>(config.num_hidden_layers));
         auto & constants = weights_->talker_constants();
         constants.begin_graph();
-        for (const auto & layer : tensor_weights.layers) {
-            cache_keys.push_back(core::make_tensor(
-                ctx,
-                GGML_TYPE_F32,
-                core::TensorShape::from_dims({1, cache_steps_, config.num_key_value_heads, head_dim})));
-            cache_values.push_back(core::make_tensor(
-                ctx,
-                GGML_TYPE_F32,
-                core::TensorShape::from_dims({1, cache_steps_, config.num_key_value_heads, head_dim})));
-            auto layer_out = decoder_layer_with_static_cache_tail(
-                ctx,
-                x,
-                positions_value,
-                layer,
-                config,
-                constants,
-                cache_keys.back(),
-                cache_values.back(),
-                cache_slot_value,
-                attention_mask_value);
-            x = layer_out.output;
-        }
-        step_cache_ = runtime::TransformerKVCache(
-            cache_steps_,
-            config.num_key_value_heads * head_dim,
-            std::move(cache_keys),
-            std::move(cache_values));
-        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
-                .build(ctx, x, binding::norm_data(constants, tensor_weights.norm));
-        hidden_output_ = x.tensor;
-        auto logits = modules::LinearModule(
-                          binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, x, binding::linear_data(constants, tensor_weights.codec_head));
-        logits_output_ = logits.tensor;
+        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config, config.vocab_size))
+                               .build_static_cache_tail(
+                                   ctx,
+                                   graph_,
+                                   x,
+                                   positions_value,
+                                   make_qwen_decoder_weights(constants, tensor_weights.layers, tensor_weights.norm, tensor_weights.codec_head),
+                                   cache_steps_,
+                                   attention_mask_value,
+                                   cache_slot_value);
+        step_cache_ = std::move(decoder_out.cache);
+        hidden_output_ = decoder_out.hidden.tensor;
+        logits_output_ = decoder_out.logits.tensor;
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
         constants.finish_graph();
@@ -1579,28 +1384,27 @@ private:
         auto positions_value = core::wrap_tensor(prefill_positions_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
         const int64_t head_dim = attention_head_dim(config);
         prefill_graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
-        for (size_t layer_index = 0; layer_index < tensor_weights.code_predictor.layers.size(); ++layer_index) {
-            auto layer_out = decoder_layer_with_cache(
-                ctx,
-                x,
-                positions_value,
-                tensor_weights.code_predictor.layers[layer_index],
-                config,
-                constants);
-            x = layer_out.output;
+        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config, config.vocab_size))
+                               .build(
+                                   ctx,
+                                   x,
+                                   positions_value,
+                                   make_qwen_decoder_weights(
+                                       constants,
+                                       tensor_weights.code_predictor.layers,
+                                       tensor_weights.code_predictor.norm,
+                                       tensor_weights.code_predictor.lm_heads.front()));
+        for (size_t layer_index = 0; layer_index < decoder_out.state.layers.size(); ++layer_index) {
+            const auto & layer = decoder_out.state.layers[layer_index];
+            if (!layer.key.has_value() || !layer.value.has_value()) {
+                throw std::runtime_error("Qwen3 code predictor prefill decoder did not return K/V state");
+            }
             auto key_dest = cache_view(ctx, cache_keys_[layer_index], 0, 2, config.num_key_value_heads, head_dim);
             auto value_dest = cache_view(ctx, cache_values_[layer_index], 0, 2, config.num_key_value_heads, head_dim);
-            ggml_build_forward_expand(prefill_graph_, ggml_cpy(ctx.ggml, layer_out.key.tensor, key_dest.tensor));
-            ggml_build_forward_expand(prefill_graph_, ggml_cpy(ctx.ggml, layer_out.value.tensor, value_dest.tensor));
+            ggml_build_forward_expand(prefill_graph_, ggml_cpy(ctx.ggml, layer.key->tensor, key_dest.tensor));
+            ggml_build_forward_expand(prefill_graph_, ggml_cpy(ctx.ggml, layer.value->tensor, value_dest.tensor));
         }
-        auto hidden = modules::SliceModule({1, 1, 1}).build(ctx, x);
-        hidden = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
-                .build(ctx, hidden, binding::norm_data(constants, tensor_weights.code_predictor.norm));
-        const auto & prefill_head = tensor_weights.code_predictor.lm_heads.front();
-        auto logits = modules::LinearModule(
-                          binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, hidden, binding::linear_data(constants, prefill_head));
-        prefill_logits_ = logits.tensor;
+        prefill_logits_ = decoder_out.logits.tensor;
         ggml_set_output(prefill_logits_);
         ggml_build_forward_expand(prefill_graph_, prefill_logits_);
     }
@@ -1626,14 +1430,17 @@ private:
             core::TensorShape::from_dims({1, 1, 1, code_groups_}),
             GGML_TYPE_F16);
         step.graph = ggml_new_graph_custom(ctx_.get(), 32768, false);
+        const auto & step_head = tensor_weights.code_predictor.lm_heads.at(static_cast<size_t>(group));
+        const auto decoder_config = make_qwen_decoder_config(config, config.vocab_size);
+        const modules::QwenDecoderLayerModule layer_module(
+            modules::qwen_decoder_layer_config_from_stack(decoder_config.stack));
         for (size_t layer_index = 0; layer_index < tensor_weights.code_predictor.layers.size(); ++layer_index) {
-            auto layer_out = decoder_layer_with_static_cache_tail(
+            auto layer_out = layer_module.build_with_static_cache_tail(
                 ctx,
+                step.graph,
                 x,
                 position_value,
-                tensor_weights.code_predictor.layers[layer_index],
-                config,
-                constants,
+                make_qwen_decoder_layer_weights(constants, tensor_weights.code_predictor.layers[layer_index]),
                 cache_keys_[layer_index],
                 cache_values_[layer_index],
                 cache_slot_value,
@@ -1642,7 +1449,6 @@ private:
         }
         x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
                 .build(ctx, x, binding::norm_data(constants, tensor_weights.code_predictor.norm));
-        const auto & step_head = tensor_weights.code_predictor.lm_heads.at(static_cast<size_t>(group));
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
                           .build(ctx, x, binding::linear_data(constants, step_head));
@@ -1982,6 +1788,7 @@ const Qwen3TTSTalkerConfig & Qwen3Talker::config() const noexcept {
 std::shared_ptr<const Qwen3TalkerWeightsRuntime> Qwen3Talker::create_weights_runtime(
     std::shared_ptr<const Qwen3TTSAssets> assets,
     core::BackendType backend_type,
+    int device,
     int threads,
     size_t graph_arena_bytes,
     size_t talker_constant_context_bytes,
@@ -1990,6 +1797,7 @@ std::shared_ptr<const Qwen3TalkerWeightsRuntime> Qwen3Talker::create_weights_run
     return std::make_shared<Qwen3TalkerWeightsRuntime>(
         std::move(assets),
         backend_type,
+        device,
         threads,
         graph_arena_bytes,
         talker_constant_context_bytes,

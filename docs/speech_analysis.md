@@ -1,6 +1,6 @@
 # Speech Analysis
 
-This page covers ASR, VAD, and diarization models that do not have a dedicated page. Qwen3 ASR is documented in [qwen3.md](qwen3.md).
+This page covers VAD and diarization models that do not have a dedicated page. ASR models are documented in [asr.md](asr.md). Qwen3 ASR is documented in [qwen3.md](qwen3.md).
 
 Common CLI shape:
 
@@ -8,65 +8,7 @@ Common CLI shape:
 audiocpp_cli --task <task> --family <family> --model <model-dir> --backend cuda --audio <audio.wav> ...
 ```
 
-## Citrinet ASR
-
-Citrinet is an offline CTC ASR model. It produces transcription text from speech audio.
-
-| Field | Value |
-|---|---|
-| Family | `citrinet_asr` |
-| Model directory | `models/citrinet` |
-| Task | `asr` |
-| Modes | `offline` |
-| Output | Transcription text |
-| Streaming | Not exposed |
-
-```bash
-audiocpp_cli --task asr --family citrinet_asr --model models/citrinet --backend cuda --audio speech_16k.wav
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--audio` | WAV path | required | Speech input. Use 16 kHz WAV for the example path. |
-| `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
-
-## Parakeet TDT
-
-Parakeet TDT is an ASR model with offline and streaming paths. The integration exposes the greedy TDT decoder and optional word/timestamp JSON output.
-
-| Field | Value |
-|---|---|
-| Family | `parakeet_tdt` |
-| Model directory | `models/parakeet-tdt-0.6b-v3` |
-| Task | `asr` |
-| Modes | `offline`, `streaming` |
-| Output | Transcription text; optional words/timestamps through `--words-out` |
-| Decoder | `greedy_duration_loop` |
-
-Offline:
-
-```bash
-audiocpp_cli --task asr --family parakeet_tdt --model models/parakeet-tdt-0.6b-v3 --backend cuda --audio speech_16k.wav --words-out words.json
-```
-
-Streaming:
-
-```bash
-audiocpp_cli --task asr --family parakeet_tdt --model models/parakeet-tdt-0.6b-v3 --backend cuda --mode streaming --audio speech_16k.wav --chunk-size 16000
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--audio` | WAV path | required | Speech input. |
-| `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
-| `--words-out` | JSON path | not set | Write word/token timestamps when produced. |
-| `--chunk-size` | samples | `512` | CLI streaming input chunk size. |
-| `--session-option encoder_variant=<value>` | `full_context`, model-specific variants | `full_context` | Encoder path. |
-| `--session-option decoder_algorithm=<value>` | `greedy_duration_loop` | `greedy_duration_loop` | TDT decoder algorithm. |
-| `--session-option buffered_chunk_secs=<float>` | seconds | `2.0` | Offline buffered chunk duration. |
-| `--session-option chunk_secs=<float>` | seconds | `2.0` | Streaming chunk duration. |
-| `--session-option left_context_secs=<float>` | seconds | `10.0` | Streaming left context. |
-| `--session-option right_context_secs=<float>` | seconds | `2.0` | Streaming right context. |
+When `--mode streaming` is used, the selected model provides its default streaming policy.
 
 ## Silero VAD
 
@@ -106,7 +48,7 @@ audiocpp_cli \
 Streaming:
 
 ```bash
-audiocpp_cli --task vad --family silero_vad --model assets/framework/models/silero_vad --backend cuda --mode streaming --audio speech_16k.wav --chunk-size 512 --segments-out segments.json
+audiocpp_cli --task vad --family silero_vad --model assets/framework/models/silero_vad --backend cuda --mode streaming --audio speech_16k.wav --segments-out segments.json
 ```
 
 | Option | Values | Default | Meaning |
@@ -118,7 +60,6 @@ audiocpp_cli --task vad --family silero_vad --model assets/framework/models/sile
 | `--vad-chunk-max-seconds` | seconds | `45` | Maximum VAD chunk length. |
 | `--vad-chunk-merge-gap-seconds` | seconds | `0.5` | Merge padded speech spans separated by this gap or less. |
 | `--vad-chunk-padding-seconds` | seconds | `0.25` | Pad each speech segment before chunk planning. |
-| `--chunk-size` | samples | `512` | Streaming chunk size; Silero streaming requires 512 samples. |
 | `--request-option threshold=<float>` | float | `0.5` | Speech probability threshold. |
 | `--request-option neg_threshold=<float>` | float | `threshold - 0.15`, clamped to at least `0.01` | Negative threshold used by the state machine when not set directly. |
 | `--request-option min_speech_duration_ms=<n>` | integer ms | `250` | Minimum speech duration. |

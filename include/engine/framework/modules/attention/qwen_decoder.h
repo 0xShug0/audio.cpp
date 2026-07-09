@@ -12,6 +12,34 @@ struct ggml_cgraph;
 
 namespace engine::modules {
 
+enum class QwenDecoderAttentionMode {
+    ManualRepeat,
+    FlashGrouped,
+    FlashGroupedViewKV,
+    ManualRepeatThenGroupedQuery,
+};
+
+enum class QwenDecoderStaticCacheUpdateMode {
+    ScratchTail,
+    DirectSetRows,
+};
+
+struct QwenDecoderAttentionPolicy {
+    QwenDecoderAttentionMode prefill_mode = QwenDecoderAttentionMode::ManualRepeat;
+    QwenDecoderAttentionMode static_mode = QwenDecoderAttentionMode::FlashGrouped;
+    int64_t grouped_query_min_steps = 0;
+};
+
+struct QwenDecoderStaticCachePolicy {
+    QwenDecoderStaticCacheUpdateMode update_mode = QwenDecoderStaticCacheUpdateMode::ScratchTail;
+    bool transpose_context = false;
+};
+
+struct QwenDecoderRuntimePolicy {
+    QwenDecoderAttentionPolicy attention;
+    QwenDecoderStaticCachePolicy static_cache;
+};
+
 struct QwenDecoderLayerConfig {
     int64_t hidden_size = 0;
     int64_t num_attention_heads = 0;
@@ -22,6 +50,8 @@ struct QwenDecoderLayerConfig {
     float rope_theta = 10000.0f;
     ggml_prec attention_precision = GGML_PREC_F32;
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
+    bool use_qk_norm = true;
+    QwenDecoderRuntimePolicy runtime;
 };
 
 struct QwenMLPWeights {
@@ -69,6 +99,7 @@ public:
         const QwenDecoderLayerWeights & weights,
         const core::TensorValue & cache_key,
         const core::TensorValue & cache_value,
+        const std::optional<core::TensorValue> & cache_slot,
         const core::TensorValue & attention_mask) const;
 
     static const core::ModuleSchema & static_schema() noexcept;
@@ -88,7 +119,11 @@ struct QwenDecoderStackConfig {
     float rope_theta = 10000.0f;
     ggml_prec attention_precision = GGML_PREC_F32;
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
+    bool use_qk_norm = true;
+    QwenDecoderRuntimePolicy runtime;
 };
+
+QwenDecoderLayerConfig qwen_decoder_layer_config_from_stack(const QwenDecoderStackConfig & config);
 
 struct QwenDecoderStackWeights {
     std::vector<QwenDecoderLayerWeights> layers;

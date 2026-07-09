@@ -37,6 +37,17 @@ public:
     static const core::ModuleSchema & static_schema() noexcept;
 };
 
+class TimeMask4dModule {
+public:
+    const core::ModuleSchema & schema() const noexcept;
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const core::TensorValue & mask) const;
+
+    static const core::ModuleSchema & static_schema() noexcept;
+};
+
 class ResidualAddModule {
 public:
     const core::ModuleSchema & schema() const noexcept;

@@ -154,6 +154,7 @@ runtime::TaskResult Qwen3ForcedAlignerSession::run(const runtime::TaskRequest & 
     require_prepared("Qwen3 forced aligner run()");
     const auto mode = engine::audio::parse_audio_chunk_mode(request.options);
     if (mode == engine::audio::AudioChunkMode::Fixed ||
+        mode == engine::audio::AudioChunkMode::QuietEnergy ||
         mode == engine::audio::AudioChunkMode::Vad) {
         throw std::runtime_error(
             "Qwen3 forced aligner does not support standalone audio chunking; "

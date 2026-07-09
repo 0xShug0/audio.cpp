@@ -5,11 +5,11 @@ on:
     branches:
       - ci/**
       - main
-      - release-0.1
+      - release-0.2
   pull_request:
     branches:
       - main
-      - release-0.1
+      - release-0.2
   workflow_dispatch:
 
 jobs:

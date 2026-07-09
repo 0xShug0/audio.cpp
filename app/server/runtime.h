@@ -8,6 +8,7 @@
 #include "engine/framework/runtime/session.h"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -34,6 +35,7 @@ private:
         std::unique_ptr<engine::runtime::ILoadedVoiceModel> model;
         std::unique_ptr<engine::runtime::IVoiceTaskSession> session;
         engine::runtime::IOfflineVoiceTaskSession * offline = nullptr;
+        engine::runtime::IStreamingVoiceTaskSession * streaming = nullptr;
         std::unordered_map<std::string, RuntimeVoicePreset> voice_presets;
         std::optional<RuntimeVoicePreset> default_voice_preset;
         std::mutex mutex;
@@ -53,12 +55,22 @@ private:
         const engine::io::json::Value & body) const;
     struct TimedTaskResult;
     TimedTaskResult run_model(LoadedModel & model, const engine::runtime::TaskRequest & request);
+    TimedTaskResult run_streaming_model(
+        LoadedModel & model,
+        const engine::runtime::TaskRequest & request,
+        const std::function<void(const engine::runtime::StreamEvent &)> & event_sink = {});
     HttpResponse handle_speech(const std::string & body_text);
+    HttpResponse handle_speech_stream(
+        LoadedModel & model,
+        const engine::runtime::TaskRequest & request,
+        const engine::io::json::Value & body);
     HttpResponse handle_transcription(const HttpRequest & request);
     HttpResponse handle_transcription_json(const std::string & body_text);
     HttpResponse handle_transcription_multipart(const std::string & body_text, const std::string & boundary);
     HttpResponse run_transcription(LoadedModel & model, const engine::runtime::TaskRequest & request);
+    HttpResponse run_transcription_stream(LoadedModel & model, const engine::runtime::TaskRequest & request);
     HttpResponse handle_generic_run(const std::string & body_text);
+    HttpResponse handle_generic_stream(const std::string & body_text);
     HttpResponse handle_voices(const HttpRequest & request) const;
     std::string models_json() const;
 

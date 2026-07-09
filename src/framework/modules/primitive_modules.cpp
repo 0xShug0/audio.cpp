@@ -56,6 +56,21 @@ const core::ModuleSchema kMulSchema = {
     "Elementwise multiplication for tensors with the same logical shape.",
 };
 
+const core::ModulePortSpec kTimeMask4dInputs[] = {
+    {"input", core::PortKind::Activation, false},
+    {"mask", core::PortKind::Activation, false},
+};
+
+const core::ModuleSchema kTimeMask4dSchema = {
+    "TimeMask4d",
+    "tensor.mask",
+    kTimeMask4dInputs,
+    2,
+    kSingleOutput,
+    1,
+    "Applies a [batch, time] keep mask to a [batch, channels, time, features] tensor.",
+};
+
 const core::ModuleSchema kResidualAddSchema = {
     "ResidualAdd",
     "nn.primitive",
@@ -240,6 +255,35 @@ core::TensorValue MulModule::build(
 
 const core::ModuleSchema & MulModule::static_schema() noexcept {
     return kMulSchema;
+}
+
+const core::ModuleSchema & TimeMask4dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue TimeMask4dModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & mask) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 4, 4, "input");
+    core::validate_shape(
+        mask,
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[2]}),
+        "time_mask");
+    const auto mask_f32 = core::wrap_tensor(ggml_cast(ctx.ggml, mask.tensor, GGML_TYPE_F32), mask.shape, GGML_TYPE_F32);
+    const auto mask_4d = core::reshape_tensor(
+        ctx,
+        mask_f32,
+        core::TensorShape::from_dims({input.shape.dims[0], 1, input.shape.dims[2], 1}));
+    const auto broadcast = core::wrap_tensor(ggml_repeat(ctx.ggml, mask_4d.tensor, input.tensor), input.shape, GGML_TYPE_F32);
+    return core::wrap_tensor(ggml_mul(ctx.ggml, input.tensor, broadcast.tensor), input.shape, GGML_TYPE_F32);
+}
+
+const core::ModuleSchema & TimeMask4dModule::static_schema() noexcept {
+    return kTimeMask4dSchema;
 }
 
 const core::ModuleSchema & ResidualAddModule::schema() const noexcept {

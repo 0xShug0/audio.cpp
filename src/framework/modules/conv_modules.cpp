@@ -40,6 +40,16 @@ const core::ModuleSchema kConv2dSchema = {
     "Applies a 2D convolution to channel-first inputs [batch, channels, height, width].",
 };
 
+const core::ModuleSchema kDepthwiseConv2dSchema = {
+    "DepthwiseConv2d",
+    "nn.conv",
+    kConvInputs,
+    3,
+    kSingleOutput,
+    1,
+    "Applies a depthwise 2D convolution to channel-first inputs [batch, channels, height, width].",
+};
+
 const core::ModuleSchema kConvTranspose1dSchema = {
     "ConvTranspose1d",
     "nn.conv",
@@ -102,6 +112,21 @@ core::TensorValue conv_transpose1d_weight(
         ggml_type_name(contiguous.type));
 }
 
+core::TensorValue depthwise_conv2d_weight(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & weight) {
+    const auto contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weight);
+    if (contiguous.type == GGML_TYPE_F32) {
+        return contiguous;
+    }
+    if (contiguous.type == GGML_TYPE_F16 || contiguous.type == GGML_TYPE_BF16 || ggml_is_quantized(contiguous.type)) {
+        return core::wrap_tensor(ggml_cast(ctx.ggml, contiguous.tensor, GGML_TYPE_F32), contiguous.shape, GGML_TYPE_F32);
+    }
+    throw std::runtime_error(
+        std::string("DepthwiseConv2dModule does not support weight type with the current ggml depthwise conv path: ") +
+        ggml_type_name(contiguous.type));
+}
+
 int64_t conv1d_output_frames(const Conv1dConfig & config, int64_t input_frames) {
     return (input_frames + 2 * config.padding - config.dilation * (config.kernel_size - 1) - 1) / config.stride + 1;
 }
@@ -127,6 +152,22 @@ core::TensorValue add_bias_if_needed(
     const auto output_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, output);
     const auto bias_view = core::reshape_tensor(ctx, *bias, core::TensorShape::from_dims({1, out_channels, 1}));
     const auto bias_expanded = core::wrap_tensor(ggml_repeat(ctx.ggml, bias_view.tensor, output_contiguous.tensor), output.shape, GGML_TYPE_F32);
+    return core::wrap_tensor(ggml_add(ctx.ggml, output_contiguous.tensor, bias_expanded.tensor), output.shape, GGML_TYPE_F32);
+}
+
+core::TensorValue add_4d_channel_bias_if_needed(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & output,
+    int64_t channels,
+    const std::optional<core::TensorValue> & bias) {
+    if (!bias.has_value()) {
+        return output;
+    }
+    core::validate_shape(*bias, core::TensorShape::from_dims({channels}), "bias");
+    const auto output_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, output);
+    const auto bias_view = core::reshape_tensor(ctx, *bias, core::TensorShape::from_dims({1, channels, 1, 1}));
+    const auto bias_expanded =
+        core::wrap_tensor(ggml_repeat(ctx.ggml, bias_view.tensor, output_contiguous.tensor), output.shape, GGML_TYPE_F32);
     return core::wrap_tensor(ggml_add(ctx.ggml, output_contiguous.tensor, bias_expanded.tensor), output.shape, GGML_TYPE_F32);
 }
 
@@ -375,6 +416,84 @@ core::TensorValue Conv2dModule::build(
 
 const core::ModuleSchema & Conv2dModule::static_schema() noexcept {
     return kConv2dSchema;
+}
+
+DepthwiseConv2dModule::DepthwiseConv2dModule(DepthwiseConv2dConfig config) : config_(config) {
+    if (config_.channels <= 0 || config_.kernel_height <= 0 || config_.kernel_width <= 0) {
+        throw std::runtime_error("DepthwiseConv2dConfig dimensions must be positive");
+    }
+    if (config_.stride_height <= 0 || config_.stride_width <= 0 || config_.dilation_height <= 0 || config_.dilation_width <= 0) {
+        throw std::runtime_error("DepthwiseConv2d stride and dilation must be positive");
+    }
+}
+
+const DepthwiseConv2dConfig & DepthwiseConv2dModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & DepthwiseConv2dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue DepthwiseConv2dModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const Conv2dWeights & weights) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 4, 4, "input");
+    core::validate_shape(
+        input,
+        core::TensorShape::from_dims({input.shape.dims[0], config_.channels, input.shape.dims[2], input.shape.dims[3]}),
+        "input");
+    core::validate_shape(
+        weights.weight,
+        core::TensorShape::from_dims({config_.channels, 1, config_.kernel_height, config_.kernel_width}),
+        "weight");
+
+    const auto output_shape = core::TensorShape::from_dims({
+        input.shape.dims[0],
+        config_.channels,
+        conv2d_output_dim(
+            input.shape.dims[2],
+            static_cast<int>(config_.kernel_height),
+            config_.stride_height,
+            config_.padding_height,
+            config_.dilation_height),
+        conv2d_output_dim(
+            input.shape.dims[3],
+            static_cast<int>(config_.kernel_width),
+            config_.stride_width,
+            config_.padding_width,
+            config_.dilation_width),
+    });
+    const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
+    const auto weight_contiguous = depthwise_conv2d_weight(ctx, weights.weight);
+    auto output = core::wrap_tensor(
+        ggml_conv_2d_dw_direct(
+            ctx.ggml,
+            weight_contiguous.tensor,
+            input_contiguous.tensor,
+            config_.stride_width,
+            config_.stride_height,
+            config_.padding_width,
+            config_.padding_height,
+            config_.dilation_width,
+            config_.dilation_height),
+        output_shape,
+        GGML_TYPE_F32);
+    if (config_.use_bias) {
+        if (!weights.bias.has_value()) {
+            throw std::runtime_error("bias is required when DepthwiseConv2dConfig.use_bias is true");
+        }
+        output = add_4d_channel_bias_if_needed(ctx, output, config_.channels, weights.bias);
+    }
+    return output;
+}
+
+const core::ModuleSchema & DepthwiseConv2dModule::static_schema() noexcept {
+    return kDepthwiseConv2dSchema;
 }
 
 ConvTranspose1dModule::ConvTranspose1dModule(ConvTranspose1dConfig config) : config_(config) {

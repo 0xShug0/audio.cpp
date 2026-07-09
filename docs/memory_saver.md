@@ -1,6 +1,6 @@
 # Memory Saver
 
-`mem_saver` session options reduce post-request resident VRAM by releasing staged graph and cache state. They are intended for deployments that prefer lower idle memory over maximum reuse between later requests.
+`mem_saver` session options reduce graph workspace VRAM or post-request resident VRAM by using tighter graph allocators or releasing staged graph and cache state. They are intended for deployments that prefer lower memory over maximum graph/cache reuse between later requests.
 
 Use this page to collect memory-saver validation results across models. Add new rows with the same columns so results stay comparable.
 
@@ -16,7 +16,7 @@ For each model:
 4. Record peak VRAM, final resident VRAM, server wall time, generated audio length, and RTF.
 5. Use the same request, native/default weights, backend, seed, duration, and sampling settings for the default and `mem_saver` pair.
 6. Use a request that actually stresses the model memory path. For longform music models, the existing checks used 120 second targets and long lyrics/text.
-7. On a stress request, `mem_saver` should usually lower final resident VRAM. If resident VRAM does not drop, check the release logs and confirm the request exercised the graph/cache state that `mem_saver` is supposed to release.
+7. On a stress request, `mem_saver` should usually lower peak or final resident VRAM. If neither drops, check the release logs and confirm the request exercised the graph/cache state that `mem_saver` is supposed to affect.
 
 ## Results
 
@@ -28,6 +28,7 @@ Native/default weights were used for all rows.
 - OmniVoice used default generation parameters, native/default weights, no explicit text chunk size, and no seed for the memory-stat pair.
 - Chatterbox used one fixed-seed voice-clone request with native/default weights and no explicit max token cap.
 - Qwen3 TTS Base used a five-request voice-clone server sequence: two small requests, one 6026-character long request with `max_tokens=4096`, then two small requests. Peak VRAM was sampled during each request; resident VRAM is the post-response value after the long request.
+- VoxCPM2 used the OpenAI-compatible offline speech endpoint with a 2048-character voice-design request, `seed=1234`, `max_tokens=512`, `num_inference_steps=10`, and `guidance_scale=2.0`. The default and `mem_saver` WAV outputs were byte-identical.
 
 | Model | Mode | Peak VRAM | Resident VRAM | Server wall | Audio | RTF |
 |---|---|---:|---:|---:|---:|---:|
@@ -47,3 +48,5 @@ Native/default weights were used for all rows.
 | Chatterbox | mem_saver | 12272 MiB | 5074 MiB | 4832.43 ms | 6.76s | 0.714856 |
 | Qwen3 TTS Base voice clone | default | 7518 MiB | 7518 MiB | 122013.55 ms | 327.6s | 0.372447 |
 | Qwen3 TTS Base voice clone | mem_saver | 7520 MiB | 5684 MiB | 121919.91 ms | 327.6s | 0.372161 |
+| VoxCPM2 offline voice design | default | 13080 MiB | 13039 MiB | 15325.7 ms | 93.12s | 0.16458 |
+| VoxCPM2 offline voice design | mem_saver | 12456 MiB | 5966 MiB | 14924 ms | 93.12s | 0.160266 |

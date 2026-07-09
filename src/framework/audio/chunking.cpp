@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -129,13 +130,16 @@ AudioChunkMode parse_audio_chunk_mode(
     if (*mode == "fixed") {
         return AudioChunkMode::Fixed;
     }
+    if (*mode == "quiet_energy") {
+        return AudioChunkMode::QuietEnergy;
+    }
     if (*mode == "vad") {
         return AudioChunkMode::Vad;
     }
     if (*mode == "none") {
         return AudioChunkMode::None;
     }
-    throw std::runtime_error("audio_chunk_mode must be auto, fixed, vad, or none");
+    throw std::runtime_error("audio_chunk_mode must be auto, fixed, quiet_energy, vad, or none");
 }
 
 std::optional<float> parse_audio_chunk_seconds_override(
@@ -274,6 +278,53 @@ std::vector<runtime::TimeSpan> plan_vad_audio_chunks(
         vad_result.speech_segments,
         static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels)),
         options);
+}
+
+std::vector<runtime::TimeSpan> plan_quiet_energy_audio_chunks(
+    const std::vector<float> & mono_samples,
+    const QuietEnergyAudioChunkOptions & options) {
+    require_positive(static_cast<int64_t>(mono_samples.size()), "quiet-energy input samples");
+    require_positive(options.chunk_samples, "quiet-energy chunk samples");
+    require_positive(options.boundary_context_samples, "quiet-energy boundary context samples");
+    require_positive(options.min_energy_window_samples, "quiet-energy min energy window samples");
+
+    const int64_t total = static_cast<int64_t>(mono_samples.size());
+    std::vector<runtime::TimeSpan> chunks;
+    int64_t index = 0;
+    while (index < total) {
+        if (index + options.chunk_samples >= total) {
+            chunks.push_back({index, total});
+            break;
+        }
+        const int64_t search_start = std::max(index, index + options.chunk_samples - options.boundary_context_samples);
+        const int64_t search_end = std::min(index + options.chunk_samples, total);
+        int64_t split = index + options.chunk_samples;
+        if (search_end > search_start) {
+            if (search_end - search_start <= options.min_energy_window_samples) {
+                split = (search_start + search_end) / 2;
+            } else {
+                float min_energy = std::numeric_limits<float>::infinity();
+                const int64_t upper = search_end - search_start - options.min_energy_window_samples;
+                for (int64_t i = 0; i < upper; i += options.min_energy_window_samples) {
+                    double sum = 0.0;
+                    for (int64_t j = 0; j < options.min_energy_window_samples; ++j) {
+                        const float value = mono_samples[static_cast<size_t>(search_start + i + j)];
+                        sum += static_cast<double>(value) * static_cast<double>(value);
+                    }
+                    const float energy =
+                        std::sqrt(static_cast<float>(sum / static_cast<double>(options.min_energy_window_samples)));
+                    if (energy < min_energy) {
+                        min_energy = energy;
+                        split = search_start + i;
+                    }
+                }
+            }
+        }
+        split = std::max<int64_t>(index + 1, std::min<int64_t>(split, total));
+        chunks.push_back({index, split});
+        index = split;
+    }
+    return chunks;
 }
 
 runtime::AudioBuffer slice_audio_buffer(

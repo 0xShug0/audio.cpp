@@ -1,0 +1,4 @@
+# Download PocketTTS model files here:
+#   models/pocket-tts/languages/english/model.safetensors
+#   models/pocket-tts/languages/english/tokenizer.model
+#   models/pocket-tts/languages/english/embeddings/*.safetensors

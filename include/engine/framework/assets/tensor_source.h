@@ -134,5 +134,11 @@ void set_backend_tensor_from_f32_parallel(
     const core::TensorShape & shape,
     ggml_type type);
 std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::path & path);
+std::vector<std::filesystem::path> indexed_tensor_source_shard_paths(
+    const std::filesystem::path & index_path,
+    const std::filesystem::path & model_root);
+std::shared_ptr<const TensorSource> open_indexed_tensor_source(
+    const std::filesystem::path & index_path,
+    const std::filesystem::path & model_root);
 
 }  // namespace engine::assets

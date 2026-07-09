@@ -252,23 +252,23 @@ public:
                 core::TensorShape::from_dims({code_capacity_, config.pool_window_size, config.hidden_size})})
                                                .build(build_ctx, special_tokens);
             x = modules::AddModule{}.build(build_ctx, x, repeated_special_tokens);
+            modules::QwenDecoderLayerConfig layer_config;
+            layer_config.hidden_size = config.hidden_size;
+            layer_config.num_attention_heads = config.num_attention_heads;
+            layer_config.num_key_value_heads = config.num_key_value_heads;
+            layer_config.head_dim = config.head_dim;
+            layer_config.intermediate_size = config.intermediate_size;
+            layer_config.rms_norm_eps = config.rms_norm_eps;
+            layer_config.rope_theta = config.rope_theta;
+            layer_config.attention_precision = GGML_PREC_F32;
+            layer_config.projection_precision = GGML_PREC_F32;
+            const modules::QwenDecoderLayerModule layer_module(layer_config);
             for (int64_t i = 0; i < config.num_attention_pooler_hidden_layers; ++i) {
                 const auto & layer = weights_->layers.layers[static_cast<size_t>(i)];
                 const auto & mask =
                     (config.layer_types[static_cast<size_t>(i)] == "sliding_attention")
                     ? sliding_attention_mask
                     : full_attention_mask;
-                const modules::QwenDecoderLayerModule layer_module({
-                    config.hidden_size,
-                    config.num_attention_heads,
-                    config.num_key_value_heads,
-                    config.head_dim,
-                    config.intermediate_size,
-                    config.rms_norm_eps,
-                    config.rope_theta,
-                    GGML_PREC_F32,
-                    GGML_PREC_F32,
-                });
                 x = layer_module.build(build_ctx, x, positions, layer, std::nullopt, std::nullopt, mask).output;
             }
             x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false}).build(

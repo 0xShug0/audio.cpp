@@ -5,6 +5,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/qwen_causal_decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -64,86 +65,62 @@ struct ThinkerWeights {
     core::TensorValue lm_head;
 };
 
-struct DecoderLayerOutputs {
-    core::TensorValue output;
-    core::TensorValue key;
-    core::TensorValue value;
-};
-
 struct PrefillOutput {
     std::vector<float> logits;
     runtime::TransformerKVState kv_state;
 };
+
+modules::QwenDecoderLayerWeights to_qwen_layer_weights(const TextLayerWeights & weights) {
+    modules::QwenDecoderLayerWeights out;
+    out.input_norm = {weights.input_norm, std::nullopt};
+    out.self_attention.q_weight = weights.q_proj;
+    out.self_attention.k_weight = weights.k_proj;
+    out.self_attention.v_weight = weights.v_proj;
+    out.self_attention.out_weight = weights.o_proj;
+    out.q_norm = {weights.q_norm, std::nullopt};
+    out.k_norm = {weights.k_norm, std::nullopt};
+    out.post_norm = {weights.post_norm, std::nullopt};
+    out.mlp.gate_proj = {weights.gate_proj, std::nullopt};
+    out.mlp.up_proj = {weights.up_proj, std::nullopt};
+    out.mlp.down_proj = {weights.down_proj, std::nullopt};
+    return out;
+}
+
+modules::QwenCausalDecoderConfig make_qwen_decoder_config(
+    const Qwen3ASRTextDecoderConfig & config,
+    modules::QwenCausalDecoderLogitsMode logits_mode) {
+    modules::QwenCausalDecoderConfig out;
+    out.stack.hidden_size = config.hidden_size;
+    out.stack.num_attention_heads = config.num_attention_heads;
+    out.stack.num_key_value_heads = config.num_key_value_heads;
+    out.stack.head_dim = config.head_dim;
+    out.stack.intermediate_size = config.intermediate_size;
+    out.stack.layers = config.num_hidden_layers;
+    out.stack.rms_norm_eps = config.rms_norm_eps;
+    out.stack.rope_theta = config.rope_theta;
+    out.stack.use_qk_norm = true;
+    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.logits_size = config.output_size;
+    out.logits_mode = logits_mode;
+    return out;
+}
+
+modules::QwenCausalDecoderWeights make_qwen_decoder_weights(const ThinkerWeights & weights) {
+    modules::QwenCausalDecoderWeights out;
+    out.stack.layers.reserve(weights.layers.size());
+    for (const auto & layer : weights.layers) {
+        out.stack.layers.push_back(to_qwen_layer_weights(layer));
+    }
+    out.final_norm = {weights.norm, std::nullopt};
+    out.lm_head = {weights.lm_head, std::nullopt};
+    return out;
+}
 
 int64_t head_dim(const Qwen3ASRTextDecoderConfig & config) {
     if (config.num_attention_heads <= 0 || config.num_key_value_heads <= 0 || config.head_dim <= 0) {
         throw std::runtime_error("Qwen3 ASR thinker attention config is invalid");
     }
     return config.head_dim;
-}
-
-core::TensorValue reshape_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    int64_t heads,
-    int64_t dim) {
-    const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
-    return core::reshape_tensor(
-        ctx,
-        contiguous,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
-}
-
-core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::TensorValue & input, int64_t repeats) {
-    if (repeats == 1) {
-        return input;
-    }
-    std::vector<core::TensorValue> heads;
-    heads.reserve(static_cast<size_t>(input.shape.dims[1] * repeats));
-    for (int64_t head = 0; head < input.shape.dims[1]; ++head) {
-        auto one = modules::SliceModule({1, head, 1}).build(ctx, input);
-        for (int64_t rep = 0; rep < repeats; ++rep) {
-            heads.push_back(one);
-        }
-    }
-    auto output = heads.front();
-    for (size_t i = 1; i < heads.size(); ++i) {
-        output = modules::ConcatModule({1}).build(ctx, output, heads[i]);
-    }
-    return output;
-}
-
-core::TensorValue attention_from_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    int64_t dim,
-    const std::optional<core::TensorValue> & attention_mask = std::nullopt) {
-    const modules::MatMulModule matmul;
-    auto scores = matmul.build(ctx, q_heads, modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    core::TensorValue attn;
-    if (attention_mask.has_value()) {
-        scores = core::ensure_backend_addressable_layout(ctx, scores);
-        attn = core::wrap_tensor(
-            ggml_soft_max_ext(
-                ctx.ggml,
-                scores.tensor,
-                attention_mask->tensor,
-                1.0F / std::sqrt(static_cast<float>(dim)),
-                0.0F),
-            scores.shape,
-            GGML_TYPE_F32);
-    } else {
-        scores = core::wrap_tensor(
-            ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(dim))),
-            scores.shape,
-            GGML_TYPE_F32);
-        scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
-        scores = core::ensure_backend_addressable_layout(ctx, scores);
-        attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
-    }
-    return matmul.build(ctx, attn, v_heads);
 }
 
 core::TensorValue prompt_embeddings(
@@ -172,172 +149,6 @@ core::TensorValue prompt_embeddings(
             GGML_TYPE_F32);
     }
     return core::reshape_tensor(ctx, x, core::TensorShape::from_dims({1, prompt_steps, config.hidden_size}));
-}
-
-core::TensorValue flash_attention_from_grouped_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    int64_t dim,
-    const core::TensorValue & attention_mask) {
-    if (!core::has_backend_addressable_layout(q_heads.tensor) ||
-        !core::has_backend_addressable_layout(k_heads.tensor) ||
-        !core::has_backend_addressable_layout(v_heads.tensor)) {
-        throw std::runtime_error("Qwen3 ASR flash attention expects contiguous Q/K/V heads");
-    }
-    auto * flash = ggml_flash_attn_ext(
-        ctx.ggml,
-        q_heads.tensor,
-        k_heads.tensor,
-        v_heads.tensor,
-        attention_mask.tensor,
-        1.0F / std::sqrt(static_cast<float>(dim)),
-        0.0F,
-        0.0F);
-    ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
-    return core::wrap_tensor(
-        flash,
-        core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[2], q_heads.shape.dims[1], dim}),
-        GGML_TYPE_F32);
-}
-
-core::TensorValue cache_view(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & cache,
-    int64_t start,
-    int64_t steps,
-    int64_t heads,
-    int64_t dim) {
-    if (start < 0 || steps <= 0 || start + steps > cache.shape.dims[1]) {
-        throw std::runtime_error("Qwen3 ASR thinker cache view range is invalid");
-    }
-    return core::wrap_tensor(
-        ggml_view_4d(
-            ctx.ggml,
-            cache.tensor,
-            dim,
-            heads,
-            steps,
-            1,
-            cache.tensor->nb[1],
-            cache.tensor->nb[2],
-            cache.tensor->nb[3],
-            static_cast<size_t>(start) * cache.tensor->nb[2]),
-        core::TensorShape::from_dims({1, steps, heads, dim}),
-        GGML_TYPE_F32);
-}
-
-DecoderLayerOutputs decoder_layer(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & positions,
-    const TextLayerWeights & weights,
-    const Qwen3ASRTextDecoderConfig & config,
-    const std::optional<core::TensorValue> & prefix_key = std::nullopt,
-    const std::optional<core::TensorValue> & prefix_value = std::nullopt,
-    const std::optional<core::TensorValue> & attention_mask = std::nullopt) {
-    const int64_t dim = head_dim(config);
-    const int64_t kv_repeats = config.num_attention_heads / config.num_key_value_heads;
-    const modules::LinearModule q_proj({config.hidden_size, config.num_attention_heads * dim, false});
-    const modules::LinearModule k_proj({config.hidden_size, config.num_key_value_heads * dim, false});
-    const modules::LinearModule v_proj({config.hidden_size, config.num_key_value_heads * dim, false});
-    const modules::LinearModule o_proj({config.num_attention_heads * dim, config.hidden_size, false});
-    const modules::RMSNormModule hidden_norm({config.hidden_size, config.rms_norm_eps, true, false});
-    const modules::RMSNormModule head_norm({dim, config.rms_norm_eps, true, false});
-
-    auto x_norm = hidden_norm.build(ctx, input, {weights.input_norm, std::nullopt});
-    auto q = q_proj.build(ctx, x_norm, {weights.q_proj, std::nullopt});
-    auto k = k_proj.build(ctx, x_norm, {weights.k_proj, std::nullopt});
-    auto v = v_proj.build(ctx, x_norm, {weights.v_proj, std::nullopt});
-    q = head_norm.build(ctx, reshape_heads(ctx, q, config.num_attention_heads, dim), {weights.q_norm, std::nullopt});
-    k = head_norm.build(ctx, reshape_heads(ctx, k, config.num_key_value_heads, dim), {weights.k_norm, std::nullopt});
-    v = reshape_heads(ctx, v, config.num_key_value_heads, dim);
-    q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
-    k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
-
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    auto all_k = prefix_key.has_value() ? modules::ConcatModule({1}).build(ctx, *prefix_key, k) : k;
-    auto all_v = prefix_value.has_value() ? modules::ConcatModule({1}).build(ctx, *prefix_value, v) : v;
-    auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k), kv_repeats);
-    auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v), kv_repeats);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-    context = core::ensure_backend_addressable_layout(ctx, context);
-    context = core::reshape_tensor(
-        ctx,
-        context,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
-    auto x = modules::AddModule{}.build(ctx, input, o_proj.build(ctx, context, {weights.o_proj, std::nullopt}));
-
-    auto ff_in = hidden_norm.build(ctx, x, {weights.post_norm, std::nullopt});
-    auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                    .build(ctx, ff_in, {weights.gate_proj, std::nullopt});
-    gate = modules::SiluModule{}.build(ctx, gate);
-    auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                  .build(ctx, ff_in, {weights.up_proj, std::nullopt});
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
-    auto ff = modules::LinearModule({config.intermediate_size, config.hidden_size, false})
-                  .build(ctx, gated, {weights.down_proj, std::nullopt});
-    return {modules::AddModule{}.build(ctx, x, ff), k, v};
-}
-
-DecoderLayerOutputs decoder_layer_with_static_cache_tail(
-    core::ModuleBuildContext & ctx,
-    ggml_cgraph * graph,
-    const core::TensorValue & input,
-    const core::TensorValue & positions,
-    const TextLayerWeights & weights,
-    const Qwen3ASRTextDecoderConfig & config,
-    const core::TensorValue & cache_key,
-    const core::TensorValue & cache_value,
-    const core::TensorValue & attention_mask) {
-    const int64_t dim = head_dim(config);
-    const int64_t scratch_slot = cache_key.shape.dims[1] - 1;
-    const modules::LinearModule q_proj({config.hidden_size, config.num_attention_heads * dim, false});
-    const modules::LinearModule k_proj({config.hidden_size, config.num_key_value_heads * dim, false});
-    const modules::LinearModule v_proj({config.hidden_size, config.num_key_value_heads * dim, false});
-    const modules::LinearModule o_proj({config.num_attention_heads * dim, config.hidden_size, false});
-    const modules::RMSNormModule hidden_norm({config.hidden_size, config.rms_norm_eps, true, false});
-
-    auto x_norm = hidden_norm.build(ctx, input, {weights.input_norm, std::nullopt});
-    auto q = q_proj.build(ctx, x_norm, {weights.q_proj, std::nullopt});
-    auto k = k_proj.build(ctx, x_norm, {weights.k_proj, std::nullopt});
-    auto v = v_proj.build(ctx, x_norm, {weights.v_proj, std::nullopt});
-    q = modules::RMSNormModule({dim, config.rms_norm_eps, true, false})
-            .build(ctx, reshape_heads(ctx, q, config.num_attention_heads, dim), {weights.q_norm, std::nullopt});
-    k = modules::RMSNormModule({dim, config.rms_norm_eps, true, false})
-            .build(ctx, reshape_heads(ctx, k, config.num_key_value_heads, dim), {weights.k_norm, std::nullopt});
-    v = reshape_heads(ctx, v, config.num_key_value_heads, dim);
-    q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
-    k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
-
-    auto key_tail = cache_view(ctx, cache_key, scratch_slot, 1, config.num_key_value_heads, dim);
-    auto value_tail = cache_view(ctx, cache_value, scratch_slot, 1, config.num_key_value_heads, dim);
-    ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, k.tensor, key_tail.tensor));
-    ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, v.tensor, value_tail.tensor));
-
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
-    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, cache_key.shape.rank}).build(ctx, cache_key);
-    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, cache_value.shape.rank}).build(ctx, cache_value);
-    k_heads = core::wrap_tensor(ggml_cont(ctx.ggml, k_heads.tensor), k_heads.shape, k_heads.type);
-    v_heads = core::wrap_tensor(ggml_cont(ctx.ggml, v_heads.tensor), v_heads.shape, v_heads.type);
-    auto context = flash_attention_from_grouped_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    context = core::ensure_backend_addressable_layout(ctx, context);
-    context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({1, 1, config.num_attention_heads * dim}));
-    auto x = modules::AddModule{}.build(ctx, input, o_proj.build(ctx, context, {weights.o_proj, std::nullopt}));
-
-    auto ff_in = hidden_norm.build(ctx, x, {weights.post_norm, std::nullopt});
-    auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                    .build(ctx, ff_in, {weights.gate_proj, std::nullopt});
-    gate = modules::SiluModule{}.build(ctx, gate);
-    auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                  .build(ctx, ff_in, {weights.up_proj, std::nullopt});
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
-    auto ff = modules::LinearModule({config.intermediate_size, config.hidden_size, false})
-                  .build(ctx, gated, {weights.down_proj, std::nullopt});
-    return {modules::AddModule{}.build(ctx, x, ff), k, v};
 }
 
 ThinkerWeights load_weights(
@@ -489,18 +300,18 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_steps_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32);
 
-        for (const auto & layer : weights.layers) {
-            auto out = decoder_layer(ctx, x, positions, layer, config);
-            x = out.output;
-            keys_.push_back(out.key.tensor);
-            values_.push_back(out.value.tensor);
+        const auto decoder_weights = make_qwen_decoder_weights(weights);
+        auto decoder_out = modules::QwenCausalDecoderModule(
+                               make_qwen_decoder_config(config, modules::QwenCausalDecoderLogitsMode::LastStep))
+                               .build(ctx, x, positions, decoder_weights);
+        for (const auto & layer : decoder_out.state.layers) {
+            if (!layer.key.has_value() || !layer.value.has_value()) {
+                throw std::runtime_error("Qwen3 ASR thinker prefill decoder did not return K/V state");
+            }
+            keys_.push_back(layer.key->tensor);
+            values_.push_back(layer.value->tensor);
         }
-        x = modules::SliceModule({1, prompt_steps_ - 1, 1}).build(ctx, x);
-        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
-                .build(ctx, x, {weights.norm, std::nullopt});
-        auto logits = modules::LinearModule({config.hidden_size, config.output_size, false})
-                          .build(ctx, x, {weights.lm_head, std::nullopt});
-        logits_ = logits.tensor;
+        logits_ = decoder_out.logits.tensor;
         ggml_set_output(logits_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, logits_);
@@ -508,10 +319,7 @@ public:
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker prefill graph");
         }
-        std::vector<int32_t> pos(static_cast<size_t>(prompt_steps_), 0);
-        for (int64_t i = 0; i < prompt_steps_; ++i) {
-            pos[static_cast<size_t>(i)] = static_cast<int32_t>(i);
-        }
+        const auto pos = modules::qwen_position_ids(prompt_steps_);
         ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
         debug::timing_log_scalar("qwen3_asr.thinker.prefill.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.thinker.prefill_prompt_steps", prompt_steps_);
@@ -641,14 +449,10 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_steps_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32);
 
-        for (const auto & layer : weights.layers) {
-            x = decoder_layer(ctx, x, positions, layer, config).output;
-        }
-        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
-                .build(ctx, x, {weights.norm, std::nullopt});
-        auto logits = modules::LinearModule({config.hidden_size, config.output_size, false})
-                          .build(ctx, x, {weights.lm_head, std::nullopt});
-        auto token_ids = engine::sampling::GreedyDecodeModule().build(ctx, logits);
+        auto decoder_out = modules::QwenCausalDecoderModule(
+                               make_qwen_decoder_config(config, modules::QwenCausalDecoderLogitsMode::AllSteps))
+                               .build(ctx, x, positions, make_qwen_decoder_weights(weights));
+        auto token_ids = engine::sampling::GreedyDecodeModule().build(ctx, decoder_out.logits);
         token_ids_ = token_ids.tensor;
         ggml_set_output(token_ids_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
@@ -657,10 +461,7 @@ public:
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker classification graph");
         }
-        std::vector<int32_t> pos(static_cast<size_t>(prompt_steps_), 0);
-        for (int64_t i = 0; i < prompt_steps_; ++i) {
-            pos[static_cast<size_t>(i)] = static_cast<int32_t>(i);
-        }
+        const auto pos = modules::qwen_position_ids(prompt_steps_);
         ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
         debug::timing_log_scalar("qwen3_asr.thinker.classify.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.thinker.classify_prompt_steps", prompt_steps_);
@@ -752,7 +553,6 @@ public:
         }
         const auto & config = runtime_->assets().config.text_decoder;
         const auto & weights = runtime_->weights();
-        const int64_t dim = head_dim(config);
         core::ModuleBuildContext ctx{ctx_.get(), "qwen3_asr.thinker.decode", runtime_->backend_type()};
         token_id_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
         auto token_id = core::wrap_tensor(token_id_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
@@ -761,55 +561,34 @@ public:
         x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({1, 1, config.hidden_size}));
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
-        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_ + 1, 1, 1, 1);
+        cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
+        auto cache_slot = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, 1);
         auto attention_mask = core::wrap_tensor(
             attention_mask_,
-            core::TensorShape::from_dims({1, 1, 1, cache_steps_ + 1}),
+            core::TensorShape::from_dims({1, 1, 1, cache_steps_}),
             GGML_TYPE_F16);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
-        std::vector<core::TensorValue> cache_keys;
-        std::vector<core::TensorValue> cache_values;
-        for (const auto & layer : weights.layers) {
-            cache_keys.push_back(core::make_tensor(
-                ctx,
-                GGML_TYPE_F32,
-                core::TensorShape::from_dims({1, cache_steps_ + 1, config.num_key_value_heads, dim})));
-            cache_values.push_back(core::make_tensor(
-                ctx,
-                GGML_TYPE_F32,
-                core::TensorShape::from_dims({1, cache_steps_ + 1, config.num_key_value_heads, dim})));
-            auto out = decoder_layer_with_static_cache_tail(
-                ctx,
-                graph_,
-                x,
-                positions,
-                layer,
-                config,
-                cache_keys.back(),
-                cache_values.back(),
-                attention_mask);
-            x = out.output;
-            key_sources_.push_back(ggml_view_1d(ctx_.get(), out.key.tensor, config.num_key_value_heads * dim, 0));
-            value_sources_.push_back(ggml_view_1d(ctx_.get(), out.value.tensor, config.num_key_value_heads * dim, 0));
-        }
-        step_cache_ = runtime::TransformerKVCache(
-            cache_steps_ + 1,
-            config.num_key_value_heads * dim,
-            std::move(cache_keys),
-            std::move(cache_values));
-        build_transfer_views(config.num_key_value_heads * dim);
-        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
-                .build(ctx, x, {weights.norm, std::nullopt});
-        auto logits = modules::LinearModule({config.hidden_size, config.output_size, false})
-                          .build(ctx, x, {weights.lm_head, std::nullopt});
-        logits_ = logits.tensor;
+        auto decoder_out = modules::QwenCausalDecoderModule(
+                               make_qwen_decoder_config(config, modules::QwenCausalDecoderLogitsMode::LastStep))
+                               .build_static_cache_tail(
+                                   ctx,
+                                   graph_,
+                                   x,
+                                   positions,
+                                   make_qwen_decoder_weights(weights),
+                                   cache_steps_,
+                                   attention_mask,
+                                   cache_slot);
+        step_cache_ = std::move(decoder_out.cache);
+        logits_ = decoder_out.logits.tensor;
         ggml_set_output(logits_);
         ggml_build_forward_expand(graph_, logits_);
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker decode graph");
         }
-        attention_mask_values_.assign(static_cast<size_t>(cache_steps_ + 1), ggml_fp32_to_fp16(-INFINITY));
+        attention_mask_values_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-INFINITY));
         debug::timing_log_scalar("qwen3_asr.thinker.decode.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.thinker.decode_cache_steps", cache_steps_);
     }
@@ -837,18 +616,14 @@ public:
         ggml_backend_tensor_set(token_id_, &token, 0, sizeof(int32_t));
         const int32_t position = static_cast<int32_t>(step_cache_.current_end());
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
-        const auto masked = ggml_fp32_to_fp16(-INFINITY);
-        const auto visible = ggml_fp32_to_fp16(0.0F);
-        std::fill(attention_mask_values_.begin(), attention_mask_values_.end(), masked);
-        for (int64_t i = 0; i < step_cache_.valid_steps(); ++i) {
-            attention_mask_values_[static_cast<size_t>(i)] = visible;
-        }
-        attention_mask_values_[static_cast<size_t>(cache_steps_)] = visible;
-        ggml_backend_tensor_set(
+        const int32_t cache_slot = static_cast<int32_t>(step_cache_.valid_steps());
+        ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(int32_t));
+        modules::write_qwen_cached_step_mask(
             attention_mask_,
-            attention_mask_values_.data(),
-            0,
-            attention_mask_values_.size() * sizeof(ggml_fp16_t));
+            attention_mask_values_,
+            cache_steps_,
+            step_cache_.valid_steps(),
+            step_cache_.valid_steps());
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
         const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
         ggml_backend_synchronize(runtime_->backend());
@@ -857,51 +632,19 @@ public:
         }
         std::vector<float> logits(static_cast<size_t>(config.output_size));
         ggml_backend_tensor_get(logits_, logits.data(), 0, logits.size() * sizeof(float));
-        const size_t dst_slot = static_cast<size_t>(step_cache_.valid_steps());
-        for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
-            ggml_backend_tensor_copy(key_sources_[layer], key_destinations_[dst_slot][layer]);
-            ggml_backend_tensor_copy(value_sources_[layer], value_destinations_[dst_slot][layer]);
-        }
         step_cache_.advance_after_direct_append(1);
         return logits;
     }
 
 private:
-    void build_transfer_views(int64_t step_elems) {
-        key_destinations_.assign(static_cast<size_t>(cache_steps_), {});
-        value_destinations_.assign(static_cast<size_t>(cache_steps_), {});
-        for (int64_t slot = 0; slot < cache_steps_; ++slot) {
-            const size_t byte_offset = static_cast<size_t>(slot * step_elems) * sizeof(float);
-            auto & key_slot = key_destinations_[static_cast<size_t>(slot)];
-            auto & value_slot = value_destinations_[static_cast<size_t>(slot)];
-            key_slot.reserve(key_sources_.size());
-            value_slot.reserve(value_sources_.size());
-            for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
-                key_slot.push_back(ggml_view_1d(
-                    ctx_.get(),
-                    step_cache_.key_tensor(layer).tensor,
-                    step_elems,
-                    byte_offset));
-                value_slot.push_back(ggml_view_1d(
-                    ctx_.get(),
-                    step_cache_.value_tensor(layer).tensor,
-                    step_elems,
-                    byte_offset));
-            }
-        }
-    }
-
     std::shared_ptr<ThinkerWeightsRuntime> runtime_;
     int64_t cache_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_id_ = nullptr;
     ggml_tensor * positions_ = nullptr;
+    ggml_tensor * cache_slot_ = nullptr;
     ggml_tensor * attention_mask_ = nullptr;
     ggml_tensor * logits_ = nullptr;
-    std::vector<ggml_tensor *> key_sources_;
-    std::vector<ggml_tensor *> value_sources_;
-    std::vector<std::vector<ggml_tensor *>> key_destinations_;
-    std::vector<std::vector<ggml_tensor *>> value_destinations_;
     std::vector<ggml_fp16_t> attention_mask_values_;
     runtime::TransformerKVCache step_cache_;
     ggml_cgraph * graph_ = nullptr;

@@ -14,6 +14,12 @@ if (NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
+if (NOT MSVC)
+    set(AUDIOCPP_DEBUG_OPT_FLAGS "-O3 -g")
+    set(CMAKE_C_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug C flags" FORCE)
+    set(CMAKE_CXX_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug C++ flags" FORCE)
+endif()
+
 set(ENGINE_DEFAULT_ENABLE_CUDA OFF)
 set(ENGINE_DEFAULT_ENABLE_VULKAN OFF)
 set(ENGINE_DEFAULT_ENABLE_METAL OFF)
@@ -53,6 +59,9 @@ option(ENGINE_BUILD_WARMBENCH "Build warmbench helper binaries" OFF)
 if (ENGINE_ENABLE_CUDA)
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
+    if (NOT MSVC)
+        set(CMAKE_CUDA_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug CUDA flags" FORCE)
+    endif()
 endif()
 if (ENGINE_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED COMPONENTS CXX)
@@ -126,6 +135,7 @@ add_library(engine_runtime STATIC
     src/framework/modules/norm_modules.cpp
     src/framework/modules/lookup_modules.cpp
     src/framework/modules/structural_modules.cpp
+    src/framework/modules/asr_helpers.cpp
     src/framework/modules/conv_modules.cpp
     src/framework/modules/whisper_embedding.cpp
     src/framework/modules/campplus_encoder.cpp
@@ -145,6 +155,7 @@ add_library(engine_runtime STATIC
     src/framework/modules/attention/common_relative_attention.cpp
     src/framework/modules/attention/relative_attention.cpp
     src/framework/modules/attention/qwen_decoder.cpp
+    src/framework/modules/attention/qwen_causal_decoder.cpp
     src/framework/modules/attention/cross_attention.cpp
     src/framework/modules/attention/transformer_blocks.cpp
     src/framework/modules/conditioning_modules.cpp
@@ -241,6 +252,16 @@ add_library(engine_runtime STATIC
     src/models/vibevoice/session.cpp
     src/models/vibevoice/tokenizer_audio.cpp
     src/models/vibevoice/tokenizer_text.cpp
+    src/models/vibevoice_asr/assets.cpp
+    src/models/vibevoice_asr/connector.cpp
+    src/models/vibevoice_asr/frontend.cpp
+    src/models/vibevoice_asr/loader.cpp
+    src/models/vibevoice_asr/postprocess.cpp
+    src/models/vibevoice_asr/session.cpp
+    src/models/vibevoice_asr/speech_encoder.cpp
+    src/models/vibevoice_asr/speech_tokenizer.cpp
+    src/models/vibevoice_asr/text_decoder.cpp
+    src/models/vibevoice_asr/tokenizer_text.cpp
     src/models/heartmula/assets.cpp
     src/models/heartmula/codec.cpp
     src/models/heartmula/generator.cpp
@@ -248,6 +269,22 @@ add_library(engine_runtime STATIC
     src/models/heartmula/mula.cpp
     src/models/heartmula/session.cpp
     src/models/heartmula/tokenizer_text.cpp
+    src/models/hviske_asr/assets.cpp
+    src/models/hviske_asr/frontend.cpp
+    src/models/hviske_asr/encoder.cpp
+    src/models/hviske_asr/decoder.cpp
+    src/models/hviske_asr/session.cpp
+    src/models/hviske_asr/loader.cpp
+    src/models/hviske_asr/weights.cpp
+    src/models/higgs_audio_stt/assets.cpp
+    src/models/higgs_audio_stt/tokenizer_text.cpp
+    src/models/higgs_audio_stt/frontend_whisper.cpp
+    src/models/higgs_audio_stt/audio_encoder.cpp
+    src/models/higgs_audio_stt/text_decoder.cpp
+    src/models/higgs_audio_stt/prompt_asr.cpp
+    src/models/higgs_audio_stt/postprocess.cpp
+    src/models/higgs_audio_stt/session.cpp
+    src/models/higgs_audio_stt/loader.cpp
     src/models/irodori_tts/assets.cpp
     src/models/irodori_tts/codec.cpp
     src/models/irodori_tts/condition_encoder.cpp
@@ -277,6 +314,13 @@ add_library(engine_runtime STATIC
     src/models/kokoro_tts/plbert.cpp
     src/models/kokoro_tts/predictor.cpp
     src/models/kokoro_tts/session.cpp
+    src/models/nemotron_asr/assets.cpp
+    src/models/nemotron_asr/frontend.cpp
+    src/models/nemotron_asr/encoder.cpp
+    src/models/nemotron_asr/decoder.cpp
+    src/models/nemotron_asr/session.cpp
+    src/models/nemotron_asr/loader.cpp
+    src/models/nemotron_asr/weights.cpp
     src/models/qwen3_tts/assets.cpp
     src/models/qwen3_tts/tokenizer_text.cpp
     src/models/qwen3_tts/tokenizer_speech_encoder.cpp
@@ -474,6 +518,7 @@ add_executable(audiocpp_cli
     app/cli/args.cpp
     app/cli/batch.cpp
     app/cli/request.cpp
+    app/streaming/streaming.cpp
     app/workflow/execution.cpp
     app/workflow/file_sink.cpp
     app/workflow/pipeline.cpp
@@ -493,6 +538,7 @@ add_executable(audiocpp_server
     app/server/runtime.cpp
     app/cli/args.cpp
     app/cli/request.cpp
+    app/streaming/streaming.cpp
 )
 
 target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
@@ -551,11 +597,14 @@ if (ENGINE_BUILD_WARMBENCH)
 
     add_engine_warmbench(chatterbox_warm_bench tests/chatterbox/chatterbox_warm_bench.cpp)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
+    add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
+    add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)
     add_engine_warmbench(index_tts2_warm_bench tests/index_tts2/index_tts2_warm_bench.cpp)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(kokoro_tts_warm_bench tests/kokoro_tts/kokoro_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
+    add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)
     add_engine_warmbench(omnivoice_warm_bench tests/omnivoice/omnivoice_warm_bench.cpp)
     add_engine_warmbench(pocket_tts_warm_bench tests/pocket_tts/pocket_tts_warm_bench.cpp)
     add_engine_warmbench(parakeet_warm_bench tests/parakeet_tdt/parakeet_warm_bench.cpp)
@@ -567,6 +616,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(sortformer_diar_warm_bench tests/sortformer_diar/sortformer_diar_warm_bench.cpp)
     add_engine_warmbench(supertonic_warm_bench tests/supertonic/supertonic_warm_bench.cpp)
     add_engine_warmbench(vevo2_warm_bench tests/vevo2/vevo2_warm_bench.cpp)
+    add_engine_warmbench(vibevoice_asr_warm_bench tests/vibevoice_asr/vibevoice_asr_warm_bench.cpp)
     add_engine_warmbench(voxcpm2_warm_bench tests/voxcpm2/voxcpm2_warm_bench.cpp)
 endif()
 

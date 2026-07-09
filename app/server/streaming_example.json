@@ -1,0 +1,24 @@
+{
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 1,
+  "lazy_load": true,
+  "models": [
+    {
+      "id": "voxcpm2-stream",
+      "family": "voxcpm2",
+      "path": "/path/to/models/VoxCPM2",
+      "task": "tts",
+      "mode": "streaming"
+    },
+    {
+      "id": "nemotron-stream",
+      "family": "nemotron_asr",
+      "path": "/path/to/models/nemotron-3.5-asr-streaming-0.6b",
+      "task": "asr",
+      "mode": "streaming"
+    }
+  ]
+}

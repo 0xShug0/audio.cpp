@@ -241,12 +241,19 @@ Ultimate clone:
 audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --text "Hello from VoxCPM2." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
 
+Streaming output:
+
+```bash
+audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --mode streaming --text "Hello from VoxCPM2." --out out.wav
+```
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--text "(style)content"` | text | required | Voice design or style control. |
 | `--voice-ref` | WAV path | not set | Reference speaker audio. |
 | `--reference-text` | text | empty string | Transcript for ultimate-clone style prompting. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode. |
+| `--session-option voxcpm2.mem_saver=true|false` | bool | `false` | Use tighter graph workspaces and release MiniCPM/AudioVAE request graphs after completion to reduce resident VRAM. |
 | `--text-chunk-size` | integer chars | `2048` | Long-form chunk size. |
 | `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
 | `--num-inference-steps` | integer | `10` | Flow matching steps. |

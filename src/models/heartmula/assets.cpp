@@ -5,12 +5,9 @@
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
-#include <optional>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 namespace engine::models::heartmula {
@@ -245,162 +242,9 @@ HeartCodecConfig parse_codec_config(const assets::ResourceBundle & resources) {
     return config;
 }
 
-class ShardedTensorSource final : public assets::TensorSource {
-public:
-    ShardedTensorSource(
-        std::filesystem::path index_path,
-        std::string model_label,
-        std::unordered_map<std::string, std::string> weight_map,
-        std::unordered_map<std::string, std::shared_ptr<const assets::TensorSource>> shard_sources)
-        : index_path_(std::move(index_path)),
-          model_label_(std::move(model_label)),
-          weight_map_(std::move(weight_map)),
-          shard_sources_(std::move(shard_sources)) {}
-
-    const std::filesystem::path & source_path() const noexcept override {
-        return index_path_;
-    }
-
-    bool has_tensor(std::string_view name) const noexcept override {
-        const auto route = weight_map_.find(std::string(name));
-        if (route == weight_map_.end()) {
-            return false;
-        }
-        const auto source = shard_sources_.find(route->second);
-        return source != shard_sources_.end() && source->second->has_tensor(name);
-    }
-
-    assets::TensorMetadata require_metadata(std::string_view name) const override {
-        return source_for(name)->require_metadata(name);
-    }
-
-    std::vector<assets::TensorMetadata> tensors() const override {
-        std::vector<assets::TensorMetadata> out;
-        out.reserve(weight_map_.size());
-        for (const auto & [name, _] : weight_map_) {
-            out.push_back(require_metadata(name));
-        }
-        std::sort(out.begin(), out.end(), [](const auto & lhs, const auto & rhs) {
-            return lhs.name < rhs.name;
-        });
-        return out;
-    }
-
-    void release_storage() const override {
-        for (const auto & [_, source] : shard_sources_) {
-            source->release_storage();
-        }
-    }
-
-    assets::RawTensorData require_tensor_data(std::string_view name) const override {
-        return source_for(name)->require_tensor_data(name);
-    }
-
-    std::vector<float> require_f32(
-        std::string_view name,
-        const std::optional<std::vector<int64_t>> & expected_shape) const override {
-        return source_for(name)->require_f32(name, expected_shape);
-    }
-
-    std::optional<std::vector<float>> optional_f32(
-        std::string_view name,
-        const std::optional<std::vector<int64_t>> & expected_shape) const override {
-        if (!has_tensor(name)) {
-            return std::nullopt;
-        }
-        return require_f32(name, expected_shape);
-    }
-
-    void set_backend_tensor(
-        ggml_tensor * tensor,
-        std::string_view name,
-        assets::TensorStorageType storage_type,
-        const std::vector<int64_t> & expected_shape) const override {
-        source_for(name)->set_backend_tensor(tensor, name, storage_type, expected_shape);
-    }
-
-    void set_backend_f32_tensor(
-        ggml_tensor * tensor,
-        std::string_view name,
-        const std::vector<int64_t> & expected_shape) const override {
-        source_for(name)->set_backend_f32_tensor(tensor, name, expected_shape);
-    }
-
-    int64_t require_i64_scalar(std::string_view name) const override {
-        return source_for(name)->require_i64_scalar(name);
-    }
-
-private:
-    std::shared_ptr<const assets::TensorSource> source_for(std::string_view name) const {
-        const auto route = weight_map_.find(std::string(name));
-        if (route == weight_map_.end()) {
-            throw std::runtime_error("missing HeartMuLa " + model_label_ + " tensor route: " + std::string(name));
-        }
-        const auto source = shard_sources_.find(route->second);
-        if (source == shard_sources_.end()) {
-            throw std::runtime_error("missing HeartMuLa " + model_label_ + " tensor shard source: " + route->second);
-        }
-        return source->second;
-    }
-
-    std::filesystem::path index_path_;
-    std::string model_label_;
-    std::unordered_map<std::string, std::string> weight_map_;
-    std::unordered_map<std::string, std::shared_ptr<const assets::TensorSource>> shard_sources_;
-};
-
-std::unordered_map<std::string, std::string> parse_weight_map(
-    const engine::io::json::Value & index_root,
-    const char * label) {
-    const auto & weight_map_object = index_root.require("weight_map").as_object();
-    std::unordered_map<std::string, std::string> weight_map;
-    weight_map.reserve(weight_map_object.size());
-    for (const auto & [name, value] : weight_map_object) {
-        weight_map.emplace(name, value.as_string());
-    }
-    if (weight_map.empty()) {
-        throw std::runtime_error(std::string("HeartMuLa ") + label + " safetensors index has an empty weight_map");
-    }
-    return weight_map;
-}
-
-std::vector<std::filesystem::path> shard_paths_from_weight_map(
-    const std::filesystem::path & model_root,
-    const std::unordered_map<std::string, std::string> & weight_map,
-    const char * label) {
-    std::set<std::string> names;
-    for (const auto & [_, file_name] : weight_map) {
-        names.insert(file_name);
-    }
-    std::vector<std::filesystem::path> paths;
-    paths.reserve(names.size());
-    for (const auto & name : names) {
-        const auto path = model_root / name;
-        if (!engine::io::is_existing_file(path)) {
-            throw std::runtime_error(std::string("missing HeartMuLa ") + label + " safetensors shard: " + path.string());
-        }
-        paths.push_back(std::filesystem::weakly_canonical(path));
-    }
-    return paths;
-}
-
-std::shared_ptr<const assets::TensorSource> open_sharded_tensor_source(
-    const std::filesystem::path & index_path,
-    const std::filesystem::path & model_root,
-    const std::unordered_map<std::string, std::string> & weight_map,
-    const char * label) {
-    std::unordered_map<std::string, std::shared_ptr<const assets::TensorSource>> shard_sources;
-    for (const auto & path : shard_paths_from_weight_map(model_root, weight_map, label)) {
-        shard_sources.emplace(path.filename().string(), assets::open_tensor_source(path));
-    }
-    return std::make_shared<ShardedTensorSource>(index_path, label, weight_map, std::move(shard_sources));
-}
-
 void fill_paths(
     HeartMuLaAssetPaths & paths,
-    const assets::ResourceBundle & resources,
-    const std::unordered_map<std::string, std::string> & mula_weight_map,
-    const std::unordered_map<std::string, std::string> & codec_weight_map) {
+    const assets::ResourceBundle & resources) {
     paths.model_root = resources.model_root();
     paths.tokenizer_json_path = resources.require_file("tokenizer_json");
     paths.generation_config_path = resources.require_file("generation_config");
@@ -408,8 +252,12 @@ void fill_paths(
     paths.mula_index_path = resources.require_file("mula_index");
     paths.codec_config_path = resources.require_file("codec_config");
     paths.codec_index_path = resources.require_file("codec_index");
-    paths.mula_shard_paths = shard_paths_from_weight_map(paths.mula_index_path.parent_path(), mula_weight_map, "LM");
-    paths.codec_shard_paths = shard_paths_from_weight_map(paths.codec_index_path.parent_path(), codec_weight_map, "codec");
+    paths.mula_shard_paths = engine::assets::indexed_tensor_source_shard_paths(
+        paths.mula_index_path,
+        paths.mula_index_path.parent_path());
+    paths.codec_shard_paths = engine::assets::indexed_tensor_source_shard_paths(
+        paths.codec_index_path,
+        paths.codec_index_path.parent_path());
 }
 
 std::string shape_string(const std::vector<int64_t> & shape) {
@@ -578,33 +426,24 @@ void validate_codec_weight_anchors(const HeartMuLaAssets & assets) {
 
 HeartMuLaAssetPaths resolve_heartmula_assets(const std::filesystem::path & model_path) {
     auto resources = make_resource_bundle(model_path);
-    const auto mula_index = resources.parse_json("mula_index");
-    const auto codec_index = resources.parse_json("codec_index");
-    const auto mula_weight_map = parse_weight_map(mula_index, "LM");
-    const auto codec_weight_map = parse_weight_map(codec_index, "codec");
     HeartMuLaAssetPaths paths;
-    fill_paths(paths, resources, mula_weight_map, codec_weight_map);
+    fill_paths(paths, resources);
     return paths;
 }
 
 std::shared_ptr<const HeartMuLaAssets> load_heartmula_assets(const std::filesystem::path & model_path) {
     auto resources = make_resource_bundle(model_path);
-    const auto mula_index = resources.parse_json("mula_index");
-    const auto codec_index = resources.parse_json("codec_index");
-    const auto mula_weight_map = parse_weight_map(mula_index, "LM");
-    const auto codec_weight_map = parse_weight_map(codec_index, "codec");
     HeartMuLaAssets assets;
-    fill_paths(assets.paths, resources, mula_weight_map, codec_weight_map);
+    fill_paths(assets.paths, resources);
     assets.mula_config = parse_mula_config(resources);
     assets.generation_config = parse_generation_config(resources);
     assets.codec_config = parse_codec_config(resources);
-    assets.mula_weights =
-        open_sharded_tensor_source(assets.paths.mula_index_path, assets.paths.mula_index_path.parent_path(), mula_weight_map, "LM");
-    assets.codec_weights = open_sharded_tensor_source(
+    assets.mula_weights = engine::assets::open_indexed_tensor_source(
+        assets.paths.mula_index_path,
+        assets.paths.mula_index_path.parent_path());
+    assets.codec_weights = engine::assets::open_indexed_tensor_source(
         assets.paths.codec_index_path,
-        assets.paths.codec_index_path.parent_path(),
-        codec_weight_map,
-        "codec");
+        assets.paths.codec_index_path.parent_path());
     validate_mula_weight_anchors(assets);
     validate_codec_weight_anchors(assets);
     return std::make_shared<HeartMuLaAssets>(std::move(assets));

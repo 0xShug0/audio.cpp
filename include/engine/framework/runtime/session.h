@@ -195,6 +195,25 @@ struct StreamEvent {
     bool is_final = false;
 };
 
+enum class StreamingInputKind {
+    None,
+    AudioChunks,
+};
+
+enum class StreamingOutputKind {
+    FinalResult,
+    PullEvents,
+};
+
+struct StreamingPolicy {
+    StreamingInputKind input = StreamingInputKind::None;
+    StreamingOutputKind output = StreamingOutputKind::FinalResult;
+    int64_t preferred_audio_chunk_samples = 0;
+    double preferred_audio_chunk_seconds = 0.0;
+};
+
+using StreamEventCallback = std::function<void(const StreamEvent &)>;
+
 class IVoiceTaskSession {
 public:
     virtual ~IVoiceTaskSession() = default;
@@ -216,6 +235,26 @@ class IStreamingVoiceTaskSession : public virtual IVoiceTaskSession {
 public:
     ~IStreamingVoiceTaskSession() override = default;
 
+    virtual StreamingPolicy streaming_policy() const {
+        StreamingPolicy policy;
+        policy.input = StreamingInputKind::AudioChunks;
+        policy.output = StreamingOutputKind::FinalResult;
+        policy.preferred_audio_chunk_samples = 512;
+        return policy;
+    }
+    virtual void start_stream(const TaskRequest & request) {
+        (void)request;
+        reset();
+    }
+    virtual std::optional<StreamEvent> next_stream_event() {
+        return std::nullopt;
+    }
+    virtual void set_stream_event_sink(StreamEventCallback sink) {
+        (void)sink;
+    }
+    virtual TaskResult finish_stream() {
+        return finalize();
+    }
     virtual void reset() = 0;
     virtual StreamEvent process_audio_chunk(const AudioChunk & chunk) = 0;
     virtual TaskResult finalize() = 0;

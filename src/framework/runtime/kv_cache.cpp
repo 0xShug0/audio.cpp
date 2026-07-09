@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 
 namespace engine::runtime {
 
@@ -148,6 +149,33 @@ void TransformerKVCache::trace_log_state(const std::string & name, int64_t num_h
         std::vector<float> last_key_keep(last_key.begin(), last_key.begin() + static_cast<ptrdiff_t>(keep_elems));
         debug::trace_log_f32(name + ".layer_last.key", {1, valid_steps_, num_heads, head_dim}, last_key_keep);
     }
+}
+
+core::TensorValue view_transformer_kv_cache_steps(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & cache,
+    int64_t start,
+    int64_t steps,
+    int64_t heads,
+    int64_t head_dim,
+    const char * label) {
+    if (start < 0 || steps <= 0 || start + steps > cache.shape.dims[1]) {
+        throw std::runtime_error(std::string(label) + " cache view range is invalid");
+    }
+    return core::wrap_tensor(
+        ggml_view_4d(
+            ctx.ggml,
+            cache.tensor,
+            head_dim,
+            heads,
+            steps,
+            1,
+            cache.tensor->nb[1],
+            cache.tensor->nb[2],
+            cache.tensor->nb[3],
+            static_cast<size_t>(start) * cache.tensor->nb[2]),
+        core::TensorShape::from_dims({1, steps, heads, head_dim}),
+        GGML_TYPE_F32);
 }
 
 }  // namespace engine::runtime

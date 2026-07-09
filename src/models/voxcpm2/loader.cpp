@@ -93,6 +93,10 @@ public:
     inspection.model_root = assets->paths.model_root;
     inspection.metadata = voxcpm2_metadata(*assets);
     inspection.capabilities = voxcpm2_capabilities();
+    inspection.cli.session_options = {
+        {"voxcpm2.mem_saver", "true|false",
+         "Use tighter graph workspaces and release request runtime graphs; default false."},
+    };
     inspection.discovered_configs = discover_config_assets(request);
     inspection.discovered_weights = discover_weight_assets(request);
     return inspection;
@@ -133,7 +137,10 @@ VoxCPM2LoadedModel::create_task_session(
   if (task.task != runtime::VoiceTaskKind::Tts) {
     throw std::runtime_error("VoxCPM2 only supports the Tts task");
   }
-  return std::make_unique<VoxCPM2Session>(task, options, assets_);
+  if (task.mode == runtime::RunMode::Streaming) {
+    return std::make_unique<VoxCPM2StreamingSession>(task, options, assets_);
+  }
+  return std::make_unique<VoxCPM2OfflineSession>(task, options, assets_);
 }
 
 std::unique_ptr<VoxCPM2LoadedModel>

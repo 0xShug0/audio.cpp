@@ -65,6 +65,7 @@ public:
     std::shared_ptr<const Qwen3TalkerWeightsRuntime> create_weights_runtime(
         std::shared_ptr<const Qwen3TTSAssets> assets,
         core::BackendType backend_type,
+        int device,
         int threads,
         size_t graph_arena_bytes,
         size_t talker_constant_context_bytes,

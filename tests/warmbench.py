@@ -19,6 +19,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ACE_STEP_BASELINE_CPP_AUDIO = REPO_ROOT / "build/logs/warmbench/ace_step_20s_baseline/ace_step_offline_cuda/cpp_audio/audio_0.wav"
+VOXCPM2_MAX_LEN_CAP = 521
 PYTHON_EXE = sys.executable
 WHISPER_CONDA_ENV = "qwen3-tts"
 WHISPER_MODEL = "tiny.en"
@@ -244,6 +245,43 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "max_new_tokens": 512,
         "strict_text": True,
         "check_language": True,
+    },
+    "higgs_audio_stt": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/higgs_audio_stt_warm_bench",
+        "python_script": "tests/higgs_audio_stt/higgs_audio_stt_python_warm_bench.py",
+        "model": "models/higgs-audio-v3-stt",
+        "case_catalog": "tests/higgs_audio_stt/higgs_audio_stt_warm_bench_cases.json",
+        "default_requests_per_session": 1,
+    },
+    "hviske_asr": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/hviske_asr_warm_bench",
+        "python_script": "tests/hviske_asr/hviske_asr_python_warm_bench.py",
+        "model": "models/hviske-v5.3",
+        "case_catalog": "tests/hviske_asr/hviske_asr_warm_bench_cases.json",
+        "default_requests_per_session": 1,
+    },
+    "nemotron_asr": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/nemotron_asr_warm_bench",
+        "python_script": "tests/nemotron_asr/nemotron_asr_python_warm_bench.py",
+        "model": "models/nemotron-3.5-asr-streaming-0.6b",
+        "case_catalog": "tests/nemotron_asr/nemotron_asr_warm_bench_cases.json",
+        "default_requests_per_session": 1,
+    },
+    "vibevoice_asr": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/vibevoice_asr_warm_bench",
+        "python_script": "tests/vibevoice_asr/vibevoice_asr_python_warm_bench.py",
+        "model": "models/VibeVoice-ASR",
+        "case_catalog": "tests/vibevoice_asr/vibevoice_asr_warm_bench_cases.json",
+        "default_case_name": "default",
+        "default_requests_per_session": 1,
     },
     "qwen3_forced_aligner": {
         "kind": "alignment",
@@ -845,11 +883,19 @@ def resolve_voxcpm2_case(config: dict[str, Any], args: argparse.Namespace) -> tu
         raise RuntimeError(
             f"VoxCPM2 case {case_name!r} needs at least {args.requests_per_session} requests, only has {len(requests)}"
         )
-    selected = [dict(request) for request in requests[: args.requests_per_session]]
+    capped_warmup = dict(warmup)
+    if "max_len" in capped_warmup:
+        capped_warmup["max_len"] = min(int(capped_warmup["max_len"]), VOXCPM2_MAX_LEN_CAP)
+    selected = []
+    for request in requests[: args.requests_per_session]:
+        capped_request = dict(request)
+        if "max_len" in capped_request:
+            capped_request["max_len"] = min(int(capped_request["max_len"]), VOXCPM2_MAX_LEN_CAP)
+        selected.append(capped_request)
     if getattr(args, "seed_was_explicit", False):
         for request in selected:
             request["seed"] = args.seed
-    return dict(warmup), selected, {"case_name": case_name, "warmup": warmup, "requests": selected}
+    return capped_warmup, selected, {"case_name": case_name, "warmup": capped_warmup, "requests": selected}
 
 
 def omnivoice_instruct_values(
@@ -1201,6 +1247,57 @@ def load_qwen3_forced_aligner_cases(path: Path, count: int) -> tuple[dict[str, A
         raise RuntimeError(f"need {count} Qwen3 forced aligner requests, only found {len(requests)}")
     warmup = payload.get("warmup") or requests[0]
     return warmup, requests[:count]
+
+
+def load_catalog_asr_cases(
+    path: Path,
+    count: int,
+    family_label: str,
+    case_name: str = "",
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"invalid {family_label} case catalog: {path}")
+    selected_case_name = case_name
+    case_payload: dict[str, Any]
+    if selected_case_name:
+        cases = payload.get("cases")
+        if isinstance(cases, dict) and selected_case_name in cases:
+            selected = cases[selected_case_name]
+        else:
+            selected = payload.get(selected_case_name)
+        if not isinstance(selected, dict):
+            available = []
+            if isinstance(cases, dict):
+                available.extend(str(key) for key in cases.keys())
+            available.extend(str(key) for key, value in payload.items() if isinstance(value, dict) and key != "cases")
+            raise RuntimeError(
+                f"unknown {family_label} case name {selected_case_name!r} in {path}; available: {', '.join(sorted(set(available)))}"
+            )
+        case_payload = selected
+    elif isinstance(payload.get("requests"), list):
+        case_payload = payload
+    else:
+        available = [str(key) for key, value in payload.items() if isinstance(value, dict)]
+        raise RuntimeError(f"{family_label} case catalog requires --case-name; available: {', '.join(sorted(available))}")
+    requests = case_payload.get("requests", [])
+    if not isinstance(requests, list) or not requests:
+        raise RuntimeError(f"{family_label} case {selected_case_name or '<default>'!r} has no requests")
+    if len(requests) < count:
+        raise RuntimeError(f"need {count} {family_label} requests, only found {len(requests)}")
+    warmup = (
+        case_payload.get("warmup")
+        or case_payload.get("offline_warmup")
+        or case_payload.get("streaming_warmup")
+        or requests[0]
+    )
+    if not isinstance(warmup, dict):
+        raise RuntimeError(f"{family_label} case {selected_case_name or '<default>'!r} has invalid warmup")
+    return dict(warmup), [dict(item) for item in requests[:count]], {
+        "case_name": selected_case_name,
+        "warmup": warmup,
+        "requests": requests[:count],
+    }
 
 
 def load_separation_cases(path: Path, case_name: str, count: int, family_label: str) -> tuple[Path, list[Path]]:
@@ -3133,6 +3230,203 @@ def build_audio_commands(
     return python_command, cpp_command
 
 
+def catalog_case_audio(case: dict[str, Any], scenario_dir: Path, role: str, index: int) -> Path:
+    source = REPO_ROOT / str(case["audio"])
+    if "start_sec" not in case and "end_sec" not in case:
+        return source
+    return materialize_qwen3_asr_audio(case, scenario_dir / "catalog_audio", index, role)
+
+
+def csv_values(cases: list[dict[str, Any]], key: str, default: Any = "") -> str:
+    return ",".join(str(case.get(key, default)) for case in cases)
+
+
+def csv_bools(cases: list[dict[str, Any]], key: str, default: bool) -> str:
+    return ",".join("true" if bool(case.get(key, default)) else "false" for case in cases)
+
+
+def catalog_asr_model_path(config: dict[str, Any], args: argparse.Namespace) -> str:
+    return args.model or str(config["model"])
+
+
+def build_catalog_asr_commands(
+    family: str,
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    warmup_case: dict[str, Any],
+    request_cases: list[dict[str, Any]],
+) -> tuple[list[str], list[str], dict[str, Any]]:
+    warmup_audio = catalog_case_audio(warmup_case, scenario_dir, "warmup", 0)
+    audio_requests = [
+        catalog_case_audio(case, scenario_dir, "request", index)
+        for index, case in enumerate(request_cases)
+    ]
+    model_path = catalog_asr_model_path(config, args)
+    common = [
+        "--model",
+        model_path,
+        "--audio",
+        str(audio_requests[0]),
+        "--warmup-audio",
+        str(warmup_audio),
+        "--audio-sequence",
+        ",".join(str(path) for path in audio_requests),
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(args.warmup),
+        "--iterations",
+        str(args.iterations),
+    ]
+    python_extra: list[str] = []
+    model_parent = Path(model_path).parent
+    if family == "higgs_audio_stt":
+        common.extend([
+            "--prompt",
+            str(warmup_case.get("prompt", "")),
+            "--prompt-sequence",
+            csv_values(request_cases, "prompt", warmup_case.get("prompt", "")),
+            "--max-tokens",
+            str(warmup_case.get("max_tokens", 1024)),
+            "--max-tokens-sequence",
+            csv_values(request_cases, "max_tokens", warmup_case.get("max_tokens", 1024)),
+            "--enable-thinking",
+            "true" if bool(warmup_case.get("enable_thinking", True)) else "false",
+            "--enable-thinking-sequence",
+            csv_bools(request_cases, "enable_thinking", bool(warmup_case.get("enable_thinking", True))),
+        ])
+        python_extra.extend(["--whisper-processor", str(model_parent / "whisper-large-v3")])
+    elif family == "hviske_asr":
+        common.extend([
+            "--language",
+            str(request_cases[0].get("language", warmup_case.get("language", "da"))),
+            "--warmup-language",
+            str(warmup_case.get("language", request_cases[0].get("language", "da"))),
+            "--language-sequence",
+            csv_values(request_cases, "language", "da"),
+            "--punctuation",
+            "true" if bool(warmup_case.get("punctuation", True)) else "false",
+            "--max-tokens",
+            str(warmup_case.get("max_tokens", 256)),
+            "--max-tokens-sequence",
+            csv_values(request_cases, "max_tokens", warmup_case.get("max_tokens", 256)),
+            "--num-beams",
+            str(warmup_case.get("num_beams", 1)),
+            "--num-beams-sequence",
+            csv_values(request_cases, "num_beams", warmup_case.get("num_beams", 1)),
+            "--length-penalty",
+            str(warmup_case.get("length_penalty", 1.0)),
+            "--length-penalty-sequence",
+            csv_values(request_cases, "length_penalty", warmup_case.get("length_penalty", 1.0)),
+            "--do-sample",
+            "true" if bool(warmup_case.get("do_sample", False)) else "false",
+            "--do-sample-sequence",
+            csv_bools(request_cases, "do_sample", bool(warmup_case.get("do_sample", False))),
+            "--temperature",
+            str(warmup_case.get("temperature", 1.0)),
+            "--temperature-sequence",
+            csv_values(request_cases, "temperature", warmup_case.get("temperature", 1.0)),
+            "--top-k",
+            str(warmup_case.get("top_k", 50)),
+            "--top-k-sequence",
+            csv_values(request_cases, "top_k", warmup_case.get("top_k", 50)),
+            "--top-p",
+            str(warmup_case.get("top_p", 1.0)),
+            "--top-p-sequence",
+            csv_values(request_cases, "top_p", warmup_case.get("top_p", 1.0)),
+            "--seed",
+            str(warmup_case.get("seed", args.seed)),
+            "--seed-sequence",
+            csv_values(request_cases, "seed", args.seed),
+        ])
+    elif family == "nemotron_asr":
+        common.extend([
+            "--language",
+            str(request_cases[0].get("language", warmup_case.get("language", "en-US"))),
+            "--warmup-language",
+            str(warmup_case.get("language", request_cases[0].get("language", "en-US"))),
+            "--language-sequence",
+            csv_values(request_cases, "language", "en-US"),
+            "--lookahead-tokens",
+            str(warmup_case.get("lookahead_tokens", 3)),
+            "--lookahead-tokens-sequence",
+            csv_values(request_cases, "lookahead_tokens", warmup_case.get("lookahead_tokens", 3)),
+            "--max-tokens",
+            str(warmup_case.get("max_tokens", 256)),
+            "--max-tokens-sequence",
+            csv_values(request_cases, "max_tokens", warmup_case.get("max_tokens", 256)),
+            "--streaming",
+            "true" if bool(warmup_case.get("streaming", False)) else "false",
+            "--streaming-sequence",
+            csv_bools(request_cases, "streaming", bool(warmup_case.get("streaming", False))),
+            "--keep-language-tags",
+            "true" if bool(warmup_case.get("keep_language_tags", False)) else "false",
+            "--keep-language-tags-sequence",
+            csv_bools(request_cases, "keep_language_tags", bool(warmup_case.get("keep_language_tags", False))),
+        ])
+    elif family == "vibevoice_asr":
+        common.extend([
+            "--context",
+            str(warmup_case.get("context", "")),
+            "--context-sequence",
+            csv_values(request_cases, "context", warmup_case.get("context", "")),
+            "--max-tokens",
+            str(warmup_case.get("max_tokens", 32768)),
+            "--max-tokens-sequence",
+            csv_values(request_cases, "max_tokens", warmup_case.get("max_tokens", 32768)),
+            "--temperature",
+            str(warmup_case.get("temperature", 0.0)),
+            "--temperature-sequence",
+            csv_values(request_cases, "temperature", warmup_case.get("temperature", 0.0)),
+            "--top-p",
+            str(warmup_case.get("top_p", 1.0)),
+            "--top-p-sequence",
+            csv_values(request_cases, "top_p", warmup_case.get("top_p", 1.0)),
+            "--top-k",
+            str(warmup_case.get("top_k", 50)),
+            "--top-k-sequence",
+            csv_values(request_cases, "top_k", warmup_case.get("top_k", 50)),
+            "--num-beams",
+            str(warmup_case.get("num_beams", 1)),
+            "--num-beams-sequence",
+            csv_values(request_cases, "num_beams", warmup_case.get("num_beams", 1)),
+            "--seed",
+            str(warmup_case.get("seed", args.seed)),
+            "--seed-sequence",
+            csv_values(request_cases, "seed", args.seed),
+        ])
+        python_extra.extend(["--tokenizer", model_path])
+    else:
+        raise RuntimeError(f"catalog ASR warmbench is not wired for family {family}")
+
+    python_command = [
+        PYTHON_EXE,
+        str(REPO_ROOT / config["python_script"]),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+    ] + python_extra + common
+    cpp_command = [
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+    ] + common
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    request_manifest = {
+        "warmup_audio": str(warmup_audio),
+        "audio_sequence": [str(path) for path in audio_requests],
+        "warmup": warmup_case,
+        "requests": request_cases,
+    }
+    return python_command, cpp_command, request_manifest
+
+
 def build_miocodec_commands(
     config: dict[str, Any],
     backend: str,
@@ -4051,6 +4345,26 @@ def run_scenario(
                 "transcripts": args.qwen3_forced_aligner_request_transcripts,
                 "expected_words": [item.get("expected_words", []) for item in request_cases],
             }
+        elif family in {"higgs_audio_stt", "hviske_asr", "nemotron_asr", "vibevoice_asr"}:
+            if len(args.case_names) > 1:
+                raise RuntimeError(f"{family} warmbench accepts at most one --case-name")
+            case_name = args.case_names[0] if args.case_names else str(config.get("default_case_name", ""))
+            warmup_case, request_cases, catalog_manifest = load_catalog_asr_cases(
+                REPO_ROOT / str(config["case_catalog"]),
+                args.requests_per_session,
+                family,
+                case_name,
+            )
+            python_command, cpp_command, request_manifest = build_catalog_asr_commands(
+                family,
+                scenario_config,
+                backend,
+                args,
+                scenario_dir,
+                warmup_case,
+                request_cases,
+            )
+            request_manifest.update(catalog_manifest)
         elif family == "miocodec":
             warmup_request, request_cases, request_manifest = resolve_miocodec_case(config, args)
             python_command, cpp_command = build_miocodec_commands(
@@ -4085,7 +4399,7 @@ def run_scenario(
                 "warmup_audio": str(warmup_audio),
                 "audio_sequence": [str(path) for path in audio_requests],
             }
-        if family not in {"miocodec", "voxcpm2"}:
+        if family not in {"miocodec", "voxcpm2", "higgs_audio_stt", "hviske_asr", "nemotron_asr", "vibevoice_asr"}:
             python_command, cpp_command = build_audio_commands(family, scenario_config, backend, mode, args, scenario_dir, warmup_audio, audio_requests)
     (scenario_dir / "request_manifest.json").write_text(json.dumps(request_manifest, indent=2), encoding="utf-8")
 

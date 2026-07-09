@@ -269,6 +269,62 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
     ),
     ModelPackage(
+        id="higgs_audio_stt",
+        display_name="Higgs Audio STT",
+        target_directory="higgs-audio-v3-stt",
+        source=CompositeSnapshotSource(
+            placements=(
+                SnapshotPlacement(
+                    source=SnapshotSource(repo_id="bosonai/higgs-audio-v3-stt"),
+                    required_files=(
+                        "config.json",
+                        "generation_config.json",
+                        "model.safetensors.index.json",
+                        "model-00001-of-00002.safetensors",
+                        "model-00002-of-00002.safetensors",
+                        "tokenizer_config.json",
+                        "vocab.json",
+                        "merges.txt",
+                    ),
+                ),
+                SnapshotPlacement(
+                    source=SnapshotSource(
+                        repo_id="openai/whisper-large-v3",
+                        include_prefixes=("preprocessor_config.json",),
+                    ),
+                    target_subdir="../whisper-large-v3",
+                    required_files=("preprocessor_config.json",),
+                ),
+            ),
+        ),
+        required_files=(
+            "config.json",
+            "generation_config.json",
+            "model.safetensors.index.json",
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+            "../whisper-large-v3/preprocessor_config.json",
+        ),
+        description="Installs Higgs Audio STT plus the sibling Whisper Large v3 preprocessor config required by the framework runtime.",
+    ),
+    ModelPackage(
+        id="hviske_asr",
+        display_name="Hviske ASR",
+        target_directory="hviske-v5.3",
+        source=SnapshotSource(repo_id="syvai/hviske-v5.3"),
+        required_files=("config.json", "generation_config.json", "model.safetensors", "tokenizer.model"),
+    ),
+    ModelPackage(
+        id="nemotron_asr",
+        display_name="Nemotron ASR",
+        target_directory="nemotron-3.5-asr-streaming-0.6b",
+        source=SnapshotSource(repo_id="nvidia/nemotron-3.5-asr-streaming-0.6b"),
+        required_files=("config.json", "model.safetensors", "processor_config.json", "tokenizer.json"),
+    ),
+    ModelPackage(
         id="qwen3_forced_aligner_0_6b",
         display_name="Qwen3 Forced Aligner 0.6B",
         target_directory="Qwen3-ForcedAligner-0.6B",
@@ -487,6 +543,47 @@ CATALOG: tuple[ModelPackage, ...] = (
             "model.safetensors",
         ),
         description="Installs MioTTS plus the sibling MioCodec dependency required by the framework runtime.",
+    ),
+    ModelPackage(
+        id="vibevoice_asr",
+        display_name="VibeVoice ASR",
+        target_directory="VibeVoice-ASR",
+        source=CompositeSnapshotSource(
+            placements=(
+                SnapshotPlacement(
+                    source=SnapshotSource(repo_id="microsoft/VibeVoice-ASR"),
+                    required_files=(
+                        "config.json",
+                        "model.safetensors.index.json",
+                        "model-00001-of-00008.safetensors",
+                        "model-00002-of-00008.safetensors",
+                        "model-00003-of-00008.safetensors",
+                        "model-00004-of-00008.safetensors",
+                        "model-00005-of-00008.safetensors",
+                        "model-00006-of-00008.safetensors",
+                        "model-00007-of-00008.safetensors",
+                        "model-00008-of-00008.safetensors",
+                    ),
+                ),
+            ),
+        ),
+        required_files=(
+            "config.json",
+            "model.safetensors.index.json",
+            "model-00001-of-00008.safetensors",
+            "model-00002-of-00008.safetensors",
+            "model-00003-of-00008.safetensors",
+            "model-00004-of-00008.safetensors",
+            "model-00005-of-00008.safetensors",
+            "model-00006-of-00008.safetensors",
+            "model-00007-of-00008.safetensors",
+            "model-00008-of-00008.safetensors",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+        ),
+        description="Installs VibeVoice ASR plus the Qwen2.5 tokenizer files required by the framework runtime.",
     ),
     ModelPackage(
         id="vibevoice_1_5b",
@@ -1409,6 +1506,12 @@ def install_composite_snapshot(
             dacvae_root = staged_package_root.parent / "Semantic-DACVAE-Japanese-32dim"
             if dacvae_root.exists():
                 convert_irodori_dacvae_weights(dacvae_root)
+        elif package.id == "vibevoice_asr":
+            copy_bundled_model_manager_assets(
+                "vibevoice_1_5b",
+                staged_package_root,
+                ("tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt"),
+            )
         elif package.id in {"vibevoice_1_5b", "vibevoice_7b"}:
             # VibeVoice 1.5B and 7B share the same Qwen2.5 tokenizer, and neither
             # upstream repo ships the tokenizer files, so both reuse one bundle.

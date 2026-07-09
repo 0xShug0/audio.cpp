@@ -1,0 +1,102 @@
+# audio.cpp — CUDA Dockerfile
+#
+# Usage:
+#   docker build -f .devops/cuda.Dockerfile -t local/audiocpp:full-cuda .
+
+# ============================================================
+# [BUILD] Compile all release binaries with CUDA
+# ============================================================
+ARG UBUNTU_VERSION=24.04
+ARG CUDA_VERSION=12.9.0
+ARG BUILD_DATE=N/A
+ARG APP_VERSION=N/A
+ARG APP_REVISION=N/A
+ARG GCC_VERSION=14
+
+ARG BASE_CUDA_DEV_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
+ARG BASE_CUDA_RUN_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+
+FROM ${BASE_CUDA_DEV_CONTAINER} AS build
+
+ARG GCC_VERSION=14
+
+# Install build toolchain
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc-${GCC_VERSION} g++-${GCC_VERSION} cmake && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV CC=gcc-${GCC_VERSION} CXX=g++-${GCC_VERSION} CUDAHOSTCXX=g++-${GCC_VERSION}
+
+WORKDIR /app
+COPY . .
+
+# Configure
+RUN cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DENGINE_ENABLE_CUDA=ON \
+        -DENGINE_ENABLE_CUDA_GRAPHS=ON \
+        -DENGINE_ENABLE_VULKAN=OFF \
+        -DENGINE_ENABLE_OPENMP=ON \
+        -DENGINE_BUILD_EXAMPLES=OFF \
+        -DENGINE_BUILD_TESTS=OFF \
+        -DENGINE_BUILD_WARMBENCH=OFF && \
+    cmake --build build --parallel $(nproc) \
+        --target audiocpp_cli \
+        --target audiocpp_server \
+        --target model_perf \
+        --target miocodec_wavlm_parity
+
+# Collect all binaries + multiplexer into /app/full
+RUN mkdir -p /app/full && \
+    cp build/bin/audiocpp_cli build/bin/audiocpp_server \
+       build/bin/model_perf build/bin/miocodec_wavlm_parity /app/full/ && \
+    cp .devops/entrypoint.sh /app/full/entrypoint.sh && \
+    chmod +x /app/full/entrypoint.sh
+
+# ============================================================
+# [BASE] Shared runtime (NVIDIA CUDA + common libs)
+# ============================================================
+FROM ${BASE_CUDA_RUN_CONTAINER} AS base
+
+ARG BUILD_DATE=N/A
+ARG APP_VERSION=N/A
+ARG APP_REVISION=N/A
+ARG IMAGE_URL=https://github.com/0xShug0/audio.cpp
+ARG IMAGE_SOURCE=https://github.com/0xShug0/audio.cpp
+
+LABEL org.opencontainers.image.created=$BUILD_DATE \
+      org.opencontainers.image.version=$APP_VERSION \
+      org.opencontainers.image.revision=$APP_REVISION \
+      org.opencontainers.image.title="audio.cpp" \
+      org.opencontainers.image.description="An all-in-one, pure C++ inference engine for audio models, powered by ggml" \
+      org.opencontainers.image.url=$IMAGE_URL \
+      org.opencontainers.image.source=$IMAGE_SOURCE
+
+# Runtime deps: OpenMP threading, curl (healthcheck), ffmpeg (audio I/O)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libgomp1 curl ffmpeg && \
+    apt-get autoremove -y && \
+    apt-get clean -y && \
+    rm -rf /tmp/* /var/tmp/* && \
+    find /var/cache/apt/archives /var/lib/apt/lists -not -name lock -type f -delete && \
+    find /var/cache -type f -delete
+
+WORKDIR /app
+
+# ============================================================
+# [FULL] All binaries + entrypoint.sh multiplexer
+# ============================================================
+FROM base AS full
+
+COPY --from=build /app/full /app
+
+USER ubuntu
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=15s \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+

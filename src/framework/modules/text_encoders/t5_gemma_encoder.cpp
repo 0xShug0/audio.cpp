@@ -107,7 +107,13 @@ core::TensorValue self_attention(
     auto q_heads = TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto scores = matmul_f32(ctx, q_heads, TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
+    auto k_heads_contiguous = ensure_contiguous(ctx, k_heads);
+    auto scores_raw = ggml_mul_mat(ctx.ggml, k_heads_contiguous.tensor, q_heads.tensor);
+    ggml_mul_mat_set_prec(scores_raw, GGML_PREC_F32);
+    auto scores = core::wrap_tensor(
+        scores_raw,
+        core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[1], q_heads.shape.dims[2], k_heads.shape.dims[2]}),
+        GGML_TYPE_F32);
     scores = core::ensure_backend_addressable_layout(ctx, scores);
     scores = core::wrap_tensor(
         ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(config.query_pre_attn_scalar)),

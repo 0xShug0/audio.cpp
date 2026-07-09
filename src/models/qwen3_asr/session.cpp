@@ -301,6 +301,9 @@ std::vector<Qwen3ASRSession::AudioChunkPlan> Qwen3ASRSession::audio_chunk_plan(c
     if (mode == engine::audio::AudioChunkMode::None) {
         return {};
     }
+    if (mode == engine::audio::AudioChunkMode::QuietEnergy) {
+        throw std::runtime_error("Qwen3 ASR does not support audio_chunk_mode=quiet_energy");
+    }
     const bool return_timestamps = request_return_timestamps(request);
     const auto & audio = *request.audio_input;
     const int64_t frames = audio_frame_count(audio);

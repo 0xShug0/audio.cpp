@@ -1,6 +1,8 @@
 #include "engine/framework/assets/tensor_source.h"
 
 #include "engine/framework/io/binary.h"
+#include "engine/framework/io/filesystem.h"
+#include "engine/framework/io/json.h"
 #include "engine/framework/io/safetensors.h"
 
 #include <algorithm>
@@ -8,7 +10,9 @@
 #include <cstring>
 #include <functional>
 #include <numeric>
+#include <set>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace engine::assets {
 namespace {
@@ -430,6 +434,141 @@ private:
     mutable engine::io::BinaryBlob bytes_;
 };
 
+std::unordered_map<std::string, std::string> parse_indexed_tensor_weight_map(
+    const std::filesystem::path & index_path) {
+    const auto root = engine::io::json::parse_file(index_path);
+    const auto & object = root.require("weight_map").as_object();
+    std::unordered_map<std::string, std::string> weight_map;
+    weight_map.reserve(object.size());
+    for (const auto & [name, value] : object) {
+        weight_map.emplace(name, value.as_string());
+    }
+    if (weight_map.empty()) {
+        throw std::runtime_error("indexed tensor source has an empty weight_map: " + index_path.string());
+    }
+    return weight_map;
+}
+
+std::vector<std::filesystem::path> indexed_tensor_source_shard_paths_from_weight_map(
+    const std::filesystem::path & model_root,
+    const std::unordered_map<std::string, std::string> & weight_map) {
+    std::set<std::string> shard_names;
+    for (const auto & [_, file_name] : weight_map) {
+        shard_names.insert(file_name);
+    }
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(shard_names.size());
+    for (const auto & name : shard_names) {
+        const auto path = model_root / name;
+        if (!engine::io::is_existing_file(path)) {
+            throw std::runtime_error("missing indexed tensor shard: " + path.string());
+        }
+        paths.push_back(std::filesystem::weakly_canonical(path));
+    }
+    return paths;
+}
+
+class IndexedTensorSource final : public TensorSource {
+public:
+    IndexedTensorSource(
+        std::filesystem::path index_path,
+        std::unordered_map<std::string, std::string> weight_map,
+        std::unordered_map<std::string, std::shared_ptr<const TensorSource>> shard_sources)
+        : index_path_(std::move(index_path)),
+          weight_map_(std::move(weight_map)),
+          shard_sources_(std::move(shard_sources)) {}
+
+    const std::filesystem::path & source_path() const noexcept override {
+        return index_path_;
+    }
+
+    bool has_tensor(std::string_view name) const noexcept override {
+        const auto route = weight_map_.find(std::string(name));
+        if (route == weight_map_.end()) {
+            return false;
+        }
+        const auto source = shard_sources_.find(route->second);
+        return source != shard_sources_.end() && source->second->has_tensor(name);
+    }
+
+    TensorMetadata require_metadata(std::string_view name) const override {
+        return source_for(name)->require_metadata(name);
+    }
+
+    std::vector<TensorMetadata> tensors() const override {
+        std::vector<TensorMetadata> out;
+        out.reserve(weight_map_.size());
+        for (const auto & [name, _] : weight_map_) {
+            out.push_back(require_metadata(name));
+        }
+        std::sort(out.begin(), out.end(), [](const TensorMetadata & lhs, const TensorMetadata & rhs) {
+            return lhs.name < rhs.name;
+        });
+        return out;
+    }
+
+    void release_storage() const override {
+        for (const auto & [_, source] : shard_sources_) {
+            source->release_storage();
+        }
+    }
+
+    RawTensorData require_tensor_data(std::string_view name) const override {
+        return source_for(name)->require_tensor_data(name);
+    }
+
+    std::vector<float> require_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        return source_for(name)->require_f32(name, expected_shape);
+    }
+
+    std::optional<std::vector<float>> optional_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        if (!has_tensor(name)) {
+            return std::nullopt;
+        }
+        return require_f32(name, expected_shape);
+    }
+
+    void set_backend_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        TensorStorageType storage_type,
+        const std::vector<int64_t> & expected_shape) const override {
+        source_for(name)->set_backend_tensor(tensor, name, storage_type, expected_shape);
+    }
+
+    void set_backend_f32_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        const std::vector<int64_t> & expected_shape) const override {
+        source_for(name)->set_backend_f32_tensor(tensor, name, expected_shape);
+    }
+
+    int64_t require_i64_scalar(std::string_view name) const override {
+        return source_for(name)->require_i64_scalar(name);
+    }
+
+private:
+    std::shared_ptr<const TensorSource> source_for(std::string_view name) const {
+        const auto route = weight_map_.find(std::string(name));
+        if (route == weight_map_.end()) {
+            throw std::runtime_error("missing indexed tensor route: " + std::string(name));
+        }
+        const auto source = shard_sources_.find(route->second);
+        if (source == shard_sources_.end()) {
+            throw std::runtime_error("missing indexed tensor shard source: " + route->second);
+        }
+        return source->second;
+    }
+
+    std::filesystem::path index_path_;
+    std::unordered_map<std::string, std::string> weight_map_;
+    std::unordered_map<std::string, std::shared_ptr<const TensorSource>> shard_sources_;
+};
+
 }  // namespace
 
 TensorDataF32 TensorSource::require_f32_tensor(std::string_view name) const {
@@ -704,6 +843,28 @@ std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::pa
         return std::make_shared<SafeTensorSource>(path);
     }
     throw std::runtime_error("unsupported tensor source format: " + path.string());
+}
+
+std::vector<std::filesystem::path> indexed_tensor_source_shard_paths(
+    const std::filesystem::path & index_path,
+    const std::filesystem::path & model_root) {
+    return indexed_tensor_source_shard_paths_from_weight_map(
+        model_root,
+        parse_indexed_tensor_weight_map(index_path));
+}
+
+std::shared_ptr<const TensorSource> open_indexed_tensor_source(
+    const std::filesystem::path & index_path,
+    const std::filesystem::path & model_root) {
+    const auto weight_map = parse_indexed_tensor_weight_map(index_path);
+    std::unordered_map<std::string, std::shared_ptr<const TensorSource>> shard_sources;
+    for (const auto & path : indexed_tensor_source_shard_paths_from_weight_map(model_root, weight_map)) {
+        shard_sources.emplace(path.filename().string(), open_tensor_source(path));
+    }
+    return std::make_shared<IndexedTensorSource>(
+        index_path,
+        weight_map,
+        std::move(shard_sources));
 }
 
 }  // namespace engine::assets

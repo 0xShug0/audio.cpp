@@ -1,0 +1,22 @@
+{
+  "host": "0.0.0.0",
+  "port": 8080,
+  "device": 0,
+  "threads": 1,
+  "models": [
+    {
+      "id": "pocket-tts",
+      "family": "pocket_tts",
+      "path": "/models/pocket-tts",
+      "task": "tts",
+      "mode": "offline",
+      "load_options": {
+        "language": "english"
+      },
+      "session_options": {
+        "language": "english"
+      }
+    }
+  ]
+}
+

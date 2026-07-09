@@ -77,6 +77,37 @@ private:
     Conv2dConfig config_;
 };
 
+struct DepthwiseConv2dConfig {
+    int64_t channels = 0;
+    int64_t kernel_height = 0;
+    int64_t kernel_width = 0;
+    int stride_height = 1;
+    int stride_width = 1;
+    int padding_height = 0;
+    int padding_width = 0;
+    int dilation_height = 1;
+    int dilation_width = 1;
+    bool use_bias = true;
+};
+
+class DepthwiseConv2dModule {
+public:
+    explicit DepthwiseConv2dModule(DepthwiseConv2dConfig config);
+
+    const DepthwiseConv2dConfig & config() const noexcept;
+    const core::ModuleSchema & schema() const noexcept;
+
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const Conv2dWeights & weights) const;
+
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    DepthwiseConv2dConfig config_;
+};
+
 struct ConvTranspose1dConfig {
     int64_t in_channels = 0;
     int64_t out_channels = 0;

@@ -15,15 +15,19 @@ import numpy as np
 
 
 TIMING_RE = re.compile(r"^\[TIMING[^\]]*\]\s+(\S+)\s+([-+0-9.eE]+)\s*$")
-REQUEST_ID_RE = re.compile(r"^request_id=(.*)$")
-TEXT_OUTPUT_RE = re.compile(r"^text_output=(.*)$")
+TEXT_OUTPUTS_JSON = "text_outputs.json"
 
-STDOUT_TEXT_CASES = {
+TEXT_OUTPUT_CASES = {
     "citrinet_asr_offline",
+    "higgs_audio_stt_paths",
+    "hviske_asr_paths",
+    "nemotron_asr_offline_paths",
+    "nemotron_asr_streaming_paths",
     "parakeet_tdt_offline_long",
     "parakeet_tdt_streaming",
     "qwen3_asr_offline",
-    "qwen3_forced_aligner_words",
+    "vibevoice_asr_structured_segments",
+    "vibevoice_asr_paths",
 }
 
 RELAXED_WAV_HASH_CASES = {
@@ -212,7 +216,7 @@ def sha256_file(path: Path) -> str:
 def artifact_hashes(case_dir: Path) -> dict[str, tuple[int, str]]:
     hashes: dict[str, tuple[int, str]] = {}
     roots = [case_dir / "outputs"]
-    roots.extend(path for path in case_dir.glob("*.json") if path.name not in {"command.json", "requests.json"})
+    roots.extend(path for path in case_dir.glob("*.json") if path.name not in {"command.json", "requests.json", TEXT_OUTPUTS_JSON})
     for root in roots:
         if root.is_file():
             paths = [root]
@@ -224,6 +228,17 @@ def artifact_hashes(case_dir: Path) -> dict[str, tuple[int, str]]:
             rel = path.relative_to(case_dir).as_posix()
             hashes[rel] = (path.stat().st_size, sha256_file(path))
     return hashes
+
+
+def shorten_text(value: str, limit: int = 180) -> str:
+    value = value.replace("\n", "\\n")
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3] + "..."
+
+
+def markdown_cell(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("|", "\\|")
 
 
 def wav_mismatch_summary(src: Path, baseline: Path, mismatches: list[str]) -> str:
@@ -264,24 +279,60 @@ def relaxed_wav_hash_summary(case_id: str, src: Path, baseline: Path, mismatches
     return True, f"WAV hash skipped, wav_cos > {threshold_percent:.6f}% required; " + "; ".join(parts)
 
 
-def stdout_text_outputs(case_dir: Path) -> dict[str, str]:
-    stdout_path = case_dir / "stdout.log"
-    outputs: dict[str, str] = {}
-    if not stdout_path.exists():
-        return outputs
+def json_text_outputs(case_dir: Path) -> dict[str, str] | None:
+    path = case_dir / TEXT_OUTPUTS_JSON
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    outputs = data.get("outputs")
+    if not isinstance(outputs, list):
+        raise RuntimeError(f"{path}: expected outputs array")
 
-    request_id = ""
-    for line in stdout_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        request_match = REQUEST_ID_RE.match(line)
-        if request_match:
-            request_id = request_match.group(1)
-            continue
-        output_match = TEXT_OUTPUT_RE.match(line)
-        if output_match is None:
-            continue
-        scoped_key = request_id if request_id else "text_output"
-        outputs[scoped_key] = output_match.group(1)
-    return outputs
+    result: dict[str, str] = {}
+    for index, item in enumerate(outputs):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"{path}: outputs[{index}] must be an object")
+        item_id = item.get("id")
+        text = item.get("text")
+        if not isinstance(item_id, str) or not isinstance(text, str):
+            raise RuntimeError(f"{path}: outputs[{index}] requires string id and text")
+        if item_id in result:
+            raise RuntimeError(f"{path}: duplicate output id {item_id}")
+        result[item_id] = text
+    return result
+
+
+def load_text_outputs(case_dir: Path) -> tuple[dict[str, str] | None, str | None]:
+    try:
+        return json_text_outputs(case_dir), None
+    except Exception as exc:  # noqa: BLE001 - report malformed comparison inputs as data failures.
+        return None, str(exc)
+
+
+def text_mismatch_detail(src_text: dict[str, str], baseline_text: dict[str, str]) -> str:
+    src_keys = set(src_text)
+    baseline_keys = set(baseline_text)
+    if src_keys != baseline_keys:
+        missing_src = sorted(baseline_keys - src_keys)
+        missing_baseline = sorted(src_keys - baseline_keys)
+        parts = [f"text outputs {len(src_keys)} vs {len(baseline_keys)}"]
+        if missing_src:
+            parts.append("missing current=" + ",".join(missing_src[:3]))
+        if missing_baseline:
+            parts.append("missing baseline=" + ",".join(missing_baseline[:3]))
+        return "; ".join(parts)
+
+    mismatches = [key for key in sorted(src_keys) if src_text[key] != baseline_text[key]]
+    if not mismatches:
+        return ""
+    first = mismatches[0]
+    baseline_value = shorten_text(baseline_text[first])
+    src_value = shorten_text(src_text[first])
+    return (
+        f"{len(mismatches)} text_output mismatch(es), first={first}, "
+        f"baseline={json.dumps(baseline_value, ensure_ascii=False)}, "
+        f"current={json.dumps(src_value, ensure_ascii=False)}"
+    )
 
 
 def timing_summary(case_dir: Path) -> tuple[float, dict[str, float]]:
@@ -320,6 +371,27 @@ def compare_case(case_id: str, src: Path | None, baseline: Path | None, src_stat
     if src_status != baseline_status:
         return "status", with_timing(f"status {src_status} vs {baseline_status}", src, baseline)
 
+    src_text, src_text_error = load_text_outputs(src)
+    baseline_text, baseline_text_error = load_text_outputs(baseline)
+    expects_text = case_id in TEXT_OUTPUT_CASES or src_text is not None or baseline_text is not None
+    if expects_text:
+        if src_text_error is not None:
+            return "text-output-json", with_timing("current text_outputs.json malformed: " + src_text_error, src, baseline)
+        if baseline_text_error is not None:
+            return "text-output-json", with_timing("baseline text_outputs.json malformed: " + baseline_text_error, src, baseline)
+        missing = []
+        if src_text is None:
+            missing.append("current")
+        if baseline_text is None:
+            missing.append("baseline")
+        if missing:
+            return "text-output-list", with_timing("missing text_outputs.json in " + "/".join(missing), src, baseline)
+        if not src_text and not baseline_text:
+            return "text-output-list", with_timing("text_outputs.json has no outputs", src, baseline)
+        text_detail = text_mismatch_detail(src_text, baseline_text)
+        if text_detail:
+            return "text-output", with_timing(text_detail, src, baseline)
+
     src_artifacts = artifact_hashes(src)
     baseline_artifacts = artifact_hashes(baseline)
     if src_artifacts != baseline_artifacts:
@@ -339,21 +411,7 @@ def compare_case(case_id: str, src: Path | None, baseline: Path | None, src_stat
             detail += f"; {relaxed_detail}"
         return "artifact-hash", with_timing(detail, src, baseline)
 
-    if case_id in STDOUT_TEXT_CASES:
-        src_text = stdout_text_outputs(src)
-        baseline_text = stdout_text_outputs(baseline)
-        if src_text != baseline_text:
-            src_keys = set(src_text)
-            baseline_keys = set(baseline_text)
-            if src_keys != baseline_keys:
-                return "stdout-text-list", with_timing(f"text outputs {len(src_keys)} vs {len(baseline_keys)}", src, baseline)
-            mismatches = [key for key in sorted(src_keys) if src_text[key] != baseline_text[key]]
-            first = mismatches[0]
-            return "stdout-text", with_timing(f"{len(mismatches)} text_output mismatch(es), first={first}", src, baseline)
-        if not src_text and not baseline_text:
-            return "stdout-text-list", with_timing("expected text_output in stdout but found none", src, baseline)
-
-    return "ok", with_timing("artifacts/stdout match", src, baseline)
+    return "ok", with_timing("artifacts/text match", src, baseline)
 
 
 def narrow_single_case_compare(
@@ -398,7 +456,7 @@ def main() -> int:
         )
         if result != "ok":
             failures += 1
-        print(f"| {case_id} | {result} | {detail} |")
+        print(f"| {case_id} | {result} | {markdown_cell(detail)} |")
     print(f"\nsummary: {len(src_cases)} source case(s), {len(baseline_cases)} baseline case(s), {failures} difference(s)")
     return 1 if failures else 0
 
