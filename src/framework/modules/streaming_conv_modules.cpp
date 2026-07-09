@@ -72,45 +72,6 @@ core::TensorValue repeat_first_frame(
     return RepeatModule({core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], prefix_frames})}).build(ctx, first);
 }
 
-core::TensorValue depthwise_conv_single_batch(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & weight,
-    const DepthwiseConv1dConfig & config) {
-    return core::wrap_tensor(
-        ggml_conv_1d_dw(
-            ctx.ggml,
-            weight.tensor,
-            input.tensor,
-            config.stride,
-            config.padding,
-            config.dilation),
-        core::TensorShape::from_dims({
-            input.shape.dims[0],
-            config.channels,
-            depthwise_conv1d_output_frames(config, input.shape.dims[2]),
-        }),
-        GGML_TYPE_F32);
-}
-
-core::TensorValue build_batched_depthwise_weight(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & weight,
-    int64_t batch) {
-    auto weight4 = core::reshape_tensor(
-        ctx,
-        weight,
-        core::TensorShape::from_dims({1, weight.shape.dims[0], weight.shape.dims[1], weight.shape.dims[2]}));
-    auto repeated = RepeatModule(RepeatConfig{
-        core::TensorShape::from_dims({batch, weight.shape.dims[0], weight.shape.dims[1], weight.shape.dims[2]})})
-                        .build(ctx, weight4);
-    repeated = tensor_layout::ensure_contiguous_layout_if_needed(ctx, repeated);
-    return core::reshape_tensor(
-        ctx,
-        repeated,
-        core::TensorShape::from_dims({batch * weight.shape.dims[0], weight.shape.dims[1], weight.shape.dims[2]}));
-}
-
 }
 
 DepthwiseConv1dModule::DepthwiseConv1dModule(DepthwiseConv1dConfig config) : config_(config) {
@@ -140,26 +101,35 @@ core::TensorValue DepthwiseConv1dModule::build(
         "weight");
     const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
     const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "DepthwiseConv1dModule");
-    core::TensorValue output;
-    if (input.shape.dims[0] == 1) {
-        output = depthwise_conv_single_batch(ctx, input_contiguous, weight_contiguous, config_);
-    } else {
-        const int64_t batch = input.shape.dims[0];
-        const int64_t channels = input.shape.dims[1];
-        auto merged_input = core::reshape_tensor(
-            ctx,
-            input_contiguous,
-            core::TensorShape::from_dims({1, batch * channels, input.shape.dims[2]}));
-        auto merged_weight = build_batched_depthwise_weight(ctx, weight_contiguous, batch);
-        auto merged_config = config_;
-        merged_config.channels = batch * channels;
-        output = depthwise_conv_single_batch(ctx, merged_input, merged_weight, merged_config);
-        output = core::reshape_tensor(
-            ctx,
-            output,
-            core::TensorShape::from_dims({batch, channels, output.shape.dims[2]}));
-    }
-    return add_bias_bct(ctx, output, config_.channels, weights.bias);
+    auto input_4d = core::reshape_tensor(
+        ctx,
+        input_contiguous,
+        core::TensorShape::from_dims({input.shape.dims[0], config_.channels, 1, input.shape.dims[2]}));
+    auto weight_4d = core::reshape_tensor(
+        ctx,
+        weight_contiguous,
+        core::TensorShape::from_dims({config_.channels, 1, 1, config_.kernel_size}));
+    // This 2D depthwise lowering greatly improves performance but may affect parity.
+    auto output_4d = DepthwiseConv2dModule({
+        config_.channels,
+        1,
+        config_.kernel_size,
+        1,
+        config_.stride,
+        0,
+        config_.padding,
+        1,
+        config_.dilation,
+        config_.use_bias,
+    }).build(ctx, input_4d, {weight_4d, weights.bias});
+    return core::reshape_tensor(
+        ctx,
+        output_4d,
+        core::TensorShape::from_dims({
+            input.shape.dims[0],
+            config_.channels,
+            depthwise_conv1d_output_frames(config_, input.shape.dims[2]),
+        }));
 }
 
 DepthwiseConv1dModuleExp::DepthwiseConv1dModuleExp(DepthwiseConv1dConfig config) : config_(config) {

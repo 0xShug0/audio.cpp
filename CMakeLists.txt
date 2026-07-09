@@ -757,6 +757,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND supertonic_vector_convnext_exp_test
     )
 
+    add_engine_unittest(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
+
+    add_test(
+        NAME depthwise_conv1d_lowering_test
+        COMMAND depthwise_conv1d_lowering_test
+    )
+
     add_executable(server_multipart_test
         tests/unittests/test_server_multipart.cpp
         app/server/multipart.cpp
