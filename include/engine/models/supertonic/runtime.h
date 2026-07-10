@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/models/supertonic/assets.h"
 #include "engine/models/supertonic/session.h"
@@ -11,7 +12,10 @@ namespace engine::models::supertonic {
 
 class SupertonicNativeRuntime {
 public:
-    SupertonicNativeRuntime(std::shared_ptr<const SupertonicAssets> assets, core::BackendConfig backend_config);
+    SupertonicNativeRuntime(
+        std::shared_ptr<const SupertonicAssets> assets,
+        core::BackendConfig backend_config,
+        assets::TensorStorageType weight_storage_type);
     ~SupertonicNativeRuntime();
 
     runtime::AudioBuffer synthesize(

@@ -62,6 +62,7 @@ runtime::ModelCliInterface supertonic_cli() {
         {"seed", "n", "Noise seed, default 1234."},
     };
     cli.session_options = {
+        {"supertonic.weight_type", "native|f32|f16|bf16|q8_0", "Supertonic weight storage type."},
     };
     return cli;
 }

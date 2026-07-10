@@ -246,6 +246,56 @@ struct SupertonicBackendWeights {
     std::unordered_map<std::string, core::TensorValue> tensors;
 };
 
+bool starts_with(std::string_view value, std::string_view prefix) {
+    return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
+}
+
+bool ends_with(std::string_view value, std::string_view suffix) {
+    return value.size() >= suffix.size() && value.substr(value.size() - suffix.size()) == suffix;
+}
+
+bool is_pointwise_linear_weight(std::string_view name) {
+    const bool pointwise_weight = ends_with(name, ".pwconv1.weight") || ends_with(name, ".pwconv2.weight");
+    if (!pointwise_weight) {
+        return false;
+    }
+    if (starts_with(name, "duration_predictor.tts.dp.sentence_encoder.convnext.") ||
+        starts_with(name, "text_encoder.tts.ttl.text_encoder.convnext.")) {
+        return true;
+    }
+    static constexpr std::array<int, 4> kPointwiseLinearBlocks = {0, 6, 12, 18};
+    for (int block : kPointwiseLinearBlocks) {
+        const std::string prefix =
+            "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(block) + ".convnext.";
+        if (starts_with(name, prefix)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool is_reshaped_linear_weight(std::string_view name) {
+    return is_pointwise_linear_weight(name) ||
+        name == "vector_estimator.vector_estimator.tts.ttl.vector_field.proj_in.net.weight" ||
+        name == "vector_estimator.vector_estimator.tts.ttl.vector_field.proj_out.net.weight";
+}
+
+assets::TensorStorageType storage_type_for_weight(
+    std::string_view name,
+    assets::TensorStorageType requested_storage_type) {
+    if (requested_storage_type != assets::TensorStorageType::Q8_0) {
+        return requested_storage_type;
+    }
+    if (name == "duration_predictor.tts.dp.predictor.layers.0.weight" ||
+        name == "duration_predictor.tts.dp.predictor.layers.1.weight" ||
+        name == "vector_estimator.vector_estimator.tts.ttl.vector_field.time_encoder.mlp.0.linear.weight" ||
+        name == "vector_estimator.vector_estimator.tts.ttl.vector_field.time_encoder.mlp.2.linear.weight" ||
+        is_reshaped_linear_weight(name)) {
+        return requested_storage_type;
+    }
+    return assets::TensorStorageType::F32;
+}
+
 const core::TensorValue & require_weight_tensor(
     const SupertonicBackendWeights & weights,
     const std::string & name) {
@@ -259,7 +309,8 @@ const core::TensorValue & require_weight_tensor(
 std::shared_ptr<const SupertonicBackendWeights> load_backend_weights(
     const std::shared_ptr<const SupertonicAssets> & assets,
     ggml_backend_t backend,
-    core::BackendType backend_type) {
+    core::BackendType backend_type,
+    assets::TensorStorageType weight_storage_type) {
     auto weights = std::make_shared<SupertonicBackendWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
@@ -271,7 +322,21 @@ std::shared_ptr<const SupertonicBackendWeights> load_backend_weights(
     for (const auto & metadata : tensors) {
         const auto & name = metadata.name;
         if (metadata.dtype == "F32" || metadata.dtype == "F16" || metadata.dtype == "BF16") {
-            auto tensor = weights->store->load_f32_tensor(*assets->weights, name, metadata.shape);
+            const auto tensor_storage_type = storage_type_for_weight(name, weight_storage_type);
+            core::TensorValue tensor;
+            if (tensor_storage_type == assets::TensorStorageType::Q8_0 && is_reshaped_linear_weight(name)) {
+                if (metadata.shape.size() != 3 || metadata.shape[2] != 1) {
+                    throw std::runtime_error("Supertonic q8 reshaped linear weight must have source shape [out, in, 1]: " + name);
+                }
+                tensor = weights->store->load_tensor_as_shape(
+                    *assets->weights,
+                    name,
+                    tensor_storage_type,
+                    metadata.shape,
+                    core::TensorShape::from_dims({metadata.shape[0], metadata.shape[1]}));
+            } else {
+                tensor = weights->store->load_tensor(*assets->weights, name, tensor_storage_type, metadata.shape);
+            }
             weights->tensors.emplace(name, tensor);
             continue;
         }
@@ -476,23 +541,15 @@ core::TensorValue vocoder_block(
     x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
     x = modules::LayerNormModule({x.shape.last_dim(), 1.0e-6F, true, true}).build(ctx, x, {weights.norm_weight, weights.norm_bias});
     x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
-    x = modules::Conv1dModule({
+    x = modules::PointwiseConv1dModule({
         x.shape.dims[1],
         weights.pw1_weight.shape.dims[0],
-        1,
-        1,
-        0,
-        1,
         true,
     }).build(ctx, x, {weights.pw1_weight, weights.pw1_bias});
     x = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, x);
-    x = modules::Conv1dModule({
+    x = modules::PointwiseConv1dModule({
         x.shape.dims[1],
         weights.pw2_weight.shape.dims[0],
-        1,
-        1,
-        0,
-        1,
         true,
     }).build(ctx, x, {weights.pw2_weight, weights.pw2_bias});
     const auto gamma = broadcast_to(ctx, weights.gamma, x.shape);
@@ -2317,7 +2374,10 @@ struct SupertonicNativeRuntime::State {
         std::vector<int64_t> dp_shape;
     };
 
-    State(std::shared_ptr<const SupertonicAssets> assets_in, core::BackendConfig backend_config)
+    State(
+        std::shared_ptr<const SupertonicAssets> assets_in,
+        core::BackendConfig backend_config,
+        assets::TensorStorageType weight_storage_type)
         : assets(std::move(assets_in)),
           threads(std::max(1, backend_config.threads)) {
         if (assets == nullptr) {
@@ -2326,7 +2386,7 @@ struct SupertonicNativeRuntime::State {
         backend_config.threads = threads;
         backend.backend = core::init_backend(backend_config);
         backend_type = core::backend_type(backend.backend);
-        weights = load_backend_weights(assets, backend.backend, backend_type);
+        weights = load_backend_weights(assets, backend.backend, backend_type, weight_storage_type);
         duration_model = std::make_unique<SupertonicDurationPredictorRuntime>(
             weights,
             backend.backend,
@@ -2378,8 +2438,11 @@ struct SupertonicNativeRuntime::State {
     std::unordered_map<std::string, Style> styles;
 };
 
-SupertonicNativeRuntime::SupertonicNativeRuntime(std::shared_ptr<const SupertonicAssets> assets, core::BackendConfig backend_config)
-    : state_(std::make_unique<State>(std::move(assets), backend_config)) {}
+SupertonicNativeRuntime::SupertonicNativeRuntime(
+    std::shared_ptr<const SupertonicAssets> assets,
+    core::BackendConfig backend_config,
+    assets::TensorStorageType weight_storage_type)
+    : state_(std::make_unique<State>(std::move(assets), backend_config, weight_storage_type)) {}
 
 SupertonicNativeRuntime::~SupertonicNativeRuntime() = default;
 

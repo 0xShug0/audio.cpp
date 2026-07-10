@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/supertonic/assets.h"
 #include "engine/models/supertonic/tokenizer_text.h"
@@ -42,6 +43,7 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const SupertonicAssets> assets_;
     SupertonicTextTokenizer tokenizer_;
+    assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
     std::unique_ptr<SupertonicNativeRuntime> runtime_;
 };
 

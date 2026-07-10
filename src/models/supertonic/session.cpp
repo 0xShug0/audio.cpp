@@ -19,10 +19,24 @@ std::shared_ptr<const SupertonicAssets> require_assets(std::shared_ptr<const Sup
     return assets;
 }
 
+void validate_weight_storage(assets::TensorStorageType storage_type, const char * option_name) {
+    if (storage_type == assets::TensorStorageType::Native ||
+        storage_type == assets::TensorStorageType::F32 ||
+        storage_type == assets::TensorStorageType::F16 ||
+        storage_type == assets::TensorStorageType::BF16 ||
+        storage_type == assets::TensorStorageType::Q8_0) {
+        return;
+    }
+    throw std::runtime_error(std::string(option_name) + " supports only native, f32, f16, bf16, and q8_0");
+}
+
 void validate_session_options(const runtime::SessionOptions & options) {
     for (const auto & [key, value] : options.options) {
         (void)value;
         if (key.rfind("supertonic.", 0) == 0) {
+            if (key == "supertonic.weight_type") {
+                continue;
+            }
             throw std::runtime_error("unknown Supertonic session option: " + key);
         }
     }
@@ -37,15 +51,19 @@ SupertonicSession::SupertonicSession(
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),
-      tokenizer_(assets_),
-      runtime_(std::make_unique<SupertonicNativeRuntime>(assets_, options.backend)) {
+      tokenizer_(assets_) {
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Supertonic only supports offline sessions");
     }
     if (task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Supertonic only supports the Tts task");
     }
+    if (const auto it = options.options.find("supertonic.weight_type"); it != options.options.end()) {
+        weight_storage_type_ = assets::parse_tensor_storage_type(it->second);
+        validate_weight_storage(weight_storage_type_, "supertonic.weight_type");
+    }
     validate_session_options(options);
+    runtime_ = std::make_unique<SupertonicNativeRuntime>(assets_, options.backend, weight_storage_type_);
 }
 
 SupertonicSession::~SupertonicSession() = default;
