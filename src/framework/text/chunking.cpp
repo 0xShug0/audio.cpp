@@ -385,6 +385,62 @@ std::vector<std::string> split_text_chunks_tag_aware(
     return chunks;
 }
 
+std::vector<std::string> split_text_chunks_japanese(
+    std::string_view text,
+    int64_t codepoint_budget) {
+    if (codepoint_budget <= 0) {
+        throw std::runtime_error("text chunk budget must be positive");
+    }
+    const std::string trimmed = engine::io::trim_ascii_whitespace(std::string(text));
+    if (trimmed.empty()) {
+        return {};
+    }
+    const auto spans = split_utf8_spans(trimmed, "Japanese text chunk");
+    if (static_cast<int64_t>(spans.size()) <= codepoint_budget) {
+        return {trimmed};
+    }
+
+    std::vector<std::string> chunks;
+    size_t start = 0;
+    while (start < spans.size()) {
+        while (start < spans.size() && is_ascii_space(spans[start].text)) {
+            ++start;
+        }
+        if (start >= spans.size()) {
+            break;
+        }
+
+        const size_t hard_end = std::min(
+            spans.size(),
+            start + static_cast<size_t>(codepoint_budget));
+        size_t end = hard_end;
+        if (hard_end < spans.size()) {
+            for (size_t i = hard_end; i > start + 1; --i) {
+                if (is_sentence_break(spans[i - 1].text)) {
+                    end = i;
+                    break;
+                }
+            }
+            if (end == hard_end) {
+                for (size_t i = hard_end; i > start + 1; --i) {
+                    if (is_clause_break(spans[i - 1].text)) {
+                        end = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        auto chunk = engine::io::trim_ascii_whitespace(
+            trimmed.substr(spans[start].start, spans[end - 1].end - spans[start].start));
+        if (!chunk.empty()) {
+            chunks.push_back(std::move(chunk));
+        }
+        start = end;
+    }
+    return chunks;
+}
+
 }  // namespace
 
 std::vector<std::string> split_text_chunks(
@@ -399,6 +455,9 @@ std::vector<std::string> split_text_chunks(
     TextChunkMode mode) {
     if (mode == TextChunkMode::TagAware) {
         return split_text_chunks_tag_aware(text, codepoint_budget);
+    }
+    if (mode == TextChunkMode::Japanese) {
+        return split_text_chunks_japanese(text, codepoint_budget);
     }
     return split_text_chunks_default(text, codepoint_budget);
 }

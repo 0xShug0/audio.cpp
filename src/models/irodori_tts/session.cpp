@@ -348,7 +348,8 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
       engine::text::parse_text_chunk_size_override(request.options)
           .value_or(assets_->config.max_text_len);
   const auto chunk_requests =
-      runtime::chunk_text_request(request, text_chunk_size);
+      runtime::chunk_text_request(request, text_chunk_size,
+                                  engine::text::TextChunkMode::Japanese);
   if (chunk_requests.empty()) {
     throw std::runtime_error("Irodori-TTS text chunking produced no requests");
   }

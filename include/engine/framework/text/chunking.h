@@ -12,6 +12,7 @@ namespace engine::text {
 enum class TextChunkMode {
     Default,
     TagAware,
+    Japanese,
 };
 
 std::optional<int64_t> parse_text_chunk_size_override(
