@@ -540,6 +540,11 @@ public:
         return out;
     }
 
+    void release_runtime_graph() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        release_graph();
+    }
+
 private:
     void release_graph() {
         if (gallocr_ != nullptr) {
@@ -786,6 +791,12 @@ BigVganVocoderOutput BigVganVocoderComponent::synthesize_chunked(
     out.samples = static_cast<int64_t>(out.waveform.size());
     out.sample_rate = weights_->config.sampling_rate;
     return out;
+}
+
+void BigVganVocoderComponent::release_runtime_graph() {
+    if (state_ != nullptr && state_->runner != nullptr) {
+        state_->runner->release_runtime_graph();
+    }
 }
 
 }  // namespace engine::modules

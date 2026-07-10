@@ -803,6 +803,11 @@ public:
     return speaker_graph_->run(ref_latent);
   }
 
+  void release_graphs() {
+    graph_.reset();
+    speaker_graph_.reset();
+  }
+
 private:
   class SpeakerGraph {
   public:
@@ -1129,5 +1134,7 @@ IrodoriSpeakerCondition IrodoriConditionEncoder::encode_speaker_reference(
     const std::vector<float> &ref_latent, int64_t ref_tokens) {
   return impl_->encode_speaker_reference(ref_latent, ref_tokens);
 }
+
+void IrodoriConditionEncoder::release_graphs() { impl_->release_graphs(); }
 
 } // namespace engine::models::irodori_tts

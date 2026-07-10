@@ -88,6 +88,7 @@ public:
                               int64_t latent_steps, int64_t target_samples);
   std::vector<float> encode_reference(const runtime::AudioBuffer &audio,
                                       int64_t &latent_steps_out);
+  void release_graphs();
 
 private:
   class Impl;

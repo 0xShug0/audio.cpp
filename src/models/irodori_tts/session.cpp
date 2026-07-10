@@ -262,6 +262,10 @@ IrodoriTTSSession::IrodoriTTSSession(
     validate_codec_weight_storage(codec_weight_storage_type_,
                                   "irodori_tts.codec_weight_type");
   }
+  if (const auto value =
+          runtime::find_option(options.options, {"irodori_tts.mem_saver", "mem_saver"})) {
+    mem_saver_ = runtime::parse_bool_option(*value, "irodori_tts.mem_saver");
+  }
   if (task_.mode != runtime::RunMode::Offline) {
     throw std::runtime_error("Irodori-TTS only supports offline sessions");
   }
@@ -359,6 +363,10 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
       cached_reference_speaker_tokens_ = speaker.tokens;
       cached_reference_speaker_has_speaker_ = speaker.has_speaker;
       cached_reference_valid_ = true;
+      if (mem_saver_) {
+        codec_->release_graphs();
+        condition_encoder_->release_graphs();
+      }
     }
   }
   const auto reference_end = Clock::now();
@@ -404,6 +412,9 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
     const auto conditions = condition_encoder_->run(
         tokenized.token_ids, tokenized.mask, caption, speaker);
     condition_ms += debug::elapsed_ms(condition_start);
+    if (mem_saver_) {
+      condition_encoder_->release_graphs();
+    }
     IrodoriCaptionCondition rf_caption;
     std::vector<float> rf_caption_state;
     if (assets_->config.use_caption_condition) {
@@ -524,6 +535,11 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
         x_t[i] += velocity[i] * (t_next - t);
       }
     }
+    if (mem_saver_) {
+      rf_context_cond = IrodoriRfSampler::ContextCache();
+      rf_context_cfg = IrodoriRfSampler::ContextCache();
+      rf_sampler_->release_graphs();
+    }
     sample_rf_ms += debug::elapsed_ms(sample_start);
 
     std::vector<float> latent(
@@ -554,6 +570,9 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
     runtime::append_audio_buffer(
         merged_audio, codec_->decode(latent, latent_steps, target_samples));
     decode_ms += debug::elapsed_ms(decode_start);
+    if (mem_saver_) {
+      codec_->release_graphs();
+    }
   }
   runtime::TaskResult result;
   result.audio_output = std::move(merged_audio);

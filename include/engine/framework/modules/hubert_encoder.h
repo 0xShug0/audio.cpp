@@ -69,6 +69,7 @@ public:
         const std::vector<float> & input_values,
         int64_t batch,
         int64_t samples) const;
+    void release_runtime_graph();
 
 private:
     struct State;

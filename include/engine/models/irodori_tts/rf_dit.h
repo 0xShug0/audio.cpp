@@ -156,6 +156,7 @@ public:
                 float text_guidance_scale, float speaker_guidance_scale,
                 float caption_guidance_scale, int64_t latent_steps,
                 std::vector<float> &velocity);
+  void release_graphs();
   int64_t context_graph_rebuilds() const noexcept;
   int64_t step_graph_rebuilds() const noexcept;
 

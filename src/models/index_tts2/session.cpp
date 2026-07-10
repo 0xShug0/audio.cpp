@@ -594,6 +594,9 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
     const auto vocoder_start = Clock::now();
     auto audio = vocoder_->synthesize(mel.values, mel.frames);
     debug::timing_log_scalar("index_tts2.vocoder_ms", engine::debug::elapsed_ms(vocoder_start));
+    if (mem_saver_) {
+        vocoder_->release_runtime_graph();
+    }
     runtime::AudioBuffer out;
     out.sample_rate = audio.sample_rate;
     out.channels = 1;

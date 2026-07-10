@@ -24,6 +24,7 @@ public:
     IndexTTS2VocoderOutput synthesize(
         const std::vector<float> & mel,
         int64_t frames) const;
+    void release_runtime_graph();
 
 private:
     std::shared_ptr<const IndexTTS2Assets> assets_;

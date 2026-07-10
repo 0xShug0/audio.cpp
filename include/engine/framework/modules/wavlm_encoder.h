@@ -90,6 +90,7 @@ public:
         int64_t batch,
         int64_t samples,
         const std::vector<int64_t> & output_layers) const;
+    void release_runtime_graph();
 
 private:
     struct State;

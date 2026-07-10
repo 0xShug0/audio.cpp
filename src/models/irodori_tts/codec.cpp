@@ -603,6 +603,11 @@ public:
     return encode_graph_->run(mono, latent_steps_out);
   }
 
+  void release_graphs() {
+    graph_.reset();
+    encode_graph_.reset();
+  }
+
 private:
   class EncodeGraph {
   public:
@@ -785,5 +790,7 @@ IrodoriCodec::encode_reference(const runtime::AudioBuffer &audio,
                                int64_t &latent_steps_out) {
   return impl_->encode_reference(audio, latent_steps_out);
 }
+
+void IrodoriCodec::release_graphs() { impl_->release_graphs(); }
 
 } // namespace engine::models::irodori_tts

@@ -157,6 +157,7 @@ public:
   IrodoriSpeakerCondition
   encode_speaker_reference(const std::vector<float> &ref_latent,
                            int64_t ref_tokens);
+  void release_graphs();
 
 private:
   class Impl;

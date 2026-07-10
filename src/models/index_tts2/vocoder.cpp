@@ -62,4 +62,8 @@ IndexTTS2VocoderOutput IndexTTS2BigVganVocoder::synthesize(
     return {out.waveform, out.samples, static_cast<int>(out.sample_rate)};
 }
 
+void IndexTTS2BigVganVocoder::release_runtime_graph() {
+    component_.release_runtime_graph();
+}
+
 }  // namespace engine::models::index_tts2

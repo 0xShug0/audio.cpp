@@ -1094,6 +1094,13 @@ public:
                speaker_guidance_scale, caption_guidance_scale, velocity);
   }
 
+  void release_graphs() {
+    context_graph_.reset();
+    modulation_graph_.reset();
+    cond_graph_.reset();
+    cfg_graph_.reset();
+  }
+
   int64_t context_graph_rebuilds() const noexcept {
     return context_graph_rebuilds_;
   }
@@ -1726,6 +1733,8 @@ void IrodoriRfSampler::run_step(
                   speaker_guidance_scale, caption_guidance_scale, latent_steps,
                   velocity);
 }
+
+void IrodoriRfSampler::release_graphs() { impl_->release_graphs(); }
 
 int64_t IrodoriRfSampler::context_graph_rebuilds() const noexcept {
   return impl_->context_graph_rebuilds();

@@ -674,6 +674,11 @@ public:
         return out;
     }
 
+    void release_runtime_graph() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        release_graph();
+    }
+
 private:
     void release_graph() {
         if (buffer_ != nullptr) {
@@ -1016,6 +1021,12 @@ WavlmEncoderLayerOutput WavlmEncoderComponent::encode_layers(
         throw std::runtime_error("WavLM component is not initialized");
     }
     return state_->runner->encode_layers(input_values, batch, samples, output_layers);
+}
+
+void WavlmEncoderComponent::release_runtime_graph() {
+    if (state_ != nullptr && state_->runner != nullptr) {
+        state_->runner->release_runtime_graph();
+    }
 }
 
 }  // namespace engine::modules
