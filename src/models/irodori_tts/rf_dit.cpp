@@ -253,10 +253,11 @@ core::TensorValue build_timestep_embedding(core::ModuleBuildContext &ctx,
 core::TensorValue build_condition_embedding(core::ModuleBuildContext &ctx,
                                             const core::TensorValue &t,
                                             const IrodoriRfDitWeights &weights,
-                                            const IrodoriModelConfig &config) {
+                                            const IrodoriModelConfig &config,
+                                            bool collapse_batch) {
   const int64_t batch = t.shape.dims[0];
   auto t_for_embedding =
-      batch > 1 ? modules::SliceModule({0, 0, 1}).build(ctx, t) : t;
+      collapse_batch && batch > 1 ? modules::SliceModule({0, 0, 1}).build(ctx, t) : t;
   auto hidden = build_timestep_embedding(ctx, t_for_embedding, weights, config);
   hidden =
       modules::LinearModule(binding::linear_config(config.timestep_embed_dim,
@@ -294,16 +295,10 @@ core::TensorValue adaln_part(core::ModuleBuildContext &ctx,
   return modules::AddModule{}.build(ctx, hidden, residual);
 }
 
-struct AdaLNOutput {
-  core::TensorValue hidden;
-  core::TensorValue gate;
-};
-
-AdaLNOutput low_rank_adaln(core::ModuleBuildContext &ctx,
-                           const core::TensorValue &x,
-                           const core::TensorValue &cond_embed,
-                           const IrodoriLowRankAdaLNWeights &weights,
-                           const IrodoriModelConfig &config) {
+IrodoriAdaLNModulation build_adaln_modulation(
+    core::ModuleBuildContext &ctx, const core::TensorValue &cond_embed,
+    const IrodoriLowRankAdaLNWeights &weights,
+    const IrodoriModelConfig &config) {
   auto shift_base =
       modules::SliceModule({2, 0, config.model_dim}).build(ctx, cond_embed);
   auto scale_base =
@@ -319,18 +314,41 @@ AdaLNOutput low_rank_adaln(core::ModuleBuildContext &ctx,
   auto gate = modules::TanhModule{}.build(
       ctx, adaln_part(ctx, gate_base, weights.gate_down, weights.gate_up,
                       gate_base, config));
+  return {shift, scale, gate};
+}
+
+struct AdaLNOutput {
+  core::TensorValue hidden;
+  core::TensorValue gate;
+};
+
+AdaLNOutput apply_adaln_modulation(core::ModuleBuildContext &ctx,
+                                   const core::TensorValue &x,
+                                   const IrodoriAdaLNModulation &modulation,
+                                   const IrodoriModelConfig &config) {
   auto hidden =
       modules::RMSNormModule({config.model_dim, config.norm_eps, false, false})
           .build(ctx, x, {std::nullopt, std::nullopt});
   auto one_plus_scale = core::wrap_tensor(
-      ggml_scale_bias(ctx.ggml, scale.tensor, 1.0F, 1.0F), scale.shape,
+      ggml_scale_bias(ctx.ggml, modulation.scale.tensor, 1.0F, 1.0F),
+      modulation.scale.shape,
       GGML_TYPE_F32);
   auto scaled = core::wrap_tensor(
       ggml_mul(ctx.ggml, hidden.tensor, one_plus_scale.tensor), hidden.shape,
       GGML_TYPE_F32);
-  hidden = core::wrap_tensor(ggml_add(ctx.ggml, scaled.tensor, shift.tensor),
-                             hidden.shape, GGML_TYPE_F32);
-  return {hidden, gate};
+  hidden =
+      core::wrap_tensor(ggml_add(ctx.ggml, scaled.tensor, modulation.shift.tensor),
+                        hidden.shape, GGML_TYPE_F32);
+  return {hidden, modulation.gate};
+}
+
+AdaLNOutput low_rank_adaln(core::ModuleBuildContext &ctx,
+                           const core::TensorValue &x,
+                           const core::TensorValue &cond_embed,
+                           const IrodoriLowRankAdaLNWeights &weights,
+                           const IrodoriModelConfig &config) {
+  return apply_adaln_modulation(
+      ctx, x, build_adaln_modulation(ctx, cond_embed, weights, config), config);
 }
 
 core::TensorValue apply_rotary_half_heads(core::ModuleBuildContext &ctx,
@@ -562,9 +580,12 @@ core::TensorValue build_block(
     const core::TensorValue &attention_mask, const core::TensorValue &positions,
     const IrodoriDiffusionBlockWeights &weights,
     const IrodoriModelConfig &config, int64_t layer_index,
-    const IrodoriLayerContextKV *context_kv) {
+    const IrodoriLayerContextKV *context_kv,
+    const IrodoriLayerAdaLNModulation *modulation) {
   auto attn_adaln =
-      low_rank_adaln(ctx, x, cond_embed, weights.attention_adaln, config);
+      modulation == nullptr
+          ? low_rank_adaln(ctx, x, cond_embed, weights.attention_adaln, config)
+          : apply_adaln_modulation(ctx, x, modulation->attention, config);
   auto attn =
       build_joint_attention(ctx, attn_adaln.hidden, text_state, speaker_state,
                             caption_state, attention_mask, positions,
@@ -576,7 +597,9 @@ core::TensorValue build_block(
       core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, gated_attn.tensor),
                         x.shape, GGML_TYPE_F32);
   auto mlp_adaln =
-      low_rank_adaln(ctx, hidden, cond_embed, weights.mlp_adaln, config);
+      modulation == nullptr
+          ? low_rank_adaln(ctx, hidden, cond_embed, weights.mlp_adaln, config)
+          : apply_adaln_modulation(ctx, hidden, modulation->mlp, config);
   auto mlp = build_swiglu(ctx, mlp_adaln.hidden, weights.mlp_w1, weights.mlp_w2,
                           weights.mlp_w3, config);
   auto gated_mlp = core::wrap_tensor(
@@ -646,6 +669,23 @@ std::vector<IrodoriLayerContextKV> build_irodori_context_kv_cache(
   return out;
 }
 
+std::vector<IrodoriLayerAdaLNModulation> build_irodori_adaln_modulation_cache(
+    core::ModuleBuildContext &ctx, const core::TensorValue &t,
+    const IrodoriRfDitWeights &weights, const IrodoriModelConfig &config) {
+  auto cond_embed = build_condition_embedding(ctx, t, weights, config, false);
+  std::vector<IrodoriLayerAdaLNModulation> out;
+  out.reserve(weights.blocks.size());
+  for (const auto &block : weights.blocks) {
+    IrodoriLayerAdaLNModulation layer;
+    layer.attention =
+        build_adaln_modulation(ctx, cond_embed, block.attention_adaln, config);
+    layer.mlp =
+        build_adaln_modulation(ctx, cond_embed, block.mlp_adaln, config);
+    out.push_back(layer);
+  }
+  return out;
+}
+
 core::TensorValue build_irodori_rf_dit(
     core::ModuleBuildContext &ctx, const core::TensorValue &x_t,
     const core::TensorValue &t, const core::TensorValue &text_state,
@@ -653,13 +693,22 @@ core::TensorValue build_irodori_rf_dit(
     const core::TensorValue &caption_state,
     const core::TensorValue &attention_mask, const core::TensorValue &positions,
     const IrodoriRfDitWeights &weights, const IrodoriModelConfig &config,
-    const std::vector<IrodoriLayerContextKV> *context_kv_cache) {
+    const std::vector<IrodoriLayerContextKV> *context_kv_cache,
+    const std::vector<IrodoriLayerAdaLNModulation> *modulation_cache) {
   if (context_kv_cache != nullptr &&
       context_kv_cache->size() != weights.blocks.size()) {
     throw std::runtime_error(
         "Irodori-TTS RF context KV cache layer count mismatch");
   }
-  auto cond_embed = build_condition_embedding(ctx, t, weights, config);
+  if (modulation_cache != nullptr &&
+      modulation_cache->size() != weights.blocks.size()) {
+    throw std::runtime_error(
+        "Irodori-TTS RF AdaLN modulation layer count mismatch");
+  }
+  core::TensorValue cond_embed;
+  if (modulation_cache == nullptr) {
+    cond_embed = build_condition_embedding(ctx, t, weights, config, true);
+  }
   auto hidden =
       modules::LinearModule(binding::linear_config(config.patched_latent_dim(),
                                                    config.model_dim, true))
@@ -667,10 +716,12 @@ core::TensorValue build_irodori_rf_dit(
   for (size_t layer = 0; layer < weights.blocks.size(); ++layer) {
     const IrodoriLayerContextKV *context_kv =
         context_kv_cache == nullptr ? nullptr : &(*context_kv_cache)[layer];
+    const IrodoriLayerAdaLNModulation *modulation =
+        modulation_cache == nullptr ? nullptr : &(*modulation_cache)[layer];
     hidden = build_block(ctx, hidden, cond_embed, text_state, speaker_state,
                          caption_state, attention_mask, positions,
                          weights.blocks[layer], config,
-                         static_cast<int64_t>(layer), context_kv);
+                         static_cast<int64_t>(layer), context_kv, modulation);
   }
   hidden =
       modules::RMSNormModule({config.model_dim, config.norm_eps, true, false})

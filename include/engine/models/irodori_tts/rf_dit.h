@@ -71,6 +71,17 @@ struct IrodoriLayerContextKV {
   core::TensorValue v_context;
 };
 
+struct IrodoriAdaLNModulation {
+  core::TensorValue shift;
+  core::TensorValue scale;
+  core::TensorValue gate;
+};
+
+struct IrodoriLayerAdaLNModulation {
+  IrodoriAdaLNModulation attention;
+  IrodoriAdaLNModulation mlp;
+};
+
 IrodoriRfDitWeights
 load_irodori_rf_dit_weights(const IrodoriAssets &assets, ggml_backend_t backend,
                             core::BackendType backend_type,
@@ -83,6 +94,10 @@ std::vector<IrodoriLayerContextKV> build_irodori_context_kv_cache(
     const core::TensorValue &caption_state, const IrodoriRfDitWeights &weights,
     const IrodoriModelConfig &config);
 
+std::vector<IrodoriLayerAdaLNModulation> build_irodori_adaln_modulation_cache(
+    core::ModuleBuildContext &ctx, const core::TensorValue &t,
+    const IrodoriRfDitWeights &weights, const IrodoriModelConfig &config);
+
 core::TensorValue build_irodori_rf_dit(
     core::ModuleBuildContext &ctx, const core::TensorValue &x_t,
     const core::TensorValue &t, const core::TensorValue &text_state,
@@ -90,6 +105,7 @@ core::TensorValue build_irodori_rf_dit(
     const core::TensorValue &caption_state,
     const core::TensorValue &attention_mask, const core::TensorValue &positions,
     const IrodoriRfDitWeights &weights, const IrodoriModelConfig &config,
-    const std::vector<IrodoriLayerContextKV> *context_kv_cache = nullptr);
+    const std::vector<IrodoriLayerContextKV> *context_kv_cache = nullptr,
+    const std::vector<IrodoriLayerAdaLNModulation> *modulation_cache = nullptr);
 
 } // namespace engine::models::irodori_tts
