@@ -4,9 +4,14 @@
 #include "engine/models/moss_tts_local/backbone.h"
 #include "engine/models/moss_tts_local/depth_transformer.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
+
+namespace engine::core {
+class ExecutionContext;
+}
 
 namespace engine::models::moss_tts_local {
 
@@ -33,8 +38,12 @@ class MossGenerator {
 public:
     MossGenerator(
         std::shared_ptr<const MossTTSLocalAssets> assets,
+        core::ExecutionContext & execution_context,
+        size_t projection_graph_arena_bytes,
+        size_t projection_weight_context_bytes,
         const MossBackboneRuntime & backbone,
         const MossDepthTransformer & depth);
+    ~MossGenerator();
 
     MossGenerator(const MossGenerator &) = delete;
     MossGenerator & operator=(const MossGenerator &) = delete;
@@ -56,6 +65,8 @@ private:
     int64_t num_codebooks_ = 0;
     std::vector<std::vector<float>> audio_embeddings_;  // [n_vq][codebook_size * hidden]
     std::vector<float> local_text_head_;                // [2 * hidden]
+    struct ProjectionRuntime;
+    std::unique_ptr<ProjectionRuntime> projection_;
 };
 
 }  // namespace engine::models::moss_tts_local

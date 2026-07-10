@@ -1,9 +1,20 @@
 #include "engine/models/moss_tts_local/generator.h"
 
+#include "engine/framework/core/backend.h"
+#include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/module.h"
+#include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/weight_binding.h"
+
+#include <ggml-backend.h>
+#include <ggml.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -14,9 +25,19 @@
 namespace engine::models::moss_tts_local {
 namespace {
 
+namespace modules = engine::modules;
+namespace binding = engine::modules::binding;
+
+struct GgmlContextDeleter {
+    void operator()(ggml_context * ctx) const noexcept {
+        if (ctx != nullptr) {
+            ggml_free(ctx);
+        }
+    }
+};
+
 // Projects a hidden-state vector through a [rows, hidden] row-major weight matrix. The
-// audio codebook heads are tied to the audio embeddings and the gate head is tiny, so
-// these products are cheap to run on the host.
+// binary gate head is tiny, so this product is cheap to run on the host.
 std::vector<float> project(
     const std::vector<float> & weight,
     const std::vector<float> & hidden,
@@ -124,8 +145,115 @@ int32_t sample_index(
 
 }  // namespace
 
+struct MossGenerator::ProjectionRuntime {
+    struct Graph {
+        ggml_tensor * input = nullptr;
+        ggml_tensor * logits = nullptr;
+        ggml_cgraph * graph = nullptr;
+        int64_t codebook_size = 0;
+    };
+
+    ProjectionRuntime(
+        const MossTTSLocalAssets & assets,
+        core::ExecutionContext & execution_context,
+        int64_t hidden_size,
+        size_t graph_arena_bytes,
+        size_t weight_context_bytes)
+        : backend(execution_context.backend()),
+          threads(execution_context.config().threads),
+          store(std::make_shared<core::BackendWeightStore>(
+              backend,
+              execution_context.backend_type(),
+              "moss_tts_local.generator.projection.weights",
+              weight_context_bytes)) {
+        if (assets.model_weights == nullptr) {
+            throw std::runtime_error("MOSS-TTS-Local projection runtime requires model weights");
+        }
+        const auto & source = *assets.model_weights;
+        weights.reserve(static_cast<size_t>(assets.config.num_codebooks));
+        for (int64_t codebook = 0; codebook < assets.config.num_codebooks; ++codebook) {
+            const int64_t codebook_size = assets.config.audio_codebook_sizes.empty()
+                ? assets.config.audio_vocab_size
+                : assets.config.audio_codebook_sizes[static_cast<size_t>(codebook)];
+            weights.push_back(store->load_f32_tensor(
+                source,
+                "audio_embeddings." + std::to_string(codebook) + ".weight",
+                {codebook_size, hidden_size}));
+        }
+        store->upload();
+
+        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        ctx.reset(ggml_init(params));
+        if (ctx == nullptr) {
+            throw std::runtime_error("failed to initialize MOSS-TTS-Local projection graph context");
+        }
+        core::ModuleBuildContext build_ctx{ctx.get(), "moss_tts_local.generator.projection"};
+        graphs.reserve(weights.size());
+        for (size_t index = 0; index < weights.size(); ++index) {
+            const int64_t codebook_size = weights[index].shape.at(0);
+            auto input = core::make_tensor(
+                build_ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({hidden_size}));
+            auto logits = modules::LinearModule(
+                              binding::linear_config(hidden_size, codebook_size, false))
+                              .build(build_ctx, input, {weights[index], std::nullopt});
+            Graph graph;
+            graph.input = input.tensor;
+            graph.logits = logits.tensor;
+            graph.codebook_size = codebook_size;
+            graph.graph = ggml_new_graph_custom(ctx.get(), 8192, false);
+            ggml_set_output(graph.logits);
+            ggml_build_forward_expand(graph.graph, graph.logits);
+            graphs.push_back(graph);
+        }
+        graph_buffer = ggml_backend_alloc_ctx_tensors(ctx.get(), backend);
+        if (graph_buffer == nullptr) {
+            throw std::runtime_error("failed to allocate MOSS-TTS-Local projection graphs");
+        }
+    }
+
+    ~ProjectionRuntime() {
+        for (const auto & graph : graphs) {
+            core::release_backend_graph_resources(backend, graph.graph);
+        }
+        if (graph_buffer != nullptr) {
+            ggml_backend_buffer_free(graph_buffer);
+        }
+    }
+
+    std::vector<float> project(int64_t codebook, const std::vector<float> & hidden) const {
+        if (codebook < 0 || static_cast<size_t>(codebook) >= graphs.size()) {
+            throw std::runtime_error("MOSS-TTS-Local projection codebook is out of range");
+        }
+        const auto & graph = graphs[static_cast<size_t>(codebook)];
+        ggml_backend_tensor_set(graph.input, hidden.data(), 0, hidden.size() * sizeof(float));
+        core::set_backend_threads(backend, threads);
+        const ggml_status status =
+            core::compute_backend_graph(backend, graph.graph, nullptr, "MOSS-TTS-Local projection");
+        ggml_backend_synchronize(backend);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("MOSS-TTS-Local projection graph compute failed");
+        }
+        std::vector<float> logits(static_cast<size_t>(graph.codebook_size));
+        ggml_backend_tensor_get(graph.logits, logits.data(), 0, logits.size() * sizeof(float));
+        return logits;
+    }
+
+    ggml_backend_t backend = nullptr;
+    int threads = 1;
+    std::shared_ptr<core::BackendWeightStore> store;
+    std::vector<core::TensorValue> weights;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
+    std::vector<Graph> graphs;
+    ggml_backend_buffer_t graph_buffer = nullptr;
+};
+
 MossGenerator::MossGenerator(
     std::shared_ptr<const MossTTSLocalAssets> assets,
+    core::ExecutionContext & execution_context,
+    size_t projection_graph_arena_bytes,
+    size_t projection_weight_context_bytes,
     const MossBackboneRuntime & backbone,
     const MossDepthTransformer & depth)
     : assets_(std::move(assets)),
@@ -156,7 +284,15 @@ MossGenerator::MossGenerator(
             "audio_embeddings." + std::to_string(codebook) + ".weight", {codebook_size, hidden_size_}));
     }
     local_text_head_ = source.require_f32("local_text_lm_head.weight", {2, hidden_size_});
+    projection_ = std::make_unique<ProjectionRuntime>(
+        *assets_,
+        execution_context,
+        hidden_size_,
+        projection_graph_arena_bytes,
+        projection_weight_context_bytes);
 }
+
+MossGenerator::~MossGenerator() = default;
 
 std::vector<std::vector<int32_t>> MossGenerator::generate(
     const std::vector<int32_t> & text_tokens,
@@ -227,8 +363,10 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
         for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
             const int64_t codebook_size =
                 static_cast<int64_t>(audio_embeddings_[static_cast<size_t>(codebook)].size()) / hidden;
-            std::vector<float> logits =
-                project(audio_embeddings_[static_cast<size_t>(codebook)], local_hidden, codebook_size, hidden);
+            std::vector<float> logits = projection_->project(codebook, local_hidden);
+            if (static_cast<int64_t>(logits.size()) != codebook_size) {
+                throw std::runtime_error("MOSS-TTS-Local projection returned an unexpected logits size");
+            }
             apply_repetition_penalty(
                 logits, code_history[static_cast<size_t>(codebook)], options.audio_repetition_penalty);
             const int32_t code = options.do_sample

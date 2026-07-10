@@ -13,7 +13,10 @@ namespace engine::models::moss_tts_local {
 // seeds it with the backbone hidden state and then feeds back one audio-codebook
 // embedding at a time; the returned final hidden state drives the RVQ code heads and
 // the assistant/end gate. The layer count is tiny, so the weights are kept in f32 and
-// the prefix is recomputed each step instead of maintaining a KV cache.
+// the prefix is recomputed each step instead of maintaining a KV cache. Forward graphs
+// for every step count the generation loop uses (1..num_codebooks) are prebuilt once
+// and reused; forward() runs 12 times per frame, so per-call graph rebuilds dominated
+// the generation loop's host-side cost.
 class MossDepthTransformer {
 public:
     MossDepthTransformer(

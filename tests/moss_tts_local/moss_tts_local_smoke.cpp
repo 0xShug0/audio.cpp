@@ -73,6 +73,8 @@ int main(int argc, char ** argv) {
         constexpr size_t kBackboneGraphArenaBytes = 512ull * 1024 * 1024;
         constexpr size_t kDepthWeightContextBytes = 16ull * 1024 * 1024;
         constexpr size_t kDepthGraphArenaBytes = 64ull * 1024 * 1024;
+        constexpr size_t kProjectionWeightContextBytes = 16ull * 1024 * 1024;
+        constexpr size_t kProjectionGraphArenaBytes = 16ull * 1024 * 1024;
 
         std::cout << "model=" << model_path.string() << "\n";
         std::cout << "loading assets...\n" << std::flush;
@@ -92,7 +94,13 @@ int main(int argc, char ** argv) {
         engine::models::moss_tts_local::MossDepthTransformer depth(
             assets, execution_context, kDepthGraphArenaBytes, kDepthWeightContextBytes);
 
-        engine::models::moss_tts_local::MossGenerator generator(assets, backbone, depth);
+        engine::models::moss_tts_local::MossGenerator generator(
+            assets,
+            execution_context,
+            kProjectionGraphArenaBytes,
+            kProjectionWeightContextBytes,
+            backbone,
+            depth);
         engine::models::moss_tts_local::MossTextProcessor processor(assets);
 
         // Optional: build a voice-clone prefix from a reference-codes CSV ([nq, frames],

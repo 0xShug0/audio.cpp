@@ -179,7 +179,99 @@ struct MossDepthTransformer::Impl {
     core::BackendType backend_type = core::BackendType::Cpu;
     size_t graph_arena_bytes = 0;
     DepthWeights weights;
+
+    // Persistent forward graphs, one per step count the generation loop uses
+    // (steps = 1..num_codebooks). The generator calls forward() 12 times per frame;
+    // rebuilding and reallocating the graph on every call was almost entirely
+    // host-side overhead, so the graphs are built once here and reused. Positions
+    // and the causal mask only depend on the step count, so they are uploaded once
+    // at build time; only the input embeddings change per call.
+    struct StepPlan {
+        ggml_tensor * embeds = nullptr;
+        ggml_tensor * positions = nullptr;
+        ggml_tensor * mask = nullptr;
+        ggml_tensor * hidden = nullptr;
+        ggml_cgraph * graph = nullptr;
+    };
+    std::unique_ptr<ggml_context, GgmlContextDeleter> plan_ctx;
+    ggml_backend_buffer_t plan_buffer = nullptr;
+    std::vector<StepPlan> plans;  // plans[steps - 1]
+
+    ~Impl() {
+        for (const auto & plan : plans) {
+            if (plan.graph != nullptr && backend != nullptr) {
+                core::release_backend_graph_resources(backend, plan.graph);
+            }
+        }
+        if (plan_buffer != nullptr) {
+            ggml_backend_buffer_free(plan_buffer);
+        }
+    }
+
+    void build_step_plans(int64_t max_steps);
 };
+
+void MossDepthTransformer::Impl::build_step_plans(int64_t max_steps) {
+    const auto & config = assets->config.local;
+    const int64_t hidden = config.hidden_size;
+
+    ggml_init_params params{graph_arena_bytes, nullptr, true};
+    plan_ctx.reset(ggml_init(params));
+    if (plan_ctx == nullptr) {
+        throw std::runtime_error("failed to initialize MOSS-TTS-Local depth plan context");
+    }
+    core::ModuleBuildContext ctx{plan_ctx.get(), "moss_tts_local.depth.step", backend_type};
+
+    plans.reserve(static_cast<size_t>(max_steps));
+    for (int64_t steps = 1; steps <= max_steps; ++steps) {
+        StepPlan plan;
+        auto embeds_input =
+            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, steps, hidden}));
+        ggml_set_input(embeds_input.tensor);
+        auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
+        ggml_set_input(positions.tensor);
+        auto attention_mask =
+            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, steps}));
+        ggml_set_input(attention_mask.tensor);
+
+        auto x = local_layer(ctx, embeds_input, positions, weights, config, attention_mask);
+        x = modules::LayerNormModule({hidden, config.layer_norm_eps, true, true}).build(ctx, x, weights.ln_f);
+        x = ensure_contiguous(ctx, x);
+        auto hidden_states = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({steps, hidden}));
+        hidden_states = ensure_contiguous(ctx, hidden_states);
+        ggml_set_output(hidden_states.tensor);
+
+        plan.graph = ggml_new_graph_custom(plan_ctx.get(), 2048, false);
+        ggml_build_forward_expand(plan.graph, hidden_states.tensor);
+        plan.embeds = embeds_input.tensor;
+        plan.positions = positions.tensor;
+        plan.mask = attention_mask.tensor;
+        plan.hidden = hidden_states.tensor;
+        plans.push_back(plan);
+    }
+
+    plan_buffer = ggml_backend_alloc_ctx_tensors(plan_ctx.get(), backend);
+    if (plan_buffer == nullptr) {
+        throw std::runtime_error("failed to allocate MOSS-TTS-Local depth step graphs");
+    }
+
+    for (int64_t steps = 1; steps <= max_steps; ++steps) {
+        const auto & plan = plans[static_cast<size_t>(steps - 1)];
+        std::vector<int32_t> position_host(static_cast<size_t>(steps));
+        for (int64_t i = 0; i < steps; ++i) {
+            position_host[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+        }
+        ggml_backend_tensor_set(plan.positions, position_host.data(), 0, position_host.size() * sizeof(int32_t));
+
+        std::vector<float> mask_host(static_cast<size_t>(steps * steps), kMaskedAttentionBias);
+        for (int64_t q = 0; q < steps; ++q) {
+            for (int64_t k = 0; k <= q; ++k) {
+                mask_host[static_cast<size_t>(q * steps + k)] = 0.0F;
+            }
+        }
+        ggml_backend_tensor_set(plan.mask, mask_host.data(), 0, mask_host.size() * sizeof(float));
+    }
+}
 
 MossDepthTransformer::MossDepthTransformer(
     std::shared_ptr<const MossTTSLocalAssets> assets,
@@ -204,6 +296,11 @@ MossDepthTransformer::MossDepthTransformer(
     impl_->graph_arena_bytes = graph_arena_bytes;
     impl_->weights = load_depth_weights(*assets, impl_->backend, impl_->backend_type, weight_context_bytes);
     impl_->assets = std::move(assets);
+    // The generation loop only ever runs the local transformer over 1..num_codebooks
+    // positions, so every graph it needs can be prebuilt up front.
+    if (impl_->assets->config.num_codebooks > 0) {
+        impl_->build_step_plans(impl_->assets->config.num_codebooks);
+    }
 }
 
 MossDepthTransformer::~MossDepthTransformer() = default;
@@ -221,6 +318,28 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
     if (static_cast<int64_t>(inputs_embeds.size()) != steps * hidden) {
         throw std::runtime_error("MOSS-TTS-Local depth transformer input size does not match [steps, hidden]");
     }
+
+    // Fast path: reuse the prebuilt graph for this step count (positions and mask are
+    // already resident); only the embeddings are uploaded per call.
+    if (steps <= static_cast<int64_t>(impl_->plans.size())) {
+        const auto & plan = impl_->plans[static_cast<size_t>(steps - 1)];
+        ggml_backend_tensor_set(plan.embeds, inputs_embeds.data(), 0, inputs_embeds.size() * sizeof(float));
+        const ggml_status status =
+            core::compute_backend_graph(impl_->backend, plan.graph, nullptr, "MOSS-TTS-Local depth step");
+        ggml_backend_synchronize(impl_->backend);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("MOSS-TTS-Local depth step graph compute failed");
+        }
+        std::vector<float> last_hidden(static_cast<size_t>(hidden));
+        ggml_backend_tensor_get(
+            plan.hidden,
+            last_hidden.data(),
+            static_cast<size_t>((steps - 1) * hidden) * sizeof(float),
+            static_cast<size_t>(hidden) * sizeof(float));
+        return last_hidden;
+    }
+
+    // Slow path for step counts outside the prebuilt range: build a one-off graph.
     const auto & weights = impl_->weights;
 
     ggml_init_params params{impl_->graph_arena_bytes, nullptr, true};

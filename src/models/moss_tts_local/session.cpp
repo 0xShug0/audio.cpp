@@ -21,6 +21,8 @@ constexpr size_t kBackboneWeightContextBytes = 64ull * 1024 * 1024;
 constexpr size_t kBackboneGraphArenaBytes = 1024ull * 1024 * 1024;
 constexpr size_t kDepthWeightContextBytes = 16ull * 1024 * 1024;
 constexpr size_t kDepthGraphArenaBytes = 64ull * 1024 * 1024;
+constexpr size_t kGeneratorProjectionWeightContextBytes = 16ull * 1024 * 1024;
+constexpr size_t kGeneratorProjectionGraphArenaBytes = 16ull * 1024 * 1024;
 constexpr size_t kCodecWeightContextBytes = 256ull * 1024 * 1024;
 constexpr size_t kCodecGraphArenaBytes = 1536ull * 1024 * 1024;
 constexpr size_t kEncoderWeightContextBytes = 256ull * 1024 * 1024;
@@ -175,7 +177,13 @@ MossTTSLocalSession::MossTTSLocalSession(
         assets_->config.num_codebooks,
         kCodecWeightContextBytes,
         kCodecGraphArenaBytes);
-    generator_ = std::make_unique<MossGenerator>(assets_, *backbone_, *depth_);
+    generator_ = std::make_unique<MossGenerator>(
+        assets_,
+        execution_context(),
+        kGeneratorProjectionGraphArenaBytes,
+        kGeneratorProjectionWeightContextBytes,
+        *backbone_,
+        *depth_);
 }
 
 std::string MossTTSLocalSession::family() const {
