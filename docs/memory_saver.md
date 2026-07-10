@@ -54,5 +54,7 @@ Native/default weights were used for all rows.
 | VoxCPM2 offline voice design | mem_saver | 12456 MiB | 5966 MiB | 14924 ms | 93.12s | 0.160266 |
 | IndexTTS2 | default | 12272 MiB | 12072 MiB | 35215.67 ms | 104.889s | 0.335743 |
 | IndexTTS2 | mem_saver | 11445 MiB | 8947 MiB | 35740.72 ms | 104.436s | 0.342226 |
-| Irodori TTS 500M | default | 20249 MiB | 20249 MiB | 3280.158 ms | 95.4s | 0.0343832 |
-| Irodori TTS 500M | mem_saver | 13434 MiB | 3542 MiB | 3297.204 ms | 95.4s | 0.0345619 |
+| Irodori TTS 500M | default | 14112 MiB | 13588 MiB | 3289.85 ms | 95.4s | 0.0344848 |
+| Irodori TTS 500M | mem_saver | 11222 MiB | 3570 MiB | 3276.203 ms | 95.4s | 0.0343418 |
+| Irodori TTS 500M 6000-char | default | 18693 MiB | 13367 MiB | 27185.7 ms | 777.92s | 0.0349466 |
+| Irodori TTS 500M 6000-char | mem_saver | 11588 MiB | 3609 MiB | 27828 ms | 777.92s | 0.0357724 |

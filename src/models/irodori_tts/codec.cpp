@@ -567,6 +567,7 @@ public:
     const bool graph_rebuild =
         graph_ == nullptr || graph_->latent_steps() != latent_steps;
     if (graph_rebuild) {
+      graph_.reset();
       graph_ = std::make_unique<Graph>(*this, latent_steps, graph_arena_bytes_);
     }
     debug::timing_log_scalar("irodori_tts.codec_decode.graph_rebuild",
@@ -595,6 +596,7 @@ public:
         encode_graph_ == nullptr ||
         encode_graph_->padded_samples() != padded_samples;
     if (graph_rebuild) {
+      encode_graph_.reset();
       encode_graph_ = std::make_unique<EncodeGraph>(*this, padded_samples,
                                                     graph_arena_bytes_);
     }

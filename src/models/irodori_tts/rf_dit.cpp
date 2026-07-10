@@ -1043,6 +1043,7 @@ public:
         context_graph_->caption_tokens() != caption_tokens ||
         context_graph_->batch() != batch) {
       ++context_graph_rebuilds_;
+      context_graph_.reset();
       context_graph_ = std::make_unique<ContextGraph>(
           *this, speaker.tokens, caption_tokens, batch, graph_arena_bytes_);
     }
@@ -1056,6 +1057,7 @@ public:
       throw std::runtime_error("Irodori-TTS RF modulation cache needs steps");
     }
     if (modulation_graph_ == nullptr || modulation_graph_->steps() != steps) {
+      modulation_graph_.reset();
       modulation_graph_ =
           std::make_unique<ModulationGraph>(*this, steps, graph_arena_bytes_);
     }
@@ -1076,6 +1078,8 @@ public:
                           (caption_cfg_enabled ? 1 : 0);
     const int64_t caption_tokens = context_cache.caption_tokens;
     std::unique_ptr<Graph> &graph = batch == 1 ? cond_graph_ : cfg_graph_;
+    std::unique_ptr<Graph> &inactive_graph = batch == 1 ? cfg_graph_ : cond_graph_;
+    inactive_graph.reset();
     if (graph == nullptr || graph->latent_steps() != latent_steps ||
         graph->speaker_tokens() != context_cache.speaker_tokens ||
         graph->caption_tokens() != caption_tokens || graph->batch() != batch ||
@@ -1084,6 +1088,7 @@ public:
         graph->speaker_cfg_enabled() != speaker_cfg_enabled ||
         graph->caption_cfg_enabled() != caption_cfg_enabled) {
       ++step_graph_rebuilds_;
+      graph.reset();
       graph = std::make_unique<Graph>(
           *this, latent_steps, context_cache.speaker_tokens, caption_tokens,
           batch, modulation_cache.steps, text_cfg_enabled, speaker_cfg_enabled,

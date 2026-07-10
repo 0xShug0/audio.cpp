@@ -795,6 +795,7 @@ public:
     const bool graph_rebuild =
         speaker_graph_ == nullptr || speaker_graph_->tokens() != ref_tokens;
     if (graph_rebuild) {
+      speaker_graph_.reset();
       speaker_graph_ =
           std::make_unique<SpeakerGraph>(*this, ref_tokens, graph_arena_bytes_);
     }

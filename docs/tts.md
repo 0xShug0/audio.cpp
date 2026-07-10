@@ -338,6 +338,7 @@ audiocpp_cli --task tts --family irodori_tts --model models/Irodori-TTS-500M-v3 
 | `--request-option caption_guidance_scale=<float>` | float | `3.0` | Caption CFG strength. |
 | `--request-option guidance_mode=<name>` | `independent` | `independent` | CFG combination mode. |
 | `--request-option trim_tail=true|false` | bool | `true` | Trim trailing silence-like samples. |
+| `--session-option irodori_tts.mem_saver=true|false` | bool | `true` | Release staged runtime graphs after request phases to reduce resident VRAM. Set `false` to keep graphs resident for maximum reuse. |
 
 ## Supertonic
 
