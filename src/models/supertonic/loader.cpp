@@ -63,6 +63,7 @@ runtime::ModelCliInterface supertonic_cli() {
     };
     cli.session_options = {
         {"supertonic.weight_type", "native|f32|f16|bf16|q8_0", "Supertonic weight storage type."},
+        {"supertonic.style_cache_slots", "n", "Preset voice style cache slots; default 4."},
     };
     return cli;
 }

@@ -5,6 +5,7 @@
 #include "engine/models/supertonic/assets.h"
 #include "engine/models/supertonic/session.h"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -15,7 +16,8 @@ public:
     SupertonicNativeRuntime(
         std::shared_ptr<const SupertonicAssets> assets,
         core::BackendConfig backend_config,
-        assets::TensorStorageType weight_storage_type);
+        assets::TensorStorageType weight_storage_type,
+        std::size_t style_cache_slots = 4);
     ~SupertonicNativeRuntime();
 
     runtime::AudioBuffer synthesize(

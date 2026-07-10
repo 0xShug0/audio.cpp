@@ -6,6 +6,8 @@
 #include "engine/models/supertonic/runtime.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -34,12 +36,28 @@ void validate_session_options(const runtime::SessionOptions & options) {
     for (const auto & [key, value] : options.options) {
         (void)value;
         if (key.rfind("supertonic.", 0) == 0) {
-            if (key == "supertonic.weight_type") {
+            if (key == "supertonic.weight_type" ||
+                key == "supertonic.style_cache_slots") {
                 continue;
             }
             throw std::runtime_error("unknown Supertonic session option: " + key);
         }
     }
+}
+
+std::size_t resolve_style_cache_slots(const runtime::SessionOptions & options) {
+    constexpr int64_t kDefaultStyleCacheSlots = 4;
+    const int64_t slots = runtime::parse_i64_option(
+        options.options,
+        {"supertonic.style_cache_slots", "style_cache_slots"})
+        .value_or(kDefaultStyleCacheSlots);
+    if (slots < 0) {
+        throw std::runtime_error("supertonic.style_cache_slots must be non-negative");
+    }
+    if (static_cast<std::uint64_t>(slots) > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw std::runtime_error("supertonic.style_cache_slots is too large");
+    }
+    return static_cast<std::size_t>(slots);
 }
 
 }  // namespace
@@ -62,8 +80,9 @@ SupertonicSession::SupertonicSession(
         weight_storage_type_ = assets::parse_tensor_storage_type(it->second);
         validate_weight_storage(weight_storage_type_, "supertonic.weight_type");
     }
+    style_cache_slots_ = resolve_style_cache_slots(options);
     validate_session_options(options);
-    runtime_ = std::make_unique<SupertonicNativeRuntime>(assets_, options.backend, weight_storage_type_);
+    runtime_ = std::make_unique<SupertonicNativeRuntime>(assets_, options.backend, weight_storage_type_, style_cache_slots_);
 }
 
 SupertonicSession::~SupertonicSession() = default;

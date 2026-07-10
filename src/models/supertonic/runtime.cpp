@@ -13,6 +13,7 @@
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
@@ -2377,9 +2378,11 @@ struct SupertonicNativeRuntime::State {
     State(
         std::shared_ptr<const SupertonicAssets> assets_in,
         core::BackendConfig backend_config,
-        assets::TensorStorageType weight_storage_type)
+        assets::TensorStorageType weight_storage_type,
+        std::size_t style_cache_slots)
         : assets(std::move(assets_in)),
-          threads(std::max(1, backend_config.threads)) {
+          threads(std::max(1, backend_config.threads)),
+          styles(style_cache_slots) {
         if (assets == nullptr) {
             throw std::runtime_error("Supertonic native runtime requires assets");
         }
@@ -2415,15 +2418,36 @@ struct SupertonicNativeRuntime::State {
     }
 
     const Style & style(const std::string & voice) {
-        const auto found = styles.find(voice);
-        if (found != styles.end()) {
-            return found->second;
+        if (const auto * cached = styles.find(voice)) {
+            engine::debug::trace_log_scalar("supertonic.style_cache.hit", 1);
+            engine::debug::trace_log_scalar("supertonic.style_cache.slots", static_cast<int64_t>(styles.capacity()));
+            engine::debug::trace_log_scalar("supertonic.style_cache.entries", static_cast<int64_t>(styles.size()));
+            engine::debug::trace_log_scalar("supertonic.style_cache.evicted", 0);
+            return *cached;
         }
+        const bool will_evict = styles.capacity() > 0 && styles.size() >= styles.capacity();
         const auto style_path = assets->paths.voice_styles_dir / (voice + ".json");
         Style loaded;
         loaded.ttl = load_style(style_path, "style_ttl", loaded.ttl_shape);
         loaded.dp = load_style(style_path, "style_dp", loaded.dp_shape);
-        return styles.emplace(voice, std::move(loaded)).first->second;
+        if (styles.capacity() == 0) {
+            uncached_style = std::move(loaded);
+            engine::debug::trace_log_scalar("supertonic.style_cache.hit", 0);
+            engine::debug::trace_log_scalar("supertonic.style_cache.slots", 0);
+            engine::debug::trace_log_scalar("supertonic.style_cache.entries", 0);
+            engine::debug::trace_log_scalar("supertonic.style_cache.evicted", 0);
+            return uncached_style;
+        }
+        styles.put(voice, std::move(loaded));
+        engine::debug::trace_log_scalar("supertonic.style_cache.hit", 0);
+        engine::debug::trace_log_scalar("supertonic.style_cache.slots", static_cast<int64_t>(styles.capacity()));
+        engine::debug::trace_log_scalar("supertonic.style_cache.entries", static_cast<int64_t>(styles.size()));
+        engine::debug::trace_log_scalar("supertonic.style_cache.evicted", will_evict ? 1 : 0);
+        const auto * cached = styles.find(voice);
+        if (cached == nullptr) {
+            throw std::runtime_error("Supertonic style cache insert failed");
+        }
+        return *cached;
     }
 
     std::shared_ptr<const SupertonicAssets> assets;
@@ -2435,14 +2459,16 @@ struct SupertonicNativeRuntime::State {
     std::unique_ptr<SupertonicTextEncoderRuntime> text_model;
     std::unique_ptr<SupertonicVectorEstimatorRuntime> vector_model;
     std::unique_ptr<SupertonicVocoderRuntime> vocoder_model;
-    std::unordered_map<std::string, Style> styles;
+    runtime::CacheSlots<std::string, Style> styles;
+    Style uncached_style;
 };
 
 SupertonicNativeRuntime::SupertonicNativeRuntime(
     std::shared_ptr<const SupertonicAssets> assets,
     core::BackendConfig backend_config,
-    assets::TensorStorageType weight_storage_type)
-    : state_(std::make_unique<State>(std::move(assets), backend_config, weight_storage_type)) {}
+    assets::TensorStorageType weight_storage_type,
+    std::size_t style_cache_slots)
+    : state_(std::make_unique<State>(std::move(assets), backend_config, weight_storage_type, style_cache_slots)) {}
 
 SupertonicNativeRuntime::~SupertonicNativeRuntime() = default;
 

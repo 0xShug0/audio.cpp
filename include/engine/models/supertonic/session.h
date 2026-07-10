@@ -5,6 +5,7 @@
 #include "engine/models/supertonic/assets.h"
 #include "engine/models/supertonic/tokenizer_text.h"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -44,6 +45,7 @@ private:
     std::shared_ptr<const SupertonicAssets> assets_;
     SupertonicTextTokenizer tokenizer_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
+    std::size_t style_cache_slots_ = 4;
     std::unique_ptr<SupertonicNativeRuntime> runtime_;
 };
 
