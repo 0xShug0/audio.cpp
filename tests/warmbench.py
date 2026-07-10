@@ -232,6 +232,28 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "length_ratio_min": 0.90,
         "whisper_word_timestamps": False,
     },
+    "moss_tts_local": {
+        "kind": "tts",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/moss_tts_local_warm_bench",
+        "python_script": "tests/moss_tts_local/moss_tts_local_python_warm_bench.py",
+        "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+        "clone_audio": "resources/a.wav",
+        "case_catalog": "tests/moss_tts_local/moss_tts_local_warm_bench_cases.json",
+        "default_case_name": "long_lived_session",
+        "max_new_frames": 256,
+        "do_sample": "false",
+        "audio_temperature": 1.0,
+        "audio_top_p": 0.95,
+        "audio_top_k": 50,
+        "audio_repetition_penalty": 1.0,
+        "use_kv_cache": "true",
+        "default_requests_per_session": 3,
+        "asr_compact_lcs_min": 0.95,
+        "log_mel_cosine_min": 0.80,
+        "length_ratio_min": 0.90,
+        "whisper_word_timestamps": False,
+    },
     "qwen3_asr": {
         "kind": "asr",
         "modes": ["offline"],
@@ -736,6 +758,38 @@ def resolve_tts_texts(
 ) -> tuple[list[str], dict[str, Any]]:
     if args.case_names and args.texts:
         raise RuntimeError("--case-name and --text are mutually exclusive for TTS benchmarks")
+
+    if family == "moss_tts_local" and not args.texts:
+        if len(args.case_names) > 1:
+            raise RuntimeError("MOSS-TTS-Local warmbench accepts at most one --case-name")
+        case_name = args.case_names[0] if args.case_names else str(config.get("default_case_name", "long_lived_session"))
+        catalog_path = REPO_ROOT / str(config["case_catalog"])
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        case = catalog.get(case_name)
+        if not isinstance(case, dict):
+            available = ", ".join(sorted(catalog))
+            raise RuntimeError(f"unknown MOSS-TTS-Local case name {case_name!r}; available: {available}")
+        requests = case.get("requests")
+        if not isinstance(requests, list) or not requests:
+            raise RuntimeError(f"MOSS-TTS-Local case {case_name!r} has no requests")
+        if len(requests) < args.requests_per_session:
+            raise RuntimeError(
+                f"MOSS-TTS-Local case {case_name!r} needs at least {args.requests_per_session} requests, only has {len(requests)}"
+            )
+        selected = [dict(request) for request in requests[: args.requests_per_session]]
+        if getattr(args, "seed_was_explicit", False):
+            for request in selected:
+                request["seed"] = args.seed
+        texts = [str(request.get("text", "")) for request in selected]
+        if any(not text for text in texts):
+            raise RuntimeError(f"MOSS-TTS-Local case {case_name!r} contains an empty text")
+        warmup_text = args.warmup_text or str(case.get("warmup_text", ""))
+        return texts, {
+            "texts": texts,
+            "warmup_text": warmup_text,
+            "case_names": [case_name],
+            "requests": selected,
+        }
 
     case_catalog_path = REPO_ROOT / config["case_catalog"]
     used_case_names: list[str] = []
@@ -2468,6 +2522,100 @@ def build_tts_commands(
             "--timing-file",
             str(timing_cpp),
         ] + omnivoice_warmup_args + common_text_args + prompt_control_args
+        for option in args.cpp_session_option:
+            cpp_command.extend(["--session-option", option])
+        return python_command, cpp_command
+
+    if family == "moss_tts_local":
+        clone_audio = args.clone_audio or config["clone_audio"]
+        max_new_frames = int(config.get("max_new_frames", 256))
+        do_sample = str(config.get("do_sample", "false"))
+        audio_temperature = float(config.get("audio_temperature", 1.0))
+        audio_top_p = float(config.get("audio_top_p", 0.95))
+        audio_top_k = int(config.get("audio_top_k", 50))
+        audio_repetition_penalty = float(config.get("audio_repetition_penalty", 1.0))
+        use_kv_cache = str(config.get("use_kv_cache", "true"))
+        request_file_args: list[str] = []
+        request_file = config.get("moss_tts_local_request_file")
+        if request_file:
+            request_file_args = ["--request-file", str(request_file)]
+        python_command = [
+            PYTHON_EXE,
+            str(REPO_ROOT / config["python_script"]),
+            "--model",
+            model_path,
+            "--clone-audio",
+            clone_audio,
+            "--backend",
+            backend,
+            "--device",
+            str(args.device),
+            "--threads",
+            str(args.threads),
+            "--warmup",
+            str(args.warmup),
+            "--iterations",
+            str(args.iterations),
+            "--max-new-frames",
+            str(max_new_frames),
+            "--seed",
+            str(args.seed),
+            "--do-sample",
+            do_sample,
+            "--audio-temperature",
+            str(audio_temperature),
+            "--audio-top-p",
+            str(audio_top_p),
+            "--audio-top-k",
+            str(audio_top_k),
+            "--audio-repetition-penalty",
+            str(audio_repetition_penalty),
+            "--use-kv-cache",
+            use_kv_cache,
+            "--audio-out",
+            str(audio_py),
+            "--audio-out-dir",
+            str(audio_py_dir),
+            "--timing-file",
+            str(timing_py),
+        ] + common_warmup_args + request_file_args + ([] if request_file_args else common_text_args)
+        cpp_command = [
+            str(REPO_ROOT / config["cpp_bin"]),
+            "--model",
+            model_path,
+            "--clone-audio",
+            clone_audio,
+            "--backend",
+            backend,
+            "--device",
+            str(args.device),
+            "--threads",
+            str(args.threads),
+            "--warmup",
+            str(args.warmup),
+            "--iterations",
+            str(args.iterations),
+            "--max-new-frames",
+            str(max_new_frames),
+            "--seed",
+            str(args.seed),
+            "--do-sample",
+            do_sample,
+            "--audio-temperature",
+            str(audio_temperature),
+            "--audio-top-p",
+            str(audio_top_p),
+            "--audio-top-k",
+            str(audio_top_k),
+            "--audio-repetition-penalty",
+            str(audio_repetition_penalty),
+            "--audio-out",
+            str(audio_cpp),
+            "--audio-out-dir",
+            str(audio_cpp_dir),
+            "--timing-file",
+            str(timing_cpp),
+        ] + common_warmup_args + request_file_args + ([] if request_file_args else common_text_args)
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
         return python_command, cpp_command
@@ -4209,6 +4357,13 @@ def run_scenario(
                 if args.request_speakers
                 else [speaker] * len(texts)
             )
+        if family == "moss_tts_local" and "requests" in request_manifest:
+            request_file = scenario_dir / "moss_tts_local_requests.json"
+            request_file.write_text(
+                json.dumps({"requests": request_manifest["requests"]}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            scenario_config["moss_tts_local_request_file"] = str(request_file)
         python_command, cpp_command = build_tts_commands(family, scenario_config, backend, args, scenario_dir, texts)
     else:
         if family in {"mel_band_roformer", "htdemucs"}:
@@ -4411,7 +4566,7 @@ def run_scenario(
                         python_whisper,
                         float(scenario_config.get("asr_compact_lcs_min", 0.0)),
                     )
-                    if family == "moss_tts":
+                    if family in {"moss_tts", "moss_tts_local"}:
                         waveform_parity = compare_moss_tts(
                             cpp_parsed["summaries"][request_index],
                             python_parsed["summaries"][request_index],
