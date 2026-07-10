@@ -185,16 +185,8 @@ CATALOG: tuple[ModelPackage, ...] = (
         id="kokoro_82m_bf16",
         display_name="Kokoro 82M bf16",
         target_directory="Kokoro-82M-bf16",
-        source=SnapshotSource(
-            repo_id="mlx-community/Kokoro-82M-bf16",
-            include_prefixes=("config.json", "kokoro-v1_0.safetensors", "voices/"),
-            include_suffixes=(".json", ".safetensors"),
-        ),
-        required_files=(
-            "config.json",
-            "kokoro-v1_0.safetensors",
-            "voices/af_heart.safetensors",
-        ),
+        source=SnapshotSource(repo_id="mlx-community/Kokoro-82M-bf16"),
+        required_files=("config.json", "kokoro-v1_0.safetensors", "voices/af_heart.safetensors"),
     ),
     ModelPackage(
         id="moss_tts",

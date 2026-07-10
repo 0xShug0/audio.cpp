@@ -241,10 +241,7 @@ int main(int argc, char ** argv) {
         setenv("ENGINE_TIMING_FILE", timing_path.c_str(), 1);
 
         auto registry = engine::runtime::make_default_registry();
-        engine::runtime::ModelLoadRequest load_request;
-        load_request.model_path = model_path;
-        load_request.family_hint = "parakeet_tdt";
-        auto model = registry.load(load_request);
+        auto model = registry.load(model_path);
 
         engine::runtime::SessionOptions session_options;
         session_options.backend.type = parse_backend(backend_name);

@@ -57,7 +57,7 @@ Kokoro is a small preset-voice TTS model. Upstream Kokoro supports packaged voic
 | Field | Value |
 |---|---|
 | Family | `kokoro_tts` |
-| Model directory | `models/Kokoro-82M-bf16` |
+| Model directory | `models/kokoro-82m-v1_0-ggml` |
 | Task | `tts` |
 | Modes | `offline` |
 | Languages | `a` for American English, `b` for British English |
@@ -65,7 +65,7 @@ Kokoro is a small preset-voice TTS model. Upstream Kokoro supports packaged voic
 | External voice tensor | Not exposed by the CLI |
 
 ```bash
-audiocpp_cli --task tts --family kokoro_tts --model models/Kokoro-82M-bf16 --backend cuda --language a --text "Hello from Kokoro." --voice-id af_heart --out out.wav
+audiocpp_cli --task tts --family kokoro_tts --model models/kokoro-82m-v1_0-ggml --backend cuda --language a --text "Hello from Kokoro." --voice-id af_heart --out out.wav
 ```
 
 | Option | Values | Default | Meaning |

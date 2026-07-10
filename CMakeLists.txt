@@ -306,14 +306,6 @@ add_library(engine_runtime STATIC
     src/models/index_tts2/style_encoder.cpp
     src/models/index_tts2/tokenizer_text.cpp
     src/models/index_tts2/vocoder.cpp
-    src/models/kokoro_tts/assets.cpp
-    src/models/kokoro_tts/decoder.cpp
-    src/models/kokoro_tts/frontend.cpp
-    src/models/kokoro_tts/g2p_en.cpp
-    src/models/kokoro_tts/loader.cpp
-    src/models/kokoro_tts/plbert.cpp
-    src/models/kokoro_tts/predictor.cpp
-    src/models/kokoro_tts/session.cpp
     src/models/nemotron_asr/assets.cpp
     src/models/nemotron_asr/frontend.cpp
     src/models/nemotron_asr/encoder.cpp
@@ -341,16 +333,6 @@ add_library(engine_runtime STATIC
     src/models/qwen3_asr/postprocess.cpp
     src/models/qwen3_asr/session.cpp
     src/models/qwen3_asr/loader.cpp
-    src/models/parakeet_tdt/assets.cpp
-    src/models/parakeet_tdt/decoder.cpp
-    src/models/parakeet_tdt/frontend.cpp
-    src/models/parakeet_tdt/loader.cpp
-    src/models/parakeet_tdt/longform_encoder.cpp
-    src/models/parakeet_tdt/offline_encoder.cpp
-    src/models/parakeet_tdt/pre_encode.cpp
-    src/models/parakeet_tdt/session.cpp
-    src/models/parakeet_tdt/streaming_encoder.cpp
-    src/models/parakeet_tdt/weights.cpp
     src/models/vevo2/ar.cpp
     src/models/vevo2/assets.cpp
     src/models/vevo2/components.cpp
@@ -601,13 +583,11 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)
     add_engine_warmbench(index_tts2_warm_bench tests/index_tts2/index_tts2_warm_bench.cpp)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
-    add_engine_warmbench(kokoro_tts_warm_bench tests/kokoro_tts/kokoro_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
     add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)
     add_engine_warmbench(omnivoice_warm_bench tests/omnivoice/omnivoice_warm_bench.cpp)
     add_engine_warmbench(pocket_tts_warm_bench tests/pocket_tts/pocket_tts_warm_bench.cpp)
-    add_engine_warmbench(parakeet_warm_bench tests/parakeet_tdt/parakeet_warm_bench.cpp)
     add_engine_warmbench(qwen3_asr_warm_bench tests/qwen3_asr/qwen3_asr_warm_bench.cpp)
     add_engine_warmbench(qwen3_forced_aligner_warm_bench tests/qwen3_forced_aligner/qwen3_forced_aligner_warm_bench.cpp)
     add_engine_warmbench(qwen3_tts_warm_bench tests/qwen3_tts/qwen3_tts_warm_bench.cpp)
