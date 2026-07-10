@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/irodori_tts/assets.h"
 #include "engine/models/irodori_tts/tokenizer_text.h"
@@ -33,6 +34,25 @@ public:
 private:
   IrodoriRequest make_request(const runtime::TaskRequest &request) const;
 
+  struct ReferenceAudioCacheKey {
+    uint64_t hash = 0;
+    int sample_rate = 0;
+    int channels = 0;
+    size_t sample_count = 0;
+  };
+
+  struct ReferenceAudioCacheKeyEqual {
+    bool operator()(const ReferenceAudioCacheKey &lhs,
+                    const ReferenceAudioCacheKey &rhs) const;
+  };
+
+  struct ReferenceSpeakerCacheEntry {
+    std::vector<float> state;
+    std::vector<uint8_t> mask;
+    int64_t tokens = 0;
+    bool has_speaker = false;
+  };
+
   runtime::TaskSpec task_;
   std::shared_ptr<const IrodoriAssets> assets_;
   IrodoriTextTokenizer tokenizer_;
@@ -50,15 +70,9 @@ private:
   std::unique_ptr<IrodoriConditionEncoder> condition_encoder_;
   std::unique_ptr<IrodoriRfSampler> rf_sampler_;
   std::unique_ptr<IrodoriCodec> codec_;
-  uint64_t cached_reference_key_ = 0;
-  int cached_reference_sample_rate_ = 0;
-  int cached_reference_channels_ = 0;
-  size_t cached_reference_samples_ = 0;
-  std::vector<float> cached_reference_speaker_state_;
-  std::vector<uint8_t> cached_reference_speaker_mask_;
-  int64_t cached_reference_speaker_tokens_ = 0;
-  bool cached_reference_speaker_has_speaker_ = false;
-  bool cached_reference_valid_ = false;
+  runtime::CacheSlots<ReferenceAudioCacheKey, ReferenceSpeakerCacheEntry,
+                      ReferenceAudioCacheKeyEqual>
+      reference_speaker_cache_;
 };
 
 } // namespace engine::models::irodori_tts

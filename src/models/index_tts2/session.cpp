@@ -13,6 +13,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace engine::models::index_tts2 {
@@ -87,6 +88,22 @@ bool same_identity(const IndexTTS2AudioIdentity & lhs, const IndexTTS2AudioIdent
         lhs.channels == rhs.channels &&
         lhs.sample_count == rhs.sample_count &&
         lhs.sample_hash == rhs.sample_hash;
+}
+
+std::size_t resolve_cache_slots(
+    const runtime::SessionOptions & options,
+    std::initializer_list<std::string_view> keys,
+    const char * option_name) {
+    constexpr int64_t kDefaultCacheSlots = 1;
+    const int64_t slots = runtime::parse_i64_option(options.options, keys)
+        .value_or(kDefaultCacheSlots);
+    if (slots < 0) {
+        throw std::runtime_error(std::string(option_name) + " must be non-negative");
+    }
+    if (static_cast<std::uint64_t>(slots) > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw std::runtime_error(std::string(option_name) + " is too large");
+    }
+    return static_cast<std::size_t>(slots);
 }
 
 std::vector<float> channel_first_to_time_major(
@@ -181,7 +198,10 @@ IndexTTS2Session::IndexTTS2Session(
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),
-      tokenizer_(assets_) {
+      tokenizer_(assets_),
+      speaker_cache_(resolve_cache_slots(this->options(), {"index_tts2.speaker_cache_slots"}, "index_tts2.speaker_cache_slots")),
+      emotion_cache_(resolve_cache_slots(this->options(), {"index_tts2.emotion_cache_slots"}, "index_tts2.emotion_cache_slots")),
+      emotion_text_weights_cache_(resolve_cache_slots(this->options(), {"index_tts2.emotion_text_cache_slots"}, "index_tts2.emotion_text_cache_slots")) {
     gpt_graph_arena_bytes_ = runtime::parse_size_mb_option(
         options.options, {"index_tts2.gpt_graph_arena_mb"}, gpt_graph_arena_bytes_);
     s2mel_graph_arena_bytes_ = runtime::parse_size_mb_option(
@@ -221,6 +241,9 @@ IndexTTS2Session::IndexTTS2Session(
             key != "index_tts2.weight_type" &&
             key != "index_tts2.conv_weight_type" &&
             key != "index_tts2.mem_saver" &&
+            key != "index_tts2.speaker_cache_slots" &&
+            key != "index_tts2.emotion_cache_slots" &&
+            key != "index_tts2.emotion_text_cache_slots" &&
             key != "index_tts2.gpt.cuda_sampling_policy" &&
             key != "index_tts2.s2mel.cuda_sampling_policy") {
             throw std::runtime_error("unknown IndexTTS2 session option: " + key);
@@ -283,6 +306,12 @@ IndexTTS2Session::IndexTTS2Session(
     assets_->emotion_matrix->release_storage();
 }
 
+bool IndexTTS2Session::AudioIdentityEqual::operator()(
+    const IndexTTS2AudioIdentity & lhs,
+    const IndexTTS2AudioIdentity & rhs) const {
+    return same_identity(lhs, rhs);
+}
+
 std::string IndexTTS2Session::family() const {
     return "index_tts2";
 }
@@ -335,11 +364,14 @@ void IndexTTS2Session::prepare(const runtime::SessionPreparationRequest & reques
 
 const IndexTTS2Session::SpeakerState & IndexTTS2Session::resolve_speaker_state(const runtime::AudioBuffer & audio) {
     const auto identity = audio_identity(audio);
-    const bool cache_hit = speaker_cache_.has_value() && same_identity(speaker_cache_->identity, identity);
-    debug::trace_log_scalar("index_tts2.speaker_cache.hit", cache_hit);
-    if (cache_hit) {
-        return *speaker_cache_;
+    if (const auto * cached = speaker_cache_.find(identity)) {
+        debug::trace_log_scalar("index_tts2.speaker_cache.hit", 1);
+        debug::trace_log_scalar("index_tts2.speaker_cache.slots", static_cast<int64_t>(speaker_cache_.capacity()));
+        debug::trace_log_scalar("index_tts2.speaker_cache.entries", static_cast<int64_t>(speaker_cache_.size()));
+        debug::trace_log_scalar("index_tts2.speaker_cache.evicted", 0);
+        return *cached;
     }
+    const bool will_evict = speaker_cache_.capacity() > 0 && speaker_cache_.size() >= speaker_cache_.capacity();
     const auto start = Clock::now();
     const auto prepared = prepare_index_tts2_reference_audio(
         audio.samples,
@@ -372,23 +404,42 @@ const IndexTTS2Session::SpeakerState & IndexTTS2Session::resolve_speaker_state(c
         prepared.campplus_fbank.frames,
         prepared.campplus_fbank.dims);
     state.prompt_condition = std::move(prompt_condition);
-    speaker_cache_ = std::move(state);
+    if (speaker_cache_.capacity() == 0) {
+        uncached_speaker_state_ = std::move(state);
+    } else {
+        speaker_cache_.put(identity, std::move(state));
+    }
     if (mem_saver_) {
         semantic_encoder_->release_graph();
         semantic_codec_->release_graphs();
         s2mel_->release_pre_cfm_graphs();
+        style_encoder_->release_graph();
     }
+    debug::trace_log_scalar("index_tts2.speaker_cache.hit", 0);
+    debug::trace_log_scalar("index_tts2.speaker_cache.slots", static_cast<int64_t>(speaker_cache_.capacity()));
+    debug::trace_log_scalar("index_tts2.speaker_cache.entries", static_cast<int64_t>(speaker_cache_.size()));
+    debug::trace_log_scalar("index_tts2.speaker_cache.evicted", will_evict ? 1 : 0);
     debug::timing_log_scalar("index_tts2.speaker_state_ms", engine::debug::elapsed_ms(start));
-    return *speaker_cache_;
+    if (speaker_cache_.capacity() == 0) {
+        return *uncached_speaker_state_;
+    }
+    const auto * cached = speaker_cache_.find(identity);
+    if (cached == nullptr) {
+        throw std::runtime_error("IndexTTS2 speaker cache insert failed");
+    }
+    return *cached;
 }
 
 const IndexTTS2Session::EmotionState & IndexTTS2Session::resolve_emotion_state(const runtime::AudioBuffer & audio) {
     const auto identity = audio_identity(audio);
-    const bool cache_hit = emotion_cache_.has_value() && same_identity(emotion_cache_->identity, identity);
-    debug::trace_log_scalar("index_tts2.emotion_cache.hit", cache_hit);
-    if (cache_hit) {
-        return *emotion_cache_;
+    if (const auto * cached = emotion_cache_.find(identity)) {
+        debug::trace_log_scalar("index_tts2.emotion_cache.hit", 1);
+        debug::trace_log_scalar("index_tts2.emotion_cache.slots", static_cast<int64_t>(emotion_cache_.capacity()));
+        debug::trace_log_scalar("index_tts2.emotion_cache.entries", static_cast<int64_t>(emotion_cache_.size()));
+        debug::trace_log_scalar("index_tts2.emotion_cache.evicted", 0);
+        return *cached;
     }
+    const bool will_evict = emotion_cache_.capacity() > 0 && emotion_cache_.size() >= emotion_cache_.capacity();
     const auto start = Clock::now();
     const auto prepared = prepare_index_tts2_reference_audio(
         audio.samples,
@@ -401,12 +452,27 @@ const IndexTTS2Session::EmotionState & IndexTTS2Session::resolve_emotion_state(c
     EmotionState state;
     state.identity = identity;
     state.semantic = semantic_encoder_->encode(prepared.semantic_features);
-    emotion_cache_ = std::move(state);
+    if (emotion_cache_.capacity() == 0) {
+        uncached_emotion_state_ = std::move(state);
+    } else {
+        emotion_cache_.put(identity, std::move(state));
+    }
     if (mem_saver_) {
         semantic_encoder_->release_graph();
     }
+    debug::trace_log_scalar("index_tts2.emotion_cache.hit", 0);
+    debug::trace_log_scalar("index_tts2.emotion_cache.slots", static_cast<int64_t>(emotion_cache_.capacity()));
+    debug::trace_log_scalar("index_tts2.emotion_cache.entries", static_cast<int64_t>(emotion_cache_.size()));
+    debug::trace_log_scalar("index_tts2.emotion_cache.evicted", will_evict ? 1 : 0);
     debug::timing_log_scalar("index_tts2.emotion_state_ms", engine::debug::elapsed_ms(start));
-    return *emotion_cache_;
+    if (emotion_cache_.capacity() == 0) {
+        return *uncached_emotion_state_;
+    }
+    const auto * cached = emotion_cache_.find(identity);
+    if (cached == nullptr) {
+        throw std::runtime_error("IndexTTS2 emotion cache insert failed");
+    }
+    return *cached;
 }
 
 std::vector<float> IndexTTS2Session::explicit_emotion_matrix_vector(
@@ -468,16 +534,25 @@ std::vector<float> IndexTTS2Session::resolve_emotion_vector(
     std::vector<float> explicit_weights;
     if (request.use_emotion_text) {
         const auto emotion_text = request.emotion_text.value_or(request.text);
-        const bool cache_hit = emotion_text_weights_cache_.has_value() && emotion_text_weights_cache_->text == emotion_text;
-        debug::trace_log_scalar("index_tts2.qwen_emotion.text_cache.hit", cache_hit);
-        if (cache_hit) {
-            explicit_weights = emotion_text_weights_cache_->weights;
+        if (const auto * cached = emotion_text_weights_cache_.find(emotion_text)) {
+            debug::trace_log_scalar("index_tts2.qwen_emotion.text_cache.hit", 1);
+            debug::trace_log_scalar("index_tts2.qwen_emotion.text_cache.slots", static_cast<int64_t>(emotion_text_weights_cache_.capacity()));
+            debug::trace_log_scalar("index_tts2.qwen_emotion.text_cache.entries", static_cast<int64_t>(emotion_text_weights_cache_.size()));
+            debug::trace_log_scalar("index_tts2.qwen_emotion.text_cache.evicted", 0);
+            explicit_weights = *cached;
         } else {
+            const bool will_evict =
+                emotion_text_weights_cache_.capacity() > 0 &&
+                emotion_text_weights_cache_.size() >= emotion_text_weights_cache_.capacity();
             explicit_weights = qwen_emotion_->infer(emotion_text, emotion_text_max_new_tokens_).values;
             if (mem_saver_) {
                 qwen_emotion_->release_graphs();
             }
-            emotion_text_weights_cache_ = EmotionTextWeightsCache{emotion_text, explicit_weights};
+            emotion_text_weights_cache_.put(emotion_text, explicit_weights);
+            debug::trace_log_scalar("index_tts2.qwen_emotion.text_cache.hit", 0);
+            debug::trace_log_scalar("index_tts2.qwen_emotion.text_cache.slots", static_cast<int64_t>(emotion_text_weights_cache_.capacity()));
+            debug::trace_log_scalar("index_tts2.qwen_emotion.text_cache.entries", static_cast<int64_t>(emotion_text_weights_cache_.size()));
+            debug::trace_log_scalar("index_tts2.qwen_emotion.text_cache.evicted", will_evict ? 1 : 0);
         }
     } else if (request.emotion_vector.has_value()) {
         explicit_weights = *request.emotion_vector;

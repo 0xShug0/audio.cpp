@@ -31,4 +31,8 @@ IndexTTS2StyleEmbedding IndexTTS2StyleEncoder::embed_fbank(
     return {out.embedding, out.embedding_size};
 }
 
+void IndexTTS2StyleEncoder::release_graph() {
+    component_.release_runtime_graph();
+}
+
 }  // namespace engine::models::index_tts2

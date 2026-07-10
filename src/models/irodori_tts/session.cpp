@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -172,6 +173,24 @@ uint64_t reference_audio_cache_key(const runtime::AudioBuffer &audio) {
   return key;
 }
 
+std::size_t resolve_reference_cache_slots(const runtime::SessionOptions &options) {
+  constexpr int64_t kDefaultCacheSlots = 1;
+  const int64_t slots =
+      runtime::parse_i64_option(
+          options.options,
+          {"irodori_tts.reference_cache_slots", "reference_cache_slots"})
+          .value_or(kDefaultCacheSlots);
+  if (slots < 0) {
+    throw std::runtime_error(
+        "irodori_tts.reference_cache_slots must be non-negative");
+  }
+  if (static_cast<std::uint64_t>(slots) >
+      static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    throw std::runtime_error("irodori_tts.reference_cache_slots is too large");
+  }
+  return static_cast<std::size_t>(slots);
+}
+
 IrodoriSpeakerCondition
 no_reference_speaker_condition(const IrodoriModelConfig &config) {
   IrodoriSpeakerCondition out;
@@ -232,7 +251,8 @@ IrodoriTTSSession::IrodoriTTSSession(
     runtime::TaskSpec task, runtime::SessionOptions options,
     std::shared_ptr<const IrodoriAssets> assets)
     : RuntimeSessionBase(options), task_(task),
-      assets_(require_assets(std::move(assets))), tokenizer_(assets_) {
+      assets_(require_assets(std::move(assets))), tokenizer_(assets_),
+      reference_speaker_cache_(resolve_reference_cache_slots(this->options())) {
   condition_graph_arena_bytes_ = runtime::parse_size_mb_option(
       options.options, {"irodori_tts.condition_graph_arena_mb"},
       condition_graph_arena_bytes_);
@@ -299,6 +319,13 @@ IrodoriTTSSession::IrodoriTTSSession(
 
 IrodoriTTSSession::~IrodoriTTSSession() = default;
 
+bool IrodoriTTSSession::ReferenceAudioCacheKeyEqual::operator()(
+    const ReferenceAudioCacheKey &lhs,
+    const ReferenceAudioCacheKey &rhs) const {
+  return lhs.hash == rhs.hash && lhs.sample_rate == rhs.sample_rate &&
+         lhs.channels == rhs.channels && lhs.sample_count == rhs.sample_count;
+}
+
 std::string IrodoriTTSSession::family() const { return "irodori_tts"; }
 
 runtime::VoiceTaskKind IrodoriTTSSession::task_kind() const {
@@ -335,38 +362,54 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
       throw std::runtime_error(
           "Irodori-TTS reference mode requires reference audio");
     }
-    const uint64_t reference_key =
-        reference_audio_cache_key(first_request.reference_audio);
-    if (cached_reference_valid_ && cached_reference_key_ == reference_key &&
-        cached_reference_sample_rate_ ==
-            first_request.reference_audio.sample_rate &&
-        cached_reference_channels_ == first_request.reference_audio.channels &&
-        cached_reference_samples_ ==
-            first_request.reference_audio.samples.size()) {
+    const ReferenceAudioCacheKey reference_key{
+        reference_audio_cache_key(first_request.reference_audio),
+        first_request.reference_audio.sample_rate,
+        first_request.reference_audio.channels,
+        first_request.reference_audio.samples.size(),
+    };
+    if (const auto *cached = reference_speaker_cache_.find(reference_key)) {
       reference_cache_hit = true;
-      speaker.state = cached_reference_speaker_state_;
-      speaker.mask = cached_reference_speaker_mask_;
-      speaker.tokens = cached_reference_speaker_tokens_;
-      speaker.has_speaker = cached_reference_speaker_has_speaker_;
+      speaker.state = cached->state;
+      speaker.mask = cached->mask;
+      speaker.tokens = cached->tokens;
+      speaker.has_speaker = cached->has_speaker;
+      debug::trace_log_scalar("irodori_tts.reference_cache.hit", 1);
+      debug::trace_log_scalar(
+          "irodori_tts.reference_cache.slots",
+          static_cast<int64_t>(reference_speaker_cache_.capacity()));
+      debug::trace_log_scalar(
+          "irodori_tts.reference_cache.entries",
+          static_cast<int64_t>(reference_speaker_cache_.size()));
+      debug::trace_log_scalar("irodori_tts.reference_cache.evicted", 0);
     } else {
+      const bool will_evict = reference_speaker_cache_.capacity() > 0 &&
+                              reference_speaker_cache_.size() >=
+                                  reference_speaker_cache_.capacity();
       int64_t ref_latent_steps = 0;
       auto ref_latent = codec_->encode_reference(first_request.reference_audio,
                                                  ref_latent_steps);
       speaker = condition_encoder_->encode_speaker_reference(ref_latent,
                                                              ref_latent_steps);
-      cached_reference_key_ = reference_key;
-      cached_reference_sample_rate_ = first_request.reference_audio.sample_rate;
-      cached_reference_channels_ = first_request.reference_audio.channels;
-      cached_reference_samples_ = first_request.reference_audio.samples.size();
-      cached_reference_speaker_state_ = speaker.state;
-      cached_reference_speaker_mask_ = speaker.mask;
-      cached_reference_speaker_tokens_ = speaker.tokens;
-      cached_reference_speaker_has_speaker_ = speaker.has_speaker;
-      cached_reference_valid_ = true;
+      ReferenceSpeakerCacheEntry entry;
+      entry.state = speaker.state;
+      entry.mask = speaker.mask;
+      entry.tokens = speaker.tokens;
+      entry.has_speaker = speaker.has_speaker;
+      reference_speaker_cache_.put(reference_key, std::move(entry));
       if (mem_saver_) {
         codec_->release_graphs();
         condition_encoder_->release_graphs();
       }
+      debug::trace_log_scalar("irodori_tts.reference_cache.hit", 0);
+      debug::trace_log_scalar(
+          "irodori_tts.reference_cache.slots",
+          static_cast<int64_t>(reference_speaker_cache_.capacity()));
+      debug::trace_log_scalar(
+          "irodori_tts.reference_cache.entries",
+          static_cast<int64_t>(reference_speaker_cache_.size()));
+      debug::trace_log_scalar("irodori_tts.reference_cache.evicted",
+                              will_evict ? 1 : 0);
     }
   }
   const auto reference_end = Clock::now();

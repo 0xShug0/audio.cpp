@@ -90,6 +90,9 @@ public:
             {"seed", "n", "Torch RNG seed."},
             {"trim_tail", "bool", "Trim trailing silence-like samples."},
         };
+        inspection.cli.session_options = {
+            {"irodori_tts.reference_cache_slots", "n", "Prepared reference-speaker cache slots; default 1."},
+        };
         inspection.discovered_configs = discover_config_assets(request);
         inspection.discovered_weights = discover_weight_assets(request);
         return inspection;

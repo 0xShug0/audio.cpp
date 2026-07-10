@@ -109,6 +109,9 @@ public:
             {"index_tts2.emotion_text_max_new_tokens", "n", "Maximum generated tokens for emotion-text classification; default 256."},
             {"index_tts2.weight_context_mb", "n", "Shared weight context size."},
             {"index_tts2.mem_saver", "true|false", "Release staged reference and conditioning graphs after request phases; default false."},
+            {"index_tts2.speaker_cache_slots", "n", "Prepared speaker-reference cache slots; default 1."},
+            {"index_tts2.emotion_cache_slots", "n", "Prepared emotion-reference cache slots; default 1."},
+            {"index_tts2.emotion_text_cache_slots", "n", "Emotion-text weight cache slots; default 1."},
         };
         inspection.discovered_configs = discover_config_assets(request);
         inspection.discovered_weights = discover_weight_assets(request);

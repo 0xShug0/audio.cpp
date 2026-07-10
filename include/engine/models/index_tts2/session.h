@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/index_tts2/assets.h"
 #include "engine/models/index_tts2/audio_features.h"
@@ -58,9 +59,10 @@ private:
         IndexTTS2SemanticEmbedding semantic;
     };
 
-    struct EmotionTextWeightsCache {
-        std::string text;
-        std::vector<float> weights;
+    struct AudioIdentityEqual {
+        bool operator()(
+            const IndexTTS2AudioIdentity & lhs,
+            const IndexTTS2AudioIdentity & rhs) const;
     };
 
     const SpeakerState & resolve_speaker_state(const runtime::AudioBuffer & audio);
@@ -107,9 +109,11 @@ private:
 
     std::vector<float> speaker_matrix_;
     std::vector<float> emotion_matrix_;
-    std::optional<SpeakerState> speaker_cache_;
-    std::optional<EmotionState> emotion_cache_;
-    std::optional<EmotionTextWeightsCache> emotion_text_weights_cache_;
+    runtime::CacheSlots<IndexTTS2AudioIdentity, SpeakerState, AudioIdentityEqual> speaker_cache_;
+    runtime::CacheSlots<IndexTTS2AudioIdentity, EmotionState, AudioIdentityEqual> emotion_cache_;
+    runtime::CacheSlots<std::string, std::vector<float>> emotion_text_weights_cache_;
+    std::optional<SpeakerState> uncached_speaker_state_;
+    std::optional<EmotionState> uncached_emotion_state_;
 };
 
 }  // namespace engine::models::index_tts2
