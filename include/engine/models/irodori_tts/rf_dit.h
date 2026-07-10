@@ -151,11 +151,11 @@ public:
   ModulationCache build_modulation_cache(const std::vector<float> &timesteps);
   void run_step(const std::vector<float> &x_t, int64_t step,
                 const ModulationCache &modulation_cache,
-                const ContextCache &context_cache, bool cfg_active,
-                bool text_cfg_enabled, bool speaker_cfg_enabled,
-                bool caption_cfg_enabled, float text_guidance_scale,
-                float speaker_guidance_scale, float caption_guidance_scale,
-                int64_t latent_steps, std::vector<float> &velocity);
+                const ContextCache &context_cache, bool text_cfg_enabled,
+                bool speaker_cfg_enabled, bool caption_cfg_enabled,
+                float text_guidance_scale, float speaker_guidance_scale,
+                float caption_guidance_scale, int64_t latent_steps,
+                std::vector<float> &velocity);
   int64_t context_graph_rebuilds() const noexcept;
   int64_t step_graph_rebuilds() const noexcept;
 

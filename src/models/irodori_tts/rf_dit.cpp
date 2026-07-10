@@ -369,6 +369,60 @@ core::TensorValue apply_rotary_half_heads(core::ModuleBuildContext &ctx,
   return modules::ConcatModule({2}).build(ctx, rot, passthrough);
 }
 
+core::TensorValue sub_tensor(core::ModuleBuildContext &ctx,
+                             const core::TensorValue &lhs,
+                             const core::TensorValue &rhs) {
+  return core::wrap_tensor(
+      ggml_sub(ctx.ggml,
+               core::ensure_backend_addressable_layout(ctx, lhs).tensor,
+               core::ensure_backend_addressable_layout(ctx, rhs).tensor),
+      lhs.shape, GGML_TYPE_F32);
+}
+
+core::TensorValue scalar_like(core::ModuleBuildContext &ctx,
+                              const core::TensorValue &scalar,
+                              const core::TensorShape &shape) {
+  auto reshaped = core::reshape_tensor(ctx, scalar,
+                                       core::TensorShape::from_dims({1, 1, 1}));
+  return modules::RepeatModule({shape}).build(ctx, reshaped);
+}
+
+core::TensorValue select_modulation_step(core::ModuleBuildContext &ctx,
+                                         const core::TensorValue &cache,
+                                         const core::TensorValue &step_index,
+                                         const IrodoriModelConfig &config) {
+  auto flat_cache = core::reshape_tensor(
+      ctx, cache,
+      core::TensorShape::from_dims({cache.shape.dims[0], config.model_dim}));
+  auto selected = core::wrap_tensor(
+      ggml_get_rows(
+          ctx.ggml,
+          core::ensure_backend_addressable_layout(ctx, flat_cache).tensor,
+          step_index.tensor),
+      core::TensorShape::from_dims({1, config.model_dim}), GGML_TYPE_F32);
+  return core::reshape_tensor(
+      ctx, selected, core::TensorShape::from_dims({1, 1, config.model_dim}));
+}
+
+IrodoriLayerAdaLNModulation select_modulation_step(
+    core::ModuleBuildContext &ctx, const IrodoriLayerAdaLNModulation &cache,
+    const core::TensorValue &step_index, const IrodoriModelConfig &config) {
+  IrodoriLayerAdaLNModulation out;
+  out.attention.shift =
+      select_modulation_step(ctx, cache.attention.shift, step_index, config);
+  out.attention.scale =
+      select_modulation_step(ctx, cache.attention.scale, step_index, config);
+  out.attention.gate =
+      select_modulation_step(ctx, cache.attention.gate, step_index, config);
+  out.mlp.shift =
+      select_modulation_step(ctx, cache.mlp.shift, step_index, config);
+  out.mlp.scale =
+      select_modulation_step(ctx, cache.mlp.scale, step_index, config);
+  out.mlp.gate =
+      select_modulation_step(ctx, cache.mlp.gate, step_index, config);
+  return out;
+}
+
 core::TensorValue flash_attention_from_heads(
     core::ModuleBuildContext &ctx, const core::TensorValue &q_heads,
     const core::TensorValue &k_heads, const core::TensorValue &v_heads,
@@ -731,6 +785,35 @@ core::TensorValue build_irodori_rf_dit(
       .build(ctx, hidden, weights.out_proj);
 }
 
+core::TensorValue build_guided_velocity(
+    core::ModuleBuildContext &ctx, const core::TensorValue &raw_output,
+    const core::TensorValue &text_guidance,
+    const core::TensorValue &speaker_guidance,
+    const core::TensorValue &caption_guidance, bool text_cfg_enabled,
+    bool speaker_cfg_enabled, bool caption_cfg_enabled) {
+  const auto cond = modules::SliceModule({0, 0, 1}).build(ctx, raw_output);
+  auto velocity = cond;
+  int64_t branch = 1;
+  auto add_branch = [&](const core::TensorValue &guidance) {
+    auto uncond = modules::SliceModule({0, branch, 1}).build(ctx, raw_output);
+    auto diff = sub_tensor(ctx, cond, uncond);
+    auto scaled = modules::MulModule{}.build(
+        ctx, diff, scalar_like(ctx, guidance, diff.shape));
+    velocity = modules::AddModule{}.build(ctx, velocity, scaled);
+    ++branch;
+  };
+  if (text_cfg_enabled) {
+    add_branch(text_guidance);
+  }
+  if (speaker_cfg_enabled) {
+    add_branch(speaker_guidance);
+  }
+  if (caption_cfg_enabled) {
+    add_branch(caption_guidance);
+  }
+  return velocity;
+}
+
 namespace {
 
 struct GgmlContextDeleter {
@@ -805,20 +888,10 @@ public:
     const std::vector<IrodoriLayerContextKV> *first_branch_backend_kv = nullptr;
   };
 
-  struct AdaLNModulationValues {
-    std::vector<float> shift;
-    std::vector<float> scale;
-    std::vector<float> gate;
-  };
-
-  struct LayerAdaLNModulationValues {
-    AdaLNModulationValues attention;
-    AdaLNModulationValues mlp;
-  };
-
   struct ModulationCache {
+    uint64_t id = 0;
     int64_t steps = 0;
-    std::vector<LayerAdaLNModulationValues> layers;
+    const std::vector<IrodoriLayerAdaLNModulation> *backend_layers = nullptr;
   };
 
   Impl(std::shared_ptr<const IrodoriAssets> assets,
@@ -986,16 +1059,18 @@ public:
       modulation_graph_ =
           std::make_unique<ModulationGraph>(*this, steps, graph_arena_bytes_);
     }
-    return modulation_graph_->run(timesteps);
+    auto cache = modulation_graph_->run(timesteps);
+    cache.id = ++next_modulation_id_;
+    return cache;
   }
 
   void run_step(const std::vector<float> &x_t, int64_t step,
                 const ModulationCache &modulation_cache,
-                const ContextCache &context_cache, bool cfg_active,
-                bool text_cfg_enabled, bool speaker_cfg_enabled,
-                bool caption_cfg_enabled, float text_guidance_scale,
-                float speaker_guidance_scale, float caption_guidance_scale,
-                int64_t latent_steps, std::vector<float> &velocity) {
+                const ContextCache &context_cache, bool text_cfg_enabled,
+                bool speaker_cfg_enabled, bool caption_cfg_enabled,
+                float text_guidance_scale, float speaker_guidance_scale,
+                float caption_guidance_scale, int64_t latent_steps,
+                std::vector<float> &velocity) {
     const int64_t batch = 1 + (text_cfg_enabled ? 1 : 0) +
                           (speaker_cfg_enabled ? 1 : 0) +
                           (caption_cfg_enabled ? 1 : 0);
@@ -1003,17 +1078,20 @@ public:
     std::unique_ptr<Graph> &graph = batch == 1 ? cond_graph_ : cfg_graph_;
     if (graph == nullptr || graph->latent_steps() != latent_steps ||
         graph->speaker_tokens() != context_cache.speaker_tokens ||
-        graph->caption_tokens() != caption_tokens || graph->batch() != batch) {
+        graph->caption_tokens() != caption_tokens || graph->batch() != batch ||
+        graph->modulation_steps() != modulation_cache.steps ||
+        graph->text_cfg_enabled() != text_cfg_enabled ||
+        graph->speaker_cfg_enabled() != speaker_cfg_enabled ||
+        graph->caption_cfg_enabled() != caption_cfg_enabled) {
       ++step_graph_rebuilds_;
       graph = std::make_unique<Graph>(
           *this, latent_steps, context_cache.speaker_tokens, caption_tokens,
-          batch, graph_arena_bytes_);
+          batch, modulation_cache.steps, text_cfg_enabled, speaker_cfg_enabled,
+          caption_cfg_enabled, graph_arena_bytes_);
     }
     graph->set_context(context_cache);
-    graph->run(x_t, step, modulation_cache, context_cache, cfg_active,
-               text_cfg_enabled, speaker_cfg_enabled, caption_cfg_enabled,
-               text_guidance_scale, speaker_guidance_scale,
-               caption_guidance_scale, velocity);
+    graph->run(x_t, step, modulation_cache, context_cache, text_guidance_scale,
+               speaker_guidance_scale, caption_guidance_scale, velocity);
   }
 
   int64_t context_graph_rebuilds() const noexcept {
@@ -1222,21 +1300,7 @@ private:
       }
       ModulationCache cache;
       cache.steps = steps_;
-      cache.layers.resize(outputs_.size());
-      for (size_t layer = 0; layer < outputs_.size(); ++layer) {
-        core::read_tensor_f32_into(outputs_[layer].attention.shift.tensor,
-                                   cache.layers[layer].attention.shift);
-        core::read_tensor_f32_into(outputs_[layer].attention.scale.tensor,
-                                   cache.layers[layer].attention.scale);
-        core::read_tensor_f32_into(outputs_[layer].attention.gate.tensor,
-                                   cache.layers[layer].attention.gate);
-        core::read_tensor_f32_into(outputs_[layer].mlp.shift.tensor,
-                                   cache.layers[layer].mlp.shift);
-        core::read_tensor_f32_into(outputs_[layer].mlp.scale.tensor,
-                                   cache.layers[layer].mlp.scale);
-        core::read_tensor_f32_into(outputs_[layer].mlp.gate.tensor,
-                                   cache.layers[layer].mlp.gate);
-      }
+      cache.backend_layers = &outputs_;
       return cache;
     }
 
@@ -1254,10 +1318,15 @@ private:
   public:
     Graph(IrodoriRfSampler::Impl &owner, int64_t latent_steps,
           int64_t speaker_tokens, int64_t caption_tokens, int64_t batch,
+          int64_t modulation_steps, bool text_cfg_enabled,
+          bool speaker_cfg_enabled, bool caption_cfg_enabled,
           size_t graph_arena_bytes)
         : owner_(&owner), latent_steps_(latent_steps),
           speaker_tokens_(speaker_tokens), caption_tokens_(caption_tokens),
-          batch_(batch) {
+          batch_(batch), modulation_steps_(modulation_steps),
+          text_cfg_enabled_(text_cfg_enabled),
+          speaker_cfg_enabled_(speaker_cfg_enabled),
+          caption_cfg_enabled_(caption_cfg_enabled) {
       const auto &config = owner.assets_->config;
       ggml_init_params params{graph_arena_bytes, nullptr, true};
       ctx_.reset(ggml_init(params));
@@ -1271,6 +1340,8 @@ private:
           build_ctx, GGML_TYPE_F32,
           core::TensorShape::from_dims(
               {batch_, latent_steps_, config.patched_latent_dim()}));
+      step_index_ = core::make_tensor(build_ctx, GGML_TYPE_I32,
+                                      core::TensorShape::from_dims({1}));
       const int64_t dim = config.model_dim / config.num_heads;
       const int64_t context_tokens =
           config.max_text_len + speaker_tokens_ + caption_tokens_;
@@ -1289,13 +1360,14 @@ private:
         ggml_set_input(kv.v_context.tensor);
         context_kv_inputs_.push_back(kv);
       }
-      modulation_inputs_.reserve(owner.weights_.blocks.size());
+      modulation_cache_inputs_.reserve(owner.weights_.blocks.size());
       for (size_t layer = 0; layer < owner.weights_.blocks.size(); ++layer) {
         IrodoriLayerAdaLNModulation modulation;
         auto make_mod_tensor = [&]() {
-          auto tensor = core::make_tensor(
-              build_ctx, GGML_TYPE_F32,
-              core::TensorShape::from_dims({1, 1, config.model_dim}));
+          auto tensor =
+              core::make_tensor(build_ctx, GGML_TYPE_F32,
+                                core::TensorShape::from_dims(
+                                    {modulation_steps_, 1, config.model_dim}));
           ggml_set_input(tensor.tensor);
           return tensor;
         };
@@ -1305,7 +1377,7 @@ private:
         modulation.mlp.shift = make_mod_tensor();
         modulation.mlp.scale = make_mod_tensor();
         modulation.mlp.gate = make_mod_tensor();
-        modulation_inputs_.push_back(modulation);
+        modulation_cache_inputs_.push_back(modulation);
       }
       attention_mask_ =
           core::make_tensor(build_ctx, GGML_TYPE_F16,
@@ -1317,11 +1389,34 @@ private:
           core::make_tensor(build_ctx, GGML_TYPE_I32,
                             core::TensorShape::from_dims({latent_steps_}));
       ggml_set_input(x_t_.tensor);
+      ggml_set_input(step_index_.tensor);
       ggml_set_input(attention_mask_.tensor);
       ggml_set_input(positions_.tensor);
+      if (batch_ > 1) {
+        text_guidance_ = core::make_tensor(build_ctx, GGML_TYPE_F32,
+                                           core::TensorShape::from_dims({1}));
+        speaker_guidance_ = core::make_tensor(
+            build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1}));
+        caption_guidance_ = core::make_tensor(
+            build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1}));
+        ggml_set_input(text_guidance_.tensor);
+        ggml_set_input(speaker_guidance_.tensor);
+        ggml_set_input(caption_guidance_.tensor);
+      }
+      modulation_inputs_.reserve(modulation_cache_inputs_.size());
+      for (const auto &layer : modulation_cache_inputs_) {
+        modulation_inputs_.push_back(
+            select_modulation_step(build_ctx, layer, step_index_, config));
+      }
       auto output = build_irodori_rf_dit(
           build_ctx, x_t_, {}, {}, {}, {}, attention_mask_, positions_,
           owner.weights_, config, &context_kv_inputs_, &modulation_inputs_);
+      if (batch_ > 1) {
+        output = build_guided_velocity(build_ctx, output, text_guidance_,
+                                       speaker_guidance_, caption_guidance_,
+                                       text_cfg_enabled_, speaker_cfg_enabled_,
+                                       caption_cfg_enabled_);
+      }
       output_ = core::ensure_backend_addressable_layout(build_ctx, output);
       ggml_set_output(output_.tensor);
       graph_ = ggml_new_graph_custom(ctx_.get(), 262144, false);
@@ -1347,6 +1442,14 @@ private:
     int64_t caption_tokens() const noexcept { return caption_tokens_; }
 
     int64_t batch() const noexcept { return batch_; }
+
+    int64_t modulation_steps() const noexcept { return modulation_steps_; }
+
+    bool text_cfg_enabled() const noexcept { return text_cfg_enabled_; }
+
+    bool speaker_cfg_enabled() const noexcept { return speaker_cfg_enabled_; }
+
+    bool caption_cfg_enabled() const noexcept { return caption_cfg_enabled_; }
 
     void set_context(const ContextCache &cache) {
       if (loaded_context_id_ == cache.id) {
@@ -1412,11 +1515,39 @@ private:
       loaded_context_id_ = cache.id;
     }
 
+    void set_modulation(const ModulationCache &cache) {
+      if (loaded_modulation_id_ == cache.id) {
+        return;
+      }
+      if (cache.steps != modulation_steps_ || cache.backend_layers == nullptr ||
+          cache.backend_layers->size() != modulation_cache_inputs_.size()) {
+        throw std::runtime_error(
+            "Irodori-TTS RF modulation cache shape mismatch");
+      }
+      auto copy_modulation_tensor = [](const core::TensorValue &source,
+                                       const core::TensorValue &target) {
+        if (source.shape.num_elements() != target.shape.num_elements()) {
+          throw std::runtime_error(
+              "Irodori-TTS RF modulation cache tensor shape mismatch");
+        }
+        ggml_backend_tensor_copy(source.tensor, target.tensor);
+      };
+      for (size_t layer = 0; layer < modulation_cache_inputs_.size(); ++layer) {
+        const auto &source = (*cache.backend_layers)[layer];
+        auto &target = modulation_cache_inputs_[layer];
+        copy_modulation_tensor(source.attention.shift, target.attention.shift);
+        copy_modulation_tensor(source.attention.scale, target.attention.scale);
+        copy_modulation_tensor(source.attention.gate, target.attention.gate);
+        copy_modulation_tensor(source.mlp.shift, target.mlp.shift);
+        copy_modulation_tensor(source.mlp.scale, target.mlp.scale);
+        copy_modulation_tensor(source.mlp.gate, target.mlp.gate);
+      }
+      loaded_modulation_id_ = cache.id;
+    }
+
     void run(const std::vector<float> &x_t, int64_t step,
              const ModulationCache &modulation_cache,
-             const ContextCache &context_cache, bool cfg_active,
-             bool text_cfg_enabled, bool speaker_cfg_enabled,
-             bool caption_cfg_enabled, float text_guidance_scale,
+             const ContextCache &context_cache, float text_guidance_scale,
              float speaker_guidance_scale, float caption_guidance_scale,
              std::vector<float> &velocity) {
       const auto &config = owner_->assets_->config;
@@ -1439,36 +1570,16 @@ private:
         throw std::runtime_error("Irodori-TTS RF caption input shape mismatch");
       }
       if (step < 0 || step >= modulation_cache.steps ||
-          modulation_cache.layers.size() != modulation_inputs_.size()) {
+          modulation_cache.steps != modulation_steps_) {
         throw std::runtime_error("Irodori-TTS RF modulation cache mismatch");
       }
-      const size_t modulation_offset =
-          static_cast<size_t>(step * config.model_dim);
-      auto write_modulation = [&](const AdaLNModulationValues &source,
-                                  const IrodoriAdaLNModulation &target) {
-        const size_t expected_values =
-            static_cast<size_t>(modulation_cache.steps * config.model_dim);
-        if (source.shift.size() != expected_values ||
-            source.scale.size() != expected_values ||
-            source.gate.size() != expected_values) {
-          throw std::runtime_error(
-              "Irodori-TTS RF modulation cache tensor shape mismatch");
-        }
-        core::write_tensor_f32(target.shift,
-                               source.shift.data() + modulation_offset,
-                               static_cast<size_t>(config.model_dim));
-        core::write_tensor_f32(target.scale,
-                               source.scale.data() + modulation_offset,
-                               static_cast<size_t>(config.model_dim));
-        core::write_tensor_f32(target.gate,
-                               source.gate.data() + modulation_offset,
-                               static_cast<size_t>(config.model_dim));
-      };
-      for (size_t layer = 0; layer < modulation_inputs_.size(); ++layer) {
-        write_modulation(modulation_cache.layers[layer].attention,
-                         modulation_inputs_[layer].attention);
-        write_modulation(modulation_cache.layers[layer].mlp,
-                         modulation_inputs_[layer].mlp);
+      set_modulation(modulation_cache);
+      const int32_t step_value = static_cast<int32_t>(step);
+      core::write_tensor_i32(step_index_, &step_value, 1);
+      if (batch_ > 1) {
+        core::write_tensor_f32(text_guidance_, &text_guidance_scale, 1);
+        core::write_tensor_f32(speaker_guidance_, &speaker_guidance_scale, 1);
+        core::write_tensor_f32(caption_guidance_, &caption_guidance_scale, 1);
       }
       if (batch_ == 1) {
         core::write_tensor_f32(x_t_, x_t.data(), x_t.size());
@@ -1495,38 +1606,6 @@ private:
       std::copy(output_scratch_.begin(),
                 output_scratch_.begin() + static_cast<std::ptrdiff_t>(x_elems),
                 velocity.begin());
-      if (cfg_active) {
-        int64_t branch = 1;
-        if (text_cfg_enabled) {
-          for (int64_t i = 0; i < x_elems; ++i) {
-            const float cond = output_scratch_[static_cast<size_t>(i)];
-            const float uncond =
-                output_scratch_[static_cast<size_t>(branch * x_elems + i)];
-            velocity[static_cast<size_t>(i)] +=
-                text_guidance_scale * (cond - uncond);
-          }
-          ++branch;
-        }
-        if (speaker_cfg_enabled) {
-          for (int64_t i = 0; i < x_elems; ++i) {
-            const float cond = output_scratch_[static_cast<size_t>(i)];
-            const float uncond =
-                output_scratch_[static_cast<size_t>(branch * x_elems + i)];
-            velocity[static_cast<size_t>(i)] +=
-                speaker_guidance_scale * (cond - uncond);
-          }
-          ++branch;
-        }
-        if (caption_cfg_enabled) {
-          for (int64_t i = 0; i < x_elems; ++i) {
-            const float cond = output_scratch_[static_cast<size_t>(i)];
-            const float uncond =
-                output_scratch_[static_cast<size_t>(branch * x_elems + i)];
-            velocity[static_cast<size_t>(i)] +=
-                caption_guidance_scale * (cond - uncond);
-          }
-        }
-      }
     }
 
   private:
@@ -1535,16 +1614,26 @@ private:
     int64_t speaker_tokens_ = 0;
     int64_t caption_tokens_ = 0;
     int64_t batch_ = 0;
+    int64_t modulation_steps_ = 0;
+    bool text_cfg_enabled_ = false;
+    bool speaker_cfg_enabled_ = false;
+    bool caption_cfg_enabled_ = false;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::TensorValue x_t_;
     std::vector<IrodoriLayerContextKV> context_kv_inputs_;
+    std::vector<IrodoriLayerAdaLNModulation> modulation_cache_inputs_;
     std::vector<IrodoriLayerAdaLNModulation> modulation_inputs_;
     core::TensorValue attention_mask_;
     core::TensorValue positions_;
+    core::TensorValue step_index_;
+    core::TensorValue text_guidance_;
+    core::TensorValue speaker_guidance_;
+    core::TensorValue caption_guidance_;
     core::TensorValue output_;
     std::vector<float> x_batch_scratch_;
     std::vector<float> output_scratch_;
     uint64_t loaded_context_id_ = 0;
+    uint64_t loaded_modulation_id_ = 0;
     ggml_cgraph *graph_ = nullptr;
     ggml_backend_buffer_t buffer_ = nullptr;
   };
@@ -1556,6 +1645,7 @@ private:
   int threads_ = 1;
   size_t graph_arena_bytes_ = 0;
   uint64_t next_context_id_ = 0;
+  uint64_t next_modulation_id_ = 0;
   int64_t context_graph_rebuilds_ = 0;
   int64_t step_graph_rebuilds_ = 0;
   std::unique_ptr<ContextGraph> context_graph_;
@@ -1622,8 +1712,8 @@ IrodoriRfSampler::build_modulation_cache(const std::vector<float> &timesteps) {
 void IrodoriRfSampler::run_step(
     const std::vector<float> &x_t, int64_t step,
     const IrodoriRfSampler::ModulationCache &modulation_cache,
-    const IrodoriRfSampler::ContextCache &context_cache, bool cfg_active,
-    bool text_cfg_enabled, bool speaker_cfg_enabled, bool caption_cfg_enabled,
+    const IrodoriRfSampler::ContextCache &context_cache, bool text_cfg_enabled,
+    bool speaker_cfg_enabled, bool caption_cfg_enabled,
     float text_guidance_scale, float speaker_guidance_scale,
     float caption_guidance_scale, int64_t latent_steps,
     std::vector<float> &velocity) {
@@ -1631,7 +1721,7 @@ void IrodoriRfSampler::run_step(
     throw std::runtime_error("Irodori-TTS RF cache is not initialized");
   }
   impl_->run_step(x_t, step, modulation_cache.state_->cache,
-                  context_cache.state_->cache, cfg_active, text_cfg_enabled,
+                  context_cache.state_->cache, text_cfg_enabled,
                   speaker_cfg_enabled, caption_cfg_enabled, text_guidance_scale,
                   speaker_guidance_scale, caption_guidance_scale, latent_steps,
                   velocity);

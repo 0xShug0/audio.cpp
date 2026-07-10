@@ -506,7 +506,7 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
           cfg_active ? rf_context_cfg
                      : (any_cfg_enabled ? rf_context_cfg : rf_context_cond);
       const auto rf_step_start = Clock::now();
-      rf_sampler_->run_step(x_t, step, modulation_cache, rf_context, cfg_active,
+      rf_sampler_->run_step(x_t, step, modulation_cache, rf_context,
                             cfg_active && text_cfg_enabled,
                             cfg_active && speaker_cfg_enabled,
                             cfg_active && caption_cfg_enabled,
