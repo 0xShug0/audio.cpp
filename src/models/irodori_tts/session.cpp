@@ -1110,45 +1110,21 @@ private:
         first_branch_outputs_.reserve(outputs_.size());
         for (auto &layer : outputs_) {
           IrodoriLayerContextKV first;
-          first.k_text =
-              modules::SliceModule({0, 0, 1}).build(build_ctx, layer.k_text);
-          first.v_text =
-              modules::SliceModule({0, 0, 1}).build(build_ctx, layer.v_text);
-          first.k_speaker =
-              modules::SliceModule({0, 0, 1}).build(build_ctx, layer.k_speaker);
-          first.v_speaker =
-              modules::SliceModule({0, 0, 1}).build(build_ctx, layer.v_speaker);
-          if (config.use_caption_condition && caption_tokens_ > 0) {
-            first.k_caption =
-                modules::SliceModule({0, 0, 1})
-                    .build(build_ctx, layer.k_caption);
-            first.v_caption =
-                modules::SliceModule({0, 0, 1})
-                    .build(build_ctx, layer.v_caption);
-          }
+          first.k_context =
+              modules::SliceModule({0, 0, 1}).build(build_ctx, layer.k_context);
+          first.v_context =
+              modules::SliceModule({0, 0, 1}).build(build_ctx, layer.v_context);
           first_branch_outputs_.push_back(first);
         }
       }
       for (auto &layer : outputs_) {
-        ggml_set_output(layer.k_text.tensor);
-        ggml_set_output(layer.v_text.tensor);
-        ggml_set_output(layer.k_speaker.tensor);
-        ggml_set_output(layer.v_speaker.tensor);
-        if (config.use_caption_condition && caption_tokens_ > 0) {
-          ggml_set_output(layer.k_caption.tensor);
-          ggml_set_output(layer.v_caption.tensor);
-        }
+        ggml_set_output(layer.k_context.tensor);
+        ggml_set_output(layer.v_context.tensor);
       }
       graph_ = ggml_new_graph_custom(ctx_.get(), 131072, false);
       for (auto &layer : outputs_) {
-        ggml_build_forward_expand(graph_, layer.k_text.tensor);
-        ggml_build_forward_expand(graph_, layer.v_text.tensor);
-        ggml_build_forward_expand(graph_, layer.k_speaker.tensor);
-        ggml_build_forward_expand(graph_, layer.v_speaker.tensor);
-        if (config.use_caption_condition && caption_tokens_ > 0) {
-          ggml_build_forward_expand(graph_, layer.k_caption.tensor);
-          ggml_build_forward_expand(graph_, layer.v_caption.tensor);
-        }
+        ggml_build_forward_expand(graph_, layer.k_context.tensor);
+        ggml_build_forward_expand(graph_, layer.v_context.tensor);
       }
       buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime.backend_);
       if (buffer_ == nullptr) {
@@ -1245,43 +1221,21 @@ private:
       t_ = core::make_tensor(build_ctx, GGML_TYPE_F32,
                              core::TensorShape::from_dims({batch_}));
       const int64_t dim = config.model_dim / config.num_heads;
+      const int64_t context_tokens =
+          config.max_text_len + speaker_tokens_ + caption_tokens_;
       context_kv_inputs_.reserve(runtime.weights_.blocks.size());
       for (size_t layer = 0; layer < runtime.weights_.blocks.size(); ++layer) {
         IrodoriLayerContextKV kv;
-        kv.k_text = core::make_tensor(
+        kv.k_context = core::make_tensor(
             build_ctx, GGML_TYPE_F32,
             core::TensorShape::from_dims(
-                {batch_, config.max_text_len, config.num_heads, dim}));
-        kv.v_text = core::make_tensor(
+                {batch_, context_tokens, config.num_heads, dim}));
+        kv.v_context = core::make_tensor(
             build_ctx, GGML_TYPE_F32,
             core::TensorShape::from_dims(
-                {batch_, config.max_text_len, config.num_heads, dim}));
-        kv.k_speaker = core::make_tensor(
-            build_ctx, GGML_TYPE_F32,
-            core::TensorShape::from_dims(
-                {batch_, speaker_tokens_, config.num_heads, dim}));
-        kv.v_speaker = core::make_tensor(
-            build_ctx, GGML_TYPE_F32,
-            core::TensorShape::from_dims(
-                {batch_, speaker_tokens_, config.num_heads, dim}));
-        if (config.use_caption_condition && caption_tokens_ > 0) {
-          kv.k_caption = core::make_tensor(
-              build_ctx, GGML_TYPE_F32,
-              core::TensorShape::from_dims(
-                  {batch_, caption_tokens_, config.num_heads, dim}));
-          kv.v_caption = core::make_tensor(
-              build_ctx, GGML_TYPE_F32,
-              core::TensorShape::from_dims(
-                  {batch_, caption_tokens_, config.num_heads, dim}));
-        }
-        ggml_set_input(kv.k_text.tensor);
-        ggml_set_input(kv.v_text.tensor);
-        ggml_set_input(kv.k_speaker.tensor);
-        ggml_set_input(kv.v_speaker.tensor);
-        if (config.use_caption_condition && caption_tokens_ > 0) {
-          ggml_set_input(kv.k_caption.tensor);
-          ggml_set_input(kv.v_caption.tensor);
-        }
+                {batch_, context_tokens, config.num_heads, dim}));
+        ggml_set_input(kv.k_context.tensor);
+        ggml_set_input(kv.v_context.tensor);
         context_kv_inputs_.push_back(kv);
       }
       attention_mask_ =
@@ -1352,24 +1306,13 @@ private:
               "Irodori-TTS RF first-branch context cache layer count mismatch");
         }
       }
-      const size_t text_values =
-          static_cast<size_t>(cache.batch * config.max_text_len *
-                              config.num_heads *
+      const int64_t context_tokens =
+          config.max_text_len + speaker_tokens_ + caption_tokens_;
+      const size_t context_values =
+          static_cast<size_t>(cache.batch * context_tokens * config.num_heads *
                               (config.model_dim / config.num_heads));
-      const size_t speaker_values =
-          static_cast<size_t>(cache.batch * speaker_tokens_ * config.num_heads *
-                              (config.model_dim / config.num_heads));
-      const size_t caption_values =
-          static_cast<size_t>(cache.batch * caption_tokens_ * config.num_heads *
-                              (config.model_dim / config.num_heads));
-      const size_t write_text_values =
-          static_cast<size_t>(batch_ * config.max_text_len * config.num_heads *
-                              (config.model_dim / config.num_heads));
-      const size_t write_speaker_values =
-          static_cast<size_t>(batch_ * speaker_tokens_ * config.num_heads *
-                              (config.model_dim / config.num_heads));
-      const size_t write_caption_values =
-          static_cast<size_t>(batch_ * caption_tokens_ * config.num_heads *
+      const size_t write_context_values =
+          static_cast<size_t>(batch_ * context_tokens * config.num_heads *
                               (config.model_dim / config.num_heads));
       auto upload_context_tensor = [&](const core::TensorValue &source,
                                        const core::TensorValue &target,
@@ -1384,32 +1327,16 @@ private:
         }
         ggml_backend_tensor_copy(source.tensor, target.tensor);
       };
-      const size_t source_text_values =
-          use_first_branch ? write_text_values : text_values;
-      const size_t source_speaker_values =
-          use_first_branch ? write_speaker_values : speaker_values;
-      const size_t source_caption_values =
-          use_first_branch ? write_caption_values : caption_values;
+      const size_t source_context_values =
+          use_first_branch ? write_context_values : context_values;
       for (size_t layer = 0; layer < context_kv_inputs_.size(); ++layer) {
         const auto &source = (*source_kv)[layer];
-        upload_context_tensor(source.k_text, context_kv_inputs_[layer].k_text,
-                              source_text_values, write_text_values);
-        upload_context_tensor(source.v_text, context_kv_inputs_[layer].v_text,
-                              source_text_values, write_text_values);
-        upload_context_tensor(source.k_speaker,
-                              context_kv_inputs_[layer].k_speaker,
-                              source_speaker_values, write_speaker_values);
-        upload_context_tensor(source.v_speaker,
-                              context_kv_inputs_[layer].v_speaker,
-                              source_speaker_values, write_speaker_values);
-        if (config.use_caption_condition && caption_tokens_ > 0) {
-          upload_context_tensor(source.k_caption,
-                                context_kv_inputs_[layer].k_caption,
-                                source_caption_values, write_caption_values);
-          upload_context_tensor(source.v_caption,
-                                context_kv_inputs_[layer].v_caption,
-                                source_caption_values, write_caption_values);
-        }
+        upload_context_tensor(source.k_context,
+                              context_kv_inputs_[layer].k_context,
+                              source_context_values, write_context_values);
+        upload_context_tensor(source.v_context,
+                              context_kv_inputs_[layer].v_context,
+                              source_context_values, write_context_values);
       }
       const auto attention_mask_values = make_rf_attention_mask(
           cache.text_mask, cache.speaker_mask, cache.caption_mask, batch_,

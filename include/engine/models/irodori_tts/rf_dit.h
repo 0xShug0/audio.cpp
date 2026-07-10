@@ -67,12 +67,8 @@ struct IrodoriRfDitWeights {
 };
 
 struct IrodoriLayerContextKV {
-  core::TensorValue k_text;
-  core::TensorValue v_text;
-  core::TensorValue k_speaker;
-  core::TensorValue v_speaker;
-  core::TensorValue k_caption;
-  core::TensorValue v_caption;
+  core::TensorValue k_context;
+  core::TensorValue v_context;
 };
 
 IrodoriRfDitWeights

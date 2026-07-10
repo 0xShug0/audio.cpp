@@ -379,53 +379,66 @@ build_layer_context_kv(core::ModuleBuildContext &ctx,
                        const IrodoriModelConfig &config) {
   const int64_t dim = head_dim(config);
   IrodoriLayerContextKV out;
-  out.k_text =
+  auto k_text =
       modules::LinearModule(
           binding::linear_config(config.text_dim, config.model_dim, false))
           .build(ctx, text_state, weights.wk_text);
-  out.v_text =
+  auto v_text =
       modules::LinearModule(
           binding::linear_config(config.text_dim, config.model_dim, false))
           .build(ctx, text_state, weights.wv_text);
-  out.k_text = core::ensure_backend_addressable_layout(
+  k_text = core::ensure_backend_addressable_layout(
       ctx,
-      head_rms_norm(ctx, reshape_heads(ctx, out.k_text, config.num_heads, dim),
+      head_rms_norm(ctx, reshape_heads(ctx, k_text, config.num_heads, dim),
                     weights.k_norm, config.norm_eps));
-  out.v_text = core::ensure_backend_addressable_layout(
-      ctx, reshape_heads(ctx, out.v_text, config.num_heads, dim));
+  v_text = core::ensure_backend_addressable_layout(
+      ctx, reshape_heads(ctx, v_text, config.num_heads, dim));
 
-  out.k_speaker =
+  auto k_speaker =
       modules::LinearModule(
           binding::linear_config(config.speaker_dim, config.model_dim, false))
           .build(ctx, speaker_state, weights.wk_speaker);
-  out.v_speaker =
+  auto v_speaker =
       modules::LinearModule(
           binding::linear_config(config.speaker_dim, config.model_dim, false))
           .build(ctx, speaker_state, weights.wv_speaker);
-  out.k_speaker = core::ensure_backend_addressable_layout(
+  k_speaker = core::ensure_backend_addressable_layout(
       ctx, head_rms_norm(
-               ctx, reshape_heads(ctx, out.k_speaker, config.num_heads, dim),
+               ctx, reshape_heads(ctx, k_speaker, config.num_heads, dim),
                weights.k_norm, config.norm_eps));
-  out.v_speaker = core::ensure_backend_addressable_layout(
-      ctx, reshape_heads(ctx, out.v_speaker, config.num_heads, dim));
+  v_speaker = core::ensure_backend_addressable_layout(
+      ctx, reshape_heads(ctx, v_speaker, config.num_heads, dim));
 
+  core::TensorValue k_caption;
+  core::TensorValue v_caption;
   if (config.use_caption_condition && caption_state.tensor != nullptr &&
       caption_state.shape.dims[1] > 0) {
-    out.k_caption = modules::LinearModule(
-                        binding::linear_config(config.caption_dim_resolved(),
-                                               config.model_dim, false))
-                        .build(ctx, caption_state, weights.wk_caption);
-    out.v_caption = modules::LinearModule(
-                        binding::linear_config(config.caption_dim_resolved(),
-                                               config.model_dim, false))
-                        .build(ctx, caption_state, weights.wv_caption);
-    out.k_caption = core::ensure_backend_addressable_layout(
+    k_caption = modules::LinearModule(
+                    binding::linear_config(config.caption_dim_resolved(),
+                                           config.model_dim, false))
+                    .build(ctx, caption_state, weights.wk_caption);
+    v_caption = modules::LinearModule(
+                    binding::linear_config(config.caption_dim_resolved(),
+                                           config.model_dim, false))
+                    .build(ctx, caption_state, weights.wv_caption);
+    k_caption = core::ensure_backend_addressable_layout(
         ctx, head_rms_norm(
-                 ctx, reshape_heads(ctx, out.k_caption, config.num_heads, dim),
+                 ctx, reshape_heads(ctx, k_caption, config.num_heads, dim),
                  weights.k_norm, config.norm_eps));
-    out.v_caption = core::ensure_backend_addressable_layout(
-        ctx, reshape_heads(ctx, out.v_caption, config.num_heads, dim));
+    v_caption = core::ensure_backend_addressable_layout(
+        ctx, reshape_heads(ctx, v_caption, config.num_heads, dim));
   }
+  out.k_context = modules::ConcatModule({1}).build(ctx, k_text, k_speaker);
+  out.v_context = modules::ConcatModule({1}).build(ctx, v_text, v_speaker);
+  if (config.use_caption_condition && k_caption.tensor != nullptr &&
+      k_caption.shape.dims[1] > 0) {
+    out.k_context =
+        modules::ConcatModule({1}).build(ctx, out.k_context, k_caption);
+    out.v_context =
+        modules::ConcatModule({1}).build(ctx, out.v_context, v_caption);
+  }
+  out.k_context = core::ensure_backend_addressable_layout(ctx, out.k_context);
+  out.v_context = core::ensure_backend_addressable_layout(ctx, out.v_context);
   return out;
 }
 
@@ -495,15 +508,12 @@ core::TensorValue build_joint_attention(
                                        caption_state, weights, config);
     context_kv = &projected;
   }
-  auto k = modules::ConcatModule({1}).build(ctx, k_self, context_kv->k_text);
-  auto v = modules::ConcatModule({1}).build(ctx, v_self, context_kv->v_text);
-  k = modules::ConcatModule({1}).build(ctx, k, context_kv->k_speaker);
-  v = modules::ConcatModule({1}).build(ctx, v, context_kv->v_speaker);
-  if (config.use_caption_condition && context_kv->k_caption.tensor != nullptr &&
-      context_kv->k_caption.shape.dims[1] > 0) {
-    k = modules::ConcatModule({1}).build(ctx, k, context_kv->k_caption);
-    v = modules::ConcatModule({1}).build(ctx, v, context_kv->v_caption);
+  if (context_kv->k_context.tensor == nullptr ||
+      context_kv->v_context.tensor == nullptr) {
+    throw std::runtime_error("Irodori-TTS RF context KV cache is missing");
   }
+  auto k = modules::ConcatModule({1}).build(ctx, k_self, context_kv->k_context);
+  auto v = modules::ConcatModule({1}).build(ctx, v_self, context_kv->v_context);
   k = core::ensure_backend_addressable_layout(ctx, k);
   v = core::ensure_backend_addressable_layout(ctx, v);
   auto q_heads =
