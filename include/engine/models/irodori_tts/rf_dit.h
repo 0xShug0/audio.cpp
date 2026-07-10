@@ -2,9 +2,11 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/models/irodori_tts/assets.h"
+#include "engine/models/irodori_tts/condition_encoder.h"
 
 #include <ggml-backend.h>
 
@@ -107,5 +109,59 @@ core::TensorValue build_irodori_rf_dit(
     const IrodoriRfDitWeights &weights, const IrodoriModelConfig &config,
     const std::vector<IrodoriLayerContextKV> *context_kv_cache = nullptr,
     const std::vector<IrodoriLayerAdaLNModulation> *modulation_cache = nullptr);
+
+class IrodoriRfSampler {
+public:
+  class ContextCache {
+  public:
+    ContextCache();
+    ~ContextCache();
+
+  private:
+    friend class IrodoriRfSampler;
+    class State;
+    std::shared_ptr<State> state_;
+  };
+
+  class ModulationCache {
+  public:
+    ModulationCache();
+    ~ModulationCache();
+
+  private:
+    friend class IrodoriRfSampler;
+    class State;
+    std::shared_ptr<State> state_;
+  };
+
+  IrodoriRfSampler(std::shared_ptr<const IrodoriAssets> assets,
+                   core::ExecutionContext &execution_context,
+                   size_t graph_arena_bytes, size_t weight_context_bytes,
+                   assets::TensorStorageType weight_storage_type);
+  ~IrodoriRfSampler();
+
+  ContextCache build_context_cache(const std::vector<float> &text_state_cond,
+                                   const std::vector<uint8_t> &text_mask_cond,
+                                   const std::vector<float> &caption_state_cond,
+                                   const IrodoriCaptionCondition &caption,
+                                   const IrodoriSpeakerCondition &speaker,
+                                   bool text_cfg_enabled,
+                                   bool speaker_cfg_enabled,
+                                   bool caption_cfg_enabled);
+  ModulationCache build_modulation_cache(const std::vector<float> &timesteps);
+  void run_step(const std::vector<float> &x_t, int64_t step,
+                const ModulationCache &modulation_cache,
+                const ContextCache &context_cache, bool cfg_active,
+                bool text_cfg_enabled, bool speaker_cfg_enabled,
+                bool caption_cfg_enabled, float text_guidance_scale,
+                float speaker_guidance_scale, float caption_guidance_scale,
+                int64_t latent_steps, std::vector<float> &velocity);
+  int64_t context_graph_rebuilds() const noexcept;
+  int64_t step_graph_rebuilds() const noexcept;
+
+private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+};
 
 } // namespace engine::models::irodori_tts
