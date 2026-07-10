@@ -89,16 +89,15 @@ IndexTTS2Request parse_index_tts2_request(const runtime::TaskRequest & request) 
         out.use_emotion_text = runtime::parse_bool_option(*use_emotion_text_value, "use_emotion_text");
     }
     if (const auto value = runtime::find_option(request.options, {"emotion_text"})) {
-        const auto text = engine::io::trim_ascii_whitespace(*value);
-        if (!text.empty()) {
-            out.emotion_text = text;
+        if (!engine::io::trim_ascii_whitespace(*value).empty()) {
+            out.emotion_text = *value;
         }
     }
     if (request.voice.has_value() &&
         request.voice->style.has_value() &&
         request.voice->style->emotion.has_value()) {
-        const auto text = engine::io::trim_ascii_whitespace(*request.voice->style->emotion);
-        if (!text.empty()) {
+        const auto & text = *request.voice->style->emotion;
+        if (!engine::io::trim_ascii_whitespace(text).empty()) {
             if (use_emotion_text_value.has_value() && !out.use_emotion_text) {
                 throw std::runtime_error("IndexTTS2 --emotion conflicts with use_emotion_text=false");
             }

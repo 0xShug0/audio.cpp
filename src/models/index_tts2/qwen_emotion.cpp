@@ -70,12 +70,6 @@ std::vector<float> causal_mask(int64_t steps) {
     return mask;
 }
 
-std::string chat_prompt_text(const std::string & text) {
-    return "System: 文本情感分类<|endoftext|>\n"
-           "Human: " + text + "<|endoftext|>\n"
-           "Assistant:";
-}
-
 float clamp_emotion(float value) {
     return std::clamp(value, 0.0F, 1.2F);
 }
@@ -230,7 +224,29 @@ IndexTTS2QwenEmotionTokenizer::IndexTTS2QwenEmotionTokenizer(std::shared_ptr<con
 }
 
 std::vector<int32_t> IndexTTS2QwenEmotionTokenizer::encode_chat_prompt(const std::string & text) const {
-    return tokenizer_->encode(chat_prompt_text(text), true);
+    std::vector<int32_t> ids = tokenizer_->encode("System: 文本情感分类", true);
+    ids.push_back(eos_token_id_);
+    std::string user_text = "\nHuman: " + text;
+    size_t trailing_spaces = 0;
+    while (trailing_spaces < user_text.size() && user_text[user_text.size() - trailing_spaces - 1] == ' ') {
+        ++trailing_spaces;
+    }
+    if (trailing_spaces > 0) {
+        user_text.resize(user_text.size() - trailing_spaces);
+    }
+    auto user = tokenizer_->encode(user_text, true);
+    ids.insert(ids.end(), user.begin(), user.end());
+    if (trailing_spaces > 0) {
+        const auto space_token = tokenizer_->find_token_id("Ġ");
+        if (!space_token.has_value()) {
+            throw std::runtime_error("IndexTTS2 Qwen emotion tokenizer missing space token");
+        }
+        ids.insert(ids.end(), trailing_spaces, *space_token);
+    }
+    ids.push_back(eos_token_id_);
+    auto assistant = tokenizer_->encode("\nAssistant:", true);
+    ids.insert(ids.end(), assistant.begin(), assistant.end());
+    return ids;
 }
 
 std::string IndexTTS2QwenEmotionTokenizer::decode(const std::vector<int32_t> & token_ids, bool skip_special_tokens) const {
