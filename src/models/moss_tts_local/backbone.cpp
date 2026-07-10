@@ -1,0 +1,674 @@
+#include "engine/models/moss_tts_local/backbone.h"
+
+#include "engine/framework/core/backend.h"
+#include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/module.h"
+#include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/lookup_modules.h"
+#include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/optimizations/fast_kv_modules.h"
+#include "engine/framework/modules/positional_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/modules/weight_binding.h"
+
+#include <ggml-backend.h>
+#include <ggml.h>
+
+#include <cmath>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace engine::models::moss_tts_local {
+namespace {
+
+namespace modules = engine::modules;
+namespace binding = engine::modules::binding;
+
+constexpr float kMaskedAttentionBias = std::numeric_limits<float>::lowest();
+
+struct GgmlContextDeleter {
+    void operator()(ggml_context * ctx) const noexcept {
+        if (ctx != nullptr) {
+            ggml_free(ctx);
+        }
+    }
+};
+
+struct BackboneLayerWeights {
+    core::TensorValue input_norm;
+    core::TensorValue q_proj;
+    core::TensorValue k_proj;
+    core::TensorValue v_proj;
+    core::TensorValue o_proj;
+    core::TensorValue q_norm;
+    core::TensorValue k_norm;
+    core::TensorValue post_norm;
+    core::TensorValue gate_proj;
+    core::TensorValue up_proj;
+    core::TensorValue down_proj;
+};
+
+struct BackboneWeights {
+    std::shared_ptr<core::BackendWeightStore> store;
+    core::TensorValue embed_tokens;
+    std::vector<BackboneLayerWeights> layers;
+    core::TensorValue norm;
+};
+
+void validate_weight_storage_type(assets::TensorStorageType storage_type) {
+    switch (storage_type) {
+        case assets::TensorStorageType::Native:
+        case assets::TensorStorageType::F32:
+        case assets::TensorStorageType::F16:
+        case assets::TensorStorageType::BF16:
+        case assets::TensorStorageType::Q8_0:
+            return;
+        default:
+            throw std::runtime_error(
+                "MOSS-TTS-Local backbone weight_type supports only native, f32, f16, bf16, and q8_0");
+    }
+}
+
+BackboneWeights load_backbone_weights(
+    const MossTTSLocalAssets & assets,
+    ggml_backend_t backend,
+    core::BackendType backend_type,
+    size_t weight_context_bytes,
+    assets::TensorStorageType storage_type) {
+    validate_weight_storage_type(storage_type);
+    const auto & config = assets.config.backbone;
+    const auto & source = *assets.model_weights;
+    BackboneWeights weights;
+    weights.store = std::make_shared<core::BackendWeightStore>(
+        backend,
+        backend_type,
+        "moss_tts_local.backbone.weights",
+        weight_context_bytes);
+    weights.embed_tokens = weights.store->load_tensor(
+        source,
+        "transformer.embed_tokens.weight",
+        storage_type,
+        {config.vocab_size, config.hidden_size});
+    const int64_t dim = config.head_dim;
+    weights.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
+    for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
+        const std::string prefix = "transformer.layers." + std::to_string(layer);
+        BackboneLayerWeights w;
+        w.input_norm = weights.store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size});
+        w.q_proj = weights.store->load_tensor(
+            source,
+            prefix + ".self_attn.q_proj.weight",
+            storage_type,
+            {config.num_attention_heads * dim, config.hidden_size});
+        w.k_proj = weights.store->load_tensor(
+            source,
+            prefix + ".self_attn.k_proj.weight",
+            storage_type,
+            {config.num_key_value_heads * dim, config.hidden_size});
+        w.v_proj = weights.store->load_tensor(
+            source,
+            prefix + ".self_attn.v_proj.weight",
+            storage_type,
+            {config.num_key_value_heads * dim, config.hidden_size});
+        w.o_proj = weights.store->load_tensor(
+            source,
+            prefix + ".self_attn.o_proj.weight",
+            storage_type,
+            {config.hidden_size, config.num_attention_heads * dim});
+        w.q_norm = weights.store->load_f32_tensor(source, prefix + ".self_attn.q_norm.weight", {dim});
+        w.k_norm = weights.store->load_f32_tensor(source, prefix + ".self_attn.k_norm.weight", {dim});
+        w.post_norm = weights.store->load_f32_tensor(
+            source,
+            prefix + ".post_attention_layernorm.weight",
+            {config.hidden_size});
+        w.gate_proj = weights.store->load_tensor(
+            source,
+            prefix + ".mlp.gate_proj.weight",
+            storage_type,
+            {config.intermediate_size, config.hidden_size});
+        w.up_proj = weights.store->load_tensor(
+            source,
+            prefix + ".mlp.up_proj.weight",
+            storage_type,
+            {config.intermediate_size, config.hidden_size});
+        w.down_proj = weights.store->load_tensor(
+            source,
+            prefix + ".mlp.down_proj.weight",
+            storage_type,
+            {config.hidden_size, config.intermediate_size});
+        weights.layers.push_back(std::move(w));
+    }
+    weights.norm = weights.store->load_f32_tensor(source, "transformer.norm.weight", {config.hidden_size});
+    weights.store->upload();
+    return weights;
+}
+
+core::TensorValue ensure_contiguous(core::ModuleBuildContext & ctx, const core::TensorValue & value) {
+    return core::ensure_backend_addressable_layout(ctx, value);
+}
+
+core::TensorValue reshape_heads(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    int64_t heads,
+    int64_t dim) {
+    auto contiguous = ensure_contiguous(ctx, input);
+    return core::reshape_tensor(
+        ctx,
+        contiguous,
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
+}
+
+core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::TensorValue & input, int64_t repeats) {
+    if (repeats == 1) {
+        return input;
+    }
+    auto contiguous = ensure_contiguous(ctx, input);
+    const int64_t batch = contiguous.shape.dims[0];
+    const int64_t kv_heads = contiguous.shape.dims[1];
+    const int64_t steps = contiguous.shape.dims[2];
+    const int64_t dim = contiguous.shape.dims[3];
+    auto expanded = core::reshape_tensor(
+        ctx,
+        contiguous,
+        core::TensorShape::from_dims({batch, kv_heads, 1, steps * dim}));
+    expanded = modules::RepeatModule({core::TensorShape::from_dims({batch, kv_heads, repeats, steps * dim})})
+                   .build(ctx, expanded);
+    expanded = ensure_contiguous(ctx, expanded);
+    return core::reshape_tensor(
+        ctx,
+        expanded,
+        core::TensorShape::from_dims({batch, kv_heads * repeats, steps, dim}));
+}
+
+core::TensorValue attention_from_heads(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & q_heads,
+    const core::TensorValue & k_heads,
+    const core::TensorValue & v_heads,
+    int64_t dim,
+    const core::TensorValue & attention_mask) {
+    const modules::MatMulModule matmul;
+    auto scores = matmul.build(
+        ctx,
+        q_heads,
+        modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
+    scores = core::ensure_backend_addressable_layout(ctx, scores);
+    auto attn = core::wrap_tensor(
+        ggml_soft_max_ext(
+            ctx.ggml,
+            scores.tensor,
+            attention_mask.tensor,
+            1.0F / std::sqrt(static_cast<float>(dim)),
+            0.0F),
+        scores.shape,
+        GGML_TYPE_F32);
+    return matmul.build(ctx, attn, v_heads);
+}
+
+// Prefill decoder layer: a standard batched causal-attention layer that also exposes this
+// layer's post-RoPE key and pre-transpose value ([1, steps, kv_heads, dim]) so the caller can
+// seed the generation cache from a single full-prompt forward instead of stepping position by
+// position. key/value are laid out exactly as decoder_layer_cached writes them per step.
+struct PrefillLayerOutput {
+    core::TensorValue hidden;
+    core::TensorValue key;
+    core::TensorValue value;
+};
+
+PrefillLayerOutput decoder_layer_prefill(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const BackboneLayerWeights & weights,
+    const MossBackboneConfig & config,
+    const core::TensorValue & attention_mask) {
+    const int64_t dim = config.head_dim;
+    const int64_t kv_repeats = config.num_attention_heads / config.num_key_value_heads;
+    const modules::LinearModule q_proj(
+        binding::linear_config(config.hidden_size, config.num_attention_heads * dim, false));
+    const modules::LinearModule k_proj(
+        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
+    const modules::LinearModule v_proj(
+        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
+    const modules::LinearModule o_proj(
+        binding::linear_config(config.num_attention_heads * dim, config.hidden_size, false));
+    const modules::RMSNormModule hidden_norm({config.hidden_size, config.rms_norm_eps, true, false});
+    const modules::RMSNormModule head_norm({dim, config.rms_norm_eps, true, false});
+    auto x_norm = hidden_norm.build(ctx, input, binding::norm_data(ctx, weights.input_norm));
+    auto q = q_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.q_proj));
+    auto k = k_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.k_proj));
+    auto v = v_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.v_proj));
+    q = head_norm.build(ctx, reshape_heads(ctx, q, config.num_attention_heads, dim), binding::norm_data(ctx, weights.q_norm));
+    k = head_norm.build(ctx, reshape_heads(ctx, k, config.num_key_value_heads, dim), binding::norm_data(ctx, weights.k_norm));
+    v = reshape_heads(ctx, v, config.num_key_value_heads, dim);
+    q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
+    k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
+
+    // Capture k/v in the same [1, steps, kv_heads, dim] layout the per-step cache stores.
+    auto cache_key = ensure_contiguous(ctx, k);
+    auto cache_value = ensure_contiguous(ctx, v);
+
+    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
+    auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k), kv_repeats);
+    auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
+    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
+    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+    context = ensure_contiguous(ctx, context);
+    context = core::reshape_tensor(
+        ctx,
+        context,
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
+    auto x = modules::AddModule{}.build(ctx, input, o_proj.build(ctx, context, binding::linear_data(ctx, weights.o_proj)));
+
+    auto ff_in = hidden_norm.build(ctx, x, binding::norm_data(ctx, weights.post_norm));
+    auto gate = modules::LinearModule(
+                    binding::linear_config(config.hidden_size, config.intermediate_size, false))
+                    .build(ctx, ff_in, binding::linear_data(ctx, weights.gate_proj));
+    gate = modules::SiluModule{}.build(ctx, gate);
+    auto up = modules::LinearModule(
+                  binding::linear_config(config.hidden_size, config.intermediate_size, false))
+                  .build(ctx, ff_in, binding::linear_data(ctx, weights.up_proj));
+    auto ff = modules::LinearModule(
+                  binding::linear_config(config.intermediate_size, config.hidden_size, false))
+                  .build(ctx, modules::MulModule{}.build(ctx, gate, up), binding::linear_data(ctx, weights.down_proj));
+    return {modules::AddModule{}.build(ctx, x, ff), cache_key, cache_value};
+}
+
+// Cached (single-position) decoder layer: computes q/k/v for the one new row, writes k/v into
+// the persistent per-layer cache at cache_slot, then attends the new query over the whole
+// cache (invalid rows suppressed by attention_mask). Same math as the prefill layer, one row
+// at a time, so cached generation matches a full re-forward.
+core::TensorValue decoder_layer_cached(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,          // [1, 1, hidden]
+    const core::TensorValue & positions,      // i32 [1]
+    const BackboneLayerWeights & weights,
+    const MossBackboneConfig & config,
+    const core::TensorValue & cache_key,      // [1, cache_steps, kv_heads, dim]
+    const core::TensorValue & cache_value,    // [1, cache_steps, kv_heads, dim]
+    const core::TensorValue & cache_slot,     // i32 [1]
+    const core::TensorValue & attention_mask) {  // [1, 1, 1, cache_steps]
+    const int64_t dim = config.head_dim;
+    const int64_t kv_repeats = config.num_attention_heads / config.num_key_value_heads;
+    const modules::LinearModule q_proj(
+        binding::linear_config(config.hidden_size, config.num_attention_heads * dim, false));
+    const modules::LinearModule k_proj(
+        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
+    const modules::LinearModule v_proj(
+        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
+    const modules::LinearModule o_proj(
+        binding::linear_config(config.num_attention_heads * dim, config.hidden_size, false));
+    const modules::RMSNormModule hidden_norm({config.hidden_size, config.rms_norm_eps, true, false});
+    const modules::RMSNormModule head_norm({dim, config.rms_norm_eps, true, false});
+    auto x_norm = hidden_norm.build(ctx, input, binding::norm_data(ctx, weights.input_norm));
+    auto q = q_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.q_proj));
+    auto k = k_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.k_proj));
+    auto v = v_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.v_proj));
+    q = head_norm.build(ctx, reshape_heads(ctx, q, config.num_attention_heads, dim), binding::norm_data(ctx, weights.q_norm));
+    k = head_norm.build(ctx, reshape_heads(ctx, k, config.num_key_value_heads, dim), binding::norm_data(ctx, weights.k_norm));
+    v = reshape_heads(ctx, v, config.num_key_value_heads, dim);
+    q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
+    k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
+
+    const modules::FastKVSetRowsModule set_rows;
+    auto all_k = set_rows.build(ctx, cache_key, k, cache_slot);
+    auto all_v = set_rows.build(ctx, cache_value, v, cache_slot);
+
+    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
+    auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k), kv_repeats);
+    auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v), kv_repeats);
+    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
+    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+    context = ensure_contiguous(ctx, context);
+    context = core::reshape_tensor(
+        ctx,
+        context,
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
+    auto x = modules::AddModule{}.build(ctx, input, o_proj.build(ctx, context, binding::linear_data(ctx, weights.o_proj)));
+
+    auto ff_in = hidden_norm.build(ctx, x, binding::norm_data(ctx, weights.post_norm));
+    auto gate = modules::LinearModule(
+                    binding::linear_config(config.hidden_size, config.intermediate_size, false))
+                    .build(ctx, ff_in, binding::linear_data(ctx, weights.gate_proj));
+    gate = modules::SiluModule{}.build(ctx, gate);
+    auto up = modules::LinearModule(
+                  binding::linear_config(config.hidden_size, config.intermediate_size, false))
+                  .build(ctx, ff_in, binding::linear_data(ctx, weights.up_proj));
+    auto ff = modules::LinearModule(
+                  binding::linear_config(config.intermediate_size, config.hidden_size, false))
+                  .build(ctx, modules::MulModule{}.build(ctx, gate, up), binding::linear_data(ctx, weights.down_proj));
+    return modules::AddModule{}.build(ctx, x, ff);
+}
+
+}  // namespace
+
+struct MossBackboneRuntime::Impl {
+    std::shared_ptr<const MossTTSLocalAssets> assets;
+    ggml_backend_t backend = nullptr;
+    core::BackendType backend_type = core::BackendType::Cpu;
+    size_t graph_arena_bytes = 0;
+    BackboneWeights weights;
+
+    // Cached-generation step graph (built once by begin_generation, reused every step).
+    std::unique_ptr<ggml_context, GgmlContextDeleter> step_ctx;
+    ggml_cgraph * step_graph = nullptr;
+    ggml_backend_buffer_t step_buffer = nullptr;
+    ggml_tensor * step_token = nullptr;
+    ggml_tensor * step_bias = nullptr;
+    ggml_tensor * step_positions = nullptr;
+    ggml_tensor * step_cache_slot = nullptr;
+    ggml_tensor * step_mask = nullptr;
+    ggml_tensor * step_hidden = nullptr;
+    std::vector<ggml_tensor *> cache_keys;
+    std::vector<ggml_tensor *> cache_values;
+    int64_t cache_steps = 0;
+    int64_t valid_steps = 0;
+    std::vector<float> mask_host;
+
+    ~Impl() {
+        if (step_graph != nullptr && backend != nullptr) {
+            core::release_backend_graph_resources(backend, step_graph);
+        }
+        if (step_buffer != nullptr) {
+            ggml_backend_buffer_free(step_buffer);
+        }
+    }
+};
+
+MossBackboneRuntime::MossBackboneRuntime(
+    std::shared_ptr<const MossTTSLocalAssets> assets,
+    core::ExecutionContext & execution_context,
+    size_t graph_arena_bytes,
+    size_t weight_context_bytes,
+    assets::TensorStorageType weight_storage_type)
+    : impl_(std::make_unique<Impl>()) {
+    if (assets == nullptr) {
+        throw std::runtime_error("MOSS-TTS-Local backbone requires assets");
+    }
+    if (assets->model_weights == nullptr) {
+        throw std::runtime_error("MOSS-TTS-Local backbone requires model weights");
+    }
+    impl_->backend = execution_context.backend();
+    if (impl_->backend == nullptr) {
+        throw std::runtime_error("MOSS-TTS-Local backbone backend is not initialized");
+    }
+    impl_->backend_type = execution_context.backend_type();
+    impl_->graph_arena_bytes = graph_arena_bytes;
+    impl_->weights = load_backbone_weights(
+        *assets,
+        impl_->backend,
+        impl_->backend_type,
+        weight_context_bytes,
+        weight_storage_type);
+    impl_->assets = std::move(assets);
+}
+
+MossBackboneRuntime::~MossBackboneRuntime() = default;
+
+int64_t MossBackboneRuntime::hidden_size() const noexcept {
+    return impl_->assets->config.backbone.hidden_size;
+}
+
+void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
+    auto & impl = *impl_;
+    const auto & config = impl.assets->config.backbone;
+    const auto & weights = impl.weights;
+    const int64_t dim = config.head_dim;
+
+    ggml_init_params params{impl.graph_arena_bytes, nullptr, true};
+    impl.step_ctx.reset(ggml_init(params));
+    if (impl.step_ctx == nullptr) {
+        throw std::runtime_error("failed to initialize MOSS-TTS-Local backbone step graph context");
+    }
+    ggml_context * gctx = impl.step_ctx.get();
+    core::ModuleBuildContext ctx{gctx, "moss_tts_local.backbone.step", impl.backend_type};
+
+    auto token_input = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, 1}));
+    ggml_set_input(token_input.tensor);
+    auto bias_input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.hidden_size}));
+    ggml_set_input(bias_input.tensor);
+    auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
+    ggml_set_input(positions.tensor);
+    auto cache_slot = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
+    ggml_set_input(cache_slot.tensor);
+    auto attention_mask =
+        core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, 1, cache_steps}));
+    ggml_set_input(attention_mask.tensor);
+
+    impl.cache_keys.clear();
+    impl.cache_values.clear();
+    impl.cache_keys.reserve(static_cast<size_t>(config.num_hidden_layers));
+    impl.cache_values.reserve(static_cast<size_t>(config.num_hidden_layers));
+
+    auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
+                 .build(ctx, token_input, weights.embed_tokens);
+    x = modules::AddModule{}.build(ctx, x, bias_input);
+    for (const auto & layer : weights.layers) {
+        auto cache_key = core::make_tensor(
+            ctx, GGML_TYPE_F32,
+            core::TensorShape::from_dims({1, cache_steps, config.num_key_value_heads, dim}));
+        auto cache_value = core::make_tensor(
+            ctx, GGML_TYPE_F32,
+            core::TensorShape::from_dims({1, cache_steps, config.num_key_value_heads, dim}));
+        impl.cache_keys.push_back(cache_key.tensor);
+        impl.cache_values.push_back(cache_value.tensor);
+        x = decoder_layer_cached(ctx, x, positions, layer, config, cache_key, cache_value, cache_slot, attention_mask);
+    }
+    x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
+            .build(ctx, x, binding::norm_data(ctx, weights.norm));
+    x = ensure_contiguous(ctx, x);
+    auto hidden = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({1, config.hidden_size}));
+    hidden = ensure_contiguous(ctx, hidden);
+    ggml_set_output(hidden.tensor);
+
+    impl.step_graph = ggml_new_graph_custom(gctx, 65536, false);
+    ggml_build_forward_expand(impl.step_graph, hidden.tensor);
+
+    impl.step_buffer = ggml_backend_alloc_ctx_tensors(gctx, impl.backend);
+    if (impl.step_buffer == nullptr) {
+        throw std::runtime_error("failed to allocate MOSS-TTS-Local backbone step graph");
+    }
+
+    impl.step_token = token_input.tensor;
+    impl.step_bias = bias_input.tensor;
+    impl.step_positions = positions.tensor;
+    impl.step_cache_slot = cache_slot.tensor;
+    impl.step_mask = attention_mask.tensor;
+    impl.step_hidden = hidden.tensor;
+    impl.cache_steps = cache_steps;
+    impl.mask_host.assign(static_cast<size_t>(cache_steps), kMaskedAttentionBias);
+}
+
+void MossBackboneRuntime::begin_generation(int64_t max_positions) const {
+    if (max_positions <= 0) {
+        throw std::runtime_error("MOSS-TTS-Local backbone begin_generation requires max_positions > 0");
+    }
+    auto & impl = *impl_;
+    if (impl.step_graph == nullptr || impl.cache_steps < max_positions) {
+        if (impl.step_graph != nullptr) {
+            core::release_backend_graph_resources(impl.backend, impl.step_graph);
+            impl.step_graph = nullptr;
+        }
+        if (impl.step_buffer != nullptr) {
+            ggml_backend_buffer_free(impl.step_buffer);
+            impl.step_buffer = nullptr;
+        }
+        build_step_graph(max_positions);
+    }
+    // Zero the caches so not-yet-written (masked) rows can never inject NaNs into the softmax.
+    const auto & config = impl.assets->config.backbone;
+    const size_t elems =
+        static_cast<size_t>(impl.cache_steps * config.num_key_value_heads * config.head_dim);
+    const std::vector<float> zeros(elems, 0.0F);
+    for (auto * tensor : impl.cache_keys) {
+        ggml_backend_tensor_set(tensor, zeros.data(), 0, elems * sizeof(float));
+    }
+    for (auto * tensor : impl.cache_values) {
+        ggml_backend_tensor_set(tensor, zeros.data(), 0, elems * sizeof(float));
+    }
+    impl.valid_steps = 0;
+}
+
+std::vector<float> MossBackboneRuntime::step(int32_t token_id, const std::vector<float> & audio_bias_row) const {
+    auto & impl = *impl_;
+    if (impl.step_graph == nullptr) {
+        throw std::runtime_error("MOSS-TTS-Local backbone step called before begin_generation");
+    }
+    const int64_t hidden = impl.assets->config.backbone.hidden_size;
+    if (static_cast<int64_t>(audio_bias_row.size()) != hidden) {
+        throw std::runtime_error("MOSS-TTS-Local backbone step audio bias row size does not match hidden_size");
+    }
+    if (impl.valid_steps >= impl.cache_steps) {
+        throw std::runtime_error("MOSS-TTS-Local backbone step exceeds cache capacity");
+    }
+    const int32_t position = static_cast<int32_t>(impl.valid_steps);
+    ggml_backend_tensor_set(impl.step_token, &token_id, 0, sizeof(int32_t));
+    ggml_backend_tensor_set(impl.step_bias, audio_bias_row.data(), 0, audio_bias_row.size() * sizeof(float));
+    ggml_backend_tensor_set(impl.step_positions, &position, 0, sizeof(int32_t));
+    ggml_backend_tensor_set(impl.step_cache_slot, &position, 0, sizeof(int32_t));
+    for (int64_t i = 0; i < impl.cache_steps; ++i) {
+        impl.mask_host[static_cast<size_t>(i)] = (i <= impl.valid_steps) ? 0.0F : kMaskedAttentionBias;
+    }
+    ggml_backend_tensor_set(impl.step_mask, impl.mask_host.data(), 0, impl.mask_host.size() * sizeof(float));
+
+    const ggml_status status = ggml_backend_graph_compute(impl.backend, impl.step_graph);
+    ggml_backend_synchronize(impl.backend);
+    if (status != GGML_STATUS_SUCCESS) {
+        throw std::runtime_error("MOSS-TTS-Local backbone step graph compute failed");
+    }
+    std::vector<float> hidden_state(static_cast<size_t>(hidden));
+    ggml_backend_tensor_get(impl.step_hidden, hidden_state.data(), 0, hidden_state.size() * sizeof(float));
+    ++impl.valid_steps;
+    return hidden_state;
+}
+
+std::vector<float> MossBackboneRuntime::prefill(
+    const std::vector<int32_t> & token_ids,
+    const std::vector<float> & audio_bias) const {
+    auto & impl = *impl_;
+    if (impl.step_graph == nullptr) {
+        throw std::runtime_error("MOSS-TTS-Local backbone prefill called before begin_generation");
+    }
+    const auto & config = impl.assets->config.backbone;
+    const int64_t steps = static_cast<int64_t>(token_ids.size());
+    if (steps <= 0) {
+        throw std::runtime_error("MOSS-TTS-Local backbone prefill requires a non-empty prompt");
+    }
+    if (steps > impl.cache_steps) {
+        throw std::runtime_error("MOSS-TTS-Local backbone prefill prompt exceeds cache capacity");
+    }
+    if (static_cast<int64_t>(audio_bias.size()) != steps * config.hidden_size) {
+        throw std::runtime_error("MOSS-TTS-Local backbone prefill audio bias size does not match [steps, hidden]");
+    }
+    const int64_t dim = config.head_dim;
+    const int64_t kv_heads = config.num_key_value_heads;
+
+    ggml_init_params params{impl.graph_arena_bytes, nullptr, true};
+    std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx(ggml_init(params));
+    if (graph_ctx == nullptr) {
+        throw std::runtime_error("failed to initialize MOSS-TTS-Local backbone prefill context");
+    }
+    core::ModuleBuildContext ctx{graph_ctx.get(), "moss_tts_local.backbone.prefill", impl.backend_type};
+
+    auto token_input = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, steps}));
+    ggml_set_input(token_input.tensor);
+    auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
+    ggml_set_input(positions.tensor);
+    auto attention_mask =
+        core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, steps}));
+    ggml_set_input(attention_mask.tensor);
+    auto bias_input =
+        core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, steps, config.hidden_size}));
+    ggml_set_input(bias_input.tensor);
+
+    auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
+                 .build(ctx, token_input, impl.weights.embed_tokens);
+    x = modules::AddModule{}.build(ctx, x, bias_input);
+    std::vector<core::TensorValue> layer_keys;
+    std::vector<core::TensorValue> layer_values;
+    layer_keys.reserve(impl.weights.layers.size());
+    layer_values.reserve(impl.weights.layers.size());
+    for (const auto & layer : impl.weights.layers) {
+        auto out = decoder_layer_prefill(ctx, x, positions, layer, config, attention_mask);
+        x = out.hidden;
+        layer_keys.push_back(out.key);
+        layer_values.push_back(out.value);
+    }
+    x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
+            .build(ctx, x, binding::norm_data(ctx, impl.weights.norm));
+    x = ensure_contiguous(ctx, x);
+    auto hidden = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({steps, config.hidden_size}));
+    hidden = ensure_contiguous(ctx, hidden);
+    ggml_set_output(hidden.tensor);
+
+    // Copy each layer's K/V straight into the generation cache rows [0, steps) as part of the
+    // graph. Doing it on-device (instead of reading the intermediates back to the host) is both
+    // faster and immune to the graph allocator reusing those tensors' storage after compute.
+    ggml_cgraph * graph = ggml_new_graph_custom(graph_ctx.get(), 65536, false);
+    ggml_build_forward_expand(graph, hidden.tensor);
+    for (size_t layer = 0; layer < impl.cache_keys.size(); ++layer) {
+        ggml_tensor * cache_key = impl.cache_keys[layer];
+        ggml_tensor * cache_value = impl.cache_values[layer];
+        ggml_tensor * key_view = ggml_view_4d(
+            graph_ctx.get(), cache_key, dim, kv_heads, steps, 1,
+            cache_key->nb[1], cache_key->nb[2], cache_key->nb[3], 0);
+        ggml_tensor * value_view = ggml_view_4d(
+            graph_ctx.get(), cache_value, dim, kv_heads, steps, 1,
+            cache_value->nb[1], cache_value->nb[2], cache_value->nb[3], 0);
+        ggml_build_forward_expand(graph, ggml_cpy(graph_ctx.get(), layer_keys[layer].tensor, key_view));
+        ggml_build_forward_expand(graph, ggml_cpy(graph_ctx.get(), layer_values[layer].tensor, value_view));
+    }
+
+    ggml_gallocr_t gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(impl.backend));
+    if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+        }
+        throw std::runtime_error("failed to allocate MOSS-TTS-Local backbone prefill graph");
+    }
+
+    ggml_backend_tensor_set(token_input.tensor, token_ids.data(), 0, token_ids.size() * sizeof(int32_t));
+    std::vector<int32_t> position_host(static_cast<size_t>(steps));
+    for (int64_t i = 0; i < steps; ++i) {
+        position_host[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+    }
+    ggml_backend_tensor_set(positions.tensor, position_host.data(), 0, position_host.size() * sizeof(int32_t));
+    std::vector<float> mask_host(static_cast<size_t>(steps * steps), kMaskedAttentionBias);
+    for (int64_t q = 0; q < steps; ++q) {
+        for (int64_t k = 0; k <= q; ++k) {
+            mask_host[static_cast<size_t>(q * steps + k)] = 0.0F;
+        }
+    }
+    ggml_backend_tensor_set(attention_mask.tensor, mask_host.data(), 0, mask_host.size() * sizeof(float));
+    ggml_backend_tensor_set(bias_input.tensor, audio_bias.data(), 0, audio_bias.size() * sizeof(float));
+
+    const ggml_status status = ggml_backend_graph_compute(impl.backend, graph);
+    ggml_backend_synchronize(impl.backend);
+    if (status != GGML_STATUS_SUCCESS) {
+        ggml_gallocr_free(gallocr);
+        throw std::runtime_error("MOSS-TTS-Local backbone prefill graph compute failed");
+    }
+
+    std::vector<float> last_hidden(static_cast<size_t>(config.hidden_size));
+    ggml_backend_tensor_get(
+        hidden.tensor,
+        last_hidden.data(),
+        static_cast<size_t>((steps - 1) * config.hidden_size) * sizeof(float),
+        last_hidden.size() * sizeof(float));
+    ggml_gallocr_free(gallocr);
+    impl.valid_steps = steps;
+    return last_hidden;
+}
+
+int64_t MossBackboneRuntime::cached_positions() const noexcept {
+    return impl_->valid_steps;
+}
+
+}  // namespace engine::models::moss_tts_local
