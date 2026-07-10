@@ -225,16 +225,24 @@ core::TensorValue decoder_block(core::ModuleBuildContext &ctx,
   auto hidden =
       modules::Snake1dModule({in_channels}).build(ctx, input, weights.up_snake);
   const int64_t padding = (stride + 1) / 2;
+  const bool crop_vulkan_output = ctx.backend_type == core::BackendType::Vulkan;
   hidden = modules::ConvTranspose1dModule({
                                               in_channels,
                                               out_channels,
                                               2 * stride,
                                               static_cast<int>(stride),
-                                              static_cast<int>(padding),
+                                              crop_vulkan_output
+                                                  ? 0
+                                                  : static_cast<int>(padding),
                                               1,
                                               weights.up_conv.bias.has_value(),
                                           })
                .build(ctx, hidden, weights.up_conv);
+  if (crop_vulkan_output) {
+    hidden = modules::SliceModule({2, padding,
+                                   hidden.shape.dims[2] - 2 * padding})
+                 .build(ctx, hidden);
+  }
   hidden = residual_unit(ctx, hidden, weights.residual_0, out_channels, 1);
   hidden = residual_unit(ctx, hidden, weights.residual_1, out_channels, 3);
   hidden = residual_unit(ctx, hidden, weights.residual_2, out_channels, 9);
