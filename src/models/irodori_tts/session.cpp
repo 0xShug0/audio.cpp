@@ -2132,12 +2132,7 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
           static_cast<float>(irodori_request.generation.num_inference_steps);
       const float t = timesteps[static_cast<size_t>(step)];
       const float t_next = (1.0F - u_next) * 0.999F;
-      const bool cfg_active =
-          (irodori_request.generation.text_guidance_scale > 0.0F ||
-           (speaker.has_speaker &&
-            irodori_request.generation.speaker_guidance_scale > 0.0F) ||
-           (rf_caption.has_caption &&
-            irodori_request.generation.caption_guidance_scale > 0.0F)) &&
+      const bool cfg_active = any_cfg_enabled &&
           t >= irodori_request.generation.guidance_min_t &&
           t <= irodori_request.generation.guidance_max_t;
       const auto &rf_context =

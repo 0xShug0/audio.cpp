@@ -71,6 +71,17 @@
         "seed": 4234
       },
       {
+        "id": "korean_hangul_decomposition",
+        "text": "안녕하세요. 한국어 음성 합성 경로를 확인합니다.",
+        "language": "ko",
+        "voice": "F3",
+        "total_steps": 8,
+        "num_inference_steps": 8,
+        "speed": 1.05,
+        "speaking_rate": 1.05,
+        "seed": 4734
+      },
+      {
         "id": "english_longform_chunking",
         "text": "Once upon a time, in a small village nestled between rolling hills, there lived a young artist named Clara. Every morning, she woke before dawn to capture the first light of day. The golden rays streaming through her window inspired countless paintings. Her work was known throughout the region for vibrant colors and emotional depth. People from far and wide came to see her gallery, and many said her paintings could tell stories that words never could.",
         "language": "en",

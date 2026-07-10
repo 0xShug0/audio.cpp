@@ -361,7 +361,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "model": "models/supertonic-3",
         "case_catalog": "tests/supertonic/supertonic_warm_bench_cases.json",
         "default_case_name": "multi_path_voice_lang_steps_speed_chunking",
-        "default_requests_per_session": 5,
+        "default_requests_per_session": 6,
         "default_warmup": 0,
         "wav_cosine_min": 0.90,
         "log_mel_cosine_min": 0.90,

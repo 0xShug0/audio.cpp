@@ -22,9 +22,6 @@ std::shared_ptr<const SupertonicAssets> require_assets(std::shared_ptr<const Sup
 void validate_session_options(const runtime::SessionOptions & options) {
     for (const auto & [key, value] : options.options) {
         (void)value;
-        if (key == "max_text_length") {
-            continue;
-        }
         if (key.rfind("supertonic.", 0) == 0) {
             throw std::runtime_error("unknown Supertonic session option: " + key);
         }

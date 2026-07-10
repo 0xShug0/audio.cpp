@@ -2076,12 +2076,10 @@ SupertonicChunkOutput synthesize_supertonic_chunk(
     const std::vector<int64_t> & style_ttl_shape,
     const std::vector<float> & style_dp,
     const std::vector<int64_t> & style_dp_shape,
-    NumpyMt19937Normal & rng,
-    size_t chunk_index) {
+    NumpyMt19937Normal & rng) {
     const auto chunk_start = std::chrono::steady_clock::now();
     auto timing_start = std::chrono::steady_clock::now();
     const auto text_inputs = tokenizer.encode(text, options.language);
-    engine::debug::timing_log_scalar("supertonic.chunk.index", static_cast<int64_t>(chunk_index));
     engine::debug::timing_log_scalar("supertonic.chunk.text_chars", static_cast<int64_t>(text.size()));
     engine::debug::timing_log_scalar("supertonic.chunk.text_tokens", text_inputs.length);
     engine::debug::timing_log_scalar("supertonic.chunk.encode_ms", engine::debug::elapsed_ms(timing_start));
@@ -2259,8 +2257,7 @@ runtime::AudioBuffer SupertonicNativeRuntime::synthesize(
         style.ttl_shape,
         style.dp,
         style.dp_shape,
-        rng,
-        0);
+        rng);
     runtime::AudioBuffer out = std::move(chunk_audio.audio);
     const size_t trim = std::min(
         out.samples.size(),

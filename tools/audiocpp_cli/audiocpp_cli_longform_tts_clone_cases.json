@@ -243,6 +243,36 @@
           "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication."
         }
       ]
+    },
+    {
+      "id": "index_tts2_longform_voice_clone_6000_emotion_text",
+      "coverage": "IndexTTS2 longform voice clone with 6000-character text plus long emotion-text conditioning",
+      "family": "index_tts2",
+      "model": "models/IndexTTS-2",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "longform_voice_clone_emotion_text",
+          "text_repeat": {
+            "text": "The archivist kept her voice steady while reading the witness report aloud, pausing after each sentence so the council could follow the chain of events without losing the emotional thread. ",
+            "chars": 6000
+          },
+          "voice_ref": "resources/index_tts2/official_examples/voice_12.wav",
+          "emotion_repeat": {
+            "text": "Speak with restrained fear, controlled urgency, and a careful softness, as if protecting a secret while trying not to alarm the listener. ",
+            "chars": 2400
+          },
+          "options": {
+            "emotion_alpha": 0.6,
+            "use_random_emotion": false
+          },
+          "seed": 1234
+        }
+      ]
     }
   ]
 }

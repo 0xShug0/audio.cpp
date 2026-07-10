@@ -77,6 +77,40 @@ bool ends_with_reference_punctuation(const std::string & text) {
     return false;
 }
 
+void append_hangul_decomposition(uint32_t codepoint, std::vector<uint32_t> & out) {
+    constexpr uint32_t kSBase = 0xAC00;
+    constexpr uint32_t kLBase = 0x1100;
+    constexpr uint32_t kVBase = 0x1161;
+    constexpr uint32_t kTBase = 0x11A7;
+    constexpr uint32_t kLCount = 19;
+    constexpr uint32_t kVCount = 21;
+    constexpr uint32_t kTCount = 28;
+    constexpr uint32_t kNCount = kVCount * kTCount;
+    constexpr uint32_t kSCount = kLCount * kNCount;
+    if (codepoint < kSBase || codepoint >= kSBase + kSCount) {
+        out.push_back(codepoint);
+        return;
+    }
+    const uint32_t s_index = codepoint - kSBase;
+    const uint32_t l_index = s_index / kNCount;
+    const uint32_t v_index = (s_index % kNCount) / kTCount;
+    const uint32_t t_index = s_index % kTCount;
+    out.push_back(kLBase + l_index);
+    out.push_back(kVBase + v_index);
+    if (t_index > 0) {
+        out.push_back(kTBase + t_index);
+    }
+}
+
+std::vector<uint32_t> decompose_hangul_syllables(const std::vector<uint32_t> & codepoints) {
+    std::vector<uint32_t> out;
+    out.reserve(codepoints.size());
+    for (const uint32_t codepoint : codepoints) {
+        append_hangul_decomposition(codepoint, out);
+    }
+    return out;
+}
+
 }  // namespace
 
 SupertonicTextTokenizer::SupertonicTextTokenizer(std::shared_ptr<const SupertonicAssets> assets)
@@ -84,7 +118,7 @@ SupertonicTextTokenizer::SupertonicTextTokenizer(std::shared_ptr<const Supertoni
 
 SupertonicTextInputs SupertonicTextTokenizer::encode(const std::string & text, const std::string & language) const {
     const auto processed = preprocess(text, language);
-    const auto codepoints = utf8_to_codepoints(processed);
+    const auto codepoints = decompose_hangul_syllables(utf8_to_codepoints(processed));
     SupertonicTextInputs out;
     out.length = static_cast<int64_t>(codepoints.size());
     out.ids.reserve(codepoints.size());
