@@ -144,23 +144,12 @@ IrodoriDurationBlockWeights load_duration_block(
     return weights;
 }
 
-core::TensorValue ensure_contiguous(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
-    return core::ensure_backend_addressable_layout(ctx, input);
-}
-
-core::TensorValue repeat_like(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & value,
-    const core::TensorValue & like) {
-    return core::wrap_tensor(ggml_repeat(ctx.ggml, value.tensor, like.tensor), like.shape, GGML_TYPE_F32);
-}
-
 core::TensorValue reshape_heads(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     int64_t heads,
     int64_t head_dim) {
-    auto contiguous = ensure_contiguous(ctx, input);
+    auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
     return core::reshape_tensor(
         ctx,
         contiguous,
@@ -178,7 +167,7 @@ core::TensorValue head_rms_norm(
         core::TensorShape::from_dims({input.shape.dims[2], input.shape.dims[3]}),
         "head_rms_norm.weight");
     auto normalized = core::wrap_tensor(
-        ggml_rms_norm(ctx.ggml, ensure_contiguous(ctx, input).tensor, eps),
+        ggml_rms_norm(ctx.ggml, core::ensure_backend_addressable_layout(ctx, input).tensor, eps),
         input.shape,
         GGML_TYPE_F32);
     auto weight_view = core::reshape_tensor(
@@ -186,7 +175,7 @@ core::TensorValue head_rms_norm(
         weight,
         core::TensorShape::from_dims({1, 1, input.shape.dims[2], input.shape.dims[3]}));
     return core::wrap_tensor(
-        ggml_mul(ctx.ggml, normalized.tensor, repeat_like(ctx, weight_view, normalized).tensor),
+        ggml_mul(ctx.ggml, normalized.tensor, modules::RepeatModule({normalized.shape}).build(ctx, weight_view).tensor),
         input.shape,
         GGML_TYPE_F32);
 }
@@ -208,7 +197,7 @@ core::TensorValue attention_from_heads(
         scores.shape,
         GGML_TYPE_F32);
     scores = modules::AddModule{}.build(ctx, scores, attention_mask);
-    scores = ensure_contiguous(ctx, scores);
+    scores = core::ensure_backend_addressable_layout(ctx, scores);
     auto attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
     return matmul.build(ctx, attn, v_heads);
 }
@@ -240,7 +229,7 @@ core::TensorValue build_self_attention(
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, head_dim, attention_mask);
     context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-    context = ensure_contiguous(ctx, context);
+    context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(
         ctx,
         context,
@@ -307,7 +296,7 @@ core::TensorValue select_speaker_vec(
     auto null_batch = modules::RepeatModule({speaker_first.shape}).build(ctx, null_view);
     auto flag_f32 = core::wrap_tensor(ggml_cast(ctx.ggml, has_speaker.tensor, GGML_TYPE_F32), has_speaker.shape, GGML_TYPE_F32);
     auto flag = core::reshape_tensor(ctx, flag_f32, core::TensorShape::from_dims({has_speaker.shape.dims[0], 1}));
-    auto flag_full = repeat_like(ctx, flag, speaker_first);
+    auto flag_full = modules::RepeatModule({speaker_first.shape}).build(ctx, flag);
     auto inv_flag = core::wrap_tensor(ggml_scale_bias(ctx.ggml, flag_full.tensor, -1.0F, 1.0F), flag_full.shape, GGML_TYPE_F32);
     return modules::AddModule{}.build(
         ctx,
@@ -336,7 +325,7 @@ core::TensorValue select_caption_vec(
     has_seq = modules::RepeatModule({core::TensorShape::from_dims({batch, tokens})}).build(ctx, has_seq);
     mask_f32 = modules::MulModule{}.build(ctx, mask_f32, has_seq);
     auto mask_3d = core::reshape_tensor(ctx, mask_f32, core::TensorShape::from_dims({batch, tokens, 1}));
-    auto mask_full = repeat_like(ctx, mask_3d, caption_state);
+    auto mask_full = modules::RepeatModule({caption_state.shape}).build(ctx, mask_3d);
     auto masked_state = modules::MulModule{}.build(ctx, caption_state, mask_full);
     auto summed = modules::ReduceSumModule({1}).build(ctx, masked_state);
     auto denom = modules::ReduceSumModule({1}).build(ctx, mask_3d);
@@ -345,14 +334,14 @@ core::TensorValue select_caption_vec(
         denom.shape,
         GGML_TYPE_F32);
     auto pooled = core::wrap_tensor(
-        ggml_div(ctx.ggml, summed.tensor, repeat_like(ctx, denom, summed).tensor),
+        ggml_div(ctx.ggml, summed.tensor, modules::RepeatModule({summed.shape}).build(ctx, denom).tensor),
         summed.shape,
         GGML_TYPE_F32);
     pooled = core::reshape_tensor(ctx, pooled, core::TensorShape::from_dims({batch, dim}));
     auto null_view = core::reshape_tensor(ctx, null_caption, core::TensorShape::from_dims({1, dim}));
     auto null_batch = modules::RepeatModule({pooled.shape}).build(ctx, null_view);
     auto flag = core::reshape_tensor(ctx, has_f32, core::TensorShape::from_dims({batch, 1}));
-    auto flag_full = repeat_like(ctx, flag, pooled);
+    auto flag_full = modules::RepeatModule({pooled.shape}).build(ctx, flag);
     auto inv_flag = core::wrap_tensor(ggml_scale_bias(ctx.ggml, flag_full.tensor, -1.0F, 1.0F), flag_full.shape, GGML_TYPE_F32);
     return modules::AddModule{}.build(
         ctx,
@@ -363,7 +352,10 @@ core::TensorValue select_caption_vec(
 core::TensorValue softplus(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input) {
-    auto one = core::wrap_tensor(ggml_scale_bias(ctx.ggml, ensure_contiguous(ctx, input).tensor, 0.0F, 1.0F), input.shape, GGML_TYPE_F32);
+    auto one = core::wrap_tensor(
+        ggml_scale_bias(ctx.ggml, core::ensure_backend_addressable_layout(ctx, input).tensor, 0.0F, 1.0F),
+        input.shape,
+        GGML_TYPE_F32);
     auto exp_value = core::wrap_tensor(ggml_exp(ctx.ggml, input.tensor), input.shape, GGML_TYPE_F32);
     return core::wrap_tensor(ggml_log(ctx.ggml, modules::AddModule{}.build(ctx, exp_value, one).tensor), input.shape, GGML_TYPE_F32);
 }
@@ -376,7 +368,7 @@ core::TensorValue masked_token_sum(
     auto mask_f32 = core::wrap_tensor(ggml_cast(ctx.ggml, mask.tensor, GGML_TYPE_F32), mask.shape, GGML_TYPE_F32);
     auto masked = modules::MulModule{}.build(ctx, values, mask_f32);
     auto sum = core::wrap_tensor(
-        ggml_sum_rows(ctx.ggml, ensure_contiguous(ctx, masked).tensor),
+        ggml_sum_rows(ctx.ggml, core::ensure_backend_addressable_layout(ctx, masked).tensor),
         core::TensorShape::from_dims({values.shape.dims[0], 1}),
         GGML_TYPE_F32);
     return core::reshape_tensor(ctx, sum, core::TensorShape::from_dims({values.shape.dims[0]}));
@@ -385,7 +377,10 @@ core::TensorValue masked_token_sum(
 core::TensorValue log1p_tensor(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input) {
-    auto one = core::wrap_tensor(ggml_scale_bias(ctx.ggml, ensure_contiguous(ctx, input).tensor, 0.0F, 1.0F), input.shape, GGML_TYPE_F32);
+    auto one = core::wrap_tensor(
+        ggml_scale_bias(ctx.ggml, core::ensure_backend_addressable_layout(ctx, input).tensor, 0.0F, 1.0F),
+        input.shape,
+        GGML_TYPE_F32);
     return core::wrap_tensor(ggml_log(ctx.ggml, modules::AddModule{}.build(ctx, input, one).tensor), input.shape, GGML_TYPE_F32);
 }
 
@@ -639,9 +634,9 @@ core::TensorValue build_irodori_duration_predictor(
         auto shift_seq = core::reshape_tensor(ctx, shift, core::TensorShape::from_dims({text_state.shape.dims[0], 1, config.duration_hidden_dim}));
         auto scale_seq = core::reshape_tensor(ctx, scale, core::TensorShape::from_dims({text_state.shape.dims[0], 1, config.duration_hidden_dim}));
         auto gate_seq = core::reshape_tensor(ctx, gate, core::TensorShape::from_dims({text_state.shape.dims[0], 1, config.duration_hidden_dim}));
-        shift_seq = repeat_like(ctx, shift_seq, normed);
-        scale_seq = repeat_like(ctx, scale_seq, normed);
-        gate_seq = repeat_like(ctx, gate_seq, normed);
+        shift_seq = modules::RepeatModule({normed.shape}).build(ctx, shift_seq);
+        scale_seq = modules::RepeatModule({normed.shape}).build(ctx, scale_seq);
+        gate_seq = modules::RepeatModule({normed.shape}).build(ctx, gate_seq);
         normed = modules::AddModule{}.build(
             ctx,
             modules::MulModule{}.build(

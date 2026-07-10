@@ -34,10 +34,6 @@ bool contains_token(
     return false;
 }
 
-bool token_in(const std::string & token, const std::vector<std::string> & values) {
-    return std::find(values.begin(), values.end(), token) != values.end();
-}
-
 size_t utf8_codepoint_size(unsigned char byte) {
     if ((byte & 0x80U) == 0U) {
         return 1;
@@ -172,7 +168,7 @@ std::vector<std::vector<std::string>> split_segments_by_token(
             sub_segments = split_segments_by_token(current_segment, {"-"}, max_text_tokens_per_segment);
             should_flush_sub_segments = true;
         } else if (current_segment_tokens_len <= max_text_tokens_per_segment) {
-            if (token_in(token, split_tokens) && current_segment_tokens_len > 2) {
+            if (std::find(split_tokens.begin(), split_tokens.end(), token) != split_tokens.end() && current_segment_tokens_len > 2) {
                 if (i + 1 < tokenized.size() && (tokenized[i + 1] == "'" || tokenized[i + 1] == "▁'")) {
                     current_segment.push_back(tokenized[i + 1]);
                 }

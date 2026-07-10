@@ -123,10 +123,6 @@ bool shape_fits_capacity(const std::vector<int64_t> & capacity, const std::vecto
     return true;
 }
 
-bool same_shape_vector(const std::vector<int64_t> & lhs, const std::vector<int64_t> & rhs) {
-    return lhs == rhs;
-}
-
 void append_cache_key_shape(std::vector<int64_t> & key, const std::vector<int64_t> & shape) {
     key.push_back(static_cast<int64_t>(shape.size()));
     key.insert(key.end(), shape.begin(), shape.end());
@@ -156,7 +152,7 @@ void copy_padded_values(
     }
     const size_t dst_count = vector_num_elements(dst_shape);
     std::fill(dst, dst + dst_count, T{});
-    if (same_shape_vector(dst_shape, src_shape)) {
+    if (dst_shape == src_shape) {
         std::memcpy(dst, src, dst_count * sizeof(T));
         return;
     }
@@ -181,7 +177,7 @@ std::vector<T> slice_padded_values(
     if (!shape_fits_capacity(src_shape, dst_shape)) {
         throw std::runtime_error("Supertonic padded slice shape mismatch");
     }
-    if (same_shape_vector(src_shape, dst_shape)) {
+    if (src_shape == dst_shape) {
         return src;
     }
     const size_t dst_count = vector_num_elements(dst_shape);
@@ -211,7 +207,7 @@ void upload_f32_tensor(
     std::vector<float> padded;
     const float * src = values.data();
     size_t count = values.size();
-    if (!same_shape_vector(capacity_shape, logical_shape)) {
+    if (capacity_shape != logical_shape) {
         padded.resize(vector_num_elements(capacity_shape));
         copy_padded_values(padded.data(), capacity_shape, values.data(), logical_shape);
         src = padded.data();
@@ -235,7 +231,7 @@ void upload_i32_tensor(
     std::vector<int32_t> padded;
     const int32_t * src = values.data();
     size_t count = values.size();
-    if (!same_shape_vector(capacity_shape, logical_shape)) {
+    if (capacity_shape != logical_shape) {
         padded.resize(vector_num_elements(capacity_shape));
         copy_padded_values(padded.data(), capacity_shape, values.data(), logical_shape);
         src = padded.data();
@@ -464,7 +460,7 @@ core::TensorValue depthwise_conv1d(
     const core::TensorValue & weight,
     const core::TensorValue & bias,
     int dilation) {
-    return modules::DepthwiseConv1dModuleExp({
+    return modules::DepthwiseConv1dModule({
         input.shape.dims[1],
         weight.shape.dims[2],
         1,

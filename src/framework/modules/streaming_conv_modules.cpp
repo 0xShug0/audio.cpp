@@ -132,64 +132,6 @@ core::TensorValue DepthwiseConv1dModule::build(
         }));
 }
 
-DepthwiseConv1dModuleExp::DepthwiseConv1dModuleExp(DepthwiseConv1dConfig config) : config_(config) {
-    if (config_.channels <= 0 || config_.kernel_size <= 0) {
-        throw std::runtime_error("DepthwiseConv1dConfig dimensions must be positive");
-    }
-    if (config_.stride <= 0 || config_.dilation <= 0) {
-        throw std::runtime_error("DepthwiseConv1d stride and dilation must be positive");
-    }
-}
-
-core::TensorValue DepthwiseConv1dModuleExp::build(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const DepthwiseConv1dWeights & weights) const {
-    if (ctx.ggml == nullptr) {
-        throw std::runtime_error("ModuleBuildContext.ggml is null");
-    }
-    core::validate_rank_between(input, 3, 3, "input");
-    core::validate_shape(
-        input,
-        core::TensorShape::from_dims({input.shape.dims[0], config_.channels, input.shape.dims[2]}),
-        "input");
-    core::validate_shape(
-        weights.weight,
-        core::TensorShape::from_dims({config_.channels, 1, config_.kernel_size}),
-        "weight");
-
-    const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
-    const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "DepthwiseConv1dModuleExp");
-    auto input_4d = core::reshape_tensor(
-        ctx,
-        input_contiguous,
-        core::TensorShape::from_dims({input.shape.dims[0], config_.channels, 1, input.shape.dims[2]}));
-    auto weight_4d = core::reshape_tensor(
-        ctx,
-        weight_contiguous,
-        core::TensorShape::from_dims({config_.channels, 1, 1, config_.kernel_size}));
-    auto output_4d = DepthwiseConv2dModule({
-        config_.channels,
-        1,
-        config_.kernel_size,
-        1,
-        config_.stride,
-        0,
-        config_.padding,
-        1,
-        config_.dilation,
-        config_.use_bias,
-    }).build(ctx, input_4d, {weight_4d, weights.bias});
-    return core::reshape_tensor(
-        ctx,
-        output_4d,
-        core::TensorShape::from_dims({
-            input.shape.dims[0],
-            config_.channels,
-            depthwise_conv1d_output_frames(config_, input.shape.dims[2]),
-        }));
-}
-
 PointwiseConv1dModule::PointwiseConv1dModule(PointwiseConv1dConfig config) : config_(config) {}
 
 core::TensorValue PointwiseConv1dModule::build(

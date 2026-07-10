@@ -11,7 +11,6 @@
 
 #include <cstddef>
 #include <memory>
-#include <optional>
 #include <vector>
 
 namespace engine::core {
@@ -19,11 +18,6 @@ class BackendWeightStore;
 }
 
 namespace engine::models::irodori_tts {
-
-struct IrodoriCodecFastConvTranspose1dWeights {
-    core::TensorValue conv1d_weight;
-    std::optional<core::TensorValue> bias;
-};
 
 struct IrodoriCodecResidualUnitWeights {
     modules::Snake1dWeights snake0;
@@ -34,7 +28,7 @@ struct IrodoriCodecResidualUnitWeights {
 
 struct IrodoriCodecDecoderBlockWeights {
     modules::Snake1dWeights up_snake;
-    IrodoriCodecFastConvTranspose1dWeights up_conv;
+    modules::ConvTranspose1dWeights up_conv;
     IrodoriCodecResidualUnitWeights residual_0;
     IrodoriCodecResidualUnitWeights residual_1;
     IrodoriCodecResidualUnitWeights residual_2;

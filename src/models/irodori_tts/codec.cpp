@@ -4,8 +4,6 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
-#include <ggml.h>
-
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -94,31 +92,7 @@ modules::Conv1dWeights load_weight_norm_conv1d(
     return weights;
 }
 
-std::vector<float> transpose_conv_transpose_to_conv1d_weight(
-    const std::vector<float> & weight,
-    int64_t in_channels,
-    int64_t out_channels,
-    int64_t kernel_size,
-    const std::string & prefix) {
-    if (static_cast<int64_t>(weight.size()) != in_channels * out_channels * kernel_size) {
-        throw std::runtime_error("Irodori codec transposed-conv weight shape mismatch: " + prefix);
-    }
-    std::vector<float> converted(static_cast<size_t>(out_channels * in_channels * kernel_size), 0.0F);
-    for (int64_t in_channel = 0; in_channel < in_channels; ++in_channel) {
-        for (int64_t out_channel = 0; out_channel < out_channels; ++out_channel) {
-            for (int64_t tap = 0; tap < kernel_size; ++tap) {
-                const size_t src =
-                    static_cast<size_t>((in_channel * out_channels + out_channel) * kernel_size + tap);
-                const size_t dst = static_cast<size_t>(
-                    (out_channel * in_channels + in_channel) * kernel_size + (kernel_size - 1 - tap));
-                converted[dst] = weight[src];
-            }
-        }
-    }
-    return converted;
-}
-
-IrodoriCodecFastConvTranspose1dWeights load_weight_norm_conv_transpose1d(
+modules::ConvTranspose1dWeights load_weight_norm_conv_transpose1d(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & prefix,
@@ -127,18 +101,13 @@ IrodoriCodecFastConvTranspose1dWeights load_weight_norm_conv_transpose1d(
     int64_t out_channels,
     int64_t kernel_size,
     bool use_bias = true) {
-    IrodoriCodecFastConvTranspose1dWeights weights;
+    modules::ConvTranspose1dWeights weights;
     const auto weight_v = source.require_f32(prefix + ".weight_v", {in_channels, out_channels, kernel_size});
     const auto weight_g = squeeze_weight_g(source.require_f32(prefix + ".weight_g", {in_channels, 1, 1}), in_channels, prefix);
-    weights.conv1d_weight = store.make_from_f32(
-        core::TensorShape::from_dims({out_channels, in_channels, kernel_size}),
+    weights.weight = store.make_from_f32(
+        core::TensorShape::from_dims({in_channels, out_channels, kernel_size}),
         storage_type,
-        transpose_conv_transpose_to_conv1d_weight(
-            fold_weight_norm_dim0(weight_v, weight_g, {in_channels, out_channels, kernel_size}, prefix),
-            in_channels,
-            out_channels,
-            kernel_size,
-            prefix));
+        fold_weight_norm_dim0(weight_v, weight_g, {in_channels, out_channels, kernel_size}, prefix));
     if (use_bias) {
         weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_channels});
     }
@@ -259,54 +228,6 @@ core::TensorValue conv1d_norm_padding(
     }).build(ctx, input, weights);
 }
 
-core::TensorValue fast_conv_transpose1d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const IrodoriCodecFastConvTranspose1dWeights & weights,
-    int64_t in_channels,
-    int64_t out_channels,
-    int64_t kernel_size,
-    int64_t stride,
-    int64_t padding) {
-    core::validate_shape(input, core::TensorShape::from_dims({1, in_channels, input.shape.dims[2]}), "input");
-    core::validate_shape(
-        weights.conv1d_weight,
-        core::TensorShape::from_dims({out_channels, in_channels, kernel_size}),
-        "conv1d_weight");
-
-    const int64_t frames = input.shape.dims[2];
-    const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
-    ggml_tensor * x3 = ggml_reshape_3d(ctx.ggml, contiguous.tensor, 1, frames, in_channels);
-    ggml_tensor * zero3 = ggml_scale(ctx.ggml, x3, 0.0F);
-    ggml_tensor * interleaved3 = x3;
-    for (int64_t i = 1; i < stride; ++i) {
-        interleaved3 = ggml_concat(ctx.ggml, interleaved3, zero3, 0);
-    }
-
-    const int64_t interleaved_frames = frames * stride - (stride - 1);
-    ggml_tensor * interleaved2 = ggml_reshape_2d(ctx.ggml, interleaved3, frames * stride, in_channels);
-    interleaved2 = ggml_view_2d(ctx.ggml, interleaved2, interleaved_frames, in_channels, interleaved2->nb[1], 0);
-    interleaved2 = ggml_cont(ctx.ggml, interleaved2);
-    ggml_tensor * input3 = ggml_reshape_3d(ctx.ggml, interleaved2, interleaved_frames, in_channels, 1);
-    ggml_tensor * weight3 = ggml_reshape_3d(ctx.ggml, weights.conv1d_weight.tensor, kernel_size, in_channels, out_channels);
-    ggml_tensor * output3 = ggml_conv_1d_fast_1d_im2col(
-        ctx.ggml,
-        weight3,
-        input3,
-        1,
-        static_cast<int>(kernel_size - 1 - padding),
-        1);
-    if (weights.bias.has_value()) {
-        core::validate_shape(*weights.bias, core::TensorShape::from_dims({out_channels}), "bias");
-        ggml_tensor * bias3 = ggml_reshape_3d(ctx.ggml, weights.bias->tensor, 1, out_channels, 1);
-        output3 = ggml_add(ctx.ggml, output3, ggml_repeat(ctx.ggml, bias3, output3));
-    }
-    return core::wrap_tensor(
-        output3,
-        core::TensorShape::from_dims({1, out_channels, output3->ne[0]}),
-        GGML_TYPE_F32);
-}
-
 core::TensorValue residual_unit(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -329,15 +250,15 @@ core::TensorValue decoder_block(
     int64_t stride) {
     auto hidden = modules::Snake1dModule({in_channels}).build(ctx, input, weights.up_snake);
     const int64_t padding = (stride + 1) / 2;
-    hidden = fast_conv_transpose1d(
-        ctx,
-        hidden,
-        weights.up_conv,
+    hidden = modules::ConvTranspose1dModule({
         in_channels,
         out_channels,
         2 * stride,
-        stride,
-        padding);
+        static_cast<int>(stride),
+        static_cast<int>(padding),
+        1,
+        weights.up_conv.bias.has_value(),
+    }).build(ctx, hidden, weights.up_conv);
     hidden = residual_unit(ctx, hidden, weights.residual_0, out_channels, 1);
     hidden = residual_unit(ctx, hidden, weights.residual_1, out_channels, 3);
     hidden = residual_unit(ctx, hidden, weights.residual_2, out_channels, 9);

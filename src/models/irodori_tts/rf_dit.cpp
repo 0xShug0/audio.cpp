@@ -198,23 +198,11 @@ IrodoriDiffusionBlockWeights load_block(core::BackendWeightStore &store,
   return weights;
 }
 
-core::TensorValue ensure_contiguous(core::ModuleBuildContext &ctx,
-                                    const core::TensorValue &input) {
-  return core::ensure_backend_addressable_layout(ctx, input);
-}
-
-core::TensorValue repeat_like(core::ModuleBuildContext &ctx,
-                              const core::TensorValue &value,
-                              const core::TensorValue &like) {
-  return core::wrap_tensor(ggml_repeat(ctx.ggml, value.tensor, like.tensor),
-                           like.shape, GGML_TYPE_F32);
-}
-
 core::TensorValue reshape_heads(core::ModuleBuildContext &ctx,
                                 const core::TensorValue &input, int64_t heads,
                                 int64_t dim) {
   return core::reshape_tensor(
-      ctx, ensure_contiguous(ctx, input),
+      ctx, core::ensure_backend_addressable_layout(ctx, input),
       core::TensorShape::from_dims(
           {input.shape.dims[0], input.shape.dims[1], heads, dim}));
 }
@@ -227,7 +215,7 @@ core::TensorValue head_rms_norm(core::ModuleBuildContext &ctx,
       core::TensorShape::from_dims({input.shape.dims[2], input.shape.dims[3]}),
       "head_rms_norm.weight");
   auto normalized = core::wrap_tensor(
-      ggml_rms_norm(ctx.ggml, ensure_contiguous(ctx, input).tensor, eps),
+      ggml_rms_norm(ctx.ggml, core::ensure_backend_addressable_layout(ctx, input).tensor, eps),
       input.shape, GGML_TYPE_F32);
   auto weight_view = core::reshape_tensor(
       ctx, weight,
@@ -235,7 +223,7 @@ core::TensorValue head_rms_norm(core::ModuleBuildContext &ctx,
           {1, 1, input.shape.dims[2], input.shape.dims[3]}));
   return core::wrap_tensor(
       ggml_mul(ctx.ggml, normalized.tensor,
-               repeat_like(ctx, weight_view, normalized).tensor),
+               modules::RepeatModule({normalized.shape}).build(ctx, weight_view).tensor),
       input.shape, GGML_TYPE_F32);
 }
 
@@ -399,11 +387,11 @@ build_layer_context_kv(core::ModuleBuildContext &ctx,
       modules::LinearModule(
           binding::linear_config(config.text_dim, config.model_dim, false))
           .build(ctx, text_state, weights.wv_text);
-  out.k_text = ensure_contiguous(
+  out.k_text = core::ensure_backend_addressable_layout(
       ctx,
       head_rms_norm(ctx, reshape_heads(ctx, out.k_text, config.num_heads, dim),
                     weights.k_norm, config.norm_eps));
-  out.v_text = ensure_contiguous(
+  out.v_text = core::ensure_backend_addressable_layout(
       ctx, reshape_heads(ctx, out.v_text, config.num_heads, dim));
 
   out.k_speaker =
@@ -414,11 +402,11 @@ build_layer_context_kv(core::ModuleBuildContext &ctx,
       modules::LinearModule(
           binding::linear_config(config.speaker_dim, config.model_dim, false))
           .build(ctx, speaker_state, weights.wv_speaker);
-  out.k_speaker = ensure_contiguous(
+  out.k_speaker = core::ensure_backend_addressable_layout(
       ctx, head_rms_norm(
                ctx, reshape_heads(ctx, out.k_speaker, config.num_heads, dim),
                weights.k_norm, config.norm_eps));
-  out.v_speaker = ensure_contiguous(
+  out.v_speaker = core::ensure_backend_addressable_layout(
       ctx, reshape_heads(ctx, out.v_speaker, config.num_heads, dim));
 
   if (config.use_caption_condition && caption_state.tensor != nullptr &&
@@ -431,11 +419,11 @@ build_layer_context_kv(core::ModuleBuildContext &ctx,
                         binding::linear_config(config.caption_dim_resolved(),
                                                config.model_dim, false))
                         .build(ctx, caption_state, weights.wv_caption);
-    out.k_caption = ensure_contiguous(
+    out.k_caption = core::ensure_backend_addressable_layout(
         ctx, head_rms_norm(
                  ctx, reshape_heads(ctx, out.k_caption, config.num_heads, dim),
                  weights.k_norm, config.norm_eps));
-    out.v_caption = ensure_contiguous(
+    out.v_caption = core::ensure_backend_addressable_layout(
         ctx, reshape_heads(ctx, out.v_caption, config.num_heads, dim));
   }
   return out;
@@ -516,8 +504,8 @@ core::TensorValue build_joint_attention(
     k = modules::ConcatModule({1}).build(ctx, k, context_kv->k_caption);
     v = modules::ConcatModule({1}).build(ctx, v, context_kv->v_caption);
   }
-  k = ensure_contiguous(ctx, k);
-  v = ensure_contiguous(ctx, v);
+  k = core::ensure_backend_addressable_layout(ctx, k);
+  v = core::ensure_backend_addressable_layout(ctx, v);
   auto q_heads =
       modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
   auto k_heads =
@@ -528,7 +516,7 @@ core::TensorValue build_joint_attention(
   auto context = flash_attention_from_heads(ctx, q_heads, k_heads, v_heads,
                                             attention_mask, dim);
   context = core::reshape_tensor(
-      ctx, ensure_contiguous(ctx, context),
+      ctx, core::ensure_backend_addressable_layout(ctx, context),
       core::TensorShape::from_dims(
           {x.shape.dims[0], x.shape.dims[1], config.model_dim}));
   context = modules::MulModule{}.build(ctx, context, gate);
