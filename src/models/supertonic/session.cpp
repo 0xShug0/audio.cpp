@@ -1,6 +1,8 @@
 #include "engine/models/supertonic/session.h"
 
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/text/chunking.h"
 #include "engine/models/supertonic/runtime.h"
 
 #include <algorithm>
@@ -72,8 +74,21 @@ runtime::TaskResult SupertonicSession::run(const runtime::TaskRequest & request)
     require_prepared("Supertonic run");
     validate_request(request);
     const auto options = generation_options_from_request(request);
+    const int64_t text_chunk_size =
+        engine::text::parse_text_chunk_size_override(request.options)
+            .value_or((options.language == "ko" || options.language == "ja") ? 120 : 300);
+    const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
     runtime::TaskResult result;
-    result.audio_output = runtime_->synthesize(request.text_input->text, options, tokenizer_);
+    runtime::AudioBuffer merged_audio;
+    engine::debug::trace_log_scalar("supertonic.text_chunk_size", text_chunk_size);
+    engine::debug::trace_log_scalar("supertonic.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
+    for (const auto & chunk_request : chunk_requests) {
+        const auto chunk_options = generation_options_from_request(chunk_request);
+        runtime::append_audio_buffer(
+            merged_audio,
+            runtime_->synthesize(chunk_request.text_input->text, chunk_options, tokenizer_));
+    }
+    result.audio_output = std::move(merged_audio);
     return result;
 }
 

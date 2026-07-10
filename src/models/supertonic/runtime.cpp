@@ -21,11 +21,9 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
-#include <iterator>
 #include <map>
 #include <numeric>
 #include <optional>
@@ -2065,157 +2063,6 @@ std::vector<float> random_normal(size_t count, NumpyMt19937Normal & rng) {
     return values;
 }
 
-std::string trim_copy(const std::string & text) {
-    size_t begin = 0;
-    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin]))) {
-        ++begin;
-    }
-    size_t end = text.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
-        --end;
-    }
-    return text.substr(begin, end - begin);
-}
-
-bool is_sentence_boundary(const std::string & text, size_t pos) {
-    const char c = text[pos];
-    if (c != '.' && c != '?' && c != '!') {
-        return false;
-    }
-    if (pos + 1 >= text.size() || !std::isspace(static_cast<unsigned char>(text[pos + 1]))) {
-        return false;
-    }
-    static constexpr const char * abbreviations[] = {
-        "Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Sr.", "Jr.", "Ph.D.", "etc.", "e.g.", "i.e.",
-        "vs.", "Inc.", "Ltd.", "Co.", "Corp.", "St.", "Ave.", "Blvd.",
-    };
-    for (const char * abbreviation : abbreviations) {
-        const std::string item(abbreviation);
-        if (pos + 1 >= item.size() && text.compare(pos + 1 - item.size(), item.size(), item) == 0) {
-            return false;
-        }
-    }
-    if (pos >= 1 && std::isupper(static_cast<unsigned char>(text[pos - 1])) &&
-        (pos == 1 || std::isspace(static_cast<unsigned char>(text[pos - 2])))) {
-        return false;
-    }
-    return true;
-}
-
-std::vector<std::string> split_long_text_span(std::string text, size_t max_len) {
-    std::vector<std::string> chunks;
-    text = trim_copy(text);
-    while (text.size() > max_len) {
-        size_t split = text.rfind(' ', max_len);
-        if (split == std::string::npos || split == 0) {
-            split = max_len;
-        }
-        auto chunk = trim_copy(text.substr(0, split));
-        if (!chunk.empty()) {
-            chunks.push_back(std::move(chunk));
-        }
-        text = trim_copy(text.substr(split));
-    }
-    if (!text.empty()) {
-        chunks.push_back(std::move(text));
-    }
-    return chunks;
-}
-
-std::vector<std::string> split_paragraphs(const std::string & text) {
-    std::vector<std::string> paragraphs;
-    size_t start = 0;
-    while (start < text.size()) {
-        size_t pos = start;
-        size_t split = std::string::npos;
-        size_t next_start = text.size();
-        while (pos < text.size()) {
-            if (text[pos] == '\n') {
-                size_t next = pos + 1;
-                while (next < text.size() && (text[next] == ' ' || text[next] == '\t' || text[next] == '\r')) {
-                    ++next;
-                }
-                if (next < text.size() && text[next] == '\n') {
-                    split = pos;
-                    next_start = next + 1;
-                    break;
-                }
-            }
-            ++pos;
-        }
-        const size_t end = split == std::string::npos ? text.size() : split;
-        auto paragraph = trim_copy(text.substr(start, end - start));
-        if (!paragraph.empty()) {
-            paragraphs.push_back(std::move(paragraph));
-        }
-        if (split == std::string::npos) {
-            break;
-        }
-        start = next_start;
-    }
-    if (paragraphs.empty()) {
-        auto paragraph = trim_copy(text);
-        if (!paragraph.empty()) {
-            paragraphs.push_back(std::move(paragraph));
-        }
-    }
-    return paragraphs;
-}
-
-std::vector<std::string> chunk_text_for_supertonic(const std::string & text, size_t max_len) {
-    std::vector<std::string> chunks;
-    for (const auto & paragraph : split_paragraphs(text)) {
-        std::vector<std::string> sentences;
-        size_t begin = 0;
-        for (size_t i = 0; i < paragraph.size(); ++i) {
-            if (!is_sentence_boundary(paragraph, i)) {
-                continue;
-            }
-            sentences.push_back(trim_copy(paragraph.substr(begin, i + 1 - begin)));
-            begin = i + 1;
-            while (begin < paragraph.size() && std::isspace(static_cast<unsigned char>(paragraph[begin]))) {
-                ++begin;
-            }
-            i = begin;
-        }
-        if (begin < paragraph.size()) {
-            sentences.push_back(trim_copy(paragraph.substr(begin)));
-        }
-
-        std::string current;
-        for (const auto & sentence : sentences) {
-            if (sentence.empty()) {
-                continue;
-            }
-            if (sentence.size() > max_len) {
-                if (!current.empty()) {
-                    chunks.push_back(std::move(current));
-                    current.clear();
-                }
-                auto split = split_long_text_span(sentence, max_len);
-                chunks.insert(chunks.end(), std::make_move_iterator(split.begin()), std::make_move_iterator(split.end()));
-                continue;
-            }
-            const size_t combined = current.empty() ? sentence.size() : current.size() + 1 + sentence.size();
-            if (combined <= max_len) {
-                if (!current.empty()) {
-                    current += ' ';
-                }
-                current += sentence;
-            } else {
-                if (!current.empty()) {
-                    chunks.push_back(std::move(current));
-                }
-                current = sentence;
-            }
-        }
-        if (!current.empty()) {
-            chunks.push_back(std::move(current));
-        }
-    }
-    return chunks;
-}
-
 SupertonicChunkOutput synthesize_supertonic_chunk(
     const std::shared_ptr<const SupertonicAssets> & assets,
     SupertonicDurationPredictorRuntime & duration_model,
@@ -2396,46 +2243,28 @@ runtime::AudioBuffer SupertonicNativeRuntime::synthesize(
     const auto & style = state_->style(options.voice);
     engine::debug::timing_log_scalar("supertonic.style_ms", engine::debug::elapsed_ms(timing_start));
 
-    runtime::AudioBuffer out;
-    out.sample_rate = state_->assets->config.sample_rate;
-    out.channels = 1;
-    const size_t max_len = (options.language == "ko" || options.language == "ja") ? 120 : 300;
-    auto chunks = chunk_text_for_supertonic(text, max_len);
-    if (chunks.empty()) {
-        throw std::runtime_error("Supertonic chunking produced no text");
-    }
     engine::debug::timing_log_scalar("supertonic.text_chars", static_cast<int64_t>(text.size()));
-    engine::debug::timing_log_scalar("supertonic.chunk_count", static_cast<int64_t>(chunks.size()));
     engine::debug::timing_log_scalar("supertonic.threads", state_->threads);
-    const size_t silence_samples = static_cast<size_t>(0.3F * static_cast<float>(out.sample_rate));
     NumpyMt19937Normal rng(options.seed);
-    float total_duration_seconds = 0.0F;
-    for (size_t i = 0; i < chunks.size(); ++i) {
-        auto chunk_audio = synthesize_supertonic_chunk(
-            state_->assets,
-            *state_->duration_model,
-            *state_->text_model,
-            *state_->vector_model,
-            *state_->vocoder_model,
-            tokenizer,
-            chunks[i],
-            options,
-            style.ttl,
-            style.ttl_shape,
-            style.dp,
-            style.dp_shape,
-            rng,
-            i);
-        out.samples.insert(out.samples.end(), chunk_audio.audio.samples.begin(), chunk_audio.audio.samples.end());
-        total_duration_seconds += chunk_audio.duration_seconds;
-        if (i + 1 < chunks.size()) {
-            out.samples.insert(out.samples.end(), silence_samples, 0.0F);
-            total_duration_seconds += 0.3F;
-        }
-    }
+    auto chunk_audio = synthesize_supertonic_chunk(
+        state_->assets,
+        *state_->duration_model,
+        *state_->text_model,
+        *state_->vector_model,
+        *state_->vocoder_model,
+        tokenizer,
+        text,
+        options,
+        style.ttl,
+        style.ttl_shape,
+        style.dp,
+        style.dp_shape,
+        rng,
+        0);
+    runtime::AudioBuffer out = std::move(chunk_audio.audio);
     const size_t trim = std::min(
         out.samples.size(),
-        static_cast<size_t>(total_duration_seconds * static_cast<float>(out.sample_rate)));
+        static_cast<size_t>(chunk_audio.duration_seconds * static_cast<float>(out.sample_rate)));
     out.samples.resize(trim);
     engine::debug::timing_log_scalar("supertonic.output_samples", static_cast<int64_t>(out.samples.size()));
     engine::debug::timing_log_scalar("supertonic.total_ms", engine::debug::elapsed_ms(total_start));

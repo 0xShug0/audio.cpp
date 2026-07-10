@@ -6,6 +6,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/text/chunking.h"
 #include "engine/framework/sampling/torch_random.h"
 
 #include <ggml-backend.h>
@@ -1846,25 +1847,32 @@ runtime::TaskResult
 IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   require_prepared("Irodori-TTS run");
   const auto wall_start = Clock::now();
-  const IrodoriRequest irodori_request = make_request(request);
+  const int64_t text_chunk_size =
+      engine::text::parse_text_chunk_size_override(request.options)
+          .value_or(assets_->config.max_text_len);
+  const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
+  if (chunk_requests.empty()) {
+    throw std::runtime_error("Irodori-TTS text chunking produced no requests");
+  }
+  const IrodoriRequest first_request = make_request(chunk_requests.front());
   const auto reference_start = Clock::now();
   IrodoriSpeakerCondition speaker =
       no_reference_speaker_condition(assets_->config);
   bool reference_cache_hit = false;
-  if (!irodori_request.no_ref) {
-    if (!irodori_request.has_reference_audio) {
+  if (!first_request.no_ref) {
+    if (!first_request.has_reference_audio) {
       throw std::runtime_error(
           "Irodori-TTS reference mode requires reference audio");
     }
     const uint64_t reference_key =
-        reference_audio_cache_key(irodori_request.reference_audio);
+        reference_audio_cache_key(first_request.reference_audio);
     if (cached_reference_valid_ && cached_reference_key_ == reference_key &&
         cached_reference_sample_rate_ ==
-            irodori_request.reference_audio.sample_rate &&
+            first_request.reference_audio.sample_rate &&
         cached_reference_channels_ ==
-            irodori_request.reference_audio.channels &&
+            first_request.reference_audio.channels &&
         cached_reference_samples_ ==
-            irodori_request.reference_audio.samples.size()) {
+            first_request.reference_audio.samples.size()) {
       reference_cache_hit = true;
       speaker.state = cached_reference_speaker_state_;
       speaker.mask = cached_reference_speaker_mask_;
@@ -1872,17 +1880,17 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
       speaker.has_speaker = cached_reference_speaker_has_speaker_;
     } else {
       int64_t ref_latent_steps = 0;
-      auto ref_latent = codec_->encode_reference(irodori_request.reference_audio,
+      auto ref_latent = codec_->encode_reference(first_request.reference_audio,
                                                  ref_latent_steps);
       speaker =
           condition_->encode_speaker_reference(ref_latent, ref_latent_steps);
       cached_reference_key_ = reference_key;
       cached_reference_sample_rate_ =
-          irodori_request.reference_audio.sample_rate;
+          first_request.reference_audio.sample_rate;
       cached_reference_channels_ =
-          irodori_request.reference_audio.channels;
+          first_request.reference_audio.channels;
       cached_reference_samples_ =
-          irodori_request.reference_audio.samples.size();
+          first_request.reference_audio.samples.size();
       cached_reference_speaker_state_ = speaker.state;
       cached_reference_speaker_mask_ = speaker.mask;
       cached_reference_speaker_tokens_ = speaker.tokens;
@@ -1891,12 +1899,11 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
     }
   }
   const auto reference_end = Clock::now();
-  const auto text_start = Clock::now();
-  const auto tokenized = tokenizer_.encode_padded(irodori_request.text,
-                                                  assets_->config.max_text_len);
   IrodoriCaptionCondition caption;
+  double tokenize_ms = 0.0;
   if (assets_->config.use_caption_condition) {
-    const std::string caption_text = trim_ascii(irodori_request.caption);
+    const auto caption_start = Clock::now();
+    const std::string caption_text = trim_ascii(first_request.caption);
     auto tokenized_caption =
         tokenizer_.encode_padded(caption_text, assets_->config.max_caption_len);
     caption.token_ids = std::move(tokenized_caption.token_ids);
@@ -1905,174 +1912,186 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
     if (!caption.has_caption) {
       std::fill(caption.mask.begin(), caption.mask.end(), 0);
     }
-  } else if (!trim_ascii(irodori_request.caption).empty()) {
+    tokenize_ms += debug::elapsed_ms(caption_start);
+  } else if (!trim_ascii(first_request.caption).empty()) {
     throw std::runtime_error("Irodori-TTS loaded checkpoint does not include "
                              "caption conditioning weights");
   }
-  const auto text_end = Clock::now();
-
-  const auto condition_start = Clock::now();
-  const auto conditions =
-      condition_->run(tokenized.token_ids, tokenized.mask, caption, speaker);
-  const auto condition_end = Clock::now();
-  IrodoriCaptionCondition rf_caption;
-  std::vector<float> rf_caption_state;
-  if (assets_->config.use_caption_condition) {
-    const int64_t dim = assets_->config.caption_dim_resolved();
-    rf_caption.mask = caption.mask;
-    rf_caption.has_caption = caption.has_caption;
-    rf_caption_state = conditions.caption_state;
-    if (static_cast<int64_t>(rf_caption_state.size()) !=
-        assets_->config.max_caption_len * dim) {
-      throw std::runtime_error(
-          "Irodori-TTS caption condition state shape mismatch");
-    }
-  }
-  const int hop_length = static_cast<int>(assets_->codec.hop_length);
-  int64_t latent_steps = 0;
-  int64_t target_samples = 0;
-  if (irodori_request.generation.duration_seconds_specified) {
-    const float seconds =
-        std::min(irodori_request.generation.max_seconds,
-                 std::max(irodori_request.generation.min_seconds,
-                          irodori_request.generation.duration_seconds));
-    target_samples = std::max<int64_t>(
-        1, static_cast<int64_t>(seconds * assets_->codec.sample_rate));
-    latent_steps = (target_samples + hop_length - 1) / hop_length;
-  } else {
-    const float pred_frames = std::expm1(conditions.predicted_log_frames);
-    const float scaled_frames =
-        pred_frames * irodori_request.generation.duration_scale;
-    const int64_t min_frames =
-        std::max<int64_t>(1, static_cast<int64_t>(std::ceil(
-                                 irodori_request.generation.min_seconds *
-                                 assets_->codec.sample_rate / hop_length)));
-    const int64_t max_frames =
-        std::max<int64_t>(1, static_cast<int64_t>(std::floor(
-                                 irodori_request.generation.max_seconds *
-                                 assets_->codec.sample_rate / hop_length)));
-    latent_steps = static_cast<int64_t>(std::llround(scaled_frames));
-    latent_steps = std::max(min_frames, std::min(max_frames, latent_steps));
-    target_samples = latent_steps * hop_length;
-  }
-  const int64_t patched_steps =
-      (latent_steps + assets_->config.latent_patch_size - 1) /
-      assets_->config.latent_patch_size;
-  const int64_t patched_dim = assets_->config.patched_latent_dim();
-  const auto sample_start = Clock::now();
-  std::vector<float> x_t = sampling::generate_torch_cuda_randn(
-      static_cast<size_t>(patched_steps * patched_dim),
-      irodori_request.generation.seed, sampling::TorchRandnPrecision::Float32);
-  const bool text_cfg_enabled =
-      irodori_request.generation.text_guidance_scale > 0.0F;
-  const bool speaker_cfg_enabled =
-      speaker.has_speaker &&
-      irodori_request.generation.speaker_guidance_scale > 0.0F;
-  const bool caption_cfg_enabled =
-      rf_caption.has_caption &&
-      irodori_request.generation.caption_guidance_scale > 0.0F;
-  const bool any_cfg_enabled =
-      text_cfg_enabled || speaker_cfg_enabled || caption_cfg_enabled;
   const int64_t rf_context_graph_rebuilds_before =
       rf_->context_graph_rebuilds();
   const int64_t rf_step_graph_rebuilds_before = rf_->step_graph_rebuilds();
-  Clock::time_point rf_context_cond_start;
-  Clock::time_point rf_context_cond_end;
-  Clock::time_point rf_context_cfg_start;
-  Clock::time_point rf_context_cfg_end;
-  IrodoriRfRuntime::ContextCache rf_context_cond;
-  IrodoriRfRuntime::ContextCache rf_context_cfg;
-  if (any_cfg_enabled) {
-    rf_context_cfg_start = Clock::now();
-    rf_context_cfg = rf_->build_context_cache(
-        conditions.text_state, tokenized.mask, rf_caption_state, rf_caption,
-        speaker, text_cfg_enabled, speaker_cfg_enabled, caption_cfg_enabled);
-    rf_context_cfg_end = Clock::now();
-    rf_context_cond_start = Clock::now();
-    rf_context_cond_end = Clock::now();
-  } else {
-    rf_context_cond_start = Clock::now();
-    rf_context_cond = rf_->build_context_cache(
-        conditions.text_state, tokenized.mask, rf_caption_state, rf_caption,
-        speaker, false, false, false);
-    rf_context_cond_end = Clock::now();
-    rf_context_cfg_start = rf_context_cond_end;
-    rf_context_cfg_end = rf_context_cond_end;
-    rf_context_cfg = rf_context_cond;
-  }
+  runtime::AudioBuffer merged_audio;
+  double condition_ms = 0.0;
+  double sample_rf_ms = 0.0;
+  double rf_context_cond_ms = 0.0;
+  double rf_context_cfg_ms = 0.0;
   double rf_step_cfg_ms = 0.0;
   double rf_step_cond_ms = 0.0;
-  std::vector<float> velocity(x_t.size());
-  for (int64_t step = 0; step < irodori_request.generation.num_inference_steps; ++step) {
-    const float u = static_cast<float>(step) /
-                    static_cast<float>(irodori_request.generation.num_inference_steps);
-    const float u_next =
-        static_cast<float>(step + 1) /
-        static_cast<float>(irodori_request.generation.num_inference_steps);
-    const float t = (1.0F - u) * 0.999F;
-    const float t_next = (1.0F - u_next) * 0.999F;
-    const bool cfg_active =
-        (irodori_request.generation.text_guidance_scale > 0.0F ||
-         (speaker.has_speaker &&
-          irodori_request.generation.speaker_guidance_scale > 0.0F) ||
-         (rf_caption.has_caption &&
-          irodori_request.generation.caption_guidance_scale > 0.0F)) &&
-        t >= irodori_request.generation.guidance_min_t &&
-        t <= irodori_request.generation.guidance_max_t;
-    const auto &rf_context =
-        cfg_active ? rf_context_cfg
-                   : (any_cfg_enabled ? rf_context_cfg : rf_context_cond);
-    const auto rf_step_start = Clock::now();
-    rf_->run_step(
-        x_t, t, rf_context, cfg_active, cfg_active && text_cfg_enabled,
-        cfg_active && speaker_cfg_enabled, cfg_active && caption_cfg_enabled,
-        irodori_request.generation.text_guidance_scale,
-        irodori_request.generation.speaker_guidance_scale,
-        irodori_request.generation.caption_guidance_scale, patched_steps, velocity);
-    const double rf_step_ms = debug::elapsed_ms(rf_step_start);
-    if (cfg_active) {
-      rf_step_cfg_ms += rf_step_ms;
-    } else {
-      rf_step_cond_ms += rf_step_ms;
-    }
-    for (size_t i = 0; i < x_t.size(); ++i) {
-      x_t[i] += velocity[i] * (t_next - t);
-    }
-  }
-  const auto sample_end = Clock::now();
+  double decode_ms = 0.0;
+  const int hop_length = static_cast<int>(assets_->codec.hop_length);
+  for (const auto & chunk_request : chunk_requests) {
+    const IrodoriRequest irodori_request = make_request(chunk_request);
+    const auto text_start = Clock::now();
+    const auto tokenized = tokenizer_.encode_padded(
+        irodori_request.text, assets_->config.max_text_len);
+    tokenize_ms += debug::elapsed_ms(text_start);
 
-  std::vector<float> latent(
-      static_cast<size_t>(latent_steps * assets_->config.latent_dim), 0.0F);
-  for (int64_t frame = 0; frame < latent_steps; ++frame) {
-    for (int64_t dim = 0; dim < assets_->config.latent_dim; ++dim) {
-      const int64_t patched_frame = frame / assets_->config.latent_patch_size;
-      const int64_t patch_offset = frame % assets_->config.latent_patch_size;
-      latent[static_cast<size_t>(frame * assets_->config.latent_dim + dim)] =
-          x_t[static_cast<size_t>(patched_frame * patched_dim +
-                                  patch_offset * assets_->config.latent_dim +
-                                  dim)];
+    const auto condition_start = Clock::now();
+    const auto conditions =
+        condition_->run(tokenized.token_ids, tokenized.mask, caption, speaker);
+    condition_ms += debug::elapsed_ms(condition_start);
+    IrodoriCaptionCondition rf_caption;
+    std::vector<float> rf_caption_state;
+    if (assets_->config.use_caption_condition) {
+      const int64_t dim = assets_->config.caption_dim_resolved();
+      rf_caption.mask = caption.mask;
+      rf_caption.has_caption = caption.has_caption;
+      rf_caption_state = conditions.caption_state;
+      if (static_cast<int64_t>(rf_caption_state.size()) !=
+          assets_->config.max_caption_len * dim) {
+        throw std::runtime_error(
+            "Irodori-TTS caption condition state shape mismatch");
+      }
     }
-  }
-  if (irodori_request.generation.trim_tail) {
-    const int flat =
-        find_flattening_point(latent, latent_steps, assets_->config.latent_dim,
-                              irodori_request.generation.tail_window_size,
-                              irodori_request.generation.tail_std_threshold,
-                              irodori_request.generation.tail_mean_threshold);
-    const int64_t flattening_samples = static_cast<int64_t>(flat) * hop_length;
-    if (flattening_samples > 0) {
-      target_samples = std::min(target_samples, flattening_samples);
+
+    int64_t latent_steps = 0;
+    int64_t target_samples = 0;
+    if (irodori_request.generation.duration_seconds_specified) {
+      const float seconds =
+          std::min(irodori_request.generation.max_seconds,
+                   std::max(irodori_request.generation.min_seconds,
+                            irodori_request.generation.duration_seconds));
+      target_samples = std::max<int64_t>(
+          1, static_cast<int64_t>(seconds * assets_->codec.sample_rate));
+      latent_steps = (target_samples + hop_length - 1) / hop_length;
+    } else {
+      const float pred_frames = std::expm1(conditions.predicted_log_frames);
+      const float scaled_frames =
+          pred_frames * irodori_request.generation.duration_scale;
+      const int64_t min_frames =
+          std::max<int64_t>(1, static_cast<int64_t>(std::ceil(
+                                   irodori_request.generation.min_seconds *
+                                   assets_->codec.sample_rate / hop_length)));
+      const int64_t max_frames =
+          std::max<int64_t>(1, static_cast<int64_t>(std::floor(
+                                   irodori_request.generation.max_seconds *
+                                   assets_->codec.sample_rate / hop_length)));
+      latent_steps = static_cast<int64_t>(std::llround(scaled_frames));
+      latent_steps = std::max(min_frames, std::min(max_frames, latent_steps));
+      target_samples = latent_steps * hop_length;
     }
+    const int64_t patched_steps =
+        (latent_steps + assets_->config.latent_patch_size - 1) /
+        assets_->config.latent_patch_size;
+    const int64_t patched_dim = assets_->config.patched_latent_dim();
+    const auto sample_start = Clock::now();
+    std::vector<float> x_t = sampling::generate_torch_cuda_randn(
+        static_cast<size_t>(patched_steps * patched_dim),
+        irodori_request.generation.seed, sampling::TorchRandnPrecision::Float32);
+    const bool text_cfg_enabled =
+        irodori_request.generation.text_guidance_scale > 0.0F;
+    const bool speaker_cfg_enabled =
+        speaker.has_speaker &&
+        irodori_request.generation.speaker_guidance_scale > 0.0F;
+    const bool caption_cfg_enabled =
+        rf_caption.has_caption &&
+        irodori_request.generation.caption_guidance_scale > 0.0F;
+    const bool any_cfg_enabled =
+        text_cfg_enabled || speaker_cfg_enabled || caption_cfg_enabled;
+    IrodoriRfRuntime::ContextCache rf_context_cond;
+    IrodoriRfRuntime::ContextCache rf_context_cfg;
+    if (any_cfg_enabled) {
+      const auto rf_context_cfg_start = Clock::now();
+      rf_context_cfg = rf_->build_context_cache(
+          conditions.text_state, tokenized.mask, rf_caption_state, rf_caption,
+          speaker, text_cfg_enabled, speaker_cfg_enabled, caption_cfg_enabled);
+      rf_context_cfg_ms += debug::elapsed_ms(rf_context_cfg_start);
+    } else {
+      const auto rf_context_cond_start = Clock::now();
+      rf_context_cond = rf_->build_context_cache(
+          conditions.text_state, tokenized.mask, rf_caption_state, rf_caption,
+          speaker, false, false, false);
+      rf_context_cond_ms += debug::elapsed_ms(rf_context_cond_start);
+      rf_context_cfg = rf_context_cond;
+    }
+
+    std::vector<float> velocity(x_t.size());
+    for (int64_t step = 0; step < irodori_request.generation.num_inference_steps; ++step) {
+      const float u = static_cast<float>(step) /
+                      static_cast<float>(irodori_request.generation.num_inference_steps);
+      const float u_next =
+          static_cast<float>(step + 1) /
+          static_cast<float>(irodori_request.generation.num_inference_steps);
+      const float t = (1.0F - u) * 0.999F;
+      const float t_next = (1.0F - u_next) * 0.999F;
+      const bool cfg_active =
+          (irodori_request.generation.text_guidance_scale > 0.0F ||
+           (speaker.has_speaker &&
+            irodori_request.generation.speaker_guidance_scale > 0.0F) ||
+           (rf_caption.has_caption &&
+            irodori_request.generation.caption_guidance_scale > 0.0F)) &&
+          t >= irodori_request.generation.guidance_min_t &&
+          t <= irodori_request.generation.guidance_max_t;
+      const auto &rf_context =
+          cfg_active ? rf_context_cfg
+                     : (any_cfg_enabled ? rf_context_cfg : rf_context_cond);
+      const auto rf_step_start = Clock::now();
+      rf_->run_step(
+          x_t, t, rf_context, cfg_active, cfg_active && text_cfg_enabled,
+          cfg_active && speaker_cfg_enabled, cfg_active && caption_cfg_enabled,
+          irodori_request.generation.text_guidance_scale,
+          irodori_request.generation.speaker_guidance_scale,
+          irodori_request.generation.caption_guidance_scale, patched_steps, velocity);
+      const double rf_step_ms = debug::elapsed_ms(rf_step_start);
+      if (cfg_active) {
+        rf_step_cfg_ms += rf_step_ms;
+      } else {
+        rf_step_cond_ms += rf_step_ms;
+      }
+      for (size_t i = 0; i < x_t.size(); ++i) {
+        x_t[i] += velocity[i] * (t_next - t);
+      }
+    }
+    sample_rf_ms += debug::elapsed_ms(sample_start);
+
+    std::vector<float> latent(
+        static_cast<size_t>(latent_steps * assets_->config.latent_dim), 0.0F);
+    for (int64_t frame = 0; frame < latent_steps; ++frame) {
+      for (int64_t dim = 0; dim < assets_->config.latent_dim; ++dim) {
+        const int64_t patched_frame = frame / assets_->config.latent_patch_size;
+        const int64_t patch_offset = frame % assets_->config.latent_patch_size;
+        latent[static_cast<size_t>(frame * assets_->config.latent_dim + dim)] =
+            x_t[static_cast<size_t>(patched_frame * patched_dim +
+                                    patch_offset * assets_->config.latent_dim +
+                                    dim)];
+      }
+    }
+    if (irodori_request.generation.trim_tail) {
+      const int flat =
+          find_flattening_point(latent, latent_steps, assets_->config.latent_dim,
+                                irodori_request.generation.tail_window_size,
+                                irodori_request.generation.tail_std_threshold,
+                                irodori_request.generation.tail_mean_threshold);
+      const int64_t flattening_samples = static_cast<int64_t>(flat) * hop_length;
+      if (flattening_samples > 0) {
+        target_samples = std::min(target_samples, flattening_samples);
+      }
+    }
+    const auto decode_start = Clock::now();
+    runtime::append_audio_buffer(
+        merged_audio, codec_->decode(latent, latent_steps, target_samples));
+    decode_ms += debug::elapsed_ms(decode_start);
   }
-  const auto decode_start = Clock::now();
   runtime::TaskResult result;
-  result.audio_output = codec_->decode(latent, latent_steps, target_samples);
-  const auto decode_end = Clock::now();
+  result.audio_output = std::move(merged_audio);
   const auto wall_end = Clock::now();
   debug::timing_log_scalar("irodori_tts.reference.used",
-                           !irodori_request.no_ref);
+                           !first_request.no_ref);
   debug::timing_log_scalar("irodori_tts.reference.cache_hit",
                            reference_cache_hit);
+  debug::trace_log_scalar("irodori_tts.text_chunk_size", text_chunk_size);
+  debug::trace_log_scalar("irodori_tts.text_chunk_count",
+                          static_cast<int64_t>(chunk_requests.size()));
   debug::timing_log_scalar(
       "irodori_tts.sample_rf.context_graph_rebuilds",
       rf_->context_graph_rebuilds() - rf_context_graph_rebuilds_before);
@@ -2082,23 +2101,23 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   debug::timing_log_scalar("irodori_tts.prepare_reference_ms",
                            debug::elapsed_ms(reference_start, reference_end));
   debug::timing_log_scalar("irodori_tts.tokenize_ms",
-                           debug::elapsed_ms(text_start, text_end));
+                           tokenize_ms);
   debug::timing_log_scalar("irodori_tts.condition_ms",
-                           debug::elapsed_ms(condition_start, condition_end));
+                           condition_ms);
   debug::timing_log_scalar("irodori_tts.sample_rf_ms",
-                           debug::elapsed_ms(sample_start, sample_end));
+                           sample_rf_ms);
   debug::timing_log_scalar(
       "irodori_tts.sample_rf.context_cond_ms",
-      debug::elapsed_ms(rf_context_cond_start, rf_context_cond_end));
+      rf_context_cond_ms);
   debug::timing_log_scalar(
       "irodori_tts.sample_rf.context_cfg_ms",
-      debug::elapsed_ms(rf_context_cfg_start, rf_context_cfg_end));
+      rf_context_cfg_ms);
   debug::timing_log_scalar("irodori_tts.sample_rf.steps_cfg_ms",
                            rf_step_cfg_ms);
   debug::timing_log_scalar("irodori_tts.sample_rf.steps_cond_ms",
                            rf_step_cond_ms);
   debug::timing_log_scalar("irodori_tts.codec_decode_ms",
-                           debug::elapsed_ms(decode_start, decode_end));
+                           decode_ms);
   debug::timing_log_scalar("session.wall_ms",
                            debug::elapsed_ms(wall_start, wall_end));
   return result;
