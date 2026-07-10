@@ -187,47 +187,6 @@ IrodoriCodecEncoderBlockWeights load_encoder_block(
     return weights;
 }
 
-core::TensorValue conv1d_same(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const modules::Conv1dWeights & weights,
-    int64_t in_channels,
-    int64_t out_channels,
-    int64_t kernel,
-    int64_t dilation = 1) {
-    const int64_t padding = (kernel - 1) * dilation / 2;
-    return modules::Conv1dModule({
-        in_channels,
-        out_channels,
-        kernel,
-        1,
-        static_cast<int>(padding),
-        static_cast<int>(dilation),
-        weights.bias.has_value(),
-    }).build(ctx, input, weights);
-}
-
-core::TensorValue conv1d_norm_padding(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const modules::Conv1dWeights & weights,
-    int64_t in_channels,
-    int64_t out_channels,
-    int64_t kernel,
-    int64_t stride,
-    int64_t dilation = 1) {
-    const int64_t padding = (kernel - stride) * dilation / 2;
-    return modules::Conv1dModule({
-        in_channels,
-        out_channels,
-        kernel,
-        static_cast<int>(stride),
-        static_cast<int>(padding),
-        static_cast<int>(dilation),
-        weights.bias.has_value(),
-    }).build(ctx, input, weights);
-}
-
 core::TensorValue residual_unit(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -235,9 +194,25 @@ core::TensorValue residual_unit(
     int64_t channels,
     int64_t dilation) {
     auto hidden = modules::Snake1dModule({channels}).build(ctx, input, weights.snake0);
-    hidden = conv1d_same(ctx, hidden, weights.conv0, channels, channels, 7, dilation);
+    hidden = modules::Conv1dModule({
+        channels,
+        channels,
+        7,
+        1,
+        static_cast<int>((7 - 1) * dilation / 2),
+        static_cast<int>(dilation),
+        weights.conv0.bias.has_value(),
+    }).build(ctx, hidden, weights.conv0);
     hidden = modules::Snake1dModule({channels}).build(ctx, hidden, weights.snake1);
-    hidden = conv1d_same(ctx, hidden, weights.conv1, channels, channels, 1);
+    hidden = modules::Conv1dModule({
+        channels,
+        channels,
+        1,
+        1,
+        0,
+        1,
+        weights.conv1.bias.has_value(),
+    }).build(ctx, hidden, weights.conv1);
     return modules::AddModule{}.build(ctx, hidden, input);
 }
 
@@ -276,7 +251,15 @@ core::TensorValue encoder_block(
     hidden = residual_unit(ctx, hidden, weights.residual_1, in_channels, 3);
     hidden = residual_unit(ctx, hidden, weights.residual_2, in_channels, 9);
     hidden = modules::Snake1dModule({in_channels}).build(ctx, hidden, weights.down_snake);
-    return conv1d_norm_padding(ctx, hidden, weights.down_conv, in_channels, out_channels, 2 * stride, stride);
+    return modules::Conv1dModule({
+        in_channels,
+        out_channels,
+        2 * stride,
+        static_cast<int>(stride),
+        static_cast<int>((2 * stride - stride) / 2),
+        1,
+        weights.down_conv.bias.has_value(),
+    }).build(ctx, hidden, weights.down_conv);
 }
 
 }  // namespace
@@ -385,7 +368,15 @@ core::TensorValue build_irodori_codec_decode(
     auto hidden = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, latent_btd);
     hidden = modules::Conv1dModule({config.codebook_dim, config.latent_dim, 1, 1, 0, 1, true})
                  .build(ctx, hidden, weights.quantizer_out_proj);
-    hidden = conv1d_same(ctx, hidden, weights.decoder_input, config.latent_dim, config.decoder_dim, 7);
+    hidden = modules::Conv1dModule({
+        config.latent_dim,
+        config.decoder_dim,
+        7,
+        1,
+        3,
+        1,
+        weights.decoder_input.bias.has_value(),
+    }).build(ctx, hidden, weights.decoder_input);
     const int64_t rates[] = {12, 10, 8, 2};
     int64_t in_channels = config.decoder_dim;
     for (size_t i = 0; i < weights.decoder_blocks.size(); ++i) {
@@ -400,7 +391,15 @@ core::TensorValue build_irodori_codec_decode(
         in_channels = out_channels;
     }
     hidden = modules::Snake1dModule({in_channels}).build(ctx, hidden, weights.watermark_passthrough.snake);
-    hidden = conv1d_same(ctx, hidden, weights.watermark_passthrough.conv, in_channels, 1, 7);
+    hidden = modules::Conv1dModule({
+        in_channels,
+        1,
+        7,
+        1,
+        3,
+        1,
+        weights.watermark_passthrough.conv.bias.has_value(),
+    }).build(ctx, hidden, weights.watermark_passthrough.conv);
     return modules::TanhModule{}.build(ctx, hidden);
 }
 
@@ -409,7 +408,15 @@ core::TensorValue build_irodori_codec_encode(
     const core::TensorValue & waveform_bct,
     const IrodoriCodecWeights & weights,
     const IrodoriCodecConfig & config) {
-    auto hidden = conv1d_same(ctx, waveform_bct, weights.encoder_input, 1, config.encoder_dim, 7);
+    auto hidden = modules::Conv1dModule({
+        1,
+        config.encoder_dim,
+        7,
+        1,
+        3,
+        1,
+        weights.encoder_input.bias.has_value(),
+    }).build(ctx, waveform_bct, weights.encoder_input);
     const int64_t rates[] = {2, 8, 10, 12};
     int64_t in_channels = config.encoder_dim;
     for (size_t i = 0; i < weights.encoder_blocks.size(); ++i) {
@@ -418,7 +425,15 @@ core::TensorValue build_irodori_codec_encode(
         in_channels = out_channels;
     }
     hidden = modules::Snake1dModule({in_channels}).build(ctx, hidden, weights.encoder_output_snake);
-    hidden = conv1d_same(ctx, hidden, weights.encoder_output, in_channels, config.latent_dim, 3);
+    hidden = modules::Conv1dModule({
+        in_channels,
+        config.latent_dim,
+        3,
+        1,
+        1,
+        1,
+        weights.encoder_output.bias.has_value(),
+    }).build(ctx, hidden, weights.encoder_output);
     hidden = modules::Conv1dModule({config.latent_dim, 2 * config.codebook_dim, 1, 1, 0, 1, true})
                  .build(ctx, hidden, weights.quantizer_in_proj);
     hidden = modules::SliceModule({1, 0, config.codebook_dim}).build(ctx, hidden);

@@ -74,13 +74,6 @@ core::TensorValue transpose_btc_bct(core::ModuleBuildContext & ctx, const core::
     return modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input);
 }
 
-core::TensorValue layer_norm(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const modules::NormWeights & weights) {
-    return modules::LayerNormModule({input.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, input, weights);
-}
-
 core::TensorValue build_biased_gpt_projection(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -222,7 +215,7 @@ core::TensorValue condition_conv_module(
     x = glu_axis(ctx, x, 1);
     x = modules::DepthwiseConv1dModule({kConditionDim, kConditionConvKernel, 1, 7, 1, true}).build(ctx, x, weights.conv_depthwise);
     x = transpose_btc_bct(ctx, x);
-    x = layer_norm(ctx, x, weights.conv_norm);
+    x = modules::LayerNormModule({x.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, x, weights.conv_norm);
     x = modules::SiluModule{}.build(ctx, x);
     x = transpose_btc_bct(ctx, x);
     x = modules::Conv1dModule({kConditionDim, kConditionDim, 1, 1, 0, 1, true}).build(ctx, x, weights.conv_pointwise_out);
@@ -236,20 +229,20 @@ core::TensorValue condition_layer(
     const IndexTTS2GptConditionLayerWeights & weights,
     int64_t heads) {
     auto x = input;
-    auto y = layer_norm(ctx, x, weights.norm_mha);
+    auto y = modules::LayerNormModule({x.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, x, weights.norm_mha);
     y = condition_rel_attention(ctx, y, pos_emb, weights, heads);
     x = modules::AddModule{}.build(ctx, x, y);
 
-    y = layer_norm(ctx, x, weights.norm_conv);
+    y = modules::LayerNormModule({x.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, x, weights.norm_conv);
     y = condition_conv_module(ctx, y, weights);
     x = modules::AddModule{}.build(ctx, x, y);
 
-    y = layer_norm(ctx, x, weights.norm_ff);
+    y = modules::LayerNormModule({x.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, x, weights.norm_ff);
     y = modules::LinearModule({kConditionDim, weights.feed_forward_in.weight.shape.dims[0], true}).build(ctx, y, weights.feed_forward_in);
     y = modules::SiluModule{}.build(ctx, y);
     y = modules::LinearModule({weights.feed_forward_in.weight.shape.dims[0], kConditionDim, true}).build(ctx, y, weights.feed_forward_out);
     x = modules::AddModule{}.build(ctx, x, y);
-    return layer_norm(ctx, x, weights.norm_final);
+    return modules::LayerNormModule({x.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, x, weights.norm_final);
 }
 
 core::TensorValue perceiver_attention(
@@ -326,7 +319,7 @@ core::TensorValue condition_encoder(
     for (const auto & layer : encoder.layers) {
         x = condition_layer(ctx, x, pos_emb, layer, encoder_heads);
     }
-    x = layer_norm(ctx, x, encoder.after_norm);
+    x = modules::LayerNormModule({x.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, x, encoder.after_norm);
     return perceiver(ctx, x, perceiver_weights, perceiver_latents, perceiver_dim, perceiver_heads, perceiver_inner, perceiver_ff_in);
 }
 

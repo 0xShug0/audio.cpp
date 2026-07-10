@@ -65,13 +65,6 @@ core::TensorValue div(
     return core::wrap_tensor(ggml_div(ctx.ggml, lhs.tensor, rhs.tensor), lhs.shape, GGML_TYPE_F32);
 }
 
-core::TensorValue layer_norm(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const modules::NormWeights & weights) {
-    return modules::LayerNormModule({input.shape.last_dim(), 1.0e-6F, true, true}).build(ctx, input, weights);
-}
-
 core::TensorValue vocos_backbone(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input_bct,
@@ -79,13 +72,13 @@ core::TensorValue vocos_backbone(
     auto x = modules::Conv1dModule({input_bct.shape.dims[1], kVocosDim, kConvNeXtKernel, 1, 3, 1, true})
                  .build(ctx, input_bct, weights.embed);
     x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
-    x = layer_norm(ctx, x, weights.norm);
+    x = modules::LayerNormModule({x.shape.last_dim(), 1.0e-6F, true, true}).build(ctx, x, weights.norm);
     x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
     for (const auto & block : weights.blocks) {
         const auto residual = x;
         x = modules::DepthwiseConv1dModule({kVocosDim, kConvNeXtKernel, 1, 3, 1, true}).build(ctx, x, block.depthwise);
         x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
-        x = layer_norm(ctx, x, block.norm);
+        x = modules::LayerNormModule({x.shape.last_dim(), 1.0e-6F, true, true}).build(ctx, x, block.norm);
         x = modules::LinearModule({kVocosDim, kVocosIntermediate, true}).build(ctx, x, block.pointwise_in);
         x = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, x);
         x = modules::LinearModule({kVocosIntermediate, kVocosDim, true}).build(ctx, x, block.pointwise_out);
@@ -97,7 +90,7 @@ core::TensorValue vocos_backbone(
         x = modules::AddModule{}.build(ctx, residual, x);
     }
     x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
-    return layer_norm(ctx, x, weights.final_norm);
+    return modules::LayerNormModule({x.shape.last_dim(), 1.0e-6F, true, true}).build(ctx, x, weights.final_norm);
 }
 
 core::TensorValue quantizer_in_project(

@@ -75,13 +75,6 @@ core::TensorValue apply_keep_mask(
     return modules::MulModule{}.build(ctx, input, repeat_last_dim_mask(ctx, keep_mask, input));
 }
 
-core::TensorValue layer_norm(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const modules::NormWeights & weights) {
-    return modules::LayerNormModule({input.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, input, weights);
-}
-
 core::TensorValue broadcast_vector(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & vector,
@@ -153,7 +146,7 @@ core::TensorValue wav2vec2bert_conv(
     const core::TensorValue & input,
     const core::TensorValue & keep_mask,
     const IndexTTS2Wav2Vec2BertConvWeights & weights) {
-    auto hidden = layer_norm(ctx, input, weights.layer_norm);
+    auto hidden = modules::LayerNormModule({input.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, input, weights.layer_norm);
     hidden = apply_keep_mask(ctx, hidden, keep_mask);
     hidden = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, hidden);
     hidden = modules::Conv1dModule({kHidden, 2 * kHidden, 1, 1, 0, 1, false}).build(ctx, hidden, weights.pointwise_in);
@@ -168,7 +161,7 @@ core::TensorValue wav2vec2bert_conv(
     hidden = modules::ConcatModule({2}).build(ctx, left_pad, hidden);
     hidden = modules::DepthwiseConv1dModule({kHidden, kConvKernel, 1, 0, 1, false}).build(ctx, hidden, weights.depthwise);
     hidden = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, hidden);
-    hidden = layer_norm(ctx, hidden, weights.depthwise_layer_norm);
+    hidden = modules::LayerNormModule({hidden.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, hidden, weights.depthwise_layer_norm);
     hidden = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, hidden);
     hidden = modules::SiluModule{}.build(ctx, hidden);
     hidden = modules::Conv1dModule({kHidden, kHidden, 1, 1, 0, 1, false}).build(ctx, hidden, weights.pointwise_out);
@@ -182,21 +175,21 @@ core::TensorValue wav2vec2bert_layer(
     const core::TensorValue & attention_mask,
     const core::TensorValue & distance_ids,
     const IndexTTS2Wav2Vec2BertLayerWeights & weights) {
-    auto hidden = layer_norm(ctx, input, weights.ffn1_norm);
+    auto hidden = modules::LayerNormModule({input.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, input, weights.ffn1_norm);
     hidden = wav2vec2bert_feed_forward(ctx, hidden, weights.ffn1_in, weights.ffn1_out);
     hidden = add_scaled_residual(ctx, input, hidden, 0.5F);
 
-    auto attn = layer_norm(ctx, hidden, weights.self_attn_norm);
+    auto attn = modules::LayerNormModule({hidden.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, hidden, weights.self_attn_norm);
     attn = wav2vec2bert_attention(ctx, attn, attention_mask, distance_ids, weights.self_attn);
     hidden = modules::AddModule{}.build(ctx, hidden, attn);
 
     auto conv = wav2vec2bert_conv(ctx, hidden, keep_mask, weights.conv);
     hidden = modules::AddModule{}.build(ctx, hidden, conv);
 
-    auto ffn2 = layer_norm(ctx, hidden, weights.ffn2_norm);
+    auto ffn2 = modules::LayerNormModule({hidden.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, hidden, weights.ffn2_norm);
     ffn2 = wav2vec2bert_feed_forward(ctx, ffn2, weights.ffn2_in, weights.ffn2_out);
     hidden = add_scaled_residual(ctx, hidden, ffn2, 0.5F);
-    return layer_norm(ctx, hidden, weights.final_norm);
+    return modules::LayerNormModule({hidden.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, hidden, weights.final_norm);
 }
 
 IndexTTS2Wav2Vec2BertAttentionWeights load_attention(
@@ -399,7 +392,7 @@ public:
         auto attn_mask = core::wrap_tensor(attention_mask_, core::TensorShape::from_dims({1, kHeads, frames_, frames_}), GGML_TYPE_F32);
         auto distances = core::wrap_tensor(distance_ids_, core::TensorShape::from_dims({frames_, frames_}), GGML_TYPE_I32);
 
-        x = layer_norm(ctx, x, weights_->feature_norm);
+        x = modules::LayerNormModule({x.shape.last_dim(), 1.0e-5F, true, true}).build(ctx, x, weights_->feature_norm);
         x = modules::LinearModule({kFeatureDim, kHidden, true, GGML_PREC_F32}).build(ctx, x, weights_->feature_projection);
         x = apply_keep_mask(ctx, x, keep);
         for (int64_t layer = 0; layer < kSemanticOutputHiddenStateIndex; ++layer) {

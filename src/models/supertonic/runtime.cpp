@@ -419,55 +419,6 @@ core::TensorValue edge_pad_time(
     return out;
 }
 
-core::TensorValue conv1d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & weight,
-    const std::optional<core::TensorValue> & bias,
-    int dilation = 1) {
-    return modules::Conv1dModule({
-        input.shape.dims[1],
-        weight.shape.dims[0],
-        weight.shape.dims[2],
-        1,
-        0,
-        dilation,
-        bias.has_value(),
-    }).build(ctx, input, {weight, bias});
-}
-
-core::TensorValue pointwise_conv1d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & weight,
-    const std::optional<core::TensorValue> & bias) {
-    return modules::Conv1dModule({
-        input.shape.dims[1],
-        weight.shape.dims[0],
-        1,
-        1,
-        0,
-        1,
-        bias.has_value(),
-    }).build(ctx, input, {weight, bias});
-}
-
-core::TensorValue depthwise_conv1d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & weight,
-    const core::TensorValue & bias,
-    int dilation) {
-    return modules::DepthwiseConv1dModule({
-        input.shape.dims[1],
-        weight.shape.dims[2],
-        1,
-        0,
-        dilation,
-        true,
-    }).build(ctx, input, {weight, bias});
-}
-
 core::TensorValue prelu(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -514,13 +465,36 @@ core::TensorValue vocoder_block(
     int dilation) {
     const int64_t left_pad = dilation * 6;
     auto x = edge_pad_time(ctx, input, left_pad, 0);
-    x = depthwise_conv1d(ctx, x, weights.dw_weight, weights.dw_bias, dilation);
+    x = modules::DepthwiseConv1dModule({
+        x.shape.dims[1],
+        weights.dw_weight.shape.dims[2],
+        1,
+        0,
+        dilation,
+        true,
+    }).build(ctx, x, {weights.dw_weight, weights.dw_bias});
     x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
     x = modules::LayerNormModule({x.shape.last_dim(), 1.0e-6F, true, true}).build(ctx, x, {weights.norm_weight, weights.norm_bias});
     x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
-    x = pointwise_conv1d(ctx, x, weights.pw1_weight, weights.pw1_bias);
+    x = modules::Conv1dModule({
+        x.shape.dims[1],
+        weights.pw1_weight.shape.dims[0],
+        1,
+        1,
+        0,
+        1,
+        true,
+    }).build(ctx, x, {weights.pw1_weight, weights.pw1_bias});
     x = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, x);
-    x = pointwise_conv1d(ctx, x, weights.pw2_weight, weights.pw2_bias);
+    x = modules::Conv1dModule({
+        x.shape.dims[1],
+        weights.pw2_weight.shape.dims[0],
+        1,
+        1,
+        0,
+        1,
+        true,
+    }).build(ctx, x, {weights.pw2_weight, weights.pw2_bias});
     const auto gamma = broadcast_to(ctx, weights.gamma, x.shape);
     x = core::wrap_tensor(ggml_mul(ctx.ggml, x.tensor, gamma.tensor), x.shape, GGML_TYPE_F32);
     return modules::ResidualAddModule{}.build(ctx, input, x);
@@ -675,16 +649,40 @@ private:
         x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, latent_mean.tensor), x.shape, GGML_TYPE_F32);
 
         x = edge_pad_time(ctx, x, 6, 0);
-        x = conv1d(ctx, x, weights_.embed_weight, weights_.embed_bias);
+        x = modules::Conv1dModule({
+            x.shape.dims[1],
+            weights_.embed_weight.shape.dims[0],
+            weights_.embed_weight.shape.dims[2],
+            1,
+            0,
+            1,
+            true,
+        }).build(ctx, x, {weights_.embed_weight, weights_.embed_bias});
         constexpr std::array<int, 10> kDilations = {1, 2, 4, 1, 2, 4, 1, 1, 1, 1};
         for (size_t i = 0; i < weights_.blocks.size(); ++i) {
             x = vocoder_block(ctx, x, weights_.blocks[i], kDilations[i]);
         }
         x = batch_norm_eval(ctx, x, weights_);
         x = edge_pad_time(ctx, x, 2, 0);
-        x = conv1d(ctx, x, weights_.head1_weight, weights_.head1_bias);
+        x = modules::Conv1dModule({
+            x.shape.dims[1],
+            weights_.head1_weight.shape.dims[0],
+            weights_.head1_weight.shape.dims[2],
+            1,
+            0,
+            1,
+            true,
+        }).build(ctx, x, {weights_.head1_weight, weights_.head1_bias});
         x = prelu(ctx, x, weights_.head_prelu_slope);
-        x = pointwise_conv1d(ctx, x, weights_.head2_weight, std::nullopt);
+        x = modules::Conv1dModule({
+            x.shape.dims[1],
+            weights_.head2_weight.shape.dims[0],
+            1,
+            1,
+            0,
+            1,
+            false,
+        }).build(ctx, x, {weights_.head2_weight, std::nullopt});
         x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
         return core::reshape_tensor(
             ctx,
@@ -737,14 +735,36 @@ public:
         x = self_encoder(x, encoder_mask, "duration_predictor.tts.dp.sentence_encoder.attn_encoder", 2, 2);
         x = add(x, convnext_out);
         x = modules::SliceModule({2, 0, 1}).build(ctx_, x);
-        x = conv1(x, "duration_predictor.tts.dp.sentence_encoder.proj_out.net.weight", "");
+        x = modules::Conv1dModule({
+            x.shape.dims[1],
+            weight("duration_predictor.tts.dp.sentence_encoder.proj_out.net.weight").shape.dims[0],
+            1,
+            1,
+            0,
+            1,
+            false,
+        }).build(ctx_, x, {weight("duration_predictor.tts.dp.sentence_encoder.proj_out.net.weight"), std::nullopt});
         x = mul(x, sentence_mask);
         auto pooled = core::reshape_tensor(ctx_, core::ensure_backend_addressable_layout(ctx_, x), core::TensorShape::from_dims({x.shape.dims[0], x.shape.dims[1]}));
         auto style_flat = core::reshape_tensor(ctx_, core::ensure_backend_addressable_layout(ctx_, style_dp), core::TensorShape::from_dims({style_dp.shape.dims[0], style_dp.shape.dims[1] * style_dp.shape.dims[2]}));
         auto joined = modules::ConcatModule({1}).build(ctx_, pooled, style_flat);
-        auto h = linear(joined, "duration_predictor.tts.dp.predictor.layers.0.weight", "duration_predictor.tts.dp.predictor.layers.0.bias");
+        auto h = modules::LinearModule({
+            joined.shape.last_dim(),
+            weight("duration_predictor.tts.dp.predictor.layers.0.weight").shape.dims[0],
+            true,
+        }).build(
+            ctx_,
+            joined,
+            {weight("duration_predictor.tts.dp.predictor.layers.0.weight"), weight("duration_predictor.tts.dp.predictor.layers.0.bias")});
         h = prelu(ctx_, h, weight("duration_predictor.tts.dp.predictor.activation.weight"));
-        auto duration = linear(h, "duration_predictor.tts.dp.predictor.layers.1.weight", "duration_predictor.tts.dp.predictor.layers.1.bias");
+        auto duration = modules::LinearModule({
+            h.shape.last_dim(),
+            weight("duration_predictor.tts.dp.predictor.layers.1.weight").shape.dims[0],
+            true,
+        }).build(
+            ctx_,
+            h,
+            {weight("duration_predictor.tts.dp.predictor.layers.1.weight"), weight("duration_predictor.tts.dp.predictor.layers.1.bias")});
         duration = core::wrap_tensor(ggml_exp(ggml_, duration.tensor), duration.shape, GGML_TYPE_F32);
         return core::reshape_tensor(ctx_, duration, core::TensorShape::from_dims({duration.shape.dims[0]}));
     }
@@ -848,7 +868,18 @@ private:
         const core::TensorValue & total_step) {
         auto time = time_embedding(current_step, total_step);
         auto latent_pair = modules::ConcatModule({0}).build(ctx_, noisy_latent, noisy_latent);
-        auto x = vector_conv1(latent_pair, "vector_estimator.vector_estimator.tts.ttl.vector_field.proj_in.net.weight", "");
+        const auto & proj_in_weight = weight("vector_estimator.vector_estimator.tts.ttl.vector_field.proj_in.net.weight");
+        auto latent_pair_btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, latent_pair);
+        latent_pair_btc = core::ensure_backend_addressable_layout(ctx_, latent_pair_btc);
+        const auto proj_in_weight_2d = core::reshape_tensor(
+            ctx_,
+            proj_in_weight,
+            core::TensorShape::from_dims({proj_in_weight.shape.dims[0], proj_in_weight.shape.dims[1]}));
+        auto x = modules::LinearModule({latent_pair.shape.dims[1], proj_in_weight.shape.dims[0], false}).build(
+            ctx_,
+            latent_pair_btc,
+            {proj_in_weight_2d, std::nullopt});
+        x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, x);
         x = mul(x, state.mask_pair);
         for (int group = 0; group < 4; ++group) {
             const int base = group * 6;
@@ -860,7 +891,18 @@ private:
             x = style_memory_block(x, state.style_key_pair, state.style_value_pair, state.mask_pair, base + 5);
         }
         x = vector_estimator_convnext(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.last_convnext", {1, 1, 1, 1}, state.mask_pair);
-        x = vector_conv1(x, "vector_estimator.vector_estimator.tts.ttl.vector_field.proj_out.net.weight", "");
+        const auto & proj_out_weight = weight("vector_estimator.vector_estimator.tts.ttl.vector_field.proj_out.net.weight");
+        auto x_btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, x);
+        x_btc = core::ensure_backend_addressable_layout(ctx_, x_btc);
+        const auto proj_out_weight_2d = core::reshape_tensor(
+            ctx_,
+            proj_out_weight,
+            core::TensorShape::from_dims({proj_out_weight.shape.dims[0], proj_out_weight.shape.dims[1]}));
+        x = modules::LinearModule({x.shape.dims[1], proj_out_weight.shape.dims[0], false}).build(
+            ctx_,
+            x_btc,
+            {proj_out_weight_2d, std::nullopt});
+        x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, x);
         x = mul(x, state.mask_pair);
         auto conditional = modules::SliceModule({0, 0, 1}).build(ctx_, x);
         auto unconditional = modules::SliceModule({0, 1, 1}).build(ctx_, x);
@@ -916,57 +958,6 @@ private:
         return modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx_, value);
     }
 
-    core::TensorValue linear(const core::TensorValue & value, const std::string & weight_name, const std::string & bias_name) {
-        const auto & wt = weight(weight_name);
-        std::optional<core::TensorValue> bias;
-        if (!bias_name.empty()) {
-            bias = weight(bias_name);
-        }
-        return modules::LinearModule({value.shape.last_dim(), wt.shape.dims[0], !bias_name.empty()}).build(ctx_, value, {wt, bias});
-    }
-
-    core::TensorValue linear_right(const core::TensorValue & value, const std::string & weight_name, const std::string & bias_name) {
-        const auto & wt = weight(weight_name);
-        auto wt_t = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, wt);
-        wt_t = core::ensure_backend_addressable_layout(ctx_, wt_t);
-        std::optional<core::TensorValue> bias;
-        if (!bias_name.empty()) {
-            bias = weight(bias_name);
-        }
-        return modules::LinearModule({value.shape.last_dim(), wt.shape.dims[1], !bias_name.empty()}).build(ctx_, value, {wt_t, bias});
-    }
-
-    core::TensorValue conv1(const core::TensorValue & value, const std::string & weight_name, const std::string & bias_name) {
-        return pointwise_conv1d(ctx_, value, weight(weight_name), bias_name.empty() ? std::optional<core::TensorValue>() : std::optional<core::TensorValue>(weight(bias_name)));
-    }
-
-    core::TensorValue vector_conv1(const core::TensorValue & value, const std::string & weight_name, const std::string & bias_name) {
-        const auto & wt = weight(weight_name);
-        std::optional<core::TensorValue> bias;
-        if (!bias_name.empty()) {
-            bias = weight(bias_name);
-        }
-        auto value_btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, value);
-        value_btc = core::ensure_backend_addressable_layout(ctx_, value_btc);
-        const auto wt_2d = core::reshape_tensor(ctx_, wt, core::TensorShape::from_dims({wt.shape.dims[0], wt.shape.dims[1]}));
-        auto projected = modules::LinearModule({value.shape.dims[1], wt.shape.dims[0], bias.has_value()}).build(ctx_, value_btc, {wt_2d, bias});
-        return modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, projected);
-    }
-
-    core::TensorValue vector_linear_btc(
-        const core::TensorValue & value_btc,
-        const std::string & weight_name,
-        const std::string & bias_name) {
-        const auto & wt = weight(weight_name);
-        std::optional<core::TensorValue> bias;
-        if (!bias_name.empty()) {
-            bias = weight(bias_name);
-        }
-        auto input = core::ensure_backend_addressable_layout(ctx_, value_btc);
-        const auto wt_2d = core::reshape_tensor(ctx_, wt, core::TensorShape::from_dims({wt.shape.dims[0], wt.shape.dims[1]}));
-        return modules::LinearModule({value_btc.shape.last_dim(), wt.shape.dims[0], bias.has_value()}).build(ctx_, input, {wt_2d, bias});
-    }
-
     core::TensorValue text_cross_attention(
         const core::TensorValue & query_bct,
         const core::TensorValue & text_bct,
@@ -980,9 +971,27 @@ private:
         auto query = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, query_bct);
         auto memory = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, text_bct);
         auto value_memory = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, value_bct == nullptr ? text_bct : *value_bct);
-        auto q = linear_right(query, prefix + ".W_query.linear.weight", prefix + ".W_query.linear.bias");
-        auto k = linear_right(memory, prefix + ".W_key.linear.weight", prefix + ".W_key.linear.bias");
-        auto v = linear_right(value_memory, prefix + ".W_value.linear.weight", prefix + ".W_value.linear.bias");
+        const auto & q_weight = weight(prefix + ".W_query.linear.weight");
+        auto q_weight_t = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, q_weight);
+        q_weight_t = core::ensure_backend_addressable_layout(ctx_, q_weight_t);
+        auto q = modules::LinearModule({query.shape.last_dim(), q_weight.shape.dims[1], true}).build(
+            ctx_,
+            query,
+            {q_weight_t, weight(prefix + ".W_query.linear.bias")});
+        const auto & k_weight = weight(prefix + ".W_key.linear.weight");
+        auto k_weight_t = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, k_weight);
+        k_weight_t = core::ensure_backend_addressable_layout(ctx_, k_weight_t);
+        auto k = modules::LinearModule({memory.shape.last_dim(), k_weight.shape.dims[1], true}).build(
+            ctx_,
+            memory,
+            {k_weight_t, weight(prefix + ".W_key.linear.bias")});
+        const auto & v_weight = weight(prefix + ".W_value.linear.weight");
+        auto v_weight_t = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, v_weight);
+        v_weight_t = core::ensure_backend_addressable_layout(ctx_, v_weight_t);
+        auto v = modules::LinearModule({value_memory.shape.last_dim(), v_weight.shape.dims[1], true}).build(
+            ctx_,
+            value_memory,
+            {v_weight_t, weight(prefix + ".W_value.linear.bias")});
         const int64_t projection_dim = q.shape.last_dim();
         const int64_t head_dim = projection_dim / heads;
         q = core::reshape_tensor(ctx_, core::ensure_backend_addressable_layout(ctx_, q), core::TensorShape::from_dims({q.shape.dims[0], q.shape.dims[1], heads, head_dim}));
@@ -1036,7 +1045,13 @@ private:
             ctx_,
             core::ensure_backend_addressable_layout(ctx_, context),
             core::TensorShape::from_dims({query.shape.dims[0], query.shape.dims[1], heads * head_dim}));
-        context = linear_right(context, prefix + ".out_fc.linear.weight", prefix + ".out_fc.linear.bias");
+        const auto & out_weight = weight(prefix + ".out_fc.linear.weight");
+        auto out_weight_t = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, out_weight);
+        out_weight_t = core::ensure_backend_addressable_layout(ctx_, out_weight_t);
+        context = modules::LinearModule({context.shape.last_dim(), out_weight.shape.dims[1], true}).build(
+            ctx_,
+            context,
+            {out_weight_t, weight(prefix + ".out_fc.linear.bias")});
         auto out = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, context);
         out = core::ensure_backend_addressable_layout(ctx_, out);
         if (output_mask_bct.has_value()) {
@@ -1152,9 +1167,36 @@ private:
         const core::TensorValue & x_bct,
         const std::string & prefix,
         int64_t heads) {
-        auto q = conv1(x_bct, prefix + ".conv_q.weight", prefix + ".conv_q.bias");
-        auto k = conv1(x_bct, prefix + ".conv_k.weight", prefix + ".conv_k.bias");
-        auto v = conv1(x_bct, prefix + ".conv_v.weight", prefix + ".conv_v.bias");
+        const auto & q_weight = weight(prefix + ".conv_q.weight");
+        auto q = modules::Conv1dModule({
+            x_bct.shape.dims[1],
+            q_weight.shape.dims[0],
+            1,
+            1,
+            0,
+            1,
+            true,
+        }).build(ctx_, x_bct, {q_weight, weight(prefix + ".conv_q.bias")});
+        const auto & k_weight = weight(prefix + ".conv_k.weight");
+        auto k = modules::Conv1dModule({
+            x_bct.shape.dims[1],
+            k_weight.shape.dims[0],
+            1,
+            1,
+            0,
+            1,
+            true,
+        }).build(ctx_, x_bct, {k_weight, weight(prefix + ".conv_k.bias")});
+        const auto & v_weight = weight(prefix + ".conv_v.weight");
+        auto v = modules::Conv1dModule({
+            x_bct.shape.dims[1],
+            v_weight.shape.dims[0],
+            1,
+            1,
+            0,
+            1,
+            true,
+        }).build(ctx_, x_bct, {v_weight, weight(prefix + ".conv_v.bias")});
         q = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, q);
         k = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, k);
         v = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, v);
@@ -1184,20 +1226,53 @@ private:
             core::ensure_backend_addressable_layout(ctx_, context),
             core::TensorShape::from_dims({x_bct.shape.dims[0], x_bct.shape.dims[2], x_bct.shape.dims[1]}));
         context = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, context);
-        return conv1(context, prefix + ".conv_o.weight", prefix + ".conv_o.bias");
+        const auto & out_weight = weight(prefix + ".conv_o.weight");
+        return modules::Conv1dModule({
+            context.shape.dims[1],
+            out_weight.shape.dims[0],
+            1,
+            1,
+            0,
+            1,
+            true,
+        }).build(ctx_, context, {out_weight, weight(prefix + ".conv_o.bias")});
     }
 
     core::TensorValue convnext(core::TensorValue x, const std::string & prefix, const std::vector<int> & dilations) {
         for (size_t i = 0; i < dilations.size(); ++i) {
             const std::string p = prefix + ".convnext." + std::to_string(i);
             auto y = edge_pad_time(ctx_, x, static_cast<int64_t>(dilations[i]) * 2, static_cast<int64_t>(dilations[i]) * 2);
-            y = depthwise_conv1d(ctx_, y, weight(p + ".dwconv.weight"), weight(p + ".dwconv.bias"), dilations[i]);
+            const auto & dw_weight = weight(p + ".dwconv.weight");
+            y = modules::DepthwiseConv1dModule({
+                y.shape.dims[1],
+                dw_weight.shape.dims[2],
+                1,
+                0,
+                dilations[i],
+                true,
+            }).build(ctx_, y, {dw_weight, weight(p + ".dwconv.bias")});
             y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
             y = modules::LayerNormModule({x.shape.dims[1], 1.0e-6F, true, true}).build(ctx_, y, {weight(p + ".norm.norm.weight"), weight(p + ".norm.norm.bias")});
             y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
-            y = pointwise_conv1d(ctx_, y, weight(p + ".pwconv1.weight"), weight(p + ".pwconv1.bias"));
+            const auto & pw1_weight = weight(p + ".pwconv1.weight");
+            auto y_btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
+            y_btc = core::ensure_backend_addressable_layout(ctx_, y_btc);
+            const auto pw1_weight_2d = core::reshape_tensor(ctx_, pw1_weight, core::TensorShape::from_dims({pw1_weight.shape.dims[0], pw1_weight.shape.dims[1]}));
+            y_btc = modules::LinearModule({y.shape.dims[1], pw1_weight.shape.dims[0], true}).build(
+                ctx_,
+                y_btc,
+                {pw1_weight_2d, weight(p + ".pwconv1.bias")});
+            y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y_btc);
             y = gelu(y);
-            y = pointwise_conv1d(ctx_, y, weight(p + ".pwconv2.weight"), weight(p + ".pwconv2.bias"));
+            const auto & pw2_weight = weight(p + ".pwconv2.weight");
+            y_btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
+            y_btc = core::ensure_backend_addressable_layout(ctx_, y_btc);
+            const auto pw2_weight_2d = core::reshape_tensor(ctx_, pw2_weight, core::TensorShape::from_dims({pw2_weight.shape.dims[0], pw2_weight.shape.dims[1]}));
+            y_btc = modules::LinearModule({y.shape.dims[1], pw2_weight.shape.dims[0], true}).build(
+                ctx_,
+                y_btc,
+                {pw2_weight_2d, weight(p + ".pwconv2.bias")});
+            y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y_btc);
             y = mul(y, weight(p + ".gamma"));
             x = add(x, y);
         }
@@ -1213,14 +1288,40 @@ private:
             const std::string p = prefix + ".convnext." + std::to_string(i);
             auto residual = mul(x, mask);
             auto y = edge_pad_time(ctx_, residual, static_cast<int64_t>(dilations[i]) * 2, static_cast<int64_t>(dilations[i]) * 2);
-            y = depthwise_conv1d(ctx_, y, weight(p + ".dwconv.weight"), weight(p + ".dwconv.bias"), dilations[i]);
+            const auto & dw_weight = weight(p + ".dwconv.weight");
+            y = modules::DepthwiseConv1dModule({
+                y.shape.dims[1],
+                dw_weight.shape.dims[2],
+                1,
+                0,
+                dilations[i],
+                true,
+            }).build(ctx_, y, {dw_weight, weight(p + ".dwconv.bias")});
             y = mul(y, mask);
             y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
             y = modules::LayerNormModule({x.shape.dims[1], 1.0e-6F, true, true}).build(ctx_, y, {weight(p + ".norm.norm.weight"), weight(p + ".norm.norm.bias")});
             y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
-            y = vector_conv1(y, p + ".pwconv1.weight", p + ".pwconv1.bias");
+            const auto & pw1_weight = weight(p + ".pwconv1.weight");
+            y = modules::Conv1dModule({
+                y.shape.dims[1],
+                pw1_weight.shape.dims[0],
+                1,
+                1,
+                0,
+                1,
+                true,
+            }).build(ctx_, y, {pw1_weight, weight(p + ".pwconv1.bias")});
             y = gelu(y);
-            y = vector_conv1(y, p + ".pwconv2.weight", p + ".pwconv2.bias");
+            const auto & pw2_weight = weight(p + ".pwconv2.weight");
+            y = modules::Conv1dModule({
+                y.shape.dims[1],
+                pw2_weight.shape.dims[0],
+                1,
+                1,
+                0,
+                1,
+                true,
+            }).build(ctx_, y, {pw2_weight, weight(p + ".pwconv2.bias")});
             y = mul(y, weight(p + ".gamma"));
             x = add(residual, y);
         }
@@ -1236,16 +1337,34 @@ private:
             const std::string p = prefix + ".convnext." + std::to_string(i);
             auto residual = mul(x, mask);
             auto y = edge_pad_time(ctx_, residual, static_cast<int64_t>(dilations[i]) * 2, static_cast<int64_t>(dilations[i]) * 2);
-            y = depthwise_conv1d(ctx_, y, weight(p + ".dwconv.weight"), weight(p + ".dwconv.bias"), dilations[i]);
+            const auto & dw_weight = weight(p + ".dwconv.weight");
+            y = modules::DepthwiseConv1dModule({
+                y.shape.dims[1],
+                dw_weight.shape.dims[2],
+                1,
+                0,
+                dilations[i],
+                true,
+            }).build(ctx_, y, {dw_weight, weight(p + ".dwconv.bias")});
             y = mul(y, mask);
             auto y_btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y);
             y_btc = modules::LayerNormModule({x.shape.dims[1], 1.0e-6F, true, true}).build(
                 ctx_,
                 y_btc,
                 {weight(p + ".norm.norm.weight"), weight(p + ".norm.norm.bias")});
-            y_btc = vector_linear_btc(y_btc, p + ".pwconv1.weight", p + ".pwconv1.bias");
+            const auto & pw1_weight = weight(p + ".pwconv1.weight");
+            const auto pw1_weight_2d = core::reshape_tensor(ctx_, pw1_weight, core::TensorShape::from_dims({pw1_weight.shape.dims[0], pw1_weight.shape.dims[1]}));
+            y_btc = modules::LinearModule({y_btc.shape.last_dim(), pw1_weight.shape.dims[0], true}).build(
+                ctx_,
+                core::ensure_backend_addressable_layout(ctx_, y_btc),
+                {pw1_weight_2d, weight(p + ".pwconv1.bias")});
             y_btc = gelu(y_btc);
-            y_btc = vector_linear_btc(y_btc, p + ".pwconv2.weight", p + ".pwconv2.bias");
+            const auto & pw2_weight = weight(p + ".pwconv2.weight");
+            const auto pw2_weight_2d = core::reshape_tensor(ctx_, pw2_weight, core::TensorShape::from_dims({pw2_weight.shape.dims[0], pw2_weight.shape.dims[1]}));
+            y_btc = modules::LinearModule({y_btc.shape.last_dim(), pw2_weight.shape.dims[0], true}).build(
+                ctx_,
+                core::ensure_backend_addressable_layout(ctx_, y_btc),
+                {pw2_weight_2d, weight(p + ".pwconv2.bias")});
             y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, y_btc);
             y = mul(y, weight(p + ".gamma"));
             x = add(residual, y);
@@ -1269,10 +1388,28 @@ private:
             x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, normed);
             x = core::ensure_backend_addressable_layout(ctx_, x);
             auto y = mul(x, mask);
-            y = conv1(y, prefix + ".ffn_layers." + std::to_string(i) + ".conv_1.weight", prefix + ".ffn_layers." + std::to_string(i) + ".conv_1.bias");
+            const auto & ffn1_weight = weight(prefix + ".ffn_layers." + std::to_string(i) + ".conv_1.weight");
+            y = modules::Conv1dModule({
+                y.shape.dims[1],
+                ffn1_weight.shape.dims[0],
+                1,
+                1,
+                0,
+                1,
+                true,
+            }).build(ctx_, y, {ffn1_weight, weight(prefix + ".ffn_layers." + std::to_string(i) + ".conv_1.bias")});
             y = modules::ReluModule().build(ctx_, y);
             y = mul(y, mask);
-            y = conv1(y, prefix + ".ffn_layers." + std::to_string(i) + ".conv_2.weight", prefix + ".ffn_layers." + std::to_string(i) + ".conv_2.bias");
+            const auto & ffn2_weight = weight(prefix + ".ffn_layers." + std::to_string(i) + ".conv_2.weight");
+            y = modules::Conv1dModule({
+                y.shape.dims[1],
+                ffn2_weight.shape.dims[0],
+                1,
+                1,
+                0,
+                1,
+                true,
+            }).build(ctx_, y, {ffn2_weight, weight(prefix + ".ffn_layers." + std::to_string(i) + ".conv_2.bias")});
             y = mul(y, mask);
             x = add(x, y);
             x = modules::LayerNormModule({x.shape.dims[1], 1.0e-6F, true, true}).build(
@@ -1331,11 +1468,19 @@ private:
         auto cos_part = core::wrap_tensor(ggml_cos(ggml_, args.tensor), args.shape, GGML_TYPE_F32);
         auto encoded = modules::ConcatModule({1}).build(ctx_, sin_part, cos_part);
         const std::string prefix = "vector_estimator.vector_estimator.tts.ttl.vector_field.time_encoder.mlp.";
-        auto h = linear(encoded, prefix + "0.linear.weight", prefix + "0.linear.bias");
+        auto h = modules::LinearModule({
+            encoded.shape.last_dim(),
+            weight(prefix + "0.linear.weight").shape.dims[0],
+            true,
+        }).build(ctx_, encoded, {weight(prefix + "0.linear.weight"), weight(prefix + "0.linear.bias")});
         auto softplus = core::wrap_tensor(ggml_softplus(ggml_, h.tensor), h.shape, GGML_TYPE_F32);
         auto mish_gate = core::wrap_tensor(ggml_tanh(ggml_, softplus.tensor), h.shape, GGML_TYPE_F32);
         h = mul(h, mish_gate);
-        return linear(h, prefix + "2.linear.weight", prefix + "2.linear.bias");
+        return modules::LinearModule({
+            h.shape.last_dim(),
+            weight(prefix + "2.linear.weight").shape.dims[0],
+            true,
+        }).build(ctx_, h, {weight(prefix + "2.linear.weight"), weight(prefix + "2.linear.bias")});
     }
 
     const core::TensorValue & time_frequency(const std::array<float, 32> & values) {
@@ -1352,7 +1497,13 @@ private:
 
     core::TensorValue add_time_condition(core::TensorValue x, const core::TensorValue & time, int block_index) {
         const std::string block = "vector_estimator.vector_estimator.tts.ttl.vector_field.main_blocks." + std::to_string(block_index);
-        auto cond = linear_right(time, block + ".linear.linear.weight", block + ".linear.linear.bias");
+        const auto & linear_weight = weight(block + ".linear.linear.weight");
+        auto linear_weight_t = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, linear_weight);
+        linear_weight_t = core::ensure_backend_addressable_layout(ctx_, linear_weight_t);
+        auto cond = modules::LinearModule({time.shape.last_dim(), linear_weight.shape.dims[1], true}).build(
+            ctx_,
+            time,
+            {linear_weight_t, weight(block + ".linear.linear.bias")});
         cond = core::reshape_tensor(ctx_, core::ensure_backend_addressable_layout(ctx_, cond), core::TensorShape::from_dims({1, cond.shape.dims[1], 1}));
         return add(x, cond);
     }
