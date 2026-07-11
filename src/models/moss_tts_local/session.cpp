@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -29,6 +31,40 @@ constexpr size_t kCodecGraphArenaBytes = 1536ull * 1024 * 1024;
 constexpr size_t kEncoderWeightContextBytes = 256ull * 1024 * 1024;
 constexpr size_t kEncoderGraphArenaBytes = 2048ull * 1024 * 1024;
 constexpr int kCodecSampleRate = 48000;
+
+uint64_t mix_reference_audio_key(uint64_t key, uint64_t value) {
+    key ^= value;
+    key *= 1099511628211ull;
+    return key;
+}
+
+uint64_t reference_audio_cache_hash(const runtime::AudioBuffer & audio) {
+    uint64_t key = 1469598103934665603ull;
+    key = mix_reference_audio_key(key, static_cast<uint64_t>(audio.sample_rate));
+    key = mix_reference_audio_key(key, static_cast<uint64_t>(audio.channels));
+    key = mix_reference_audio_key(key, static_cast<uint64_t>(audio.samples.size()));
+    for (const float sample : audio.samples) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &sample, sizeof(bits));
+        key = mix_reference_audio_key(key, static_cast<uint64_t>(bits));
+    }
+    return key;
+}
+
+std::size_t resolve_reference_cache_slots(const runtime::SessionOptions & options) {
+    constexpr int64_t kDefaultReferenceCacheSlots = 1;
+    const int64_t slots = runtime::parse_i64_option(
+        options.options,
+        {"moss_tts_local.reference_cache_slots", "reference_cache_slots"})
+        .value_or(kDefaultReferenceCacheSlots);
+    if (slots < 0) {
+        throw std::runtime_error("moss_tts_local.reference_cache_slots must be non-negative");
+    }
+    if (static_cast<std::uint64_t>(slots) > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw std::runtime_error("moss_tts_local.reference_cache_slots is too large");
+    }
+    return static_cast<std::size_t>(slots);
+}
 
 // Prepares a speaker reference for the codec encoder, mirroring the processor's
 // encode_audios_from_wav front end: de-interleave, force stereo (mono duplicated),
@@ -162,7 +198,8 @@ MossTTSLocalSession::MossTTSLocalSession(
     std::shared_ptr<const MossTTSLocalAssets> assets)
     : RuntimeSessionBase(options),
       task_(task),
-      assets_(require_assets(std::move(assets))) {
+      assets_(require_assets(std::move(assets))),
+      reference_voice_cache_(resolve_reference_cache_slots(this->options())) {
     backbone_ = std::make_unique<MossBackboneRuntime>(
         assets_,
         execution_context(),
@@ -220,6 +257,15 @@ MossCodecEncoder & MossTTSLocalSession::encoder() {
     return *encoder_;
 }
 
+bool MossTTSLocalSession::ReferenceAudioCacheKeyEqual::operator()(
+    const ReferenceAudioCacheKey & lhs,
+    const ReferenceAudioCacheKey & rhs) const {
+    return lhs.hash == rhs.hash &&
+        lhs.sample_rate == rhs.sample_rate &&
+        lhs.channels == rhs.channels &&
+        lhs.sample_count == rhs.sample_count;
+}
+
 runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & request) {
     const auto wall_start = std::chrono::steady_clock::now();
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
@@ -252,14 +298,46 @@ runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & reques
     double codec_decode_ms = 0.0;
     double interleave_ms = 0.0;
     if (has_reference) {
-        std::vector<std::vector<float>> stereo;
-        time_once(reference_ms, [&]() {
-            stereo = reference_to_codec_stereo(*request.voice->speaker->audio);
-        });
         std::vector<std::vector<int32_t>> reference_codes;
-        time_once(reference_encode_ms, [&]() {
-            reference_codes = encoder().encode(stereo);
-        });
+        const auto & reference_audio = *request.voice->speaker->audio;
+        const ReferenceAudioCacheKey reference_key{
+            reference_audio_cache_hash(reference_audio),
+            reference_audio.sample_rate,
+            reference_audio.channels,
+            reference_audio.samples.size(),
+        };
+        if (const auto * cached = reference_voice_cache_.find(reference_key)) {
+            reference_codes = cached->codes;
+            engine::debug::trace_log_scalar("moss_tts_local.reference_cache.hit", 1);
+            engine::debug::trace_log_scalar(
+                "moss_tts_local.reference_cache.slots",
+                static_cast<int64_t>(reference_voice_cache_.capacity()));
+            engine::debug::trace_log_scalar(
+                "moss_tts_local.reference_cache.entries",
+                static_cast<int64_t>(reference_voice_cache_.size()));
+            engine::debug::trace_log_scalar("moss_tts_local.reference_cache.evicted", 0);
+        } else {
+            const bool will_evict = reference_voice_cache_.capacity() > 0 &&
+                reference_voice_cache_.size() >= reference_voice_cache_.capacity();
+            std::vector<std::vector<float>> stereo;
+            time_once(reference_ms, [&]() {
+                stereo = reference_to_codec_stereo(reference_audio);
+            });
+            time_once(reference_encode_ms, [&]() {
+                reference_codes = encoder().encode(stereo);
+            });
+            ReferenceVoiceCacheEntry entry;
+            entry.codes = reference_codes;
+            reference_voice_cache_.put(reference_key, std::move(entry));
+            engine::debug::trace_log_scalar("moss_tts_local.reference_cache.hit", 0);
+            engine::debug::trace_log_scalar(
+                "moss_tts_local.reference_cache.slots",
+                static_cast<int64_t>(reference_voice_cache_.capacity()));
+            engine::debug::trace_log_scalar(
+                "moss_tts_local.reference_cache.entries",
+                static_cast<int64_t>(reference_voice_cache_.size()));
+            engine::debug::trace_log_scalar("moss_tts_local.reference_cache.evicted", will_evict ? 1 : 0);
+        }
         time_once(prefix_ms, [&]() {
             prefix = processor_->build_clone_prefix(request.text_input->text, reference_codes, language);
         });

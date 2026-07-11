@@ -578,7 +578,7 @@ public:
       graph_.reset();
       graph_ = std::make_unique<Graph>(*this, latent_steps, graph_arena_bytes_);
     }
-    debug::timing_log_scalar("irodori_tts.codec_decode.graph_rebuild",
+    debug::trace_log_scalar("irodori_tts.codec_decode.graph_rebuild",
                              graph_rebuild);
     return graph_->run(latent, target_samples);
   }
@@ -608,7 +608,7 @@ public:
       encode_graph_ = std::make_unique<EncodeGraph>(*this, padded_samples,
                                                     graph_arena_bytes_);
     }
-    debug::timing_log_scalar("irodori_tts.codec_encode.graph_rebuild",
+    debug::trace_log_scalar("irodori_tts.codec_encode.graph_rebuild",
                              graph_rebuild);
     return encode_graph_->run(mono, latent_steps_out);
   }

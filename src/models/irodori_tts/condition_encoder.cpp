@@ -778,7 +778,7 @@ public:
     if (graph_rebuild) {
       graph_ = std::make_unique<Graph>(*this, tokens, graph_arena_bytes_);
     }
-    debug::timing_log_scalar("irodori_tts.condition.graph_rebuild",
+    debug::trace_log_scalar("irodori_tts.condition.graph_rebuild",
                              graph_rebuild);
     return graph_->run(token_ids, token_mask, caption, speaker);
   }
@@ -799,7 +799,7 @@ public:
       speaker_graph_ =
           std::make_unique<SpeakerGraph>(*this, ref_tokens, graph_arena_bytes_);
     }
-    debug::timing_log_scalar("irodori_tts.speaker_encoder.graph_rebuild",
+    debug::trace_log_scalar("irodori_tts.speaker_encoder.graph_rebuild",
                              graph_rebuild);
     return speaker_graph_->run(ref_latent);
   }

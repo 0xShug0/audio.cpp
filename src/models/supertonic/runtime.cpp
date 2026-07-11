@@ -2289,8 +2289,8 @@ SupertonicChunkOutput synthesize_supertonic_chunk(
     const auto chunk_start = std::chrono::steady_clock::now();
     auto timing_start = std::chrono::steady_clock::now();
     const auto text_inputs = tokenizer.encode(text, options.language);
-    engine::debug::timing_log_scalar("supertonic.chunk.text_chars", static_cast<int64_t>(text.size()));
-    engine::debug::timing_log_scalar("supertonic.chunk.text_tokens", text_inputs.length);
+    engine::debug::trace_log_scalar("supertonic.chunk.text_chars", static_cast<int64_t>(text.size()));
+    engine::debug::trace_log_scalar("supertonic.chunk.text_tokens", text_inputs.length);
     engine::debug::timing_log_scalar("supertonic.chunk.encode_ms", engine::debug::elapsed_ms(timing_start));
 
     std::vector<int32_t> ids;
@@ -2305,9 +2305,9 @@ SupertonicChunkOutput synthesize_supertonic_chunk(
     if (duration.values.empty() || !(duration.values[0] > 0.0F)) {
         throw std::runtime_error("Supertonic duration predictor returned invalid duration");
     }
-    engine::debug::timing_log_scalar("supertonic.chunk.duration_raw_seconds", duration.values[0]);
+    engine::debug::trace_log_scalar("supertonic.chunk.duration_raw_seconds", duration.values[0]);
     duration.values[0] /= options.speaking_rate;
-    engine::debug::timing_log_scalar("supertonic.chunk.duration_seconds", duration.values[0]);
+    engine::debug::trace_log_scalar("supertonic.chunk.duration_seconds", duration.values[0]);
 
     timing_start = std::chrono::steady_clock::now();
     auto text_emb = text_model.run(ids, text_inputs.mask, text_inputs.length, style_ttl, style_ttl_shape);
@@ -2344,9 +2344,9 @@ SupertonicChunkOutput synthesize_supertonic_chunk(
     out.audio.channels = 1;
     out.audio.samples = std::move(wav.values);
     out.duration_seconds = duration.values[0];
-    engine::debug::timing_log_scalar("supertonic.chunk.latent_length", latent_length);
-    engine::debug::timing_log_scalar("supertonic.chunk.wav_length", wav_length);
-    engine::debug::timing_log_scalar("supertonic.chunk.output_samples", static_cast<int64_t>(out.audio.samples.size()));
+    engine::debug::trace_log_scalar("supertonic.chunk.latent_length", latent_length);
+    engine::debug::trace_log_scalar("supertonic.chunk.wav_length", wav_length);
+    engine::debug::trace_log_scalar("supertonic.chunk.output_samples", static_cast<int64_t>(out.audio.samples.size()));
     engine::debug::timing_log_scalar("supertonic.chunk.total_ms", engine::debug::elapsed_ms(chunk_start));
     return out;
 }
@@ -2481,8 +2481,8 @@ runtime::AudioBuffer SupertonicNativeRuntime::synthesize(
     const auto & style = state_->style(options.voice);
     engine::debug::timing_log_scalar("supertonic.style_ms", engine::debug::elapsed_ms(timing_start));
 
-    engine::debug::timing_log_scalar("supertonic.text_chars", static_cast<int64_t>(text.size()));
-    engine::debug::timing_log_scalar("supertonic.threads", state_->threads);
+    engine::debug::trace_log_scalar("supertonic.text_chars", static_cast<int64_t>(text.size()));
+    engine::debug::trace_log_scalar("supertonic.threads", state_->threads);
     NumpyMt19937Normal rng(options.seed);
     auto chunk_audio = synthesize_supertonic_chunk(
         state_->assets,
@@ -2503,7 +2503,7 @@ runtime::AudioBuffer SupertonicNativeRuntime::synthesize(
         out.samples.size(),
         static_cast<size_t>(chunk_audio.duration_seconds * static_cast<float>(out.sample_rate)));
     out.samples.resize(trim);
-    engine::debug::timing_log_scalar("supertonic.output_samples", static_cast<int64_t>(out.samples.size()));
+    engine::debug::trace_log_scalar("supertonic.output_samples", static_cast<int64_t>(out.samples.size()));
     engine::debug::timing_log_scalar("supertonic.total_ms", engine::debug::elapsed_ms(total_start));
     return out;
 }

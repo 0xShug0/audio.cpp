@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/moss_tts_local/assets.h"
 #include "engine/models/moss_tts_local/backbone.h"
@@ -9,7 +10,10 @@
 #include "engine/models/moss_tts_local/generator.h"
 #include "engine/models/moss_tts_local/tokenizer_text.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace engine::models::moss_tts_local {
 
@@ -36,6 +40,21 @@ public:
 private:
     MossCodecEncoder & encoder();
 
+    struct ReferenceAudioCacheKey {
+        uint64_t hash = 0;
+        int sample_rate = 0;
+        int channels = 0;
+        size_t sample_count = 0;
+    };
+
+    struct ReferenceAudioCacheKeyEqual {
+        bool operator()(const ReferenceAudioCacheKey & lhs, const ReferenceAudioCacheKey & rhs) const;
+    };
+
+    struct ReferenceVoiceCacheEntry {
+        std::vector<std::vector<int32_t>> codes;
+    };
+
     runtime::TaskSpec task_;
     std::shared_ptr<const MossTTSLocalAssets> assets_;
     // Declared before the generator so the generator (which holds references to them) is
@@ -47,6 +66,8 @@ private:
     std::unique_ptr<MossGenerator> generator_;
     // Lazily built the first time a speaker reference is provided (voice cloning).
     std::unique_ptr<MossCodecEncoder> encoder_;
+    runtime::CacheSlots<ReferenceAudioCacheKey, ReferenceVoiceCacheEntry, ReferenceAudioCacheKeyEqual>
+        reference_voice_cache_;
 };
 
 }  // namespace engine::models::moss_tts_local

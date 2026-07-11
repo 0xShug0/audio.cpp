@@ -136,6 +136,11 @@ public:
             {"voice_ref", "path", "Reference speaker WAV for zero-shot voice cloning."},
             {"reference_text", "text", "Transcript of the reference audio when known."},
             {"language", "code", "Optional language tag hint for multilingual synthesis."},
+            {
+                "moss_tts_local.reference_cache_slots",
+                "n",
+                "Prepared reference-voice cache slots; default 1, set 0 to disable.",
+            },
         };
         inspection.discovered_configs = discover_config_assets(root);
         inspection.discovered_weights = discover_weight_assets(root);

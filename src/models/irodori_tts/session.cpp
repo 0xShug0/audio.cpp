@@ -621,16 +621,16 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   runtime::TaskResult result;
   result.audio_output = std::move(merged_audio);
   const auto wall_end = Clock::now();
-  debug::timing_log_scalar("irodori_tts.reference.used", !first_request.no_ref);
-  debug::timing_log_scalar("irodori_tts.reference.cache_hit",
-                           reference_cache_hit);
+  debug::trace_log_scalar("irodori_tts.reference.used", !first_request.no_ref);
+  debug::trace_log_scalar("irodori_tts.reference.cache_hit",
+                          reference_cache_hit);
   debug::trace_log_scalar("irodori_tts.text_chunk_size", text_chunk_size);
   debug::trace_log_scalar("irodori_tts.text_chunk_count",
                           static_cast<int64_t>(chunk_requests.size()));
-  debug::timing_log_scalar("irodori_tts.sample_rf.context_graph_rebuilds",
+  debug::trace_log_scalar("irodori_tts.sample_rf.context_graph_rebuilds",
                            rf_sampler_->context_graph_rebuilds() -
                                rf_context_graph_rebuilds_before);
-  debug::timing_log_scalar("irodori_tts.sample_rf.step_graph_rebuilds",
+  debug::trace_log_scalar("irodori_tts.sample_rf.step_graph_rebuilds",
                            rf_sampler_->step_graph_rebuilds() -
                                rf_step_graph_rebuilds_before);
   debug::timing_log_scalar("irodori_tts.prepare_reference_ms",
