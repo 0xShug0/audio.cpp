@@ -1,32 +1,34 @@
 #pragma once
 
 #include "engine/framework/core/execution_context.h"
+#include "engine/models/moss/audio_tokenizer_config.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <vector>
 
-namespace engine::models::moss_tts_local {
+namespace engine::models::moss {
 
-// MOSS-Audio-Tokenizer-v2 encoder: turns a reference waveform into RLFQ codes
-// for zero-shot voice cloning. It is the structural mirror of MossCodecDecoder --
+// MOSS-Audio-Tokenizer encoder: turns a reference waveform into RLFQ codes
+// for zero-shot voice cloning. It is the structural mirror of MossAudioTokenizerDecoder --
 // stereo is interleaved into one stream, patched down and run through a stack of
 // causal Transformer blocks (interleaved RoPE, LayerScale, GELU MLP), then the
 // RLFQ quantizer selects the nearest codes. Produces the same [num_quantizers,
 // frames] code matrix the generator consumes.
-class MossCodecEncoder {
+class MossAudioTokenizerEncoder {
 public:
-    MossCodecEncoder(
+    MossAudioTokenizerEncoder(
         const std::filesystem::path & codec_dir,
         core::ExecutionContext & execution_context,
         int64_t num_quantizers,
         size_t weight_context_bytes,
-        size_t graph_arena_bytes);
-    ~MossCodecEncoder();
+        size_t graph_arena_bytes,
+        AudioTokenizerConfig config = moss_audio_tokenizer_v2_config());
+    ~MossAudioTokenizerEncoder();
 
-    MossCodecEncoder(const MossCodecEncoder &) = delete;
-    MossCodecEncoder & operator=(const MossCodecEncoder &) = delete;
+    MossAudioTokenizerEncoder(const MossAudioTokenizerEncoder &) = delete;
+    MossAudioTokenizerEncoder & operator=(const MossAudioTokenizerEncoder &) = delete;
 
     // Encodes a waveform given as {left, right} channels (each with the same
     // per-channel sample count, 48 kHz) into [num_quantizers][frames] codes.
@@ -37,4 +39,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace engine::models::moss_tts_local
+}  // namespace engine::models::moss

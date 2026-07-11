@@ -30,7 +30,7 @@
 #include <string>
 #include <vector>
 
-namespace engine::models::moss_tts_local::codec_detail {
+namespace engine::models::moss::codec_detail {
 
 namespace modules = engine::modules;
 namespace binding = engine::modules::binding;
@@ -329,4 +329,4 @@ inline std::vector<float> causal_context_mask_window(
     return mask;
 }
 
-}  // namespace engine::models::moss_tts_local::codec_detail
+}  // namespace engine::models::moss::codec_detail

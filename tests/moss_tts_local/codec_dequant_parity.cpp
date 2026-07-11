@@ -2,7 +2,7 @@
 // dequant on a fixed code matrix and dumps the latent for comparison against
 // the Python reference (scripts/codec_dequant_ref.py).
 
-#include "engine/models/moss_tts_local/codec_quantizer.h"
+#include "engine/models/moss/audio_tokenizer_quantizer.h"
 
 #include <cmath>
 #include <cstdint>
@@ -33,7 +33,7 @@ int main(int argc, char ** argv) {
     }
 
     try {
-        engine::models::moss_tts_local::MossCodecDequantizer dequantizer(codec_dir, kNumQuantizers);
+        engine::models::moss::MossAudioTokenizerQuantizer dequantizer(codec_dir, kNumQuantizers);
         const std::vector<float> latent = dequantizer.decode(codes);  // [code_dim, steps]
         const int64_t code_dim = dequantizer.code_dim();
 

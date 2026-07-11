@@ -5,7 +5,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/moss_tts_local/codec_decoder.h"
+#include "engine/models/moss/audio_tokenizer_decoder.h"
 
 #include <algorithm>
 #include <cmath>
@@ -101,7 +101,7 @@ int main(int argc, char ** argv) {
 
         std::cout << "codec=" << codec_dir.string() << "\n";
         std::cout << "loading decoder weights...\n" << std::flush;
-        engine::models::moss_tts_local::MossCodecDecoder decoder(
+        engine::models::moss::MossAudioTokenizerDecoder decoder(
             codec_dir, execution_context, num_quantizers, kWeightContextBytes, kGraphArenaBytes);
 
         std::cout << "decoding " << frames << " frames...\n" << std::flush;

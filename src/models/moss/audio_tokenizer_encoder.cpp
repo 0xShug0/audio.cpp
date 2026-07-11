@@ -1,9 +1,9 @@
-#include "engine/models/moss_tts_local/codec_encoder.h"
+#include "engine/models/moss/audio_tokenizer_encoder.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
-#include "engine/models/moss_tts_local/codec_quantizer.h"
-#include "engine/models/moss_tts_local/codec_transformer.h"
+#include "engine/models/moss/audio_tokenizer_quantizer.h"
+#include "engine/models/moss/audio_tokenizer_transformer.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -13,27 +13,23 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::moss_tts_local {
+namespace engine::models::moss {
 namespace {
 
 namespace cd = codec_detail;
 
-// Encoder ProjectedTransformer stages, mirroring the v2 codec config.json
-// encoder_kwargs (modules encoder.1/3/5/7/9/11). Each transformer is preceded by
-// a PatchedPretransform downsample of factor `patch` (module 2*i); the first one
-// (patch 240) turns the interleaved waveform into frames, the rest halve the
-// frame count. context is the local-attention window at that stage's frame rate
-// (mirror of the decoder's contexts, reversed).
-constexpr cd::TransformerSpec kEncoderSpecs[] = {
-    {240, 384, 768, 12, 12, 3072, 400, 240},
-    {768, 384, 768, 12, 12, 3072, 400, 2},
-    {768, 384, 768, 12, 12, 3072, 400, 2},
-    {768, 384, 768, 12, 12, 3072, 400, 2},
-    {768, 640, 768, 12, 12, 3072, 250, 2},
-    {1280, 768, 1280, 20, 32, 5120, 125, 2},
-};
-
-constexpr size_t kNumTransformers = sizeof(kEncoderSpecs) / sizeof(kEncoderSpecs[0]);
+cd::TransformerSpec to_transformer_spec(const AudioTokenizerTransformerStage & stage) {
+    return {
+        stage.input_dimension,
+        stage.output_dimension,
+        stage.model_dimension,
+        stage.num_heads,
+        stage.num_layers,
+        stage.feedforward_dimension,
+        stage.context_window,
+        stage.patch_size,
+    };
+}
 
 // PatchedPretransform (encode/downsample): [1, l, d] -> [1, l/patch, d*patch].
 // Packs `patch` consecutive frames into the feature dim, matching
@@ -59,22 +55,24 @@ core::TensorValue patch_downsample(
 
 }  // namespace
 
-struct MossCodecEncoder::Impl {
+struct MossAudioTokenizerEncoder::Impl {
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
     int threads = 1;
+    int64_t samples_per_frame = 3840;
     size_t graph_arena_bytes = 0;
-    std::unique_ptr<MossCodecDequantizer> quantizer;
+    std::unique_ptr<MossAudioTokenizerQuantizer> quantizer;
     std::unique_ptr<core::BackendWeightStore> store;
     std::vector<cd::TransformerWeights> transformers;
 };
 
-MossCodecEncoder::MossCodecEncoder(
+MossAudioTokenizerEncoder::MossAudioTokenizerEncoder(
     const std::filesystem::path & codec_dir,
     core::ExecutionContext & execution_context,
     int64_t num_quantizers,
     size_t weight_context_bytes,
-    size_t graph_arena_bytes)
+    size_t graph_arena_bytes,
+    AudioTokenizerConfig config)
     : impl_(std::make_unique<Impl>()) {
     impl_->backend = execution_context.backend();
     if (impl_->backend == nullptr) {
@@ -82,23 +80,24 @@ MossCodecEncoder::MossCodecEncoder(
     }
     impl_->backend_type = execution_context.backend_type();
     impl_->threads = execution_context.config().threads;
+    impl_->samples_per_frame = config.samples_per_frame;
     impl_->graph_arena_bytes = graph_arena_bytes;
-    impl_->quantizer = std::make_unique<MossCodecDequantizer>(codec_dir, num_quantizers);
+    impl_->quantizer = std::make_unique<MossAudioTokenizerQuantizer>(codec_dir, num_quantizers, config.quantizer);
 
     cd::CodecShards shards(codec_dir);
     impl_->store = std::make_unique<core::BackendWeightStore>(
-        impl_->backend, impl_->backend_type, "moss_tts_local.codec.encoder", weight_context_bytes);
-    impl_->transformers.reserve(kNumTransformers);
-    for (size_t index = 0; index < kNumTransformers; ++index) {
+        impl_->backend, impl_->backend_type, "moss.audio_tokenizer.encoder", weight_context_bytes);
+    impl_->transformers.reserve(config.encoder_stages.size());
+    for (size_t index = 0; index < config.encoder_stages.size(); ++index) {
         impl_->transformers.push_back(cd::load_transformer(
-            *impl_->store, shards, kEncoderSpecs[index], "encoder", static_cast<int64_t>(2 * index + 1)));
+            *impl_->store, shards, to_transformer_spec(config.encoder_stages[index]), "encoder", static_cast<int64_t>(2 * index + 1)));
     }
     impl_->store->upload();
 }
 
-MossCodecEncoder::~MossCodecEncoder() = default;
+MossAudioTokenizerEncoder::~MossAudioTokenizerEncoder() = default;
 
-std::vector<std::vector<int32_t>> MossCodecEncoder::encode(
+std::vector<std::vector<int32_t>> MossAudioTokenizerEncoder::encode(
     const std::vector<std::vector<float>> & channels) const {
     if (channels.size() != 2) {
         throw std::runtime_error("MOSS codec encoder requires stereo (2-channel) input");
@@ -114,8 +113,8 @@ std::vector<std::vector<int32_t>> MossCodecEncoder::encode(
     // Pad each channel up to a multiple of the downsample rate, then interleave
     // the two channels into one stream (even = left, odd = right), matching the
     // codec's _flatten_channels_for_codec.
-    const int64_t frames = (raw_per_channel + cd::kSamplesPerFrame - 1) / cd::kSamplesPerFrame;
-    const int64_t per_channel = frames * cd::kSamplesPerFrame;
+    const int64_t frames = (raw_per_channel + impl_->samples_per_frame - 1) / impl_->samples_per_frame;
+    const int64_t per_channel = frames * impl_->samples_per_frame;
     const int64_t interleaved = per_channel * 2;
     std::vector<float> waveform(static_cast<size_t>(interleaved), 0.0F);
 #ifdef _OPENMP
@@ -131,7 +130,7 @@ std::vector<std::vector<int32_t>> MossCodecEncoder::encode(
     if (graph_ctx == nullptr) {
         throw std::runtime_error("failed to initialize MOSS codec encoder graph context");
     }
-    core::ModuleBuildContext ctx{graph_ctx.get(), "moss_tts_local.codec.encode", impl_->backend_type};
+    core::ModuleBuildContext ctx{graph_ctx.get(), "moss.audio_tokenizer.encode", impl_->backend_type};
 
     // Input is the interleaved waveform as a single-feature stream [1, L, 1].
     auto input_tensor =
@@ -206,7 +205,7 @@ std::vector<std::vector<int32_t>> MossCodecEncoder::encode(
 
     // hidden is [1, frames, code_dim] feature-last; ggml memory order is
     // channel-fastest, i.e. flat[frame * code_dim + channel] -- exactly the
-    // layout MossCodecDequantizer::encode expects.
+    // layout MossAudioTokenizerQuantizer::encode expects.
     std::vector<float> latent(static_cast<size_t>(steps * cd::kCodeDim));
     ggml_backend_tensor_get(hidden.tensor, latent.data(), 0, latent.size() * sizeof(float));
     ggml_gallocr_free(gallocr);
@@ -214,4 +213,4 @@ std::vector<std::vector<int32_t>> MossCodecEncoder::encode(
     return impl_->quantizer->encode(latent, steps);
 }
 
-}  // namespace engine::models::moss_tts_local
+}  // namespace engine::models::moss

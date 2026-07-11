@@ -274,17 +274,13 @@ MossGenerator::MossGenerator(
         throw std::runtime_error("MOSS-TTS-Local generator only supports the binary local text head");
     }
     const auto & source = *assets_->model_weights;
-    audio_embeddings_.reserve(static_cast<size_t>(num_codebooks_));
-    for (int64_t codebook = 0; codebook < num_codebooks_; ++codebook) {
-        const int64_t codebook_size = config.audio_codebook_sizes.empty()
-            ? config.audio_vocab_size
-            : config.audio_codebook_sizes[static_cast<size_t>(codebook)];
-        if (codebook_size <= 0) {
-            throw std::runtime_error("MOSS-TTS-Local generator has an invalid audio codebook size");
-        }
-        audio_embeddings_.push_back(source.require_f32(
-            "audio_embeddings." + std::to_string(codebook) + ".weight", {codebook_size, hidden_size_}));
-    }
+    moss::AudioCodebookSpec codebooks;
+    codebooks.hidden_size = hidden_size_;
+    codebooks.num_codebooks = num_codebooks_;
+    codebooks.audio_vocab_size = config.audio_vocab_size;
+    codebooks.audio_codebook_sizes = config.audio_codebook_sizes;
+    codebooks.audio_pad_token_id = config.audio_pad_token_id;
+    audio_codebooks_ = std::make_unique<moss::AudioCodebookEmbeddings>(source, std::move(codebooks));
     local_text_head_ = source.require_f32("local_text_lm_head.weight", {2, hidden_size_});
     projection_ = std::make_unique<ProjectionRuntime>(
         *assets_,
@@ -303,7 +299,6 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
     const auto & config = assets_->config;
     const int64_t hidden = hidden_size_;
     const int64_t n_vq = num_codebooks_;
-    const int32_t pad_code = static_cast<int32_t>(config.audio_pad_token_id);
     const int32_t assistant_slot = static_cast<int32_t>(config.audio_assistant_slot_token_id);
 
     if (text_tokens.empty()) {
@@ -336,8 +331,7 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
     std::vector<std::vector<uint8_t>> code_seen(static_cast<size_t>(n_vq));
     if (use_repetition_penalty) {
         for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
-            const int64_t codebook_size =
-                static_cast<int64_t>(audio_embeddings_[static_cast<size_t>(codebook)].size()) / hidden;
+            const int64_t codebook_size = audio_codebooks_->codebook_size(codebook);
             code_seen[static_cast<size_t>(codebook)].assign(static_cast<size_t>(codebook_size), 0);
         }
     }
@@ -355,24 +349,6 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
     backbone_.reset_timing();
     depth_.reset_timing();
 
-    // Sums the audio-codebook embeddings for one decoder row into the additive bias the
-    // backbone expects (padding codes contribute nothing).
-    const auto bias_for = [&](const int32_t * codes) {
-        std::vector<float> bias(static_cast<size_t>(hidden), 0.0F);
-        for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
-            const int32_t code = codes[codebook];
-            if (code == pad_code) {
-                continue;
-            }
-            const float * embedding =
-                audio_embeddings_[static_cast<size_t>(codebook)].data() + static_cast<size_t>(code) * hidden;
-            for (int64_t index = 0; index < hidden; ++index) {
-                bias[static_cast<size_t>(index)] += embedding[index];
-            }
-        }
-        return bias;
-    };
-
     // Prefill the whole prompt in a single batched forward (fills the cache in one pass
     // instead of one graph launch per token), then generate one row at a time from the cache.
     // The last prompt position's hidden state seeds the first generated frame.
@@ -382,7 +358,7 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
     for (int64_t position = 0; position < prefix_len; ++position) {
         std::vector<float> row;
         add_timing(bias_ms, [&]() {
-            row = bias_for(audio_codes.data() + position * n_vq);
+            row = audio_codebooks_->bias_for(audio_codes.data() + position * n_vq);
         });
         std::copy(row.begin(), row.end(), prefix_bias.begin() + position * hidden);
     }
@@ -416,8 +392,7 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
 
         std::vector<int32_t> frame_codes(static_cast<size_t>(n_vq));
         for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
-            const int64_t codebook_size =
-                static_cast<int64_t>(audio_embeddings_[static_cast<size_t>(codebook)].size()) / hidden;
+            const int64_t codebook_size = audio_codebooks_->codebook_size(codebook);
             std::vector<float> logits;
             add_timing(projection_ms, [&]() {
                 logits = projection_->project(codebook, local_hidden);
@@ -444,8 +419,7 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
             }
 
             if (codebook + 1 < n_vq) {
-                const float * embedding =
-                    audio_embeddings_[static_cast<size_t>(codebook)].data() + static_cast<size_t>(code) * hidden;
+                const float * embedding = audio_codebooks_->embedding(codebook, code);
                 local_embeds.insert(local_embeds.end(), embedding, embedding + hidden);
                 add_timing(depth_ms, [&]() {
                     local_hidden = depth_.forward(local_embeds, codebook + 2);
@@ -459,7 +433,7 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
         // advance the backbone cache; the returned hidden seeds the next frame.
         std::vector<float> frame_bias;
         add_timing(bias_ms, [&]() {
-            frame_bias = bias_for(frame_codes.data());
+            frame_bias = audio_codebooks_->bias_for(frame_codes.data());
         });
         add_timing(backbone_step_ms, [&]() {
             backbone_.step_into(assistant_slot, frame_bias, last_hidden);

@@ -3,6 +3,7 @@
 #include "engine/models/moss_tts_local/assets.h"
 #include "engine/models/moss_tts_local/backbone.h"
 #include "engine/models/moss_tts_local/depth_transformer.h"
+#include "engine/models/moss/token_rows.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -63,7 +64,7 @@ private:
     const MossDepthTransformer & depth_;
     int64_t hidden_size_ = 0;
     int64_t num_codebooks_ = 0;
-    std::vector<std::vector<float>> audio_embeddings_;  // [n_vq][codebook_size * hidden]
+    std::unique_ptr<moss::AudioCodebookEmbeddings> audio_codebooks_;
     std::vector<float> local_text_head_;                // [2 * hidden]
     struct ProjectionRuntime;
     std::unique_ptr<ProjectionRuntime> projection_;

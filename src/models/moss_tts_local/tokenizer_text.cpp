@@ -56,38 +56,18 @@ std::filesystem::path require_path(
 
 }  // namespace
 
-// A decoder row carries a text-channel id plus n_vq audio-channel codes. Text rows pad the
-// audio channels; audio rows carry the reference codes with the given text-channel slot.
-struct RowBuilder {
-    std::vector<int32_t> text_tokens;
-    std::vector<int32_t> audio_codes;
-    int64_t n_vq;
-    int32_t audio_pad;
-
-    void push_text_token(int32_t id) {
-        text_tokens.push_back(id);
-        audio_codes.insert(audio_codes.end(), static_cast<size_t>(n_vq), audio_pad);
-    }
-    void push_text_ids(const std::vector<int32_t> & ids) {
-        for (const int32_t id : ids) {
-            push_text_token(id);
-        }
-    }
-};
-
 struct MossTextProcessor::Impl {
     std::shared_ptr<const MossTTSLocalAssets> assets;
     std::shared_ptr<engine::tokenizers::LlamaBpeTokenizer> tokenizer;
 
-    RowBuilder make_row_builder() const {
-        RowBuilder builder;
-        builder.n_vq = assets->config.num_codebooks;
-        builder.audio_pad = static_cast<int32_t>(assets->config.audio_pad_token_id);
-        return builder;
+    moss::TokenRowBuilder make_row_builder() const {
+        return moss::TokenRowBuilder(
+            assets->config.num_codebooks,
+            static_cast<int32_t>(assets->config.audio_pad_token_id));
     }
 
-    void push_text(RowBuilder & builder, const std::string & text) const {
-        builder.push_text_ids(tokenizer->encode(text));
+    void push_text(moss::TokenRowBuilder & builder, const std::string & text) const {
+        builder.push_text_tokens(tokenizer->encode(text));
     }
 
     // Emits the shared <user_inst> scaffold. `emit_reference` fills the "- Reference(s):"
@@ -95,9 +75,9 @@ struct MossTextProcessor::Impl {
     MossGenerationPrefix build_prefix(
         const std::string & text,
         const std::optional<std::string> & language,
-        const std::function<void(RowBuilder &)> & emit_reference) const {
+        const std::function<void(moss::TokenRowBuilder &)> & emit_reference) const {
         const auto & config = assets->config;
-        RowBuilder builder = make_row_builder();
+        moss::TokenRowBuilder builder = make_row_builder();
         builder.push_text_token(static_cast<int32_t>(config.im_start_token_id));
         push_text(builder, kUserRolePrefix);
         push_text(builder, kUserReferencePrefix);
@@ -111,10 +91,7 @@ struct MossTextProcessor::Impl {
         push_text(builder, kAssistantRolePrefix);
         builder.push_text_token(static_cast<int32_t>(config.audio_start_token_id));
 
-        MossGenerationPrefix prefix;
-        prefix.text_tokens = std::move(builder.text_tokens);
-        prefix.audio_codes = std::move(builder.audio_codes);
-        return prefix;
+        return builder.finish();
     }
 };
 
@@ -138,7 +115,7 @@ MossTextProcessor::~MossTextProcessor() = default;
 MossGenerationPrefix MossTextProcessor::build_generation_prefix(
     const std::string & text,
     const std::optional<std::string> & language) const {
-    return impl_->build_prefix(text, language, [this](RowBuilder & builder) {
+    return impl_->build_prefix(text, language, [this](moss::TokenRowBuilder & builder) {
         impl_->push_text(builder, kNoneValue);
     });
 }
@@ -162,15 +139,15 @@ MossGenerationPrefix MossTextProcessor::build_clone_prefix(
         }
     }
 
-    return impl_->build_prefix(text, language, [&](RowBuilder & builder) {
+    return impl_->build_prefix(text, language, [&](moss::TokenRowBuilder & builder) {
         // "- Reference(s):" slot -> audio_start, one audio_user_slot row per reference
         // frame carrying that frame's codes, then audio_end.
         builder.push_text_token(static_cast<int32_t>(config.audio_start_token_id));
         for (size_t frame = 0; frame < frames; ++frame) {
-            builder.text_tokens.push_back(static_cast<int32_t>(config.audio_user_slot_token_id));
-            for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
-                builder.audio_codes.push_back(reference_codes[static_cast<size_t>(codebook)][frame]);
-            }
+            builder.push_audio_row(
+                static_cast<int32_t>(config.audio_user_slot_token_id),
+                reference_codes,
+                static_cast<int64_t>(frame));
         }
         builder.push_text_token(static_cast<int32_t>(config.audio_end_token_id));
     });

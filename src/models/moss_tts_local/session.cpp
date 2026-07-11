@@ -212,7 +212,7 @@ MossTTSLocalSession::MossTTSLocalSession(
     depth_ = std::make_unique<MossDepthTransformer>(
         assets_, execution_context(), kDepthGraphArenaBytes, kDepthWeightContextBytes);
     processor_ = std::make_unique<MossTextProcessor>(assets_);
-    codec_ = std::make_unique<MossCodecDecoder>(
+    codec_ = std::make_unique<moss::MossAudioTokenizerDecoder>(
         resolve_moss_codec_dir(*assets_),
         execution_context(),
         assets_->config.num_codebooks,
@@ -248,9 +248,9 @@ void MossTTSLocalSession::prepare(const runtime::SessionPreparationRequest & req
     mark_prepared();
 }
 
-MossCodecEncoder & MossTTSLocalSession::encoder() {
+moss::MossAudioTokenizerEncoder & MossTTSLocalSession::encoder() {
     if (encoder_ == nullptr) {
-        encoder_ = std::make_unique<MossCodecEncoder>(
+        encoder_ = std::make_unique<moss::MossAudioTokenizerEncoder>(
             resolve_moss_codec_dir(*assets_),
             execution_context(),
             assets_->config.num_codebooks,

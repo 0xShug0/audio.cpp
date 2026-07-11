@@ -1,4 +1,4 @@
-#include "engine/models/moss_tts_local/codec_quantizer.h"
+#include "engine/models/moss/audio_tokenizer_quantizer.h"
 
 #include "engine/framework/assets/tensor_source.h"
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace engine::models::moss_tts_local {
+namespace engine::models::moss {
 namespace {
 
 // Opens every safetensors shard in the codec directory and resolves tensors by
@@ -82,8 +82,15 @@ std::vector<float> load_wn_conv_weight(
 
 }  // namespace
 
-MossCodecDequantizer::MossCodecDequantizer(const std::filesystem::path & codec_dir, int64_t num_quantizers)
-    : codebook_size_(1024), codebook_dim_(8), rvq_dim_(512), code_dim_(768), num_quantizers_(num_quantizers) {
+MossAudioTokenizerQuantizer::MossAudioTokenizerQuantizer(
+    const std::filesystem::path & codec_dir,
+    int64_t num_quantizers,
+    AudioTokenizerQuantizerConfig config)
+    : codebook_size_(config.codebook_size),
+      codebook_dim_(config.codebook_dim),
+      rvq_dim_(config.rvq_dim),
+      code_dim_(config.code_dim),
+      num_quantizers_(num_quantizers) {
     if (num_quantizers_ <= 0) {
         throw std::runtime_error("MOSS codec dequantizer requires a positive quantizer count");
     }
@@ -160,7 +167,7 @@ MossCodecDequantizer::MossCodecDequantizer(const std::filesystem::path & codec_d
     input_bias_ = shards.require_f32("quantizer.input_proj.bias");
 }
 
-std::vector<float> MossCodecDequantizer::decode(const std::vector<std::vector<int32_t>> & codes) const {
+std::vector<float> MossAudioTokenizerQuantizer::decode(const std::vector<std::vector<int32_t>> & codes) const {
     if (static_cast<int64_t>(codes.size()) != num_quantizers_) {
         throw std::runtime_error("MOSS codec dequantizer got the wrong number of codebooks");
     }
@@ -196,7 +203,7 @@ std::vector<float> MossCodecDequantizer::decode(const std::vector<std::vector<in
     return latent;
 }
 
-std::vector<std::vector<int32_t>> MossCodecDequantizer::encode(
+std::vector<std::vector<int32_t>> MossAudioTokenizerQuantizer::encode(
     const std::vector<float> & hidden, int64_t frames) const {
     if (frames <= 0) {
         throw std::runtime_error("MOSS codec quantizer requires a non-empty encoder latent");
@@ -295,4 +302,4 @@ std::vector<std::vector<int32_t>> MossCodecDequantizer::encode(
     return codes;
 }
 
-}  // namespace engine::models::moss_tts_local
+}  // namespace engine::models::moss

@@ -8,7 +8,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/moss_tts_local/codec_encoder.h"
+#include "engine/models/moss/audio_tokenizer_encoder.h"
 
 #include <cstdint>
 #include <exception>
@@ -103,7 +103,7 @@ int main(int argc, char ** argv) {
         engine::core::ExecutionContext execution_context(backend_config);
 
         std::cout << "loading codec encoder weights...\n" << std::flush;
-        engine::models::moss_tts_local::MossCodecEncoder encoder(
+        engine::models::moss::MossAudioTokenizerEncoder encoder(
             codec_dir, execution_context, num_quantizers, kWeightContextBytes, kGraphArenaBytes);
 
         std::cout << "encoding...\n" << std::flush;

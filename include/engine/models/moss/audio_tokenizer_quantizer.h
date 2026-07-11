@@ -1,10 +1,12 @@
 #pragma once
 
+#include "engine/models/moss/audio_tokenizer_config.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <vector>
 
-namespace engine::models::moss_tts_local {
+namespace engine::models::moss {
 
 // Dequantizes MOSS-Audio-Tokenizer-v2 codes (RLFQ) into the codec's continuous
 // latent, i.e. the input to the codec decoder stack. Codes are the
@@ -13,9 +15,12 @@ namespace engine::models::moss_tts_local {
 // quantizer.decode_codes output [1, code_dim, steps]. This is the plain-linear
 // dequant path (per-codebook embedding lookup -> weight-normalized 1x1 conv ->
 // residual sum -> output projection); the transformer decoder is a later phase.
-class MossCodecDequantizer {
+class MossAudioTokenizerQuantizer {
 public:
-    MossCodecDequantizer(const std::filesystem::path & codec_dir, int64_t num_quantizers);
+    MossAudioTokenizerQuantizer(
+        const std::filesystem::path & codec_dir,
+        int64_t num_quantizers,
+        AudioTokenizerQuantizerConfig config = moss_audio_tokenizer_v2_config().quantizer);
 
     int64_t code_dim() const noexcept { return code_dim_; }
     int64_t num_quantizers() const noexcept { return num_quantizers_; }
@@ -52,4 +57,4 @@ private:
     std::vector<float> input_bias_;     // [rvq_dim] (encode)
 };
 
-}  // namespace engine::models::moss_tts_local
+}  // namespace engine::models::moss

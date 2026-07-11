@@ -1,10 +1,10 @@
-#include "engine/models/moss_tts_local/codec_decoder.h"
+#include "engine/models/moss/audio_tokenizer_decoder.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/models/moss_tts_local/codec_quantizer.h"
-#include "engine/models/moss_tts_local/codec_transformer.h"
+#include "engine/models/moss/audio_tokenizer_quantizer.h"
+#include "engine/models/moss/audio_tokenizer_transformer.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -16,26 +16,25 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::moss_tts_local {
+namespace engine::models::moss {
 namespace {
 
 namespace cd = codec_detail;
 
-// Decoder ProjectedTransformer stages, mirroring the v2 codec config.json
-// decoder_kwargs (modules decoder.0/2/4/6/8/10). context is the local-attention
-// window at that stage's frame rate; the patch that follows expands the frame
-// rate (the last one by 240).
-constexpr cd::TransformerSpec kDecoderSpecs[] = {
-    {cd::kCodeDim, 1280, 1280, 20, 32, 5120, 125, 2},
-    {640, 768, 768, 12, 12, 3072, 250, 2},
-    {384, 768, 768, 12, 12, 3072, 400, 2},
-    {384, 768, 768, 12, 12, 3072, 400, 2},
-    {384, 768, 768, 12, 12, 3072, 400, 2},
-    {384, 240, 768, 12, 12, 3072, 400, 240},
-};
-
-constexpr size_t kNumTransformers = sizeof(kDecoderSpecs) / sizeof(kDecoderSpecs[0]);
 constexpr int64_t kAttentionQueryChunk = 1500;
+
+cd::TransformerSpec to_transformer_spec(const AudioTokenizerTransformerStage & stage) {
+    return {
+        stage.input_dimension,
+        stage.output_dimension,
+        stage.model_dimension,
+        stage.num_heads,
+        stage.num_layers,
+        stage.feedforward_dimension,
+        stage.context_window,
+        stage.patch_size,
+    };
+}
 
 // PatchedPretransform (decode/upsample): [1, l, d*patch] -> [1, l*patch, d].
 // Each frame is unpacked into `patch` consecutive frames along time, matching
@@ -59,22 +58,24 @@ core::TensorValue patch_upsample(
 
 }  // namespace
 
-struct MossCodecDecoder::Impl {
+struct MossAudioTokenizerDecoder::Impl {
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
     int threads = 1;
+    int64_t sampling_rate = 48000;
     size_t graph_arena_bytes = 0;
-    std::unique_ptr<MossCodecDequantizer> dequantizer;
+    std::unique_ptr<MossAudioTokenizerQuantizer> dequantizer;
     std::unique_ptr<core::BackendWeightStore> store;
     std::vector<cd::TransformerWeights> transformers;
 };
 
-MossCodecDecoder::MossCodecDecoder(
+MossAudioTokenizerDecoder::MossAudioTokenizerDecoder(
     const std::filesystem::path & codec_dir,
     core::ExecutionContext & execution_context,
     int64_t num_quantizers,
     size_t weight_context_bytes,
-    size_t graph_arena_bytes)
+    size_t graph_arena_bytes,
+    AudioTokenizerConfig config)
     : impl_(std::make_unique<Impl>()) {
     impl_->backend = execution_context.backend();
     if (impl_->backend == nullptr) {
@@ -82,27 +83,28 @@ MossCodecDecoder::MossCodecDecoder(
     }
     impl_->backend_type = execution_context.backend_type();
     impl_->threads = execution_context.config().threads;
+    impl_->sampling_rate = config.sampling_rate;
     impl_->graph_arena_bytes = graph_arena_bytes;
-    impl_->dequantizer = std::make_unique<MossCodecDequantizer>(codec_dir, num_quantizers);
+    impl_->dequantizer = std::make_unique<MossAudioTokenizerQuantizer>(codec_dir, num_quantizers, config.quantizer);
 
     cd::CodecShards shards(codec_dir);
     impl_->store = std::make_unique<core::BackendWeightStore>(
-        impl_->backend, impl_->backend_type, "moss_tts_local.codec.decoder", weight_context_bytes);
-    impl_->transformers.reserve(kNumTransformers);
-    for (size_t index = 0; index < kNumTransformers; ++index) {
+        impl_->backend, impl_->backend_type, "moss.audio_tokenizer.decoder", weight_context_bytes);
+    impl_->transformers.reserve(config.decoder_stages.size());
+    for (size_t index = 0; index < config.decoder_stages.size(); ++index) {
         impl_->transformers.push_back(cd::load_transformer(
-            *impl_->store, shards, kDecoderSpecs[index], "decoder", static_cast<int64_t>(2 * index)));
+            *impl_->store, shards, to_transformer_spec(config.decoder_stages[index]), "decoder", static_cast<int64_t>(2 * index)));
     }
     impl_->store->upload();
 }
 
-MossCodecDecoder::~MossCodecDecoder() = default;
+MossAudioTokenizerDecoder::~MossAudioTokenizerDecoder() = default;
 
-int64_t MossCodecDecoder::sampling_rate() const noexcept {
-    return 48000;
+int64_t MossAudioTokenizerDecoder::sampling_rate() const noexcept {
+    return impl_->sampling_rate;
 }
 
-std::vector<std::vector<float>> MossCodecDecoder::decode(
+std::vector<std::vector<float>> MossAudioTokenizerDecoder::decode(
     const std::vector<std::vector<int32_t>> & codes) const {
     const int64_t frames = codes.empty() ? 0 : static_cast<int64_t>(codes.front().size());
     if (frames <= 0) {
@@ -160,7 +162,7 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
     if (graph_ctx == nullptr) {
         throw std::runtime_error("failed to initialize MOSS codec decoder graph context");
     }
-    core::ModuleBuildContext ctx{graph_ctx.get(), "moss_tts_local.codec.decode", impl_->backend_type};
+    core::ModuleBuildContext ctx{graph_ctx.get(), "moss.audio_tokenizer.decode", impl_->backend_type};
 
     auto latent_tensor =
         core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames, cd::kCodeDim}));
@@ -303,13 +305,13 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
                 stereo[1][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i + 1)];
             }
         });
-        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.dequant_ms", dequant_ms);
-        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.latent_pack_ms", latent_pack_ms);
-        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.graph_build_ms", graph_build_ms);
-        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.input_upload_ms", input_upload_ms);
-        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.graph_compute_ms", graph_compute_ms);
-        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.output_read_ms", output_read_ms);
-        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.deinterleave_ms", deinterleave_ms);
+        engine::debug::timing_log_scalar("moss.audio_tokenizer.decode.dequant_ms", dequant_ms);
+        engine::debug::timing_log_scalar("moss.audio_tokenizer.decode.latent_pack_ms", latent_pack_ms);
+        engine::debug::timing_log_scalar("moss.audio_tokenizer.decode.graph_build_ms", graph_build_ms);
+        engine::debug::timing_log_scalar("moss.audio_tokenizer.decode.input_upload_ms", input_upload_ms);
+        engine::debug::timing_log_scalar("moss.audio_tokenizer.decode.graph_compute_ms", graph_compute_ms);
+        engine::debug::timing_log_scalar("moss.audio_tokenizer.decode.output_read_ms", output_read_ms);
+        engine::debug::timing_log_scalar("moss.audio_tokenizer.decode.deinterleave_ms", deinterleave_ms);
     } else {
 #ifdef _OPENMP
 #pragma omp parallel for if(per_channel >= 4096)
@@ -322,4 +324,4 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
     return stereo;
 }
 
-}  // namespace engine::models::moss_tts_local
+}  // namespace engine::models::moss

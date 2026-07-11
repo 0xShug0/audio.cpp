@@ -236,9 +236,11 @@ add_library(engine_runtime STATIC
     src/models/miotts/loader.cpp
     src/models/moss_tts_local/assets.cpp
     src/models/moss_tts_local/backbone.cpp
-    src/models/moss_tts_local/codec_decoder.cpp
-    src/models/moss_tts_local/codec_encoder.cpp
-    src/models/moss_tts_local/codec_quantizer.cpp
+    src/models/moss/audio_tokenizer_decoder.cpp
+    src/models/moss/audio_tokenizer_encoder.cpp
+    src/models/moss/audio_tokenizer_config.cpp
+    src/models/moss/audio_tokenizer_quantizer.cpp
+    src/models/moss/token_rows.cpp
     src/models/moss_tts_local/depth_transformer.cpp
     src/models/moss_tts_local/generator.cpp
     src/models/moss_tts_local/loader.cpp
