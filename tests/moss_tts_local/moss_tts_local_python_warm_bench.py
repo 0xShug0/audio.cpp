@@ -156,11 +156,11 @@ def main() -> int:
     def request_value(spec: dict[str, Any], key: str, fallback: Any) -> Any:
         return spec[key] if key in spec else fallback
 
-    def run_request(spec: dict[str, Any]) -> torch.Tensor:
+    def run_request(spec: dict[str, Any], use_default_clone_audio: bool) -> torch.Tensor:
         text = str(spec["text"])
         language = spec.get("language")
         message_kwargs: dict[str, Any] = {"text": text, "language": language}
-        clone_audio_path = str(spec.get("voice_ref") or spec.get("clone_audio") or args.clone_audio)
+        clone_audio_path = str(spec.get("voice_ref") or spec.get("clone_audio") or (args.clone_audio if use_default_clone_audio else ""))
         if clone_audio_path:
             message_kwargs["reference"] = [str(resolve_path(Path(clone_audio_path)))]
         conversation = [processor.build_user_message(**message_kwargs)]
@@ -193,7 +193,7 @@ def main() -> int:
             torch.cuda.manual_seed_all(args.seed)
             torch.cuda.synchronize(args.device)
         started = time.perf_counter()
-        audio = run_request(warmup_spec)
+        audio = run_request(warmup_spec, True)
         if args.backend == "cuda":
             torch.cuda.synchronize(args.device)
         wall_ms = (time.perf_counter() - started) * 1000.0
@@ -228,7 +228,7 @@ def main() -> int:
                 torch.cuda.manual_seed_all(seed)
                 torch.cuda.synchronize(args.device)
             started = time.perf_counter()
-            last_audio = run_request(spec)
+            last_audio = run_request(spec, args.request_file is None)
             if args.backend == "cuda":
                 torch.cuda.synchronize(args.device)
             wall_ms = (time.perf_counter() - started) * 1000.0

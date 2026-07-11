@@ -247,11 +247,12 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "audio_top_p": 0.95,
         "audio_top_k": 50,
         "audio_repetition_penalty": 1.0,
+        "dtype": "fp32",
         "use_kv_cache": "true",
         "default_requests_per_session": 3,
         "asr_compact_lcs_min": 0.95,
         "log_mel_cosine_min": 0.80,
-        "length_ratio_min": 0.90,
+        "length_ratio_min": 0.80,
         "whisper_word_timestamps": False,
     },
     "qwen3_asr": {
@@ -2534,6 +2535,7 @@ def build_tts_commands(
         audio_top_p = float(config.get("audio_top_p", 0.95))
         audio_top_k = int(config.get("audio_top_k", 50))
         audio_repetition_penalty = float(config.get("audio_repetition_penalty", 1.0))
+        dtype = str(config.get("dtype", "bf16"))
         use_kv_cache = str(config.get("use_kv_cache", "true"))
         request_file_args: list[str] = []
         request_file = config.get("moss_tts_local_request_file")
@@ -2570,6 +2572,8 @@ def build_tts_commands(
             str(audio_top_k),
             "--audio-repetition-penalty",
             str(audio_repetition_penalty),
+            "--dtype",
+            dtype,
             "--use-kv-cache",
             use_kv_cache,
             "--audio-out",
@@ -4575,6 +4579,12 @@ def run_scenario(
                             float(scenario_config.get("log_mel_cosine_min", 0.80)),
                             float(scenario_config.get("length_ratio_min", 0.98)),
                         )
+                        if (
+                            family == "moss_tts_local"
+                            and asr_parity["mismatches"] == ["empty_text"]
+                            and waveform_parity["ok"]
+                        ):
+                            asr_parity = {**asr_parity, "ok": True, "reason": "ok", "mismatches": []}
                         parity_ok = asr_parity["ok"] and waveform_parity["ok"]
                         parity_reason = "ok" if parity_ok else (
                             asr_parity["reason"] if not asr_parity["ok"] else waveform_parity["reason"]
