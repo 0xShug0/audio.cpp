@@ -160,10 +160,11 @@ struct MossGenerator::ProjectionRuntime {
         size_t graph_arena_bytes,
         size_t weight_context_bytes)
         : backend(execution_context.backend()),
+          backend_type(execution_context.backend_type()),
           threads(execution_context.config().threads),
           store(std::make_shared<core::BackendWeightStore>(
               backend,
-              execution_context.backend_type(),
+              backend_type,
               "moss_tts_local.generator.projection.weights",
               weight_context_bytes)) {
         if (assets.model_weights == nullptr) {
@@ -187,7 +188,7 @@ struct MossGenerator::ProjectionRuntime {
         if (ctx == nullptr) {
             throw std::runtime_error("failed to initialize MOSS-TTS-Local projection graph context");
         }
-        core::ModuleBuildContext build_ctx{ctx.get(), "moss_tts_local.generator.projection"};
+        core::ModuleBuildContext build_ctx{ctx.get(), "moss_tts_local.generator.projection", backend_type};
         graphs.reserve(weights.size());
         for (size_t index = 0; index < weights.size(); ++index) {
             const int64_t codebook_size = weights[index].shape.at(0);
@@ -241,6 +242,7 @@ struct MossGenerator::ProjectionRuntime {
     }
 
     ggml_backend_t backend = nullptr;
+    core::BackendType backend_type = core::BackendType::Cpu;
     int threads = 1;
     std::shared_ptr<core::BackendWeightStore> store;
     std::vector<core::TensorValue> weights;

@@ -150,13 +150,24 @@ void copy_padded_values(
         throw std::runtime_error("Supertonic padded copy shape mismatch");
     }
     const size_t dst_count = vector_num_elements(dst_shape);
-    std::fill(dst, dst + dst_count, T{});
+    const int64_t dst_count_i64 = static_cast<int64_t>(dst_count);
+#ifdef _OPENMP
+#pragma omp parallel for if(dst_count_i64 >= 4096)
+#endif
+    for (int64_t i = 0; i < dst_count_i64; ++i) {
+        dst[static_cast<size_t>(i)] = T{};
+    }
     if (dst_shape == src_shape) {
         std::memcpy(dst, src, dst_count * sizeof(T));
         return;
     }
     const size_t src_count = vector_num_elements(src_shape);
-    for (size_t src_offset = 0; src_offset < src_count; ++src_offset) {
+    const int64_t src_count_i64 = static_cast<int64_t>(src_count);
+#ifdef _OPENMP
+#pragma omp parallel for if(src_count_i64 >= 4096)
+#endif
+    for (int64_t src_index = 0; src_index < src_count_i64; ++src_index) {
+        const size_t src_offset = static_cast<size_t>(src_index);
         size_t remainder = src_offset;
         std::array<int64_t, 4> index = {0, 0, 0, 0};
         for (size_t axis = src_shape.size(); axis > 0; --axis) {
@@ -181,7 +192,12 @@ std::vector<T> slice_padded_values(
     }
     const size_t dst_count = vector_num_elements(dst_shape);
     std::vector<T> dst(dst_count, T{});
-    for (size_t dst_offset = 0; dst_offset < dst_count; ++dst_offset) {
+    const int64_t dst_count_i64 = static_cast<int64_t>(dst_count);
+#ifdef _OPENMP
+#pragma omp parallel for if(dst_count_i64 >= 4096)
+#endif
+    for (int64_t dst_index = 0; dst_index < dst_count_i64; ++dst_index) {
+        const size_t dst_offset = static_cast<size_t>(dst_index);
         size_t remainder = dst_offset;
         std::array<int64_t, 4> index = {0, 0, 0, 0};
         for (size_t axis = dst_shape.size(); axis > 0; --axis) {
@@ -1148,6 +1164,9 @@ private:
             return found->second;
         }
         std::vector<float> position_values(static_cast<size_t>(frames));
+#ifdef _OPENMP
+#pragma omp parallel for if(frames >= 4096)
+#endif
         for (int64_t i = 0; i < frames; ++i) {
             position_values[static_cast<size_t>(i)] = static_cast<float>(i);
         }
@@ -1165,6 +1184,9 @@ private:
             return found->second;
         }
         std::vector<float> values(static_cast<size_t>(frames * frames), 0.0F);
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) if(frames * frames >= 4096)
+#endif
         for (int64_t query = 0; query < frames; ++query) {
             for (int64_t key = 0; key < frames; ++key) {
                 const int64_t distance = key - query;
@@ -2504,7 +2526,8 @@ runtime::AudioBuffer SupertonicNativeRuntime::synthesize(
         static_cast<size_t>(chunk_audio.duration_seconds * static_cast<float>(out.sample_rate)));
     out.samples.resize(trim);
     engine::debug::trace_log_scalar("supertonic.output_samples", static_cast<int64_t>(out.samples.size()));
-    engine::debug::timing_log_scalar("supertonic.total_ms", engine::debug::elapsed_ms(total_start));
+    const double total_ms = engine::debug::elapsed_ms(total_start);
+    engine::debug::timing_log_scalar("session.wall_ms", total_ms);
     return out;
 }
 

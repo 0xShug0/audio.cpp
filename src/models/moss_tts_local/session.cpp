@@ -80,6 +80,9 @@ std::vector<std::vector<float>> reference_to_codec_stereo(const runtime::AudioBu
     // De-interleave into per-channel streams, then force exactly two channels
     // (mono is duplicated; extra channels are dropped) before resampling.
     std::vector<std::vector<float>> stereo(2, std::vector<float>(static_cast<size_t>(frames)));
+#ifdef _OPENMP
+#pragma omp parallel for if(frames >= 4096)
+#endif
     for (int64_t t = 0; t < frames; ++t) {
         const float left = audio.samples[static_cast<size_t>(t * channels)];
         const float right = channels > 1 ? audio.samples[static_cast<size_t>(t * channels + 1)] : left;
@@ -360,10 +363,14 @@ runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & reques
         codes.assign(
             static_cast<size_t>(num_codebooks),
             std::vector<int32_t>(frames.size()));
-        for (size_t frame = 0; frame < frames.size(); ++frame) {
+        const int64_t generated_frames = static_cast<int64_t>(frames.size());
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) if(generated_frames * num_codebooks >= 4096)
+#endif
+        for (int64_t frame = 0; frame < generated_frames; ++frame) {
             for (int64_t codebook = 0; codebook < num_codebooks; ++codebook) {
-                codes[static_cast<size_t>(codebook)][frame] =
-                    frames[frame][static_cast<size_t>(codebook)];
+                codes[static_cast<size_t>(codebook)][static_cast<size_t>(frame)] =
+                    frames[static_cast<size_t>(frame)][static_cast<size_t>(codebook)];
             }
         }
     });
@@ -380,10 +387,14 @@ runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & reques
     audio.channels = channel_count;
     time_once(interleave_ms, [&]() {
         audio.samples.resize(samples_per_channel * static_cast<size_t>(channel_count));
-        for (size_t sample = 0; sample < samples_per_channel; ++sample) {
+        const int64_t sample_count = static_cast<int64_t>(samples_per_channel);
+#ifdef _OPENMP
+#pragma omp parallel for if(sample_count * channel_count >= 4096)
+#endif
+        for (int64_t sample = 0; sample < sample_count; ++sample) {
             for (int channel = 0; channel < channel_count; ++channel) {
-                audio.samples[sample * static_cast<size_t>(channel_count) + static_cast<size_t>(channel)] =
-                    channels[static_cast<size_t>(channel)][sample];
+                audio.samples[static_cast<size_t>(sample) * static_cast<size_t>(channel_count) + static_cast<size_t>(channel)] =
+                    channels[static_cast<size_t>(channel)][static_cast<size_t>(sample)];
             }
         }
     });

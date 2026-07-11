@@ -834,6 +834,9 @@ make_rf_attention_mask(const std::vector<uint8_t> &text_mask,
       latent_steps + text_tokens + speaker_tokens + caption_tokens;
   std::vector<float> out(static_cast<size_t>(batch * latent_steps * keys),
                          -INFINITY);
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) if(batch * latent_steps * keys >= 4096)
+#endif
   for (int64_t b = 0; b < batch; ++b) {
     for (int64_t q = 0; q < latent_steps; ++q) {
       for (int64_t k = 0; k < keys; ++k) {
@@ -862,6 +865,9 @@ make_rf_attention_mask(const std::vector<uint8_t> &text_mask,
 
 std::vector<int32_t> positions(int64_t count) {
   std::vector<int32_t> out(static_cast<size_t>(count));
+#ifdef _OPENMP
+#pragma omp parallel for if(count >= 4096)
+#endif
   for (int64_t i = 0; i < count; ++i) {
     out[static_cast<size_t>(i)] = static_cast<int32_t>(i);
   }

@@ -575,8 +575,13 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
       } else {
         rf_step_cond_ms += rf_step_ms;
       }
-      for (size_t i = 0; i < x_t.size(); ++i) {
-        x_t[i] += velocity[i] * (t_next - t);
+      const int64_t sample_count = static_cast<int64_t>(x_t.size());
+#ifdef _OPENMP
+#pragma omp parallel for if(sample_count >= 4096)
+#endif
+      for (int64_t i = 0; i < sample_count; ++i) {
+        const size_t index = static_cast<size_t>(i);
+        x_t[index] += velocity[index] * (t_next - t);
       }
     }
     if (mem_saver_) {
@@ -588,6 +593,9 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
 
     std::vector<float> latent(
         static_cast<size_t>(latent_steps * assets_->config.latent_dim), 0.0F);
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) if(latent_steps * assets_->config.latent_dim >= 4096)
+#endif
     for (int64_t frame = 0; frame < latent_steps; ++frame) {
       for (int64_t dim = 0; dim < assets_->config.latent_dim; ++dim) {
         const int64_t patched_frame = frame / assets_->config.latent_patch_size;

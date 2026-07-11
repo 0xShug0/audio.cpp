@@ -259,6 +259,7 @@ struct MossBackboneRuntime::Impl {
     std::shared_ptr<const MossTTSLocalAssets> assets;
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
+    int threads = 1;
     size_t graph_arena_bytes = 0;
     BackboneWeights weights;
 
@@ -314,6 +315,7 @@ MossBackboneRuntime::MossBackboneRuntime(
         throw std::runtime_error("MOSS-TTS-Local backbone backend is not initialized");
     }
     impl_->backend_type = execution_context.backend_type();
+    impl_->threads = execution_context.config().threads;
     impl_->graph_arena_bytes = graph_arena_bytes;
     impl_->weights = load_backbone_weights(
         *assets,
@@ -510,6 +512,9 @@ void MossBackboneRuntime::step_into(
     ggml_backend_tensor_set(impl.step_positions, &position, 0, sizeof(int32_t));
     ggml_backend_tensor_set(impl.step_cache_slot, &cache_slot, 0, sizeof(int32_t));
     impl.step_input_upload_ms += engine::debug::elapsed_ms(timing_start);
+#ifdef _OPENMP
+#pragma omp parallel for if(impl.step_cache.cache_steps() >= 4096)
+#endif
     for (int64_t i = 0; i < impl.step_cache.cache_steps(); ++i) {
         impl.mask_host[static_cast<size_t>(i)] =
             ggml_fp32_to_fp16((i <= cache_slot) ? 0.0F : kMaskedAttentionBias);
@@ -519,6 +524,7 @@ void MossBackboneRuntime::step_into(
     impl.step_mask_upload_ms += engine::debug::elapsed_ms(timing_start);
 
     timing_start = Clock::now();
+    core::set_backend_threads(impl.backend, impl.threads);
     const ggml_status status = ggml_backend_graph_compute(impl.backend, impl.step_graph);
     ggml_backend_synchronize(impl.backend);
     impl.step_graph_compute_ms += engine::debug::elapsed_ms(timing_start);
@@ -625,6 +631,9 @@ std::vector<float> MossBackboneRuntime::prefill(
     timing_start = Clock::now();
     ggml_backend_tensor_set(token_input.tensor, token_ids.data(), 0, token_ids.size() * sizeof(int32_t));
     std::vector<int32_t> position_host(static_cast<size_t>(steps));
+#ifdef _OPENMP
+#pragma omp parallel for if(steps >= 4096)
+#endif
     for (int64_t i = 0; i < steps; ++i) {
         position_host[static_cast<size_t>(i)] = static_cast<int32_t>(i);
     }
@@ -632,6 +641,9 @@ std::vector<float> MossBackboneRuntime::prefill(
     std::vector<ggml_fp16_t> mask_host(
         static_cast<size_t>(steps * steps),
         ggml_fp32_to_fp16(kMaskedAttentionBias));
+#ifdef _OPENMP
+#pragma omp parallel for if(steps * steps >= 4096)
+#endif
     for (int64_t q = 0; q < steps; ++q) {
         for (int64_t k = 0; k <= q; ++k) {
             mask_host[static_cast<size_t>(q * steps + k)] = ggml_fp32_to_fp16(0.0F);
@@ -642,6 +654,7 @@ std::vector<float> MossBackboneRuntime::prefill(
     impl.prefill_input_upload_ms += engine::debug::elapsed_ms(timing_start);
 
     timing_start = Clock::now();
+    core::set_backend_threads(impl.backend, impl.threads);
     const ggml_status status = ggml_backend_graph_compute(impl.backend, graph);
     ggml_backend_synchronize(impl.backend);
     impl.prefill_graph_compute_ms += engine::debug::elapsed_ms(timing_start);

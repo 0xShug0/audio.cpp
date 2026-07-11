@@ -294,6 +294,9 @@ inline core::TensorValue run_transformer(
 
 inline std::vector<float> causal_context_mask(int64_t steps, int64_t context) {
     std::vector<float> mask(static_cast<size_t>(steps * steps), kMaskedAttentionBias);
+#ifdef _OPENMP
+#pragma omp parallel for if(steps * steps >= 4096)
+#endif
     for (int64_t query = 0; query < steps; ++query) {
         for (int64_t key = 0; key <= query; ++key) {
             if (query - key < context) {
@@ -311,6 +314,9 @@ inline std::vector<float> causal_context_mask_window(
     int64_t key_steps,
     int64_t context) {
     std::vector<float> mask(static_cast<size_t>(query_steps * key_steps), kMaskedAttentionBias);
+#ifdef _OPENMP
+#pragma omp parallel for if(query_steps * key_steps >= 4096)
+#endif
     for (int64_t q = 0; q < query_steps; ++q) {
         const int64_t query = query_start + q;
         for (int64_t k = 0; k < key_steps; ++k) {

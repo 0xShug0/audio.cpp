@@ -144,6 +144,7 @@ struct MossDepthTransformer::Impl {
     std::shared_ptr<const MossTTSLocalAssets> assets;
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
+    int threads = 1;
     size_t graph_arena_bytes = 0;
     DepthWeights weights;
 
@@ -236,6 +237,9 @@ void MossDepthTransformer::Impl::build_step_plans(int64_t max_steps) {
     for (int64_t steps = 1; steps <= max_steps; ++steps) {
         const auto & plan = plans[static_cast<size_t>(steps - 1)];
         std::vector<int32_t> position_host(static_cast<size_t>(steps));
+#ifdef _OPENMP
+#pragma omp parallel for if(steps >= 4096)
+#endif
         for (int64_t i = 0; i < steps; ++i) {
             position_host[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         }
@@ -244,6 +248,9 @@ void MossDepthTransformer::Impl::build_step_plans(int64_t max_steps) {
         std::vector<ggml_fp16_t> mask_host(
             static_cast<size_t>(steps * steps),
             ggml_fp32_to_fp16(kMaskedAttentionBias));
+#ifdef _OPENMP
+#pragma omp parallel for if(steps * steps >= 4096)
+#endif
         for (int64_t q = 0; q < steps; ++q) {
             for (int64_t k = 0; k <= q; ++k) {
                 mask_host[static_cast<size_t>(q * steps + k)] = ggml_fp32_to_fp16(0.0F);
@@ -273,6 +280,7 @@ MossDepthTransformer::MossDepthTransformer(
         throw std::runtime_error("MOSS-TTS-Local depth transformer backend is not initialized");
     }
     impl_->backend_type = execution_context.backend_type();
+    impl_->threads = execution_context.config().threads;
     impl_->graph_arena_bytes = graph_arena_bytes;
     impl_->weights = load_depth_weights(*assets, impl_->backend, impl_->backend_type, weight_context_bytes);
     impl_->assets = std::move(assets);
@@ -307,6 +315,7 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
         ggml_backend_tensor_set(plan.embeds, inputs_embeds.data(), 0, inputs_embeds.size() * sizeof(float));
         impl_->step_input_upload_ms += engine::debug::elapsed_ms(timing_start);
         timing_start = Clock::now();
+        core::set_backend_threads(impl_->backend, impl_->threads);
         const ggml_status status =
             core::compute_backend_graph(impl_->backend, plan.graph, nullptr, "MOSS-TTS-Local depth step");
         ggml_backend_synchronize(impl_->backend);
@@ -372,6 +381,9 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
         embeds_input.tensor, inputs_embeds.data(), 0, inputs_embeds.size() * sizeof(float));
 
     std::vector<int32_t> position_host(static_cast<size_t>(steps));
+#ifdef _OPENMP
+#pragma omp parallel for if(steps >= 4096)
+#endif
     for (int64_t i = 0; i < steps; ++i) {
         position_host[static_cast<size_t>(i)] = static_cast<int32_t>(i);
     }
@@ -380,6 +392,9 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
     std::vector<ggml_fp16_t> mask_host(
         static_cast<size_t>(steps * steps),
         ggml_fp32_to_fp16(kMaskedAttentionBias));
+#ifdef _OPENMP
+#pragma omp parallel for if(steps * steps >= 4096)
+#endif
     for (int64_t q = 0; q < steps; ++q) {
         for (int64_t k = 0; k <= q; ++k) {
             mask_host[static_cast<size_t>(q * steps + k)] = ggml_fp32_to_fp16(0.0F);
@@ -389,6 +404,7 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
     impl_->slow_input_upload_ms += engine::debug::elapsed_ms(timing_start);
 
     timing_start = Clock::now();
+    core::set_backend_threads(impl_->backend, impl_->threads);
     const ggml_status status = ggml_backend_graph_compute(impl_->backend, graph);
     ggml_backend_synchronize(impl_->backend);
     impl_->slow_graph_compute_ms += engine::debug::elapsed_ms(timing_start);

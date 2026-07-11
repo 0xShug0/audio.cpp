@@ -479,16 +479,22 @@ double bs1770_loudness_48k(const std::vector<float> &mono) {
   working = lfilter_biquad(working, 0.9950442970178917, -1.9900885940357833,
                            0.9950442970178917, -1.990076284018423,
                            0.9901009040531438);
-  std::vector<double> block_energy;
-  for (int64_t start = 0;
-       start + kBlockSamples <= static_cast<int64_t>(working.size());
-       start += kStrideSamples) {
+  const int64_t block_count =
+      (static_cast<int64_t>(working.size()) - kBlockSamples) / kStrideSamples +
+      1;
+  std::vector<double> block_energy(static_cast<size_t>(block_count));
+#ifdef _OPENMP
+#pragma omp parallel for if(block_count >= 8)
+#endif
+  for (int64_t block = 0; block < block_count; ++block) {
+    const int64_t start = block * kStrideSamples;
     double sum_sq = 0.0;
     for (int i = 0; i < kBlockSamples; ++i) {
       const double sample = working[static_cast<size_t>(start + i)];
       sum_sq += sample * sample;
     }
-    block_energy.push_back(sum_sq / static_cast<double>(kBlockSamples));
+    block_energy[static_cast<size_t>(block)] =
+        sum_sq / static_cast<double>(kBlockSamples);
   }
   if (block_energy.empty()) {
     return kMinLoudness;
@@ -535,14 +541,22 @@ void normalize_reference_audio_in_place(std::vector<float> &mono,
   const double loudness = bs1770_loudness_48k(mono);
   const double gain = std::exp((target_db - loudness) * kGainFactor);
   float peak = 0.0F;
-  for (float &sample : mono) {
+  const int64_t samples = static_cast<int64_t>(mono.size());
+#ifdef _OPENMP
+#pragma omp parallel for reduction(max: peak) if(samples >= 4096)
+#endif
+  for (int64_t i = 0; i < samples; ++i) {
+    float &sample = mono[static_cast<size_t>(i)];
     sample = static_cast<float>(static_cast<double>(sample) * gain);
     peak = std::max(peak, std::abs(sample));
   }
   if (std::isfinite(peak) && peak > 1.0F) {
     const float peak_gain = 1.0F / peak;
-    for (float &sample : mono) {
-      sample *= peak_gain;
+#ifdef _OPENMP
+#pragma omp parallel for if(samples >= 4096)
+#endif
+    for (int64_t i = 0; i < samples; ++i) {
+      mono[static_cast<size_t>(i)] *= peak_gain;
     }
   }
 }

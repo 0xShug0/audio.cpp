@@ -1,5 +1,6 @@
 #include "engine/models/moss_tts_local/codec_encoder.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
 #include "engine/models/moss_tts_local/codec_quantizer.h"
 #include "engine/models/moss_tts_local/codec_transformer.h"
@@ -61,6 +62,7 @@ core::TensorValue patch_downsample(
 struct MossCodecEncoder::Impl {
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
+    int threads = 1;
     size_t graph_arena_bytes = 0;
     std::unique_ptr<MossCodecDequantizer> quantizer;
     std::unique_ptr<core::BackendWeightStore> store;
@@ -79,6 +81,7 @@ MossCodecEncoder::MossCodecEncoder(
         throw std::runtime_error("MOSS codec encoder backend is not initialized");
     }
     impl_->backend_type = execution_context.backend_type();
+    impl_->threads = execution_context.config().threads;
     impl_->graph_arena_bytes = graph_arena_bytes;
     impl_->quantizer = std::make_unique<MossCodecDequantizer>(codec_dir, num_quantizers);
 
@@ -115,6 +118,9 @@ std::vector<std::vector<int32_t>> MossCodecEncoder::encode(
     const int64_t per_channel = frames * cd::kSamplesPerFrame;
     const int64_t interleaved = per_channel * 2;
     std::vector<float> waveform(static_cast<size_t>(interleaved), 0.0F);
+#ifdef _OPENMP
+#pragma omp parallel for if(raw_per_channel >= 4096)
+#endif
     for (int64_t i = 0; i < raw_per_channel; ++i) {
         waveform[static_cast<size_t>(2 * i)] = channels[0][static_cast<size_t>(i)];
         waveform[static_cast<size_t>(2 * i + 1)] = channels[1][static_cast<size_t>(i)];
@@ -190,6 +196,7 @@ std::vector<std::vector<int32_t>> MossCodecEncoder::encode(
             stage.mask, stage.mask_host.data(), 0, stage.mask_host.size() * sizeof(float));
     }
 
+    core::set_backend_threads(impl_->backend, impl_->threads);
     const ggml_status status = ggml_backend_graph_compute(impl_->backend, graph);
     ggml_backend_synchronize(impl_->backend);
     if (status != GGML_STATUS_SUCCESS) {

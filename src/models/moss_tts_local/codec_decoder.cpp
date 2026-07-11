@@ -1,5 +1,6 @@
 #include "engine/models/moss_tts_local/codec_decoder.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/models/moss_tts_local/codec_quantizer.h"
@@ -61,6 +62,7 @@ core::TensorValue patch_upsample(
 struct MossCodecDecoder::Impl {
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
+    int threads = 1;
     size_t graph_arena_bytes = 0;
     std::unique_ptr<MossCodecDequantizer> dequantizer;
     std::unique_ptr<core::BackendWeightStore> store;
@@ -79,6 +81,7 @@ MossCodecDecoder::MossCodecDecoder(
         throw std::runtime_error("MOSS codec decoder backend is not initialized");
     }
     impl_->backend_type = execution_context.backend_type();
+    impl_->threads = execution_context.config().threads;
     impl_->graph_arena_bytes = graph_arena_bytes;
     impl_->dequantizer = std::make_unique<MossCodecDequantizer>(codec_dir, num_quantizers);
 
@@ -128,6 +131,9 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
     if (collect_timing) {
         latent_pack_ms = engine::debug::measure_ms([&]() {
             latent_input.resize(static_cast<size_t>(frames * cd::kCodeDim));
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) if(frames * cd::kCodeDim >= 4096)
+#endif
             for (int64_t channel = 0; channel < cd::kCodeDim; ++channel) {
                 for (int64_t step = 0; step < frames; ++step) {
                     latent_input[static_cast<size_t>(step * cd::kCodeDim + channel)] =
@@ -137,6 +143,9 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
         });
     } else {
         latent_input.resize(static_cast<size_t>(frames * cd::kCodeDim));
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) if(frames * cd::kCodeDim >= 4096)
+#endif
         for (int64_t channel = 0; channel < cd::kCodeDim; ++channel) {
             for (int64_t step = 0; step < frames; ++step) {
                 latent_input[static_cast<size_t>(step * cd::kCodeDim + channel)] =
@@ -260,6 +269,7 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
     }
 
     const auto compute_start = std::chrono::steady_clock::now();
+    core::set_backend_threads(impl_->backend, impl_->threads);
     const ggml_status status = ggml_backend_graph_compute(impl_->backend, graph);
     ggml_backend_synchronize(impl_->backend);
     if (collect_timing) {
@@ -285,6 +295,9 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
     std::vector<std::vector<float>> stereo(2, std::vector<float>(static_cast<size_t>(per_channel)));
     if (collect_timing) {
         deinterleave_ms = engine::debug::measure_ms([&]() {
+#ifdef _OPENMP
+#pragma omp parallel for if(per_channel >= 4096)
+#endif
             for (int64_t i = 0; i < per_channel; ++i) {
                 stereo[0][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i)];
                 stereo[1][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i + 1)];
@@ -298,6 +311,9 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
         engine::debug::timing_log_scalar("moss_tts_local.codec_decode.output_read_ms", output_read_ms);
         engine::debug::timing_log_scalar("moss_tts_local.codec_decode.deinterleave_ms", deinterleave_ms);
     } else {
+#ifdef _OPENMP
+#pragma omp parallel for if(per_channel >= 4096)
+#endif
         for (int64_t i = 0; i < per_channel; ++i) {
             stereo[0][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i)];
             stereo[1][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i + 1)];

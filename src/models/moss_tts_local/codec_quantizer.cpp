@@ -52,6 +52,9 @@ std::vector<float> reconstruct_weight_norm(
     int64_t out_channels,
     int64_t in_channels) {
     std::vector<float> weight(static_cast<size_t>(out_channels * in_channels));
+#ifdef _OPENMP
+#pragma omp parallel for if(out_channels * in_channels >= 4096)
+#endif
     for (int64_t o = 0; o < out_channels; ++o) {
         double norm = 0.0;
         for (int64_t k = 0; k < in_channels; ++k) {
@@ -98,6 +101,9 @@ MossCodecDequantizer::MossCodecDequantizer(const std::filesystem::path & codec_d
         codebook.out_bias = shards.require_f32(prefix + ".out_proj.bias");
         std::vector<float> combined_bias(static_cast<size_t>(code_dim_));
         std::vector<float> combined_weight(static_cast<size_t>(code_dim_ * codebook_dim_));
+#ifdef _OPENMP
+#pragma omp parallel for if(code_dim_ >= 256)
+#endif
         for (int64_t out = 0; out < code_dim_; ++out) {
             const float * output_row = &output_weight_[static_cast<size_t>(out * rvq_dim_)];
             float bias_sum = 0.0F;
@@ -114,9 +120,12 @@ MossCodecDequantizer::MossCodecDequantizer(const std::filesystem::path & codec_d
             }
         }
         codebook.latent_table.resize(static_cast<size_t>(codebook_size_ * code_dim_));
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) if(codebook_size_ * code_dim_ >= 4096)
+#endif
         for (int64_t code = 0; code < codebook_size_; ++code) {
-            const float * embedding = &codebook.table[static_cast<size_t>(code * codebook_dim_)];
             for (int64_t out = 0; out < code_dim_; ++out) {
+                const float * embedding = &codebook.table[static_cast<size_t>(code * codebook_dim_)];
                 float sum = combined_bias[static_cast<size_t>(out)];
                 const float * row = &combined_weight[static_cast<size_t>(out * codebook_dim_)];
                 for (int64_t k = 0; k < codebook_dim_; ++k) {
@@ -130,6 +139,9 @@ MossCodecDequantizer::MossCodecDequantizer(const std::filesystem::path & codec_d
         // Pre-normalize the codebook rows once (encode does L2-normalized nearest
         // search, matching the training LFQ; F.normalize uses eps=1e-12).
         codebook.table_normalized = codebook.table;
+#ifdef _OPENMP
+#pragma omp parallel for if(codebook_size_ * codebook_dim_ >= 4096)
+#endif
         for (int64_t code = 0; code < codebook_size_; ++code) {
             float * row = &codebook.table_normalized[static_cast<size_t>(code * codebook_dim_)];
             double norm = 0.0;
@@ -156,24 +168,29 @@ std::vector<float> MossCodecDequantizer::decode(const std::vector<std::vector<in
     if (steps <= 0) {
         throw std::runtime_error("MOSS codec dequantizer requires a non-empty code sequence");
     }
-
-    std::vector<float> latent(static_cast<size_t>(code_dim_ * steps));
-    std::vector<float> frame_latent(static_cast<size_t>(code_dim_));
     for (int64_t step = 0; step < steps; ++step) {
-        std::copy(output_bias_.begin(), output_bias_.end(), frame_latent.begin());
         for (int64_t index = 0; index < num_quantizers_; ++index) {
-            const auto & codebook = codebooks_[static_cast<size_t>(index)];
             const int64_t code = codes[static_cast<size_t>(index)][static_cast<size_t>(step)];
             if (code < 0 || code >= codebook_size_) {
                 throw std::runtime_error("MOSS codec code index out of range");
             }
-            const float * decoded = &codebook.latent_table[static_cast<size_t>(code * code_dim_)];
-            for (int64_t out = 0; out < code_dim_; ++out) {
-                frame_latent[static_cast<size_t>(out)] += decoded[static_cast<size_t>(out)];
-            }
         }
+    }
+
+    std::vector<float> latent(static_cast<size_t>(code_dim_ * steps));
+#ifdef _OPENMP
+#pragma omp parallel for if(steps * code_dim_ >= 4096)
+#endif
+    for (int64_t step = 0; step < steps; ++step) {
         for (int64_t out = 0; out < code_dim_; ++out) {
-            latent[static_cast<size_t>(out * steps + step)] = frame_latent[static_cast<size_t>(out)];
+            float value = output_bias_[static_cast<size_t>(out)];
+            for (int64_t index = 0; index < num_quantizers_; ++index) {
+                const auto & codebook = codebooks_[static_cast<size_t>(index)];
+                const int64_t code = codes[static_cast<size_t>(index)][static_cast<size_t>(step)];
+                const float * decoded = &codebook.latent_table[static_cast<size_t>(code * code_dim_)];
+                value += decoded[static_cast<size_t>(out)];
+            }
+            latent[static_cast<size_t>(out * steps + step)] = value;
         }
     }
     return latent;
@@ -191,9 +208,10 @@ std::vector<std::vector<int32_t>> MossCodecDequantizer::encode(
     std::vector<std::vector<int32_t>> codes(
         static_cast<size_t>(num_quantizers_), std::vector<int32_t>(static_cast<size_t>(frames)));
 
-    std::vector<double> residual(static_cast<size_t>(rvq_dim_));
-    std::vector<double> encoding(static_cast<size_t>(codebook_dim_));
-    for (int64_t step = 0; step < frames; ++step) {
+    const auto encode_frame = [&](int64_t step, std::vector<double> & residual, std::vector<double> & encoding) {
+        std::fill(residual.begin(), residual.end(), 0.0);
+        std::fill(encoding.begin(), encoding.end(), 0.0);
+
         // input_proj: encoder latent [code_dim] -> rvq_dim (WNConv1d 1x1).
         const float * frame_hidden = &hidden[static_cast<size_t>(step * code_dim_)];
         for (int64_t out = 0; out < rvq_dim_; ++out) {
@@ -251,6 +269,27 @@ std::vector<std::vector<int32_t>> MossCodecDequantizer::encode(
                 }
                 residual[static_cast<size_t>(out)] -= sum;
             }
+        }
+    };
+
+#ifdef _OPENMP
+    if (frames >= 8) {
+#pragma omp parallel
+        {
+            std::vector<double> residual(static_cast<size_t>(rvq_dim_));
+            std::vector<double> encoding(static_cast<size_t>(codebook_dim_));
+#pragma omp for
+            for (int64_t step = 0; step < frames; ++step) {
+                encode_frame(step, residual, encoding);
+            }
+        }
+    } else
+#endif
+    {
+        std::vector<double> residual(static_cast<size_t>(rvq_dim_));
+        std::vector<double> encoding(static_cast<size_t>(codebook_dim_));
+        for (int64_t step = 0; step < frames; ++step) {
+            encode_frame(step, residual, encoding);
         }
     }
     return codes;

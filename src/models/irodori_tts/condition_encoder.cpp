@@ -667,6 +667,9 @@ std::vector<float> make_text_attention_mask(const std::vector<uint8_t> &mask,
                                             int64_t tokens) {
   std::vector<float> out(static_cast<size_t>(batch * heads * tokens * tokens),
                          kNegInf);
+#ifdef _OPENMP
+#pragma omp parallel for collapse(3) if(batch * heads * tokens * tokens >= 4096)
+#endif
   for (int64_t b = 0; b < batch; ++b) {
     for (int64_t h = 0; h < heads; ++h) {
       for (int64_t q = 0; q < tokens; ++q) {
@@ -683,6 +686,9 @@ std::vector<float> make_text_attention_mask(const std::vector<uint8_t> &mask,
 
 std::vector<int32_t> positions(int64_t count) {
   std::vector<int32_t> out(static_cast<size_t>(count));
+#ifdef _OPENMP
+#pragma omp parallel for if(count >= 4096)
+#endif
   for (int64_t i = 0; i < count; ++i) {
     out[static_cast<size_t>(i)] = static_cast<int32_t>(i);
   }
