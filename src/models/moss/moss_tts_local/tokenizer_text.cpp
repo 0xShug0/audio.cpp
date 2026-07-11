@@ -1,4 +1,4 @@
-#include "engine/models/moss_tts_local/tokenizer_text.h"
+#include "engine/models/moss/moss_tts_local/tokenizer_text.h"
 
 #include "engine/framework/tokenizers/llama_bpe.h"
 

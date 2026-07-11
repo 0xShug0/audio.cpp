@@ -2,7 +2,7 @@
 // dequant on a fixed code matrix and dumps the latent for comparison against
 // the Python reference (scripts/codec_dequant_ref.py).
 
-#include "engine/models/moss/audio_tokenizer_quantizer.h"
+#include "engine/models/moss/shared/audio_tokenizer_quantizer.h"
 
 #include <cmath>
 #include <cstdint>

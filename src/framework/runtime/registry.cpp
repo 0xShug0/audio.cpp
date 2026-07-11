@@ -20,7 +20,7 @@
 #include "engine/models/marblenet_vad/session.h"
 #include "engine/models/miocodec/loader.h"
 #include "engine/models/miotts/loader.h"
-#include "engine/models/moss_tts_local/loader.h"
+#include "engine/models/moss/moss_tts_local/loader.h"
 #include "engine/models/nemotron_asr/loader.h"
 #include "engine/models/omnivoice/loader.h"
 #include "engine/models/pocket_tts/loader.h"

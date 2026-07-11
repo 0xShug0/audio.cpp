@@ -8,7 +8,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/moss/audio_tokenizer_encoder.h"
+#include "engine/models/moss/shared/audio_tokenizer_encoder.h"
 
 #include <cstdint>
 #include <exception>

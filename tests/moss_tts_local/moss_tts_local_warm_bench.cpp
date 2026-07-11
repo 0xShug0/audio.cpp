@@ -266,7 +266,9 @@ std::vector<RequestCase> load_request_file(
         set_option_if_present(request.options, item, "seed", "seed");
         set_option_if_present(request.options, item, "do_sample", "do_sample");
         set_option_if_present(request.options, item, "temperature", "audio_temperature");
+        set_option_if_present(request.options, item, "temperature", "text_temperature");
         set_option_if_present(request.options, item, "audio_temperature", "audio_temperature");
+        set_option_if_present(request.options, item, "text_temperature", "text_temperature");
         set_option_if_present(request.options, item, "top_p", "audio_top_p");
         set_option_if_present(request.options, item, "audio_top_p", "audio_top_p");
         set_option_if_present(request.options, item, "top_k", "audio_top_k");

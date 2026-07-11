@@ -54,6 +54,7 @@ Omit these unless you need explicit control. If `--seed` is omitted, models that
 | `--guidance-scale` | float | Classifier-free guidance scale. |
 | `--num-inference-steps` | integer | Diffusion/flow denoising steps. |
 | `--text-chunk-size` | integer chars | Split long text where supported, including TTS text. |
+| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | Select text chunking mode where supported. |
 
 ## Batch Inputs
 

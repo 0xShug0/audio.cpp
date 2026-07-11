@@ -2,13 +2,13 @@
 
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/moss/audio_tokenizer_decoder.h"
-#include "engine/models/moss/audio_tokenizer_encoder.h"
-#include "engine/models/moss_tts_local/assets.h"
-#include "engine/models/moss_tts_local/backbone.h"
-#include "engine/models/moss_tts_local/depth_transformer.h"
-#include "engine/models/moss_tts_local/generator.h"
-#include "engine/models/moss_tts_local/tokenizer_text.h"
+#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
+#include "engine/models/moss/shared/audio_tokenizer_encoder.h"
+#include "engine/models/moss/moss_tts_local/assets.h"
+#include "engine/models/moss/moss_tts_local/backbone.h"
+#include "engine/models/moss/moss_tts_local/depth_transformer.h"
+#include "engine/models/moss/moss_tts_local/generator.h"
+#include "engine/models/moss/moss_tts_local/tokenizer_text.h"
 
 #include <cstddef>
 #include <cstdint>

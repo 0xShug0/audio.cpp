@@ -1,4 +1,4 @@
-#include "engine/models/moss_tts_local/generator.h"
+#include "engine/models/moss/moss_tts_local/generator.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -7,6 +7,7 @@
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/weight_binding.h"
+#include "engine/framework/sampling/torch_random.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -92,7 +93,10 @@ int32_t sample_index(
     int top_k,
     float top_p,
     float temperature,
-    std::mt19937 & rng) {
+    std::mt19937 & rng,
+    uint64_t seed,
+    uint64_t call_index,
+    const engine::sampling::TorchCudaSamplingPolicy & sampling_policy) {
     if (temperature <= 0.0F) {
         throw std::runtime_error("MOSS-TTS-Local sampler temperature must be positive");
     }
@@ -107,14 +111,28 @@ int32_t sample_index(
         throw std::runtime_error("MOSS-TTS-Local sampler has no finite logits");
     }
     if (top_k > 0 && static_cast<int>(indices.size()) > top_k) {
-        const auto keep = indices.begin() + top_k;
-        std::nth_element(indices.begin(), keep, indices.end(), [&](int32_t lhs, int32_t rhs) {
+        std::vector<int32_t> ranked = indices;
+        const auto keep = ranked.begin() + top_k - 1;
+        std::nth_element(ranked.begin(), keep, ranked.end(), [&](int32_t lhs, int32_t rhs) {
             return logits[static_cast<size_t>(lhs)] > logits[static_cast<size_t>(rhs)];
         });
-        indices.resize(static_cast<size_t>(top_k));
+        const float kth_logit = logits[static_cast<size_t>(*keep)];
+        indices.erase(
+            std::remove_if(
+                indices.begin(),
+                indices.end(),
+                [&](int32_t index) {
+                    return logits[static_cast<size_t>(index)] < kth_logit;
+                }),
+            indices.end());
     }
     std::sort(indices.begin(), indices.end(), [&](int32_t lhs, int32_t rhs) {
-        return logits[static_cast<size_t>(lhs)] > logits[static_cast<size_t>(rhs)];
+        const float lhs_logit = logits[static_cast<size_t>(lhs)];
+        const float rhs_logit = logits[static_cast<size_t>(rhs)];
+        if (lhs_logit == rhs_logit) {
+            return lhs < rhs;
+        }
+        return lhs_logit > rhs_logit;
     });
 
     const float max_logit = logits[static_cast<size_t>(indices.front())] / temperature;
@@ -131,13 +149,35 @@ int32_t sample_index(
         size_t keep = weights.size();
         for (size_t index = 0; index < weights.size(); ++index) {
             cumulative += weights[index] / total;
-            if (cumulative >= top_p) {
+            if (cumulative > top_p) {
                 keep = index + 1;
                 break;
             }
         }
         indices.resize(keep);
         weights.resize(keep);
+    }
+    if (sampling_policy.cuda_fast_path) {
+        double best_rank = -std::numeric_limits<double>::infinity();
+        int32_t best_token = -1;
+        for (size_t index = 0; index < indices.size(); ++index) {
+            const float exponential = engine::sampling::torch_cuda_tensor_iterator_exponential_element(
+                seed,
+                static_cast<uint64_t>(logits.size()),
+                static_cast<uint64_t>(indices[index]),
+                call_index,
+                sampling_policy.multiprocessor_count,
+                sampling_policy.max_threads_per_multiprocessor);
+            const double rank = weights[index] / static_cast<double>(exponential);
+            if (rank > best_rank) {
+                best_rank = rank;
+                best_token = indices[index];
+            }
+        }
+        if (best_token < 0) {
+            throw std::runtime_error("MOSS-TTS-Local CUDA sampler failed to select a token");
+        }
+        return best_token;
     }
     std::discrete_distribution<size_t> distribution(weights.begin(), weights.end());
     return indices[distribution(rng)];
@@ -260,7 +300,16 @@ MossGenerator::MossGenerator(
     const MossDepthTransformer & depth)
     : assets_(std::move(assets)),
       backbone_(backbone),
-      depth_(depth) {
+      depth_(depth),
+      sampling_policy_(
+          execution_context.backend_type() == core::BackendType::Cuda
+              ? engine::sampling::resolve_torch_cuda_sampling_policy(
+                    execution_context.backend_type(),
+                    execution_context.config().device,
+                    "moss_tts_local.generator.cuda_sampling_policy",
+                    "MOSS-TTS-Local",
+                    engine::sampling::TorchCudaSamplingPolicyFailureMode::StrictCuda)
+              : engine::sampling::TorchCudaSamplingPolicy{}) {
     if (assets_ == nullptr) {
         throw std::runtime_error("MOSS-TTS-Local generator requires assets");
     }
@@ -336,6 +385,7 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
         }
     }
     std::mt19937 rng(options.seed);
+    uint64_t sample_call_index = 0;
     double bias_ms = 0.0;
     double prefill_ms = 0.0;
     double depth_ms = 0.0;
@@ -383,7 +433,15 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
         add_timing(gate_ms, [&]() {
             gate_logits = project(local_text_head_, local_hidden, 2, hidden);
             gate_index = options.do_sample
-                ? sample_index(gate_logits, options.text_top_k, options.text_top_p, options.text_temperature, rng)
+                ? sample_index(
+                      gate_logits,
+                      options.text_top_k,
+                      options.text_top_p,
+                      options.text_temperature,
+                      rng,
+                      options.seed,
+                      sample_call_index++,
+                      sampling_policy_)
                 : argmax_index(gate_logits);
         });
         if (gate_index != 0) {
@@ -406,7 +464,15 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
                 apply_repetition_penalty(
                     logits, code_history[static_cast<size_t>(codebook)], options.audio_repetition_penalty);
                 code = options.do_sample
-                    ? sample_index(logits, options.audio_top_k, options.audio_top_p, options.audio_temperature, rng)
+                    ? sample_index(
+                          logits,
+                          options.audio_top_k,
+                          options.audio_top_p,
+                          options.audio_temperature,
+                          rng,
+                          options.seed,
+                          sample_call_index++,
+                          sampling_policy_)
                     : argmax_index(logits);
             });
             frame_codes[static_cast<size_t>(codebook)] = code;

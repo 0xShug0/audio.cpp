@@ -2,7 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/moss_tts_local/assets.h"
+#include "engine/models/moss/moss_tts_local/assets.h"
 
 #include <cstdint>
 #include <memory>

@@ -1,11 +1,11 @@
-#include "engine/models/moss_tts_local/session.h"
+#include "engine/models/moss/moss_tts_local/session.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
-#include "engine/models/moss_tts_local/assets.h"
+#include "engine/models/moss/moss_tts_local/assets.h"
 
 #include <algorithm>
 #include <cctype>
@@ -178,6 +178,9 @@ MossGenerationOptions generation_options_from_request(const runtime::TaskRequest
     }
     if (const auto value = runtime::parse_float_option(request.options, {"audio_temperature", "temperature"})) {
         options.audio_temperature = *value;
+    }
+    if (const auto value = runtime::parse_float_option(request.options, {"text_temperature"})) {
+        options.text_temperature = *value;
     }
     if (const auto value = runtime::parse_int_option(request.options, {"audio_top_k", "top_k"})) {
         options.audio_top_k = *value;

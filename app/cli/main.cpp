@@ -108,6 +108,7 @@ void print_task_list_help() {
         << "    --guidance-scale <float>\n"
         << "    --num-inference-steps <n>\n"
         << "    --text-chunk-size <chars>\n"
+        << "    --text-chunk-mode default|tag_aware|japanese|endline\n"
         << "  Inputs:\n"
         << "    --audio <wav>\n"
         << "    --text <text>\n"
@@ -247,6 +248,7 @@ void print_model_common_options(const engine::runtime::ModelInspection & inspect
             << "    --reference-duration-seconds <float>\n"
             << "    --num-inference-steps <n>\n"
             << "    --text-chunk-size <chars>\n"
+            << "    --text-chunk-mode default|tag_aware|japanese|endline\n"
             << "    --seed <n>\n";
     }
     if (model_supports_task(inspection, engine::runtime::VoiceTaskKind::Asr) ||

@@ -1,4 +1,4 @@
-#include "engine/models/moss_tts_local/depth_transformer.h"
+#include "engine/models/moss/moss_tts_local/depth_transformer.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"

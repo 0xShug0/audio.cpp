@@ -1,4 +1,4 @@
-#include "engine/models/moss_tts_local/assets.h"
+#include "engine/models/moss/moss_tts_local/assets.h"
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/io/filesystem.h"

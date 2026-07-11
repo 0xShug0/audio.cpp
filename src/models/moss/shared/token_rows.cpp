@@ -1,4 +1,4 @@
-#include "engine/models/moss/token_rows.h"
+#include "engine/models/moss/shared/token_rows.h"
 
 #include <algorithm>
 #include <stdexcept>

@@ -79,6 +79,7 @@ public:
             {"num_inference_steps", "n", "RF diffusion steps."},
             {"duration_seconds", "seconds", "Explicit output duration."},
             {"duration_scale", "float", "Predicted-duration multiplier."},
+            {"text_chunk_mode", "japanese|endline", "Text chunking mode."},
             {"min_seconds", "seconds", "Minimum generated duration."},
             {"max_seconds", "seconds", "Maximum generated duration."},
             {"text_guidance_scale", "float", "Text classifier-free guidance scale."},

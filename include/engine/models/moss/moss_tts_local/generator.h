@@ -1,9 +1,10 @@
 #pragma once
 
-#include "engine/models/moss_tts_local/assets.h"
-#include "engine/models/moss_tts_local/backbone.h"
-#include "engine/models/moss_tts_local/depth_transformer.h"
-#include "engine/models/moss/token_rows.h"
+#include "engine/models/moss/moss_tts_local/assets.h"
+#include "engine/models/moss/moss_tts_local/backbone.h"
+#include "engine/models/moss/moss_tts_local/depth_transformer.h"
+#include "engine/models/moss/shared/token_rows.h"
+#include "engine/framework/sampling/torch_random.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -66,6 +67,7 @@ private:
     int64_t num_codebooks_ = 0;
     std::unique_ptr<moss::AudioCodebookEmbeddings> audio_codebooks_;
     std::vector<float> local_text_head_;                // [2 * hidden]
+    engine::sampling::TorchCudaSamplingPolicy sampling_policy_;
     struct ProjectionRuntime;
     std::unique_ptr<ProjectionRuntime> projection_;
 };

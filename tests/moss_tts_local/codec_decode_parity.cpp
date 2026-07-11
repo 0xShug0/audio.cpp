@@ -5,7 +5,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/moss/audio_tokenizer_decoder.h"
+#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
 
 #include <algorithm>
 #include <cmath>

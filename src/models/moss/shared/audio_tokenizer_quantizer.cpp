@@ -1,4 +1,4 @@
-#include "engine/models/moss/audio_tokenizer_quantizer.h"
+#include "engine/models/moss/shared/audio_tokenizer_quantizer.h"
 
 #include "engine/framework/assets/tensor_source.h"
 

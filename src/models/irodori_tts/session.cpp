@@ -16,6 +16,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -213,6 +214,37 @@ std::string trim_ascii(std::string text) {
   return text;
 }
 
+std::string text_chunk_mode_name(engine::text::TextChunkMode mode) {
+  switch (mode) {
+  case engine::text::TextChunkMode::Default:
+    return "default";
+  case engine::text::TextChunkMode::TagAware:
+    return "tag_aware";
+  case engine::text::TextChunkMode::Japanese:
+    return "japanese";
+  case engine::text::TextChunkMode::Endline:
+    return "endline";
+  }
+  return "unknown";
+}
+
+std::string escape_log_text(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (char ch : text) {
+    if (ch == '\n') {
+      out += "\\n";
+    } else if (ch == '\r') {
+      out += "\\r";
+    } else if (ch == '\t') {
+      out += "\\t";
+    } else {
+      out.push_back(ch);
+    }
+  }
+  return out;
+}
+
 int find_flattening_point(const std::vector<float> &latent, int64_t frames,
                           int64_t dim, int64_t window_size, float std_threshold,
                           float mean_threshold) {
@@ -347,9 +379,11 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   const int64_t text_chunk_size =
       engine::text::parse_text_chunk_size_override(request.options)
           .value_or(assets_->config.max_text_len);
+  const auto text_chunk_mode =
+      engine::text::parse_text_chunk_mode_override(request.options)
+          .value_or(engine::text::TextChunkMode::Japanese);
   const auto chunk_requests =
-      runtime::chunk_text_request(request, text_chunk_size,
-                                  engine::text::TextChunkMode::Japanese);
+      runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
   if (chunk_requests.empty()) {
     throw std::runtime_error("Irodori-TTS text chunking produced no requests");
   }
@@ -445,8 +479,16 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   double rf_step_cond_ms = 0.0;
   double decode_ms = 0.0;
   const int hop_length = static_cast<int>(assets_->codec.hop_length);
-  for (const auto &chunk_request : chunk_requests) {
+  for (size_t chunk_index = 0; chunk_index < chunk_requests.size();
+       ++chunk_index) {
+    const auto &chunk_request = chunk_requests[chunk_index];
     const IrodoriRequest irodori_request = make_request(chunk_request);
+    debug::trace_log_scalar(
+        "irodori_tts.chunk." + std::to_string(chunk_index) + ".text",
+        escape_log_text(irodori_request.text));
+    debug::trace_log_scalar(
+        "irodori_tts.chunk." + std::to_string(chunk_index) + ".seed",
+        irodori_request.generation.seed);
     const auto text_start = Clock::now();
     const auto tokenized = tokenizer_.encode_padded(
         irodori_request.text, assets_->config.max_text_len);
@@ -633,6 +675,8 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   debug::trace_log_scalar("irodori_tts.reference.cache_hit",
                           reference_cache_hit);
   debug::trace_log_scalar("irodori_tts.text_chunk_size", text_chunk_size);
+  debug::trace_log_scalar("irodori_tts.text_chunk_mode",
+                          text_chunk_mode_name(text_chunk_mode));
   debug::trace_log_scalar("irodori_tts.text_chunk_count",
                           static_cast<int64_t>(chunk_requests.size()));
   debug::trace_log_scalar("irodori_tts.sample_rf.context_graph_rebuilds",

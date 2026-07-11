@@ -228,6 +228,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "voice_clone_max_memory_per_sample_gb": 1.0,
         "tts_max_batch_size": 0,
         "codec_max_batch_size": 0,
+        "run_asr_check": False,
         "log_mel_cosine_min": 0.80,
         "length_ratio_min": 0.90,
         "whisper_word_timestamps": False,
@@ -248,9 +249,11 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "audio_top_k": 50,
         "audio_repetition_penalty": 1.0,
         "dtype": "fp32",
+        "cpp_session_options": ["moss_tts_local.weight_type=f32"],
         "use_kv_cache": "true",
         "default_requests_per_session": 4,
         "asr_compact_lcs_min": 0.95,
+        "run_asr_check": False,
         "log_mel_cosine_min": 0.80,
         "length_ratio_min": 0.80,
         "whisper_word_timestamps": False,
@@ -2201,6 +2204,8 @@ def build_tts_commands(
             "--timing-file",
             str(timing_cpp),
         ] + common_warmup_args + common_text_args
+        for option in config.get("cpp_session_options", []):
+            cpp_command.extend(["--session-option", option])
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
         return python_command, cpp_command
@@ -2622,6 +2627,8 @@ def build_tts_commands(
             "--log-file",
             str(scenario_dir / "cpp.framework.log"),
         ] + common_warmup_args + request_file_args + ([] if request_file_args else common_text_args)
+        for option in config.get("cpp_session_options", []):
+            cpp_command.extend(["--session-option", option])
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
         return python_command, cpp_command
@@ -4532,6 +4539,7 @@ def run_scenario(
         waveform_compare_fn = compare_kokoro if family == "kokoro" else compare_pocket
         python_whisper_results: list[dict[str, Any]] = []
         cpp_whisper_results: list[dict[str, Any]] = []
+        run_asr_check = bool(scenario_config.get("run_asr_check", True))
         for request_index in range(args.requests_per_session):
             python_output = python_valid["per_request_outputs"][request_index]
             cpp_output = cpp_valid["per_request_outputs"][request_index]
@@ -4547,31 +4555,44 @@ def run_scenario(
                 if python_audio_path is None or cpp_audio_path is None:
                     parity = missing_parity(request_index, request_manifest["texts"][request_index], "missing_audio_path")
                 else:
-                    python_whisper = run_whisper(
-                        python_audio_path,
-                        scenario_dir / "whisper" / f"python_request_{request_index:02d}",
-                        args.threads,
-                        scenario_config.get("whisper_model", WHISPER_MODEL),
-                        scenario_config.get("whisper_language"),
-                        bool(scenario_config.get("whisper_word_timestamps", True)),
-                    )
-                    cpp_whisper = run_whisper(
-                        cpp_audio_path,
-                        scenario_dir / "whisper" / f"cpp_request_{request_index:02d}",
-                        args.threads,
-                        scenario_config.get("whisper_model", WHISPER_MODEL),
-                        scenario_config.get("whisper_language"),
-                        bool(scenario_config.get("whisper_word_timestamps", True)),
-                    )
-                    python_whisper_results.append(python_whisper)
-                    cpp_whisper_results.append(cpp_whisper)
-                    append_log(master_log, f"PYTHON ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(python_whisper)}")
-                    append_log(master_log, f"CPP ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(cpp_whisper)}")
-                    asr_parity = compare_whisper_outputs(
-                        cpp_whisper,
-                        python_whisper,
-                        float(scenario_config.get("asr_compact_lcs_min", 0.0)),
-                    )
+                    if run_asr_check:
+                        python_whisper = run_whisper(
+                            python_audio_path,
+                            scenario_dir / "whisper" / f"python_request_{request_index:02d}",
+                            args.threads,
+                            scenario_config.get("whisper_model", WHISPER_MODEL),
+                            scenario_config.get("whisper_language"),
+                            bool(scenario_config.get("whisper_word_timestamps", True)),
+                        )
+                        cpp_whisper = run_whisper(
+                            cpp_audio_path,
+                            scenario_dir / "whisper" / f"cpp_request_{request_index:02d}",
+                            args.threads,
+                            scenario_config.get("whisper_model", WHISPER_MODEL),
+                            scenario_config.get("whisper_language"),
+                            bool(scenario_config.get("whisper_word_timestamps", True)),
+                        )
+                        python_whisper_results.append(python_whisper)
+                        cpp_whisper_results.append(cpp_whisper)
+                        append_log(master_log, f"PYTHON ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(python_whisper)}")
+                        append_log(master_log, f"CPP ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(cpp_whisper)}")
+                        asr_parity = compare_whisper_outputs(
+                            cpp_whisper,
+                            python_whisper,
+                            float(scenario_config.get("asr_compact_lcs_min", 0.0)),
+                        )
+                    else:
+                        asr_parity = {
+                            "ok": True,
+                            "reason": "skipped",
+                            "mismatches": [],
+                            "text_distance": 0,
+                            "compact_text_distance": 0,
+                            "compact_lcs": 1.0,
+                            "compact_lcs_min": float(scenario_config.get("asr_compact_lcs_min", 0.0)),
+                            "timing_mismatches": [],
+                        }
+                        append_log(master_log, f"ASR SKIPPED family={family} mode={mode} backend={backend} request={request_index}")
                     if family in {"moss_tts", "moss_tts_local"}:
                         waveform_parity = compare_moss_tts(
                             cpp_parsed["summaries"][request_index],

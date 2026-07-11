@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/models/moss/token_rows.h"
-#include "engine/models/moss_tts_local/assets.h"
+#include "engine/models/moss/shared/token_rows.h"
+#include "engine/models/moss/moss_tts_local/assets.h"
 
 #include <cstdint>
 #include <memory>

@@ -234,18 +234,18 @@ add_library(engine_runtime STATIC
     src/models/miotts/causal_lm.cpp
     src/models/miotts/session.cpp
     src/models/miotts/loader.cpp
-    src/models/moss_tts_local/assets.cpp
-    src/models/moss_tts_local/backbone.cpp
-    src/models/moss/audio_tokenizer_decoder.cpp
-    src/models/moss/audio_tokenizer_encoder.cpp
-    src/models/moss/audio_tokenizer_config.cpp
-    src/models/moss/audio_tokenizer_quantizer.cpp
-    src/models/moss/token_rows.cpp
-    src/models/moss_tts_local/depth_transformer.cpp
-    src/models/moss_tts_local/generator.cpp
-    src/models/moss_tts_local/loader.cpp
-    src/models/moss_tts_local/tokenizer_text.cpp
-    src/models/moss_tts_local/session.cpp
+    src/models/moss/moss_tts_local/assets.cpp
+    src/models/moss/moss_tts_local/backbone.cpp
+    src/models/moss/shared/audio_tokenizer_decoder.cpp
+    src/models/moss/shared/audio_tokenizer_encoder.cpp
+    src/models/moss/shared/audio_tokenizer_config.cpp
+    src/models/moss/shared/audio_tokenizer_quantizer.cpp
+    src/models/moss/shared/token_rows.cpp
+    src/models/moss/moss_tts_local/depth_transformer.cpp
+    src/models/moss/moss_tts_local/generator.cpp
+    src/models/moss/moss_tts_local/loader.cpp
+    src/models/moss/moss_tts_local/tokenizer_text.cpp
+    src/models/moss/moss_tts_local/session.cpp
     src/models/voxcpm2/assets.cpp
     src/models/voxcpm2/audiovae.cpp
     src/models/voxcpm2/generator.cpp

@@ -1,4 +1,4 @@
-#include "engine/models/moss/audio_tokenizer_config.h"
+#include "engine/models/moss/shared/audio_tokenizer_config.h"
 
 namespace engine::models::moss {
 

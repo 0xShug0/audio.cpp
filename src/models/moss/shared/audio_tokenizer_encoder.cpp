@@ -1,9 +1,9 @@
-#include "engine/models/moss/audio_tokenizer_encoder.h"
+#include "engine/models/moss/shared/audio_tokenizer_encoder.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
-#include "engine/models/moss/audio_tokenizer_quantizer.h"
-#include "engine/models/moss/audio_tokenizer_transformer.h"
+#include "engine/models/moss/shared/audio_tokenizer_quantizer.h"
+#include "engine/models/moss/shared/audio_tokenizer_transformer.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
