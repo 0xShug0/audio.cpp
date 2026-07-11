@@ -154,6 +154,7 @@ add_library(engine_runtime STATIC
     src/framework/modules/attention/longformer_attention_gpu.cpp
     src/framework/modules/attention/common_relative_attention.cpp
     src/framework/modules/attention/relative_attention.cpp
+    src/framework/modules/attention/scaled_dot_product_attention.cpp
     src/framework/modules/attention/qwen_decoder.cpp
     src/framework/modules/attention/qwen_causal_decoder.cpp
     src/framework/modules/attention/cross_attention.cpp
@@ -782,6 +783,13 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME depthwise_conv1d_lowering_test
         COMMAND depthwise_conv1d_lowering_test
+    )
+
+    add_engine_unittest(scaled_dot_product_attention_test tests/unittests/test_scaled_dot_product_attention.cpp)
+
+    add_test(
+        NAME scaled_dot_product_attention_test
+        COMMAND scaled_dot_product_attention_test
     )
 
     add_executable(server_multipart_test

@@ -47,6 +47,8 @@ public:
     std::vector<float> step(int32_t token_id, const std::vector<float> & audio_bias_row) const;
     void step_into(int32_t token_id, const std::vector<float> & audio_bias_row, std::vector<float> & hidden_state) const;
     int64_t cached_positions() const noexcept;
+    void reset_timing() const;
+    void log_timing() const;
 
 private:
     void build_step_graph(int64_t cache_steps) const;

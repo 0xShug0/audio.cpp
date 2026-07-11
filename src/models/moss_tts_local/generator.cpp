@@ -350,6 +350,8 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
     int64_t depth_calls = 0;
     int64_t projection_calls = 0;
     int64_t backbone_step_calls = 0;
+    backbone_.reset_timing();
+    depth_.reset_timing();
 
     // Sums the audio-codebook embeddings for one decoder row into the additive bias the
     // backbone expects (padding codes contribute nothing).
@@ -470,9 +472,11 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
     engine::debug::timing_log_scalar("moss_tts_local.generator.projection_ms", projection_ms);
     engine::debug::timing_log_scalar("moss_tts_local.generator.sampling_ms", sampling_ms);
     engine::debug::timing_log_scalar("moss_tts_local.generator.backbone_step_ms", backbone_step_ms);
-    engine::debug::timing_log_scalar("moss_tts_local.generator.depth_calls", depth_calls);
-    engine::debug::timing_log_scalar("moss_tts_local.generator.projection_calls", projection_calls);
-    engine::debug::timing_log_scalar("moss_tts_local.generator.backbone_step_calls", backbone_step_calls);
+    engine::debug::trace_log_scalar("moss_tts_local.generator.depth_calls", depth_calls);
+    engine::debug::trace_log_scalar("moss_tts_local.generator.projection_calls", projection_calls);
+    engine::debug::trace_log_scalar("moss_tts_local.generator.backbone_step_calls", backbone_step_calls);
+    backbone_.log_timing();
+    depth_.log_timing();
 
     return generated_frames;
 }

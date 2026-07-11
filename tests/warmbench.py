@@ -249,7 +249,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "audio_repetition_penalty": 1.0,
         "dtype": "fp32",
         "use_kv_cache": "true",
-        "default_requests_per_session": 3,
+        "default_requests_per_session": 4,
         "asr_compact_lcs_min": 0.95,
         "log_mel_cosine_min": 0.80,
         "length_ratio_min": 0.80,

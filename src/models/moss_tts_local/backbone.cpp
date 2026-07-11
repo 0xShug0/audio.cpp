@@ -2,7 +2,9 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/core/module.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/attention/qwen_decoder.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -18,7 +20,6 @@
 #include <ggml-backend.h>
 #include <ggml.h>
 
-#include <cmath>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -31,6 +32,7 @@ namespace {
 
 namespace modules = engine::modules;
 namespace binding = engine::modules::binding;
+using Clock = std::chrono::steady_clock;
 
 constexpr float kMaskedAttentionBias = std::numeric_limits<float>::lowest();
 
@@ -171,31 +173,6 @@ core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::Te
     }).build(ctx, expanded);
 }
 
-core::TensorValue attention_from_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    int64_t dim,
-    const core::TensorValue & attention_mask) {
-    const modules::MatMulModule matmul;
-    auto scores = matmul.build(
-        ctx,
-        q_heads,
-        modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    scores = core::ensure_backend_addressable_layout(ctx, scores);
-    auto attn = core::wrap_tensor(
-        ggml_soft_max_ext(
-            ctx.ggml,
-            scores.tensor,
-            attention_mask.tensor,
-            1.0F / std::sqrt(static_cast<float>(dim)),
-            0.0F),
-        scores.shape,
-        GGML_TYPE_F32);
-    return matmul.build(ctx, attn, v_heads);
-}
-
 // Prefill decoder layer: a standard batched causal-attention layer that also exposes this
 // layer's post-RoPE key and pre-transpose value ([1, steps, kv_heads, dim]) so the caller can
 // seed the generation cache from a single full-prompt forward instead of stepping position by
@@ -250,8 +227,13 @@ PrefillLayerOutput decoder_layer_prefill(
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k), kv_repeats);
     auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+    auto context =
+        modules::ScaledDotProductAttentionModule({
+            dim,
+            modules::ScaledDotProductAttentionLowering::Explicit,
+            GGML_PREC_F32,
+        })
+            .build(ctx, q_heads, k_heads, v_heads, attention_mask);
     context = modules::ReshapeModule({
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}),
     }).build(ctx, core::ensure_backend_addressable_layout(ctx, context));
@@ -292,6 +274,17 @@ struct MossBackboneRuntime::Impl {
     ggml_tensor * step_hidden = nullptr;
     runtime::TransformerKVCache step_cache;
     std::vector<ggml_fp16_t> mask_host;
+    double step_graph_build_ms = 0.0;
+    double step_input_upload_ms = 0.0;
+    double step_mask_upload_ms = 0.0;
+    double step_graph_compute_ms = 0.0;
+    double step_output_read_ms = 0.0;
+    int64_t step_calls = 0;
+    double prefill_graph_build_ms = 0.0;
+    double prefill_input_upload_ms = 0.0;
+    double prefill_graph_compute_ms = 0.0;
+    double prefill_output_read_ms = 0.0;
+    int64_t prefill_calls = 0;
 
     ~Impl() {
         if (step_graph != nullptr && backend != nullptr) {
@@ -339,6 +332,7 @@ int64_t MossBackboneRuntime::hidden_size() const noexcept {
 
 void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     auto & impl = *impl_;
+    const auto graph_build_start = Clock::now();
     const auto & config = impl.assets->config.backbone;
     const auto & weights = impl.weights;
     const int64_t dim = config.head_dim;
@@ -448,6 +442,7 @@ void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
         std::move(cache_keys),
         std::move(cache_values));
     impl.mask_host.assign(static_cast<size_t>(cache_steps), ggml_fp32_to_fp16(kMaskedAttentionBias));
+    impl.step_graph_build_ms += engine::debug::elapsed_ms(graph_build_start);
 }
 
 void MossBackboneRuntime::begin_generation(int64_t max_positions) const {
@@ -509,24 +504,33 @@ void MossBackboneRuntime::step_into(
     }
     const int32_t position = static_cast<int32_t>(impl.step_cache.current_end());
     const int32_t cache_slot = static_cast<int32_t>(impl.step_cache.valid_steps());
+    auto timing_start = Clock::now();
     ggml_backend_tensor_set(impl.step_token, &token_id, 0, sizeof(int32_t));
     ggml_backend_tensor_set(impl.step_bias, audio_bias_row.data(), 0, audio_bias_row.size() * sizeof(float));
     ggml_backend_tensor_set(impl.step_positions, &position, 0, sizeof(int32_t));
     ggml_backend_tensor_set(impl.step_cache_slot, &cache_slot, 0, sizeof(int32_t));
+    impl.step_input_upload_ms += engine::debug::elapsed_ms(timing_start);
     for (int64_t i = 0; i < impl.step_cache.cache_steps(); ++i) {
         impl.mask_host[static_cast<size_t>(i)] =
             ggml_fp32_to_fp16((i <= cache_slot) ? 0.0F : kMaskedAttentionBias);
     }
+    timing_start = Clock::now();
     ggml_backend_tensor_set(impl.step_mask, impl.mask_host.data(), 0, impl.mask_host.size() * sizeof(ggml_fp16_t));
+    impl.step_mask_upload_ms += engine::debug::elapsed_ms(timing_start);
 
+    timing_start = Clock::now();
     const ggml_status status = ggml_backend_graph_compute(impl.backend, impl.step_graph);
     ggml_backend_synchronize(impl.backend);
+    impl.step_graph_compute_ms += engine::debug::elapsed_ms(timing_start);
     if (status != GGML_STATUS_SUCCESS) {
         throw std::runtime_error("MOSS-TTS-Local backbone step graph compute failed");
     }
     hidden_state.resize(static_cast<size_t>(hidden));
+    timing_start = Clock::now();
     ggml_backend_tensor_get(impl.step_hidden, hidden_state.data(), 0, hidden_state.size() * sizeof(float));
+    impl.step_output_read_ms += engine::debug::elapsed_ms(timing_start);
     impl.step_cache.advance_after_direct_append(1);
+    ++impl.step_calls;
 }
 
 std::vector<float> MossBackboneRuntime::prefill(
@@ -550,6 +554,7 @@ std::vector<float> MossBackboneRuntime::prefill(
     const int64_t dim = config.head_dim;
     const int64_t kv_heads = config.num_key_value_heads;
 
+    auto timing_start = Clock::now();
     ggml_init_params params{impl.graph_arena_bytes, nullptr, true};
     std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx(ggml_init(params));
     if (graph_ctx == nullptr) {
@@ -562,7 +567,7 @@ std::vector<float> MossBackboneRuntime::prefill(
     auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
     ggml_set_input(positions.tensor);
     auto attention_mask =
-        core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, steps}));
+        core::make_tensor(ctx, GGML_TYPE_F16, core::TensorShape::from_dims({1, 1, steps, steps}));
     ggml_set_input(attention_mask.tensor);
     auto bias_input =
         core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, steps, config.hidden_size}));
@@ -615,42 +620,82 @@ std::vector<float> MossBackboneRuntime::prefill(
         }
         throw std::runtime_error("failed to allocate MOSS-TTS-Local backbone prefill graph");
     }
+    impl.prefill_graph_build_ms += engine::debug::elapsed_ms(timing_start);
 
+    timing_start = Clock::now();
     ggml_backend_tensor_set(token_input.tensor, token_ids.data(), 0, token_ids.size() * sizeof(int32_t));
     std::vector<int32_t> position_host(static_cast<size_t>(steps));
     for (int64_t i = 0; i < steps; ++i) {
         position_host[static_cast<size_t>(i)] = static_cast<int32_t>(i);
     }
     ggml_backend_tensor_set(positions.tensor, position_host.data(), 0, position_host.size() * sizeof(int32_t));
-    std::vector<float> mask_host(static_cast<size_t>(steps * steps), kMaskedAttentionBias);
+    std::vector<ggml_fp16_t> mask_host(
+        static_cast<size_t>(steps * steps),
+        ggml_fp32_to_fp16(kMaskedAttentionBias));
     for (int64_t q = 0; q < steps; ++q) {
         for (int64_t k = 0; k <= q; ++k) {
-            mask_host[static_cast<size_t>(q * steps + k)] = 0.0F;
+            mask_host[static_cast<size_t>(q * steps + k)] = ggml_fp32_to_fp16(0.0F);
         }
     }
-    ggml_backend_tensor_set(attention_mask.tensor, mask_host.data(), 0, mask_host.size() * sizeof(float));
+    ggml_backend_tensor_set(attention_mask.tensor, mask_host.data(), 0, mask_host.size() * sizeof(ggml_fp16_t));
     ggml_backend_tensor_set(bias_input.tensor, audio_bias.data(), 0, audio_bias.size() * sizeof(float));
+    impl.prefill_input_upload_ms += engine::debug::elapsed_ms(timing_start);
 
+    timing_start = Clock::now();
     const ggml_status status = ggml_backend_graph_compute(impl.backend, graph);
     ggml_backend_synchronize(impl.backend);
+    impl.prefill_graph_compute_ms += engine::debug::elapsed_ms(timing_start);
     if (status != GGML_STATUS_SUCCESS) {
         ggml_gallocr_free(gallocr);
         throw std::runtime_error("MOSS-TTS-Local backbone prefill graph compute failed");
     }
 
     std::vector<float> last_hidden(static_cast<size_t>(config.hidden_size));
+    timing_start = Clock::now();
     ggml_backend_tensor_get(
         hidden.tensor,
         last_hidden.data(),
         static_cast<size_t>((steps - 1) * config.hidden_size) * sizeof(float),
         last_hidden.size() * sizeof(float));
+    impl.prefill_output_read_ms += engine::debug::elapsed_ms(timing_start);
     ggml_gallocr_free(gallocr);
     impl.step_cache.advance_after_direct_append(steps);
+    ++impl.prefill_calls;
     return last_hidden;
 }
 
 int64_t MossBackboneRuntime::cached_positions() const noexcept {
     return impl_->step_cache.valid_steps();
+}
+
+void MossBackboneRuntime::reset_timing() const {
+    auto & impl = *impl_;
+    impl.step_graph_build_ms = 0.0;
+    impl.step_input_upload_ms = 0.0;
+    impl.step_mask_upload_ms = 0.0;
+    impl.step_graph_compute_ms = 0.0;
+    impl.step_output_read_ms = 0.0;
+    impl.step_calls = 0;
+    impl.prefill_graph_build_ms = 0.0;
+    impl.prefill_input_upload_ms = 0.0;
+    impl.prefill_graph_compute_ms = 0.0;
+    impl.prefill_output_read_ms = 0.0;
+    impl.prefill_calls = 0;
+}
+
+void MossBackboneRuntime::log_timing() const {
+    const auto & impl = *impl_;
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.step.graph.build_ms", impl.step_graph_build_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.step.input_upload_ms", impl.step_input_upload_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.step.mask_upload_ms", impl.step_mask_upload_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.step.graph.compute_ms", impl.step_graph_compute_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.step.output_read_ms", impl.step_output_read_ms);
+    engine::debug::trace_log_scalar("moss_tts_local.backbone.step.calls", impl.step_calls);
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.prefill.graph.build_ms", impl.prefill_graph_build_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.prefill.input_upload_ms", impl.prefill_input_upload_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.prefill.graph.compute_ms", impl.prefill_graph_compute_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.prefill.output_read_ms", impl.prefill_output_read_ms);
+    engine::debug::trace_log_scalar("moss_tts_local.backbone.prefill.calls", impl.prefill_calls);
 }
 
 }  // namespace engine::models::moss_tts_local

@@ -34,6 +34,8 @@ public:
     // Runs the local transformer over inputs_embeds ([steps, hidden_size] row-major
     // float) and returns the final-step hidden state as [hidden_size] float.
     std::vector<float> forward(const std::vector<float> & inputs_embeds, int64_t steps) const;
+    void reset_timing() const;
+    void log_timing() const;
 
 private:
     struct Impl;

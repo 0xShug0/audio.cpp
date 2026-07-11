@@ -221,6 +221,7 @@ MossCodecEncoder & MossTTSLocalSession::encoder() {
 }
 
 runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("MOSS-TTS-Local requires text input");
     }
@@ -316,7 +317,8 @@ runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & reques
     engine::debug::timing_log_scalar("moss_tts_local.code_pack_ms", code_pack_ms);
     engine::debug::timing_log_scalar("moss_tts_local.codec_decode_ms", codec_decode_ms);
     engine::debug::timing_log_scalar("moss_tts_local.interleave_ms", interleave_ms);
-    engine::debug::timing_log_scalar("moss_tts_local.generated_frames", static_cast<int64_t>(frames.size()));
+    engine::debug::trace_log_scalar("moss_tts_local.generated_frames", static_cast<int64_t>(frames.size()));
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
 
     runtime::TaskResult result;
     result.audio_output = std::move(audio);

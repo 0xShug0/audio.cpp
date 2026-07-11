@@ -2,7 +2,9 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/core/module.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -14,7 +16,6 @@
 #include <ggml-backend.h>
 #include <ggml.h>
 
-#include <cmath>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -27,6 +28,7 @@ namespace {
 
 namespace modules = engine::modules;
 namespace binding = engine::modules::binding;
+using Clock = std::chrono::steady_clock;
 
 constexpr float kMaskedAttentionBias = std::numeric_limits<float>::lowest();
 
@@ -81,31 +83,6 @@ DepthWeights load_depth_weights(
     return weights;
 }
 
-core::TensorValue attention_from_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    int64_t dim,
-    const core::TensorValue & attention_mask) {
-    const modules::MatMulModule matmul;
-    auto scores = matmul.build(
-        ctx,
-        q_heads,
-        modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    scores = core::ensure_backend_addressable_layout(ctx, scores);
-    auto attn = core::wrap_tensor(
-        ggml_soft_max_ext(
-            ctx.ggml,
-            scores.tensor,
-            attention_mask.tensor,
-            1.0F / std::sqrt(static_cast<float>(dim)),
-            0.0F),
-        scores.shape,
-        GGML_TYPE_F32);
-    return matmul.build(ctx, attn, v_heads);
-}
-
 core::TensorValue local_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -140,8 +117,13 @@ core::TensorValue local_layer(
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+    auto context =
+        modules::ScaledDotProductAttentionModule({
+            dim,
+            modules::ScaledDotProductAttentionLowering::Explicit,
+            GGML_PREC_F32,
+        })
+            .build(ctx, q_heads, k_heads, v_heads, attention_mask);
     context = modules::ReshapeModule({
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], hidden}),
     }).build(ctx, core::ensure_backend_addressable_layout(ctx, context));
@@ -181,6 +163,15 @@ struct MossDepthTransformer::Impl {
     std::unique_ptr<ggml_context, GgmlContextDeleter> plan_ctx;
     ggml_backend_buffer_t plan_buffer = nullptr;
     std::vector<StepPlan> plans;  // plans[steps - 1]
+    double step_input_upload_ms = 0.0;
+    double step_graph_compute_ms = 0.0;
+    double step_output_read_ms = 0.0;
+    int64_t step_calls = 0;
+    double slow_graph_build_ms = 0.0;
+    double slow_input_upload_ms = 0.0;
+    double slow_graph_compute_ms = 0.0;
+    double slow_output_read_ms = 0.0;
+    int64_t slow_calls = 0;
 
     ~Impl() {
         for (const auto & plan : plans) {
@@ -216,7 +207,7 @@ void MossDepthTransformer::Impl::build_step_plans(int64_t max_steps) {
         auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
         ggml_set_input(positions.tensor);
         auto attention_mask =
-            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, steps}));
+            core::make_tensor(ctx, GGML_TYPE_F16, core::TensorShape::from_dims({1, 1, steps, steps}));
         ggml_set_input(attention_mask.tensor);
 
         auto x = local_layer(ctx, embeds_input, positions, weights, config, attention_mask);
@@ -250,13 +241,15 @@ void MossDepthTransformer::Impl::build_step_plans(int64_t max_steps) {
         }
         ggml_backend_tensor_set(plan.positions, position_host.data(), 0, position_host.size() * sizeof(int32_t));
 
-        std::vector<float> mask_host(static_cast<size_t>(steps * steps), kMaskedAttentionBias);
+        std::vector<ggml_fp16_t> mask_host(
+            static_cast<size_t>(steps * steps),
+            ggml_fp32_to_fp16(kMaskedAttentionBias));
         for (int64_t q = 0; q < steps; ++q) {
             for (int64_t k = 0; k <= q; ++k) {
-                mask_host[static_cast<size_t>(q * steps + k)] = 0.0F;
+                mask_host[static_cast<size_t>(q * steps + k)] = ggml_fp32_to_fp16(0.0F);
             }
         }
-        ggml_backend_tensor_set(plan.mask, mask_host.data(), 0, mask_host.size() * sizeof(float));
+        ggml_backend_tensor_set(plan.mask, mask_host.data(), 0, mask_host.size() * sizeof(ggml_fp16_t));
     }
 }
 
@@ -310,25 +303,33 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
     // already resident); only the embeddings are uploaded per call.
     if (steps <= static_cast<int64_t>(impl_->plans.size())) {
         const auto & plan = impl_->plans[static_cast<size_t>(steps - 1)];
+        auto timing_start = Clock::now();
         ggml_backend_tensor_set(plan.embeds, inputs_embeds.data(), 0, inputs_embeds.size() * sizeof(float));
+        impl_->step_input_upload_ms += engine::debug::elapsed_ms(timing_start);
+        timing_start = Clock::now();
         const ggml_status status =
             core::compute_backend_graph(impl_->backend, plan.graph, nullptr, "MOSS-TTS-Local depth step");
         ggml_backend_synchronize(impl_->backend);
+        impl_->step_graph_compute_ms += engine::debug::elapsed_ms(timing_start);
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("MOSS-TTS-Local depth step graph compute failed");
         }
         std::vector<float> last_hidden(static_cast<size_t>(hidden));
+        timing_start = Clock::now();
         ggml_backend_tensor_get(
             plan.hidden,
             last_hidden.data(),
             static_cast<size_t>((steps - 1) * hidden) * sizeof(float),
             static_cast<size_t>(hidden) * sizeof(float));
+        impl_->step_output_read_ms += engine::debug::elapsed_ms(timing_start);
+        ++impl_->step_calls;
         return last_hidden;
     }
 
     // Slow path for step counts outside the prebuilt range: build a one-off graph.
     const auto & weights = impl_->weights;
 
+    auto timing_start = Clock::now();
     ggml_init_params params{impl_->graph_arena_bytes, nullptr, true};
     std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx(ggml_init(params));
     if (graph_ctx == nullptr) {
@@ -342,7 +343,7 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
     auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
     ggml_set_input(positions.tensor);
     auto attention_mask =
-        core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, steps}));
+        core::make_tensor(ctx, GGML_TYPE_F16, core::TensorShape::from_dims({1, 1, steps, steps}));
     ggml_set_input(attention_mask.tensor);
 
     auto x = local_layer(ctx, embeds_input, positions, weights, config, attention_mask);
@@ -364,7 +365,9 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
         }
         throw std::runtime_error("failed to allocate MOSS-TTS-Local depth forward graph");
     }
+    impl_->slow_graph_build_ms += engine::debug::elapsed_ms(timing_start);
 
+    timing_start = Clock::now();
     ggml_backend_tensor_set(
         embeds_input.tensor, inputs_embeds.data(), 0, inputs_embeds.size() * sizeof(float));
 
@@ -374,29 +377,63 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
     }
     ggml_backend_tensor_set(positions.tensor, position_host.data(), 0, position_host.size() * sizeof(int32_t));
 
-    std::vector<float> mask_host(static_cast<size_t>(steps * steps), kMaskedAttentionBias);
+    std::vector<ggml_fp16_t> mask_host(
+        static_cast<size_t>(steps * steps),
+        ggml_fp32_to_fp16(kMaskedAttentionBias));
     for (int64_t q = 0; q < steps; ++q) {
         for (int64_t k = 0; k <= q; ++k) {
-            mask_host[static_cast<size_t>(q * steps + k)] = 0.0F;
+            mask_host[static_cast<size_t>(q * steps + k)] = ggml_fp32_to_fp16(0.0F);
         }
     }
-    ggml_backend_tensor_set(attention_mask.tensor, mask_host.data(), 0, mask_host.size() * sizeof(float));
+    ggml_backend_tensor_set(attention_mask.tensor, mask_host.data(), 0, mask_host.size() * sizeof(ggml_fp16_t));
+    impl_->slow_input_upload_ms += engine::debug::elapsed_ms(timing_start);
 
+    timing_start = Clock::now();
     const ggml_status status = ggml_backend_graph_compute(impl_->backend, graph);
     ggml_backend_synchronize(impl_->backend);
+    impl_->slow_graph_compute_ms += engine::debug::elapsed_ms(timing_start);
     if (status != GGML_STATUS_SUCCESS) {
         ggml_gallocr_free(gallocr);
         throw std::runtime_error("MOSS-TTS-Local depth forward graph compute failed");
     }
 
     std::vector<float> last_hidden(static_cast<size_t>(hidden));
+    timing_start = Clock::now();
     ggml_backend_tensor_get(
         hidden_states.tensor,
         last_hidden.data(),
         static_cast<size_t>((steps - 1) * hidden) * sizeof(float),
         static_cast<size_t>(hidden) * sizeof(float));
+    impl_->slow_output_read_ms += engine::debug::elapsed_ms(timing_start);
     ggml_gallocr_free(gallocr);
+    ++impl_->slow_calls;
     return last_hidden;
+}
+
+void MossDepthTransformer::reset_timing() const {
+    auto & impl = *impl_;
+    impl.step_input_upload_ms = 0.0;
+    impl.step_graph_compute_ms = 0.0;
+    impl.step_output_read_ms = 0.0;
+    impl.step_calls = 0;
+    impl.slow_graph_build_ms = 0.0;
+    impl.slow_input_upload_ms = 0.0;
+    impl.slow_graph_compute_ms = 0.0;
+    impl.slow_output_read_ms = 0.0;
+    impl.slow_calls = 0;
+}
+
+void MossDepthTransformer::log_timing() const {
+    const auto & impl = *impl_;
+    engine::debug::timing_log_scalar("moss_tts_local.depth.step.input_upload_ms", impl.step_input_upload_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.depth.step.graph.compute_ms", impl.step_graph_compute_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.depth.step.output_read_ms", impl.step_output_read_ms);
+    engine::debug::trace_log_scalar("moss_tts_local.depth.step.calls", impl.step_calls);
+    engine::debug::timing_log_scalar("moss_tts_local.depth.forward.graph.build_ms", impl.slow_graph_build_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.depth.forward.input_upload_ms", impl.slow_input_upload_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.depth.forward.graph.compute_ms", impl.slow_graph_compute_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.depth.forward.output_read_ms", impl.slow_output_read_ms);
+    engine::debug::trace_log_scalar("moss_tts_local.depth.forward.calls", impl.slow_calls);
 }
 
 }  // namespace engine::models::moss_tts_local
