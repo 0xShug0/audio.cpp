@@ -241,7 +241,7 @@ add_library(engine_runtime STATIC
     src/models/moss_tts_local/depth_transformer.cpp
     src/models/moss_tts_local/generator.cpp
     src/models/moss_tts_local/loader.cpp
-    src/models/moss_tts_local/processor.cpp
+    src/models/moss_tts_local/tokenizer_text.cpp
     src/models/moss_tts_local/session.cpp
     src/models/voxcpm2/assets.cpp
     src/models/voxcpm2/audiovae.cpp

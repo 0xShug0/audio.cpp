@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/linear_module.h"
@@ -18,7 +19,6 @@
 #include <random>
 #include <stdexcept>
 #include <string>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -78,12 +78,8 @@ void apply_repetition_penalty(
     if (penalty <= 0.0F) {
         throw std::runtime_error("MOSS-TTS-Local repetition penalty must be positive");
     }
-    std::unordered_set<int32_t> seen_codes;
     for (const int32_t code : previous_codes) {
         if (code < 0 || code >= static_cast<int32_t>(logits.size())) {
-            continue;
-        }
-        if (!seen_codes.insert(code).second) {
             continue;
         }
         float & value = logits[static_cast<size_t>(code)];
@@ -110,12 +106,16 @@ int32_t sample_index(
     if (indices.empty()) {
         throw std::runtime_error("MOSS-TTS-Local sampler has no finite logits");
     }
+    if (top_k > 0 && static_cast<int>(indices.size()) > top_k) {
+        const auto keep = indices.begin() + top_k;
+        std::nth_element(indices.begin(), keep, indices.end(), [&](int32_t lhs, int32_t rhs) {
+            return logits[static_cast<size_t>(lhs)] > logits[static_cast<size_t>(rhs)];
+        });
+        indices.resize(static_cast<size_t>(top_k));
+    }
     std::sort(indices.begin(), indices.end(), [&](int32_t lhs, int32_t rhs) {
         return logits[static_cast<size_t>(lhs)] > logits[static_cast<size_t>(rhs)];
     });
-    if (top_k > 0 && static_cast<int>(indices.size()) > top_k) {
-        indices.resize(static_cast<size_t>(top_k));
-    }
 
     const float max_logit = logits[static_cast<size_t>(indices.front())] / temperature;
     std::vector<double> weights;
@@ -311,9 +311,45 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
         throw std::runtime_error("MOSS-TTS-Local generation audio codes must be [seq, n_vq]");
     }
 
+    const bool collect_timing = engine::debug::timing_log_enabled();
+    const auto add_timing = [&](double & target, auto && fn) {
+        if (collect_timing) {
+            target += engine::debug::measure_ms(fn);
+        } else {
+            fn();
+        }
+    };
+    const auto set_timing = [&](double & target, auto && fn) {
+        if (collect_timing) {
+            target = engine::debug::measure_ms(fn);
+        } else {
+            fn();
+        }
+    };
+
     std::vector<std::vector<int32_t>> generated_frames;
+    generated_frames.reserve(static_cast<size_t>(options.max_new_frames));
     std::vector<std::vector<int32_t>> code_history(static_cast<size_t>(n_vq));
+    const bool use_repetition_penalty = options.audio_repetition_penalty != 1.0F;
+    std::vector<std::vector<uint8_t>> code_seen(static_cast<size_t>(n_vq));
+    if (use_repetition_penalty) {
+        for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
+            const int64_t codebook_size =
+                static_cast<int64_t>(audio_embeddings_[static_cast<size_t>(codebook)].size()) / hidden;
+            code_seen[static_cast<size_t>(codebook)].assign(static_cast<size_t>(codebook_size), 0);
+        }
+    }
     std::mt19937 rng(options.seed);
+    double bias_ms = 0.0;
+    double prefill_ms = 0.0;
+    double depth_ms = 0.0;
+    double gate_ms = 0.0;
+    double projection_ms = 0.0;
+    double sampling_ms = 0.0;
+    double backbone_step_ms = 0.0;
+    int64_t depth_calls = 0;
+    int64_t projection_calls = 0;
+    int64_t backbone_step_calls = 0;
 
     // Sums the audio-codebook embeddings for one decoder row into the additive bias the
     // backbone expects (padding codes contribute nothing).
@@ -340,21 +376,36 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
     backbone_.begin_generation(prefix_len + options.max_new_frames);
     std::vector<float> prefix_bias(static_cast<size_t>(prefix_len * hidden), 0.0F);
     for (int64_t position = 0; position < prefix_len; ++position) {
-        const std::vector<float> row = bias_for(audio_codes.data() + position * n_vq);
+        std::vector<float> row;
+        add_timing(bias_ms, [&]() {
+            row = bias_for(audio_codes.data() + position * n_vq);
+        });
         std::copy(row.begin(), row.end(), prefix_bias.begin() + position * hidden);
     }
-    std::vector<float> last_hidden = backbone_.prefill(text_tokens, prefix_bias);
+    std::vector<float> last_hidden;
+    set_timing(prefill_ms, [&]() {
+        last_hidden = backbone_.prefill(text_tokens, prefix_bias);
+    });
 
     for (int64_t frame = 0; frame < options.max_new_frames; ++frame) {
         // Seed the depth transformer with the backbone hidden state (local position 0).
         std::vector<float> local_embeds = last_hidden;
-        std::vector<float> local_hidden = depth_.forward(local_embeds, 1);
+        local_embeds.reserve(static_cast<size_t>(n_vq * hidden));
+        std::vector<float> local_hidden;
+        add_timing(depth_ms, [&]() {
+            local_hidden = depth_.forward(local_embeds, 1);
+        });
+        ++depth_calls;
 
         // Binary gate: continue with the assistant slot or stop on the audio-end token.
-        std::vector<float> gate_logits = project(local_text_head_, local_hidden, 2, hidden);
-        const int32_t gate_index = options.do_sample
-            ? sample_index(gate_logits, options.text_top_k, options.text_top_p, options.text_temperature, rng)
-            : argmax_index(gate_logits);
+        std::vector<float> gate_logits;
+        int32_t gate_index = 0;
+        add_timing(gate_ms, [&]() {
+            gate_logits = project(local_text_head_, local_hidden, 2, hidden);
+            gate_index = options.do_sample
+                ? sample_index(gate_logits, options.text_top_k, options.text_top_p, options.text_temperature, rng)
+                : argmax_index(gate_logits);
+        });
         if (gate_index != 0) {
             break;
         }
@@ -363,31 +414,65 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
         for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
             const int64_t codebook_size =
                 static_cast<int64_t>(audio_embeddings_[static_cast<size_t>(codebook)].size()) / hidden;
-            std::vector<float> logits = projection_->project(codebook, local_hidden);
+            std::vector<float> logits;
+            add_timing(projection_ms, [&]() {
+                logits = projection_->project(codebook, local_hidden);
+            });
+            ++projection_calls;
             if (static_cast<int64_t>(logits.size()) != codebook_size) {
                 throw std::runtime_error("MOSS-TTS-Local projection returned an unexpected logits size");
             }
-            apply_repetition_penalty(
-                logits, code_history[static_cast<size_t>(codebook)], options.audio_repetition_penalty);
-            const int32_t code = options.do_sample
-                ? sample_index(logits, options.audio_top_k, options.audio_top_p, options.audio_temperature, rng)
-                : argmax_index(logits);
+            int32_t code = 0;
+            add_timing(sampling_ms, [&]() {
+                apply_repetition_penalty(
+                    logits, code_history[static_cast<size_t>(codebook)], options.audio_repetition_penalty);
+                code = options.do_sample
+                    ? sample_index(logits, options.audio_top_k, options.audio_top_p, options.audio_temperature, rng)
+                    : argmax_index(logits);
+            });
             frame_codes[static_cast<size_t>(codebook)] = code;
-            code_history[static_cast<size_t>(codebook)].push_back(code);
+            if (use_repetition_penalty) {
+                auto & seen = code_seen[static_cast<size_t>(codebook)];
+                if (code >= 0 && static_cast<size_t>(code) < seen.size() && seen[static_cast<size_t>(code)] == 0) {
+                    seen[static_cast<size_t>(code)] = 1;
+                    code_history[static_cast<size_t>(codebook)].push_back(code);
+                }
+            }
 
             if (codebook + 1 < n_vq) {
                 const float * embedding =
                     audio_embeddings_[static_cast<size_t>(codebook)].data() + static_cast<size_t>(code) * hidden;
                 local_embeds.insert(local_embeds.end(), embedding, embedding + hidden);
-                local_hidden = depth_.forward(local_embeds, codebook + 2);
+                add_timing(depth_ms, [&]() {
+                    local_hidden = depth_.forward(local_embeds, codebook + 2);
+                });
+                ++depth_calls;
             }
         }
         generated_frames.push_back(frame_codes);
 
         // Append the emitted frame as the next decoder row (assistant slot + codes) and
         // advance the backbone cache; the returned hidden seeds the next frame.
-        last_hidden = backbone_.step(assistant_slot, bias_for(frame_codes.data()));
+        std::vector<float> frame_bias;
+        add_timing(bias_ms, [&]() {
+            frame_bias = bias_for(frame_codes.data());
+        });
+        add_timing(backbone_step_ms, [&]() {
+            backbone_.step_into(assistant_slot, frame_bias, last_hidden);
+        });
+        ++backbone_step_calls;
     }
+
+    engine::debug::timing_log_scalar("moss_tts_local.generator.bias_ms", bias_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.generator.prefill_ms", prefill_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.generator.depth_ms", depth_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.generator.gate_ms", gate_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.generator.projection_ms", projection_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.generator.sampling_ms", sampling_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.generator.backbone_step_ms", backbone_step_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.generator.depth_calls", depth_calls);
+    engine::debug::timing_log_scalar("moss_tts_local.generator.projection_calls", projection_calls);
+    engine::debug::timing_log_scalar("moss_tts_local.generator.backbone_step_calls", backbone_step_calls);
 
     return generated_frames;
 }

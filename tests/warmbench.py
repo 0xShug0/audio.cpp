@@ -2619,6 +2619,8 @@ def build_tts_commands(
             str(audio_cpp_dir),
             "--timing-file",
             str(timing_cpp),
+            "--log-file",
+            str(scenario_dir / "cpp.framework.log"),
         ] + common_warmup_args + request_file_args + ([] if request_file_args else common_text_args)
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])

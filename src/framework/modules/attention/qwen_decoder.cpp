@@ -63,15 +63,22 @@ core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::Te
     if (repeats == 1) {
         return input;
     }
-    std::vector<core::TensorValue> heads;
-    heads.reserve(static_cast<size_t>(input.shape.dims[1] * repeats));
-    for (int64_t head = 0; head < input.shape.dims[1]; ++head) {
-        auto one = SliceModule({1, head, 1}).build(ctx, input);
-        for (int64_t rep = 0; rep < repeats; ++rep) {
-            heads.push_back(one);
-        }
-    }
-    return concat_all(ctx, heads, 1);
+    auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
+    const int64_t batch = contiguous.shape.dims[0];
+    const int64_t kv_heads = contiguous.shape.dims[1];
+    const int64_t steps = contiguous.shape.dims[2];
+    const int64_t dim = contiguous.shape.dims[3];
+    auto expanded = core::reshape_tensor(
+        ctx,
+        contiguous,
+        core::TensorShape::from_dims({batch, kv_heads, 1, steps * dim}));
+    expanded = RepeatModule({core::TensorShape::from_dims({batch, kv_heads, repeats, steps * dim})})
+                   .build(ctx, expanded);
+    expanded = core::ensure_backend_addressable_layout(ctx, expanded);
+    return core::reshape_tensor(
+        ctx,
+        expanded,
+        core::TensorShape::from_dims({batch, kv_heads * repeats, steps, dim}));
 }
 
 core::TensorValue attention_from_heads(

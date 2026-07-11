@@ -7,7 +7,7 @@
 #include "engine/models/moss_tts_local/codec_encoder.h"
 #include "engine/models/moss_tts_local/depth_transformer.h"
 #include "engine/models/moss_tts_local/generator.h"
-#include "engine/models/moss_tts_local/processor.h"
+#include "engine/models/moss_tts_local/tokenizer_text.h"
 
 #include <memory>
 
@@ -34,6 +34,8 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    MossCodecEncoder & encoder();
+
     runtime::TaskSpec task_;
     std::shared_ptr<const MossTTSLocalAssets> assets_;
     // Declared before the generator so the generator (which holds references to them) is

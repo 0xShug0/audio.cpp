@@ -86,6 +86,9 @@ MossCodecDequantizer::MossCodecDequantizer(const std::filesystem::path & codec_d
     }
     CodecShards shards(codec_dir);
 
+    output_weight_ = load_wn_conv_weight(shards, "quantizer.output_proj", code_dim_, rvq_dim_);
+    output_bias_ = shards.require_f32("quantizer.output_proj.bias");
+
     codebooks_.reserve(static_cast<size_t>(num_quantizers_));
     for (int64_t index = 0; index < num_quantizers_; ++index) {
         const std::string prefix = "quantizer.quantizers." + std::to_string(index);
@@ -93,6 +96,35 @@ MossCodecDequantizer::MossCodecDequantizer(const std::filesystem::path & codec_d
         codebook.table = shards.require_f32(prefix + ".codebook.weight");
         codebook.out_weight = load_wn_conv_weight(shards, prefix + ".out_proj", rvq_dim_, codebook_dim_);
         codebook.out_bias = shards.require_f32(prefix + ".out_proj.bias");
+        std::vector<float> combined_bias(static_cast<size_t>(code_dim_));
+        std::vector<float> combined_weight(static_cast<size_t>(code_dim_ * codebook_dim_));
+        for (int64_t out = 0; out < code_dim_; ++out) {
+            const float * output_row = &output_weight_[static_cast<size_t>(out * rvq_dim_)];
+            float bias_sum = 0.0F;
+            for (int64_t rvq = 0; rvq < rvq_dim_; ++rvq) {
+                bias_sum += output_row[rvq] * codebook.out_bias[static_cast<size_t>(rvq)];
+            }
+            combined_bias[static_cast<size_t>(out)] = bias_sum;
+            for (int64_t k = 0; k < codebook_dim_; ++k) {
+                float sum = 0.0F;
+                for (int64_t rvq = 0; rvq < rvq_dim_; ++rvq) {
+                    sum += output_row[rvq] * codebook.out_weight[static_cast<size_t>(rvq * codebook_dim_ + k)];
+                }
+                combined_weight[static_cast<size_t>(out * codebook_dim_ + k)] = sum;
+            }
+        }
+        codebook.latent_table.resize(static_cast<size_t>(codebook_size_ * code_dim_));
+        for (int64_t code = 0; code < codebook_size_; ++code) {
+            const float * embedding = &codebook.table[static_cast<size_t>(code * codebook_dim_)];
+            for (int64_t out = 0; out < code_dim_; ++out) {
+                float sum = combined_bias[static_cast<size_t>(out)];
+                const float * row = &combined_weight[static_cast<size_t>(out * codebook_dim_)];
+                for (int64_t k = 0; k < codebook_dim_; ++k) {
+                    sum += row[k] * embedding[k];
+                }
+                codebook.latent_table[static_cast<size_t>(code * code_dim_ + out)] = sum;
+            }
+        }
         codebook.in_weight = load_wn_conv_weight(shards, prefix + ".in_proj", codebook_dim_, rvq_dim_);
         codebook.in_bias = shards.require_f32(prefix + ".in_proj.bias");
         // Pre-normalize the codebook rows once (encode does L2-normalized nearest
@@ -112,8 +144,6 @@ MossCodecDequantizer::MossCodecDequantizer(const std::filesystem::path & codec_d
         codebooks_.push_back(std::move(codebook));
     }
 
-    output_weight_ = load_wn_conv_weight(shards, "quantizer.output_proj", code_dim_, rvq_dim_);
-    output_bias_ = shards.require_f32("quantizer.output_proj.bias");
     input_weight_ = load_wn_conv_weight(shards, "quantizer.input_proj", rvq_dim_, code_dim_);
     input_bias_ = shards.require_f32("quantizer.input_proj.bias");
 }
@@ -128,32 +158,22 @@ std::vector<float> MossCodecDequantizer::decode(const std::vector<std::vector<in
     }
 
     std::vector<float> latent(static_cast<size_t>(code_dim_ * steps));
-    std::vector<double> residual(static_cast<size_t>(rvq_dim_));
+    std::vector<float> frame_latent(static_cast<size_t>(code_dim_));
     for (int64_t step = 0; step < steps; ++step) {
-        std::fill(residual.begin(), residual.end(), 0.0);
+        std::copy(output_bias_.begin(), output_bias_.end(), frame_latent.begin());
         for (int64_t index = 0; index < num_quantizers_; ++index) {
             const auto & codebook = codebooks_[static_cast<size_t>(index)];
             const int64_t code = codes[static_cast<size_t>(index)][static_cast<size_t>(step)];
             if (code < 0 || code >= codebook_size_) {
                 throw std::runtime_error("MOSS codec code index out of range");
             }
-            const float * embedding = &codebook.table[static_cast<size_t>(code * codebook_dim_)];
-            for (int64_t out = 0; out < rvq_dim_; ++out) {
-                double sum = codebook.out_bias[static_cast<size_t>(out)];
-                const float * row = &codebook.out_weight[static_cast<size_t>(out * codebook_dim_)];
-                for (int64_t k = 0; k < codebook_dim_; ++k) {
-                    sum += static_cast<double>(row[k]) * static_cast<double>(embedding[k]);
-                }
-                residual[static_cast<size_t>(out)] += sum;
+            const float * decoded = &codebook.latent_table[static_cast<size_t>(code * code_dim_)];
+            for (int64_t out = 0; out < code_dim_; ++out) {
+                frame_latent[static_cast<size_t>(out)] += decoded[static_cast<size_t>(out)];
             }
         }
         for (int64_t out = 0; out < code_dim_; ++out) {
-            double sum = output_bias_[static_cast<size_t>(out)];
-            const float * row = &output_weight_[static_cast<size_t>(out * rvq_dim_)];
-            for (int64_t k = 0; k < rvq_dim_; ++k) {
-                sum += static_cast<double>(row[k]) * residual[static_cast<size_t>(k)];
-            }
-            latent[static_cast<size_t>(out * steps + step)] = static_cast<float>(sum);
+            latent[static_cast<size_t>(out * steps + step)] = frame_latent[static_cast<size_t>(out)];
         }
     }
     return latent;

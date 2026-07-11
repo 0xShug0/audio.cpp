@@ -1,4 +1,4 @@
-#include "engine/models/moss_tts_local/processor.h"
+#include "engine/models/moss_tts_local/tokenizer_text.h"
 
 #include "engine/framework/tokenizers/llama_bpe.h"
 
@@ -49,7 +49,7 @@ std::filesystem::path require_path(
     const std::optional<std::filesystem::path> & path,
     const char * label) {
     if (!path.has_value()) {
-        throw std::runtime_error(std::string("MOSS-TTS-Local processor requires ") + label);
+        throw std::runtime_error(std::string("MOSS-TTS-Local text tokenizer requires ") + label);
     }
     return *path;
 }
@@ -121,7 +121,7 @@ struct MossTextProcessor::Impl {
 MossTextProcessor::MossTextProcessor(std::shared_ptr<const MossTTSLocalAssets> assets)
     : impl_(std::make_unique<Impl>()) {
     if (assets == nullptr) {
-        throw std::runtime_error("MOSS-TTS-Local processor requires assets");
+        throw std::runtime_error("MOSS-TTS-Local text tokenizer requires assets");
     }
     engine::tokenizers::LlamaBpeTokenizerSpec spec;
     spec.vocab_path = require_path(assets->paths.tokenizer_vocab_path, "vocab.json");

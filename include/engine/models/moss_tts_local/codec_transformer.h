@@ -83,6 +83,14 @@ struct TransformerWeights {
     std::vector<LayerWeights> layers;
 };
 
+struct AttentionWindow {
+    int64_t query_start;
+    int64_t query_steps;
+    int64_t key_start;
+    int64_t key_steps;
+    core::TensorValue mask;
+};
+
 // Opens the codec safetensors shards and resolves a tensor to the shard that
 // holds it (the codec ships model-0000N-of-00003.safetensors + an index).
 class CodecShards {
@@ -216,6 +224,27 @@ inline core::TensorValue attention(
     return matmul.build(ctx, attn, v_heads);
 }
 
+inline core::TensorValue windowed_attention(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & q_heads,
+    const core::TensorValue & k_heads,
+    const core::TensorValue & v_heads,
+    int64_t dim,
+    const std::vector<AttentionWindow> & windows) {
+    if (windows.empty()) {
+        throw std::runtime_error("MOSS codec windowed attention requires at least one window");
+    }
+    core::TensorValue merged;
+    for (const auto & window : windows) {
+        auto q_slice = modules::SliceModule({2, window.query_start, window.query_steps}).build(ctx, q_heads);
+        auto k_slice = modules::SliceModule({2, window.key_start, window.key_steps}).build(ctx, k_heads);
+        auto v_slice = modules::SliceModule({2, window.key_start, window.key_steps}).build(ctx, v_heads);
+        auto part = attention(ctx, q_slice, k_slice, v_slice, dim, window.mask);
+        merged = merged.valid() ? modules::ConcatModule({2}).build(ctx, merged, part) : part;
+    }
+    return merged;
+}
+
 inline core::TensorValue transformer_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -223,6 +252,7 @@ inline core::TensorValue transformer_layer(
     const TransformerSpec & spec,
     const core::TensorValue & positions,
     const core::TensorValue & mask,
+    const std::vector<AttentionWindow> * windows,
     int64_t steps) {
     const int64_t dim = spec.d_model / spec.num_heads;
     const modules::LayerNormModule norm({spec.d_model, kLayerNormEps, true, true});
@@ -244,7 +274,8 @@ inline core::TensorValue transformer_layer(
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto context = attention(ctx, q_heads, k_heads, v_heads, dim, mask);
+    auto context = windows == nullptr ? attention(ctx, q_heads, k_heads, v_heads, dim, mask)
+                                      : windowed_attention(ctx, q_heads, k_heads, v_heads, dim, *windows);
     context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
     context = ensure_contiguous(ctx, context);
     context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({1, steps, spec.d_model}));
@@ -278,7 +309,24 @@ inline core::TensorValue run_transformer(
     auto x = modules::LinearModule(binding::linear_config(spec.input_dim, spec.d_model, false))
                  .build(ctx, input, binding::linear_data(ctx, weights.input_proj));
     for (const auto & layer : weights.layers) {
-        x = transformer_layer(ctx, x, layer, spec, positions, mask, steps);
+        x = transformer_layer(ctx, x, layer, spec, positions, mask, nullptr, steps);
+    }
+    return modules::LinearModule(binding::linear_config(spec.d_model, spec.output_dim, false))
+        .build(ctx, x, binding::linear_data(ctx, weights.output_proj));
+}
+
+inline core::TensorValue run_transformer_windowed(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const TransformerWeights & weights,
+    const core::TensorValue & positions,
+    const std::vector<AttentionWindow> & windows,
+    int64_t steps) {
+    const auto & spec = weights.spec;
+    auto x = modules::LinearModule(binding::linear_config(spec.input_dim, spec.d_model, false))
+                 .build(ctx, input, binding::linear_data(ctx, weights.input_proj));
+    for (const auto & layer : weights.layers) {
+        x = transformer_layer(ctx, x, layer, spec, positions, windows.front().mask, &windows, steps);
     }
     return modules::LinearModule(binding::linear_config(spec.d_model, spec.output_dim, false))
         .build(ctx, x, binding::linear_data(ctx, weights.output_proj));
@@ -290,6 +338,25 @@ inline std::vector<float> causal_context_mask(int64_t steps, int64_t context) {
         for (int64_t key = 0; key <= query; ++key) {
             if (query - key < context) {
                 mask[static_cast<size_t>(query * steps + key)] = 0.0F;
+            }
+        }
+    }
+    return mask;
+}
+
+inline std::vector<float> causal_context_mask_window(
+    int64_t query_start,
+    int64_t query_steps,
+    int64_t key_start,
+    int64_t key_steps,
+    int64_t context) {
+    std::vector<float> mask(static_cast<size_t>(query_steps * key_steps), kMaskedAttentionBias);
+    for (int64_t q = 0; q < query_steps; ++q) {
+        const int64_t query = query_start + q;
+        for (int64_t k = 0; k < key_steps; ++k) {
+            const int64_t key = key_start + k;
+            if (key <= query && query - key < context) {
+                mask[static_cast<size_t>(q * key_steps + k)] = 0.0F;
             }
         }
     }

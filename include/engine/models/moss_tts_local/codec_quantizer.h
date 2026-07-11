@@ -35,6 +35,7 @@ private:
         std::vector<float> table_normalized;  // [codebook_size, codebook_dim], L2-normalized rows (encode)
         std::vector<float> out_weight;        // [rvq_dim, codebook_dim] row-major
         std::vector<float> out_bias;          // [rvq_dim]
+        std::vector<float> latent_table;      // [codebook_size, code_dim] row-major (decode)
         std::vector<float> in_weight;         // [codebook_dim, rvq_dim] row-major (encode)
         std::vector<float> in_bias;           // [codebook_dim] (encode)
     };

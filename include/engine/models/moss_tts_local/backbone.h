@@ -45,6 +45,7 @@ public:
     // step forwards one fused position (its text token embedded in-graph plus audio_bias_row),
     // appends that position's K/V to the cache, and returns its hidden state ([hidden_size]).
     std::vector<float> step(int32_t token_id, const std::vector<float> & audio_bias_row) const;
+    void step_into(int32_t token_id, const std::vector<float> & audio_bias_row, std::vector<float> & hidden_state) const;
     int64_t cached_positions() const noexcept;
 
 private:

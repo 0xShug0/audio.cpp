@@ -10,7 +10,7 @@
 #include "engine/models/moss_tts_local/backbone.h"
 #include "engine/models/moss_tts_local/depth_transformer.h"
 #include "engine/models/moss_tts_local/generator.h"
-#include "engine/models/moss_tts_local/processor.h"
+#include "engine/models/moss_tts_local/tokenizer_text.h"
 
 #include <cstdint>
 #include <exception>

@@ -1,12 +1,15 @@
 #include "engine/models/moss_tts_local/codec_decoder.h"
 
 #include "engine/framework/core/module.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/models/moss_tts_local/codec_quantizer.h"
 #include "engine/models/moss_tts_local/codec_transformer.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
 
+#include <algorithm>
+#include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -31,6 +34,7 @@ constexpr cd::TransformerSpec kDecoderSpecs[] = {
 };
 
 constexpr size_t kNumTransformers = sizeof(kDecoderSpecs) / sizeof(kDecoderSpecs[0]);
+constexpr int64_t kAttentionQueryChunk = 1500;
 
 // PatchedPretransform (decode/upsample): [1, l, d*patch] -> [1, l*patch, d].
 // Each frame is unpacked into `patch` consecutive frames along time, matching
@@ -102,15 +106,44 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
 
     // Codes -> continuous latent [code_dim, frames] (channel-major), transposed
     // into the feature-last [1, frames, code_dim] layout the decoder expects.
-    const auto latent = impl_->dequantizer->decode(codes);
-    std::vector<float> latent_input(static_cast<size_t>(frames * cd::kCodeDim));
-    for (int64_t channel = 0; channel < cd::kCodeDim; ++channel) {
-        for (int64_t step = 0; step < frames; ++step) {
-            latent_input[static_cast<size_t>(step * cd::kCodeDim + channel)] =
-                latent[static_cast<size_t>(channel * frames + step)];
+    double dequant_ms = 0.0;
+    double latent_pack_ms = 0.0;
+    double graph_build_ms = 0.0;
+    double input_upload_ms = 0.0;
+    double graph_compute_ms = 0.0;
+    double output_read_ms = 0.0;
+    double deinterleave_ms = 0.0;
+    const bool collect_timing = engine::debug::timing_log_enabled();
+    std::vector<float> latent;
+    if (collect_timing) {
+        dequant_ms = engine::debug::measure_ms([&]() {
+            latent = impl_->dequantizer->decode(codes);
+        });
+    } else {
+        latent = impl_->dequantizer->decode(codes);
+    }
+    std::vector<float> latent_input;
+    if (collect_timing) {
+        latent_pack_ms = engine::debug::measure_ms([&]() {
+            latent_input.resize(static_cast<size_t>(frames * cd::kCodeDim));
+            for (int64_t channel = 0; channel < cd::kCodeDim; ++channel) {
+                for (int64_t step = 0; step < frames; ++step) {
+                    latent_input[static_cast<size_t>(step * cd::kCodeDim + channel)] =
+                        latent[static_cast<size_t>(channel * frames + step)];
+                }
+            }
+        });
+    } else {
+        latent_input.resize(static_cast<size_t>(frames * cd::kCodeDim));
+        for (int64_t channel = 0; channel < cd::kCodeDim; ++channel) {
+            for (int64_t step = 0; step < frames; ++step) {
+                latent_input[static_cast<size_t>(step * cd::kCodeDim + channel)] =
+                    latent[static_cast<size_t>(channel * frames + step)];
+            }
         }
     }
 
+    const auto graph_build_start = std::chrono::steady_clock::now();
     ggml_init_params params{impl_->graph_arena_bytes, nullptr, true};
     std::unique_ptr<ggml_context, cd::GgmlContextDeleter> graph_ctx(ggml_init(params));
     if (graph_ctx == nullptr) {
@@ -123,10 +156,14 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
     ggml_set_input(latent_tensor.tensor);
 
     struct StageInput {
+        struct MaskInput {
+            ggml_tensor * tensor;
+            std::vector<float> host;
+        };
+
         ggml_tensor * positions;
         std::vector<int32_t> position_host;
-        ggml_tensor * mask;
-        std::vector<float> mask_host;
+        std::vector<MaskInput> masks;
     };
     std::vector<StageInput> stage_inputs;
     stage_inputs.reserve(impl_->transformers.size());
@@ -136,9 +173,12 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
     for (const auto & transformer : impl_->transformers) {
         auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
         ggml_set_input(positions.tensor);
-        auto mask =
-            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, steps}));
-        ggml_set_input(mask.tensor);
+        const bool use_windowed_attention = steps > kAttentionQueryChunk;
+        core::TensorValue mask;
+        if (!use_windowed_attention) {
+            mask = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, steps}));
+            ggml_set_input(mask.tensor);
+        }
 
         StageInput stage;
         stage.positions = positions.tensor;
@@ -146,11 +186,42 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
         for (int64_t i = 0; i < steps; ++i) {
             stage.position_host[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         }
-        stage.mask = mask.tensor;
-        stage.mask_host = cd::causal_context_mask(steps, transformer.spec.context);
+        std::vector<cd::AttentionWindow> windows;
+        if (use_windowed_attention) {
+            for (int64_t query_start = 0; query_start < steps; query_start += kAttentionQueryChunk) {
+                const int64_t query_steps = std::min<int64_t>(kAttentionQueryChunk, steps - query_start);
+                const int64_t key_start = std::max<int64_t>(0, query_start - transformer.spec.context + 1);
+                const int64_t key_steps = query_start + query_steps - key_start;
+                auto window_mask = core::make_tensor(
+                    ctx,
+                    GGML_TYPE_F32,
+                    core::TensorShape::from_dims({1, 1, query_steps, key_steps}));
+                ggml_set_input(window_mask.tensor);
+                stage.masks.push_back(StageInput::MaskInput{
+                    window_mask.tensor,
+                    cd::causal_context_mask_window(
+                        query_start,
+                        query_steps,
+                        key_start,
+                        key_steps,
+                        transformer.spec.context),
+                });
+                windows.push_back(cd::AttentionWindow{
+                    query_start,
+                    query_steps,
+                    key_start,
+                    key_steps,
+                    window_mask,
+                });
+            }
+        } else {
+            stage.masks.push_back(StageInput::MaskInput{mask.tensor, cd::causal_context_mask(steps, transformer.spec.context)});
+        }
         stage_inputs.push_back(std::move(stage));
 
-        hidden = cd::run_transformer(ctx, hidden, transformer, positions, mask, steps);
+        hidden = windows.empty()
+            ? cd::run_transformer(ctx, hidden, transformer, positions, mask, steps)
+            : cd::run_transformer_windowed(ctx, hidden, transformer, positions, windows, steps);
         hidden = patch_upsample(ctx, hidden, transformer.spec.patch);
         steps *= transformer.spec.patch;
     }
@@ -168,18 +239,30 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
         }
         throw std::runtime_error("failed to allocate MOSS codec decoder forward graph");
     }
+    if (collect_timing) {
+        graph_build_ms = engine::debug::elapsed_ms(graph_build_start);
+    }
 
+    const auto upload_start = std::chrono::steady_clock::now();
     ggml_backend_tensor_set(
         latent_tensor.tensor, latent_input.data(), 0, latent_input.size() * sizeof(float));
     for (const auto & stage : stage_inputs) {
         ggml_backend_tensor_set(
             stage.positions, stage.position_host.data(), 0, stage.position_host.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(
-            stage.mask, stage.mask_host.data(), 0, stage.mask_host.size() * sizeof(float));
+        for (const auto & mask : stage.masks) {
+            ggml_backend_tensor_set(mask.tensor, mask.host.data(), 0, mask.host.size() * sizeof(float));
+        }
+    }
+    if (collect_timing) {
+        input_upload_ms = engine::debug::elapsed_ms(upload_start);
     }
 
+    const auto compute_start = std::chrono::steady_clock::now();
     const ggml_status status = ggml_backend_graph_compute(impl_->backend, graph);
     ggml_backend_synchronize(impl_->backend);
+    if (collect_timing) {
+        graph_compute_ms = engine::debug::elapsed_ms(compute_start);
+    }
     if (status != GGML_STATUS_SUCCESS) {
         ggml_gallocr_free(gallocr);
         throw std::runtime_error("MOSS codec decoder forward graph compute failed");
@@ -187,16 +270,36 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
 
     const int64_t interleaved = steps;  // frames * 3840 * 2 (stereo interleaved)
     std::vector<float> flat(static_cast<size_t>(interleaved));
+    const auto read_start = std::chrono::steady_clock::now();
     ggml_backend_tensor_get(hidden.tensor, flat.data(), 0, flat.size() * sizeof(float));
     ggml_gallocr_free(gallocr);
+    if (collect_timing) {
+        output_read_ms = engine::debug::elapsed_ms(read_start);
+    }
 
     // De-interleave the jointly-processed stream back into left/right channels
     // (channel 0 = even samples, channel 1 = odd samples).
     const int64_t per_channel = frames * cd::kSamplesPerFrame;
     std::vector<std::vector<float>> stereo(2, std::vector<float>(static_cast<size_t>(per_channel)));
-    for (int64_t i = 0; i < per_channel; ++i) {
-        stereo[0][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i)];
-        stereo[1][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i + 1)];
+    if (collect_timing) {
+        deinterleave_ms = engine::debug::measure_ms([&]() {
+            for (int64_t i = 0; i < per_channel; ++i) {
+                stereo[0][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i)];
+                stereo[1][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i + 1)];
+            }
+        });
+        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.dequant_ms", dequant_ms);
+        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.latent_pack_ms", latent_pack_ms);
+        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.graph_build_ms", graph_build_ms);
+        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.input_upload_ms", input_upload_ms);
+        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.graph_compute_ms", graph_compute_ms);
+        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.output_read_ms", output_read_ms);
+        engine::debug::timing_log_scalar("moss_tts_local.codec_decode.deinterleave_ms", deinterleave_ms);
+    } else {
+        for (int64_t i = 0; i < per_channel; ++i) {
+            stereo[0][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i)];
+            stereo[1][static_cast<size_t>(i)] = flat[static_cast<size_t>(2 * i + 1)];
+        }
     }
     return stereo;
 }

@@ -308,6 +308,21 @@ std::optional<engine::runtime::AudioBuffer> clone_audio_for_request(
     return found->second;
 }
 
+std::filesystem::path prepare_clone_audio_path(
+    const std::filesystem::path & default_clone_audio_path,
+    const std::vector<RequestCase> & request_cases,
+    bool request_file_used) {
+    if (!request_file_used) {
+        return default_clone_audio_path;
+    }
+    for (const auto & request : request_cases) {
+        if (!request.clone_audio_path.empty()) {
+            return request.clone_audio_path;
+        }
+    }
+    return {};
+}
+
 engine::runtime::TaskRequest make_request(
     const RequestCase & request_case,
     const std::optional<engine::runtime::AudioBuffer> & clone_audio) {
@@ -408,7 +423,9 @@ int main(int argc, char ** argv) try {
     }
 
     std::unordered_map<std::string, engine::runtime::AudioBuffer> clone_audio_cache;
-    const auto warmup_clone_audio = clone_audio_for_request(clone_audio_path, clone_audio_cache);
+    const auto prepare_clone_path =
+        prepare_clone_audio_path(clone_audio_path, request_cases, !request_file.empty());
+    const auto warmup_clone_audio = clone_audio_for_request(prepare_clone_path, clone_audio_cache);
     engine::runtime::SessionPreparationRequest prepare_request;
     prepare_request.text = engine::runtime::Transcript{warmup_text, ""};
     if (warmup_clone_audio.has_value()) {
