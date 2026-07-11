@@ -43,15 +43,17 @@ core::TensorValue patch_upsample(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     int64_t patch) {
-    auto contiguous = cd::ensure_contiguous(ctx, input);
+    auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
     const int64_t length = contiguous.shape.dims[1];
     const int64_t packed = contiguous.shape.dims[2];
     const int64_t channels = packed / patch;
-    ggml_tensor * reshaped = ggml_reshape_3d(ctx.ggml, contiguous.tensor, patch, channels, length);
-    ggml_tensor * permuted = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, reshaped, 1, 0, 2, 3));
-    ggml_tensor * unpacked = ggml_reshape_2d(ctx.ggml, permuted, channels, length * patch);
-    return core::wrap_tensor(
-        unpacked, core::TensorShape::from_dims({1, length * patch, channels}), GGML_TYPE_F32);
+    auto reshaped = engine::modules::ReshapeModule({
+        core::TensorShape::from_dims({1, length, channels, patch}),
+    }).build(ctx, contiguous);
+    auto transposed = engine::modules::TransposeModule({{0, 1, 3, 2}, reshaped.shape.rank}).build(ctx, reshaped);
+    return engine::modules::ReshapeModule({
+        core::TensorShape::from_dims({1, length * patch, channels}),
+    }).build(ctx, core::ensure_backend_addressable_layout(ctx, transposed));
 }
 
 }  // namespace
@@ -221,12 +223,12 @@ std::vector<std::vector<float>> MossCodecDecoder::decode(
 
         hidden = windows.empty()
             ? cd::run_transformer(ctx, hidden, transformer, positions, mask, steps)
-            : cd::run_transformer_windowed(ctx, hidden, transformer, positions, windows, steps);
+            : cd::run_transformer(ctx, hidden, transformer, positions, windows.front().mask, steps, &windows);
         hidden = patch_upsample(ctx, hidden, transformer.spec.patch);
         steps *= transformer.spec.patch;
     }
 
-    hidden = cd::ensure_contiguous(ctx, hidden);
+    hidden = core::ensure_backend_addressable_layout(ctx, hidden);
     ggml_set_output(hidden.tensor);
 
     ggml_cgraph * graph = ggml_new_graph_custom(graph_ctx.get(), 131072, false);

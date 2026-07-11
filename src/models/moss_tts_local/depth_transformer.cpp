@@ -81,30 +81,6 @@ DepthWeights load_depth_weights(
     return weights;
 }
 
-core::TensorValue ensure_contiguous(core::ModuleBuildContext & ctx, const core::TensorValue & value) {
-    return core::ensure_backend_addressable_layout(ctx, value);
-}
-
-core::TensorValue split_projection(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & fused,
-    int64_t index,
-    int64_t width) {
-    return modules::SliceModule({2, index * width, width}).build(ctx, fused);
-}
-
-core::TensorValue reshape_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    int64_t heads,
-    int64_t dim) {
-    auto contiguous = ensure_contiguous(ctx, input);
-    return core::reshape_tensor(
-        ctx,
-        contiguous,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
-}
-
 core::TensorValue attention_from_heads(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & q_heads,
@@ -146,9 +122,18 @@ core::TensorValue local_layer(
 
     auto x_norm = attn_norm.build(ctx, input, weights.ln_1);
     auto qkv = c_attn.build(ctx, x_norm, weights.c_attn);
-    auto q = reshape_heads(ctx, split_projection(ctx, qkv, 0, hidden), heads, dim);
-    auto k = reshape_heads(ctx, split_projection(ctx, qkv, 1, hidden), heads, dim);
-    auto v = reshape_heads(ctx, split_projection(ctx, qkv, 2, hidden), heads, dim);
+    auto q = modules::SliceModule({2, 0, hidden}).build(ctx, qkv);
+    auto k = modules::SliceModule({2, hidden, hidden}).build(ctx, qkv);
+    auto v = modules::SliceModule({2, 2 * hidden, hidden}).build(ctx, qkv);
+    q = modules::ReshapeModule({
+        core::TensorShape::from_dims({q.shape.dims[0], q.shape.dims[1], heads, dim}),
+    }).build(ctx, core::ensure_backend_addressable_layout(ctx, q));
+    k = modules::ReshapeModule({
+        core::TensorShape::from_dims({k.shape.dims[0], k.shape.dims[1], heads, dim}),
+    }).build(ctx, core::ensure_backend_addressable_layout(ctx, k));
+    v = modules::ReshapeModule({
+        core::TensorShape::from_dims({v.shape.dims[0], v.shape.dims[1], heads, dim}),
+    }).build(ctx, core::ensure_backend_addressable_layout(ctx, v));
     q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NORMAL, config.rope_base}).build(ctx, q, positions);
     k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NORMAL, config.rope_base}).build(ctx, k, positions);
 
@@ -157,9 +142,9 @@ core::TensorValue local_layer(
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
     context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-    context = ensure_contiguous(ctx, context);
-    context = core::reshape_tensor(
-        ctx, context, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], hidden}));
+    context = modules::ReshapeModule({
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], hidden}),
+    }).build(ctx, core::ensure_backend_addressable_layout(ctx, context));
     auto x = modules::AddModule{}.build(ctx, input, c_proj.build(ctx, context, weights.c_proj));
 
     auto ff_in = modules::LayerNormModule({hidden, config.layer_norm_eps, true, true}).build(ctx, x, weights.ln_2);
@@ -236,9 +221,11 @@ void MossDepthTransformer::Impl::build_step_plans(int64_t max_steps) {
 
         auto x = local_layer(ctx, embeds_input, positions, weights, config, attention_mask);
         x = modules::LayerNormModule({hidden, config.layer_norm_eps, true, true}).build(ctx, x, weights.ln_f);
-        x = ensure_contiguous(ctx, x);
-        auto hidden_states = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({steps, hidden}));
-        hidden_states = ensure_contiguous(ctx, hidden_states);
+        x = core::ensure_backend_addressable_layout(ctx, x);
+        auto hidden_states = modules::ReshapeModule({
+            core::TensorShape::from_dims({steps, hidden}),
+        }).build(ctx, x);
+        hidden_states = core::ensure_backend_addressable_layout(ctx, hidden_states);
         ggml_set_output(hidden_states.tensor);
 
         plan.graph = ggml_new_graph_custom(plan_ctx.get(), 2048, false);
@@ -360,9 +347,11 @@ std::vector<float> MossDepthTransformer::forward(const std::vector<float> & inpu
 
     auto x = local_layer(ctx, embeds_input, positions, weights, config, attention_mask);
     x = modules::LayerNormModule({hidden, config.layer_norm_eps, true, true}).build(ctx, x, weights.ln_f);
-    x = ensure_contiguous(ctx, x);
-    auto hidden_states = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({steps, hidden}));
-    hidden_states = ensure_contiguous(ctx, hidden_states);
+    x = core::ensure_backend_addressable_layout(ctx, x);
+    auto hidden_states = modules::ReshapeModule({
+        core::TensorShape::from_dims({steps, hidden}),
+    }).build(ctx, x);
+    hidden_states = core::ensure_backend_addressable_layout(ctx, hidden_states);
     ggml_set_output(hidden_states.tensor);
 
     ggml_cgraph * graph = ggml_new_graph_custom(graph_ctx.get(), 8192, false);

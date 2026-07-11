@@ -151,42 +151,24 @@ BackboneWeights load_backbone_weights(
     return weights;
 }
 
-core::TensorValue ensure_contiguous(core::ModuleBuildContext & ctx, const core::TensorValue & value) {
-    return core::ensure_backend_addressable_layout(ctx, value);
-}
-
-core::TensorValue reshape_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    int64_t heads,
-    int64_t dim) {
-    auto contiguous = ensure_contiguous(ctx, input);
-    return core::reshape_tensor(
-        ctx,
-        contiguous,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
-}
-
 core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::TensorValue & input, int64_t repeats) {
     if (repeats == 1) {
         return input;
     }
-    auto contiguous = ensure_contiguous(ctx, input);
+    auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
     const int64_t batch = contiguous.shape.dims[0];
     const int64_t kv_heads = contiguous.shape.dims[1];
     const int64_t steps = contiguous.shape.dims[2];
     const int64_t dim = contiguous.shape.dims[3];
-    auto expanded = core::reshape_tensor(
-        ctx,
-        contiguous,
-        core::TensorShape::from_dims({batch, kv_heads, 1, steps * dim}));
+    auto expanded = modules::ReshapeModule({
+        core::TensorShape::from_dims({batch, kv_heads, 1, steps * dim}),
+    }).build(ctx, contiguous);
     expanded = modules::RepeatModule({core::TensorShape::from_dims({batch, kv_heads, repeats, steps * dim})})
                    .build(ctx, expanded);
-    expanded = ensure_contiguous(ctx, expanded);
-    return core::reshape_tensor(
-        ctx,
-        expanded,
-        core::TensorShape::from_dims({batch, kv_heads * repeats, steps, dim}));
+    expanded = core::ensure_backend_addressable_layout(ctx, expanded);
+    return modules::ReshapeModule({
+        core::TensorShape::from_dims({batch, kv_heads * repeats, steps, dim}),
+    }).build(ctx, expanded);
 }
 
 core::TensorValue attention_from_heads(
@@ -247,26 +229,32 @@ PrefillLayerOutput decoder_layer_prefill(
     auto q = q_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.q_proj));
     auto k = k_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.k_proj));
     auto v = v_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.v_proj));
-    q = head_norm.build(ctx, reshape_heads(ctx, q, config.num_attention_heads, dim), binding::norm_data(ctx, weights.q_norm));
-    k = head_norm.build(ctx, reshape_heads(ctx, k, config.num_key_value_heads, dim), binding::norm_data(ctx, weights.k_norm));
-    v = reshape_heads(ctx, v, config.num_key_value_heads, dim);
+    q = modules::ReshapeModule({
+        core::TensorShape::from_dims({q.shape.dims[0], q.shape.dims[1], config.num_attention_heads, dim}),
+    }).build(ctx, core::ensure_backend_addressable_layout(ctx, q));
+    k = modules::ReshapeModule({
+        core::TensorShape::from_dims({k.shape.dims[0], k.shape.dims[1], config.num_key_value_heads, dim}),
+    }).build(ctx, core::ensure_backend_addressable_layout(ctx, k));
+    v = modules::ReshapeModule({
+        core::TensorShape::from_dims({v.shape.dims[0], v.shape.dims[1], config.num_key_value_heads, dim}),
+    }).build(ctx, core::ensure_backend_addressable_layout(ctx, v));
+    q = head_norm.build(ctx, q, binding::norm_data(ctx, weights.q_norm));
+    k = head_norm.build(ctx, k, binding::norm_data(ctx, weights.k_norm));
     q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
     k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
 
     // Capture k/v in the same [1, steps, kv_heads, dim] layout the per-step cache stores.
-    auto cache_key = ensure_contiguous(ctx, k);
-    auto cache_value = ensure_contiguous(ctx, v);
+    auto cache_key = core::ensure_backend_addressable_layout(ctx, k);
+    auto cache_value = core::ensure_backend_addressable_layout(ctx, v);
 
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k), kv_repeats);
     auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
     auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
     context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-    context = ensure_contiguous(ctx, context);
-    context = core::reshape_tensor(
-        ctx,
-        context,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
+    context = modules::ReshapeModule({
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}),
+    }).build(ctx, core::ensure_backend_addressable_layout(ctx, context));
     auto x = modules::AddModule{}.build(ctx, input, o_proj.build(ctx, context, binding::linear_data(ctx, weights.o_proj)));
 
     auto ff_in = hidden_norm.build(ctx, x, binding::norm_data(ctx, weights.post_norm));
@@ -434,9 +422,11 @@ void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     }
     x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
             .build(ctx, x, binding::norm_data(ctx, weights.norm));
-    x = ensure_contiguous(ctx, x);
-    auto hidden = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({1, config.hidden_size}));
-    hidden = ensure_contiguous(ctx, hidden);
+    x = core::ensure_backend_addressable_layout(ctx, x);
+    auto hidden = modules::ReshapeModule({
+        core::TensorShape::from_dims({1, config.hidden_size}),
+    }).build(ctx, x);
+    hidden = core::ensure_backend_addressable_layout(ctx, hidden);
     ggml_set_output(hidden.tensor);
 
     ggml_build_forward_expand(impl.step_graph, hidden.tensor);
@@ -593,9 +583,11 @@ std::vector<float> MossBackboneRuntime::prefill(
     }
     x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
             .build(ctx, x, binding::norm_data(ctx, impl.weights.norm));
-    x = ensure_contiguous(ctx, x);
-    auto hidden = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({steps, config.hidden_size}));
-    hidden = ensure_contiguous(ctx, hidden);
+    x = core::ensure_backend_addressable_layout(ctx, x);
+    auto hidden = modules::ReshapeModule({
+        core::TensorShape::from_dims({steps, config.hidden_size}),
+    }).build(ctx, x);
+    hidden = core::ensure_backend_addressable_layout(ctx, hidden);
     ggml_set_output(hidden.tensor);
 
     // Copy each layer's K/V straight into the generation cache rows [0, steps) as part of the

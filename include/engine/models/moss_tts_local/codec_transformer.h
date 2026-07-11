@@ -158,47 +158,6 @@ inline TransformerWeights load_transformer(
     return weights;
 }
 
-inline core::TensorValue ensure_contiguous(core::ModuleBuildContext & ctx, const core::TensorValue & value) {
-    return core::ensure_backend_addressable_layout(ctx, value);
-}
-
-inline core::TensorValue reshape_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    int64_t heads,
-    int64_t dim) {
-    auto contiguous = ensure_contiguous(ctx, input);
-    return core::reshape_tensor(
-        ctx,
-        contiguous,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
-}
-
-// Slices a fused qkv projection [1, T, 3*d_model] into its q/k/v thirds, each
-// [1, T, d_model]. The 3*d_model axis is laid out as [3, heads, head_dim].
-inline core::TensorValue slice_projection(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & qkv,
-    int64_t which,
-    int64_t d_model,
-    int64_t steps) {
-    ggml_tensor * source = qkv.tensor;
-    const size_t element_size = ggml_element_size(source);
-    ggml_tensor * view = ggml_view_3d(
-        ctx.ggml,
-        source,
-        d_model,
-        steps,
-        1,
-        source->nb[1],
-        source->nb[2],
-        static_cast<size_t>(which * d_model) * element_size);
-    return core::wrap_tensor(
-        ggml_cont(ctx.ggml, view),
-        core::TensorShape::from_dims({1, steps, d_model}),
-        GGML_TYPE_F32);
-}
-
 inline core::TensorValue attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & q_heads,
@@ -261,13 +220,22 @@ inline core::TensorValue transformer_layer(
     auto qkv = modules::LinearModule(binding::linear_config(spec.d_model, 3 * spec.d_model, false))
                    .build(ctx, normed, binding::linear_data(ctx, weights.in_proj));
 
-    auto q = slice_projection(ctx, qkv, 0, spec.d_model, steps);
-    auto k = slice_projection(ctx, qkv, 1, spec.d_model, steps);
-    auto v = slice_projection(ctx, qkv, 2, spec.d_model, steps);
+    auto q = core::ensure_backend_addressable_layout(
+        ctx, modules::SliceModule({2, 0, spec.d_model}).build(ctx, qkv));
+    auto k = core::ensure_backend_addressable_layout(
+        ctx, modules::SliceModule({2, spec.d_model, spec.d_model}).build(ctx, qkv));
+    auto v = core::ensure_backend_addressable_layout(
+        ctx, modules::SliceModule({2, 2 * spec.d_model, spec.d_model}).build(ctx, qkv));
 
-    q = reshape_heads(ctx, q, spec.num_heads, dim);
-    k = reshape_heads(ctx, k, spec.num_heads, dim);
-    v = reshape_heads(ctx, v, spec.num_heads, dim);
+    q = modules::ReshapeModule({
+        core::TensorShape::from_dims({q.shape.dims[0], q.shape.dims[1], spec.num_heads, dim}),
+    }).build(ctx, q);
+    k = modules::ReshapeModule({
+        core::TensorShape::from_dims({k.shape.dims[0], k.shape.dims[1], spec.num_heads, dim}),
+    }).build(ctx, k);
+    v = modules::ReshapeModule({
+        core::TensorShape::from_dims({v.shape.dims[0], v.shape.dims[1], spec.num_heads, dim}),
+    }).build(ctx, v);
     q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NORMAL, kRopeTheta}).build(ctx, q, positions);
     k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NORMAL, kRopeTheta}).build(ctx, k, positions);
 
@@ -277,12 +245,17 @@ inline core::TensorValue transformer_layer(
     auto context = windows == nullptr ? attention(ctx, q_heads, k_heads, v_heads, dim, mask)
                                       : windowed_attention(ctx, q_heads, k_heads, v_heads, dim, *windows);
     context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-    context = ensure_contiguous(ctx, context);
-    context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({1, steps, spec.d_model}));
+    context = core::ensure_backend_addressable_layout(ctx, context);
+    context = modules::ReshapeModule({
+        core::TensorShape::from_dims({1, steps, spec.d_model}),
+    }).build(ctx, context);
     auto attn_out = modules::LinearModule(binding::linear_config(spec.d_model, spec.d_model, false))
                         .build(ctx, context, binding::linear_data(ctx, weights.out_proj));
-    attn_out = core::wrap_tensor(
-        ggml_mul(ctx.ggml, attn_out.tensor, weights.layer_scale1.tensor), attn_out.shape, GGML_TYPE_F32);
+    auto layer_scale1 = modules::ReshapeModule({
+        core::TensorShape::from_dims({1, 1, spec.d_model}),
+    }).build(ctx, weights.layer_scale1);
+    layer_scale1 = modules::RepeatModule({attn_out.shape}).build(ctx, layer_scale1);
+    attn_out = modules::MulModule{}.build(ctx, attn_out, layer_scale1);
     auto x = modules::AddModule{}.build(ctx, input, attn_out);
 
     auto ff_in = norm.build(ctx, x, binding::norm_data(ctx, weights.norm2_w, weights.norm2_b));
@@ -291,8 +264,11 @@ inline core::TensorValue transformer_layer(
     ff = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, ff);
     ff = modules::LinearModule(binding::linear_config(spec.intermediate_size, spec.d_model, false))
              .build(ctx, ff, binding::linear_data(ctx, weights.fc2));
-    ff = core::wrap_tensor(
-        ggml_mul(ctx.ggml, ff.tensor, weights.layer_scale2.tensor), ff.shape, GGML_TYPE_F32);
+    auto layer_scale2 = modules::ReshapeModule({
+        core::TensorShape::from_dims({1, 1, spec.d_model}),
+    }).build(ctx, weights.layer_scale2);
+    layer_scale2 = modules::RepeatModule({ff.shape}).build(ctx, layer_scale2);
+    ff = modules::MulModule{}.build(ctx, ff, layer_scale2);
     return modules::AddModule{}.build(ctx, x, ff);
 }
 
@@ -304,29 +280,13 @@ inline core::TensorValue run_transformer(
     const TransformerWeights & weights,
     const core::TensorValue & positions,
     const core::TensorValue & mask,
-    int64_t steps) {
+    int64_t steps,
+    const std::vector<AttentionWindow> * windows = nullptr) {
     const auto & spec = weights.spec;
     auto x = modules::LinearModule(binding::linear_config(spec.input_dim, spec.d_model, false))
                  .build(ctx, input, binding::linear_data(ctx, weights.input_proj));
     for (const auto & layer : weights.layers) {
-        x = transformer_layer(ctx, x, layer, spec, positions, mask, nullptr, steps);
-    }
-    return modules::LinearModule(binding::linear_config(spec.d_model, spec.output_dim, false))
-        .build(ctx, x, binding::linear_data(ctx, weights.output_proj));
-}
-
-inline core::TensorValue run_transformer_windowed(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const TransformerWeights & weights,
-    const core::TensorValue & positions,
-    const std::vector<AttentionWindow> & windows,
-    int64_t steps) {
-    const auto & spec = weights.spec;
-    auto x = modules::LinearModule(binding::linear_config(spec.input_dim, spec.d_model, false))
-                 .build(ctx, input, binding::linear_data(ctx, weights.input_proj));
-    for (const auto & layer : weights.layers) {
-        x = transformer_layer(ctx, x, layer, spec, positions, windows.front().mask, &windows, steps);
+        x = transformer_layer(ctx, x, layer, spec, positions, mask, windows, steps);
     }
     return modules::LinearModule(binding::linear_config(spec.d_model, spec.output_dim, false))
         .build(ctx, x, binding::linear_data(ctx, weights.output_proj));
