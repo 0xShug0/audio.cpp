@@ -4,14 +4,9 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/attention/qwen_decoder.h"
-#include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/framework/modules/optimizations/fast_kv_modules.h"
-#include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
@@ -153,104 +148,37 @@ BackboneWeights load_backbone_weights(
     return weights;
 }
 
-core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::TensorValue & input, int64_t repeats) {
-    if (repeats == 1) {
-        return input;
-    }
-    auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
-    const int64_t batch = contiguous.shape.dims[0];
-    const int64_t kv_heads = contiguous.shape.dims[1];
-    const int64_t steps = contiguous.shape.dims[2];
-    const int64_t dim = contiguous.shape.dims[3];
-    auto expanded = modules::ReshapeModule({
-        core::TensorShape::from_dims({batch, kv_heads, 1, steps * dim}),
-    }).build(ctx, contiguous);
-    expanded = modules::RepeatModule({core::TensorShape::from_dims({batch, kv_heads, repeats, steps * dim})})
-                   .build(ctx, expanded);
-    expanded = core::ensure_backend_addressable_layout(ctx, expanded);
-    return modules::ReshapeModule({
-        core::TensorShape::from_dims({batch, kv_heads * repeats, steps, dim}),
-    }).build(ctx, expanded);
+modules::QwenDecoderLayerWeights qwen_layer_weights(const BackboneLayerWeights & weights) {
+    modules::QwenDecoderLayerWeights out;
+    out.input_norm = {weights.input_norm, std::nullopt};
+    out.self_attention.q_weight = weights.q_proj;
+    out.self_attention.k_weight = weights.k_proj;
+    out.self_attention.v_weight = weights.v_proj;
+    out.self_attention.out_weight = weights.o_proj;
+    out.q_norm = {weights.q_norm, std::nullopt};
+    out.k_norm = {weights.k_norm, std::nullopt};
+    out.post_norm = {weights.post_norm, std::nullopt};
+    out.mlp.gate_proj = {weights.gate_proj, std::nullopt};
+    out.mlp.up_proj = {weights.up_proj, std::nullopt};
+    out.mlp.down_proj = {weights.down_proj, std::nullopt};
+    return out;
 }
 
-// Prefill decoder layer: a standard batched causal-attention layer that also exposes this
-// layer's post-RoPE key and pre-transpose value ([1, steps, kv_heads, dim]) so the caller can
-// seed the generation cache from a single full-prompt forward instead of stepping position by
-// position. key/value are laid out exactly as decoder_layer_cached writes them per step.
-struct PrefillLayerOutput {
-    core::TensorValue hidden;
-    core::TensorValue key;
-    core::TensorValue value;
-};
-
-PrefillLayerOutput decoder_layer_prefill(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & positions,
-    const BackboneLayerWeights & weights,
-    const MossBackboneConfig & config,
-    const core::TensorValue & attention_mask) {
-    const int64_t dim = config.head_dim;
-    const int64_t kv_repeats = config.num_attention_heads / config.num_key_value_heads;
-    const modules::LinearModule q_proj(
-        binding::linear_config(config.hidden_size, config.num_attention_heads * dim, false));
-    const modules::LinearModule k_proj(
-        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
-    const modules::LinearModule v_proj(
-        binding::linear_config(config.hidden_size, config.num_key_value_heads * dim, false));
-    const modules::LinearModule o_proj(
-        binding::linear_config(config.num_attention_heads * dim, config.hidden_size, false));
-    const modules::RMSNormModule hidden_norm({config.hidden_size, config.rms_norm_eps, true, false});
-    const modules::RMSNormModule head_norm({dim, config.rms_norm_eps, true, false});
-    auto x_norm = hidden_norm.build(ctx, input, binding::norm_data(ctx, weights.input_norm));
-    auto q = q_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.q_proj));
-    auto k = k_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.k_proj));
-    auto v = v_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.v_proj));
-    q = modules::ReshapeModule({
-        core::TensorShape::from_dims({q.shape.dims[0], q.shape.dims[1], config.num_attention_heads, dim}),
-    }).build(ctx, core::ensure_backend_addressable_layout(ctx, q));
-    k = modules::ReshapeModule({
-        core::TensorShape::from_dims({k.shape.dims[0], k.shape.dims[1], config.num_key_value_heads, dim}),
-    }).build(ctx, core::ensure_backend_addressable_layout(ctx, k));
-    v = modules::ReshapeModule({
-        core::TensorShape::from_dims({v.shape.dims[0], v.shape.dims[1], config.num_key_value_heads, dim}),
-    }).build(ctx, core::ensure_backend_addressable_layout(ctx, v));
-    q = head_norm.build(ctx, q, binding::norm_data(ctx, weights.q_norm));
-    k = head_norm.build(ctx, k, binding::norm_data(ctx, weights.k_norm));
-    q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
-    k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
-
-    // Capture k/v in the same [1, steps, kv_heads, dim] layout the per-step cache stores.
-    auto cache_key = core::ensure_backend_addressable_layout(ctx, k);
-    auto cache_value = core::ensure_backend_addressable_layout(ctx, v);
-
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k), kv_repeats);
-    auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
-    auto context =
-        modules::ScaledDotProductAttentionModule({
-            dim,
-            modules::ScaledDotProductAttentionLowering::Explicit,
-            GGML_PREC_F32,
-        })
-            .build(ctx, q_heads, k_heads, v_heads, attention_mask);
-    context = modules::ReshapeModule({
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}),
-    }).build(ctx, core::ensure_backend_addressable_layout(ctx, context));
-    auto x = modules::AddModule{}.build(ctx, input, o_proj.build(ctx, context, binding::linear_data(ctx, weights.o_proj)));
-
-    auto ff_in = hidden_norm.build(ctx, x, binding::norm_data(ctx, weights.post_norm));
-    auto gate = modules::LinearModule(
-                    binding::linear_config(config.hidden_size, config.intermediate_size, false))
-                    .build(ctx, ff_in, binding::linear_data(ctx, weights.gate_proj));
-    gate = modules::SiluModule{}.build(ctx, gate);
-    auto up = modules::LinearModule(
-                  binding::linear_config(config.hidden_size, config.intermediate_size, false))
-                  .build(ctx, ff_in, binding::linear_data(ctx, weights.up_proj));
-    auto ff = modules::LinearModule(
-                  binding::linear_config(config.intermediate_size, config.hidden_size, false))
-                  .build(ctx, modules::MulModule{}.build(ctx, gate, up), binding::linear_data(ctx, weights.down_proj));
-    return {modules::AddModule{}.build(ctx, x, ff), cache_key, cache_value};
+modules::QwenDecoderLayerConfig qwen_layer_config(const MossBackboneConfig & config) {
+    modules::QwenDecoderLayerConfig out;
+    out.hidden_size = config.hidden_size;
+    out.num_attention_heads = config.num_attention_heads;
+    out.num_key_value_heads = config.num_key_value_heads;
+    out.head_dim = config.head_dim;
+    out.intermediate_size = config.intermediate_size;
+    out.rms_norm_eps = config.rms_norm_eps;
+    out.rope_theta = config.rope_theta;
+    out.attention_precision = GGML_PREC_F32;
+    out.use_qk_norm = true;
+    out.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+    out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
+    out.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    return out;
 }
 
 }  // namespace
@@ -365,37 +293,12 @@ void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     cache_values.reserve(static_cast<size_t>(config.num_hidden_layers));
 
     impl.step_graph = ggml_new_graph_custom(gctx, 65536, false);
-    modules::QwenDecoderLayerConfig layer_config;
-    layer_config.hidden_size = config.hidden_size;
-    layer_config.num_attention_heads = config.num_attention_heads;
-    layer_config.num_key_value_heads = config.num_key_value_heads;
-    layer_config.head_dim = config.head_dim;
-    layer_config.intermediate_size = config.intermediate_size;
-    layer_config.rms_norm_eps = config.rms_norm_eps;
-    layer_config.rope_theta = config.rope_theta;
-    layer_config.attention_precision = GGML_PREC_F32;
-    layer_config.use_qk_norm = true;
-    layer_config.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
-    layer_config.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    const modules::QwenDecoderLayerModule layer_module(layer_config);
+    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config));
 
     auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
                  .build(ctx, token_input, weights.embed_tokens);
     x = modules::AddModule{}.build(ctx, x, bias_input);
     for (const auto & layer : weights.layers) {
-        modules::QwenDecoderLayerWeights layer_weights;
-        layer_weights.input_norm = {layer.input_norm, std::nullopt};
-        layer_weights.self_attention.q_weight = layer.q_proj;
-        layer_weights.self_attention.k_weight = layer.k_proj;
-        layer_weights.self_attention.v_weight = layer.v_proj;
-        layer_weights.self_attention.out_weight = layer.o_proj;
-        layer_weights.q_norm = {layer.q_norm, std::nullopt};
-        layer_weights.k_norm = {layer.k_norm, std::nullopt};
-        layer_weights.post_norm = {layer.post_norm, std::nullopt};
-        layer_weights.mlp.gate_proj = {layer.gate_proj, std::nullopt};
-        layer_weights.mlp.up_proj = {layer.up_proj, std::nullopt};
-        layer_weights.mlp.down_proj = {layer.down_proj, std::nullopt};
-
         auto cache_key = core::make_tensor(
             ctx, GGML_TYPE_F32,
             core::TensorShape::from_dims({1, cache_steps, config.num_key_value_heads, dim}));
@@ -409,7 +312,7 @@ void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
             impl.step_graph,
             x,
             positions,
-            layer_weights,
+            qwen_layer_weights(layer),
             cache_key,
             cache_value,
             cache_slot,
@@ -586,9 +489,20 @@ std::vector<float> MossBackboneRuntime::prefill(
     std::vector<core::TensorValue> layer_values;
     layer_keys.reserve(impl.weights.layers.size());
     layer_values.reserve(impl.weights.layers.size());
+    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config));
     for (const auto & layer : impl.weights.layers) {
-        auto out = decoder_layer_prefill(ctx, x, positions, layer, config, attention_mask);
-        x = out.hidden;
+        auto out = layer_module.build(
+            ctx,
+            x,
+            positions,
+            qwen_layer_weights(layer),
+            std::nullopt,
+            std::nullopt,
+            attention_mask);
+        x = out.output;
+        if (!out.key.valid() || !out.value.valid()) {
+            throw std::runtime_error("MOSS-TTS-Local backbone prefill decoder did not return K/V state");
+        }
         layer_keys.push_back(out.key);
         layer_values.push_back(out.value);
     }
