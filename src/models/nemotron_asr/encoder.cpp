@@ -442,12 +442,6 @@ struct NemotronEncoderRuntime::Graph {
     bool first_chunk = false;
     bool stream_static_inputs_valid = false;
     int64_t stream_static_prompt_id = -1;
-    bool offline_static_inputs_valid = false;
-    int64_t offline_static_prompt_id = -1;
-    int64_t offline_static_valid1 = -1;
-    int64_t offline_static_valid2 = -1;
-    int64_t offline_static_valid3 = -1;
-    int64_t offline_static_lookahead = -1;
     ggml_backend_t backend = nullptr;
     ggml_context * ggml = nullptr;
     ggml_gallocr_t gallocr = nullptr;
@@ -1022,40 +1016,27 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode(
     const int64_t valid1 = std::min<int64_t>(graph.mask1.shape.dims[1], causal_conv_output_dim(features.valid_frames, enc.subsampling_kernel, enc.subsampling_stride, streaming_graph));
     const int64_t valid2 = std::min<int64_t>(graph.mask2.shape.dims[1], causal_conv_output_dim(valid1, enc.subsampling_kernel, enc.subsampling_stride, streaming_graph));
     const int64_t valid3 = std::min<int64_t>(graph.encoded_frames, causal_conv_output_dim(valid2, enc.subsampling_kernel, enc.subsampling_stride, streaming_graph));
-    if (!graph.offline_static_inputs_valid ||
-        graph.offline_static_prompt_id != prompt_id ||
-        graph.offline_static_valid1 != valid1 ||
-        graph.offline_static_valid2 != valid2 ||
-        graph.offline_static_valid3 != valid3 ||
-        graph.offline_static_lookahead != lookahead_tokens) {
-        engine::modules::fill_asr_keep_mask(mask_scratch_, graph.mask1.shape.dims[1], valid1);
-        engine::core::write_tensor_i32(graph.mask1, mask_scratch_);
-        engine::modules::fill_asr_keep_mask(mask_scratch_, graph.mask2.shape.dims[1], valid2);
-        engine::core::write_tensor_i32(graph.mask2, mask_scratch_);
-        engine::modules::fill_asr_keep_mask(mask_scratch_, graph.mask3.shape.dims[1], valid3);
-        engine::core::write_tensor_i32(graph.mask3, mask_scratch_);
-        engine::modules::fill_asr_keep_mask(mask_scratch_, graph.encoded_frames, valid3);
-        engine::core::write_tensor_i32(graph.keep_mask, mask_scratch_);
-        engine::modules::fill_asr_chunked_attention_bias(
-            attention_mask_scratch_,
-            graph.encoded_frames,
-            valid3,
-            enc.sliding_window - 1,
-            lookahead_tokens);
-        engine::core::write_tensor_f32(graph.attention_mask, attention_mask_scratch_);
+    engine::modules::fill_asr_keep_mask(mask_scratch_, graph.mask1.shape.dims[1], valid1);
+    engine::core::write_tensor_i32(graph.mask1, mask_scratch_);
+    engine::modules::fill_asr_keep_mask(mask_scratch_, graph.mask2.shape.dims[1], valid2);
+    engine::core::write_tensor_i32(graph.mask2, mask_scratch_);
+    engine::modules::fill_asr_keep_mask(mask_scratch_, graph.mask3.shape.dims[1], valid3);
+    engine::core::write_tensor_i32(graph.mask3, mask_scratch_);
+    engine::modules::fill_asr_keep_mask(mask_scratch_, graph.encoded_frames, valid3);
+    engine::core::write_tensor_i32(graph.keep_mask, mask_scratch_);
+    engine::modules::fill_asr_chunked_attention_bias(
+        attention_mask_scratch_,
+        graph.encoded_frames,
+        valid3,
+        enc.sliding_window - 1,
+        lookahead_tokens);
+    engine::core::write_tensor_f32(graph.attention_mask, attention_mask_scratch_);
 
-        prompt_scratch_.assign(static_cast<size_t>(graph.encoded_frames * assets_->config.num_prompts), 0.0f);
-        for (int64_t t = 0; t < graph.encoded_frames; ++t) {
-            prompt_scratch_[static_cast<size_t>(t * assets_->config.num_prompts + prompt_id)] = 1.0f;
-        }
-        engine::core::write_tensor_f32(graph.prompt, prompt_scratch_);
-        graph.offline_static_inputs_valid = true;
-        graph.offline_static_prompt_id = prompt_id;
-        graph.offline_static_valid1 = valid1;
-        graph.offline_static_valid2 = valid2;
-        graph.offline_static_valid3 = valid3;
-        graph.offline_static_lookahead = lookahead_tokens;
+    prompt_scratch_.assign(static_cast<size_t>(graph.encoded_frames * assets_->config.num_prompts), 0.0f);
+    for (int64_t t = 0; t < graph.encoded_frames; ++t) {
+        prompt_scratch_[static_cast<size_t>(t * assets_->config.num_prompts + prompt_id)] = 1.0f;
     }
+    engine::core::write_tensor_f32(graph.prompt, prompt_scratch_);
 
     engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
     const auto compute_start = Clock::now();

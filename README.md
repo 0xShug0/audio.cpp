@@ -66,7 +66,7 @@ Current model status in the framework:
 | **omnivoice** | TTS, voice cloning, voice design | 646+ langs | OmniVoice, Qwen3-0.6B based | **released** |
 | **pocket_tts** | TTS, voice cloning | en, de, it, pt, es | PocketTTS-100M | **released** |
 | **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | Nemotron 3.5 ASR Streaming 0.6B | **released** |
-| **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B | **released** |
+| **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B, Qwen3-ASR-1.7B-hf | **released** |
 | **qwen3_forced_aligner** | forced alignment | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | Qwen3-ForcedAligner-0.6B | **released** |
 | **qwen3_tts** | TTS, voice cloning, voice design | zh, en, fr, de, it, ja, ko, pt, ru, es | Qwen3-TTS-12Hz-0.6B-Base, Qwen3-TTS-12Hz-1.7B-Base, Qwen3-TTS-12Hz-1.7B-CustomVoice, Qwen3-TTS-12Hz-1.7B-VoiceDesign | **released** |
 | **seed_vc** | voice conversion | lang agnostic | SeedVC XLS-R + HiFT, SeedVC Whisper-small + BigVGAN | **released** |
@@ -450,6 +450,7 @@ Recommended top-level install packages:
 | `parakeet_tdt_0_6b_v3` | Parakeet TDT 0.6B v3 | **Yes** |
 | `pocket_tts` | PocketTTS | **Yes** |
 | `qwen3_asr_0_6b` | Qwen3 ASR 0.6B | **Yes** |
+| `qwen3_asr_1_7b_hf` | Qwen3 ASR 1.7B HF | **Yes** |
 | `qwen3_forced_aligner_0_6b` | Qwen3 Forced Aligner 0.6B | **Yes** |
 | `qwen3_tts_0_6b_base` | Qwen3 TTS 12Hz 0.6B Base | **Yes** |
 | `qwen3_tts_1_7b_base` | Qwen3 TTS 12Hz 1.7B Base | **Yes** |

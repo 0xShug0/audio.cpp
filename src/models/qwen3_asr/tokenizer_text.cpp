@@ -19,6 +19,9 @@ std::shared_ptr<const Qwen3ASRTextTokenizer::Impl> load_impl(const Qwen3ASRAsset
     spec.vocab_path = assets.paths.tokenizer_vocab_path;
     spec.merges_path = assets.paths.tokenizer_merges_path;
     spec.tokenizer_config_path = assets.paths.tokenizer_config_path;
+    if (!assets.paths.tokenizer_json_path.empty()) {
+        spec.tokenizer_json_path = assets.paths.tokenizer_json_path;
+    }
     spec.pre_type = engine::tokenizers::LlamaBpePreTokenizer::Qwen2;
 
     auto impl = std::make_shared<Qwen3ASRTextTokenizer::Impl>();

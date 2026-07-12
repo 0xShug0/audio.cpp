@@ -5,6 +5,7 @@
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace engine::models::qwen3_asr {
@@ -28,7 +29,10 @@ Qwen3ASRAudioEncoderConfig parse_audio_encoder_config(const engine::io::json::Va
     config.encoder_attention_heads = value.require("encoder_attention_heads").as_i64();
     config.encoder_ffn_dim = value.require("encoder_ffn_dim").as_i64();
     config.d_model = value.require("d_model").as_i64();
-    config.max_source_positions = value.require("max_source_positions").as_i64();
+    // The Transformers checkpoint calls a small RoPE setting
+    // max_position_embeddings. The audio tower still uses the same 1500-frame
+    // sinusoidal table as the original Qwen checkpoint.
+    config.max_source_positions = json::optional_i64(value, "max_source_positions", 1500);
     config.n_window = value.require("n_window").as_i64();
     config.n_window_infer = value.require("n_window_infer").as_i64();
     config.conv_chunksize = value.require("conv_chunksize").as_i64();
@@ -55,11 +59,16 @@ Qwen3ASRTextDecoderConfig parse_text_decoder_config(
     config.head_dim = json::optional_i64(text_config, "head_dim", config.hidden_size / config.num_attention_heads);
     config.max_position_embeddings = text_config.require("max_position_embeddings").as_i64();
     config.audio_token_id = thinker_config.require("audio_token_id").as_i64();
-    config.audio_start_token_id = thinker_config.require("audio_start_token_id").as_i64();
-    config.audio_end_token_id = thinker_config.require("audio_end_token_id").as_i64();
+    config.audio_start_token_id = json::optional_i64(thinker_config, "audio_start_token_id", 0);
+    config.audio_end_token_id = json::optional_i64(thinker_config, "audio_end_token_id", 0);
+    config.pad_token_id = json::optional_i64(thinker_config, "pad_token_id", config.pad_token_id);
     config.pad_token_id = json::optional_i64(text_config, "pad_token_id", config.pad_token_id);
     config.rms_norm_eps = json::optional_f32(text_config, "rms_norm_eps", config.rms_norm_eps);
     config.rope_theta = json::optional_f32(text_config, "rope_theta", config.rope_theta);
+    const auto * rope_parameters = text_config.find("rope_parameters");
+    if (rope_parameters != nullptr && rope_parameters->is_object()) {
+        config.rope_theta = json::optional_f32(*rope_parameters, "rope_theta", config.rope_theta);
+    }
     const auto * rope_scaling = text_config.find("rope_scaling");
     if (rope_scaling != nullptr && rope_scaling->is_object()) {
         config.mrope_section = json::optional_i64_array_or_scalar(*rope_scaling, "mrope_section", config.mrope_section);
@@ -67,42 +76,87 @@ Qwen3ASRTextDecoderConfig parse_text_decoder_config(
     return config;
 }
 
+int64_t require_added_token_id(const assets::ResourceBundle & resources, std::string_view content) {
+    const auto tokenizer = resources.parse_json("tokenizer_json");
+    for (const auto & item : tokenizer.require("added_tokens").as_array()) {
+        const auto * token_content = item.find("content");
+        const auto * token_id = item.find("id");
+        if (token_content != nullptr && token_content->is_string() &&
+            token_id != nullptr && token_id->is_number() && token_content->as_string() == content) {
+            return token_id->as_i64();
+        }
+    }
+    throw std::runtime_error("Qwen3 ASR tokenizer.json is missing token: " + std::string(content));
+}
+
+void add_supported_languages(Qwen3ASRConfig & config, const engine::io::json::Value & root) {
+    static constexpr const char * kLanguages[] = {
+        "Chinese", "English", "Cantonese", "Arabic", "German", "French", "Spanish", "Portuguese",
+        "Indonesian", "Italian", "Korean", "Russian", "Thai", "Vietnamese", "Japanese", "Turkish",
+        "Hindi", "Malay", "Dutch", "Swedish", "Danish", "Finnish", "Polish", "Czech", "Filipino",
+        "Persian", "Greek", "Romanian", "Hungarian", "Macedonian",
+    };
+    config.supported_languages = {"Auto"};
+    const auto * languages = root.find("support_languages");
+    if (languages != nullptr && languages->is_array()) {
+        for (const auto & language : languages->as_array()) {
+            config.supported_languages.push_back(language.as_string());
+        }
+        return;
+    }
+    for (const char * language : kLanguages) {
+        config.supported_languages.emplace_back(language);
+    }
+}
+
 Qwen3ASRConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
-    const auto & thinker_config = root.require("thinker_config");
+    const auto * legacy_thinker = root.find("thinker_config");
+    const bool hf_layout = legacy_thinker == nullptr;
+    const auto & thinker_config = hf_layout ? root : *legacy_thinker;
     const auto & audio_config = thinker_config.require("audio_config");
     const auto & text_config = thinker_config.require("text_config");
 
     Qwen3ASRConfig config;
+    config.hf_transformers_layout = hf_layout;
     config.model_type = root.require("model_type").as_string();
-    config.thinker_model_type = thinker_config.require("model_type").as_string();
-    config.model_size = json::optional_string(root, "model_size", config.model_type);
-    config.classify_num = json::optional_i64(root.require("thinker_config"), "classify_num", 0);
+    config.thinker_model_type = json::optional_string(thinker_config, "model_type", config.model_type);
+    config.model_size = json::optional_string(root, "model_size", hf_layout ? "Qwen3-ASR-1.7B-hf" : config.model_type);
+    config.classify_num = json::optional_i64(thinker_config, "classify_num", 0);
     config.timestamp_token_id = json::optional_i64(root, "timestamp_token_id", 0);
-    config.timestamp_segment_time_ms = json::optional_i64(root, "timestamp_segment_time", 0);
+    config.tie_word_embeddings = json::optional_bool(
+        root,
+        "tie_word_embeddings",
+        json::optional_bool(text_config, "tie_word_embeddings", false));
     config.audio_encoder = parse_audio_encoder_config(audio_config);
     config.text_decoder = parse_text_decoder_config(thinker_config, text_config);
+    if (hf_layout) {
+        config.text_decoder.audio_start_token_id = require_added_token_id(resources, "<|audio_start|>");
+        config.text_decoder.audio_end_token_id = require_added_token_id(resources, "<|audio_end|>");
+    }
 
     const auto generation = resources.parse_json("generation_config");
     config.max_new_tokens = json::optional_i64(generation, "max_new_tokens", config.max_new_tokens);
     config.text_decoder.pad_token_id = json::optional_i64(generation, "pad_token_id", config.text_decoder.pad_token_id);
     config.text_decoder.eos_token_ids = json::require_i64_array_or_scalar(generation, "eos_token_id");
 
-    const auto preprocessor = resources.parse_json("preprocessor_config");
-    config.frontend.sample_rate = static_cast<int>(json::optional_i64(preprocessor, "sampling_rate", config.frontend.sample_rate));
-    config.frontend.feature_size = preprocessor.require("feature_size").as_i64();
-    config.frontend.hop_length = preprocessor.require("hop_length").as_i64();
-    config.frontend.n_fft = preprocessor.require("n_fft").as_i64();
+    const auto processor = resources.parse_json(resources.has_file("processor_config") ? "processor_config" : "preprocessor_config");
+    const auto * feature_extractor = processor.find("feature_extractor");
+    const auto & frontend = feature_extractor != nullptr && feature_extractor->is_object() ? *feature_extractor : processor;
+    config.frontend.sample_rate = static_cast<int>(json::optional_i64(frontend, "sampling_rate", config.frontend.sample_rate));
+    config.frontend.feature_size = frontend.require("feature_size").as_i64();
+    config.frontend.hop_length = frontend.require("hop_length").as_i64();
+    config.frontend.n_fft = frontend.require("n_fft").as_i64();
+    config.timestamp_segment_time_ms = json::optional_i64(processor, "timestamp_segment_time", 0);
+    if (config.timestamp_segment_time_ms == 0) {
+        config.timestamp_segment_time_ms = json::optional_i64(root, "timestamp_segment_time", 0);
+    }
     config.sample_rate = config.frontend.sample_rate;
     if (config.frontend.feature_size != config.audio_encoder.num_mel_bins) {
         throw std::runtime_error("Qwen3 ASR frontend feature size does not match audio encoder config");
     }
 
-    config.supported_languages.clear();
-    config.supported_languages.push_back("Auto");
-    for (const auto & language : root.require("support_languages").as_array()) {
-        config.supported_languages.push_back(language.as_string());
-    }
+    add_supported_languages(config, root);
     return config;
 }
 
@@ -111,47 +165,53 @@ assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_
     resources.add_model_files({
         {"config", "config.json", true},
         {"generation_config", "generation_config.json", true},
-        {"preprocessor_config", "preprocessor_config.json", true},
-        {"chat_template", "chat_template.json", false},
+        {"preprocessor_config", "preprocessor_config.json", false},
+        {"processor_config", "processor_config.json", false},
         {"weights", "model.safetensors", true},
         {"tokenizer_config", "tokenizer_config.json", true},
-        {"vocab", "vocab.json", true},
-        {"merges", "merges.txt", true},
+        {"vocab", "vocab.json", false},
+        {"merges", "merges.txt", false},
+        {"tokenizer_json", "tokenizer.json", false},
     });
+    if (!resources.add_optional_model_file("chat_template", "chat_template.json")) {
+        (void) resources.add_optional_model_file("chat_template", "chat_template.jinja");
+    }
+    if (!resources.has_file("preprocessor_config") && !resources.has_file("processor_config")) {
+        throw std::runtime_error("Qwen3 ASR requires preprocessor_config.json or processor_config.json");
+    }
+    const bool has_legacy_tokenizer = resources.has_file("vocab") && resources.has_file("merges");
+    if (!has_legacy_tokenizer && !resources.has_file("tokenizer_json")) {
+        throw std::runtime_error("Qwen3 ASR requires vocab.json plus merges.txt, or tokenizer.json");
+    }
     return resources;
+}
+
+Qwen3ASRAssetPaths paths_from_resources(const assets::ResourceBundle & resources) {
+    Qwen3ASRAssetPaths paths;
+    paths.model_root = resources.model_root();
+    paths.config_path = resources.require_file("config");
+    paths.generation_config_path = resources.require_file("generation_config");
+    if (const auto * value = resources.find_file("preprocessor_config")) paths.preprocessor_config_path = *value;
+    if (const auto * value = resources.find_file("processor_config")) paths.processor_config_path = *value;
+    if (const auto * value = resources.find_file("chat_template")) paths.chat_template_path = *value;
+    paths.model_weights_path = resources.require_file("weights");
+    paths.tokenizer_config_path = resources.require_file("tokenizer_config");
+    if (const auto * value = resources.find_file("vocab")) paths.tokenizer_vocab_path = *value;
+    if (const auto * value = resources.find_file("merges")) paths.tokenizer_merges_path = *value;
+    if (const auto * value = resources.find_file("tokenizer_json")) paths.tokenizer_json_path = *value;
+    return paths;
 }
 
 }  // namespace
 
 Qwen3ASRAssetPaths resolve_qwen3_asr_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
-    const auto * chat_template = resources.find_file("chat_template");
-    Qwen3ASRAssetPaths paths;
-    paths.model_root = resources.model_root();
-    paths.config_path = resources.require_file("config");
-    paths.generation_config_path = resources.require_file("generation_config");
-    paths.preprocessor_config_path = resources.require_file("preprocessor_config");
-    paths.chat_template_path = chat_template != nullptr ? *chat_template : std::filesystem::path{};
-    paths.model_weights_path = resources.require_file("weights");
-    paths.tokenizer_config_path = resources.require_file("tokenizer_config");
-    paths.tokenizer_vocab_path = resources.require_file("vocab");
-    paths.tokenizer_merges_path = resources.require_file("merges");
-    return paths;
+    return paths_from_resources(make_resource_bundle(model_path));
 }
 
 std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(const std::filesystem::path & model_path) {
     auto resources = make_resource_bundle(model_path);
     Qwen3ASRAssets assets;
-    const auto * chat_template = resources.find_file("chat_template");
-    assets.paths.model_root = resources.model_root();
-    assets.paths.config_path = resources.require_file("config");
-    assets.paths.generation_config_path = resources.require_file("generation_config");
-    assets.paths.preprocessor_config_path = resources.require_file("preprocessor_config");
-    assets.paths.chat_template_path = chat_template != nullptr ? *chat_template : std::filesystem::path{};
-    assets.paths.model_weights_path = resources.require_file("weights");
-    assets.paths.tokenizer_config_path = resources.require_file("tokenizer_config");
-    assets.paths.tokenizer_vocab_path = resources.require_file("vocab");
-    assets.paths.tokenizer_merges_path = resources.require_file("merges");
+    assets.paths = paths_from_resources(resources);
     assets.config = parse_config(resources);
     assets.model_weights = resources.open_tensor_source("weights");
     return std::make_shared<Qwen3ASRAssets>(std::move(assets));
