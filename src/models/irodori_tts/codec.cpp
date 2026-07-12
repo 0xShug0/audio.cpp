@@ -540,14 +540,17 @@ void normalize_reference_audio_in_place(std::vector<float> &mono,
   constexpr double kGainFactor = 0.11512925464970229;
   const double loudness = bs1770_loudness_48k(mono);
   const double gain = std::exp((target_db - loudness) * kGainFactor);
-  float peak = 0.0F;
   const int64_t samples = static_cast<int64_t>(mono.size());
 #ifdef _OPENMP
-#pragma omp parallel for reduction(max: peak) if(samples >= 4096)
+#pragma omp parallel for if(samples >= 4096)
 #endif
   for (int64_t i = 0; i < samples; ++i) {
     float &sample = mono[static_cast<size_t>(i)];
     sample = static_cast<float>(static_cast<double>(sample) * gain);
+  }
+  float peak = 0.0F;
+  for (int64_t i = 0; i < samples; ++i) {
+    const float sample = mono[static_cast<size_t>(i)];
     peak = std::max(peak, std::abs(sample));
   }
   if (std::isfinite(peak) && peak > 1.0F) {
