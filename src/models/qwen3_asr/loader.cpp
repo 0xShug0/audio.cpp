@@ -21,18 +21,25 @@ std::filesystem::path resolve_model_root(const std::filesystem::path & model_pat
 }
 
 bool has_qwen3_asr_assets(const std::filesystem::path & root) {
+    const bool has_frontend = engine::io::is_existing_file(root / "preprocessor_config.json")
+        || engine::io::is_existing_file(root / "processor_config.json");
+    const bool has_tokenizer = engine::io::is_existing_file(root / "tokenizer.json")
+        || (engine::io::is_existing_file(root / "vocab.json")
+            && engine::io::is_existing_file(root / "merges.txt"));
     return engine::io::is_existing_file(root / "config.json")
         && engine::io::is_existing_file(root / "model.safetensors")
         && engine::io::is_existing_file(root / "tokenizer_config.json")
-        && engine::io::is_existing_file(root / "vocab.json")
-        && engine::io::is_existing_file(root / "merges.txt");
+        && engine::io::is_existing_file(root / "generation_config.json")
+        && has_frontend
+        && has_tokenizer;
 }
 
 std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoadRequest & request) {
     const auto root = resolve_model_root(request.model_path);
     return runtime::discover_named_assets(
         root,
-        {"config.json", "generation_config.json", "tokenizer_config.json"});
+        {"config.json", "generation_config.json", "preprocessor_config.json", "processor_config.json",
+         "tokenizer_config.json", "tokenizer.json", "vocab.json", "merges.txt"});
 }
 
 std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoadRequest & request) {

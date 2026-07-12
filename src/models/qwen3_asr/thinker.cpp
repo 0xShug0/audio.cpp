@@ -159,6 +159,9 @@ ThinkerWeights load_weights(
     assets::TensorStorageType storage_type) {
     const auto & config = assets.config.text_decoder;
     const auto & source = *assets.model_weights;
+    const std::string model_prefix = assets.config.hf_transformers_layout
+        ? "model.language_model"
+        : "thinker.model";
     ThinkerWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
@@ -167,13 +170,13 @@ ThinkerWeights load_weights(
         weight_context_bytes);
     weights.token_embedding = weights.store->load_tensor(
         source,
-        "thinker.model.embed_tokens.weight",
+        model_prefix + ".embed_tokens.weight",
         storage_type,
         {config.vocab_size, config.hidden_size});
     weights.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
     const int64_t dim = head_dim(config);
     for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
-        const std::string prefix = "thinker.model.layers." + std::to_string(layer);
+        const std::string prefix = model_prefix + ".layers." + std::to_string(layer);
         TextLayerWeights w;
         w.input_norm = weights.store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size});
         w.q_proj = weights.store->load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.num_attention_heads * dim, config.hidden_size});
@@ -188,8 +191,22 @@ ThinkerWeights load_weights(
         w.down_proj = weights.store->load_tensor(source, prefix + ".mlp.down_proj.weight", storage_type, {config.hidden_size, config.intermediate_size});
         weights.layers.push_back(std::move(w));
     }
-    weights.norm = weights.store->load_f32_tensor(source, "thinker.model.norm.weight", {config.hidden_size});
-    weights.lm_head = weights.store->load_tensor(source, "thinker.lm_head.weight", storage_type, {config.output_size, config.hidden_size});
+    weights.norm = weights.store->load_f32_tensor(source, model_prefix + ".norm.weight", {config.hidden_size});
+    if (assets.config.hf_transformers_layout && assets.config.tie_word_embeddings) {
+        if (config.output_size != config.vocab_size) {
+            throw std::runtime_error("Qwen3 ASR tied output embedding requires output_size == vocab_size");
+        }
+        weights.lm_head = weights.token_embedding;
+    } else {
+        const std::string lm_head_name = assets.config.hf_transformers_layout
+            ? "lm_head.weight"
+            : "thinker.lm_head.weight";
+        weights.lm_head = weights.store->load_tensor(
+            source,
+            lm_head_name,
+            storage_type,
+            {config.output_size, config.hidden_size});
+    }
     weights.store->upload();
     return weights;
 }

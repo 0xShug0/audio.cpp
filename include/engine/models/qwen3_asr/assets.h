@@ -63,6 +63,8 @@ struct Qwen3ASRConfig {
     int64_t classify_num = 0;
     int64_t timestamp_token_id = 0;
     int64_t timestamp_segment_time_ms = 0;
+    bool hf_transformers_layout = false;
+    bool tie_word_embeddings = false;
     Qwen3ASRFrontendConfig frontend;
     Qwen3ASRAudioEncoderConfig audio_encoder;
     Qwen3ASRTextDecoderConfig text_decoder;
@@ -74,11 +76,13 @@ struct Qwen3ASRAssetPaths {
     std::filesystem::path config_path;
     std::filesystem::path generation_config_path;
     std::filesystem::path preprocessor_config_path;
+    std::filesystem::path processor_config_path;
     std::filesystem::path chat_template_path;
     std::filesystem::path model_weights_path;
     std::filesystem::path tokenizer_config_path;
     std::filesystem::path tokenizer_vocab_path;
     std::filesystem::path tokenizer_merges_path;
+    std::filesystem::path tokenizer_json_path;
 };
 
 struct Qwen3ASRAssets {

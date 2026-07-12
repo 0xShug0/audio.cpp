@@ -237,6 +237,12 @@ std::shared_ptr<const Qwen3ASRAudioEncoderWeights> load_weights(
     assets::TensorStorageType storage_type) {
     const auto & config = assets.config.audio_encoder;
     const auto & source = *assets.model_weights;
+    const std::string audio_prefix = assets.config.hf_transformers_layout
+        ? "model.audio_tower"
+        : "thinker.audio_tower";
+    const std::string projector_prefix = assets.config.hf_transformers_layout
+        ? "model.multi_modal_projector"
+        : audio_prefix;
     auto weights = std::make_shared<Qwen3ASRAudioEncoderWeights>();
     auto store = std::make_shared<core::BackendWeightStore>(
         backend,
@@ -247,33 +253,33 @@ std::shared_ptr<const Qwen3ASRAudioEncoderWeights> load_weights(
     weights->conv1 = load_conv2d(
         *store,
         source,
-        "thinker.audio_tower.conv2d1",
+        audio_prefix + ".conv2d1",
         storage_type,
         {config.downsample_hidden_size, 1, 3, 3},
         config.downsample_hidden_size);
     weights->conv2 = load_conv2d(
         *store,
         source,
-        "thinker.audio_tower.conv2d2",
+        audio_prefix + ".conv2d2",
         storage_type,
         {config.downsample_hidden_size, config.downsample_hidden_size, 3, 3},
         config.downsample_hidden_size);
     weights->conv3 = load_conv2d(
         *store,
         source,
-        "thinker.audio_tower.conv2d3",
+        audio_prefix + ".conv2d3",
         storage_type,
         {config.downsample_hidden_size, config.downsample_hidden_size, 3, 3},
         config.downsample_hidden_size);
     const int64_t conv_freq = (((config.num_mel_bins + 1) / 2 + 1) / 2 + 1) / 2;
     weights->conv_out_weight = store->load_tensor(
         source,
-        "thinker.audio_tower.conv_out.weight",
+        audio_prefix + ".conv_out.weight",
         storage_type,
         {config.d_model, config.downsample_hidden_size * conv_freq});
     weights->layers.reserve(static_cast<size_t>(config.encoder_layers));
     for (int64_t layer = 0; layer < config.encoder_layers; ++layer) {
-        const std::string prefix = "thinker.audio_tower.layers." + std::to_string(layer);
+        const std::string prefix = audio_prefix + ".layers." + std::to_string(layer);
         AudioLayerWeights w;
         w.self_attn_norm_weight = store->load_f32_tensor(source, prefix + ".self_attn_layer_norm.weight", {config.d_model});
         w.self_attn_norm_bias = store->load_f32_tensor(source, prefix + ".self_attn_layer_norm.bias", {config.d_model});
@@ -293,15 +299,17 @@ std::shared_ptr<const Qwen3ASRAudioEncoderWeights> load_weights(
         w.fc2_bias = store->load_f32_tensor(source, prefix + ".fc2.bias", {config.d_model});
         weights->layers.push_back(std::move(w));
     }
-    weights->ln_post_weight = store->load_f32_tensor(source, "thinker.audio_tower.ln_post.weight", {config.d_model});
-    weights->ln_post_bias = store->load_f32_tensor(source, "thinker.audio_tower.ln_post.bias", {config.d_model});
+    weights->ln_post_weight = store->load_f32_tensor(source, audio_prefix + ".ln_post.weight", {config.d_model});
+    weights->ln_post_bias = store->load_f32_tensor(source, audio_prefix + ".ln_post.bias", {config.d_model});
+    const std::string proj1 = assets.config.hf_transformers_layout ? ".linear_1" : ".proj1";
+    const std::string proj2 = assets.config.hf_transformers_layout ? ".linear_2" : ".proj2";
     weights->proj1 = {
-        store->load_tensor(source, "thinker.audio_tower.proj1.weight", storage_type, {config.d_model, config.d_model}),
-        store->load_f32_tensor(source, "thinker.audio_tower.proj1.bias", {config.d_model}),
+        store->load_tensor(source, projector_prefix + proj1 + ".weight", storage_type, {config.d_model, config.d_model}),
+        store->load_f32_tensor(source, projector_prefix + proj1 + ".bias", {config.d_model}),
     };
     weights->proj2 = {
-        store->load_tensor(source, "thinker.audio_tower.proj2.weight", storage_type, {config.output_dim, config.d_model}),
-        store->load_f32_tensor(source, "thinker.audio_tower.proj2.bias", {config.output_dim}),
+        store->load_tensor(source, projector_prefix + proj2 + ".weight", storage_type, {config.output_dim, config.d_model}),
+        store->load_f32_tensor(source, projector_prefix + proj2 + ".bias", {config.output_dim}),
     };
     weights->positional_embedding = store->make_f32(
         core::TensorShape::from_dims({config.max_source_positions, config.d_model}),

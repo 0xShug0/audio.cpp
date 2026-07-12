@@ -260,6 +260,31 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
     ),
     ModelPackage(
+        id="qwen3_asr_1_7b_hf",
+        display_name="Qwen3 ASR 1.7B HF",
+        target_directory="Qwen3-ASR-1.7B-hf",
+        source=SnapshotSource(
+            repo_id="Qwen/Qwen3-ASR-1.7B-hf",
+            include_prefixes=(
+                "config.json",
+                "generation_config.json",
+                "model.safetensors",
+                "processor_config.json",
+                "tokenizer_config.json",
+                "tokenizer.json",
+            ),
+        ),
+        required_files=(
+            "config.json",
+            "generation_config.json",
+            "model.safetensors",
+            "processor_config.json",
+            "tokenizer_config.json",
+            "tokenizer.json",
+        ),
+        description="Native Hugging Face Transformers checkpoint; no conversion is required.",
+    ),
+    ModelPackage(
         id="higgs_audio_stt",
         display_name="Higgs Audio STT",
         target_directory="higgs-audio-v3-stt",

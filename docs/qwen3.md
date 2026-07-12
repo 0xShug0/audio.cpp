@@ -112,7 +112,7 @@ internally to choose speech-aware chunks before running ASR and alignment.
 | Field | Value |
 |---|---|
 | Family | `qwen3_asr` |
-| Model directory | `models/Qwen3-ASR-0.6B` |
+| Model directory | `models/Qwen3-ASR-0.6B` or `models/Qwen3-ASR-1.7B-hf` |
 | Task | `asr` |
 | Modes | `offline` |
 | Input | Speech WAV through `--audio` |
@@ -120,6 +120,15 @@ internally to choose speech-aware chunks before running ASR and alignment.
 
 ```bash
 audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B --backend cuda --audio speech_16k.wav --text "" --text-out transcript.txt
+```
+
+The native Hugging Face Transformers layout of `Qwen/Qwen3-ASR-1.7B-hf` is
+also accepted directly. It uses `processor_config.json`, `tokenizer.json`, and
+the `model.audio_tower` / `model.language_model` tensor namespaces; no model
+conversion is required:
+
+```bash
+audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --text "" --text-out transcript.txt
 ```
 
 With word timestamps:
