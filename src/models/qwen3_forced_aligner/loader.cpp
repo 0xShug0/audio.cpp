@@ -23,7 +23,8 @@ std::filesystem::path resolve_model_root(const std::filesystem::path & model_pat
 
 bool has_forced_aligner_assets(const std::filesystem::path & root) {
     if (!engine::io::is_existing_file(root / "config.json") ||
-        !engine::io::is_existing_file(root / "model.safetensors") ||
+        (!engine::io::is_existing_file(root / "model.gguf") &&
+         !engine::io::is_existing_file(root / "model.safetensors")) ||
         !engine::io::is_existing_file(root / "tokenizer_config.json") ||
         !engine::io::is_existing_file(root / "vocab.json") ||
         !engine::io::is_existing_file(root / "merges.txt")) {
@@ -42,7 +43,7 @@ std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoad
 
 std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoadRequest & request) {
     const auto root = resolve_model_root(request.model_path);
-    return runtime::discover_named_assets(root, {"model.safetensors"});
+    return runtime::discover_named_assets(root, {"model.gguf", "model.safetensors"});
 }
 
 class Qwen3ForcedAlignerLoader final : public runtime::IVoiceModelLoader {
@@ -69,7 +70,7 @@ public:
         inspection.metadata.variant = assets->config.model_size.empty() ? assets->config.thinker_model_type : assets->config.model_size;
         inspection.metadata.description = "Qwen3 forced aligner loaded from local extracted assets.";
         inspection.metadata.config_candidates = {"config.json", "generation_config.json", "tokenizer_config.json"};
-        inspection.metadata.weight_candidates = {"model.safetensors"};
+        inspection.metadata.weight_candidates = {"model.gguf", "model.safetensors"};
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::Alignment, {runtime::RunMode::Offline}},
         };
@@ -126,7 +127,7 @@ std::unique_ptr<Qwen3ForcedAlignerLoadedModel> load_qwen3_forced_aligner_model(c
     metadata.variant = assets->config.model_size.empty() ? assets->config.thinker_model_type : assets->config.model_size;
     metadata.description = "Qwen3 forced aligner loaded from local extracted assets.";
     metadata.config_candidates = {"config.json", "generation_config.json", "tokenizer_config.json"};
-    metadata.weight_candidates = {"model.safetensors"};
+    metadata.weight_candidates = {"model.gguf", "model.safetensors"};
 
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {

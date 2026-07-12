@@ -131,6 +131,46 @@ conversion is required:
 audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --text "" --text-out transcript.txt
 ```
 
+### GGUF checkpoints
+
+Qwen3 ASR, Qwen3 Forced Aligner, and Qwen3 TTS accept audio.cpp-native GGUF
+checkpoints. Convert a safetensors checkpoint while keeping its JSON/tokenizer
+sidecars in the same model directory:
+
+```bash
+audiocpp_gguf \
+  --input models/Qwen3-ASR-1.7B-hf/model.safetensors \
+  --output models/Qwen3-ASR-1.7B-hf/model.gguf \
+  --type q8_0
+```
+
+On Windows:
+
+```powershell
+audiocpp_gguf.exe --input models\Qwen3-ASR-1.7B-hf\model.safetensors --output models\Qwen3-ASR-1.7B-hf\model.gguf --type q8_0
+```
+
+The converter supports `f16`, `q8_0`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, and
+`q6_k`. It quantizes eligible projection matrices but keeps embedding/codebook
+lookup tables in F16 and leaves shapes that cannot use the selected block format
+unquantized. This mixed layout works across more ggml backends than blindly
+quantizing every 2-D tensor. Qwen loaders prefer `model.gguf` when both formats
+are present. Use `--overwrite` to replace an existing output.
+
+For Qwen3 TTS, convert the main `model.safetensors` and the separate
+`speech_tokenizer/model.safetensors` independently, placing each output beside
+its source as `model.gguf`.
+
+Quantization can reduce the reliability of Qwen3 ASR automatic language
+detection even when transcription quality remains good with a language hint.
+For known-language audio, pass `--language` explicitly; use `f16` when maximum
+parity with the original checkpoint is more important than file size.
+
+GGUF only replaces tensor storage; configuration, generation settings,
+processor files, and tokenizer files are still required. GGUF files produced
+for llama.cpp or whisper.cpp do not automatically work because those projects
+use architecture-specific tensor names and metadata.
+
 With word timestamps:
 
 ```bash

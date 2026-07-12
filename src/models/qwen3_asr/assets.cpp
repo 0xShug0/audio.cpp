@@ -167,12 +167,14 @@ assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_
         {"generation_config", "generation_config.json", true},
         {"preprocessor_config", "preprocessor_config.json", false},
         {"processor_config", "processor_config.json", false},
-        {"weights", "model.safetensors", true},
         {"tokenizer_config", "tokenizer_config.json", true},
         {"vocab", "vocab.json", false},
         {"merges", "merges.txt", false},
         {"tokenizer_json", "tokenizer.json", false},
     });
+    if (!resources.add_optional_model_file("weights", "model.gguf")) {
+        resources.add_model_file("weights", "model.safetensors");
+    }
     if (!resources.add_optional_model_file("chat_template", "chat_template.json")) {
         (void) resources.add_optional_model_file("chat_template", "chat_template.jinja");
     }

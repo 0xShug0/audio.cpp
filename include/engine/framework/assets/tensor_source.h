@@ -25,6 +25,8 @@ enum class TensorStorageType {
     Q4_1,
     Q5_0,
     Q5_1,
+    Q2_K,
+    Q3_K,
     Q4_K,
     Q5_K,
     Q6_K,
@@ -134,6 +136,11 @@ void set_backend_tensor_from_f32_parallel(
     const core::TensorShape & shape,
     ggml_type type);
 std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::path & path);
+void convert_tensor_source_to_gguf(
+    const std::filesystem::path & input_path,
+    const std::filesystem::path & output_path,
+    TensorStorageType weight_type,
+    bool overwrite = false);
 std::vector<std::filesystem::path> indexed_tensor_source_shard_paths(
     const std::filesystem::path & index_path,
     const std::filesystem::path & model_root);

@@ -690,6 +690,24 @@ Some models expose memory-saver session options such as `ace_step.mem_saver=true
 
 Many model sessions expose quantization through `--session-option <family>.weight_type=<mode>`, and some families also expose more specific knobs such as `...conv_weight_type`, `...talker_weight_type`, or `...speech_decoder_weight_type`. The exact supported modes are model-specific rather than global.
 
+The framework also has a reusable GGUF tensor source and a streaming converter. The
+container reader is shared by all model families; a family still has to list a `.gguf`
+checkpoint as one of its accepted assets because model configuration and tensor naming
+remain architecture-specific. Qwen3 ASR, Qwen3 Forced Aligner, and Qwen3 TTS currently
+accept `model.gguf` (including `speech_tokenizer/model.gguf` for TTS).
+
+```bash
+build/bin/audiocpp_gguf \
+  --input models/Qwen3-ASR-1.7B-hf/model.safetensors \
+  --output models/Qwen3-ASR-1.7B-hf/model.gguf \
+  --type q8_0
+```
+
+Supported conversion types are `f16`, `q8_0`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, and
+`q6_k`. Quantized GGUF files use mixed precision: projection matrices are quantized,
+while embedding/codebook lookup tables and unsupported shapes retain a backend-safe
+type. If both files exist, Qwen loaders prefer `model.gguf` over `model.safetensors`.
+
 Example:
 
 ```bash
@@ -709,5 +727,7 @@ In practice, lower precision and quantized modes should be treated as model- and
 ## Notes
 
 - The repo supports multiple backends, but backend and model coverage are model-dependent.
-- GGUF model loading is planned, but not supported yet.
+- GGUF is a container, not a universal architecture adapter. Existing llama.cpp or
+  whisper.cpp GGUF files are not automatically compatible unless their tensor names and
+  model metadata are mapped to the audio.cpp family implementation.
 - `Build_xcframework.sh` is outdated; Metal and Apple XCFramework packaging still need to be retested after the framework refactor.

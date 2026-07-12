@@ -504,6 +504,14 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_server PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+add_executable(audiocpp_gguf
+    tools/gguf_convert.cpp
+)
+target_link_libraries(audiocpp_gguf PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(audiocpp_gguf PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 add_executable(model_perf
     tests/perf/model_perf.cpp
     app/cli/args.cpp
@@ -691,6 +699,14 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME depthwise_conv1d_lowering_test
         COMMAND depthwise_conv1d_lowering_test
+    )
+
+    add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
+    target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME gguf_tensor_source_test
+        COMMAND gguf_tensor_source_test
     )
 
     add_executable(server_multipart_test

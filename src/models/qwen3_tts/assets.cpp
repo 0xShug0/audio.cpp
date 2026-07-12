@@ -27,6 +27,12 @@ std::filesystem::path require_file(const std::filesystem::path & path, const cha
     return path;
 }
 
+std::filesystem::path require_tensor_file(const std::filesystem::path & directory, const char * role) {
+    const auto gguf = directory / "model.gguf";
+    if (engine::io::is_existing_file(gguf)) return gguf;
+    return require_file(directory / "model.safetensors", role);
+}
+
 Qwen3TTSVariant parse_variant(const std::string & value) {
     if (value == "base") {
         return Qwen3TTSVariant::Base;
@@ -171,12 +177,12 @@ Qwen3TTSAssetPaths resolve_qwen3_tts_assets(const std::filesystem::path & model_
     paths.model_root = root;
     paths.config_path = require_file(root / "config.json", "config");
     paths.generation_config_path = require_file(root / "generation_config.json", "generation config");
-    paths.model_weights_path = require_file(root / "model.safetensors", "model weights");
+    paths.model_weights_path = require_tensor_file(root, "model weights");
     paths.tokenizer_config_path = require_file(root / "tokenizer_config.json", "text tokenizer config");
     paths.tokenizer_vocab_path = require_file(root / "vocab.json", "text tokenizer vocab");
     paths.tokenizer_merges_path = require_file(root / "merges.txt", "text tokenizer merges");
     paths.speech_tokenizer_config_path = require_file(root / "speech_tokenizer" / "config.json", "speech tokenizer config");
-    paths.speech_tokenizer_weights_path = require_file(root / "speech_tokenizer" / "model.safetensors", "speech tokenizer weights");
+    paths.speech_tokenizer_weights_path = require_tensor_file(root / "speech_tokenizer", "speech tokenizer weights");
     return paths;
 }
 

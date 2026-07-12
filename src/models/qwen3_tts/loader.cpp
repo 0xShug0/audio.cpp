@@ -22,12 +22,14 @@ std::filesystem::path resolve_model_root(const std::filesystem::path & model_pat
 
 bool has_qwen3_tts_assets(const std::filesystem::path & root) {
     return engine::io::is_existing_file(root / "config.json")
-        && engine::io::is_existing_file(root / "model.safetensors")
+        && (engine::io::is_existing_file(root / "model.gguf")
+            || engine::io::is_existing_file(root / "model.safetensors"))
         && engine::io::is_existing_file(root / "tokenizer_config.json")
         && engine::io::is_existing_file(root / "vocab.json")
         && engine::io::is_existing_file(root / "merges.txt")
         && engine::io::is_existing_file(root / "speech_tokenizer" / "config.json")
-        && engine::io::is_existing_file(root / "speech_tokenizer" / "model.safetensors");
+        && (engine::io::is_existing_file(root / "speech_tokenizer" / "model.gguf")
+            || engine::io::is_existing_file(root / "speech_tokenizer" / "model.safetensors"));
 }
 
 std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoadRequest & request) {
@@ -39,7 +41,9 @@ std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoad
 
 std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoadRequest & request) {
     const auto root = resolve_model_root(request.model_path);
-    return runtime::discover_named_assets(root, {"model.safetensors", "speech_tokenizer/model.safetensors"});
+    return runtime::discover_named_assets(
+        root,
+        {"model.gguf", "model.safetensors", "speech_tokenizer/model.gguf", "speech_tokenizer/model.safetensors"});
 }
 
 std::vector<std::string> supported_languages(const Qwen3TTSConfig & config) {
@@ -83,7 +87,8 @@ public:
             "tokenizer_config.json",
             "speech_tokenizer/config.json",
         };
-        inspection.metadata.weight_candidates = {"model.safetensors", "speech_tokenizer/model.safetensors"};
+        inspection.metadata.weight_candidates = {
+            "model.gguf", "model.safetensors", "speech_tokenizer/model.gguf", "speech_tokenizer/model.safetensors"};
         inspection.cli.session_options = {
             {"qwen3_tts.mem_saver", "true|false", "Release the talker cached-step graph after each request; default false."},
         };
@@ -163,7 +168,8 @@ std::unique_ptr<Qwen3TTSLoadedModel> load_qwen3_tts_model(const std::filesystem:
         "tokenizer_config.json",
         "speech_tokenizer/config.json",
     };
-    metadata.weight_candidates = {"model.safetensors", "speech_tokenizer/model.safetensors"};
+    metadata.weight_candidates = {
+        "model.gguf", "model.safetensors", "speech_tokenizer/model.gguf", "speech_tokenizer/model.safetensors"};
 
     runtime::CapabilitySet capabilities;
     if (assets->config.variant == Qwen3TTSVariant::Base) {
