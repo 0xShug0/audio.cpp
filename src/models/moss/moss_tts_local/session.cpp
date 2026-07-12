@@ -252,6 +252,7 @@ MossTTSLocalSession::MossTTSLocalSession(
         kGeneratorProjectionWeightContextBytes,
         *backbone_,
         *depth_);
+    assets_->model_weights->release_storage();
 }
 
 std::string MossTTSLocalSession::family() const {

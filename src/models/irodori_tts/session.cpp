@@ -335,6 +335,8 @@ IrodoriTTSSession::IrodoriTTSSession(
   codec_ = std::make_unique<IrodoriCodec>(
       assets_, execution_context(), codec_graph_arena_bytes_,
       codec_weight_context_bytes_, codec_weight_storage_type_);
+  assets_->model_weights->release_storage();
+  assets_->codec_weights->release_storage();
   debug::trace_log_scalar("irodori_tts.model_root",
                           assets_->paths.model_root.string());
   debug::trace_log_scalar("irodori_tts.codec_root",

@@ -133,8 +133,10 @@ cmake -S . -B build -DENGINE_ENABLE_NATIVE_CPU=OFF
 Build the CLI and server from the configured tree:
 
 ```bash
-cmake --build build --parallel --target audiocpp_cli --target audiocpp_server
+cmake --build build -j$(nproc) --target audiocpp_cli --target audiocpp_server
 ```
+
+If your machine is memory-constrained, use a smaller `-j` value, for example `-j4`.
 
 If you use an environment manager or custom toolchain, activate it before running the commands above.
 
@@ -523,7 +525,7 @@ build/bin/audiocpp_server
 Build:
 
 ```bash
-cmake --build build --parallel --target audiocpp_server
+cmake --build build -j$(nproc) --target audiocpp_server
 ```
 
 Create a config file with your own model paths:
