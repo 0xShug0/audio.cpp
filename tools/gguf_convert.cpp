@@ -9,8 +9,8 @@ namespace {
 
 void print_usage() {
     std::cout
-        << "Usage: audiocpp_gguf --input <weights.safetensors> --output <weights.gguf> "
-           "--type <f16|q8_0|q2_k|q3_k|q4_k|q5_k|q6_k> [--overwrite]\n";
+        << "Usage: audiocpp_gguf --input <weights.safetensors|model.safetensors.index.json> --output <weights.gguf> "
+           "--type <f16|q8_0|q2_k|q3_k|q4_k|q5_k|q6_k> [--overwrite] [--no-sidecars]\n";
 }
 
 }  // namespace
@@ -21,6 +21,7 @@ int main(int argc, char ** argv) {
         std::filesystem::path output;
         std::string type;
         bool overwrite = false;
+        bool embed_sidecars = true;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--help" || arg == "-h") {
@@ -29,6 +30,10 @@ int main(int argc, char ** argv) {
             }
             if (arg == "--overwrite") {
                 overwrite = true;
+                continue;
+            }
+            if (arg == "--no-sidecars") {
+                embed_sidecars = false;
                 continue;
             }
             if ((arg == "--input" || arg == "--output" || arg == "--type") && i + 1 < argc) {
@@ -53,7 +58,7 @@ int main(int argc, char ** argv) {
             }
         }
         const auto storage_type = engine::assets::parse_tensor_storage_type(type);
-        engine::assets::convert_tensor_source_to_gguf(input, output, storage_type, overwrite);
+        engine::assets::convert_tensor_source_to_gguf(input, output, storage_type, overwrite, embed_sidecars);
         std::cout << "gguf=" << std::filesystem::weakly_canonical(output).string() << "\n";
         std::cout << "weight_type=" << type << "\n";
         return 0;
