@@ -137,7 +137,8 @@ public:
   IrodoriRfSampler(std::shared_ptr<const IrodoriAssets> assets,
                    core::ExecutionContext &execution_context,
                    size_t graph_arena_bytes, size_t weight_context_bytes,
-                   assets::TensorStorageType weight_storage_type);
+                   assets::TensorStorageType weight_storage_type,
+                   bool mem_saver);
   ~IrodoriRfSampler();
 
   ContextCache build_context_cache(const std::vector<float> &text_state_cond,

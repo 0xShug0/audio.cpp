@@ -331,7 +331,7 @@ IrodoriTTSSession::IrodoriTTSSession(
       condition_weight_context_bytes_, weight_storage_type_);
   rf_sampler_ = std::make_unique<IrodoriRfSampler>(
       assets_, execution_context(), rf_graph_arena_bytes_,
-      rf_weight_context_bytes_, weight_storage_type_);
+      rf_weight_context_bytes_, weight_storage_type_, mem_saver_);
   codec_ = std::make_unique<IrodoriCodec>(
       assets_, execution_context(), codec_graph_arena_bytes_,
       codec_weight_context_bytes_, codec_weight_storage_type_);
