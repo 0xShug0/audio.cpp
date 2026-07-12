@@ -19,5 +19,7 @@ struct ChatterboxAssetPaths {
 };
 
 ChatterboxAssetPaths resolve_chatterbox_assets(const std::filesystem::path & model_root);
+void require_chatterbox_tts_assets(const ChatterboxAssetPaths & assets);
+void require_chatterbox_vc_assets(const ChatterboxAssetPaths & assets);
 
 }  // namespace engine::models::chatterbox

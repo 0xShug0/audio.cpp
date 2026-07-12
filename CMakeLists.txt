@@ -383,6 +383,7 @@ add_library(engine_runtime STATIC
     src/models/chatterbox/t3_weights.cpp
     src/models/chatterbox/text_tokenizer.cpp
     src/models/chatterbox/tts.cpp
+    src/models/chatterbox/vc.cpp
     src/models/chatterbox/voice_encoder_impl.cpp
     src/models/qwen3_forced_aligner/processor.cpp
     src/models/qwen3_forced_aligner/session.cpp

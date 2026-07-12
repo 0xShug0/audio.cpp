@@ -6,6 +6,7 @@
 #include "engine/models/chatterbox/assets.h"
 #include "engine/models/chatterbox/conditionals.h"
 #include "engine/models/chatterbox/tts.h"
+#include "engine/models/chatterbox/vc.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -45,6 +46,7 @@ public:
 
 private:
     runtime::TaskResult run_voice_cloning(const runtime::TaskRequest & request);
+    runtime::TaskResult run_voice_conversion(const runtime::TaskRequest & request);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const ChatterboxAssetPaths> assets_;
@@ -52,6 +54,7 @@ private:
     engine::assets::TensorStorageType component_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     bool mem_saver_ = false;
     std::unique_ptr<ChatterboxTtsComponent> component_;
+    std::unique_ptr<ChatterboxVcComponent> vc_component_;
     std::optional<std::string> component_language_;
     std::optional<ChatterboxVoiceCloneConfig> voice_clone_config_;
     runtime::CacheSlots<
