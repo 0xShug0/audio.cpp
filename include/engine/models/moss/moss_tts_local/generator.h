@@ -23,9 +23,9 @@ namespace engine::models::moss_tts_local {
 struct MossGenerationOptions {
     int64_t max_new_frames = 4096;
     bool do_sample = true;
-    float audio_temperature = 1.0F;
-    float audio_top_p = 0.95F;
-    int audio_top_k = 50;
+    float audio_temperature = 1.7F;
+    float audio_top_p = 0.8F;
+    int audio_top_k = 25;
     float audio_repetition_penalty = 1.0F;
     float text_temperature = 1.0F;
     float text_top_p = 1.0F;

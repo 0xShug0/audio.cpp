@@ -277,18 +277,13 @@ void MossTTSLocalSession::prepare(const runtime::SessionPreparationRequest & req
 
 moss::MossAudioTokenizerEncoder & MossTTSLocalSession::encoder() {
     if (encoder_ == nullptr) {
-        core::BackendConfig encoder_backend;
-        encoder_backend.type = core::BackendType::Cpu;
-        encoder_backend.device = 0;
-        encoder_backend.threads = options().backend.threads;
-        reference_encoder_execution_context_ = std::make_unique<core::ExecutionContext>(encoder_backend);
+        reference_encoder_execution_context_ = std::make_unique<core::ExecutionContext>(options().backend);
         encoder_ = std::make_unique<moss::MossAudioTokenizerEncoder>(
             resolve_moss_codec_dir(*assets_),
             *reference_encoder_execution_context_,
             assets_->config.num_codebooks,
             kEncoderWeightContextBytes,
             kEncoderGraphArenaBytes);
-        engine::debug::trace_log_scalar("moss_tts_local.reference_encoder.backend_cpu", 1);
     }
     return *encoder_;
 }

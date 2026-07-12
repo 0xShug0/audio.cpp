@@ -227,7 +227,7 @@ def main() -> int:
             torch.cuda.manual_seed_all(args.seed)
             torch.cuda.synchronize(args.device)
         started = time.perf_counter()
-        audio, prompt_stats = run_request(warmup_spec, True)
+        audio, prompt_stats = run_request(warmup_spec, args.request_file is None)
         if args.backend == "cuda":
             torch.cuda.synchronize(args.device)
         wall_ms = (time.perf_counter() - started) * 1000.0
