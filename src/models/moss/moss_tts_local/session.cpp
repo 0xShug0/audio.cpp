@@ -326,6 +326,8 @@ runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & reques
     double reference_encode_ms = 0.0;
     double prefix_ms = 0.0;
     double generate_ms = 0.0;
+    double backbone_step_release_ms = 0.0;
+    int64_t backbone_step_released_steps = 0;
     double code_pack_ms = 0.0;
     double codec_decode_ms = 0.0;
     double interleave_ms = 0.0;
@@ -392,6 +394,9 @@ runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & reques
     if (frames.empty()) {
         throw std::runtime_error("MOSS-TTS-Local generated no audio frames");
     }
+    time_once(backbone_step_release_ms, [&]() {
+        backbone_step_released_steps = backbone_->release_cached_step_graph();
+    });
 
     const int64_t num_codebooks = assets_->config.num_codebooks;
     std::vector<std::vector<int32_t>> codes;
@@ -439,9 +444,11 @@ runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & reques
     engine::debug::timing_log_scalar("moss_tts_local.reference_encode_ms", reference_encode_ms);
     engine::debug::timing_log_scalar("moss_tts_local.prefix_ms", prefix_ms);
     engine::debug::timing_log_scalar("moss_tts_local.generate_ms", generate_ms);
+    engine::debug::timing_log_scalar("moss_tts_local.backbone.step.release_ms", backbone_step_release_ms);
     engine::debug::timing_log_scalar("moss_tts_local.code_pack_ms", code_pack_ms);
     engine::debug::timing_log_scalar("moss_tts_local.codec_decode_ms", codec_decode_ms);
     engine::debug::timing_log_scalar("moss_tts_local.interleave_ms", interleave_ms);
+    engine::debug::trace_log_scalar("moss_tts_local.backbone.step.released_cache_steps", backbone_step_released_steps);
     engine::debug::trace_log_scalar("moss_tts_local.generated_frames", static_cast<int64_t>(frames.size()));
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
 

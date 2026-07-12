@@ -215,13 +215,30 @@ struct MossBackboneRuntime::Impl {
     double prefill_output_read_ms = 0.0;
     int64_t prefill_calls = 0;
 
-    ~Impl() {
+    int64_t release_step_graph() {
+        const int64_t released_steps = step_cache.cache_steps();
         if (step_graph != nullptr && backend != nullptr) {
             core::release_backend_graph_resources(backend, step_graph);
+            step_graph = nullptr;
         }
         if (step_buffer != nullptr) {
             ggml_backend_buffer_free(step_buffer);
+            step_buffer = nullptr;
         }
+        step_ctx.reset();
+        step_token = nullptr;
+        step_bias = nullptr;
+        step_positions = nullptr;
+        step_cache_slot = nullptr;
+        step_mask = nullptr;
+        step_hidden = nullptr;
+        step_cache = runtime::TransformerKVCache();
+        std::vector<ggml_fp16_t>().swap(mask_host);
+        return released_steps;
+    }
+
+    ~Impl() {
+        release_step_graph();
     }
 };
 
@@ -356,14 +373,7 @@ void MossBackboneRuntime::begin_generation(int64_t max_positions) const {
     }
     auto & impl = *impl_;
     if (impl.step_graph == nullptr || impl.step_cache.cache_steps() < max_positions) {
-        if (impl.step_graph != nullptr) {
-            core::release_backend_graph_resources(impl.backend, impl.step_graph);
-            impl.step_graph = nullptr;
-        }
-        if (impl.step_buffer != nullptr) {
-            ggml_backend_buffer_free(impl.step_buffer);
-            impl.step_buffer = nullptr;
-        }
+        impl.release_step_graph();
         build_step_graph(max_positions);
     }
     // Zero the caches so not-yet-written (masked) rows can never inject NaNs into the softmax.
@@ -593,6 +603,10 @@ std::vector<float> MossBackboneRuntime::prefill(
 
 int64_t MossBackboneRuntime::cached_positions() const noexcept {
     return impl_->step_cache.valid_steps();
+}
+
+int64_t MossBackboneRuntime::release_cached_step_graph() const {
+    return impl_->release_step_graph();
 }
 
 void MossBackboneRuntime::reset_timing() const {
