@@ -151,6 +151,15 @@ On Windows:
 audiocpp_gguf.exe --input models\Qwen3-ASR-1.7B-hf\model.safetensors --output models\Qwen3-ASR-1.7B-hf\model.gguf --type q8_0
 ```
 
+The forced aligner uses the same standalone layout:
+
+```powershell
+audiocpp_gguf.exe --input models\Qwen3-ForcedAligner-0.6B\model.safetensors --output models\Qwen3-ForcedAligner-0.6B-Q8_0\model.gguf --type q8_0
+```
+
+Pass the resulting GGUF file or its containing directory to
+`qwen3_asr.forced_aligner_model_path`; no external sidecars are required.
+
 Sidecar embedding is recursive and binary-safe, so nested tokenizer assets are
 portable too. Pass `--no-sidecars` to produce the older tensor-only layout. The converter supports
 `f16`, `q8_0`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, and
