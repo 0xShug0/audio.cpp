@@ -519,8 +519,17 @@ engine::runtime::TaskRequest build_openai_transcription_request(const Value & bo
     engine::runtime::TaskRequest request;
     request.audio_input = minitts::cli::read_audio_buffer(resolve_path(base_dir, audio->as_string()));
     request.options = options_from_object(body.find("options"));
+    std::string language;
     if (const auto * value = body.find("language")) {
-        request.options["language"] = value->as_string();
+        language = value->as_string();
+        request.options["language"] = language;
+    }
+    std::string context;
+    if (const auto * value = body.find("text")) {
+        context = value->as_string();
+    }
+    if (!language.empty() || !context.empty()) {
+        request.text_input = engine::runtime::Transcript{std::move(context), std::move(language)};
     }
     return request;
 }
