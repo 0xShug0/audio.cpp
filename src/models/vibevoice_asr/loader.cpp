@@ -1,6 +1,7 @@
 #include "engine/models/vibevoice_asr/loader.h"
 
 #include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/models/vibevoice_asr/session.h"
 
 #include <stdexcept>
@@ -21,7 +22,8 @@ std::filesystem::path resolve_model_root(const std::filesystem::path & model_pat
 
 bool has_vibevoice_asr_assets(const std::filesystem::path & root) {
     return engine::io::is_existing_file(root / "config.json") &&
-        engine::io::is_existing_file(root / "model.safetensors.index.json") &&
+        (engine::io::is_existing_file(root / "model.gguf") ||
+         engine::io::is_existing_file(root / "model.safetensors.index.json")) &&
         engine::io::is_existing_file(root / "tokenizer_config.json") &&
         engine::io::is_existing_file(root / "tokenizer.json") &&
         engine::io::is_existing_file(root / "vocab.json") &&
@@ -37,7 +39,7 @@ std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoad
 
 std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoadRequest & request) {
     const auto root = resolve_model_root(request.model_path);
-    return runtime::discover_named_assets(root, {"model.safetensors.index.json"});
+    return runtime::discover_named_assets(root, {"model.gguf", "model.safetensors.index.json"});
 }
 
 runtime::CapabilitySet vibevoice_asr_capabilities() {
@@ -54,7 +56,7 @@ runtime::ModelMetadata vibevoice_asr_metadata(const VibeVoiceAssets & assets) {
     runtime::ModelMetadata metadata;
     metadata.family = "vibevoice_asr";
     metadata.variant = assets.config.model_type.empty() ? "vibevoice-asr" : assets.config.model_type;
-    metadata.description = "VibeVoice-ASR loaded from local safetensors shards.";
+    metadata.description = "VibeVoice-ASR loaded from local assets.";
     metadata.config_candidates = {
         "config.json",
         "tokenizer_config.json",
@@ -62,7 +64,7 @@ runtime::ModelMetadata vibevoice_asr_metadata(const VibeVoiceAssets & assets) {
         "vocab.json",
         "merges.txt",
     };
-    metadata.weight_candidates = {"model.safetensors.index.json"};
+    metadata.weight_candidates = {"model.gguf", "model.safetensors.index.json"};
     return metadata;
 }
 
@@ -74,6 +76,14 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
+            const auto gguf_path = engine::io::is_existing_directory(request.model_path)
+                ? request.model_path / "model.gguf"
+                : request.model_path;
+            if (engine::io::is_existing_file(gguf_path) &&
+                gguf_path.extension() == ".gguf" &&
+                assets::gguf_has_embedded_sidecars(gguf_path)) {
+                return !request.family_hint.has_value() || *request.family_hint == family();
+            }
             const auto root = resolve_model_root(request.model_path);
             return has_vibevoice_asr_assets(root) &&
                 (!request.family_hint.has_value() || *request.family_hint == family());
@@ -83,7 +93,7 @@ public:
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_vibevoice_assets(resolve_model_root(request.model_path));
+        const auto assets = load_vibevoice_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->paths.model_root;
         inspection.metadata = vibevoice_asr_metadata(*assets);
@@ -116,7 +126,7 @@ public:
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_vibevoice_asr_model(resolve_model_root(request.model_path));
+        return load_vibevoice_asr_model(request.model_path);
     }
 };
 

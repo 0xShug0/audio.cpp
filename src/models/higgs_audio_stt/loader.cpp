@@ -1,6 +1,7 @@
 #include "engine/models/higgs_audio_stt/loader.h"
 
 #include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/models/higgs_audio_stt/session.h"
 
 #include <algorithm>
@@ -22,7 +23,8 @@ std::filesystem::path resolve_model_root(const std::filesystem::path & model_pat
 
 bool has_higgs_audio_stt_assets(const std::filesystem::path & root) {
     return engine::io::is_existing_file(root / "config.json")
-        && engine::io::is_existing_file(root / "model.safetensors.index.json")
+        && (engine::io::is_existing_file(root / "model.gguf") ||
+            engine::io::is_existing_file(root / "model.safetensors.index.json"))
         && engine::io::is_existing_file(root / "tokenizer_config.json")
         && engine::io::is_existing_file(root / "vocab.json")
         && engine::io::is_existing_file(root / "merges.txt");
@@ -37,7 +39,7 @@ std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoad
 
 std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoadRequest & request) {
     const auto root = resolve_model_root(request.model_path);
-    return runtime::discover_named_assets(root, {"model.safetensors.index.json"});
+    return runtime::discover_named_assets(root, {"model.gguf", "model.safetensors.index.json"});
 }
 
 class HiggsAudioSTTLoader final : public runtime::IVoiceModelLoader {
@@ -48,6 +50,12 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
+            const auto gguf = engine::io::is_existing_directory(request.model_path)
+                ? request.model_path / "model.gguf" : request.model_path;
+            if (engine::io::is_existing_file(gguf) && gguf.extension() == ".gguf" &&
+                assets::gguf_has_embedded_sidecars(gguf)) {
+                return !request.family_hint.has_value() || *request.family_hint == family();
+            }
             const auto root = resolve_model_root(request.model_path);
             return has_higgs_audio_stt_assets(root)
                 && (!request.family_hint.has_value() || *request.family_hint == family());
@@ -57,14 +65,14 @@ public:
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_higgs_audio_stt_assets(resolve_model_root(request.model_path));
+        const auto assets = load_higgs_audio_stt_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->paths.model_root;
         inspection.metadata.family = family();
         inspection.metadata.variant = assets->config.model_size.empty() ? assets->config.model_type : assets->config.model_size;
         inspection.metadata.description = "Higgs Audio STT loaded from local extracted assets.";
         inspection.metadata.config_candidates = {"config.json", "generation_config.json", "tokenizer_config.json"};
-        inspection.metadata.weight_candidates = {"model.safetensors.index.json"};
+        inspection.metadata.weight_candidates = {"model.gguf", "model.safetensors.index.json"};
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::Asr, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
@@ -92,7 +100,7 @@ public:
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_higgs_audio_stt_model(resolve_model_root(request.model_path));
+        return load_higgs_audio_stt_model(request.model_path);
     }
 };
 
@@ -134,7 +142,7 @@ std::unique_ptr<HiggsAudioSTTLoadedModel> load_higgs_audio_stt_model(const std::
     metadata.variant = assets->config.model_size.empty() ? assets->config.model_type : assets->config.model_size;
     metadata.description = "Higgs Audio STT loaded from local extracted assets.";
     metadata.config_candidates = {"config.json", "generation_config.json", "tokenizer_config.json"};
-    metadata.weight_candidates = {"model.safetensors.index.json"};
+    metadata.weight_candidates = {"model.gguf", "model.safetensors.index.json"};
 
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {

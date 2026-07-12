@@ -105,16 +105,28 @@ HiggsAudioSTTConfig parse_config(const assets::ResourceBundle & resources) {
 }
 
 assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_path) {
-    assets::ResourceBundle resources(resolve_model_root(model_path));
+    const auto prepared = assets::prepare_model_directory(model_path);
+    assets::ResourceBundle resources(prepared.model_root);
     resources.add_model_files({
         {"config", "config.json", true},
         {"generation_config", "generation_config.json", true},
-        {"preprocessor_config", "../whisper-large-v3/preprocessor_config.json", true},
-        {"weights_index", "model.safetensors.index.json", true},
+        {"preprocessor_config", "preprocessor_config.json", false},
+        {"weights_index", "model.safetensors.index.json", false},
         {"tokenizer_config", "tokenizer_config.json", true},
         {"vocab", "vocab.json", true},
         {"merges", "merges.txt", true},
     });
+    if (!resources.has_file("preprocessor_config")) {
+        resources.add_model_file("preprocessor_config", "../whisper-large-v3/preprocessor_config.json");
+    }
+    if (prepared.standalone_gguf.has_value()) {
+        resources.add_file("model_gguf", *prepared.standalone_gguf);
+    } else {
+        (void) resources.add_optional_model_file("model_gguf", "model.gguf");
+    }
+    if (!resources.has_file("model_gguf") && !resources.has_file("weights_index")) {
+        throw std::runtime_error("Higgs Audio STT requires model.gguf or model.safetensors.index.json");
+    }
     return resources;
 }
 
@@ -125,10 +137,16 @@ void fill_paths(
     paths.config_path = resources.require_file("config");
     paths.generation_config_path = resources.require_file("generation_config");
     paths.preprocessor_config_path = resources.require_file("preprocessor_config");
-    paths.model_index_path = resources.require_file("weights_index");
-    paths.model_shard_paths = engine::assets::indexed_tensor_source_shard_paths(
-        paths.model_index_path,
-        paths.model_index_path.parent_path());
+    if (const auto * index = resources.find_file("weights_index"); index != nullptr) {
+        paths.model_index_path = *index;
+    }
+    if (const auto * gguf = resources.find_file("model_gguf"); gguf != nullptr) {
+        paths.model_shard_paths = {*gguf};
+    } else {
+        paths.model_shard_paths = engine::assets::indexed_tensor_source_shard_paths(
+            paths.model_index_path,
+            paths.model_index_path.parent_path());
+    }
     paths.tokenizer_config_path = resources.require_file("tokenizer_config");
     paths.tokenizer_vocab_path = resources.require_file("vocab");
     paths.tokenizer_merges_path = resources.require_file("merges");
@@ -148,9 +166,13 @@ std::shared_ptr<const HiggsAudioSTTAssets> load_higgs_audio_stt_assets(const std
     auto assets = std::make_shared<HiggsAudioSTTAssets>();
     fill_paths(assets->paths, resources);
     assets->config = parse_config(resources);
-    assets->model_weights = engine::assets::open_indexed_tensor_source(
-        assets->paths.model_index_path,
-        assets->paths.model_index_path.parent_path());
+    if (resources.has_file("model_gguf")) {
+        assets->model_weights = resources.open_tensor_source("model_gguf");
+    } else {
+        assets->model_weights = engine::assets::open_indexed_tensor_source(
+            assets->paths.model_index_path,
+            assets->paths.model_index_path.parent_path());
+    }
     return assets;
 }
 

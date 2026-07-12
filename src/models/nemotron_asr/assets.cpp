@@ -156,13 +156,20 @@ NemotronConfig parse_config(
 }  // namespace
 
 NemotronAssetPaths resolve_nemotron_asr_assets(const std::filesystem::path & model_path) {
-    const auto root = resolve_root(model_path);
+    const auto prepared = engine::assets::prepare_model_directory(model_path);
+    const auto & root = prepared.model_root;
     NemotronAssetPaths paths;
     paths.model_root = root;
     paths.config_path = require_file(root / "config.json", "config.json");
     paths.processor_config_path = require_file(root / "processor_config.json", "processor_config.json");
     paths.tokenizer_json_path = require_file(root / "tokenizer.json", "tokenizer.json");
-    paths.weight_path = require_file(root / "model.safetensors", "model.safetensors");
+    if (prepared.standalone_gguf.has_value()) {
+        paths.weight_path = *prepared.standalone_gguf;
+    } else if (engine::io::is_existing_file(root / "model.gguf")) {
+        paths.weight_path = require_file(root / "model.gguf", "model.gguf");
+    } else {
+        paths.weight_path = require_file(root / "model.safetensors", "model.safetensors");
+    }
     return paths;
 }
 

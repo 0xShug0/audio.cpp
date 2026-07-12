@@ -161,7 +161,8 @@ Qwen3ASRConfig parse_config(const assets::ResourceBundle & resources) {
 }
 
 assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_path) {
-    assets::ResourceBundle resources(resolve_model_root(model_path));
+    const auto prepared = assets::prepare_model_directory(model_path);
+    assets::ResourceBundle resources(prepared.model_root);
     resources.add_model_files({
         {"config", "config.json", true},
         {"generation_config", "generation_config.json", true},
@@ -172,7 +173,9 @@ assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_
         {"merges", "merges.txt", false},
         {"tokenizer_json", "tokenizer.json", false},
     });
-    if (!resources.add_optional_model_file("weights", "model.gguf")) {
+    if (prepared.standalone_gguf.has_value()) {
+        resources.add_file("weights", *prepared.standalone_gguf);
+    } else if (!resources.add_optional_model_file("weights", "model.gguf")) {
         resources.add_model_file("weights", "model.safetensors");
     }
     if (!resources.add_optional_model_file("chat_template", "chat_template.json")) {

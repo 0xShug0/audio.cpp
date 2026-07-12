@@ -31,16 +31,25 @@ std::filesystem::path require_existing_file(const std::filesystem::path & path, 
 }
 
 assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_path) {
-    assets::ResourceBundle resources(resolve_model_root(model_path));
+    const auto prepared = assets::prepare_model_directory(model_path);
+    assets::ResourceBundle resources(prepared.model_root);
     resources.add_model_files({
         {"config", "config.json", true},
-        {"model_index", "model.safetensors.index.json", true},
+        {"model_index", "model.safetensors.index.json", false},
         {"preprocessor_config", "preprocessor_config.json", false},
         {"tokenizer_config", "tokenizer_config.json", false},
         {"tokenizer_json", "tokenizer.json", false},
         {"tokenizer_vocab", "vocab.json", false},
         {"tokenizer_merges", "merges.txt", false},
     });
+    if (prepared.standalone_gguf.has_value()) {
+        resources.add_file("model_gguf", *prepared.standalone_gguf);
+    } else {
+        (void) resources.add_optional_model_file("model_gguf", "model.gguf");
+    }
+    if (!resources.has_file("model_gguf") && !resources.has_file("model_index")) {
+        throw std::runtime_error("VibeVoice-ASR requires model.gguf or model.safetensors.index.json");
+    }
     return resources;
 }
 
@@ -249,7 +258,9 @@ void fill_paths(
     const assets::ResourceBundle & resources) {
     paths.model_root = resources.model_root();
     paths.config_path = resources.require_file("config");
-    paths.model_index_path = resources.require_file("model_index");
+    if (const auto * path = resources.find_file("model_index"); path != nullptr) {
+        paths.model_index_path = *path;
+    }
     if (const auto * path = resources.find_file("preprocessor_config"); path != nullptr) {
         paths.preprocessor_config_path = *path;
     }
@@ -265,9 +276,13 @@ void fill_paths(
     if (const auto * path = resources.find_file("tokenizer_merges"); path != nullptr) {
         paths.tokenizer_merges_path = *path;
     }
-    paths.model_shard_paths = engine::assets::indexed_tensor_source_shard_paths(
-        paths.model_index_path,
-        paths.model_root);
+    if (const auto * gguf = resources.find_file("model_gguf"); gguf != nullptr) {
+        paths.model_shard_paths = {*gguf};
+    } else {
+        paths.model_shard_paths = engine::assets::indexed_tensor_source_shard_paths(
+            paths.model_index_path,
+            paths.model_root);
+    }
 }
 
 void resolve_tokenizer_files(VibeVoiceAssetPaths & paths) {
@@ -351,9 +366,13 @@ std::shared_ptr<const VibeVoiceAssets> load_vibevoice_assets(const std::filesyst
     resolve_tokenizer_files(assets.paths);
     assets.config = parse_config(resources);
     assets.processor = parse_processor_config(resources);
-    assets.model_weights = engine::assets::open_indexed_tensor_source(
-        assets.paths.model_index_path,
-        assets.paths.model_root);
+    if (resources.has_file("model_gguf")) {
+        assets.model_weights = resources.open_tensor_source("model_gguf");
+    } else {
+        assets.model_weights = engine::assets::open_indexed_tensor_source(
+            assets.paths.model_index_path,
+            assets.paths.model_root);
+    }
     validate_weight_anchors(assets);
     return std::make_shared<VibeVoiceAssets>(std::move(assets));
 }

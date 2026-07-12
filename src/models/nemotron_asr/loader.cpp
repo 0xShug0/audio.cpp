@@ -1,6 +1,7 @@
 #include "engine/models/nemotron_asr/loader.h"
 
 #include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/models/nemotron_asr/session.h"
 
 #include <stdexcept>
@@ -19,19 +20,12 @@ std::filesystem::path resolve_model_root(const std::filesystem::path & model_pat
     throw std::runtime_error("Nemotron ASR model path does not exist: " + model_path.string());
 }
 
-bool has_nemotron_assets(const std::filesystem::path & root) {
-    return engine::io::is_existing_file(root / "config.json") &&
-        engine::io::is_existing_file(root / "processor_config.json") &&
-        engine::io::is_existing_file(root / "tokenizer.json") &&
-        engine::io::is_existing_file(root / "model.safetensors");
-}
-
 std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoadRequest & request) {
     return runtime::discover_named_assets(resolve_model_root(request.model_path), {"config.json", "processor_config.json"});
 }
 
 std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoadRequest & request) {
-    return runtime::discover_named_assets(resolve_model_root(request.model_path), {"model.safetensors"});
+    return runtime::discover_named_assets(resolve_model_root(request.model_path), {"model.gguf", "model.safetensors"});
 }
 
 class NemotronASRLoader final : public runtime::IVoiceModelLoader {
@@ -42,11 +36,7 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
-            const auto root = resolve_model_root(request.model_path);
-            if (!has_nemotron_assets(root)) {
-                return false;
-            }
-            const auto assets = load_nemotron_asr_assets(root);
+            const auto assets = load_nemotron_asr_assets(request.model_path);
             return assets->config.model_type == "nemotron3_5_asr" &&
                 (!request.family_hint.has_value() || *request.family_hint == family());
         } catch (...) {
@@ -55,14 +45,14 @@ public:
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_nemotron_asr_assets(resolve_model_root(request.model_path));
+        const auto assets = load_nemotron_asr_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->paths.model_root;
         inspection.metadata.family = family();
         inspection.metadata.variant = assets->config.model_type;
-        inspection.metadata.description = "NVIDIA Nemotron 3.5 ASR streaming RNNT loaded from local safetensors assets.";
+        inspection.metadata.description = "NVIDIA Nemotron 3.5 ASR streaming RNNT loaded from local assets.";
         inspection.metadata.config_candidates = {"config.json", "processor_config.json"};
-        inspection.metadata.weight_candidates = {"model.safetensors"};
+        inspection.metadata.weight_candidates = {"model.gguf", "model.safetensors"};
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::Asr, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
@@ -91,7 +81,7 @@ public:
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_nemotron_asr_model(resolve_model_root(request.model_path));
+        return load_nemotron_asr_model(request.model_path);
     }
 };
 
@@ -134,9 +124,9 @@ std::unique_ptr<NemotronASRLoadedModel> load_nemotron_asr_model(const std::files
     runtime::ModelMetadata metadata;
     metadata.family = "nemotron_asr";
     metadata.variant = assets->config.model_type;
-    metadata.description = "NVIDIA Nemotron 3.5 ASR streaming RNNT loaded from local safetensors assets.";
+    metadata.description = "NVIDIA Nemotron 3.5 ASR streaming RNNT loaded from local assets.";
     metadata.config_candidates = {"config.json", "processor_config.json"};
-    metadata.weight_candidates = {"model.safetensors"};
+    metadata.weight_candidates = {"model.gguf", "model.safetensors"};
 
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {

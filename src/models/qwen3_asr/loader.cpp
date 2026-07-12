@@ -1,6 +1,7 @@
 #include "engine/models/qwen3_asr/loader.h"
 
 #include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/models/qwen3_asr/session.h"
 
 #include <algorithm>
@@ -56,6 +57,18 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
+            if (engine::io::is_existing_directory(request.model_path)) {
+                const auto gguf_path = request.model_path / "model.gguf";
+                if (engine::io::is_existing_file(gguf_path) &&
+                    assets::gguf_has_embedded_sidecars(gguf_path)) {
+                    return !request.family_hint.has_value() || *request.family_hint == family();
+                }
+            }
+            if (engine::io::is_existing_file(request.model_path) &&
+                request.model_path.extension() == ".gguf") {
+                return assets::gguf_has_embedded_sidecars(request.model_path)
+                    && (!request.family_hint.has_value() || *request.family_hint == family());
+            }
             const auto root = resolve_model_root(request.model_path);
             return has_qwen3_asr_assets(root)
                 && (!request.family_hint.has_value() || *request.family_hint == family());
@@ -65,7 +78,7 @@ public:
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_qwen3_asr_assets(resolve_model_root(request.model_path));
+        const auto assets = load_qwen3_asr_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->paths.model_root;
         inspection.metadata.family = family();
@@ -84,7 +97,7 @@ public:
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_qwen3_asr_model(resolve_model_root(request.model_path));
+        return load_qwen3_asr_model(request.model_path);
     }
 };
 

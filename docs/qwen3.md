@@ -134,8 +134,9 @@ audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --ba
 ### GGUF checkpoints
 
 Qwen3 ASR, Qwen3 Forced Aligner, and Qwen3 TTS accept audio.cpp-native GGUF
-checkpoints. Convert a safetensors checkpoint while keeping its JSON/tokenizer
-sidecars in the same model directory:
+checkpoints. By default the converter embeds JSON, tokenizer, processor, and chat
+template sidecars found beside the input checkpoint. Qwen3 ASR can therefore be
+distributed and loaded as a standalone `model.gguf`:
 
 ```bash
 audiocpp_gguf \
@@ -150,7 +151,9 @@ On Windows:
 audiocpp_gguf.exe --input models\Qwen3-ASR-1.7B-hf\model.safetensors --output models\Qwen3-ASR-1.7B-hf\model.gguf --type q8_0
 ```
 
-The converter supports `f16`, `q8_0`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, and
+Sidecar embedding is recursive and binary-safe, so nested tokenizer assets are
+portable too. Pass `--no-sidecars` to produce the older tensor-only layout. The converter supports
+`f16`, `q8_0`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, and
 `q6_k`. It quantizes eligible projection matrices but keeps embedding/codebook
 lookup tables in F16 and leaves shapes that cannot use the selected block format
 unquantized. This mixed layout works across more ggml backends than blindly
@@ -166,10 +169,10 @@ detection even when transcription quality remains good with a language hint.
 For known-language audio, pass `--language` explicitly; use `f16` when maximum
 parity with the original checkpoint is more important than file size.
 
-GGUF only replaces tensor storage; configuration, generation settings,
-processor files, and tokenizer files are still required. GGUF files produced
-for llama.cpp or whisper.cpp do not automatically work because those projects
-use architecture-specific tensor names and metadata.
+Older tensor-only GGUF files still require configuration, generation settings,
+processor files, and tokenizer files beside them and remain backward compatible.
+GGUF files produced for llama.cpp or whisper.cpp do not automatically work because
+those projects use architecture-specific tensor names and metadata.
 
 With word timestamps:
 
