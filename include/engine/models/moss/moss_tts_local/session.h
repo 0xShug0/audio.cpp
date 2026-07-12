@@ -65,6 +65,7 @@ private:
     std::unique_ptr<moss::MossAudioTokenizerDecoder> codec_;
     std::unique_ptr<MossGenerator> generator_;
     // Lazily built the first time a speaker reference is provided (voice cloning).
+    std::unique_ptr<core::ExecutionContext> reference_encoder_execution_context_;
     std::unique_ptr<moss::MossAudioTokenizerEncoder> encoder_;
     runtime::CacheSlots<ReferenceAudioCacheKey, ReferenceVoiceCacheEntry, ReferenceAudioCacheKeyEqual>
         reference_voice_cache_;

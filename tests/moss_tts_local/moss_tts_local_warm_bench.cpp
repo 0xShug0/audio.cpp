@@ -266,7 +266,6 @@ std::vector<RequestCase> load_request_file(
         set_option_if_present(request.options, item, "seed", "seed");
         set_option_if_present(request.options, item, "do_sample", "do_sample");
         set_option_if_present(request.options, item, "temperature", "audio_temperature");
-        set_option_if_present(request.options, item, "temperature", "text_temperature");
         set_option_if_present(request.options, item, "audio_temperature", "audio_temperature");
         set_option_if_present(request.options, item, "text_temperature", "text_temperature");
         set_option_if_present(request.options, item, "top_p", "audio_top_p");
@@ -364,7 +363,7 @@ int main(int argc, char ** argv) try {
     const int threads = int_arg(argc, argv, "--threads", 8);
     const int warmup = int_arg(argc, argv, "--warmup", 1);
     const int iterations = int_arg(argc, argv, "--iterations", 1);
-    const int max_new_frames = int_arg(argc, argv, "--max-new-frames", 256);
+    const int max_new_frames = int_arg(argc, argv, "--max-new-frames", 4096);
     const int seed = int_arg(argc, argv, "--seed", 1234);
     const std::string warmup_text = arg_value(argc, argv, "--warmup-text", kDefaultWarmupText);
     const std::vector<std::string> texts = arg_values(argc, argv, "--text");
@@ -388,10 +387,11 @@ int main(int argc, char ** argv) try {
     std::unordered_map<std::string, std::string> request_options = parse_key_value_args(argc, argv, "--request-option");
     request_options.emplace("max_tokens", std::to_string(max_new_frames));
     request_options.emplace("seed", std::to_string(seed));
-    request_options.emplace("do_sample", arg_value(argc, argv, "--do-sample", "false"));
-    request_options.emplace("audio_temperature", arg_value(argc, argv, "--audio-temperature", "1.0"));
-    request_options.emplace("audio_top_p", arg_value(argc, argv, "--audio-top-p", "0.95"));
-    request_options.emplace("audio_top_k", arg_value(argc, argv, "--audio-top-k", "50"));
+    request_options.emplace("do_sample", arg_value(argc, argv, "--do-sample", "true"));
+    request_options.emplace("audio_temperature", arg_value(argc, argv, "--audio-temperature", "1.7"));
+    request_options.emplace("text_temperature", arg_value(argc, argv, "--text-temperature", "1.0"));
+    request_options.emplace("audio_top_p", arg_value(argc, argv, "--audio-top-p", "0.8"));
+    request_options.emplace("audio_top_k", arg_value(argc, argv, "--audio-top-k", "25"));
     request_options.emplace("audio_repetition_penalty", arg_value(argc, argv, "--audio-repetition-penalty", "1.0"));
     const auto request_cases = request_file.empty()
         ? text_requests(texts, clone_audio_path, request_options)

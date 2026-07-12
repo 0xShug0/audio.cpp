@@ -32,12 +32,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--warmup-text", default=DEFAULT_WARMUP_TEXT)
     parser.add_argument("--iterations", type=int, default=1)
-    parser.add_argument("--max-new-frames", type=int, default=256)
+    parser.add_argument("--max-new-frames", type=int, default=4096)
     parser.add_argument("--seed", type=int, default=1234)
-    parser.add_argument("--do-sample", choices=("true", "false"), default="false")
-    parser.add_argument("--audio-temperature", type=float, default=1.0)
-    parser.add_argument("--audio-top-p", type=float, default=0.95)
-    parser.add_argument("--audio-top-k", type=int, default=50)
+    parser.add_argument("--do-sample", choices=("true", "false"), default="true")
+    parser.add_argument("--text-temperature", type=float, default=1.0)
+    parser.add_argument("--audio-temperature", type=float, default=1.7)
+    parser.add_argument("--audio-top-p", type=float, default=0.8)
+    parser.add_argument("--audio-top-k", type=int, default=25)
     parser.add_argument("--audio-repetition-penalty", type=float, default=1.0)
     parser.add_argument("--dtype", choices=("fp32", "bf16", "fp16"), default="bf16")
     parser.add_argument("--use-kv-cache", choices=("true", "false"), default="true")
@@ -75,6 +76,25 @@ def write_sectioned_timing_log(path: Path, sections: list[tuple[str, list[str]]]
 
 def resolve_path(path: Path) -> Path:
     return path if path.is_absolute() else REPO_ROOT / path
+
+
+def mix_hash(key: int, value: int) -> int:
+    key ^= int(value) & 0xFFFFFFFF
+    key = (key * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return key
+
+
+def prompt_hash(input_ids: torch.Tensor) -> int:
+    flat = input_ids.detach().to(torch.int64).cpu().reshape(-1)
+    key = 1469598103934665603
+    for value in flat.tolist():
+        key = mix_hash(key, int(value))
+    return key & 0x7FFFFFFFFFFFFFFF
+
+
+def prompt_audio_nonpad_count(input_ids: torch.Tensor, audio_pad_token_id: int) -> int:
+    audio = input_ids[..., 1:].detach().cpu()
+    return int(audio.ne(int(audio_pad_token_id)).sum().item())
 
 
 def summarize(audio: torch.Tensor, sample_rate: int, text: str) -> dict[str, object]:
@@ -125,6 +145,9 @@ def main() -> int:
     if args.backend == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA backend requested but torch.cuda.is_available() is false")
     dtype = {"fp32": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}[args.dtype]
+    if args.dtype == "fp32" and args.backend == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
     attn = "sdpa" if args.backend == "cuda" else "eager"
     if args.backend == "cuda" and hasattr(torch.backends.cuda, "enable_cudnn_sdp"):
         torch.backends.cuda.enable_cudnn_sdp(False)
@@ -132,7 +155,11 @@ def main() -> int:
     from transformers import AutoModel, AutoProcessor
 
     model_path = resolve_path(args.model)
-    processor = AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True)
+    processor_kwargs: dict[str, Any] = {}
+    if args.dtype == "fp32":
+        processor_kwargs["codec_weight_dtype"] = "fp32"
+        processor_kwargs["codec_compute_dtype"] = "fp32"
+    processor = AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True, **processor_kwargs)
     if args.dtype == "fp32":
         processor.audio_tokenizer = processor.audio_tokenizer.to(device=device, dtype=torch.float32)
         if hasattr(processor.audio_tokenizer, "set_compute_dtype"):
@@ -156,7 +183,7 @@ def main() -> int:
     def request_value(spec: dict[str, Any], key: str, fallback: Any) -> Any:
         return spec[key] if key in spec else fallback
 
-    def run_request(spec: dict[str, Any], use_default_clone_audio: bool) -> torch.Tensor:
+    def run_request(spec: dict[str, Any], use_default_clone_audio: bool) -> tuple[torch.Tensor, dict[str, int]]:
         text = str(spec["text"])
         language = spec.get("language")
         message_kwargs: dict[str, Any] = {"text": text, "language": language}
@@ -167,13 +194,20 @@ def main() -> int:
         batch = processor([conversation], mode="generation")
         input_ids = batch["input_ids"].to(model.device)
         attention_mask = batch["attention_mask"].to(model.device)
+        prompt_stats = {
+            "moss_tts_local.prefix_len": int(input_ids.shape[1]),
+            "moss_tts_local.prefix_hash": int(prompt_hash(input_ids)),
+            "moss_tts_local.prefix_audio_nonpad": int(
+                prompt_audio_nonpad_count(input_ids, int(processor.model_config.audio_pad_token_id))
+            ),
+        }
         do_sample = parse_bool(str(request_value(spec, "do_sample", args.do_sample)).lower())
         gen_kwargs: dict[str, Any] = {
             "max_new_tokens": int(request_value(spec, "max_tokens", request_value(spec, "max_new_frames", args.max_new_frames))),
             "do_sample": do_sample,
             "use_kv_cache": parse_bool(args.use_kv_cache),
             "audio_temperature": float(request_value(spec, "temperature", request_value(spec, "audio_temperature", args.audio_temperature))) if do_sample else 0.0,
-            "text_temperature": float(request_value(spec, "temperature", request_value(spec, "audio_temperature", args.audio_temperature))) if do_sample else 0.0,
+            "text_temperature": float(request_value(spec, "text_temperature", args.text_temperature)) if do_sample else 0.0,
             "audio_top_p": float(request_value(spec, "top_p", request_value(spec, "audio_top_p", args.audio_top_p))),
             "audio_top_k": int(request_value(spec, "top_k", request_value(spec, "audio_top_k", args.audio_top_k))),
             "audio_repetition_penalty": float(request_value(spec, "repetition_penalty", request_value(spec, "audio_repetition_penalty", args.audio_repetition_penalty))),
@@ -182,7 +216,7 @@ def main() -> int:
             gen_out = model.generate(input_ids=input_ids, attention_mask=attention_mask, **gen_kwargs)
             for message in processor.decode(gen_out):
                 if message is not None:
-                    return message.audio_codes_list[0]
+                    return message.audio_codes_list[0], prompt_stats
         raise RuntimeError("MOSS-TTS-Local Python warm bench produced no audio")
 
     warmup_outputs: list[torch.Tensor] = []
@@ -193,7 +227,7 @@ def main() -> int:
             torch.cuda.manual_seed_all(args.seed)
             torch.cuda.synchronize(args.device)
         started = time.perf_counter()
-        audio = run_request(warmup_spec, True)
+        audio, prompt_stats = run_request(warmup_spec, True)
         if args.backend == "cuda":
             torch.cuda.synchronize(args.device)
         wall_ms = (time.perf_counter() - started) * 1000.0
@@ -203,6 +237,9 @@ def main() -> int:
             f"warmup{warmup_index + 1}",
             [
                 timing_line(ts, "moss_tts_local.request_char_count", len(args.warmup_text)),
+                timing_line(ts, "moss_tts_local.prefix_len", prompt_stats["moss_tts_local.prefix_len"]),
+                timing_line(ts, "moss_tts_local.prefix_hash", prompt_stats["moss_tts_local.prefix_hash"]),
+                timing_line(ts, "moss_tts_local.prefix_audio_nonpad", prompt_stats["moss_tts_local.prefix_audio_nonpad"]),
                 timing_line(ts, "moss_tts_local.request_wall_ms", wall_ms),
                 timing_line(ts, "moss_tts_local.audio_seconds", seconds),
                 timing_line(ts, "moss_tts_local.rtf", (wall_ms / 1000.0) / seconds if seconds > 0.0 else 0.0),
@@ -228,7 +265,7 @@ def main() -> int:
                 torch.cuda.manual_seed_all(seed)
                 torch.cuda.synchronize(args.device)
             started = time.perf_counter()
-            last_audio = run_request(spec, args.request_file is None)
+            last_audio, prompt_stats = run_request(spec, args.request_file is None)
             if args.backend == "cuda":
                 torch.cuda.synchronize(args.device)
             wall_ms = (time.perf_counter() - started) * 1000.0
@@ -239,6 +276,9 @@ def main() -> int:
                 f"iteration{iteration + 1}.request{request_index + 1}",
                 [
                     timing_line(ts, "moss_tts_local.request_char_count", len(text)),
+                    timing_line(ts, "moss_tts_local.prefix_len", prompt_stats["moss_tts_local.prefix_len"]),
+                    timing_line(ts, "moss_tts_local.prefix_hash", prompt_stats["moss_tts_local.prefix_hash"]),
+                    timing_line(ts, "moss_tts_local.prefix_audio_nonpad", prompt_stats["moss_tts_local.prefix_audio_nonpad"]),
                     timing_line(ts, "moss_tts_local.request_wall_ms", wall_ms),
                     timing_line(ts, "moss_tts_local.audio_seconds", seconds),
                     timing_line(ts, "moss_tts_local.rtf", (wall_ms / 1000.0) / seconds if seconds > 0.0 else 0.0),

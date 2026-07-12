@@ -110,10 +110,12 @@ std::vector<std::vector<int32_t>> MossAudioTokenizerEncoder::encode(
         throw std::runtime_error("MOSS codec encoder requires a non-empty waveform");
     }
 
-    // Pad each channel up to a multiple of the downsample rate, then interleave
-    // the two channels into one stream (even = left, odd = right), matching the
-    // codec's _flatten_channels_for_codec.
+    // Pad each channel up to a multiple of the downsample rate for the encoder graph,
+    // but keep the official valid code length as floor(valid_samples / samples_per_frame).
+    // MossAudioTokenizerPatchedPretransform pads the tensor and propagates input_lengths
+    // with integer division, then slices audio_codes to audio_codes_lengths.
     const int64_t frames = (raw_per_channel + impl_->samples_per_frame - 1) / impl_->samples_per_frame;
+    const int64_t valid_frames = raw_per_channel / impl_->samples_per_frame;
     const int64_t per_channel = frames * impl_->samples_per_frame;
     const int64_t interleaved = per_channel * 2;
     std::vector<float> waveform(static_cast<size_t>(interleaved), 0.0F);
@@ -210,7 +212,11 @@ std::vector<std::vector<int32_t>> MossAudioTokenizerEncoder::encode(
     ggml_backend_tensor_get(hidden.tensor, latent.data(), 0, latent.size() * sizeof(float));
     ggml_gallocr_free(gallocr);
 
-    return impl_->quantizer->encode(latent, steps);
+    if (valid_frames <= 0) {
+        throw std::runtime_error("MOSS codec encoder input is shorter than one codec frame");
+    }
+    latent.resize(static_cast<size_t>(valid_frames * cd::kCodeDim));
+    return impl_->quantizer->encode(latent, valid_frames);
 }
 
 }  // namespace engine::models::moss

@@ -33,6 +33,16 @@ int int_arg(int argc, char ** argv, const std::string & name, int fallback) {
     return std::stoi(arg_value(argc, argv, name, std::to_string(fallback)));
 }
 
+engine::core::BackendType parse_backend(const std::string & name) {
+    if (name == "cpu") {
+        return engine::core::BackendType::Cpu;
+    }
+    if (name == "cuda") {
+        return engine::core::BackendType::Cuda;
+    }
+    throw std::runtime_error("unsupported codec_encode_parity backend: " + name);
+}
+
 std::vector<float> read_f32(const std::string & path, size_t expected) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
@@ -82,6 +92,8 @@ int main(int argc, char ** argv) {
         const int samples = int_arg(argc, argv, "--samples", 96000);
         const int num_quantizers = int_arg(argc, argv, "--quantizers", 12);
         const int threads = int_arg(argc, argv, "--threads", 16);
+        const std::string backend_name = arg_value(argc, argv, "--backend", "cpu");
+        const int device = int_arg(argc, argv, "--device", 0);
 
         std::cout << "loading prepared waveform [" << channels << "," << samples << "]...\n" << std::flush;
         const auto wav = read_f32(prepared, static_cast<size_t>(channels) * static_cast<size_t>(samples));
@@ -97,8 +109,8 @@ int main(int argc, char ** argv) {
         constexpr size_t kGraphArenaBytes = 2048ull * 1024 * 1024;
 
         engine::core::BackendConfig backend_config;
-        backend_config.type = engine::core::BackendType::Cpu;
-        backend_config.device = 0;
+        backend_config.type = parse_backend(backend_name);
+        backend_config.device = device;
         backend_config.threads = threads;
         engine::core::ExecutionContext execution_context(backend_config);
 
