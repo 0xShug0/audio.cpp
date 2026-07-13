@@ -1217,7 +1217,8 @@ std::filesystem::path materialize_gguf_sidecars(const std::filesystem::path & pa
     }
     const auto fingerprint_source = canonical.string() + ":" +
         std::to_string(std::filesystem::file_size(canonical)) + ":" +
-        std::to_string(std::filesystem::last_write_time(canonical).time_since_epoch().count());
+        std::to_string(static_cast<long long>(
+            std::filesystem::last_write_time(canonical).time_since_epoch().count()));
     std::ostringstream fingerprint;
     fingerprint << std::hex << std::hash<std::string>{}(fingerprint_source);
     const auto root = std::filesystem::temp_directory_path() / "audiocpp-gguf" / fingerprint.str();
