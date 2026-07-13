@@ -52,15 +52,17 @@ Offline:
 audiocpp_cli --task asr --family higgs_audio_stt --model models/higgs-audio-v3-stt --backend cuda --audio speech_16k.wav --text "Transcribe the speech." --text-out transcript.txt
 ```
 
-Standalone Q8_0 GGUF conversion uses the two-shard index. Copy the shared Whisper
-preprocessor configuration beside the index before conversion so it is embedded:
+Standalone Q8_0 GGUF conversion uses the two-shard index. Map the shared Whisper
+preprocessor configuration into the GGUF so the original directory layout is not required:
 
 ```powershell
-Copy-Item models\whisper-large-v3\preprocessor_config.json models\higgs-audio-v3-stt\preprocessor_config.json
-audiocpp_gguf.exe --input models\higgs-audio-v3-stt\model.safetensors.index.json --output models\higgs-audio-v3-stt-Q8_0\model.gguf --type q8_0
+audiocpp_gguf.exe --input models\higgs-audio-v3-stt\model.safetensors.index.json --root models\higgs-audio-v3-stt --sidecar models\whisper-large-v3\preprocessor_config.json=preprocessor_config.json --output models\higgs-audio-v3-stt-Q8_0\model.gguf --type q8_0
 ```
 
-The resulting output directory may contain only `model.gguf`.
+The shared `whisper-large-v3/preprocessor_config.json` is required only as an input while
+creating the GGUF. Once embedded, the resulting GGUF can be moved to an unrelated
+directory, renamed, and passed directly to `--model`; the external Whisper file and
+directory are no longer required at runtime.
 
 Streaming:
 

@@ -701,7 +701,9 @@ and Qwen3 ASR, Nemotron ASR, VibeVoice-ASR, and Higgs Audio STT can load the res
 `model.gguf` as a standalone file. Pass `--no-sidecars` when a tensor-only container is desired. A
 `model.safetensors.index.json` is also a first-class tensor source and is merged from
 its routed shards while converting. Exact original tensor ranks are stored separately
-because GGML normally collapses trailing singleton dimensions.
+because GGML normally collapses trailing singleton dimensions. Rank-0 safetensors
+scalars are stored physically as one-element GGML tensors while their scalar rank is
+preserved in the exact-shape metadata.
 
 ```bash
 build/bin/audiocpp_gguf \
@@ -709,6 +711,32 @@ build/bin/audiocpp_gguf \
   --output models/Qwen3-ASR-1.7B-hf/model.gguf \
   --type q8_0
 ```
+
+Multi-component checkpoints can be packed into one GGUF with repeated namespaced
+inputs. Existing component loaders can open a namespace through
+`open_tensor_source(path, "component")`, which strips that prefix from the view:
+
+```bash
+build/bin/audiocpp_gguf \
+  --input gpt=models/index-tts2-mlx/gpt.safetensors \
+  --input s2mel=models/index-tts2-mlx/s2mel.safetensors \
+  --input bigvgan=models/index-tts2-mlx/bigvgan/model.safetensors \
+  --root models/index-tts2-mlx \
+  --sidecar models/shared/preprocessor_config.json=preprocessor_config.json \
+  --output models/index-tts2-mlx-GGUF/model.gguf \
+  --type q8_0
+```
+
+`--root` selects the directory whose non-weight sidecars are embedded. Repeat
+`--sidecar source=destination` for required assets outside that root, or to remap an
+asset such as Higgs Audio STT's shared Whisper `preprocessor_config.json` into the
+standalone model root. For Higgs, that external Whisper file is needed only during GGUF
+creation; it is not required when loading the completed standalone GGUF.
+
+Packing is a container feature; it does not by itself wire every model loader to the new
+layout. The packed IndexTTS-2 MLX checkpoint has been conversion-tested, including its
+CAMPPlus rank-0 counters, but the existing IndexTTS-2 runtime still has to open and consume
+the corresponding namespaces before audio.cpp can synthesize directly from that file.
 
 Supported conversion types are `f16`, `q8_0`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, and
 `q6_k`. Quantized GGUF files use mixed precision: projection matrices are quantized,

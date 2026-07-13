@@ -136,6 +136,25 @@ void set_backend_tensor_from_f32_parallel(
     const core::TensorShape & shape,
     ggml_type type);
 std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::path & path);
+std::shared_ptr<const TensorSource> open_tensor_source(
+    const std::filesystem::path & path,
+    std::string_view tensor_prefix);
+struct TensorSourceInput {
+    std::filesystem::path path;
+    std::string tensor_prefix;
+};
+struct GgufEmbeddedFile {
+    std::filesystem::path source_path;
+    std::filesystem::path destination;
+};
+void convert_tensor_sources_to_gguf(
+    const std::vector<TensorSourceInput> & inputs,
+    const std::filesystem::path & output_path,
+    TensorStorageType weight_type,
+    bool overwrite = false,
+    bool embed_sidecars = true,
+    const std::filesystem::path & sidecar_root = {},
+    const std::vector<GgufEmbeddedFile> & extra_sidecars = {});
 void convert_tensor_source_to_gguf(
     const std::filesystem::path & input_path,
     const std::filesystem::path & output_path,
