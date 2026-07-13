@@ -1,6 +1,6 @@
 #include "engine/models/hviske_asr/loader.h"
 
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/models/hviske_asr/session.h"
 
 #include <stdexcept>
@@ -9,28 +9,8 @@
 namespace engine::models::hviske_asr {
 namespace {
 
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("Hviske ASR model path does not exist: " + model_path.string());
-}
-
-bool has_hviske_assets(const std::filesystem::path & root) {
-    return engine::io::is_existing_file(root / "config.json") &&
-        engine::io::is_existing_file(root / "model.safetensors") &&
-        engine::io::is_existing_file(root / "tokenizer.model");
-}
-
-std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoadRequest & request) {
-    return runtime::discover_named_assets(resolve_model_root(request.model_path), {"config.json", "generation_config.json"});
-}
-
-std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoadRequest & request) {
-    return runtime::discover_named_assets(resolve_model_root(request.model_path), {"model.safetensors"});
+std::filesystem::path spec_path() {
+    return engine::assets::default_model_package_spec_path("hviske_asr");
 }
 
 class HviskeASRLoader final : public runtime::IVoiceModelLoader {
@@ -41,34 +21,33 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
-            const auto root = resolve_model_root(request.model_path);
-            if (!has_hviske_assets(root)) {
-                return false;
-            }
-            const auto assets = load_hviske_assets(root);
-            return assets->config.model_type == "cohere_asr" &&
-                (!request.family_hint.has_value() || *request.family_hint == family());
+            (void) engine::assets::load_resource_bundle_from_package_spec(request.model_path, spec_path());
+            return !request.family_hint.has_value() || *request.family_hint == family();
         } catch (...) {
             return false;
         }
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_hviske_assets(resolve_model_root(request.model_path));
+        const auto assets = load_hviske_assets(request.model_path);
         runtime::ModelInspection inspection;
-        inspection.model_root = assets->model_root;
+        inspection.model_root = assets->resources.model_root();
         inspection.metadata.family = family();
         inspection.metadata.variant = assets->config.variant.empty() ? assets->config.model_type : assets->config.variant;
-        inspection.metadata.description = "Hviske/Cohere ASR loaded from local safetensors assets.";
-        inspection.metadata.config_candidates = {"config.json", "generation_config.json"};
-        inspection.metadata.weight_candidates = {"model.safetensors"};
+        inspection.metadata.description = "Hviske/Cohere ASR loaded from local tensor assets.";
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::Asr, {runtime::RunMode::Offline}},
         };
         inspection.capabilities.languages = assets->config.supported_languages;
         inspection.capabilities.supports_timestamps = false;
-        inspection.discovered_configs = discover_config_assets(request);
-        inspection.discovered_weights = discover_weight_assets(request);
+        inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
+            request.model_path,
+            spec_path(),
+            engine::assets::ModelPackageResourceKind::Files);
+        inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
+            request.model_path,
+            spec_path(),
+            engine::assets::ModelPackageResourceKind::Tensors);
         inspection.cli.request_options = {
             {"language", "code", "ASR language code; defaults to da."},
             {"punctuation", "bool", "Enable or disable punctuation tokens in the decoder prompt."},
@@ -93,7 +72,7 @@ public:
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_hviske_asr_model(resolve_model_root(request.model_path));
+        return load_hviske_asr_model(request.model_path);
     }
 };
 
@@ -133,9 +112,7 @@ std::unique_ptr<HviskeASRLoadedModel> load_hviske_asr_model(const std::filesyste
     runtime::ModelMetadata metadata;
     metadata.family = "hviske_asr";
     metadata.variant = assets->config.variant.empty() ? assets->config.model_type : assets->config.variant;
-    metadata.description = "Hviske/Cohere ASR loaded from local safetensors assets.";
-    metadata.config_candidates = {"config.json", "generation_config.json"};
-    metadata.weight_candidates = {"model.safetensors"};
+    metadata.description = "Hviske/Cohere ASR loaded from local tensor assets.";
 
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {

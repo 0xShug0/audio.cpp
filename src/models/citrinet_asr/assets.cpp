@@ -1,6 +1,6 @@
 #include "engine/models/citrinet_asr/assets.h"
 
-#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/assets/weight_metadata.h"
 #include "engine/framework/io/filesystem.h"
@@ -15,25 +15,6 @@
 namespace engine::models::citrinet_asr {
 namespace io = engine::io;
 namespace asset_meta = engine::assets;
-CitrinetAssetPaths resolve_citrinet_assets(const std::filesystem::path & checkpoint_path) {
-    assets::ResourceBundle resources(checkpoint_path.parent_path());
-    resources.add_file("weights", checkpoint_path);
-    resources.add_file("config", assets::checkpoint_sidecar_config_path(checkpoint_path));
-
-    const auto config = resources.parse_json("config");
-    const auto * vocab_file = config.find("vocab_file");
-    if (vocab_file == nullptr || !vocab_file->is_string()) {
-        throw std::runtime_error("Citrinet config is missing vocab_file");
-    }
-    resources.add_model_file("vocab", vocab_file->as_string());
-
-    CitrinetAssetPaths paths;
-    paths.model_root = resources.model_root();
-    paths.checkpoint_path = resources.require_file("weights");
-    paths.config_path = resources.require_file("config");
-    paths.vocab_path = resources.require_file("vocab");
-    return paths;
-}
 
 namespace {
 
@@ -153,20 +134,17 @@ CitrinetConfig parse_config(const io::json::Value & root) {
     return cfg;
 }
 
-CitrinetWeights load_citrinet_weights(const std::filesystem::path & checkpoint_path) {
-    const auto assets = resolve_citrinet_assets(checkpoint_path);
+CitrinetWeights load_citrinet_weights(engine::assets::ResourceBundle resources) {
     CitrinetWeights weights;
-    engine::assets::ResourceBundle resources(assets.model_root);
-    resources.add_file("weights", assets.checkpoint_path);
     const auto source = resources.open_tensor_source("weights");
     weights.source = source;
-    weights.config = parse_config(io::json::parse_file(assets.config_path));
+    weights.config = parse_config(resources.parse_json("config"));
     weights.window = source->require_f32("preprocessor.featurizer.window", {weights.config.win_length});
     weights.fb = source->require_f32(
         "preprocessor.featurizer.fb",
         {1, weights.config.n_mels, weights.config.n_fft / 2 + 1});
 
-    weights.vocab = load_vocab_file(assets.vocab_path);
+    weights.vocab = load_vocab_file(resources.require_file("vocab"));
     if (static_cast<int64_t>(weights.vocab.size()) != weights.config.vocab_size) {
         throw std::runtime_error("vocab size mismatch");
     }
@@ -262,10 +240,13 @@ std::string checkpoint_cache_key(const std::filesystem::path & checkpoint_path) 
 
 }  // namespace
 
-std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::filesystem::path & checkpoint_path) {
+std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::filesystem::path & model_path) {
     static std::mutex cache_mutex;
     static std::unordered_map<std::string, std::weak_ptr<const CitrinetWeights>> cache;
-    const auto key = checkpoint_cache_key(checkpoint_path);
+    auto resources = engine::assets::load_resource_bundle_from_package_spec(
+        model_path,
+        engine::assets::default_model_package_spec_path("citrinet_asr"));
+    const auto key = checkpoint_cache_key(resources.require_file("weights"));
     {
         std::lock_guard<std::mutex> lock(cache_mutex);
         if (const auto it = cache.find(key); it != cache.end()) {
@@ -274,7 +255,7 @@ std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::f
             }
         }
     }
-    auto loaded = std::make_shared<const CitrinetWeights>(load_citrinet_weights(checkpoint_path));
+    auto loaded = std::make_shared<const CitrinetWeights>(load_citrinet_weights(std::move(resources)));
     {
         std::lock_guard<std::mutex> lock(cache_mutex);
         cache[key] = loaded;

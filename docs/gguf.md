@@ -139,11 +139,11 @@ Status labels:
 |---|---|---|---|---|---|
 | `ace_step` | No | --- | --- | --- | --- |
 | `chatterbox` | No | --- | --- | --- | --- |
-| `citrinet_asr` | No | --- | --- | --- | --- |
+| `citrinet_asr` | Done | Pass | --- | --- | Pass |
 | `heartmula` | No | --- | --- | --- | --- |
 | `higgs_audio_stt` | Done | Pass | Pass | --- | Pass |
 | `htdemucs` | No | --- | --- | --- | --- |
-| `hviske_asr` | No | --- | --- | --- | --- |
+| `hviske_asr` | Done | Pass | --- | --- | Pass |
 | `index_tts2` | Done | Pass | Pass (drift) | Pass | No (similarity drift, frame drift, text minor drift) |
 | `irodori_tts` | Done | Pass | Pass | --- | Pass (drift) |
 | `marblenet_vad` | No | --- | --- | --- | --- |

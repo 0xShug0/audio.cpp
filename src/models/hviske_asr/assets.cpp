@@ -1,6 +1,6 @@
 #include "engine/models/hviske_asr/assets.h"
 
-#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -21,8 +21,7 @@ std::vector<std::string> string_array(const engine::io::json::Value & value) {
     return out;
 }
 
-HviskeConfig load_config(const std::filesystem::path & path) {
-    const auto root = engine::io::json::parse_file(path);
+HviskeConfig load_config(const engine::io::json::Value & root) {
     HviskeConfig config;
     config.model_type = root.require("model_type").as_string();
     if (const auto * architectures = root.find("architectures");
@@ -68,8 +67,7 @@ HviskeConfig load_config(const std::filesystem::path & path) {
     return config;
 }
 
-void apply_generation_config(HviskeConfig & config, const std::filesystem::path & path) {
-    const auto root = engine::io::json::parse_file(path);
+void apply_generation_config(HviskeConfig & config, const engine::io::json::Value & root) {
     config.decoder.pad_token_id = root.require("pad_token_id").as_i64();
     config.decoder.eos_token_id = root.require("eos_token_id").as_i64();
     config.decoder.bos_token_id = root.require("bos_token_id").as_i64();
@@ -78,24 +76,19 @@ void apply_generation_config(HviskeConfig & config, const std::filesystem::path 
 
 }  // namespace
 
-std::shared_ptr<const HviskeAssets> load_hviske_assets(const std::filesystem::path & model_root) {
-    engine::assets::ResourceBundle resources(model_root);
-    resources.add_model_files({
-        {"config", "config.json"},
-        {"generation_config", "generation_config.json"},
-        {"tokenizer", "tokenizer.model"},
-        {"weights", "model.safetensors"},
-    });
-
+std::shared_ptr<const HviskeAssets> load_hviske_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<HviskeAssets>();
-    assets->model_root = resources.model_root();
-    assets->config = load_config(resources.require_file("config"));
-    apply_generation_config(assets->config, resources.require_file("generation_config"));
+    assets->resources = engine::assets::load_resource_bundle_from_package_spec(
+        model_path,
+        engine::assets::default_model_package_spec_path("hviske_asr"));
+    assets->config = load_config(assets->resources.parse_json("config"));
+    apply_generation_config(assets->config, assets->resources.parse_json("generation_config"));
     if (assets->config.model_type != "cohere_asr") {
         throw std::runtime_error("Hviske ASR expects Cohere ASR config, got: " + assets->config.model_type);
     }
-    assets->tokenizer_pieces = engine::tokenizers::load_sentencepiece_model(resources.require_file("tokenizer"));
-    assets->model_weights = resources.open_tensor_source("weights");
+    assets->tokenizer_pieces = engine::tokenizers::load_sentencepiece_model(
+        assets->resources.require_file("tokenizer"));
+    assets->model_weights = assets->resources.open_tensor_source("weights");
     return assets;
 }
 

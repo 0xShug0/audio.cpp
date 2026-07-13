@@ -1,0 +1,34 @@
+{
+  "family": "citrinet_asr",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:citrinet_256_config.json",
+        "tokenizer": "model:citrinet_256_tokenizer.model",
+        "vocab": "model:citrinet_256_vocab.txt"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:citrinet_256_config.json",
+        "tokenizer": "model:citrinet_256_tokenizer.model",
+        "vocab": "model:citrinet_256_vocab.txt"
+      },
+      "tensors": {
+        "weights": "model:citrinet_256.safetensors"
+      }
+    }
+  ]
+}

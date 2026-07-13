@@ -27,6 +27,15 @@ Citrinet is an offline CTC ASR model. It produces transcription text from speech
 audiocpp_cli --task asr --family citrinet_asr --model models/citrinet --backend cuda --audio speech_16k.wav
 ```
 
+Create a standalone Q8_0 GGUF from the converted Citrinet safetensors layout:
+
+```powershell
+audiocpp_gguf.exe --input models\citrinet\citrinet_256.safetensors --root models\citrinet --output models\citrinet-Q8_0\model.gguf --type q8_0
+```
+
+The GGUF embeds `citrinet_256_config.json` and the vocabulary/tokenizer sidecars, so the
+completed `model.gguf` can be moved, renamed, and passed directly to `--model`.
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. Use 16 kHz WAV for the example path. |
@@ -99,6 +108,15 @@ Hviske ASR is an offline Cohere ASR model path. The integration exposes Danish p
 ```bash
 audiocpp_cli --task asr --family hviske_asr --model models/hviske-v5.3 --backend cuda --audio speech_16k.wav --text-out transcript.txt
 ```
+
+Create a standalone Q8_0 GGUF:
+
+```powershell
+audiocpp_gguf.exe --input models\hviske-v5.3\model.safetensors --root models\hviske-v5.3 --output models\hviske-v5.3-Q8_0\model.gguf --type q8_0
+```
+
+Configuration, generation settings, and the SentencePiece tokenizer are embedded. The
+completed GGUF can therefore be moved, renamed, and passed directly to `--model`.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|

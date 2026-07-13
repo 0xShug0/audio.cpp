@@ -706,11 +706,12 @@ The framework also has a reusable GGUF tensor source and a streaming converter. 
 container reader is shared by all model families; a family still has to list a `.gguf`
 checkpoint as one of its accepted assets because model configuration and tensor naming
 remain architecture-specific. Qwen3 ASR, Qwen3 Forced Aligner, Qwen3 TTS, Nemotron
-3.5 ASR, VibeVoice-ASR, and Higgs Audio STT currently accept `model.gguf` (including
-`speech_tokenizer/model.gguf` for TTS). The converter recursively embeds sidecar files
+3.5 ASR, VibeVoice-ASR, Higgs Audio STT, Hviske ASR, and Citrinet ASR currently accept
+`model.gguf` (including `speech_tokenizer/model.gguf` for TTS). The converter recursively embeds sidecar files
 up to 64 MiB by default using binary-safe metadata, including nested tokenizer models,
-and Qwen3 ASR, Nemotron ASR, VibeVoice-ASR, and Higgs Audio STT can load the resulting
-`model.gguf` as a standalone file. Pass `--no-sidecars` when a tensor-only container is desired. A
+and Qwen3 ASR, Nemotron ASR, VibeVoice-ASR, Higgs Audio STT, Hviske ASR, and Citrinet
+ASR can load the resulting `model.gguf` as a standalone file. Pass `--no-sidecars` when a
+tensor-only container is desired. A
 `model.safetensors.index.json` is also a first-class tensor source and is merged from
 its routed shards while converting. Exact original tensor ranks are stored separately
 because GGML normally collapses trailing singleton dimensions. Rank-0 safetensors

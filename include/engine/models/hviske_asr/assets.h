@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/tokenizers/sentencepiece.h"
 
 #include <cstdint>
@@ -63,13 +63,13 @@ struct HviskeConfig {
 };
 
 struct HviskeAssets {
-    std::filesystem::path model_root;
+    engine::assets::ResourceBundle resources;
     HviskeConfig config;
     std::vector<engine::tokenizers::SentencePiecePiece> tokenizer_pieces;
     std::shared_ptr<const engine::assets::TensorSource> model_weights;
 };
 
-std::shared_ptr<const HviskeAssets> load_hviske_assets(const std::filesystem::path & model_root);
+std::shared_ptr<const HviskeAssets> load_hviske_assets(const std::filesystem::path & model_path);
 
 std::vector<int32_t> tokenize_hviske_prompt(
     const HviskeAssets & assets,

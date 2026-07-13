@@ -822,6 +822,17 @@ if (ENGINE_BUILD_TESTS)
         COMMAND scaled_dot_product_attention_test
     )
 
+    add_engine_unittest(asr_standalone_gguf_test tests/unittests/test_asr_standalone_gguf.cpp)
+    target_include_directories(asr_standalone_gguf_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+    target_compile_definitions(asr_standalone_gguf_test PRIVATE
+        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+    )
+
+    add_test(
+        NAME asr_standalone_gguf_test
+        COMMAND asr_standalone_gguf_test
+    )
+
     add_executable(server_multipart_test
         tests/unittests/test_server_multipart.cpp
         app/server/multipart.cpp

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/assets/resource_bundle.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -100,14 +100,6 @@ struct CitrinetWeights {
     std::vector<std::string> vocab;
 };
 
-struct CitrinetAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path checkpoint_path;
-    std::filesystem::path config_path;
-    std::filesystem::path vocab_path;
-};
-
-CitrinetAssetPaths resolve_citrinet_assets(const std::filesystem::path & checkpoint_path);
-std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::filesystem::path & checkpoint_path);
+std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::citrinet_asr
