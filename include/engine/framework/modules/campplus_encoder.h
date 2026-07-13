@@ -153,6 +153,7 @@ public:
         const std::vector<float> & features,
         int64_t frames,
         int64_t dims) const;
+    void release_runtime_graph();
 
 private:
     struct State;

@@ -1,54 +1,96 @@
 {
-  "long_session_100_500_1024_500": {
+  "short_len500": {
+    "requests": [
+      {
+        "id": "len500",
+        "length": 500,
+        "text": "Supertonic short CPU request validates the single request warmbench path with clear speech and stable timing. Supertonic short CPU request validates the single request warmbench path with clear speech and stable timing. Supertonic short CPU request validates the single request warmbench path with clear speech and stable timing. Supertonic short CPU request validates the single request warmbench path with clear speech and stable timing. Supertonic short CPU request validates the single request warmbench path.",
+        "language": "en",
+        "voice": "M1",
+        "total_steps": 10,
+        "speed": 1.05,
+        "seed": 1234
+      }
+    ]
+  },
+  "multi_path_voice_lang_steps_speed_chunking": {
     "warmup": {
       "id": "warmup",
-      "text": "Supertonic warmup request keeps the long session ready.",
+      "text": "Supertonic warmup request keeps the multi path session ready.",
       "language": "en",
       "voice": "M1",
-      "total_steps": 10,
+      "total_steps": 8,
+      "num_inference_steps": 8,
       "speed": 1.05,
+      "speaking_rate": 1.05,
       "seed": 1234
     },
     "requests": [
       {
-        "id": "len100",
-        "length": 100,
-        "text": "Supertonic long session request 1 validates session graph reuse with clear speech and stable timing.",
+        "id": "english_male_default",
+        "text": "The startup secured $5.2M in venture capital, a huge leap from the initial $450K seed round.",
         "language": "en",
         "voice": "M1",
-        "total_steps": 10,
+        "total_steps": 8,
+        "num_inference_steps": 8,
         "speed": 1.05,
+        "speaking_rate": 1.05,
         "seed": 1234
       },
       {
-        "id": "len500_first",
-        "length": 500,
-        "text": "Supertonic long session request 1 validates session graph reuse with clear speech and stable timing. Supertonic long session request 2 validates session graph reuse with clear speech and stable timing. Supertonic long session request 3 validates session graph reuse with clear speech and stable timing. Supertonic long session request 4 validates session graph reuse with clear speech and stable timing. Supertonic long session request 5 validates session graph reuse with clear speech and stable ti.",
-        "language": "en",
-        "voice": "M1",
-        "total_steps": 10,
+        "id": "language_agnostic_female",
+        "text": "Bonjour from the language agnostic path, with plain ASCII text for tokenizer compatibility.",
+        "language": "na",
+        "voice": "F1",
+        "total_steps": 8,
+        "num_inference_steps": 8,
         "speed": 1.05,
-        "seed": 1234
+        "speaking_rate": 1.05,
+        "seed": 2234
       },
       {
-        "id": "len1024",
-        "length": 1024,
-        "text": "Supertonic long session request 1 validates session graph reuse with clear speech and stable timing. Supertonic long session request 2 validates session graph reuse with clear speech and stable timing. Supertonic long session request 3 validates session graph reuse with clear speech and stable timing. Supertonic long session request 4 validates session graph reuse with clear speech and stable timing. Supertonic long session request 5 validates session graph reuse with clear speech and stable timing. Supertonic long session request 6 validates session graph reuse with clear speech and stable timing. Supertonic long session request 7 validates session graph reuse with clear speech and stable timing. Supertonic long session request 8 validates session graph reuse with clear speech and stable timing. Supertonic long session request 9 validates session graph reuse with clear speech and stable timing. Supertonic long session request 10 validates session graph reuse with clear speech and stable timing. Supertonic l.",
+        "id": "english_faster_female",
+        "text": "This announcement is synthesized at a faster pace so the warmbench covers the official speed control path.",
         "language": "en",
-        "voice": "M1",
-        "total_steps": 10,
-        "speed": 1.05,
-        "seed": 1234
+        "voice": "F2",
+        "total_steps": 8,
+        "num_inference_steps": 8,
+        "speed": 1.2,
+        "speaking_rate": 1.2,
+        "seed": 3234
       },
       {
-        "id": "len500_second",
-        "length": 500,
-        "text": "Supertonic long session request 1 validates session graph reuse with clear speech and stable timing. Supertonic long session request 2 validates session graph reuse with clear speech and stable timing. Supertonic long session request 3 validates session graph reuse with clear speech and stable timing. Supertonic long session request 4 validates session graph reuse with clear speech and stable timing. Supertonic long session request 5 validates session graph reuse with clear speech and stable ti.",
-        "language": "en",
-        "voice": "M1",
+        "id": "japanese_slow_high_quality",
+        "text": "こんにちは。さようなら。ゆっくりはなします。",
+        "language": "ja",
+        "voice": "M2",
         "total_steps": 10,
+        "num_inference_steps": 10,
+        "speed": 0.9,
+        "speaking_rate": 0.9,
+        "seed": 4234
+      },
+      {
+        "id": "korean_hangul_decomposition",
+        "text": "안녕하세요. 한국어 음성 합성 경로를 확인합니다.",
+        "language": "ko",
+        "voice": "F3",
+        "total_steps": 8,
+        "num_inference_steps": 8,
         "speed": 1.05,
-        "seed": 1234
+        "speaking_rate": 1.05,
+        "seed": 4734
+      },
+      {
+        "id": "english_longform_chunking",
+        "text": "Once upon a time, in a small village nestled between rolling hills, there lived a young artist named Clara. Every morning, she woke before dawn to capture the first light of day. The golden rays streaming through her window inspired countless paintings. Her work was known throughout the region for vibrant colors and emotional depth. People from far and wide came to see her gallery, and many said her paintings could tell stories that words never could.",
+        "language": "en",
+        "voice": "M4",
+        "total_steps": 8,
+        "num_inference_steps": 8,
+        "speed": 1.05,
+        "speaking_rate": 1.05,
+        "seed": 5234
       }
     ]
   }

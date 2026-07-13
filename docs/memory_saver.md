@@ -29,6 +29,8 @@ Native/default weights were used for all rows.
 - Chatterbox used one fixed-seed voice-clone request with native/default weights and no explicit max token cap.
 - Qwen3 TTS Base used a five-request voice-clone server sequence: two small requests, one 6026-character long request with `max_tokens=4096`, then two small requests. Peak VRAM was sampled during each request; resident VRAM is the post-response value after the long request.
 - VoxCPM2 used the OpenAI-compatible offline speech endpoint with a 2048-character voice-design request, `seed=1234`, `max_tokens=512`, `num_inference_steps=10`, and `guidance_scale=2.0`. The default and `mem_saver` WAV outputs were byte-identical.
+- IndexTTS2 used a five-request server sequence with the same seeds and references for default and `mem_saver`: normal text, longer text, longer emotion-text request with a different reference, shorter text, then longer text.
+- Irodori TTS 500M used a five-request server sequence with the same seeds and options for default and `mem_saver`: reference text, longer reference text, longer no-reference emoji/style text, shorter reference text, then longer reference text.
 
 | Model | Mode | Peak VRAM | Resident VRAM | Server wall | Audio | RTF |
 |---|---|---:|---:|---:|---:|---:|
@@ -50,3 +52,9 @@ Native/default weights were used for all rows.
 | Qwen3 TTS Base voice clone | mem_saver | 7520 MiB | 5684 MiB | 121919.91 ms | 327.6s | 0.372161 |
 | VoxCPM2 offline voice design | default | 13080 MiB | 13039 MiB | 15325.7 ms | 93.12s | 0.16458 |
 | VoxCPM2 offline voice design | mem_saver | 12456 MiB | 5966 MiB | 14924 ms | 93.12s | 0.160266 |
+| IndexTTS2 | default | 12272 MiB | 12072 MiB | 35215.67 ms | 104.889s | 0.335743 |
+| IndexTTS2 | mem_saver | 11445 MiB | 8947 MiB | 35740.72 ms | 104.436s | 0.342226 |
+| Irodori TTS 500M | default | 14112 MiB | 13588 MiB | 3289.85 ms | 95.4s | 0.0344848 |
+| Irodori TTS 500M | mem_saver | 11222 MiB | 3570 MiB | 3276.203 ms | 95.4s | 0.0343418 |
+| Irodori TTS 500M 6000-char | default | 18693 MiB | 13367 MiB | 27185.7 ms | 777.92s | 0.0349466 |
+| Irodori TTS 500M 6000-char | mem_saver | 11588 MiB | 3609 MiB | 27828 ms | 777.92s | 0.0357724 |

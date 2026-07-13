@@ -1,6 +1,7 @@
 #include "engine/framework/modules/streaming_conv_modules.h"
 
 #include "tensor_layout_utils.h"
+#include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/structural_modules.h"
 
 #include <stdexcept>
@@ -138,6 +139,32 @@ core::TensorValue PointwiseConv1dModule::build(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const PointwiseConv1dWeights & weights) const {
+    if (config_.quant) {
+        core::validate_rank_between(input, 3, 3, "input");
+        core::validate_shape(
+            input,
+            core::TensorShape::from_dims({input.shape.dims[0], config_.in_channels, input.shape.dims[2]}),
+            "input");
+        core::TensorValue weight = weights.weight;
+        if (weight.shape.rank == 3) {
+            core::validate_shape(
+                weight,
+                core::TensorShape::from_dims({config_.out_channels, config_.in_channels, 1}),
+                "weight");
+            weight = core::reshape_tensor(
+                ctx,
+                weight,
+                core::TensorShape::from_dims({config_.out_channels, config_.in_channels}));
+        } else {
+            core::validate_shape(
+                weight,
+                core::TensorShape::from_dims({config_.out_channels, config_.in_channels}),
+                "weight");
+        }
+        auto x = TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input);
+        x = LinearModule({config_.in_channels, config_.out_channels, config_.use_bias}).build(ctx, x, {weight, weights.bias});
+        return TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
+    }
     return Conv1dModule({config_.in_channels, config_.out_channels, 1, 1, 0, 1, config_.use_bias}).build(ctx, input, weights);
 }
 

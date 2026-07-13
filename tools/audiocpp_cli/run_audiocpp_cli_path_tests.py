@@ -271,6 +271,24 @@ def materialize_request_paths(request: dict[str, Any]) -> dict[str, Any]:
         if repeat <= 0:
             raise RuntimeError("text_repeat must be positive")
         out["text"] = "\n".join(text.strip() for _ in range(repeat))
+    if "text_repeat" in out and isinstance(out["text_repeat"], dict):
+        if "text" in out:
+            raise RuntimeError("request cannot contain both text and text_repeat")
+        spec = out.pop("text_repeat")
+        text = str(spec["text"])
+        chars = int(spec["chars"])
+        if not text or chars <= 0:
+            raise RuntimeError("text_repeat requires non-empty text and positive chars")
+        out["text"] = (text * ((chars // len(text)) + 1))[:chars]
+    if "emotion_repeat" in out:
+        if "emotion" in out:
+            raise RuntimeError("request cannot contain both emotion and emotion_repeat")
+        spec = out.pop("emotion_repeat")
+        text = str(spec["text"])
+        chars = int(spec["chars"])
+        if not text or chars <= 0:
+            raise RuntimeError("emotion_repeat requires non-empty text and positive chars")
+        out["emotion"] = (text * ((chars // len(text)) + 1))[:chars]
     for key in ("audio", "voice_ref", "source_audio", "target_voice", "prosody_ref", "style_ref"):
         if key in out:
             out[key] = maybe_absolute_path(out[key])
@@ -351,6 +369,8 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
     ]
     append_key_values(command, "--load-option", case.get("load_options", {}))
     append_key_values(command, "--session-option", case.get("session_options", {}))
+    for override in getattr(args, "session_option", []) or []:
+        command.extend(["--session-option", override])
     if args.log:
         command.append("--log")
 
@@ -485,6 +505,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resource-sample-ms", type=int, default=DEFAULT_RESOURCE_SAMPLE_MS)
     parser.add_argument("--out-root", type=Path)
     parser.add_argument("--only", action="append", default=[], help="Case id or comma-separated case ids")
+    parser.add_argument(
+        "--session-option",
+        action="append",
+        default=[],
+        help="Extra key=value session option appended to every case (e.g. moss_tts_local.weight_type=f32)",
+    )
     parser.add_argument("--family", help="Run only cases for one family")
     parser.add_argument("--log", action="store_true")
     parser.add_argument("--list", action="store_true")

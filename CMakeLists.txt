@@ -144,6 +144,7 @@ add_library(engine_runtime STATIC
     src/framework/modules/hubert_encoder.cpp
     src/framework/modules/wavlm_encoder.cpp
     src/framework/modules/optimizations/fast_conv_modules.cpp
+    src/framework/modules/optimizations/fast_projection_modules.cpp
     src/framework/modules/recurrent_modules.cpp
     src/framework/modules/streaming_conv_modules.cpp
     src/framework/modules/attention/positional_encoding.cpp
@@ -153,6 +154,7 @@ add_library(engine_runtime STATIC
     src/framework/modules/attention/longformer_attention_gpu.cpp
     src/framework/modules/attention/common_relative_attention.cpp
     src/framework/modules/attention/relative_attention.cpp
+    src/framework/modules/attention/scaled_dot_product_attention.cpp
     src/framework/modules/attention/qwen_decoder.cpp
     src/framework/modules/attention/qwen_causal_decoder.cpp
     src/framework/modules/attention/cross_attention.cpp
@@ -232,6 +234,18 @@ add_library(engine_runtime STATIC
     src/models/miotts/causal_lm.cpp
     src/models/miotts/session.cpp
     src/models/miotts/loader.cpp
+    src/models/moss/moss_tts_local/assets.cpp
+    src/models/moss/moss_tts_local/backbone.cpp
+    src/models/moss/shared/audio_tokenizer_decoder.cpp
+    src/models/moss/shared/audio_tokenizer_encoder.cpp
+    src/models/moss/shared/audio_tokenizer_config.cpp
+    src/models/moss/shared/audio_tokenizer_quantizer.cpp
+    src/models/moss/shared/token_rows.cpp
+    src/models/moss/moss_tts_local/depth_transformer.cpp
+    src/models/moss/moss_tts_local/generator.cpp
+    src/models/moss/moss_tts_local/loader.cpp
+    src/models/moss/moss_tts_local/tokenizer_text.cpp
+    src/models/moss/moss_tts_local/session.cpp
     src/models/voxcpm2/assets.cpp
     src/models/voxcpm2/audiovae.cpp
     src/models/voxcpm2/generator.cpp
@@ -284,6 +298,27 @@ add_library(engine_runtime STATIC
     src/models/higgs_audio_stt/postprocess.cpp
     src/models/higgs_audio_stt/session.cpp
     src/models/higgs_audio_stt/loader.cpp
+    src/models/irodori_tts/assets.cpp
+    src/models/irodori_tts/codec.cpp
+    src/models/irodori_tts/condition_encoder.cpp
+    src/models/irodori_tts/duration.cpp
+    src/models/irodori_tts/loader.cpp
+    src/models/irodori_tts/rf_dit.cpp
+    src/models/irodori_tts/session.cpp
+    src/models/irodori_tts/tokenizer_text.cpp
+    src/models/index_tts2/assets.cpp
+    src/models/index_tts2/audio_features.cpp
+    src/models/index_tts2/gpt.cpp
+    src/models/index_tts2/loader.cpp
+    src/models/index_tts2/qwen_emotion.cpp
+    src/models/index_tts2/request.cpp
+    src/models/index_tts2/s2mel.cpp
+    src/models/index_tts2/semantic_codec.cpp
+    src/models/index_tts2/semantic_encoder.cpp
+    src/models/index_tts2/session.cpp
+    src/models/index_tts2/style_encoder.cpp
+    src/models/index_tts2/tokenizer_text.cpp
+    src/models/index_tts2/vocoder.cpp
     src/models/nemotron_asr/assets.cpp
     src/models/nemotron_asr/frontend.cpp
     src/models/nemotron_asr/encoder.cpp
@@ -348,6 +383,7 @@ add_library(engine_runtime STATIC
     src/models/chatterbox/t3_weights.cpp
     src/models/chatterbox/text_tokenizer.cpp
     src/models/chatterbox/tts.cpp
+    src/models/chatterbox/vc.cpp
     src/models/chatterbox/voice_encoder_impl.cpp
     src/models/qwen3_forced_aligner/processor.cpp
     src/models/qwen3_forced_aligner/session.cpp
@@ -385,6 +421,11 @@ add_library(engine_runtime STATIC
     src/models/stable_audio/sampler.cpp
     src/models/stable_audio/session.cpp
     src/models/stable_audio/t5gemma.cpp
+    src/models/supertonic/assets.cpp
+    src/models/supertonic/loader.cpp
+    src/models/supertonic/runtime.cpp
+    src/models/supertonic/session.cpp
+    src/models/supertonic/tokenizer_text.cpp
     src/models/sortformer_diar/assets.cpp
     src/models/sortformer_diar/frontend.cpp
     src/models/sortformer_diar/graph.cpp
@@ -547,6 +588,42 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+add_executable(moss_tts_local_smoke
+    tests/moss_tts_local/moss_tts_local_smoke.cpp
+)
+
+target_link_libraries(moss_tts_local_smoke PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(codec_dequant_parity
+    tests/moss_tts_local/codec_dequant_parity.cpp
+)
+
+target_link_libraries(codec_dequant_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(codec_dequant_parity PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(codec_decode_parity
+    tests/moss_tts_local/codec_decode_parity.cpp
+)
+
+target_link_libraries(codec_decode_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(codec_decode_parity PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(codec_encode_parity
+    tests/moss_tts_local/codec_encode_parity.cpp
+)
+
+target_link_libraries(codec_encode_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 if (ENGINE_BUILD_WARMBENCH)
     function(add_engine_warmbench target_name source_file)
         add_executable(${target_name}
@@ -562,8 +639,11 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)
+    add_engine_warmbench(index_tts2_warm_bench tests/index_tts2/index_tts2_warm_bench.cpp)
+    add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
+    add_engine_warmbench(moss_tts_local_warm_bench tests/moss_tts_local/moss_tts_local_warm_bench.cpp)
     add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)
     add_engine_warmbench(omnivoice_warm_bench tests/omnivoice/omnivoice_warm_bench.cpp)
     add_engine_warmbench(pocket_tts_warm_bench tests/pocket_tts/pocket_tts_warm_bench.cpp)
@@ -573,6 +653,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(seed_vc_warm_bench tests/seed_vc/seed_vc_warm_bench.cpp)
     add_engine_warmbench(silero_vad_warm_bench tests/silero_vad/silero_vad_warm_bench.cpp)
     add_engine_warmbench(sortformer_diar_warm_bench tests/sortformer_diar/sortformer_diar_warm_bench.cpp)
+    add_engine_warmbench(supertonic_warm_bench tests/supertonic/supertonic_warm_bench.cpp)
     add_engine_warmbench(vevo2_warm_bench tests/vevo2/vevo2_warm_bench.cpp)
     add_engine_warmbench(vibevoice_asr_warm_bench tests/vibevoice_asr/vibevoice_asr_warm_bench.cpp)
     add_engine_warmbench(voxcpm2_warm_bench tests/voxcpm2/voxcpm2_warm_bench.cpp)
@@ -607,6 +688,13 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME audio_dsp_test
         COMMAND audio_dsp_test
+    )
+
+    add_engine_unittest(wav_reader_test tests/unittests/test_wav_reader.cpp)
+
+    add_test(
+        NAME wav_reader_test
+        COMMAND wav_reader_test
     )
 
     add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
@@ -694,6 +782,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND conv_transpose_fast_path_test
     )
 
+    add_engine_unittest(supertonic_vector_convnext_exp_test tests/unittests/test_supertonic_vector_convnext_exp.cpp)
+
+    add_test(
+        NAME supertonic_vector_convnext_exp_test
+        COMMAND supertonic_vector_convnext_exp_test
+    )
+
     add_engine_unittest(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
 
     add_test(
@@ -707,6 +802,13 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME gguf_tensor_source_test
         COMMAND gguf_tensor_source_test
+    )
+
+    add_engine_unittest(scaled_dot_product_attention_test tests/unittests/test_scaled_dot_product_attention.cpp)
+
+    add_test(
+        NAME scaled_dot_product_attention_test
+        COMMAND scaled_dot_product_attention_test
     )
 
     add_executable(server_multipart_test

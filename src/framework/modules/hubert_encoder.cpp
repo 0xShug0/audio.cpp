@@ -342,6 +342,11 @@ public:
         return out;
     }
 
+    void release_runtime_graph() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        release_graph();
+    }
+
 private:
     void release_graph() {
         if (gallocr_ != nullptr) {
@@ -504,6 +509,12 @@ HubertEncoderOutput HubertEncoderComponent::encode(
         throw std::runtime_error("HuBERT component is not initialized");
     }
     return state_->runner->encode(input_values, batch, samples);
+}
+
+void HubertEncoderComponent::release_runtime_graph() {
+    if (state_ != nullptr && state_->runner != nullptr) {
+        state_->runner->release_runtime_graph();
+    }
 }
 
 }  // namespace engine::modules

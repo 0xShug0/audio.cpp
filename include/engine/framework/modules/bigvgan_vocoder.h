@@ -115,6 +115,7 @@ public:
         int64_t frames,
         int64_t chunk_frames,
         int64_t overlap_frames) const;
+    void release_runtime_graph();
 
 private:
     struct State;

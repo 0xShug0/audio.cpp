@@ -870,4 +870,15 @@ CampplusEncoderOutputs CampplusEncoderComponent::embed_from_features(
     return outputs;
 }
 
+void CampplusEncoderComponent::release_runtime_graph() {
+    if (state_ == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    state_->runner.reset();
+    state_->weights = nullptr;
+    state_->frames = 0;
+    state_->backend = {};
+}
+
 }  // namespace engine::modules

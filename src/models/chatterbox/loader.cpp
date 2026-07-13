@@ -38,6 +38,28 @@ std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoad
         });
 }
 
+bool has_chatterbox_tts_assets(const ChatterboxAssetPaths & assets) {
+    return !assets.voice_encoder_weights.empty() &&
+        !assets.t3_english_weights.empty() &&
+        !assets.t3_multilingual_v2_weights.empty() &&
+        !assets.t3_multilingual_v3_weights.empty() &&
+        !assets.english_tokenizer.empty() &&
+        !assets.multilingual_tokenizer.empty() &&
+        !assets.cangjie_mapping.empty();
+}
+
+runtime::CapabilitySet make_chatterbox_capabilities(const ChatterboxAssetPaths & assets) {
+    runtime::CapabilitySet capabilities;
+    if (has_chatterbox_tts_assets(assets)) {
+        capabilities.supported_tasks.push_back({runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}});
+        capabilities.languages = supported_chatterbox_language_codes();
+        capabilities.supports_style_condition = true;
+    }
+    capabilities.supported_tasks.push_back({runtime::VoiceTaskKind::VoiceConversion, {runtime::RunMode::Offline}});
+    capabilities.supports_speaker_reference = true;
+    return capabilities;
+}
+
 class ChatterboxLoader final : public runtime::IVoiceModelLoader {
 public:
     std::string family() const override {
@@ -57,12 +79,12 @@ public:
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
         const auto root = resolve_model_root(request.model_path);
-        (void) resolve_chatterbox_assets(root);
+        const auto assets = resolve_chatterbox_assets(root);
         runtime::ModelInspection inspection;
         inspection.model_root = root;
         inspection.metadata.family = family();
         inspection.metadata.variant = root.filename().string();
-        inspection.metadata.description = "Chatterbox voice cloning loaded from local assets.";
+        inspection.metadata.description = "Chatterbox voice cloning and voice conversion loaded from local assets.";
         inspection.metadata.config_candidates = {
             "tokenizer.json",
             "grapheme_mtl_merged_expanded_v1.json",
@@ -75,12 +97,7 @@ public:
             "s3gen.safetensors",
             "conds.pt",
         };
-        inspection.capabilities.supported_tasks = {
-            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
-        };
-        inspection.capabilities.languages = supported_chatterbox_language_codes();
-        inspection.capabilities.supports_speaker_reference = true;
-        inspection.capabilities.supports_style_condition = true;
+        inspection.capabilities = make_chatterbox_capabilities(assets);
         inspection.cli.session_options = {
             {
                 "--session-option chatterbox.conditionals_cache_slots",
@@ -91,6 +108,16 @@ public:
                 "--session-option chatterbox.mem_saver=true",
                 "",
                 "Free non-conditional runtime graphs after each request chunk; default false.",
+            },
+            {
+                "--source-audio",
+                "wav",
+                "Source speech audio for Chatterbox voice conversion.",
+            },
+            {
+                "--target-voice",
+                "wav",
+                "Target voice reference audio for Chatterbox voice conversion.",
             },
         };
         inspection.discovered_configs = discover_config_assets(request);
@@ -129,8 +156,13 @@ const runtime::CapabilitySet & ChatterboxLoadedModel::capabilities() const noexc
 std::unique_ptr<runtime::IVoiceTaskSession> ChatterboxLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.task != runtime::VoiceTaskKind::VoiceCloning) {
-        throw std::runtime_error("Chatterbox only supports VoiceTaskKind::VoiceCloning");
+    if (task.task != runtime::VoiceTaskKind::VoiceCloning &&
+        task.task != runtime::VoiceTaskKind::VoiceConversion) {
+        throw std::runtime_error("Chatterbox supports VoiceCloning and VoiceConversion");
+    }
+    if (task.task == runtime::VoiceTaskKind::VoiceCloning &&
+        !has_chatterbox_tts_assets(*assets_)) {
+        throw std::runtime_error("Chatterbox voice cloning requires the full T3/VE/tokenizer asset bundle");
     }
     if (task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Chatterbox only supports offline mode");
@@ -145,7 +177,7 @@ std::unique_ptr<ChatterboxLoadedModel> load_chatterbox_model(const std::filesyst
     runtime::ModelMetadata metadata;
     metadata.family = "chatterbox";
     metadata.variant = root.filename().string();
-    metadata.description = "Chatterbox voice cloning loaded from local assets.";
+    metadata.description = "Chatterbox voice cloning and voice conversion loaded from local assets.";
     metadata.config_candidates = {
         "tokenizer.json",
         "grapheme_mtl_merged_expanded_v1.json",
@@ -159,13 +191,7 @@ std::unique_ptr<ChatterboxLoadedModel> load_chatterbox_model(const std::filesyst
         "conds.pt",
     };
 
-    runtime::CapabilitySet capabilities;
-    capabilities.supported_tasks = {
-        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
-    };
-    capabilities.languages = supported_chatterbox_language_codes();
-    capabilities.supports_speaker_reference = true;
-    capabilities.supports_style_condition = true;
+    runtime::CapabilitySet capabilities = make_chatterbox_capabilities(*assets);
 
     return std::make_unique<ChatterboxLoadedModel>(
         std::move(metadata),

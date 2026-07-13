@@ -318,6 +318,9 @@ void emit_batch_result(
     for (size_t i = 0; i < batch.results.size(); ++i) {
         emit_batch_item_result(i, batch.results[i], policy);
     }
+
+    std::cout << "[TIMING] session.prepare_ms " << batch.prepare_ms << "\n";
+    std::cout << "[TIMING] session.wall_ms " << batch.session_wall_ms << "\n";
 }
 
 void emit_batch_summary(
@@ -351,6 +354,7 @@ void emit_batch_item_result(
     const std::string request_id = safe_output_name(item.id);
     std::cout << "request_index=" << index << "\n";
     std::cout << "request_id=" << request_id << "\n";
+    std::cout << "[TIMING] request." << request_id << ".wall_ms " << item.wall_ms << "\n";
 
     std::optional<std::filesystem::path> audio_out;
     std::optional<std::filesystem::path> named_out_dir;

@@ -330,6 +330,7 @@ audiocpp_cli --task tts --family irodori_tts --model models/Irodori-TTS-500M-v3 
 | `--request-option caption=<text>` | text | empty string | Voice-design caption for the 600M model. |
 | `--num-inference-steps` | integer | `40` | RF diffusion steps. |
 | `--duration-seconds` | seconds | `0` | Force duration when positive; `0` uses model-predicted duration. |
+| `--text-chunk-mode` | `japanese`, `endline` | `japanese` | Long-form chunking mode; `endline` splits only at sentence punctuation followed by a line break or end of input. |
 | `--request-option duration_scale=<float>` | float | `1.0` | Scale predicted duration. |
 | `--request-option min_seconds=<float>` | seconds | `0.5` | Minimum generated duration. |
 | `--request-option max_seconds=<float>` | seconds | `30` | Maximum generated duration. |
@@ -338,6 +339,7 @@ audiocpp_cli --task tts --family irodori_tts --model models/Irodori-TTS-500M-v3 
 | `--request-option caption_guidance_scale=<float>` | float | `3.0` | Caption CFG strength. |
 | `--request-option guidance_mode=<name>` | `independent` | `independent` | CFG combination mode. |
 | `--request-option trim_tail=true|false` | bool | `true` | Trim trailing silence-like samples. |
+| `--session-option irodori_tts.mem_saver=true|false` | bool | `true` | Release staged runtime graphs after request phases to reduce resident VRAM. Set `false` to keep graphs resident for maximum reuse. |
 
 ## Supertonic
 
