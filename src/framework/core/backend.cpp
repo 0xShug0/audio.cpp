@@ -21,8 +21,9 @@ void ensure_backends_loaded() {
 // (GPU/IGPU/ACCEL) deliberately plays no part in that: Metal reports GPU rather than ACCEL,
 // Vulkan reports IGPU on integrated GPUs, and those values are free to change upstream.
 //
-// The CUDA registry name depends on how ggml was built - GGML_CUDA_NAME is "ROCm" under HIP
-// and "MUSA" under MUSA - so every alias has to be accepted. The names are spelled out here
+// The CUDA registry name depends on how ggml was built - GGML_CUDA_NAME is "MUSA" under
+// MUSA - so every alias has to be accepted. HIP builds share the ggml CUDA backend but
+// register as "ROCm" and get their own BackendType::Hip. The names are spelled out here
 // instead of pulled from ggml-cuda.h/ggml-vulkan.h because those headers resolve against the
 // backend's own build flags, which are not visible from this translation unit.
 struct BackendRegNames {
@@ -31,7 +32,8 @@ struct BackendRegNames {
 };
 
 constexpr BackendRegNames k_backend_reg_names[] = {
-    {BackendType::Cuda,   {"CUDA", "ROCm", "MUSA"}},
+    {BackendType::Cuda,   {"CUDA", "MUSA", nullptr}},
+    {BackendType::Hip,    {"ROCm", nullptr, nullptr}},
     {BackendType::Vulkan, {"Vulkan", nullptr, nullptr}},
     {BackendType::Metal,  {"MTL", nullptr, nullptr}},
 };
@@ -64,6 +66,10 @@ bool backend_handle_matches(ggml_backend_t backend, BackendType type) {
 
 bool is_cuda_backend_handle(ggml_backend_t backend) {
     return backend_handle_matches(backend, BackendType::Cuda);
+}
+
+bool is_hip_backend_handle(ggml_backend_t backend) {
+    return backend_handle_matches(backend, BackendType::Hip);
 }
 
 bool is_vulkan_backend_handle(ggml_backend_t backend) {
@@ -194,6 +200,8 @@ ggml_backend_t init_backend(const BackendConfig & config) {
             }
             return backend;
         }
+        case BackendType::Hip:
+            return init_device_backend(BackendType::Hip, "HIP", config);
         case BackendType::Cuda:
             return init_device_backend(BackendType::Cuda, "CUDA", config);
         case BackendType::Vulkan:
@@ -240,6 +248,9 @@ BackendType backend_type(ggml_backend_t backend) {
     if (is_host_backend(backend)) {
         return BackendType::Cpu;
     }
+    if (is_hip_backend_handle(backend)) {
+        return BackendType::Hip;
+    }
     if (is_cuda_backend_handle(backend)) {
         return BackendType::Cuda;
     }
@@ -276,11 +287,11 @@ static void cuda_clear_graph(ggml_backend_t backend, ggml_cgraph * graph) {
 }
 
 void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph) {
-    if (is_cuda_backend_handle(backend)) cuda_clear_graph(backend, graph);
+    if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_clear_graph(backend, graph);
 }
 
 void release_backend_graph_resources(BackendType backend_type, ggml_backend_t backend, ggml_cgraph * graph) {
-    if (backend_type == BackendType::Cuda) cuda_clear_graph(backend, graph);
+    if (backend_type == BackendType::Cuda || backend_type == BackendType::Hip) cuda_clear_graph(backend, graph);
 }
 
 void validate_backend_graph_supported(ggml_backend_t backend, ggml_cgraph * graph, const char * label) {

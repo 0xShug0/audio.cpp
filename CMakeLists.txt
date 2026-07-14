@@ -50,6 +50,7 @@ if (NOT MSVC)
 endif()
 
 set(ENGINE_DEFAULT_ENABLE_CUDA OFF)
+set(ENGINE_DEFAULT_ENABLE_HIP OFF)
 set(ENGINE_DEFAULT_ENABLE_VULKAN OFF)
 set(ENGINE_DEFAULT_ENABLE_METAL OFF)
 set(ENGINE_DEFAULT_ENABLE_LLAMAFILE ON)
@@ -60,6 +61,9 @@ if (APPLE)
 endif()
 if (DEFINED GGML_CUDA)
     set(ENGINE_DEFAULT_ENABLE_CUDA ${GGML_CUDA})
+endif()
+if (DEFINED GGML_HIP)
+    set(ENGINE_DEFAULT_ENABLE_HIP ${GGML_HIP})
 endif()
 if (DEFINED GGML_VULKAN)
     set(ENGINE_DEFAULT_ENABLE_VULKAN ${GGML_VULKAN})
@@ -75,6 +79,7 @@ if (DEFINED GGML_CUDA_GRAPHS)
 endif()
 
 option(ENGINE_ENABLE_CUDA "Build ggml with CUDA backend support" ${ENGINE_DEFAULT_ENABLE_CUDA})
+option(ENGINE_ENABLE_HIP "Build ggml with HIP/ROCm backend support" ${ENGINE_DEFAULT_ENABLE_HIP})
 option(ENGINE_ENABLE_VULKAN "Build ggml with Vulkan backend support" ${ENGINE_DEFAULT_ENABLE_VULKAN})
 option(ENGINE_ENABLE_METAL "Build ggml with Metal backend support" ${ENGINE_DEFAULT_ENABLE_METAL})
 option(ENGINE_ENABLE_LLAMAFILE "Build ggml with llamafile SGEMM support" ${ENGINE_DEFAULT_ENABLE_LLAMAFILE})
@@ -91,7 +96,7 @@ set(AUDIOCPP_GGML_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/external/ggml"
     CACHE PATH "ggml source tree to build with AudioCPP")
 
-if (ENGINE_ENABLE_CUDA)
+if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     enable_language(CUDA)
     # 12.0 is a floor, not a target: any 12.x or 13.x works (the Dockerfile pins
     # 12.9.0, and docs/build/windows.md ships a CUDA 13 package). The minimum is
@@ -132,6 +137,7 @@ set(GGML_BUILD_TESTS OFF CACHE BOOL "Do not build upstream tests" FORCE)
 set(GGML_ALL_WARNINGS OFF CACHE BOOL "Keep upstream warnings quiet in this sample" FORCE)
 set(GGML_CCACHE OFF CACHE BOOL "Do not probe for ccache in this local setup" FORCE)
 set(GGML_CUDA ${ENGINE_ENABLE_CUDA} CACHE BOOL "Build ggml with CUDA backend support" FORCE)
+set(GGML_HIP ${ENGINE_ENABLE_HIP} CACHE BOOL "Build ggml with HIP backend support" FORCE)
 set(GGML_VULKAN ${ENGINE_ENABLE_VULKAN} CACHE BOOL "Build ggml with Vulkan backend support" FORCE)
 set(GGML_METAL ${ENGINE_ENABLE_METAL} CACHE BOOL "Build ggml with Metal backend support" FORCE)
 set(GGML_LLAMAFILE ${ENGINE_ENABLE_LLAMAFILE} CACHE BOOL "Build ggml with llamafile SGEMM support" FORCE)
@@ -632,7 +638,11 @@ if (ENGINE_ENABLE_OPENMP)
     endif()
 endif()
 
-if (ENGINE_ENABLE_CUDA)
+if (MSVC)
+    target_compile_options(engine_runtime PRIVATE /utf-8)
+endif()
+
+if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     target_sources(engine_runtime PRIVATE
         src/framework/audio/istft_cuda_runtime.cu
         src/framework/sampling/torch_random_cuda_runtime.cu
