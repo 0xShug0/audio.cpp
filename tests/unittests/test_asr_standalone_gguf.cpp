@@ -170,6 +170,44 @@ void test_native_q8_matrix_reshape_falls_back_to_f32() {
     std::filesystem::remove_all(root);
 }
 
+void test_native_q8_matrix_reshape_preserves_q8_when_block_aligned() {
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_q8_block_aligned_reshape_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    const auto safetensors = root / "model.safetensors";
+    const auto gguf = root / "model.gguf";
+    write_quantizable_matrix(safetensors);
+    engine::assets::convert_tensor_source_to_gguf(
+        safetensors,
+        gguf,
+        engine::assets::TensorStorageType::Q8_0,
+        false,
+        false);
+    const auto source = engine::assets::open_tensor_source(gguf);
+    engine::test::require_eq(
+        source->require_metadata("conv.weight").dtype,
+        std::string("q8_0"),
+        "quantized block-aligned source type");
+    auto * backend = engine::core::init_backend({engine::core::BackendType::Cpu, 0, 1});
+    {
+        engine::core::BackendWeightStore store(
+            backend,
+            engine::core::BackendType::Cpu,
+            "q8_block_aligned_reshape_test",
+            1024 * 1024);
+        const auto weight = store.load_tensor_as_shape(
+            *source,
+            "conv.weight",
+            engine::assets::TensorStorageType::Native,
+            {32, 256},
+            engine::core::TensorShape::from_dims({32, 256}));
+        engine::test::require_eq(weight.tensor->type, GGML_TYPE_Q8_0, "block-aligned native q8 backend type");
+        store.upload();
+    }
+    ggml_backend_free(backend);
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -177,6 +215,7 @@ int main() {
         test_hviske_standalone_gguf();
         test_citrinet_standalone_gguf();
         test_native_q8_matrix_reshape_falls_back_to_f32();
+        test_native_q8_matrix_reshape_preserves_q8_when_block_aligned();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;
