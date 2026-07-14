@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/tokenizers/sentencepiece.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -97,7 +98,7 @@ struct CitrinetWeights {
     std::vector<float> fb;
     std::vector<JasperBlockWeights> blocks;
     Conv1dWeights decoder;
-    std::vector<std::string> vocab;
+    std::vector<tokenizers::SentencePiecePiece> tokenizer_pieces;
 };
 
 std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::filesystem::path & model_path);

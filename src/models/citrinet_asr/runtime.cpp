@@ -494,7 +494,6 @@ std::vector<float> to_time_major_features(const engine::audio::AudioTensor & fea
 
 FeaturePack compute_citrinet_features(const std::vector<float> & waveform, const CitrinetWeights & weights);
 std::vector<int32_t> greedy_ctc_ids(const CitrinetInferenceResult & result, int32_t blank_id);
-std::string decode_wordpieces(const std::vector<std::string> & vocab, const std::vector<int32_t> & ids);
 
 FeaturePack extract_feature_pack_from_audio(
     const runtime::AudioBuffer & audio,
@@ -513,7 +512,7 @@ CitrinetTranscriptionResult make_transcription_result(
     CitrinetInferenceResult inference) {
     auto ids = greedy_ctc_ids(inference, static_cast<int32_t>(weights.config.blank_id));
     CitrinetTranscriptionResult result;
-    result.text = decode_wordpieces(weights.vocab, ids);
+    result.text = tokenizers::decode_sentencepiece(weights.tokenizer_pieces, ids);
     result.token_ids = std::move(ids);
     result.inference = std::move(inference);
     return result;
@@ -633,37 +632,6 @@ std::vector<int32_t> greedy_ctc_ids(const CitrinetInferenceResult & result, int3
         ids.push_back(best);
     }
     return ids;
-}
-
-bool is_join_punctuation(const std::string & piece) {
-    return piece == "." || piece == "," || piece == "!" || piece == "?" || piece == ":" || piece == ";" ||
-           piece == "'" || piece == "\"" || piece == ")" || piece == "]" || piece == "}" || piece == "-" ||
-           piece == "/" || piece == "\\";
-}
-
-std::string decode_wordpieces(const std::vector<std::string> & vocab, const std::vector<int32_t> & ids) {
-    std::string text;
-    for (int32_t id : ids) {
-        if (id < 0 || id >= static_cast<int32_t>(vocab.size())) {
-            throw std::runtime_error("token id out of vocab range");
-        }
-        const std::string & piece = vocab[static_cast<size_t>(id)];
-        if (piece.rfind("##", 0) == 0) {
-            text += piece.substr(2);
-            continue;
-        }
-        if (text.empty()) {
-            text += piece;
-            continue;
-        }
-        if (!text.empty() && (text.back() == '\'' || text.back() == '-' || is_join_punctuation(piece))) {
-            text += piece;
-            continue;
-        }
-        text += ' ';
-        text += piece;
-    }
-    return text;
 }
 
 }  // namespace

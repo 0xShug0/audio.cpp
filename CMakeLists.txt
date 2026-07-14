@@ -694,6 +694,16 @@ if (ENGINE_BUILD_TESTS)
         COMMAND sentencepiece_tokenizer1_test
     )
 
+    add_engine_unittest(citrinet_tokenizer_decode_test tests/unittests/test_citrinet_tokenizer_decode.cpp)
+    target_compile_definitions(citrinet_tokenizer_decode_test PRIVATE
+        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+    )
+
+    add_test(
+        NAME citrinet_tokenizer_decode_test
+        COMMAND citrinet_tokenizer_decode_test
+    )
+
     add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
 
     add_test(

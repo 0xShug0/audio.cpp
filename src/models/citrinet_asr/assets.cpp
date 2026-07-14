@@ -61,31 +61,6 @@ std::vector<JasperBlockConfig> parse_jasper_config(const io::json::Value & value
     return blocks;
 }
 
-std::vector<std::string> load_vocab_file(const std::filesystem::path & path) {
-    const auto text = io::read_text_file(path);
-    std::vector<std::string> vocab;
-    size_t start = 0;
-    while (true) {
-        const size_t end = text.find('\n', start);
-        std::string piece = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        if (!piece.empty() && piece.back() == '\r') {
-            piece.pop_back();
-        }
-        vocab.push_back(std::move(piece));
-        if (end == std::string::npos) {
-            break;
-        }
-        start = end + 1;
-        if (start > text.size()) {
-            break;
-        }
-    }
-    if (vocab.empty()) {
-        throw std::runtime_error("empty vocab file: " + path.string());
-    }
-    return vocab;
-}
-
 CitrinetConfig parse_config(const io::json::Value & root) {
     CitrinetConfig cfg;
     cfg.sample_rate = root.require("sample_rate").as_i64();
@@ -144,9 +119,13 @@ CitrinetWeights load_citrinet_weights(engine::assets::ResourceBundle resources) 
         "preprocessor.featurizer.fb",
         {1, weights.config.n_mels, weights.config.n_fft / 2 + 1});
 
-    weights.vocab = load_vocab_file(resources.require_file("vocab"));
-    if (static_cast<int64_t>(weights.vocab.size()) != weights.config.vocab_size) {
-        throw std::runtime_error("vocab size mismatch");
+    const auto tokenizer_model_path = resources.require_file("tokenizer");
+    weights.tokenizer_pieces = tokenizers::load_sentencepiece_model(tokenizer_model_path);
+    if (static_cast<int64_t>(weights.tokenizer_pieces.size()) != weights.config.vocab_size) {
+        throw std::runtime_error(
+            "Citrinet tokenizer model has " + std::to_string(weights.tokenizer_pieces.size()) +
+            " pieces but the config expects vocab_size " + std::to_string(weights.config.vocab_size) +
+            ": " + tokenizer_model_path.string());
     }
 
     weights.blocks.resize(weights.config.jasper.size());
