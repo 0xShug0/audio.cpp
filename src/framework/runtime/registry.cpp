@@ -170,6 +170,9 @@ const IVoiceModelLoader * ModelRegistry::find_loader(const ModelLoadRequest & re
         if (request.family_hint.has_value() && loader->family() != *request.family_hint) {
             continue;
         }
+        if (request.family_hint.has_value()) {
+            return loader.get();
+        }
         if (loader->can_load(request)) {
             return loader.get();
         }

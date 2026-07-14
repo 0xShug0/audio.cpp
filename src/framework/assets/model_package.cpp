@@ -76,7 +76,11 @@ void add_resource_map(
         return;
     }
     for (const auto & [id, ref] : map_value->as_object()) {
-        bundle.add_file(id, resolve_resource_ref(roots, ref.as_string()));
+        const auto path = resolve_resource_ref(roots, ref.as_string());
+        if (!engine::io::is_existing_file(path)) {
+            throw std::runtime_error("missing model package file '" + id + "': " + path.string());
+        }
+        bundle.add_file(id, path);
     }
 }
 
@@ -108,6 +112,9 @@ void add_tensor_map(
     for (const auto & [id, ref] : map_value->as_object()) {
         std::string prefix;
         const auto path = resolve_tensor_source_ref(roots, ref, prefix);
+        if (!engine::io::is_existing_file(path)) {
+            throw std::runtime_error("missing model package tensor source '" + id + "': " + path.string());
+        }
         bundle.add_tensor_source(id, path, std::move(prefix));
     }
 }
