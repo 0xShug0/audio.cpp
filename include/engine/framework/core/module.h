@@ -13,6 +13,7 @@ namespace engine::core {
 enum class BackendType {
     Cpu,
     Cuda,
+    Hip,
     Vulkan,
     Metal,
     BestAvailable,

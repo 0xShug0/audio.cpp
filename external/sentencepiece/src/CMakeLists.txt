@@ -263,7 +263,7 @@ endif()
 set_target_properties(sentencepiece-static PROPERTIES OUTPUT_NAME "sentencepiece")
 set_target_properties(sentencepiece_train-static PROPERTIES OUTPUT_NAME "sentencepiece_train")
 
-if (NOT MSVC)
+if (NOT MSVC AND NOT WIN32)
   set(CMAKE_CXX_FLAGS "-O3 -Wall -fPIC ${CMAKE_CXX_FLAGS}")
   if (SPM_NO_THREADLOCAL)
     add_definitions(-DSPM_NO_THREADLOCAL=1)
