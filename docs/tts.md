@@ -370,7 +370,7 @@ IndexTTS2 is a Chinese and English TTS model with voice cloning and expressive e
 |---|---|
 | Family | `index_tts2` |
 | Model directory | `models/IndexTTS-2` |
-| Task | `tts` |
+| Task | `tts`, `clon` |
 | Modes | `offline` |
 | Languages | `zh`, `en` |
 | Voice input | Required reference WAV through `--voice-ref` |
@@ -379,7 +379,7 @@ IndexTTS2 is a Chinese and English TTS model with voice cloning and expressive e
 Voice clone:
 
 ```bash
-audiocpp_cli --task tts --family index_tts2 --model /path/to/IndexTTS-2 --backend cuda --language en --text "Hello from IndexTTS2." --voice-ref /path/to/reference.wav --out out.wav
+audiocpp_cli --task clon --family index_tts2 --model /path/to/IndexTTS-2 --backend cuda --language en --text "Hello from IndexTTS2." --voice-ref /path/to/reference.wav --out out.wav
 ```
 
 Emotion text:
@@ -430,7 +430,7 @@ Irodori-TTS is Japanese TTS. The 500M model supports no-reference and reference-
 | Model directories | `models/Irodori-TTS-500M-v3`, `models/Irodori-TTS-600M-v3-VoiceDesign` |
 | Required shared tokenizer | `models/llm-jp-3-150m/tokenizer.json` |
 | Required shared codec | `models/Semantic-DACVAE-Japanese-32dim/weights.safetensors` |
-| Tasks | `tts`, `vdes` |
+| Tasks | `tts`, `clon`, `vdes` |
 | Modes | `offline` |
 | Languages | `ja` |
 | Voice input | Optional reference WAV, no-reference mode, or caption for VoiceDesign |
@@ -451,7 +451,7 @@ audiocpp_cli --task vdes --family irodori_tts --model /path/to/Irodori-TTS-600M-
 Reference-conditioned speech:
 
 ```bash
-audiocpp_cli --task tts --family irodori_tts --model /path/to/Irodori-TTS-500M-v3 --backend cuda --language ja --text "同じ声で短く話します。" --voice-ref /path/to/reference.wav --request-option no_ref=false --out out.wav
+audiocpp_cli --task clon --family irodori_tts --model /path/to/Irodori-TTS-500M-v3 --backend cuda --language ja --text "同じ声で短く話します。" --voice-ref /path/to/reference.wav --request-option no_ref=false --out out.wav
 ```
 
 | Option | Values | Default | Meaning |

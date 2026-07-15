@@ -13,6 +13,7 @@ runtime::CapabilitySet capabilities_for_assets(const IrodoriAssets & assets) {
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
         {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline}},
     };
     capabilities.supports_style_condition = assets.config.use_caption_condition;
@@ -119,8 +120,10 @@ std::unique_ptr<runtime::IVoiceTaskSession> IrodoriTTSLoadedModel::create_task_s
     if (task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Irodori-TTS only supports offline sessions");
     }
-    if (task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceDesign) {
-        throw std::runtime_error("Irodori-TTS supports only TTS and voice-design offline tasks");
+    if (task.task != runtime::VoiceTaskKind::Tts &&
+        task.task != runtime::VoiceTaskKind::VoiceCloning &&
+        task.task != runtime::VoiceTaskKind::VoiceDesign) {
+        throw std::runtime_error("Irodori-TTS supports only TTS, voice-cloning, and voice-design offline tasks");
     }
     return std::make_unique<IrodoriTTSSession>(task, options, assets_);
 }

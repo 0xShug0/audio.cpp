@@ -35,6 +35,7 @@ public:
         inspection.metadata.description = "IndexTTS2 loaded from local extracted assets.";
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
         };
         inspection.capabilities.supports_speaker_reference = true;
         inspection.capabilities.supports_style_condition = true;
@@ -103,8 +104,9 @@ const runtime::CapabilitySet & IndexTTS2LoadedModel::capabilities() const noexce
 std::unique_ptr<runtime::IVoiceTaskSession> IndexTTS2LoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.mode != runtime::RunMode::Offline || task.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("IndexTTS2 only supports offline TTS sessions");
+    if (task.mode != runtime::RunMode::Offline ||
+        (task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceCloning)) {
+        throw std::runtime_error("IndexTTS2 only supports offline TTS and voice-cloning sessions");
     }
     return std::make_unique<IndexTTS2Session>(task, options, assets_);
 }
@@ -120,6 +122,7 @@ std::unique_ptr<IndexTTS2LoadedModel> load_index_tts2_model(const std::filesyste
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
     };
     capabilities.supports_speaker_reference = true;
     capabilities.supports_style_condition = true;

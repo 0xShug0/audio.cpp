@@ -250,8 +250,9 @@ IndexTTS2Session::IndexTTS2Session(
             throw std::runtime_error("unknown IndexTTS2 session option: " + key);
         }
     }
-    if (task_.mode != runtime::RunMode::Offline || task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("IndexTTS2 currently supports offline TTS sessions");
+    if (task_.mode != runtime::RunMode::Offline ||
+        (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning)) {
+        throw std::runtime_error("IndexTTS2 currently supports offline TTS and voice-cloning sessions");
     }
 
     semantic_encoder_ = std::make_unique<IndexTTS2Wav2Vec2BertRuntime>(
