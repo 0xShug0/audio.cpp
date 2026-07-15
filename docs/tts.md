@@ -113,7 +113,7 @@ MOSS-TTS-Local is the larger local-transformer MOSS TTS path. It supports text-o
 | Family | `moss_tts_local` |
 | Model directory | `models/MOSS-TTS-Local-Transformer-v1.5` |
 | Required codec layout | `audio_tokenizer/` directory inside the model root |
-| Task | `tts` |
+| Task | `tts`, `clon` |
 | Modes | `offline` |
 | Languages | Model auto-handles supported languages; `--language` can pass a language hint |
 | Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
@@ -128,7 +128,7 @@ audiocpp_cli --task tts --family moss_tts_local --model /path/to/MOSS-TTS-Local-
 Voice clone:
 
 ```bash
-audiocpp_cli --task tts --family moss_tts_local --model /path/to/MOSS-TTS-Local-Transformer-v1.5 --backend cuda --text "Hello from MOSS-TTS-Local." --voice-ref /path/to/reference.wav --reference-text "Reference transcript when available." --out out.wav
+audiocpp_cli --task clon --family moss_tts_local --model /path/to/MOSS-TTS-Local-Transformer-v1.5 --backend cuda --text "Hello from MOSS-TTS-Local." --voice-ref /path/to/reference.wav --reference-text "Reference transcript when available." --out out.wav
 ```
 
 | Option | Values | Default | Meaning |
@@ -159,7 +159,7 @@ MOSS-TTS-Nano is the smaller MOSS TTS path. It supports text-only continuation g
 | Family | `moss_tts_nano` |
 | Model directory | `models/MOSS-TTS-Nano-100M` |
 | Required codec layout | `audio_tokenizer/` directory inside the model root |
-| Task | `tts` |
+| Task | `tts`, `clon` |
 | Modes | `offline` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Optional reference WAV through `--voice-ref` |
@@ -174,7 +174,7 @@ audiocpp_cli --task tts --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-10
 Voice clone:
 
 ```bash
-audiocpp_cli --task tts --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-100M --backend cuda --text "Hello from MOSS-TTS-Nano." --voice-ref /path/to/reference.wav --reference-text "Reference transcript when available." --out out.wav
+audiocpp_cli --task clon --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-100M --backend cuda --text "Hello from MOSS-TTS-Nano." --voice-ref /path/to/reference.wav --reference-text "Reference transcript when available." --out out.wav
 ```
 
 | Option | Values | Default | Meaning |

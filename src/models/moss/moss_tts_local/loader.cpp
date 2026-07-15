@@ -16,6 +16,7 @@ runtime::CapabilitySet moss_tts_local_capabilities() {
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
     };
     capabilities.languages = {"Auto"};
     capabilities.supports_speaker_reference = true;
@@ -54,8 +55,8 @@ public:
         if (task.mode != runtime::RunMode::Offline) {
             throw std::runtime_error("MOSS-TTS-Local only supports offline sessions");
         }
-        if (task.task != runtime::VoiceTaskKind::Tts) {
-            throw std::runtime_error("MOSS-TTS-Local only supports the Tts task");
+        if (task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceCloning) {
+            throw std::runtime_error("MOSS-TTS-Local only supports the Tts and VoiceCloning tasks");
         }
         return std::make_unique<MossTTSLocalSession>(task, options, assets_);
     }

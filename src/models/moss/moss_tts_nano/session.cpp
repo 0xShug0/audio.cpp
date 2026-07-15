@@ -212,8 +212,8 @@ MossTTSNanoSession::MossTTSNanoSession(
           audio_tokenizer_weight_context_bytes_,
           audio_tokenizer_decoder_graph_arena_bytes_,
           moss::moss_audio_tokenizer_nano_config()) {
-    if (task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("MOSS-TTS-Nano only supports the Tts task");
+    if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("MOSS-TTS-Nano only supports the Tts and VoiceCloning tasks");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("MOSS-TTS-Nano currently supports offline sessions");
