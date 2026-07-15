@@ -95,6 +95,9 @@ void test_citrinet_standalone_gguf() {
     write_dummy_weights(native / "citrinet_256.safetensors");
     write_text(native / "citrinet_256_config.json", R"json({"vocab_file":"citrinet_256_vocab.txt"})json");
     write_text(native / "citrinet_256_tokenizer.model", "test tokenizer sidecar");
+    // Legacy sidecar: the spec no longer references vocab.txt (CTC ids decode
+    // through tokenizer.model), but previously converted model directories
+    // still contain it — loading must ignore the stray file, not choke on it.
     write_text(native / "citrinet_256_vocab.txt", "a\nb\n");
 
     const auto gguf = packed / "renamed-citrinet.gguf";
@@ -113,10 +116,6 @@ void test_citrinet_standalone_gguf() {
         assets.require_file("config").filename().string(),
         std::string("citrinet_256_config.json"),
         "Citrinet embedded config");
-    engine::test::require_eq(
-        assets.require_file("vocab").filename().string(),
-        std::string("citrinet_256_vocab.txt"),
-        "Citrinet embedded vocabulary");
     engine::test::require_eq(
         assets.require_file("tokenizer").filename().string(),
         std::string("citrinet_256_tokenizer.model"),

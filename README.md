@@ -6,7 +6,13 @@ Tired of juggling a dozen Conda environments, hundreds of Python packages, and d
 
 > [!IMPORTANT]
 > **CUDA performance headline:** multiple TTS paths already run **1.8x-5.0x faster than their Python reference paths** while cutting end-to-end latency by **45%-80%**.
+>
 > **VibeVoice 1.5B:** generates a **93.9-minute podcast in 18.2 minutes** with **10 diffusion steps** and without quantization, running about **5.15x faster than real time**.
+>
+> **Supertonic 3:** generates about **10 hours of audio in 3 minutes** on RTX5090. Up to 200x+ real-time on CUDA, 6x+ real-time on CPU, and 47 ms TTFT in CUDA streaming mode.
+> [Demo: 10 hours of audio generated in 3 minutes](https://www.reddit.com/r/LocalLLaMA/comments/1uwpvt9/audiocpp_10_hours_of_audio_generated_in_3_minutes/).
+>
+> **Real-world ASR win:** In [TranscrIA benchmark](https://github.com/Martossien/transcria/blob/main/docs/STT_BENCHMARK_REAL_MEETINGS.md) on messy French meeting audio, audio.cpp’s Nemotron 3.5 ASR matched the same WER as other implementations while using about **1/4 of the wall time**. 
 
 It is built for real end-to-end execution rather than one-off model demos: the same runtime powers TTS, voice cloning, voice conversion, ASR, diarization, VAD, source separation, alignment, codec-style models, and higher-level workflows through a common framework surface.
 
@@ -20,6 +26,8 @@ Highlights:
 
 <p><strong><span style="font-size:1.1em;">The goal of the framework is to provide highly optimized, reusable building blocks for audio-related models, so new model integrations can be brought up faster, shared components can be improved once and benefit many families, and real end-to-end inference paths can stay efficient, maintainable, and portable.</span></strong></p>
 
+audio.cpp would not be moving this quickly without generous contributors bringing in real fixes, new capabilities, and careful polish. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute and for a shout-out to the people already helping shape the project.
+
 > [!TIP]
 > **Contribution focus:** the most helpful contributions right now are improvements to the UI, API server, and pipeline/workflow subsystems. These areas make the existing model surface easier to use, serve, compose, and validate. See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 >
@@ -28,65 +36,48 @@ Highlights:
 ## News
 
 > [!IMPORTANT]
-> **2026-07-13:** Five TTS families join the released framework surface: IndexTTS2, Irodori-TTS, MOSS-TTS-Nano, MOSS-TTS-Local, and Supertonic 3. These add expressive Chinese/English TTS, Japanese no-reference/reference/voice-design speech, MOSS local-transformer and nano paths, and very fast preset-voice Supertonic generation.
+> **2026-07-14 - Release 0.3:** This release expands audio.cpp with five new TTS families: IndexTTS2, Irodori-TTS, MOSS-TTS-Nano, MOSS-TTS-Local (thanks to [@justinjohn0306](https://github.com/justinjohn0306)), and Supertonic 3. Chatterbox also gains voice-conversion support, extending the existing TTS/voice-cloning path into a fuller speech workflow.
+>
+> **GGUF support:** audio.cpp now has reusable GGUF loading and conversion support, with tested GGUF paths for multiple ASR and TTS models. Some models can run up to 2× faster with Q8 GGUF, without any parity drift. See [docs/gguf.md](docs/gguf.md) for the current support status. Huge thanks to [@mirek190](https://github.com/mirek190) for driving the core GGUF work and model support forward.
 
-> [!IMPORTANT]
-> **2026-07-08:** Four new ASR families are now released in the framework: Higgs Audio STT, Hviske ASR, Nemotron ASR, and VibeVoice ASR. Initial model-specific streaming support also lands for VoxCPM2 TTS, Nemotron ASR, and Higgs Audio STT, with server SSE configuration and request examples for streaming speech generation and transcription.
-
-> [!IMPORTANT]
-> **2026-07-03:** Conv1DTransp module CUDA optimization: VibeVoice reaches **5.15x realtime** on **93.9-minute long-form generation**. Overall, VibeVoice inference time was reduced by **73.17%**, PocketTTS by **35.32%**, Chatterbox by **33.56%**, Qwen3-TTS by **30.60%**, HeartMuLa by **17.03%**, and VoxCPM2 by **14.7%** compared with the previous release.
-
-> [!IMPORTANT]
-> **2026-07-02:** Music generation and source separation expanded in the released framework surface: ACE-Step 1.5 Turbo/Base, HeartMuLa, Stable Audio 3 Small Music/SFX and Medium, Mel-Band RoFormer, and HTDemucs are now available through the normal audio.cpp CLI/framework paths.
-
-- **2026-07-02:** VibeVoice 7B joins the 1.5B model, and full fine-tune adapters — language-model LoRA plus fine-tuned diffusion head and acoustic/semantic connectors — can now be merged at load time through `--load-option vibevoice.lora`.
-- **2026-06-30:** VibeVoice 1.5B is now released in the framework, bringing long-form, multi-speaker dialogue TTS into the normal audio.cpp model surface.
-- **2026-06-30:** More detailed usage documentation is now available in [docs/usage.md](docs/usage.md), covering model setup, CLI usage, server usage, and common workflows.
-- **2026-06-26:** The speech intelligence side grew with released Citrinet ASR, MarbleNet VAD, and Sortformer diarization paths.
-- **2026-06-25:** The first release wave landed with TTS, voice cloning, voice conversion, alignment, VAD, codec, and multilingual generation support across Chatterbox, MioCodec, MioTTS, OmniVoice, PocketTTS, Qwen3, SeedVC, Silero VAD, Vevo2, and VoxCPM2.
+**2026-06-25 to 2026-07-08:** audio.cpp grew from the first released model wave into broad TTS, ASR, music generation, source separation, VAD, diarization, codec, and voice-conversion coverage, with VibeVoice 1.5B/7B, LoRA adapter loading, initial streaming support, and major CUDA Conv1DTransp speedups.
 
 ## Supported Models
 
-Current model status in the framework:
+| Family | Task | Supported language(s) | Supported variant(s) in this repo |
+|---|---|---|---|
+| **ace_step** | music generation, music editing | 50+ langs | ACE-Step 1.5 Turbo and Base with acestep-5Hz-lm-1.7B |
+| **chatterbox** | TTS, voice cloning, voice conversion | ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | Chatterbox with 0.5B backbone |
+| **citrinet_asr** | ASR | en | Citrinet-256 |
+| **heartmula** | music generation | zh, en, ja, ko, es | HeartMuLa-oss-3B with HeartCodec-oss |
+| **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT |
+| **htdemucs** | source separation | lang agnostic | HTDemucs, HTDemucs_ft |
+| **hviske_asr** | ASR | da | Hviske v5.3 |
+| **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD |
+| **mel_band_roformer** | vocal separation | lang agnostic | Mel-Band RoFormer MLX vocal separation variants |
+| **miocodec** | audio codec, voice conversion backend | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz |
+| **miotts** | TTS, voice cloning | en, ja | MioTTS-1.7B |
+| **omnivoice** | TTS, voice cloning, voice design | 646+ langs | OmniVoice, Qwen3-0.6B based |
+| **pocket_tts** | TTS, voice cloning | en, de, it, pt, es | PocketTTS-100M |
+| **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | Nemotron 3.5 ASR Streaming 0.6B |
+| **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B, Qwen3-ASR-1.7B-hf |
+| **qwen3_forced_aligner** | forced alignment | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | Qwen3-ForcedAligner-0.6B |
+| **qwen3_tts** | TTS, voice cloning, voice design | zh, en, fr, de, it, ja, ko, pt, ru, es | Qwen3-TTS-12Hz-0.6B-Base, Qwen3-TTS-12Hz-1.7B-Base, Qwen3-TTS-12Hz-1.7B-CustomVoice, Qwen3-TTS-12Hz-1.7B-VoiceDesign |
+| **seed_vc** | voice conversion | lang agnostic | SeedVC XLS-R + HiFT, SeedVC Whisper-small + BigVGAN |
+| **silero_vad** | VAD | lang agnostic | Silero VAD |
+| **sortformer_diar** | diarization | en | Sortformer-4spk-v1 |
+| **stable_audio** | music generation, sound generation, audio editing | en | Stable Audio 3 Small Music, Stable Audio 3 Small SFX, Stable Audio 3 Medium |
+| **vevo2** | TTS, singing generation, voice conversion, singing conversion, editing | en, zh | Vevo2 with Qwen2.5-0.5B AR model |
+| **vibevoice** | TTS, multi-speaker dialogue TTS | en, zh | VibeVoice-1.5B, VibeVoice-7B |
+| **vibevoice_asr** | ASR | auto | VibeVoice ASR |
+| **voxcpm2** | TTS, voice cloning, voice design | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | VoxCPM2-2B, 48 kHz |
+| **index_tts2** | TTS, voice cloning, expressive speech | zh, en | IndexTTS-2 |
+| **irodori_tts** | TTS, voice cloning, voice design | ja | Irodori-TTS-500M-v3, Irodori-TTS-600M-v3-VoiceDesign |
+| **moss_tts_nano** | TTS, voice cloning | auto | MOSS-TTS-Nano-100M |
+| **moss_tts_local** | TTS, voice cloning | auto, optional language hint | MOSS-TTS-Local-Transformer-v1.5 |
+| **supertonic** | TTS | en, ko, ja, ar, bg, cs, da, de, el, es, et, fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, na | Supertonic 3 |
 
-- `released`: The model is fully wired into the broader framework surface and ready for normal use.
-- `testing`: The model is implemented and working in this repo, and is still being validated, polished, or promoted into the broader released surface.
-- `optimization`: The model is end-to-end working, but still needs more optimization work before it should be treated like a released or testing-level path.
-
-| Family | Task | Supported language(s) | Supported variant(s) in this repo | Release status |
-|---|---|---|---|---|
-| **ace_step** | music generation, music editing | 50+ langs | ACE-Step 1.5 Turbo and Base with acestep-5Hz-lm-1.7B | **released** |
-| **chatterbox** | TTS, voice cloning | ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | Chatterbox with 0.5B backbone | **released** |
-| **citrinet_asr** | ASR | en | Citrinet-256 | **released** |
-| **heartmula** | music generation | zh, en, ja, ko, es | HeartMuLa-oss-3B with HeartCodec-oss | **released** |
-| **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | **released** |
-| **htdemucs** | source separation | lang agnostic | HTDemucs, HTDemucs_ft | **released** |
-| **hviske_asr** | ASR | da | Hviske v5.3 | **released** |
-| **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | **released** |
-| **mel_band_roformer** | vocal separation | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | **released** |
-| **miocodec** | audio codec, voice conversion backend | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | **released** |
-| **miotts** | TTS, voice cloning | en, ja | MioTTS-1.7B | **released** |
-| **omnivoice** | TTS, voice cloning, voice design | 646+ langs | OmniVoice, Qwen3-0.6B based | **released** |
-| **pocket_tts** | TTS, voice cloning | en, de, it, pt, es | PocketTTS-100M | **released** |
-| **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | Nemotron 3.5 ASR Streaming 0.6B | **released** |
-| **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B, Qwen3-ASR-1.7B-hf | **released** |
-| **qwen3_forced_aligner** | forced alignment | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | Qwen3-ForcedAligner-0.6B | **released** |
-| **qwen3_tts** | TTS, voice cloning, voice design | zh, en, fr, de, it, ja, ko, pt, ru, es | Qwen3-TTS-12Hz-0.6B-Base, Qwen3-TTS-12Hz-1.7B-Base, Qwen3-TTS-12Hz-1.7B-CustomVoice, Qwen3-TTS-12Hz-1.7B-VoiceDesign | **released** |
-| **seed_vc** | voice conversion | lang agnostic | SeedVC XLS-R + HiFT, SeedVC Whisper-small + BigVGAN | **released** |
-| **silero_vad** | VAD | lang agnostic | Silero VAD | **released** |
-| **sortformer_diar** | diarization | en | Sortformer-4spk-v1 | **released** |
-| **stable_audio** | music generation, sound generation, audio editing | en | Stable Audio 3 Small Music, Stable Audio 3 Small SFX, Stable Audio 3 Medium | **released** |
-| **vevo2** | TTS, singing generation, voice conversion, singing conversion, editing | en, zh | Vevo2 with Qwen2.5-0.5B AR model | **released** |
-| **vibevoice** | TTS, multi-speaker dialogue TTS | en, zh | VibeVoice-1.5B, VibeVoice-7B | **released** |
-| **vibevoice_asr** | ASR | auto | VibeVoice ASR | **released** |
-| **voxcpm2** | TTS, voice cloning, voice design | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | VoxCPM2-2B, 48 kHz | **released** |
-| higgs_tts | TTS, voice cloning, expressive speech | 100+ languages | Higgs Audio v3 TTS 4B | testing |
-| **index_tts2** | TTS, voice cloning, expressive speech | zh, en | IndexTTS-2 | **released** |
-| **irodori_tts** | TTS, voice cloning, voice design | ja | Irodori-TTS-500M-v3, Irodori-TTS-600M-v3-VoiceDesign | **released** |
-| kokoro_tts | TTS | en-us, en-gb | Kokoro-82M | testing |
-| **moss_tts_nano** | TTS, voice cloning | auto | MOSS-TTS-Nano-100M | **released** |
-| **moss_tts_local** | TTS, voice cloning | auto, optional language hint | MOSS-TTS-Local-Transformer-v1.5 | **released** |
-| **supertonic** | TTS | en, ko, ja, ar, bg, cs, da, de, el, es, et, fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, na | Supertonic 3 | **released** |
+WIP: Higgs Audio v3 TTS 4B, Fish Audio S2 Pro, Voxtral-Mini-4B-Realtime.
 
 PocketTTS language selection is a model-load option. When the model path points at the PocketTTS root, the loader uses `english` unless you pass `--load-option language=<name>`. Kyutai's normal non-English PocketTTS releases are smaller distilled language models intended for the fast PocketTTS path. The `_24l` variants are larger 24-layer, undistilled preview models that can sound better but are slower. Kyutai currently publishes French only as `french_24l`, not as a normal distilled `french` language directory, so French is not listed as a normal PocketTTS language here.
 
@@ -96,140 +87,71 @@ Docker CPU and CUDA images are available for both CLI and server use. See [Docke
 
 ## Build
 
+| OS | Requirements |
+|---|---|
+| Linux | GCC 13 or newer, CMake, backend toolchain for CUDA or Vulkan builds |
+| Windows | Visual Studio Build Tools 2022 or newer with C++ desktop workload, MSVC x64 compiler, Windows SDK, CMake, Ninja, MSVC OpenMP components; official NVIDIA CUDA Toolkit for CUDA builds |
+| macOS | Xcode or Xcode Command Line Tools with the Metal compiler available through `xcrun` |
+
 ### Linux Build
 
-On Linux, use a normal CMake build directory such as `build/`.
-
-For single-config generators, the default build type is `RelWithDebInfo`.
-
-That default configure is a CPU build unless you enable an accelerator backend explicitly.
-
-Use GCC 13 or newer for Linux builds.
-
-Native ggml CPU optimization is enabled by default for local performance. If your compiler or assembler rejects a generated CPU instruction such as `vpdpbusd`, reconfigure with `-DENGINE_ENABLE_NATIVE_CPU=OFF` to build portable CPU kernels.
-
-Common Linux configure examples:
-
-CPU-only:
-
-```bash
-cmake -S . -B build
-```
-
-CUDA:
-
-```bash
-cmake -S . -B build -DENGINE_ENABLE_CUDA=ON
-```
-
-Vulkan:
-
-```bash
-cmake -S . -B build -DENGINE_ENABLE_VULKAN=ON
-```
-
-Portable CPU-kernel fallback:
-
-```bash
-cmake -S . -B build -DENGINE_ENABLE_NATIVE_CPU=OFF
-```
-
-Build the CLI and server from the configured tree:
-
-```bash
-cmake --build build -j$(nproc) --target audiocpp_cli --target audiocpp_server
-```
-
-If your machine is memory-constrained, use a smaller `-j` value, for example `-j4`.
-
-If you use an environment manager or custom toolchain, activate it before running the commands above.
-
-The optional Linux helper script wraps the same CMake flow and uses aligned build directory names:
-
-- `build/linux-cuda-release`
-- `build/linux-vulkan-release`
-- `build/linux-cpu-release`
-
-Examples:
+Use the Linux helper script for CPU, CUDA, or Vulkan builds:
 
 ```bash
 scripts/build_linux.sh --backend cuda --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend vulkan --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_server
+```
+
+The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-vulkan-release`, and `build/linux-cpu-release`.
+
+For portable CPU kernels on machines where native ISA flags are not suitable:
+
+```bash
 scripts/build_linux.sh --backend cuda --native-cpu OFF --target audiocpp_cli --target audiocpp_server
+```
+
+For deployment builds with compiled package specs:
+
+```bash
 scripts/build_linux.sh --backend cuda --deployment-build --target audiocpp_cli --target audiocpp_server
 ```
 
-Use `--build-dir <dir>` only when you intentionally want a custom output directory.
+For direct CMake commands, see [docs/build/linux.md](docs/build/linux.md).
 
 ### Windows Build
 
-The recommended native Windows build is command-line only:
-
-- Visual Studio Build Tools 2022 or newer with the C++ desktop workload
-- MSVC x64 compiler, Windows SDK, CMake, Ninja, and MSVC OpenMP components
-- Official NVIDIA CUDA Toolkit installed under `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\...` for CUDA builds
-
-Use MSVC `cl.exe` as the compiler. For CUDA builds, `cl.exe` is also used as the CUDA host compiler. Native Windows `nvcc` does not support `clang-cl` as its host compiler, and the Visual Studio IDE is not required.
-
-From PowerShell:
+Use the Windows PowerShell build script:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
 ```
 
-CPU-only:
+Common presets:
 
 ```powershell
+.\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
+.\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
 ```
 
-From `cmd.exe`:
+From `cmd.exe`, use the wrapper:
 
 ```bat
 scripts\build_windows.cmd
 ```
 
-If GNU Make is available on Windows:
-
-```bash
-make -f Makefile.windows cpu JOBS=16
-make -f Makefile.windows cuda JOBS=16
-make -f Makefile.windows cuda NATIVE_CPU=OFF JOBS=16
-```
-
-The Windows script configures `build/windows-cuda-release` by default and builds `audiocpp_cli`. CUDA presets enable CUDA, CUDA graphs, OpenMP, Ninja, `/utf-8`, `/EHsc`, MSVC OpenMP SIMD support with `/openmp:experimental`, and native CPU optimization by default. The CPU preset uses the same MSVC/Ninja/OpenMP setup without requiring CUDA. CUDA presets auto-detect the local GPU CUDA architecture when `nvidia-smi` is available. Pass `-NativeCpu OFF` or `NATIVE_CPU=OFF` to use portable CPU kernels.
-
-For Windows prebuilt release zips and CPU compatibility profiles, see [docs/windows_build.md](docs/windows_build.md).
-
-Useful variants:
+For deployment builds with compiled package specs:
 
 ```powershell
-.\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
-.\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
-.\scripts\build_windows.ps1 -Preset windows-cuda-debug -Target audiocpp_cli
-.\scripts\build_windows.ps1 -NativeCpu OFF -Target audiocpp_cli
 .\scripts\build_windows.ps1 -DeploymentBuild -Target audiocpp_cli
-.\scripts\build_windows.ps1 -ConfigureOnly
-.\scripts\build_windows.ps1 -CudaArchitectures 120a-real
 ```
 
-If multiple Build Tools installations are present, pass the one you want explicitly:
-
-```powershell
-.\scripts\build_windows.ps1 -VsInstall "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
-```
-
-The built CLI is written to the selected preset directory:
-
-```powershell
-build\windows-cpu-release\bin\audiocpp_cli.exe
-build\windows-cuda-release\bin\audiocpp_cli.exe
-```
+For requirements, CPU profiles, CUDA packaging, and release zips, see [docs/build/windows.md](docs/build/windows.md).
 
 ### Metal Build
 
-On macOS, use the Metal helper script to build against ggml's Metal backend. It requires Xcode or the Xcode Command Line Tools with the Metal compiler available through `xcrun`.
+On macOS, use the Metal helper script to build against ggml's Metal backend:
 
 ```bash
 scripts/build_metal.sh --target audiocpp_cli
@@ -254,7 +176,7 @@ The built CLI is written to:
 build/macos-metal-release/bin/audiocpp_cli
 ```
 
-Build options:
+### Build Options
 
 | Option | Meaning | Default |
 |---|---|---|
@@ -270,13 +192,9 @@ Build options:
 | `ENGINE_BUILD_WARMBENCH` | Build warmbench helper binaries. | `OFF` |
 | `AUDIOCPP_DEPLOYMENT_BUILD` | Compile package specs into CLI/server binaries for standalone GGUF and package-spec fallback loading. Script builds expose this as `--deployment-build` on Linux/macOS and `-DeploymentBuild` on Windows. | `OFF` |
 
-### Build Type Notes
-
-- For single-config generators, the recommended config is `RelWithDebInfo`
-- For multi-config generators, choose the configuration at build time
-- Backend and feature options are independent from build type
-
 ## Usage
+
+For full setup, CLI, server, and workflow examples, see [docs/usage.md](docs/usage.md).
 
 ### CLI
 
@@ -416,6 +334,8 @@ build/bin/audiocpp_cli \
 ### Tools / Model Manager
 
 The repository also ships a model manager at `tools/model_manager.py` for downloading supported model packages into the framework expected `models/` layout.
+
+Some models also have GGUF packages available. Current GGUF repositories include [audio-cpp/audio.cpp-gguf](https://huggingface.co/audio-cpp/audio.cpp-gguf) and [mirek190/audio.cpp](https://huggingface.co/mirek190/audio.cpp). See [docs/gguf.md](docs/gguf.md) for GGUF support status. A dedicated GGUF model-management tool is under development.
 
 Dependencies:
 
@@ -617,6 +537,7 @@ The Python-reference side of these tests usually requires more time-consuming se
 
 ## Projects
 
+- [TranscrIA](https://github.com/Martossien/transcria) is a self-hosted meeting transcription platform with diarization and local LLM correction. audio.cpp is integrated as a first-class STT engine in the product.
 - [Pocket TTS Browser Engine](https://github.com/jjmlovesgit/pocket-tts-browser-engine) uses audio.cpp to bring fully local PocketTTS voices into Chrome and Edge through the browser TTS API.
 - [GuideAnts](https://github.com/Elumenotion/GuideAnts) uses audio.cpp as the default local AI stack path for basic ASR and TTS, with planned reusable skills for audio.cpp scenarios and model configurations.
 

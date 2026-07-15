@@ -48,7 +48,7 @@ For models with Python references, include parity evidence when practical. For m
 
 Please be prepared to help maintain new model contributions as framework APIs evolve. Keeping model code aligned with the shared framework surface is part of making the implementation useful long term.
 
-## Framework Modules
+## Framework Modules (High Risk)
 
 Framework modules are a high-impact but higher-risk contribution area because the internal framework APIs are still evolving quickly. Changes here can affect many model families at once, so please prefer additive work over modifying behavior that existing models already depend on.
 
@@ -61,3 +61,13 @@ Keep PRs focused. A model port, a server change, a pipeline change, and a broad 
 When changing shared framework code, explain which model families or routes were checked. When changing model behavior, explain whether the change affects outputs, performance, memory, or only docs/build wiring.
 
 If a PR intentionally leaves a model under testing, say what remains before it should be marked released.
+
+## Acknowledgments
+
+audio.cpp has already benefited from generous upstream contributions. Thank you to:
+
+- [@mirek190](https://github.com/mirek190) for OMTD tooling, Qwen3-ASR 1.7B HF support, GGUF core/converter work, and standalone GGUF support for ASR models in [#8](https://github.com/0xShug0/audio.cpp/pull/8), [#43](https://github.com/0xShug0/audio.cpp/pull/43), [#45](https://github.com/0xShug0/audio.cpp/pull/45), and [#46](https://github.com/0xShug0/audio.cpp/pull/46).
+- [@justinjohn0306](https://github.com/justinjohn0306) for VibeVoice 7B, LoRA/fine-tune adapter loading, and the initial MOSS-TTS-Local model family implementation in [#14](https://github.com/0xShug0/audio.cpp/pull/14) and [#19](https://github.com/0xShug0/audio.cpp/pull/19).
+- [@xashr](https://github.com/xashr) for Dockerfiles, Docker examples, and Docker documentation in [#30](https://github.com/0xShug0/audio.cpp/pull/30).
+- [@dkruyt](https://github.com/dkruyt) for multipart transcription uploads and server voice-discovery support in [#25](https://github.com/0xShug0/audio.cpp/pull/25).
+- [@CaptainArni](https://github.com/CaptainArni) for fixing PocketTTS empty output when switching cached voices in [#22](https://github.com/0xShug0/audio.cpp/pull/22).

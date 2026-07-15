@@ -10,7 +10,15 @@ This document covers native Windows builds and release zip packaging.
 
 The Visual Studio IDE is not required.
 
+Use MSVC `cl.exe` as the compiler. For CUDA builds, `cl.exe` is also used as the CUDA host compiler. Native Windows `nvcc` does not support `clang-cl` as its host compiler.
+
 ## Native Builds
+
+From PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+```
 
 CPU:
 
@@ -27,6 +35,44 @@ CUDA:
 ```
 
 The CUDA build also includes the CPU backend, so the same binary can run with `--backend cpu` or `--backend cuda`.
+
+From `cmd.exe`:
+
+```bat
+scripts\build_windows.cmd
+```
+
+If GNU Make is available on Windows:
+
+```bash
+make -f Makefile.windows cpu JOBS=16
+make -f Makefile.windows cuda JOBS=16
+make -f Makefile.windows cuda NATIVE_CPU=OFF JOBS=16
+```
+
+Useful script variants:
+
+```powershell
+.\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
+.\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
+.\scripts\build_windows.ps1 -Preset windows-cuda-debug -Target audiocpp_cli
+.\scripts\build_windows.ps1 -NativeCpu OFF -Target audiocpp_cli
+.\scripts\build_windows.ps1 -ConfigureOnly
+.\scripts\build_windows.ps1 -CudaArchitectures 120a-real
+```
+
+If multiple Build Tools installations are present, pass the one you want explicitly:
+
+```powershell
+.\scripts\build_windows.ps1 -VsInstall "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
+```
+
+The built CLI is written to the selected preset directory:
+
+```text
+build\windows-cpu-release\bin\audiocpp_cli.exe
+build\windows-cuda-release\bin\audiocpp_cli.exe
+```
 
 ## CPU Architecture Profiles
 

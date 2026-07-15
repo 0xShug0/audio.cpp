@@ -9,8 +9,7 @@
       },
       "files": {
         "config": "model:citrinet_256_config.json",
-        "tokenizer": "model:citrinet_256_tokenizer.model",
-        "vocab": "model:citrinet_256_vocab.txt"
+        "tokenizer": "model:citrinet_256_tokenizer.model"
       },
       "tensors": {
         "weights": "weights:"
@@ -23,8 +22,7 @@
       },
       "files": {
         "config": "model:citrinet_256_config.json",
-        "tokenizer": "model:citrinet_256_tokenizer.model",
-        "vocab": "model:citrinet_256_vocab.txt"
+        "tokenizer": "model:citrinet_256_tokenizer.model"
       },
       "tensors": {
         "weights": "model:citrinet_256.safetensors"

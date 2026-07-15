@@ -35,6 +35,7 @@ public:
         inspection.metadata.description = "MOSS-TTS-Nano loaded from local extracted assets.";
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
         };
         inspection.capabilities.supports_speaker_reference = true;
         inspection.capabilities.languages = {"Auto"};
@@ -101,8 +102,8 @@ const runtime::CapabilitySet & MossTTSNanoLoadedModel::capabilities() const noex
 std::unique_ptr<runtime::IVoiceTaskSession> MossTTSNanoLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("MOSS-TTS-Nano only supports the Tts task");
+    if (task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("MOSS-TTS-Nano only supports the Tts and VoiceCloning tasks");
     }
     if (task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("MOSS-TTS-Nano only supports offline sessions");
@@ -121,6 +122,7 @@ std::unique_ptr<MossTTSNanoLoadedModel> load_moss_tts_nano_model(const std::file
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
     };
     capabilities.supports_speaker_reference = true;
     capabilities.languages = {"Auto"};

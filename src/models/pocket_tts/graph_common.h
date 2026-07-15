@@ -90,17 +90,26 @@ auto run_graph_with_backend(
     auto output = build_fn(ctx);
     ggml_cgraph * graph = ggml_new_graph_custom(ggml_ctx, 32768, false);
     ggml_build_forward_expand(graph, output.tensor);
-    ggml_backend_buffer_t params_buffer = ggml_backend_alloc_ctx_tensors(ggml_ctx, backend);
+    ggml_gallocr_t gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+    if (gallocr == nullptr ||
+        !ggml_gallocr_reserve(gallocr, graph) ||
+        !ggml_gallocr_alloc_graph(gallocr, graph)) {
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+        }
+        ggml_free(ggml_ctx);
+        throw std::runtime_error(std::string(label) + " graph allocation failed");
+    }
     init_fn();
     core::set_backend_threads(backend, threads);
     const ggml_status status = engine::core::compute_backend_graph(backend, graph);
     if (status != GGML_STATUS_SUCCESS) {
-        ggml_backend_buffer_free(params_buffer);
+        ggml_gallocr_free(gallocr);
         ggml_free(ggml_ctx);
         throw std::runtime_error(std::string(label) + " compute failed: " + ggml_status_to_string(status));
     }
     auto result = read_fn(ggml_ctx);
-    ggml_backend_buffer_free(params_buffer);
+    ggml_gallocr_free(gallocr);
     ggml_free(ggml_ctx);
     return result;
 }

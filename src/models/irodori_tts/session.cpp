@@ -308,9 +308,10 @@ IrodoriTTSSession::IrodoriTTSSession(
     throw std::runtime_error("Irodori-TTS only supports offline sessions");
   }
   if (task_.task != runtime::VoiceTaskKind::Tts &&
+      task_.task != runtime::VoiceTaskKind::VoiceCloning &&
       task_.task != runtime::VoiceTaskKind::VoiceDesign) {
     throw std::runtime_error(
-        "Irodori-TTS supports only TTS and voice-design offline tasks");
+        "Irodori-TTS supports only TTS, voice-cloning, and voice-design offline tasks");
   }
   condition_encoder_ = std::make_unique<IrodoriConditionEncoder>(
       assets_, execution_context(), condition_graph_arena_bytes_,
