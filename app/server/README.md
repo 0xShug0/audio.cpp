@@ -221,7 +221,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
   -F file=@/path/to/input.wav
 ```
 
-`file` and `model` are required; `language` is optional. The uploaded bytes are spooled to a temporary file for the duration of the request and removed afterward.
+`file` and `model` are required; `language` is optional. Uploaded WAV bytes are decoded in memory and are not written to a temporary file.
 
 For streaming-capable ASR models configured with `mode: "streaming"`, pass `stream=true` to receive OpenAI-style transcription SSE:
 

@@ -55,6 +55,11 @@ std::string workflow_string(const engine::io::json::Value & object, const std::s
     return value->as_string();
 }
 
+std::istringstream workflow_buffer(const engine::io::json::Value & object, const std::string & key) {
+    const auto str = workflow_string(object, key);
+    return std::istringstream(str);
+}
+
 std::string workflow_string_or(
     const engine::io::json::Value & object,
     const std::string & key,
@@ -725,8 +730,14 @@ void run_chunked_model_step(
         throw std::runtime_error("chunked_model step requires request object: " + id);
     }
     const std::string audio_key = workflow_string_or(step, "audio_key", "audio");
-    const auto input_audio_path = resolve_workflow_path(workflow_string(*request_value, audio_key), context);
-    const auto input_wav = engine::audio::read_wav_f32(input_audio_path);
+    engine::audio::WavData input_wav;
+    if (workflow_has_field(*request_value, "audio_data")) {
+        auto input_audio_data = workflow_buffer(*request_value, "audio_data");
+        input_wav = engine::audio::read_wav_f32(input_audio_data);
+    } else {
+        const auto input_audio_path = resolve_workflow_path(workflow_string(*request_value, audio_key), context);
+        input_wav = engine::audio::read_wav_f32(input_audio_path);
+    }
     if (input_wav.channels <= 0 || input_wav.sample_rate <= 0 || input_wav.samples.empty()) {
         throw std::runtime_error("chunked_model input audio is invalid: " + id);
     }

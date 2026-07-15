@@ -235,37 +235,6 @@ bool is_wav_upload_filename(const std::string & filename) {
     return ext.empty() || ext == ".wav";
 }
 
-// Multipart file uploads arrive as in-memory bytes, but the WAV decoder only reads from disk,
-// so uploaded audio is spooled to a uniquely named temp file before decoding.
-std::filesystem::path write_temp_upload(const std::string & filename, const std::string & data) {
-    std::filesystem::path ext = std::filesystem::path(filename).extension();
-    if (ext.empty()) {
-        ext = ".wav";
-    }
-    static std::atomic<uint64_t> counter{0};
-    std::ostringstream name;
-    name << "audiocpp_upload_" << Clock::now().time_since_epoch().count() << "_" << counter.fetch_add(1)
-         << ext.string();
-    const auto path = std::filesystem::temp_directory_path() / name.str();
-    std::ofstream out(path, std::ios::binary);
-    if (!out) {
-        throw std::runtime_error("failed to create temp file for upload: " + path.string());
-    }
-    out.write(data.data(), static_cast<std::streamsize>(data.size()));
-    if (!out) {
-        throw std::runtime_error("failed to write temp file for upload: " + path.string());
-    }
-    return path;
-}
-
-struct TempFileGuard {
-    std::filesystem::path path;
-    ~TempFileGuard() {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-    }
-};
-
 double elapsed_ms(Clock::time_point started) {
     return std::chrono::duration<double, std::milli>(Clock::now() - started).count();
 }
@@ -513,7 +482,10 @@ const engine::runtime::AudioBuffer & select_audio_output(const engine::runtime::
     throw std::runtime_error("model result did not contain exactly one audio output");
 }
 
-engine::runtime::TaskRequest build_openai_transcription_request(const Value & body, const std::filesystem::path & base_dir) {
+engine::runtime::TaskRequest build_openai_transcription_request(
+    const Value & body,
+    const std::filesystem::path & base_dir,
+    const std::string * uploaded_audio_bytes = nullptr) {
     const auto * audio = body.find("audio");
     if (audio == nullptr) {
         audio = body.find("audio_path");
@@ -521,12 +493,16 @@ engine::runtime::TaskRequest build_openai_transcription_request(const Value & bo
     if (audio == nullptr) {
         audio = body.find("file");
     }
-    if (audio == nullptr || !audio->is_string()) {
+    if (uploaded_audio_bytes == nullptr && (audio == nullptr || !audio->is_string())) {
         throw std::runtime_error("transcription request requires audio, audio_path, or file path");
     }
 
     engine::runtime::TaskRequest request;
-    request.audio_input = minitts::cli::read_audio_buffer(resolve_path(base_dir, audio->as_string()));
+    if (uploaded_audio_bytes == nullptr) {
+        request.audio_input = minitts::cli::read_audio_buffer(resolve_path(base_dir, audio->as_string()));
+    } else {
+        request.audio_input = minitts::cli::read_audio_buffer(std::string_view(*uploaded_audio_bytes));
+    }
     request.options = options_from_object(body.find("options"));
     std::string language;
     if (const auto * value = body.find("language")) {
@@ -986,18 +962,15 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
             "invalid_request_error");
     }
 
-    const TempFileGuard guard{write_temp_upload(file_part->filename, file_part->data)};
-
     engine::io::json::Value::Object fields;
     fields.emplace("model", engine::io::json::Value::make_string(model_id));
-    fields.emplace("audio", engine::io::json::Value::make_string(guard.path.string()));
     if (!language.empty()) {
         fields.emplace("language", engine::io::json::Value::make_string(language));
     }
     const auto body = engine::io::json::Value::make_object(std::move(fields));
 
     auto & model = require_model(body);
-    const auto request = build_openai_transcription_request(body, request_base_);
+    const auto request = build_openai_transcription_request(body, request_base_, &file_part->data);
     if (stream) {
         return run_transcription_stream(model, request);
     }

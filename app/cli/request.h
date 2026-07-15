@@ -6,11 +6,14 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace minitts::cli {
 
 engine::runtime::AudioBuffer read_audio_buffer(const std::filesystem::path & path);
+engine::runtime::AudioBuffer read_audio_buffer(std::istream & path);
+engine::runtime::AudioBuffer read_audio_buffer(std::string_view input);
 std::string json_option_string(const engine::io::json::Value & value);
 std::unordered_map<std::string, std::string> json_options_map(const engine::io::json::Value * value);
 std::optional<std::string> json_optional_string(
