@@ -370,6 +370,13 @@ public:
         combined_scratch_.resize(static_cast<size_t>(config_.latent_size + 1));
 
         params_buffer_ = ggml_backend_alloc_ctx_tensors(ggml_ctx_, backend_);
+        if (params_buffer_ == nullptr) {
+            // Under VRAM pressure the CUDA buffer alloc fails and returns null;
+            // the write_tensor calls below would then trip GGML_ASSERT and
+            // SIGABRT the whole server. Fail the request instead (see #55).
+            release_runtime();
+            throw std::runtime_error("FlowLM step parameter buffer allocation failed (out of memory)");
+        }
         if (prompt_steps_ > 0) {
             core::write_tensor_f32(prompt_embeddings_, prompt_embeddings_buffer_);
             core::write_tensor_i32(prompt_positions_, std::vector<int32_t>(static_cast<size_t>(prompt_steps_), 0));
@@ -402,7 +409,12 @@ public:
                 }
             }
             prompt_galloc_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
-            ggml_gallocr_alloc_graph(prompt_galloc_, prompt_graph_);
+            if (prompt_galloc_ == nullptr ||
+                !ggml_gallocr_reserve(prompt_galloc_, prompt_graph_) ||
+                !ggml_gallocr_alloc_graph(prompt_galloc_, prompt_graph_)) {
+                release_runtime();
+                throw std::runtime_error("FlowLM prompt graph allocation failed (out of memory)");
+            }
             if (engine::core::uses_host_graph_plan(backend_)) {
                 const auto prompt_plan_started = std::chrono::steady_clock::now();
                 prompt_plan_ = engine::core::create_backend_graph_plan_if_host(backend_, prompt_graph_);
@@ -417,23 +429,37 @@ public:
     }
 
     ~FlowLMStepRuntime() {
+        release_runtime();
+    }
+
+    // Free every owned backend resource and null it, so the constructor can
+    // call this on an allocation-failure throw path (a throw from the
+    // constructor skips the destructor, which would otherwise leak the ggml
+    // context and any buffers allocated before the failure). Idempotent.
+    void release_runtime() {
         if (prompt_plan_ != nullptr) {
             engine::core::free_backend_graph_plan(backend_, prompt_plan_);
+            prompt_plan_ = nullptr;
         }
         if (step_plan_ != nullptr) {
             engine::core::free_backend_graph_plan(backend_, step_plan_);
+            step_plan_ = nullptr;
         }
         if (prompt_galloc_ != nullptr) {
             ggml_gallocr_free(prompt_galloc_);
+            prompt_galloc_ = nullptr;
         }
         if (step_galloc_ != nullptr) {
             ggml_gallocr_free(step_galloc_);
+            step_galloc_ = nullptr;
         }
         if (params_buffer_ != nullptr) {
             ggml_backend_buffer_free(params_buffer_);
+            params_buffer_ = nullptr;
         }
         if (ggml_ctx_ != nullptr) {
             ggml_free(ggml_ctx_);
+            ggml_ctx_ = nullptr;
         }
     }
 
@@ -633,7 +659,18 @@ private:
             return;
         }
         step_galloc_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
-        ggml_gallocr_alloc_graph(step_galloc_, step_graph_);
+        if (step_galloc_ == nullptr ||
+            !ggml_gallocr_reserve(step_galloc_, step_graph_) ||
+            !ggml_gallocr_alloc_graph(step_galloc_, step_graph_)) {
+            // Lazy per-step allocation: free the partial gallocr so a later
+            // retry (step_graph_allocated_ stays false) does not leak it, then
+            // fail the request instead of asserting (see #55).
+            if (step_galloc_ != nullptr) {
+                ggml_gallocr_free(step_galloc_);
+                step_galloc_ = nullptr;
+            }
+            throw std::runtime_error("FlowLM step graph allocation failed (out of memory)");
+        }
         if (engine::core::uses_host_graph_plan(backend_)) {
             const auto step_plan_started = std::chrono::steady_clock::now();
             step_plan_ = engine::core::create_backend_graph_plan_if_host(backend_, step_graph_);
