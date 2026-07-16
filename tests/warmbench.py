@@ -97,8 +97,20 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "clone_audio": "resources/sample.wav",
         "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
         "case_catalog": "tests/qwen3_tts/qwen3_tts_warm_bench_cases.txt",
+        "case_overrides": {
+            "one_request": {
+                "model": "models/Qwen3-TTS-12Hz-1.7B-Base",
+                "clone_audio": "assets/resources/3.wav",
+                "reference_text": "Oh hi, I'm Nanashi Mumei from Hololive English Council. I'm that forgetful owl who only remembers the things that really matter.",
+                "source_issue": "https://github.com/0xShug0/audio.cpp/issues/67",
+            },
+        },
         "max_new_tokens": 512,
         "min_text_length": 70,
+        "run_asr_check": False,
+        "wav_cosine_min": 0.95,
+        "log_mel_cosine_min": 0.95,
+        "length_ratio_min": 0.98,
     },
     "qwen3_tts_voice_design": {
         "kind": "tts",
@@ -1677,6 +1689,103 @@ def compare_moss_tts(
         "python_frames": int(py_audio.shape[0]),
         "common_frames": int(common_frames),
         "sample_rate": int(py_sr),
+    }
+    return {
+        "ok": not mismatches,
+        "reason": "ok" if not mismatches else f"mismatch:{mismatches[0]}",
+        "mismatches": mismatches,
+        "metrics": metrics,
+    }
+
+
+def compare_qwen3_tts_audio(
+    cpp_summary: dict[str, Any],
+    py_summary: dict[str, Any],
+    cpp_audio_path: Path,
+    py_audio_path: Path,
+    waveform_cosine_min: float,
+    log_mel_cosine_min: float,
+    length_ratio_min: float,
+) -> dict[str, Any]:
+    import librosa
+    import numpy as np
+    import soundfile as sf
+
+    mismatches: list[str] = []
+    if cpp_summary.get("sample_rate") != py_summary.get("sample_rate"):
+        mismatches.append("sample_rate")
+    if cpp_summary.get("channels") != py_summary.get("channels"):
+        mismatches.append("channels")
+
+    cpp_audio, cpp_sr = sf.read(str(cpp_audio_path), always_2d=True)
+    py_audio, py_sr = sf.read(str(py_audio_path), always_2d=True)
+    if int(cpp_sr) != int(py_sr):
+        mismatches.append("sample_rate")
+
+    cpp_audio = np.asarray(cpp_audio, dtype=np.float32)
+    py_audio = np.asarray(py_audio, dtype=np.float32)
+    cpp_flat = cpp_audio.reshape(-1).astype(np.float64, copy=False)
+    py_flat = py_audio.reshape(-1).astype(np.float64, copy=False)
+    common_samples = min(cpp_flat.size, py_flat.size)
+    if common_samples <= 0:
+        return {
+            "ok": False,
+            "reason": "mismatch:empty_audio",
+            "mismatches": ["empty_audio"],
+            "metrics": {
+                "wav_cosine_min": waveform_cosine_min,
+                "log_mel_cosine_min": log_mel_cosine_min,
+                "length_ratio_min": length_ratio_min,
+            },
+        }
+
+    length_ratio = common_samples / float(max(cpp_flat.size, py_flat.size))
+    if cpp_flat.size != py_flat.size:
+        mismatches.append("samples")
+    if length_ratio < length_ratio_min:
+        mismatches.append("length_ratio")
+
+    cpp_common = cpp_flat[:common_samples]
+    py_common = py_flat[:common_samples]
+    diff = cpp_common - py_common
+    waveform_denom = float(np.linalg.norm(cpp_common) * np.linalg.norm(py_common))
+    waveform_cosine = 1.0 if waveform_denom == 0.0 else float(np.dot(cpp_common, py_common) / waveform_denom)
+    if waveform_cosine < waveform_cosine_min:
+        mismatches.append("cosine")
+
+    cpp_mono = cpp_audio.mean(axis=1)[:common_samples].astype(np.float32, copy=False)
+    py_mono = py_audio.mean(axis=1)[:common_samples].astype(np.float32, copy=False)
+    mel_kwargs = {"sr": int(cpp_sr), "n_fft": 1024, "hop_length": 256, "n_mels": 80, "power": 2.0}
+    cpp_log_mel = np.log(np.maximum(librosa.feature.melspectrogram(y=cpp_mono, **mel_kwargs), 1.0e-10))
+    py_log_mel = np.log(np.maximum(librosa.feature.melspectrogram(y=py_mono, **mel_kwargs), 1.0e-10))
+    common_mel_frames = min(cpp_log_mel.shape[1], py_log_mel.shape[1])
+    if common_mel_frames > 0:
+        cpp_mel_flat = cpp_log_mel[:, :common_mel_frames].reshape(-1).astype(np.float64, copy=False)
+        py_mel_flat = py_log_mel[:, :common_mel_frames].reshape(-1).astype(np.float64, copy=False)
+        log_mel_denom = float(np.linalg.norm(cpp_mel_flat) * np.linalg.norm(py_mel_flat))
+        log_mel_cosine = 1.0 if log_mel_denom == 0.0 else float(np.dot(cpp_mel_flat, py_mel_flat) / log_mel_denom)
+    else:
+        log_mel_cosine = 0.0
+    if log_mel_cosine < log_mel_cosine_min:
+        mismatches.append("log_mel_cosine")
+
+    metrics = {
+        "cpp_samples": int(cpp_flat.size),
+        "python_samples": int(py_flat.size),
+        "common_samples": int(common_samples),
+        "length_ratio": length_ratio,
+        "length_ratio_min": length_ratio_min,
+        "cosine": waveform_cosine,
+        "wav_cosine_min": waveform_cosine_min,
+        "mae": float(np.mean(np.abs(diff), dtype=np.float64)),
+        "rmse": float(np.sqrt(np.mean(np.square(diff), dtype=np.float64))),
+        "max_abs": float(np.max(np.abs(diff))),
+        "cpp_mel_frames": int(cpp_log_mel.shape[1]),
+        "python_mel_frames": int(py_log_mel.shape[1]),
+        "common_mel_frames": int(common_mel_frames),
+        "log_mel_cosine": log_mel_cosine,
+        "log_mel_cosine_min": log_mel_cosine_min,
+        "sample_rate": int(cpp_sr),
     }
     return {
         "ok": not mismatches,
@@ -4386,6 +4495,16 @@ def run_scenario(
             texts, request_manifest, scenario_config = resolve_omnivoice_case(config, args)
         else:
             texts, request_manifest = resolve_tts_texts(family, config, args, mode)
+        if family == "qwen3_tts":
+            for case_name in request_manifest.get("case_names", []):
+                case_override = scenario_config.get("case_overrides", {}).get(case_name)
+                if not case_override:
+                    continue
+                for key in ("model", "clone_audio", "reference_text"):
+                    scenario_config[key] = case_override[key]
+                    request_manifest[key] = case_override[key]
+                if "source_issue" in case_override:
+                    request_manifest["source_issue"] = case_override["source_issue"]
         if family == "chatterbox" and not args.warmup_text and request_manifest.get("warmup_text"):
             scenario_config["warmup_text"] = request_manifest["warmup_text"]
         if family == "moss_tts_nano" and isinstance(request_manifest.get("options"), dict):
@@ -4633,7 +4752,21 @@ def run_scenario(
                             "timing_mismatches": [],
                         }
                         append_log(master_log, f"ASR SKIPPED family={family} mode={mode} backend={backend} request={request_index}")
-                    if family in {"moss_tts_nano", "moss_tts_local"}:
+                    if family == "qwen3_tts":
+                        waveform_parity = compare_qwen3_tts_audio(
+                            cpp_parsed["summaries"][request_index],
+                            python_parsed["summaries"][request_index],
+                            cpp_audio_path,
+                            python_audio_path,
+                            float(scenario_config.get("wav_cosine_min", 0.95)),
+                            float(scenario_config.get("log_mel_cosine_min", 0.95)),
+                            float(scenario_config.get("length_ratio_min", 0.98)),
+                        )
+                        parity_ok = asr_parity["ok"] and waveform_parity["ok"]
+                        parity_reason = "ok" if parity_ok else (
+                            asr_parity["reason"] if not asr_parity["ok"] else waveform_parity["reason"]
+                        )
+                    elif family in {"moss_tts_nano", "moss_tts_local"}:
                         waveform_parity = compare_moss_tts(
                             cpp_parsed["summaries"][request_index],
                             python_parsed["summaries"][request_index],

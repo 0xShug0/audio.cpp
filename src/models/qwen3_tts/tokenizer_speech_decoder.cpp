@@ -42,7 +42,7 @@ namespace binding = modules::binding;
 
 constexpr int64_t kSampleRate = 24000;
 constexpr int64_t kDecodeSamplesPerCode = 1920;
-constexpr int64_t kChunkCodes = 64;
+constexpr int64_t kChunkCodes = 300;
 constexpr int64_t kLeftContextCodes = 25;
 constexpr float kCodebookEps = 1.0e-5F;
 constexpr float kMaskNegInf = -1.0e9F;
