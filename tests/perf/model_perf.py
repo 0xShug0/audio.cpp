@@ -1518,7 +1518,7 @@ LOADERS: dict[str, LoaderFn] = {
     "kokoro_tts": kokoro_loader,
     "pocket_tts": pocket_tts_loader,
     "omnivoice": omnivoice_loader,
-    "moss_tts": moss_tts_loader,
+    "moss_tts_nano": moss_tts_loader,
     "seed_vc": seed_vc_loader,
     "vevo2": vevo2_loader,
     "parakeet_tdt": parakeet_loader,

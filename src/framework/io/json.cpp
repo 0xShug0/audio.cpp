@@ -75,6 +75,80 @@ std::string print_cjson(cJSON * root) {
     return out;
 }
 
+std::string strip_jsonc_comments(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    bool in_string = false;
+    bool escaped = false;
+    for (size_t index = 0; index < text.size(); ++index) {
+        const char ch = text[index];
+        if (in_string) {
+            out.push_back(ch);
+            if (escaped) {
+                escaped = false;
+            } else if (ch == '\\') {
+                escaped = true;
+            } else if (ch == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            in_string = true;
+            out.push_back(ch);
+            continue;
+        }
+        if (ch == '/' && index + 1 < text.size() && text[index + 1] == '/') {
+            while (index < text.size() && text[index] != '\n') {
+                ++index;
+            }
+            if (index < text.size()) {
+                out.push_back('\n');
+            }
+            continue;
+        }
+        out.push_back(ch);
+    }
+    return out;
+}
+
+std::string strip_jsonc_trailing_commas(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    bool in_string = false;
+    bool escaped = false;
+    for (size_t index = 0; index < text.size(); ++index) {
+        const char ch = text[index];
+        if (in_string) {
+            out.push_back(ch);
+            if (escaped) {
+                escaped = false;
+            } else if (ch == '\\') {
+                escaped = true;
+            } else if (ch == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            in_string = true;
+            out.push_back(ch);
+            continue;
+        }
+        if (ch == ',') {
+            size_t lookahead = index + 1;
+            while (lookahead < text.size() && std::isspace(static_cast<unsigned char>(text[lookahead])) != 0) {
+                ++lookahead;
+            }
+            if (lookahead < text.size() && (text[lookahead] == '}' || text[lookahead] == ']')) {
+                continue;
+            }
+        }
+        out.push_back(ch);
+    }
+    return out;
+}
+
 Value convert_cjson(const cJSON * node) {
     if (node == nullptr) {
         throw std::runtime_error("json conversion received null node");
@@ -303,8 +377,16 @@ Value parse(std::string_view text) {
     }
 }
 
+Value parse_jsonc(std::string_view text) {
+    return parse(strip_jsonc_trailing_commas(strip_jsonc_comments(text)));
+}
+
 Value parse_file(const std::filesystem::path & path) {
     return parse(engine::io::read_text_file(path));
+}
+
+Value parse_jsonc_file(const std::filesystem::path & path) {
+    return parse_jsonc(engine::io::read_text_file(path));
 }
 
 std::string stringify(const Value & value) {

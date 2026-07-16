@@ -1,138 +1,87 @@
 #include "engine/models/demucs/assets.h"
 
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/framework/io/json.h"
 
 #include <cmath>
 #include <stdexcept>
-#include <utility>
 
 namespace engine::models::demucs {
-namespace io = engine::io;
+namespace json = engine::io::json;
 namespace {
 
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("HTDemucs model path does not exist: " + model_path.string());
-}
-
-std::filesystem::path require_relative_path(const io::json::Value & object, const std::string & key) {
-    const auto & value = object.require(key);
-    if (!value.is_string()) {
-        throw std::runtime_error("HTDemucs manifest key '" + key + "' must be a string");
-    }
-    return std::filesystem::path(value.as_string());
-}
-
-DemucsConvertedModelRef parse_model_ref(const io::json::Value & value) {
-    DemucsConvertedModelRef model;
-    model.signature = value.require("signature").as_string();
-    model.checkpoint_file = value.require("checkpoint_file").as_string();
-    model.output_dir = require_relative_path(value, "output_dir");
-    const auto * tensor_count = value.find("tensor_count");
-    model.tensor_count = tensor_count != nullptr && tensor_count->is_number() ? tensor_count->as_i64() : 0;
-    return model;
-}
-
-DemucsBagManifest parse_manifest(const std::filesystem::path & root) {
-    const auto manifest = io::json::parse_file(root / "manifest.json");
-    DemucsBagManifest out;
-    out.model_type = manifest.require("model_type").as_string();
-    out.name = manifest.require("name").as_string();
+HTDemucsManifest parse_package_manifest(const assets::ResourceBundle & resources) {
+    const auto manifest = resources.parse_json("manifest");
+    HTDemucsManifest out;
+    out.model_type = json::require_string(manifest, "model_type");
+    out.name = json::require_string(manifest, "name");
 
     if (out.model_type == "demucs_single") {
-        out.models.push_back(parse_model_ref(manifest.require("model")));
+        (void) manifest.require("model");
     } else if (out.model_type == "demucs_single_alias") {
-        out.models.push_back(parse_model_ref(manifest.require("model")));
+        (void) manifest.require("model");
     } else if (out.model_type == "demucs_bag") {
-        for (const auto & item : manifest.require("models").as_array()) {
-            out.models.push_back(parse_model_ref(item));
-        }
-        const auto * weights = manifest.find("weights");
-        if (weights != nullptr && !weights->is_null()) {
-            for (const auto & row : weights->as_array()) {
-                std::vector<float> values;
-                for (const auto & item : row.as_array()) {
-                    values.push_back(item.as_f32());
-                }
-                out.weights.push_back(std::move(values));
-            }
-        }
-        const auto * segment = manifest.find("segment");
-        if (segment != nullptr && segment->is_number()) {
-            out.segment_override_seconds = segment->as_f32();
-        }
+        throw std::runtime_error("HTDemucs package-spec loader currently supports only single-model manifests");
     } else {
         throw std::runtime_error("Unsupported HTDemucs manifest type: " + out.model_type);
-    }
-
-    if (out.models.empty()) {
-        throw std::runtime_error("HTDemucs manifest has no models");
     }
     return out;
 }
 
-HTDemucsConfig parse_submodel_config(const std::filesystem::path & config_path) {
-    const auto root = io::json::parse_file(config_path);
+HTDemucsConfig parse_config(const assets::ResourceBundle & resources) {
+    const auto root = resources.parse_json("submodel_config");
     HTDemucsConfig config;
-    config.class_name = root.require("class_name").as_string();
+    config.class_name = json::require_string(root, "class_name");
     if (config.class_name != "HTDemucs") {
         throw std::runtime_error("Only HTDemucs class_name is supported, got: " + config.class_name);
     }
-    config.signature = root.require("signature").as_string();
-    config.checkpoint_file = root.require("checkpoint_file").as_string();
-    for (const auto & item : root.require("sources").as_array()) {
-        config.sources.push_back(item.as_string());
-    }
-    config.audio_channels = root.require("audio_channels").as_i64();
-    config.sample_rate = root.require("samplerate").as_i64();
-    config.segment_seconds = root.require("segment").as_f32();
+    config.signature = json::require_string(root, "signature");
+    config.checkpoint_file = json::require_string(root, "checkpoint_file");
+    config.sources = json::require_string_array(root, "sources");
+    config.audio_channels = json::require_i64(root, "audio_channels");
+    config.sample_rate = json::require_i64(root, "samplerate");
+    config.segment_seconds = json::require_f32(root, "segment");
 
     const auto & kwargs = root.require("kwargs");
-    config.channels = kwargs.require("channels").as_i64();
-    config.growth = kwargs.require("growth").as_i64();
-    config.n_fft = kwargs.require("nfft").as_i64();
+    config.channels = json::require_i64(kwargs, "channels");
+    config.growth = json::require_i64(kwargs, "growth");
+    config.n_fft = json::require_i64(kwargs, "nfft");
     config.hop_length = config.n_fft / 4;
-    config.wiener_iters = kwargs.require("wiener_iters").as_i64();
-    config.wiener_residual = kwargs.require("wiener_residual").as_bool();
-    config.cac = kwargs.require("cac").as_bool();
-    config.depth = kwargs.require("depth").as_i64();
-    config.rewrite = kwargs.require("rewrite").as_bool();
-    config.multi_freqs_depth = kwargs.require("multi_freqs_depth").as_i64();
-    config.freq_emb_scale = kwargs.require("freq_emb").as_f32();
-    config.embedding_scale = kwargs.require("emb_scale").as_f32();
-    config.embedding_smooth = kwargs.require("emb_smooth").as_bool();
-    config.kernel_size = kwargs.require("kernel_size").as_i64();
-    config.stride = kwargs.require("stride").as_i64();
-    config.time_stride = kwargs.require("time_stride").as_i64();
-    config.context = kwargs.require("context").as_i64();
-    config.context_enc = kwargs.require("context_enc").as_i64();
-    config.norm_starts = kwargs.require("norm_starts").as_i64();
-    config.norm_groups = kwargs.require("norm_groups").as_i64();
-    config.dconv_mode = kwargs.require("dconv_mode").as_i64();
-    config.dconv_depth = kwargs.require("dconv_depth").as_i64();
-    config.dconv_comp = kwargs.require("dconv_comp").as_i64();
-    config.dconv_init = kwargs.require("dconv_init").as_f32();
-    config.bottom_channels = kwargs.require("bottom_channels").as_i64();
-    config.transformer_layers = kwargs.require("t_layers").as_i64();
-    config.transformer_hidden_scale = kwargs.require("t_hidden_scale").as_f32();
-    config.transformer_heads = kwargs.require("t_heads").as_i64();
-    config.transformer_dropout = kwargs.require("t_dropout").as_f32();
-    config.transformer_layer_scale = kwargs.require("t_layer_scale").as_bool();
-    config.transformer_gelu = kwargs.require("t_gelu").as_bool();
-    config.transformer_norm_in_group = kwargs.require("t_norm_in_group").as_bool();
-    config.transformer_group_norm = kwargs.require("t_group_norm").as_bool();
-    config.transformer_norm_in = kwargs.require("t_norm_in").as_bool();
-    config.transformer_norm_first = kwargs.require("t_norm_first").as_bool();
-    config.transformer_norm_out = kwargs.require("t_norm_out").as_bool();
-    config.transformer_cross_first = kwargs.require("t_cross_first").as_bool();
-    config.transformer_max_period = kwargs.require("t_max_period").as_f32();
-    config.transformer_weight_pos_embed = kwargs.require("t_weight_pos_embed").as_f32();
+    config.wiener_iters = json::require_i64(kwargs, "wiener_iters");
+    config.wiener_residual = json::require_bool(kwargs, "wiener_residual");
+    config.cac = json::require_bool(kwargs, "cac");
+    config.depth = json::require_i64(kwargs, "depth");
+    config.rewrite = json::require_bool(kwargs, "rewrite");
+    config.multi_freqs_depth = json::require_i64(kwargs, "multi_freqs_depth");
+    config.freq_emb_scale = json::require_f32(kwargs, "freq_emb");
+    config.embedding_scale = json::require_f32(kwargs, "emb_scale");
+    config.embedding_smooth = json::require_bool(kwargs, "emb_smooth");
+    config.kernel_size = json::require_i64(kwargs, "kernel_size");
+    config.stride = json::require_i64(kwargs, "stride");
+    config.time_stride = json::require_i64(kwargs, "time_stride");
+    config.context = json::require_i64(kwargs, "context");
+    config.context_enc = json::require_i64(kwargs, "context_enc");
+    config.norm_starts = json::require_i64(kwargs, "norm_starts");
+    config.norm_groups = json::require_i64(kwargs, "norm_groups");
+    config.dconv_mode = json::require_i64(kwargs, "dconv_mode");
+    config.dconv_depth = json::require_i64(kwargs, "dconv_depth");
+    config.dconv_comp = json::require_i64(kwargs, "dconv_comp");
+    config.dconv_init = json::require_f32(kwargs, "dconv_init");
+    config.bottom_channels = json::require_i64(kwargs, "bottom_channels");
+    config.transformer_layers = json::require_i64(kwargs, "t_layers");
+    config.transformer_hidden_scale = json::require_f32(kwargs, "t_hidden_scale");
+    config.transformer_heads = json::require_i64(kwargs, "t_heads");
+    config.transformer_dropout = json::require_f32(kwargs, "t_dropout");
+    config.transformer_layer_scale = json::require_bool(kwargs, "t_layer_scale");
+    config.transformer_gelu = json::require_bool(kwargs, "t_gelu");
+    config.transformer_norm_in_group = json::require_bool(kwargs, "t_norm_in_group");
+    config.transformer_group_norm = json::require_bool(kwargs, "t_group_norm");
+    config.transformer_norm_in = json::require_bool(kwargs, "t_norm_in");
+    config.transformer_norm_first = json::require_bool(kwargs, "t_norm_first");
+    config.transformer_norm_out = json::require_bool(kwargs, "t_norm_out");
+    config.transformer_cross_first = json::require_bool(kwargs, "t_cross_first");
+    config.transformer_max_period = json::require_f32(kwargs, "t_max_period");
+    config.transformer_weight_pos_embed = json::require_f32(kwargs, "t_weight_pos_embed");
 
     if (kwargs.require("channels_time").is_null() == false) {
         throw std::runtime_error("HTDemucs channels_time != null is not supported yet");
@@ -140,16 +89,16 @@ HTDemucsConfig parse_submodel_config(const std::filesystem::path & config_path) 
     if (!kwargs.require("multi_freqs").as_array().empty()) {
         throw std::runtime_error("HTDemucs multi_freqs is not supported yet");
     }
-    if (kwargs.require("t_emb").as_string() != "sin") {
+    if (json::require_string(kwargs, "t_emb") != "sin") {
         throw std::runtime_error("HTDemucs only supports t_emb=sin");
     }
     if (config.transformer_norm_in_group || config.transformer_group_norm) {
         throw std::runtime_error("HTDemucs native runtime currently supports only layer-norm transformer checkpoints");
     }
-    if (kwargs.require("t_sin_random_shift").as_i64() != 0) {
+    if (json::require_i64(kwargs, "t_sin_random_shift") != 0) {
         throw std::runtime_error("HTDemucs only supports t_sin_random_shift=0");
     }
-    if (kwargs.require("t_sparse_self_attn").as_bool() || kwargs.require("t_sparse_cross_attn").as_bool()) {
+    if (json::require_bool(kwargs, "t_sparse_self_attn") || json::require_bool(kwargs, "t_sparse_cross_attn")) {
         throw std::runtime_error("HTDemucs sparse attention is not supported");
     }
     if (!config.cac) {
@@ -168,40 +117,10 @@ HTDemucsConfig parse_submodel_config(const std::filesystem::path & config_path) 
     return config;
 }
 
-runtime::ModelMetadata build_metadata(const DemucsBagManifest & manifest) {
-    runtime::ModelMetadata metadata;
-    metadata.family = "htdemucs";
-    metadata.variant = manifest.name;
-    metadata.description = manifest.model_type == "demucs_bag"
-        ? "HTDemucs source separation bag converted from Demucs reference checkpoints."
-        : "HTDemucs base source separation model converted from Demucs reference checkpoints.";
-    metadata.config_candidates = {"manifest.json", "*/config.json"};
-    metadata.weight_candidates = {"*/model.safetensors"};
-    return metadata;
-}
-
-runtime::CapabilitySet build_capabilities(const HTDemucsConfig & config) {
-    runtime::CapabilitySet capabilities;
-    capabilities.supported_tasks = {
-        {runtime::VoiceTaskKind::SourceSeparation, {runtime::RunMode::Offline}},
-    };
-    capabilities.languages = {"N/A"};
-    (void) config;
-    return capabilities;
-}
-
-std::shared_ptr<const DemucsSubmodelAssets> load_submodel(
-    const std::filesystem::path & root,
-    const DemucsConvertedModelRef & model) {
-    auto sub = std::make_shared<DemucsSubmodelAssets>();
-    sub->manifest_entry = model;
-    sub->resources = assets::ResourceBundle(root / model.output_dir);
-    sub->resources.add_model_files({
-        {"config", "config.json", true},
-        {"weights", "model.safetensors", true},
-    });
-    sub->tensor_source = sub->resources.open_tensor_source("weights");
-    sub->config = parse_submodel_config(sub->resources.require_file("config"));
+std::shared_ptr<const HTDemucsSubmodelAssets> load_submodel(const assets::ResourceBundle & resources) {
+    auto sub = std::make_shared<HTDemucsSubmodelAssets>();
+    sub->tensor_source = resources.open_tensor_source("submodel_weights");
+    sub->config = parse_config(resources);
     return sub;
 }
 
@@ -221,31 +140,14 @@ void validate_demucs_weight_storage_type(assets::TensorStorageType storage_type)
     }
 }
 
-runtime::ModelInspection inspect_htdemucs_model(const runtime::ModelLoadRequest & request) {
-    const auto root = resolve_model_root(request.model_path);
-    const auto manifest = parse_manifest(root);
-    const auto first = load_submodel(root, manifest.models.front());
-
-    runtime::ModelInspection inspection;
-    inspection.model_root = root;
-    inspection.metadata = build_metadata(manifest);
-    inspection.capabilities = build_capabilities(first->config);
-    inspection.discovered_configs = runtime::discover_named_assets(root, {"manifest.json", "*/config.json"});
-    inspection.discovered_weights = runtime::discover_named_assets(root, {"*/model.safetensors"});
-    return inspection;
-}
-
-std::shared_ptr<const DemucsAssets> load_htdemucs_assets(const runtime::ModelLoadRequest & request) {
-    const auto root = resolve_model_root(request.model_path);
-    const auto manifest = parse_manifest(root);
-    auto assets = std::make_shared<DemucsAssets>();
-    assets->manifest = manifest;
-    assets->metadata = build_metadata(manifest);
-    for (const auto & model : manifest.models) {
-        assets->submodels.push_back(load_submodel(root, model));
-    }
-    assets->capabilities = build_capabilities(assets->submodels.front()->config);
-    return assets;
+std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(const runtime::ModelLoadRequest & request) {
+    auto out = std::make_shared<HTDemucsAssets>();
+    out->resources = assets::load_resource_bundle_from_package_spec(
+        request.model_path,
+        assets::default_model_package_spec_path("htdemucs"));
+    out->manifest = parse_package_manifest(out->resources);
+    out->submodels.push_back(load_submodel(out->resources));
+    return out;
 }
 
 }  // namespace engine::models::demucs

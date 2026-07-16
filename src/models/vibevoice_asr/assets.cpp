@@ -1,7 +1,7 @@
 #include "engine/models/vibevoice_asr/assets.h"
 
-#include "engine/framework/assets/resource_bundle.h"
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/model_package.h"
+#include "engine/framework/io/config.h"
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
@@ -13,57 +13,7 @@ namespace engine::models::vibevoice_asr {
 namespace json = engine::io::json;
 namespace {
 
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("VibeVoice model path does not exist: " + model_path.string());
-}
-
-std::filesystem::path require_existing_file(const std::filesystem::path & path, const char * role) {
-    if (!engine::io::is_existing_file(path)) {
-        throw std::runtime_error(std::string("VibeVoice-ASR missing ") + role + ": " + path.string());
-    }
-    return std::filesystem::weakly_canonical(path);
-}
-
-assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_path) {
-    assets::ResourceBundle resources(resolve_model_root(model_path));
-    resources.add_model_files({
-        {"config", "config.json", true},
-        {"model_index", "model.safetensors.index.json", true},
-        {"preprocessor_config", "preprocessor_config.json", false},
-        {"tokenizer_config", "tokenizer_config.json", false},
-        {"tokenizer_json", "tokenizer.json", false},
-        {"tokenizer_vocab", "vocab.json", false},
-        {"tokenizer_merges", "merges.txt", false},
-    });
-    return resources;
-}
-
-void require_positive(int64_t value, const char * label) {
-    if (value <= 0) {
-        throw std::runtime_error(std::string("VibeVoice config contains non-positive ") + label);
-    }
-}
-
-void require_divisible(int64_t value, int64_t divisor, const char * label) {
-    if (divisor <= 0 || value % divisor != 0) {
-        throw std::runtime_error(std::string("VibeVoice config invalid divisibility for ") + label);
-    }
-}
-
-void require_string_value(const std::string & actual, const char * expected, const char * label) {
-    if (actual != expected) {
-        throw std::runtime_error(
-            std::string("VibeVoice config ") + label + " mismatch: expected " + expected + ", got " + actual);
-    }
-}
-
-VibeVoiceTokenizerConfig parse_tokenizer_config(const engine::io::json::Value & value, const char * label) {
+VibeVoiceTokenizerConfig parse_tokenizer_config(const json::Value & value, const char * label) {
     VibeVoiceTokenizerConfig config;
     config.channels = json::optional_i64(value, "channels", config.channels);
     config.causal = json::optional_bool(value, "causal", config.causal);
@@ -88,10 +38,10 @@ VibeVoiceTokenizerConfig parse_tokenizer_config(const engine::io::json::Value & 
     config.decoder_n_filters = json::optional_i64(value, "decoder_n_filters", config.encoder_n_filters);
     config.decoder_ratios = json::optional_i64_array(value, "decoder_ratios", config.encoder_ratios);
     config.decoder_depths = json::optional_string(value, "decoder_depths", config.decoder_depths);
-    require_positive(config.channels, label);
-    require_positive(config.vae_dim, label);
-    require_positive(config.encoder_n_filters, label);
-    require_positive(config.decoder_n_filters, label);
+    engine::io::require_positive(config.channels, label);
+    engine::io::require_positive(config.vae_dim, label);
+    engine::io::require_positive(config.encoder_n_filters, label);
+    engine::io::require_positive(config.decoder_n_filters, label);
     if (!config.causal) {
         throw std::runtime_error(std::string("VibeVoice ") + label + " must be causal");
     }
@@ -102,20 +52,28 @@ VibeVoiceTokenizerConfig parse_tokenizer_config(const engine::io::json::Value & 
         config.decoder_ratios = config.encoder_ratios;
     }
     for (const auto ratio : config.encoder_ratios) {
-        require_positive(ratio, label);
+        engine::io::require_positive(ratio, label);
     }
     for (const auto ratio : config.decoder_ratios) {
-        require_positive(ratio, label);
+        engine::io::require_positive(ratio, label);
     }
-    require_string_value(config.mixer_layer, "depthwise_conv", label);
-    require_string_value(config.conv_norm, "none", label);
-    require_string_value(config.layernorm, "RMSNorm", label);
+    if (config.mixer_layer != "depthwise_conv") {
+        throw std::runtime_error(std::string("VibeVoice config ") + label + " mixer_layer mismatch");
+    }
+    if (config.conv_norm != "none") {
+        throw std::runtime_error(std::string("VibeVoice config ") + label + " conv_norm mismatch");
+    }
+    if (config.layernorm != "RMSNorm") {
+        throw std::runtime_error(std::string("VibeVoice config ") + label + " layernorm mismatch");
+    }
     return config;
 }
 
-VibeVoiceDecoderConfig parse_decoder_config(const engine::io::json::Value & value) {
+VibeVoiceDecoderConfig parse_decoder_config(const json::Value & value) {
     const auto model_type = json::optional_string(value, "model_type", "");
-    require_string_value(model_type, "qwen2", "decoder model_type");
+    if (model_type != "qwen2") {
+        throw std::runtime_error("VibeVoice config decoder model_type mismatch");
+    }
     VibeVoiceDecoderConfig config;
     config.hidden_size = json::require_i64(value, "hidden_size");
     config.intermediate_size = json::require_i64(value, "intermediate_size");
@@ -130,15 +88,15 @@ VibeVoiceDecoderConfig parse_decoder_config(const engine::io::json::Value & valu
     config.tie_word_embeddings = json::optional_bool(value, "tie_word_embeddings", config.tie_word_embeddings);
     config.use_cache = json::optional_bool(value, "use_cache", config.use_cache);
     config.use_sliding_window = json::optional_bool(value, "use_sliding_window", config.use_sliding_window);
-    require_positive(config.hidden_size, "decoder hidden_size");
-    require_positive(config.intermediate_size, "decoder intermediate_size");
-    require_positive(config.max_position_embeddings, "decoder max_position_embeddings");
-    require_positive(config.num_attention_heads, "decoder num_attention_heads");
-    require_positive(config.num_hidden_layers, "decoder num_hidden_layers");
-    require_positive(config.num_key_value_heads, "decoder num_key_value_heads");
-    require_positive(config.vocab_size, "decoder vocab_size");
-    require_divisible(config.hidden_size, config.num_attention_heads, "decoder hidden_size / heads");
-    require_divisible(config.num_attention_heads, config.num_key_value_heads, "decoder grouped query heads");
+    engine::io::require_positive(config.hidden_size, "decoder hidden_size");
+    engine::io::require_positive(config.intermediate_size, "decoder intermediate_size");
+    engine::io::require_positive(config.max_position_embeddings, "decoder max_position_embeddings");
+    engine::io::require_positive(config.num_attention_heads, "decoder num_attention_heads");
+    engine::io::require_positive(config.num_hidden_layers, "decoder num_hidden_layers");
+    engine::io::require_positive(config.num_key_value_heads, "decoder num_key_value_heads");
+    engine::io::require_positive(config.vocab_size, "decoder vocab_size");
+    engine::io::require_divisible(config.hidden_size, config.num_attention_heads, "decoder hidden_size / heads");
+    engine::io::require_divisible(config.num_attention_heads, config.num_key_value_heads, "decoder grouped query heads");
     config.head_dim = config.hidden_size / config.num_attention_heads;
     if (config.use_sliding_window) {
         throw std::runtime_error("VibeVoice decoder sliding-window attention is not expected for 1.5B");
@@ -146,7 +104,7 @@ VibeVoiceDecoderConfig parse_decoder_config(const engine::io::json::Value & valu
     return config;
 }
 
-VibeVoiceDiffusionHeadConfig parse_diffusion_head_config(const engine::io::json::Value & value) {
+VibeVoiceDiffusionHeadConfig parse_diffusion_head_config(const json::Value & value) {
     VibeVoiceDiffusionHeadConfig config;
     config.ddpm_batch_mul = json::optional_i64(value, "ddpm_batch_mul", config.ddpm_batch_mul);
     config.ddpm_beta_schedule = json::optional_string(value, "ddpm_beta_schedule", config.ddpm_beta_schedule);
@@ -161,23 +119,29 @@ VibeVoiceDiffusionHeadConfig parse_diffusion_head_config(const engine::io::json:
     config.prediction_type = json::optional_string(value, "prediction_type", config.prediction_type);
     config.rms_norm_eps = json::optional_f32(value, "rms_norm_eps", config.rms_norm_eps);
     config.speech_vae_dim = json::optional_i64(value, "speech_vae_dim", config.latent_size);
-    require_positive(config.ddpm_batch_mul, "diffusion ddpm_batch_mul");
-    require_positive(config.ddpm_num_inference_steps, "diffusion ddpm_num_inference_steps");
-    require_positive(config.ddpm_num_steps, "diffusion ddpm_num_steps");
-    require_positive(config.head_layers, "diffusion head_layers");
-    require_positive(config.hidden_size, "diffusion hidden_size");
-    require_positive(config.latent_size, "diffusion latent_size");
-    require_positive(config.speech_vae_dim, "diffusion speech_vae_dim");
-    require_string_value(config.diffusion_type, "ddpm", "diffusion_type");
-    require_string_value(config.prediction_type, "v_prediction", "diffusion prediction_type");
-    require_string_value(config.ddpm_beta_schedule, "cosine", "diffusion beta schedule");
+    engine::io::require_positive(config.ddpm_batch_mul, "diffusion ddpm_batch_mul");
+    engine::io::require_positive(config.ddpm_num_inference_steps, "diffusion ddpm_num_inference_steps");
+    engine::io::require_positive(config.ddpm_num_steps, "diffusion ddpm_num_steps");
+    engine::io::require_positive(config.head_layers, "diffusion head_layers");
+    engine::io::require_positive(config.hidden_size, "diffusion hidden_size");
+    engine::io::require_positive(config.latent_size, "diffusion latent_size");
+    engine::io::require_positive(config.speech_vae_dim, "diffusion speech_vae_dim");
+    if (config.diffusion_type != "ddpm") {
+        throw std::runtime_error("VibeVoice config diffusion_type mismatch");
+    }
+    if (config.prediction_type != "v_prediction") {
+        throw std::runtime_error("VibeVoice config diffusion prediction_type mismatch");
+    }
+    if (config.ddpm_beta_schedule != "cosine") {
+        throw std::runtime_error("VibeVoice config diffusion beta schedule mismatch");
+    }
     if (config.speech_vae_dim != config.latent_size) {
         throw std::runtime_error("VibeVoice diffusion speech_vae_dim must match latent_size");
     }
     return config;
 }
 
-int64_t require_acoustic_vae_dim(const engine::io::json::Value & root) {
+int64_t require_acoustic_vae_dim(const json::Value & root) {
     // VibeVoice-7B's config.json spells this key "acostic_vae_dim".
     for (const char * key : {"acoustic_vae_dim", "acostic_vae_dim"}) {
         if (const auto * value = root.find(key); value != nullptr) {
@@ -191,7 +155,9 @@ VibeVoiceConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
     VibeVoiceConfig config;
     config.model_type = json::optional_string(root, "model_type", "");
-    require_string_value(config.model_type, "vibevoice", "model_type");
+    if (config.model_type != "vibevoice") {
+        throw std::runtime_error("VibeVoice config model_type mismatch");
+    }
     config.torch_dtype = json::optional_string(root, "torch_dtype", config.torch_dtype);
     config.acoustic_vae_dim = require_acoustic_vae_dim(root);
     config.semantic_vae_dim = json::require_i64(root, "semantic_vae_dim");
@@ -199,8 +165,8 @@ VibeVoiceConfig parse_config(const assets::ResourceBundle & resources) {
     config.semantic_tokenizer = parse_tokenizer_config(root.require("semantic_tokenizer_config"), "semantic tokenizer");
     config.decoder = parse_decoder_config(root.require("decoder_config"));
     config.diffusion_head = parse_diffusion_head_config(root.require("diffusion_head_config"));
-    require_positive(config.acoustic_vae_dim, "acoustic_vae_dim");
-    require_positive(config.semantic_vae_dim, "semantic_vae_dim");
+    engine::io::require_positive(config.acoustic_vae_dim, "acoustic_vae_dim");
+    engine::io::require_positive(config.semantic_vae_dim, "semantic_vae_dim");
     if (config.acoustic_vae_dim != config.acoustic_tokenizer.vae_dim) {
         throw std::runtime_error("VibeVoice acoustic_vae_dim does not match acoustic tokenizer vae_dim");
     }
@@ -236,99 +202,50 @@ VibeVoiceProcessorConfig parse_processor_config(const assets::ResourceBundle & r
             json::optional_f32(*audio, "target_dB_FS", config.audio_processor.target_db_fs);
         config.audio_processor.eps = json::optional_f32(*audio, "eps", config.audio_processor.eps);
     }
-    require_positive(config.speech_tok_compress_ratio, "processor speech_tok_compress_ratio");
-    require_positive(config.audio_processor.sample_rate, "processor sampling_rate");
+    engine::io::require_positive(config.speech_tok_compress_ratio, "processor speech_tok_compress_ratio");
+    engine::io::require_positive(config.audio_processor.sample_rate, "processor sampling_rate");
     if (config.language_model_pretrained_name.empty()) {
         throw std::runtime_error("VibeVoice processor language_model_pretrained_name must not be empty");
     }
     return config;
 }
 
-void fill_paths(
-    VibeVoiceAssetPaths & paths,
-    const assets::ResourceBundle & resources) {
-    paths.model_root = resources.model_root();
-    paths.config_path = resources.require_file("config");
-    paths.model_index_path = resources.require_file("model_index");
-    if (const auto * path = resources.find_file("preprocessor_config"); path != nullptr) {
-        paths.preprocessor_config_path = *path;
-    }
-    if (const auto * path = resources.find_file("tokenizer_config"); path != nullptr) {
-        paths.tokenizer_config_path = *path;
-    }
-    if (const auto * path = resources.find_file("tokenizer_json"); path != nullptr) {
-        paths.tokenizer_json_path = *path;
-    }
-    if (const auto * path = resources.find_file("tokenizer_vocab"); path != nullptr) {
-        paths.tokenizer_vocab_path = *path;
-    }
-    if (const auto * path = resources.find_file("tokenizer_merges"); path != nullptr) {
-        paths.tokenizer_merges_path = *path;
-    }
-    paths.model_shard_paths = engine::assets::indexed_tensor_source_shard_paths(
-        paths.model_index_path,
-        paths.model_root);
-}
-
-void resolve_tokenizer_files(VibeVoiceAssetPaths & paths) {
-    if (paths.tokenizer_config_path.has_value() &&
-        paths.tokenizer_json_path.has_value() &&
-        paths.tokenizer_vocab_path.has_value() &&
-        paths.tokenizer_merges_path.has_value()) {
-        return;
-    }
-    paths.tokenizer_config_path = require_existing_file(paths.model_root / "tokenizer_config.json", "tokenizer_config.json");
-    paths.tokenizer_json_path = require_existing_file(paths.model_root / "tokenizer.json", "tokenizer.json");
-    paths.tokenizer_vocab_path = require_existing_file(paths.model_root / "vocab.json", "vocab.json");
-    paths.tokenizer_merges_path = require_existing_file(paths.model_root / "merges.txt", "merges.txt");
-}
-
-void require_tensor_metadata(
-    const assets::TensorSource & source,
-    const std::string & name,
-    std::initializer_list<int64_t> expected_shape) {
-    const auto metadata = source.require_metadata(name);
-    if (metadata.shape != std::vector<int64_t>(expected_shape)) {
-        throw std::runtime_error("VibeVoice tensor shape mismatch for " + name);
-    }
-}
-
-void validate_weight_anchors(const VibeVoiceAssets & assets) {
+void validate_weight_anchors(const VibeVoiceASRAssets & assets) {
     const auto & config = assets.config;
     const auto & weights = *assets.model_weights;
     const auto & decoder = config.decoder;
-    require_tensor_metadata(weights, "model.language_model.embed_tokens.weight", {decoder.vocab_size, decoder.hidden_size});
+    assets::require_tensor_shape(weights, "model.language_model.embed_tokens.weight", {decoder.vocab_size, decoder.hidden_size});
     if (!decoder.tie_word_embeddings) {
         const auto lm_head_name = weights.require_tensor_name({"lm_head.weight", "model.lm_head.weight"});
-        require_tensor_metadata(weights, lm_head_name, {decoder.vocab_size, decoder.hidden_size});
+        assets::require_tensor_shape(weights, lm_head_name, {decoder.vocab_size, decoder.hidden_size});
     }
-    require_tensor_metadata(weights, "model.language_model.norm.weight", {decoder.hidden_size});
-    require_tensor_metadata(weights, "model.language_model.layers.0.self_attn.q_proj.weight", {decoder.hidden_size, decoder.hidden_size});
-    require_tensor_metadata(
+    assets::require_tensor_shape(weights, "model.language_model.norm.weight", {decoder.hidden_size});
+    assets::require_tensor_shape(weights, "model.language_model.layers.0.self_attn.q_proj.weight", {decoder.hidden_size, decoder.hidden_size});
+    assets::require_tensor_shape(
         weights,
         "model.language_model.layers.0.self_attn.k_proj.weight",
         {decoder.num_key_value_heads * decoder.head_dim, decoder.hidden_size});
-    require_tensor_metadata(
+    assets::require_tensor_shape(
         weights,
         "model.language_model.layers.0.self_attn.v_proj.weight",
         {decoder.num_key_value_heads * decoder.head_dim, decoder.hidden_size});
-    require_tensor_metadata(weights, "model.language_model.layers.0.self_attn.o_proj.weight", {decoder.hidden_size, decoder.hidden_size});
-    require_tensor_metadata(weights, "model.language_model.layers.0.mlp.gate_proj.weight", {decoder.intermediate_size, decoder.hidden_size});
-    require_tensor_metadata(weights, "model.language_model.layers.0.mlp.up_proj.weight", {decoder.intermediate_size, decoder.hidden_size});
-    require_tensor_metadata(weights, "model.language_model.layers.0.mlp.down_proj.weight", {decoder.hidden_size, decoder.intermediate_size});
+    assets::require_tensor_shape(weights, "model.language_model.layers.0.self_attn.o_proj.weight", {decoder.hidden_size, decoder.hidden_size});
+    assets::require_tensor_shape(weights, "model.language_model.layers.0.mlp.gate_proj.weight", {decoder.intermediate_size, decoder.hidden_size});
+    assets::require_tensor_shape(weights, "model.language_model.layers.0.mlp.up_proj.weight", {decoder.intermediate_size, decoder.hidden_size});
+    assets::require_tensor_shape(weights, "model.language_model.layers.0.mlp.down_proj.weight", {decoder.hidden_size, decoder.intermediate_size});
 
-    require_tensor_metadata(weights, "model.acoustic_connector.fc1.weight", {decoder.hidden_size, config.acoustic_vae_dim});
-    require_tensor_metadata(weights, "model.acoustic_connector.norm.weight", {decoder.hidden_size});
-    require_tensor_metadata(weights, "model.acoustic_connector.fc2.weight", {decoder.hidden_size, decoder.hidden_size});
-    require_tensor_metadata(weights, "model.semantic_connector.fc1.weight", {decoder.hidden_size, config.semantic_vae_dim});
-    require_tensor_metadata(weights, "model.semantic_connector.norm.weight", {decoder.hidden_size});
-    require_tensor_metadata(weights, "model.semantic_connector.fc2.weight", {decoder.hidden_size, decoder.hidden_size});
+    assets::require_tensor_shape(weights, "model.acoustic_connector.fc1.weight", {decoder.hidden_size, config.acoustic_vae_dim});
+    assets::require_tensor_shape(weights, "model.acoustic_connector.norm.weight", {decoder.hidden_size});
+    assets::require_tensor_shape(weights, "model.acoustic_connector.fc2.weight", {decoder.hidden_size, decoder.hidden_size});
+    assets::require_tensor_shape(weights, "model.semantic_connector.fc1.weight", {decoder.hidden_size, config.semantic_vae_dim});
+    assets::require_tensor_shape(weights, "model.semantic_connector.norm.weight", {decoder.hidden_size});
+    assets::require_tensor_shape(weights, "model.semantic_connector.fc2.weight", {decoder.hidden_size, decoder.hidden_size});
 
-    require_tensor_metadata(
+    assets::require_tensor_shape(
         weights,
         "model.acoustic_tokenizer.encoder.downsample_layers.0.0.conv.conv.weight",
         {config.acoustic_tokenizer.encoder_n_filters, config.acoustic_tokenizer.channels, 7});
-    require_tensor_metadata(
+    assets::require_tensor_shape(
         weights,
         "model.semantic_tokenizer.encoder.downsample_layers.0.0.conv.conv.weight",
         {config.semantic_tokenizer.encoder_n_filters, config.semantic_tokenizer.channels, 7});
@@ -336,26 +253,17 @@ void validate_weight_anchors(const VibeVoiceAssets & assets) {
 
 }  // namespace
 
-VibeVoiceAssetPaths resolve_vibevoice_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
-    VibeVoiceAssetPaths paths;
-    fill_paths(paths, resources);
-    resolve_tokenizer_files(paths);
-    return paths;
-}
-
-std::shared_ptr<const VibeVoiceAssets> load_vibevoice_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
-    VibeVoiceAssets assets;
-    fill_paths(assets.paths, resources);
-    resolve_tokenizer_files(assets.paths);
-    assets.config = parse_config(resources);
-    assets.processor = parse_processor_config(resources);
-    assets.model_weights = engine::assets::open_indexed_tensor_source(
-        assets.paths.model_index_path,
-        assets.paths.model_root);
+std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(const std::filesystem::path & model_path) {
+    auto resources = assets::load_resource_bundle_from_package_spec(
+        model_path,
+        assets::default_model_package_spec_path("vibevoice_asr"));
+    VibeVoiceASRAssets assets;
+    assets.resources = std::move(resources);
+    assets.config = parse_config(assets.resources);
+    assets.processor = parse_processor_config(assets.resources);
+    assets.model_weights = assets.resources.open_tensor_source("model_weights");
     validate_weight_anchors(assets);
-    return std::make_shared<VibeVoiceAssets>(std::move(assets));
+    return std::make_shared<VibeVoiceASRAssets>(std::move(assets));
 }
 
 }  // namespace engine::models::vibevoice_asr

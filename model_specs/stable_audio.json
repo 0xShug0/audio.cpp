@@ -1,0 +1,65 @@
+{
+  "family": "stable_audio",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "model:t5gemma-b-b-ul2/config.json",
+        "t5_tokenizer_json": "model:t5gemma-b-b-ul2/tokenizer.json",
+        "t5_tokenizer_model": "model:t5gemma-b-b-ul2/tokenizer.model",
+        "t5_tokenizer_config": "model:t5gemma-b-b-ul2/tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "t5_weights": {
+          "source": "weights:",
+          "prefix": "t5_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "t5": "t5gemma-b-b-ul2"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "t5:config.json",
+        "t5_tokenizer_json": "t5:tokenizer.json",
+        "t5_tokenizer_model": "t5:tokenizer.model",
+        "t5_tokenizer_config": "t5:tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "t5_weights": "t5:model.safetensors"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "t5": "../t5-base"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "t5:config.json",
+        "t5_tokenizer_json": "t5:tokenizer.json",
+        "t5_tokenizer_model": "t5:spiece.model",
+        "t5_tokenizer_config": "t5:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:Foundation_1.safetensors",
+        "t5_weights": "t5:model.safetensors"
+      }
+    }
+  ]
+}

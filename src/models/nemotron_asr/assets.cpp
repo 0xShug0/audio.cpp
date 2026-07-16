@@ -1,7 +1,6 @@
 #include "engine/models/nemotron_asr/assets.h"
 
-#include "engine/framework/assets/resource_bundle.h"
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
@@ -9,40 +8,8 @@
 #include <utility>
 
 namespace engine::models::nemotron_asr {
+namespace json = engine::io::json;
 namespace {
-
-std::filesystem::path require_file(const std::filesystem::path & path, const char * role) {
-    if (!engine::io::is_existing_file(path)) {
-        throw std::runtime_error(std::string("Nemotron ASR missing ") + role + ": " + path.string());
-    }
-    return std::filesystem::weakly_canonical(path);
-}
-
-std::filesystem::path resolve_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("Nemotron ASR model path does not exist: " + model_path.string());
-}
-
-std::vector<int64_t> parse_i64_array(const engine::io::json::Value & value) {
-    std::vector<int64_t> out;
-    for (const auto & item : value.as_array()) {
-        out.push_back(item.as_i64());
-    }
-    return out;
-}
-
-std::unordered_map<std::string, int64_t> parse_prompt_dictionary(const engine::io::json::Value & value) {
-    std::unordered_map<std::string, int64_t> out;
-    for (const auto & [key, item] : value.as_object()) {
-        out.emplace(key, item.as_i64());
-    }
-    return out;
-}
 
 void validate_config(const NemotronConfig & config) {
     if (config.model_type != "nemotron3_5_asr") {
@@ -73,13 +40,13 @@ void validate_config(const NemotronConfig & config) {
 
 std::vector<uint8_t> parse_special_token_ids(const std::filesystem::path & tokenizer_json, int64_t vocab_size) {
     std::vector<uint8_t> special(static_cast<size_t>(vocab_size), 0);
-    const auto root = engine::io::json::parse_file(tokenizer_json);
+    const auto root = json::parse_file(tokenizer_json);
     if (const auto * added = root.find("added_tokens"); added != nullptr && added->is_array()) {
         for (const auto & item : added->as_array()) {
-            if (!engine::io::json::optional_bool(item, "special", false)) {
+            if (!json::optional_bool(item, "special", false)) {
                 continue;
             }
-            const int64_t id = engine::io::json::require_i64(item, "id");
+            const int64_t id = json::require_i64(item, "id");
             if (id >= 0 && id < vocab_size) {
                 special[static_cast<size_t>(id)] = 1;
             }
@@ -92,7 +59,7 @@ void parse_decoder_metadata(
     const std::filesystem::path & tokenizer_json,
     std::string & metaspace_replacement,
     bool & trim_leading_space) {
-    const auto root = engine::io::json::parse_file(tokenizer_json);
+    const auto root = json::parse_file(tokenizer_json);
     metaspace_replacement.clear();
     trim_leading_space = false;
     if (const auto * decoder = root.find("decoder"); decoder != nullptr
@@ -104,82 +71,72 @@ void parse_decoder_metadata(
     }
 }
 
-NemotronConfig parse_config(
-    const engine::io::json::Value & config_root,
-    const engine::io::json::Value & processor_root) {
+NemotronConfig parse_config(const assets::ResourceBundle & resources) {
+    const auto config_root = resources.parse_json("config");
+    const auto processor_root = resources.parse_json("processor_config");
+
     NemotronConfig config;
-    config.model_type = engine::io::json::require_string(config_root, "model_type");
-    config.vocab_size = engine::io::json::require_i64(config_root, "vocab_size");
-    config.blank_token_id = engine::io::json::require_i64(config_root, "blank_token_id");
-    config.pad_token_id = engine::io::json::require_i64(config_root, "pad_token_id");
-    config.default_prompt_id = engine::io::json::require_i64(config_root, "default_prompt_id");
-    config.decoder_hidden_size = engine::io::json::require_i64(config_root, "decoder_hidden_size");
-    config.decoder_layers = engine::io::json::require_i64(config_root, "num_decoder_layers");
-    config.max_symbols_per_step = engine::io::json::require_i64(config_root, "max_symbols_per_step");
-    config.num_prompts = engine::io::json::require_i64(config_root, "num_prompts");
-    config.prompt_intermediate_size = engine::io::json::require_i64(config_root, "prompt_intermediate_size");
+    config.model_type = json::require_string(config_root, "model_type");
+    config.vocab_size = json::require_i64(config_root, "vocab_size");
+    config.blank_token_id = json::require_i64(config_root, "blank_token_id");
+    config.pad_token_id = json::require_i64(config_root, "pad_token_id");
+    config.default_prompt_id = json::require_i64(config_root, "default_prompt_id");
+    config.decoder_hidden_size = json::require_i64(config_root, "decoder_hidden_size");
+    config.decoder_layers = json::require_i64(config_root, "num_decoder_layers");
+    config.max_symbols_per_step = json::require_i64(config_root, "max_symbols_per_step");
+    config.num_prompts = json::require_i64(config_root, "num_prompts");
+    config.prompt_intermediate_size = json::require_i64(config_root, "prompt_intermediate_size");
 
     const auto & encoder = config_root.require("encoder_config");
-    config.encoder.hidden_size = engine::io::json::require_i64(encoder, "hidden_size");
-    config.encoder.intermediate_size = engine::io::json::require_i64(encoder, "intermediate_size");
-    config.encoder.layers = engine::io::json::require_i64(encoder, "num_hidden_layers");
-    config.encoder.heads = engine::io::json::require_i64(encoder, "num_attention_heads");
-    config.encoder.kv_heads = engine::io::json::require_i64(encoder, "num_key_value_heads");
-    config.encoder.conv_kernel = engine::io::json::require_i64(encoder, "conv_kernel_size");
-    config.encoder.sliding_window = engine::io::json::require_i64(encoder, "sliding_window");
-    config.encoder.subsampling_factor = engine::io::json::require_i64(encoder, "subsampling_factor");
-    config.encoder.subsampling_channels = engine::io::json::require_i64(encoder, "subsampling_conv_channels");
-    config.encoder.subsampling_kernel = engine::io::json::require_i64(encoder, "subsampling_conv_kernel_size");
-    config.encoder.subsampling_stride = engine::io::json::require_i64(encoder, "subsampling_conv_stride");
-    config.encoder.max_position_embeddings = engine::io::json::require_i64(encoder, "max_position_embeddings");
+    config.encoder.hidden_size = json::require_i64(encoder, "hidden_size");
+    config.encoder.intermediate_size = json::require_i64(encoder, "intermediate_size");
+    config.encoder.layers = json::require_i64(encoder, "num_hidden_layers");
+    config.encoder.heads = json::require_i64(encoder, "num_attention_heads");
+    config.encoder.kv_heads = json::require_i64(encoder, "num_key_value_heads");
+    config.encoder.conv_kernel = json::require_i64(encoder, "conv_kernel_size");
+    config.encoder.sliding_window = json::require_i64(encoder, "sliding_window");
+    config.encoder.subsampling_factor = json::require_i64(encoder, "subsampling_factor");
+    config.encoder.subsampling_channels = json::require_i64(encoder, "subsampling_conv_channels");
+    config.encoder.subsampling_kernel = json::require_i64(encoder, "subsampling_conv_kernel_size");
+    config.encoder.subsampling_stride = json::require_i64(encoder, "subsampling_conv_stride");
+    config.encoder.max_position_embeddings = json::require_i64(encoder, "max_position_embeddings");
     config.encoder.default_lookahead_tokens =
-        engine::io::json::require_i64(encoder, "default_num_lookahead_tokens");
+        json::require_i64(encoder, "default_num_lookahead_tokens");
     config.encoder.supported_lookahead_tokens =
-        parse_i64_array(encoder.require("supported_num_lookahead_tokens"));
+        json::require_i64_array(encoder, "supported_num_lookahead_tokens");
 
     const auto & feature = processor_root.require("feature_extractor");
-    config.frontend.sample_rate = engine::io::json::require_i64(feature, "sampling_rate");
-    config.frontend.feature_size = engine::io::json::require_i64(feature, "feature_size");
-    config.frontend.n_fft = engine::io::json::require_i64(feature, "n_fft");
-    config.frontend.win_length = engine::io::json::require_i64(feature, "win_length");
-    config.frontend.hop_length = engine::io::json::require_i64(feature, "hop_length");
-    config.frontend.preemphasis = engine::io::json::require_f32(feature, "preemphasis");
+    config.frontend.sample_rate = json::require_i64(feature, "sampling_rate");
+    config.frontend.feature_size = json::require_i64(feature, "feature_size");
+    config.frontend.n_fft = json::require_i64(feature, "n_fft");
+    config.frontend.win_length = json::require_i64(feature, "win_length");
+    config.frontend.hop_length = json::require_i64(feature, "hop_length");
+    config.frontend.preemphasis = json::require_f32(feature, "preemphasis");
     config.encoder.default_lookahead_tokens =
-        engine::io::json::require_i64(processor_root, "default_num_lookahead_tokens");
+        json::require_i64(processor_root, "default_num_lookahead_tokens");
     config.encoder.supported_lookahead_tokens =
-        parse_i64_array(processor_root.require("supported_num_lookahead_tokens"));
-    config.prompt_dictionary = parse_prompt_dictionary(processor_root.require("prompt_dictionary"));
+        json::require_i64_array(processor_root, "supported_num_lookahead_tokens");
+    config.prompt_dictionary = json::require_i64_object(processor_root, "prompt_dictionary");
     validate_config(config);
     return config;
 }
 
 }  // namespace
 
-NemotronAssetPaths resolve_nemotron_asr_assets(const std::filesystem::path & model_path) {
-    const auto root = resolve_root(model_path);
-    NemotronAssetPaths paths;
-    paths.model_root = root;
-    paths.config_path = require_file(root / "config.json", "config.json");
-    paths.processor_config_path = require_file(root / "processor_config.json", "processor_config.json");
-    paths.tokenizer_json_path = require_file(root / "tokenizer.json", "tokenizer.json");
-    paths.weight_path = require_file(root / "model.safetensors", "model.safetensors");
-    return paths;
-}
-
-std::shared_ptr<const NemotronAssets> load_nemotron_asr_assets(const std::filesystem::path & model_path) {
-    auto assets = std::make_shared<NemotronAssets>();
-    assets->paths = resolve_nemotron_asr_assets(model_path);
-    engine::assets::ResourceBundle resources(assets->paths.model_root);
-    resources.add_file("weights", assets->paths.weight_path);
-    assets->source = resources.open_tensor_source("weights");
-    assets->config = parse_config(
-        engine::io::json::parse_file(assets->paths.config_path),
-        engine::io::json::parse_file(assets->paths.processor_config_path));
-    assets->tokenizer = engine::tokenizers::load_huggingface_tokenizer_json(assets->paths.tokenizer_json_path);
+std::shared_ptr<const NemotronASRAssets> load_nemotron_asr_assets(const std::filesystem::path & model_path) {
+    auto resources = engine::assets::load_resource_bundle_from_package_spec(
+        model_path,
+        engine::assets::default_model_package_spec_path("nemotron_asr"));
+    auto assets = std::make_shared<NemotronASRAssets>();
+    assets->resources = std::move(resources);
+    assets->source = assets->resources.open_tensor_source("weights");
+    assets->config = parse_config(assets->resources);
+    const auto & tokenizer_json = assets->resources.require_file("tokenizer_json");
+    assets->tokenizer = engine::tokenizers::load_huggingface_tokenizer_json(tokenizer_json);
     assets->special_token_ids =
-        parse_special_token_ids(assets->paths.tokenizer_json_path, assets->config.vocab_size);
+        parse_special_token_ids(tokenizer_json, assets->config.vocab_size);
     parse_decoder_metadata(
-        assets->paths.tokenizer_json_path,
+        tokenizer_json,
         assets->metaspace_replacement,
         assets->trim_leading_space);
     return assets;

@@ -19,7 +19,7 @@ transformers457_dynamic_module_utils.transformers = transformers457
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-kDefaultWarmupText = "This is a fixed warmup request for the MOSS TTS session benchmark."
+kDefaultWarmupText = "This is a fixed warmup request for the MOSS-TTS-Nano session benchmark."
 
 
 def timestamp_seconds_local() -> str:
@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iterations", type=int, default=1)
     parser.add_argument("--max-new-frames", type=int, default=300)
     parser.add_argument("--active-codebooks", type=int, default=16)
-    parser.add_argument("--do-sample", choices=("true", "false"), default="false")
+    parser.add_argument("--do-sample", choices=("true", "false"), default="true")
     parser.add_argument("--text-temperature", type=float, default=1.5)
     parser.add_argument("--text-top-p", type=float, default=1.0)
     parser.add_argument("--text-top-k", type=int, default=50)
@@ -49,11 +49,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audio-top-k", type=int, default=25)
     parser.add_argument("--audio-repetition-penalty", type=float, default=1.0)
     parser.add_argument("--use-kv-cache", choices=("true", "false"), default="true")
+    parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--voice-clone-max-text-tokens", type=int, default=50)
     parser.add_argument("--voice-clone-max-memory-per-sample-gb", type=float, default=1.0)
     parser.add_argument("--tts-max-batch-size", type=int, default=0)
     parser.add_argument("--codec-max-batch-size", type=int, default=0)
-    parser.add_argument("--audio-out", type=Path, default=Path("moss_tts_python_audio.wav"))
+    parser.add_argument("--audio-out", type=Path, default=Path("moss_tts_nano_python_audio.wav"))
     parser.add_argument("--audio-out-dir", type=Path, default=None)
     parser.add_argument("--timing-file", type=Path)
     parser.add_argument("--artifact-stamp", default="")
@@ -141,11 +142,11 @@ def main() -> int:
     args = parse_args()
     texts = list(args.texts)
     if not texts:
-        texts = ["Hello from MOSS TTS. This benchmark should produce stable cloned speech for comparison."]
+        texts = ["Hello from MOSS-TTS-Nano. This benchmark should produce stable cloned speech for comparison."]
 
     stamp = args.artifact_stamp or timestamp_seconds_local()
     timing_path = args.timing_file or (
-        REPO_ROOT / "build" / "logs" / "parity" / "moss_tts" / f"moss_tts_python_{args.backend}-{stamp}.log"
+        REPO_ROOT / "build" / "logs" / "parity" / "moss_tts_nano" / f"moss_tts_python_{args.backend}-{stamp}.log"
     )
 
     import torch
@@ -164,11 +165,13 @@ def main() -> int:
     model_config.local_transformer_attn_implementation = attention_impl
     if getattr(model_config, "gpt2_config", None) is not None:
         model_config.gpt2_config._attn_implementation = attention_impl
+    use_safetensors = not (args.model.resolve() / "pytorch_model.bin").is_file()
     model = AutoModelForCausalLM.from_pretrained(
         str(args.model.resolve()),
         config=model_config,
         trust_remote_code=True,
         local_files_only=True,
+        use_safetensors=use_safetensors,
     )
     force_attention_implementation(model, attention_impl)
     model = model.to(device)
@@ -217,6 +220,9 @@ def main() -> int:
             args.audio_out.parent / f"{args.audio_out.stem}_warmup_{warmup_index}{args.audio_out.suffix}"
         )
         torch.cuda.synchronize(args.device) if args.backend == "cuda" else None
+        torch.manual_seed(args.seed)
+        if args.backend == "cuda":
+            torch.cuda.manual_seed_all(args.seed)
         started = time.perf_counter()
         result = run_voice_clone_request(args.warmup_text, warmup_audio_out)
         torch.cuda.synchronize(args.device) if args.backend == "cuda" else None
@@ -227,9 +233,9 @@ def main() -> int:
         log_sections.append((
             f"warmup{warmup_index + 1}",
             [
-                timing_line(ts, "moss_tts.request_char_count", len(args.warmup_text)),
-                timing_line(ts, "moss_tts.request_wall_ms", wall_ms),
-                timing_line(ts, "moss_tts.generated_frames", int(result["audio_token_ids"].shape[0])),
+                timing_line(ts, "moss_tts_nano.request_char_count", len(args.warmup_text)),
+                timing_line(ts, "moss_tts_nano.request_wall_ms", wall_ms),
+                timing_line(ts, "moss_tts_nano.generated_frames", int(result["audio_token_ids"].shape[0])),
             ],
         ))
 
@@ -246,6 +252,9 @@ def main() -> int:
         request_audio_out.parent.mkdir(parents=True, exist_ok=True)
         for iteration in range(max(1, args.iterations)):
             torch.cuda.synchronize(args.device) if args.backend == "cuda" else None
+            torch.manual_seed(args.seed)
+            if args.backend == "cuda":
+                torch.cuda.manual_seed_all(args.seed)
             started = time.perf_counter()
             result = run_voice_clone_request(text, request_audio_out)
             torch.cuda.synchronize(args.device) if args.backend == "cuda" else None
@@ -262,9 +271,9 @@ def main() -> int:
             log_sections.append((
                 f"iteration{iteration + 1}.request{request_index + 1}",
                 [
-                    timing_line(ts, "moss_tts.request_char_count", len(text)),
-                    timing_line(ts, "moss_tts.request_wall_ms", last_wall_ms[request_index]),
-                    timing_line(ts, "moss_tts.generated_frames", int(result["audio_token_ids"].shape[0])),
+                    timing_line(ts, "moss_tts_nano.request_char_count", len(text)),
+                    timing_line(ts, "moss_tts_nano.request_wall_ms", last_wall_ms[request_index]),
+                    timing_line(ts, "moss_tts_nano.generated_frames", int(result["audio_token_ids"].shape[0])),
                 ],
             ))
 
@@ -296,7 +305,7 @@ def main() -> int:
 
     for request_index, wall_sum in enumerate(wall_sums):
         print(f"average[{request_index}]")
-        print(f"moss_tts.request_wall_ms={wall_sum / float(max(1, args.iterations))}")
+        print(f"moss_tts_nano.request_wall_ms={wall_sum / float(max(1, args.iterations))}")
 
     return 0
 

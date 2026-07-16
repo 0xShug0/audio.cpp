@@ -95,9 +95,6 @@ MelBandWeights load_mel_band_weights(
     assets_ns::TensorStorageType storage_type) {
     validate_roformer_weight_storage_type(storage_type);
     const auto & config = assets.config;
-    if (config.family != RoformerFamily::MelBandRoformer) {
-        throw std::runtime_error("mel_band_roformer weight loader received a non-mel family config");
-    }
     if (config.num_stems != 1) {
         throw std::runtime_error("mel_band_roformer native runtime currently supports only single-stem checkpoints");
     }
@@ -957,9 +954,7 @@ RoformerRuntime::RoformerRuntime(
     }
     validate_roformer_weight_storage_type(weight_storage_type);
     fft_threads_ = std::max<size_t>(1, static_cast<size_t>(execution_context.config().threads));
-    if (assets_->config.family == RoformerFamily::MelBandRoformer) {
-        impl_->mel_graph = std::make_unique<MelBandGraph>(assets_, execution_context, weight_storage_type);
-    }
+    impl_->mel_graph = std::make_unique<MelBandGraph>(assets_, execution_context, weight_storage_type);
 }
 
 RoformerRuntime::~RoformerRuntime() = default;
@@ -969,9 +964,8 @@ const RoformerArchitectureConfig & RoformerRuntime::config() const noexcept {
 }
 
 const std::vector<float> & RoformerRuntime::separate_chunk(const std::vector<float> & chunk_planar) {
-    if (assets_->config.family != RoformerFamily::MelBandRoformer || impl_->mel_graph == nullptr) {
-        throw std::runtime_error(
-            "RoFormer native inference runtime is not implemented yet for family '" + assets_->metadata.family + "'");
+    if (impl_->mel_graph == nullptr) {
+        throw std::runtime_error("mel_band_roformer graph is not initialized");
     }
     separate_runtime_chunk(
         *impl_->mel_graph,

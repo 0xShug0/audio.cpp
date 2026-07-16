@@ -16,11 +16,15 @@ namespace {
 
 std::shared_ptr<const Qwen3ASRTextTokenizer::Impl> load_impl(const Qwen3ASRAssets & assets) {
     engine::tokenizers::LlamaBpeTokenizerSpec spec;
-    spec.vocab_path = assets.paths.tokenizer_vocab_path;
-    spec.merges_path = assets.paths.tokenizer_merges_path;
-    spec.tokenizer_config_path = assets.paths.tokenizer_config_path;
-    if (!assets.paths.tokenizer_json_path.empty()) {
-        spec.tokenizer_json_path = assets.paths.tokenizer_json_path;
+    spec.tokenizer_config_path = assets.resources.require_file("tokenizer_config");
+    if (const auto * path = assets.resources.find_file("vocab")) {
+        spec.vocab_path = *path;
+    }
+    if (const auto * path = assets.resources.find_file("merges")) {
+        spec.merges_path = *path;
+    }
+    if (const auto * path = assets.resources.find_file("tokenizer_json")) {
+        spec.tokenizer_json_path = *path;
     }
     spec.pre_type = engine::tokenizers::LlamaBpePreTokenizer::Qwen2;
 

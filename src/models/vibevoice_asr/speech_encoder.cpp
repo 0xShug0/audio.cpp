@@ -41,7 +41,7 @@ void append_latents(VibeVoiceTokenizerLatents & dst, const VibeVoiceTokenizerLat
 }  // namespace
 
 VibeVoiceASRSpeechEncoder::VibeVoiceASRSpeechEncoder(
-    std::shared_ptr<const VibeVoiceAssets> assets,
+    std::shared_ptr<const VibeVoiceASRAssets> assets,
     core::BackendType backend_type,
     int device,
     int threads,

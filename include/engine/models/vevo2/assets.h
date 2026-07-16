@@ -1,16 +1,14 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/modules/whisper_embedding.h"
-#include "engine/framework/runtime/model.h"
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
-
-namespace engine::assets {
-class TensorSource;
-}
 
 namespace engine::models::vevo2 {
 
@@ -93,62 +91,30 @@ struct Vevo2VocoderConfig {
     std::string padding = "same";
 };
 
-struct Vevo2AssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path whisper_root;
-
-    std::filesystem::path content_style_tokenizer_weights;
-    std::filesystem::path prosody_tokenizer_weights;
-
-    std::filesystem::path ar_config;
-    std::filesystem::path ar_amphion_config;
-    std::filesystem::path ar_generation_config;
-    std::filesystem::path ar_weights;
-    std::filesystem::path ar_tokenizer_config;
-    std::filesystem::path ar_tokenizer_json;
-    std::filesystem::path ar_vocab;
-    std::filesystem::path ar_merges;
-    std::filesystem::path ar_added_tokens;
-    std::filesystem::path ar_special_tokens;
-
-    std::filesystem::path fm_config;
-    std::filesystem::path fm_weights;
-    std::filesystem::path fm_whisper_stats;
-
-    std::filesystem::path fm_text_config;
-    std::filesystem::path fm_text_weights;
-    std::filesystem::path fm_text_whisper_stats;
-
-    std::filesystem::path vocoder_config;
-    std::filesystem::path vocoder_weights_0;
-    std::filesystem::path vocoder_weights_1;
-    std::filesystem::path vocoder_weights_2;
-
-    std::filesystem::path whisper_config;
-    std::filesystem::path whisper_weights;
+struct Vevo2Config {
+    Vevo2ARConfig ar;
+    Vevo2CocoTokenizerConfig prosody_tokenizer;
+    Vevo2CocoTokenizerConfig content_style_tokenizer;
+    Vevo2FMConfig fm;
+    Vevo2FMConfig fm_text;
+    Vevo2VocoderConfig vocoder;
+    engine::modules::WhisperEmbeddingConfig whisper;
 };
 
 struct Vevo2Assets {
-    Vevo2AssetPaths paths;
-    Vevo2ARConfig ar_config;
-    Vevo2CocoTokenizerConfig prosody_tokenizer_config;
-    Vevo2CocoTokenizerConfig content_style_tokenizer_config;
-    Vevo2FMConfig fm_config;
-    Vevo2FMConfig fm_text_config;
-    Vevo2VocoderConfig vocoder_config;
-    engine::modules::WhisperEmbeddingConfig whisper_config;
-    runtime::ModelMetadata metadata;
-    runtime::CapabilitySet capabilities;
-    std::vector<runtime::NamedAsset> discovered_configs;
-    std::vector<runtime::NamedAsset> discovered_weights;
+    assets::ResourceBundle resources;
+    Vevo2Config config;
+    std::shared_ptr<const assets::TensorSource> content_style_tokenizer_weights;
+    std::shared_ptr<const assets::TensorSource> prosody_tokenizer_weights;
+    std::shared_ptr<const assets::TensorSource> ar_weights;
+    std::shared_ptr<const assets::TensorSource> fm_weights;
+    std::shared_ptr<const assets::TensorSource> fm_whisper_stats;
+    std::shared_ptr<const assets::TensorSource> vocoder_weights_0;
+    std::shared_ptr<const assets::TensorSource> whisper_weights;
 };
 
-std::filesystem::path resolve_vevo2_model_root(const std::filesystem::path & model_path);
-std::filesystem::path resolve_vevo2_whisper_root(
-    const runtime::ModelLoadRequest & request,
-    const std::filesystem::path & model_root);
-Vevo2AssetPaths resolve_vevo2_asset_paths(const runtime::ModelLoadRequest & request);
-std::shared_ptr<const Vevo2Assets> load_vevo2_assets(const runtime::ModelLoadRequest & request);
-runtime::ModelInspection inspect_vevo2_model(const runtime::ModelLoadRequest & request);
+std::shared_ptr<const Vevo2Assets> load_vevo2_assets(
+    const std::filesystem::path & model_path,
+    const std::optional<std::filesystem::path> & whisper_model_path = std::nullopt);
 
 }  // namespace engine::models::vevo2

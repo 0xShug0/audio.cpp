@@ -237,37 +237,6 @@ bool is_wav_upload_filename(const std::string & filename) {
     return ext.empty() || ext == ".wav";
 }
 
-// Multipart file uploads arrive as in-memory bytes, but the WAV decoder only reads from disk,
-// so uploaded audio is spooled to a uniquely named temp file before decoding.
-std::filesystem::path write_temp_upload(const std::string & filename, const std::string & data) {
-    std::filesystem::path ext = std::filesystem::path(filename).extension();
-    if (ext.empty()) {
-        ext = ".wav";
-    }
-    static std::atomic<uint64_t> counter{0};
-    std::ostringstream name;
-    name << "audiocpp_upload_" << Clock::now().time_since_epoch().count() << "_" << counter.fetch_add(1)
-         << ext.string();
-    const auto path = std::filesystem::temp_directory_path() / name.str();
-    std::ofstream out(path, std::ios::binary);
-    if (!out) {
-        throw std::runtime_error("failed to create temp file for upload: " + path.string());
-    }
-    out.write(data.data(), static_cast<std::streamsize>(data.size()));
-    if (!out) {
-        throw std::runtime_error("failed to write temp file for upload: " + path.string());
-    }
-    return path;
-}
-
-struct TempFileGuard {
-    std::filesystem::path path;
-    ~TempFileGuard() {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-    }
-};
-
 double elapsed_ms(Clock::time_point started) {
     return std::chrono::duration<double, std::milli>(Clock::now() - started).count();
 }
@@ -515,7 +484,10 @@ const engine::runtime::AudioBuffer & select_audio_output(const engine::runtime::
     throw std::runtime_error("model result did not contain exactly one audio output");
 }
 
-engine::runtime::TaskRequest build_openai_transcription_request(const Value & body, const std::filesystem::path & base_dir) {
+engine::runtime::TaskRequest build_openai_transcription_request(
+    const Value & body,
+    const std::filesystem::path & base_dir,
+    const std::string * uploaded_audio_bytes = nullptr) {
     const auto * audio = body.find("audio");
     if (audio == nullptr) {
         audio = body.find("audio_path");
@@ -523,15 +495,28 @@ engine::runtime::TaskRequest build_openai_transcription_request(const Value & bo
     if (audio == nullptr) {
         audio = body.find("file");
     }
-    if (audio == nullptr || !audio->is_string()) {
+    if (uploaded_audio_bytes == nullptr && (audio == nullptr || !audio->is_string())) {
         throw std::runtime_error("transcription request requires audio, audio_path, or file path");
     }
 
     engine::runtime::TaskRequest request;
-    request.audio_input = minitts::cli::read_audio_buffer(resolve_path(base_dir, audio->as_string()));
+    if (uploaded_audio_bytes == nullptr) {
+        request.audio_input = minitts::cli::read_audio_buffer(resolve_path(base_dir, audio->as_string()));
+    } else {
+        request.audio_input = minitts::cli::read_audio_buffer(std::string_view(*uploaded_audio_bytes));
+    }
     request.options = options_from_object(body.find("options"));
+    std::string language;
     if (const auto * value = body.find("language")) {
-        request.options["language"] = value->as_string();
+        language = value->as_string();
+        request.options["language"] = language;
+    }
+    std::string context;
+    if (const auto * value = body.find("text")) {
+        context = value->as_string();
+    }
+    if (!language.empty() || !context.empty()) {
+        request.text_input = engine::runtime::Transcript{std::move(context), std::move(language)};
     }
     return request;
 }
@@ -640,6 +625,9 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
 
     engine::runtime::ModelLoadRequest load_request;
     load_request.model_path = model.config.path;
+    load_request.model_spec_override = model.config.model_spec_override.has_value()
+        ? model.config.model_spec_override
+        : config_.model_spec_override;
     load_request.family_hint = model.config.family;
     load_request.config_id = model.config.config_id;
     load_request.weight_id = model.config.weight_id;
@@ -976,18 +964,15 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
             "invalid_request_error");
     }
 
-    const TempFileGuard guard{write_temp_upload(file_part->filename, file_part->data)};
-
     engine::io::json::Value::Object fields;
     fields.emplace("model", engine::io::json::Value::make_string(model_id));
-    fields.emplace("audio", engine::io::json::Value::make_string(guard.path.string()));
     if (!language.empty()) {
         fields.emplace("language", engine::io::json::Value::make_string(language));
     }
     const auto body = engine::io::json::Value::make_object(std::move(fields));
 
     auto & model = require_model(body);
-    const auto request = build_openai_transcription_request(body, request_base_);
+    const auto request = build_openai_transcription_request(body, request_base_, &file_part->data);
     if (stream) {
         return run_transcription_stream(model, request);
     }
@@ -1094,13 +1079,21 @@ HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
     const std::string model_id = query_param(request.query, "model");
     std::vector<std::string> voices;
 
-    const auto it = model_index_.find(model_id);
-    if (it != model_index_.end()) {
-        for (const auto & [name, preset] : models_.at(it->second)->voice_presets) {
+    size_t model_idx = SIZE_MAX;
+    if (!model_id.empty()) {
+        const auto it = model_index_.find(model_id);
+        if (it != model_index_.end()) {
+            model_idx = it->second;
+        }
+    } else if (models_.size() == 1) {
+        model_idx = 0;
+    }
+    if (model_idx != SIZE_MAX) {
+        for (const auto & [name, preset] : models_.at(model_idx)->voice_presets) {
             (void) preset;
             voices.push_back(name);
         }
-        const auto embeddings_dir = models_.at(it->second)->config.path / "embeddings";
+        const auto embeddings_dir = models_.at(model_idx)->config.path / "embeddings";
         std::error_code ec;
         if (std::filesystem::is_directory(embeddings_dir, ec)) {
             for (const auto & entry : std::filesystem::directory_iterator(embeddings_dir, ec)) {

@@ -645,7 +645,7 @@ std::vector<float> make_cross_mask(int64_t query_steps, int64_t encoder_frames, 
 
 struct HviskeDecoderRuntime::PrefillGraph {
     PrefillGraph(
-        std::shared_ptr<const HviskeAssets> assets,
+        std::shared_ptr<const HviskeASRAssets> assets,
         std::shared_ptr<const HviskeWeights> weights,
         engine::core::ExecutionContext & execution_context,
         int64_t prompt_steps,
@@ -834,7 +834,7 @@ private:
         }
     }
 
-    std::shared_ptr<const HviskeAssets> assets_;
+    std::shared_ptr<const HviskeASRAssets> assets_;
     std::shared_ptr<const HviskeWeights> weights_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     int64_t prompt_steps_ = 0;
@@ -860,7 +860,7 @@ private:
 
 struct HviskeDecoderRuntime::DecodeGraph {
     DecodeGraph(
-        std::shared_ptr<const HviskeAssets> assets,
+        std::shared_ptr<const HviskeASRAssets> assets,
         std::shared_ptr<const HviskeWeights> weights,
         engine::core::ExecutionContext & execution_context,
         int64_t encoder_frames,
@@ -1063,7 +1063,7 @@ private:
         }
     }
 
-    std::shared_ptr<const HviskeAssets> assets_;
+    std::shared_ptr<const HviskeASRAssets> assets_;
     std::shared_ptr<const HviskeWeights> weights_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     int64_t encoder_frames_ = 0;
@@ -1095,7 +1095,7 @@ struct HviskeDecoderRuntime::BeamDecodeGraph {
     };
 
     BeamDecodeGraph(
-        std::shared_ptr<const HviskeAssets> assets,
+        std::shared_ptr<const HviskeASRAssets> assets,
         std::shared_ptr<const HviskeWeights> weights,
         engine::core::ExecutionContext & execution_context,
         int64_t encoder_frames,
@@ -1435,7 +1435,7 @@ private:
         bank_graphs_[static_cast<size_t>(bank)] = graph;
     }
 
-    std::shared_ptr<const HviskeAssets> assets_;
+    std::shared_ptr<const HviskeASRAssets> assets_;
     std::shared_ptr<const HviskeWeights> weights_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     int64_t encoder_frames_ = 0;
@@ -1471,7 +1471,7 @@ private:
 };
 
 HviskeDecoderRuntime::HviskeDecoderRuntime(
-    std::shared_ptr<const HviskeAssets> assets,
+    std::shared_ptr<const HviskeASRAssets> assets,
     std::shared_ptr<const HviskeWeights> weights,
     engine::core::ExecutionContext & execution_context,
     size_t prefill_graph_arena_bytes,

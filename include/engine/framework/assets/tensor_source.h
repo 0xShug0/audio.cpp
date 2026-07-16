@@ -25,6 +25,8 @@ enum class TensorStorageType {
     Q4_1,
     Q5_0,
     Q5_1,
+    Q2_K,
+    Q3_K,
     Q4_K,
     Q5_K,
     Q6_K,
@@ -118,6 +120,7 @@ public:
 };
 
 [[nodiscard]] TensorStorageType parse_tensor_storage_type(std::string_view value);
+[[nodiscard]] ggml_type ggml_type_for_tensor_dtype(std::string_view dtype);
 [[nodiscard]] ggml_type ggml_type_for_tensor_storage(TensorStorageType storage_type);
 [[nodiscard]] TensorStorageType tensor_storage_type_for_dtype(std::string_view dtype);
 [[nodiscard]] std::vector<float> tensor_data_to_f32(
@@ -127,6 +130,21 @@ public:
     const TensorSource & source,
     std::string_view name,
     TensorStorageType requested_type);
+inline void require_tensor_shape(
+    const TensorSource & source,
+    std::string_view name,
+    const std::vector<int64_t> & expected_shape) {
+    const auto metadata = source.require_metadata(name);
+    if (metadata.shape != expected_shape) {
+        throw std::runtime_error("tensor shape mismatch for " + std::string(name));
+    }
+}
+inline void require_tensor_shape(
+    const TensorSource & source,
+    std::string_view name,
+    std::initializer_list<int64_t> expected_shape) {
+    require_tensor_shape(source, name, std::vector<int64_t>(expected_shape));
+}
 void set_backend_tensor_from_f32_parallel(
     ggml_tensor * tensor,
     std::string_view name,
@@ -134,11 +152,42 @@ void set_backend_tensor_from_f32_parallel(
     const core::TensorShape & shape,
     ggml_type type);
 std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::path & path);
-std::vector<std::filesystem::path> indexed_tensor_source_shard_paths(
-    const std::filesystem::path & index_path,
+std::shared_ptr<const TensorSource> open_tensor_source(
+    const std::filesystem::path & path,
+    std::string_view tensor_prefix);
+struct TensorSourceInput {
+    std::filesystem::path path;
+    std::string tensor_prefix;
+};
+struct GgufEmbeddedFile {
+    std::filesystem::path source_path;
+    std::filesystem::path destination;
+};
+struct GgufEmbeddedModelSpec {
+    std::string family;
+    std::string json;
+};
+void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & inputs,
+                                    const std::filesystem::path & output_path, TensorStorageType weight_type,
+                                    bool overwrite = false, bool embed_sidecars = true,
+    const std::filesystem::path & sidecar_root = {},
+                                    const std::vector<GgufEmbeddedFile> & extra_sidecars = {},
+                                    const std::optional<GgufEmbeddedModelSpec> & model_spec = std::nullopt);
+void convert_tensor_source_to_gguf(const std::filesystem::path & input_path, const std::filesystem::path & output_path,
+                                   TensorStorageType weight_type, bool overwrite = false, bool embed_sidecars = true);
+[[nodiscard]] bool gguf_has_embedded_sidecars(const std::filesystem::path & path);
+[[nodiscard]] std::optional<GgufEmbeddedModelSpec> read_gguf_embedded_model_spec(const std::filesystem::path & path);
+[[nodiscard]] std::filesystem::path materialize_gguf_sidecars(const std::filesystem::path & path);
+struct PreparedModelDirectory {
+    std::filesystem::path model_root;
+    std::optional<std::filesystem::path> standalone_gguf;
+};
+[[nodiscard]] PreparedModelDirectory
+prepare_model_directory(const std::filesystem::path & model_path,
+    const std::filesystem::path & gguf_relative_path = "model.gguf");
+std::vector<std::filesystem::path> indexed_tensor_source_shard_paths(const std::filesystem::path & index_path,
     const std::filesystem::path & model_root);
-std::shared_ptr<const TensorSource> open_indexed_tensor_source(
-    const std::filesystem::path & index_path,
+std::shared_ptr<const TensorSource> open_indexed_tensor_source(const std::filesystem::path & index_path,
     const std::filesystem::path & model_root);
 
 }  // namespace engine::assets

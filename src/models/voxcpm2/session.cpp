@@ -232,7 +232,11 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
   const auto wall_start = Clock::now();
   const int64_t text_chunk_size =
       engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
-  const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
+  const auto text_chunk_mode =
+      engine::text::parse_text_chunk_mode_override(request.options)
+          .value_or(engine::text::TextChunkMode::TagAware);
+  const auto chunk_requests =
+      runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
   const auto generation_options = generation_options_from_request(request);
   const auto prompt_text =
       runtime::find_option(request.options, {"voxcpm2.prompt_text",
@@ -278,6 +282,11 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
   result.audio_output = std::move(merged_audio);
 
   const auto wall_end = Clock::now();
+  debug::trace_log_scalar("voxcpm2.text_chunk_size", text_chunk_size);
+  debug::trace_log_scalar("voxcpm2.text_chunk_mode",
+                          engine::text::text_chunk_mode_name(text_chunk_mode));
+  debug::trace_log_scalar("voxcpm2.text_chunk_count",
+                          static_cast<int64_t>(chunk_requests.size()));
   debug::timing_log_scalar("voxcpm2.generator_ms", generator_ms);
   debug::timing_log_scalar("voxcpm2.audiovae_decoder_ms", decoder_ms);
   debug::timing_log_scalar("session.wall_ms",

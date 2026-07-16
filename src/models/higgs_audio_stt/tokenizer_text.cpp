@@ -16,9 +16,9 @@ namespace {
 
 std::shared_ptr<const HiggsAudioSTTTextTokenizer::Impl> load_impl(const HiggsAudioSTTAssets & assets) {
     engine::tokenizers::LlamaBpeTokenizerSpec spec;
-    spec.vocab_path = assets.paths.tokenizer_vocab_path;
-    spec.merges_path = assets.paths.tokenizer_merges_path;
-    spec.tokenizer_config_path = assets.paths.tokenizer_config_path;
+    spec.vocab_path = assets.resources.require_file("vocab");
+    spec.merges_path = assets.resources.require_file("merges");
+    spec.tokenizer_config_path = assets.resources.require_file("tokenizer_config");
     spec.pre_type = engine::tokenizers::LlamaBpePreTokenizer::Qwen2;
 
     auto impl = std::make_shared<HiggsAudioSTTTextTokenizer::Impl>();

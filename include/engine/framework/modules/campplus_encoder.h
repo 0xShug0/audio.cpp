@@ -131,6 +131,10 @@ public:
         const std::filesystem::path & checkpoint_path,
         core::BackendConfig backend,
         CampplusEncoderConfig config = {});
+    static CampplusEncoderComponent load_from_tensor_source(
+        std::shared_ptr<const assets::TensorSource> source,
+        core::BackendConfig backend,
+        CampplusEncoderConfig config = {});
 
     CampplusEncoderComponent() = default;
     CampplusEncoderComponent(
@@ -153,6 +157,7 @@ public:
         const std::vector<float> & features,
         int64_t frames,
         int64_t dims) const;
+    void release_runtime_graph();
 
 private:
     struct State;

@@ -674,6 +674,11 @@ public:
         return out;
     }
 
+    void release_runtime_graph() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        release_graph();
+    }
+
 private:
     void release_graph() {
         if (buffer_ != nullptr) {
@@ -878,11 +883,17 @@ WavlmEncoderComponent WavlmEncoderComponent::load_from_safetensors(
     const std::filesystem::path & checkpoint_path,
     core::BackendConfig backend,
     WavlmEncoderConfig config) {
+    return load_from_tensor_source(*engine::assets::open_tensor_source(checkpoint_path), std::move(backend), std::move(config));
+}
+
+WavlmEncoderComponent WavlmEncoderComponent::load_from_tensor_source(
+    const engine::assets::TensorSource & source,
+    core::BackendConfig backend,
+    WavlmEncoderConfig config) {
     validate_config(config);
-    const auto source = engine::assets::open_tensor_source(checkpoint_path);
     auto weights = std::make_shared<WavlmEncoderWeights>();
     weights->config = std::move(config);
-    weights->source_path = source->source_path();
+    weights->source_path = source.source_path();
     weights->execution_context = std::make_shared<core::ExecutionContext>(backend);
     weights->store = std::make_shared<core::BackendWeightStore>(
         weights->execution_context->backend(),
@@ -891,22 +902,22 @@ WavlmEncoderComponent WavlmEncoderComponent::load_from_safetensors(
         512ull * 1024ull * 1024ull);
 
     const auto & config_ref = weights->config;
-    load_tensor_alias(*weights, *source, "feature_extractor.conv_layers.0.conv.weight", "feature_extractor.conv_layers.0.0.weight", {config_ref.conv_dim[0], 1, config_ref.conv_kernel[0]});
-    load_tensor_alias(*weights, *source, "feature_extractor.conv_layers.0.layer_norm.weight", "feature_extractor.conv_layers.0.2.weight", {config_ref.conv_dim[0]});
-    load_tensor_alias(*weights, *source, "feature_extractor.conv_layers.0.layer_norm.bias", "feature_extractor.conv_layers.0.2.bias", {config_ref.conv_dim[0]});
+    load_tensor_alias(*weights, source, "feature_extractor.conv_layers.0.conv.weight", "feature_extractor.conv_layers.0.0.weight", {config_ref.conv_dim[0], 1, config_ref.conv_kernel[0]});
+    load_tensor_alias(*weights, source, "feature_extractor.conv_layers.0.layer_norm.weight", "feature_extractor.conv_layers.0.2.weight", {config_ref.conv_dim[0]});
+    load_tensor_alias(*weights, source, "feature_extractor.conv_layers.0.layer_norm.bias", "feature_extractor.conv_layers.0.2.bias", {config_ref.conv_dim[0]});
     for (int64_t i = 1; i < static_cast<int64_t>(config_ref.conv_dim.size()); ++i) {
         load_tensor_alias(
             *weights,
-            *source,
+            source,
             "feature_extractor.conv_layers." + std::to_string(i) + ".conv.weight",
             "feature_extractor.conv_layers." + std::to_string(i) + ".0.weight",
             {config_ref.conv_dim[static_cast<size_t>(i)], config_ref.conv_dim[static_cast<size_t>(i - 1)], config_ref.conv_kernel[static_cast<size_t>(i)]});
     }
-    load_tensor_alias(*weights, *source, "feature_projection.layer_norm.weight", "layer_norm.weight", {config_ref.conv_dim.back()});
-    load_tensor_alias(*weights, *source, "feature_projection.layer_norm.bias", "layer_norm.bias", {config_ref.conv_dim.back()});
-    load_tensor_alias(*weights, *source, "feature_projection.projection.weight", "post_extract_proj.weight", {config_ref.hidden_size, config_ref.conv_dim.back()});
-    load_tensor_alias(*weights, *source, "feature_projection.projection.bias", "post_extract_proj.bias", {config_ref.hidden_size});
-    load_tensor_alias(*weights, *source, "encoder.pos_conv_embed.conv.bias", "encoder.pos_conv.0.bias", {config_ref.hidden_size});
+    load_tensor_alias(*weights, source, "feature_projection.layer_norm.weight", "layer_norm.weight", {config_ref.conv_dim.back()});
+    load_tensor_alias(*weights, source, "feature_projection.layer_norm.bias", "layer_norm.bias", {config_ref.conv_dim.back()});
+    load_tensor_alias(*weights, source, "feature_projection.projection.weight", "post_extract_proj.weight", {config_ref.hidden_size, config_ref.conv_dim.back()});
+    load_tensor_alias(*weights, source, "feature_projection.projection.bias", "post_extract_proj.bias", {config_ref.hidden_size});
+    load_tensor_alias(*weights, source, "encoder.pos_conv_embed.conv.bias", "encoder.pos_conv.0.bias", {config_ref.hidden_size});
     weights->tensors.emplace(
         "encoder.pos_conv_embed.conv.weight",
         weights->store->make_f32(
@@ -915,7 +926,7 @@ WavlmEncoderComponent WavlmEncoderComponent::load_from_safetensors(
                 config_ref.hidden_size / config_ref.num_conv_pos_embedding_groups,
                 config_ref.num_conv_pos_embeddings}),
             effective_weight_norm_conv1d(
-                *source,
+                source,
                 "encoder.pos_conv.0",
                 config_ref.hidden_size,
                 config_ref.hidden_size / config_ref.num_conv_pos_embedding_groups,
@@ -924,38 +935,38 @@ WavlmEncoderComponent WavlmEncoderComponent::load_from_safetensors(
         (config_ref.hidden_size / config_ref.num_conv_pos_embedding_groups) *
         config_ref.num_conv_pos_embeddings;
     ++weights->loaded_tensor_count;
-    load_tensor_alias(*weights, *source, "encoder.layer_norm.weight", "encoder.layer_norm.weight", {config_ref.hidden_size});
-    load_tensor_alias(*weights, *source, "encoder.layer_norm.bias", "encoder.layer_norm.bias", {config_ref.hidden_size});
+    load_tensor_alias(*weights, source, "encoder.layer_norm.weight", "encoder.layer_norm.weight", {config_ref.hidden_size});
+    load_tensor_alias(*weights, source, "encoder.layer_norm.bias", "encoder.layer_norm.bias", {config_ref.hidden_size});
     weights->relative_attention_embedding =
-        source->require_f32("encoder.layers.0.self_attn.relative_attention_bias.weight", {config_ref.num_buckets, config_ref.num_attention_heads});
+        source.require_f32("encoder.layers.0.self_attn.relative_attention_bias.weight", {config_ref.num_buckets, config_ref.num_attention_heads});
     weights->position_bias_cache = std::make_shared<WavlmPositionBiasCache>();
     weights->parameter_count += config_ref.num_buckets * config_ref.num_attention_heads;
     const int64_t head_dim = config_ref.hidden_size / config_ref.num_attention_heads;
     for (int64_t i = 0; i < config_ref.num_hidden_layers; ++i) {
         const std::string internal = "encoder.layers." + std::to_string(i);
         const std::string src = "encoder.layers." + std::to_string(i);
-        load_tensor_alias(*weights, *source, internal + ".attention.q_proj.weight", src + ".self_attn.q_proj.weight", {config_ref.hidden_size, config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".attention.q_proj.bias", src + ".self_attn.q_proj.bias", {config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".attention.k_proj.weight", src + ".self_attn.k_proj.weight", {config_ref.hidden_size, config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".attention.k_proj.bias", src + ".self_attn.k_proj.bias", {config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".attention.v_proj.weight", src + ".self_attn.v_proj.weight", {config_ref.hidden_size, config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".attention.v_proj.bias", src + ".self_attn.v_proj.bias", {config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".attention.out_proj.weight", src + ".self_attn.out_proj.weight", {config_ref.hidden_size, config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".attention.out_proj.bias", src + ".self_attn.out_proj.bias", {config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".attention.gru_rel_pos_linear.weight", src + ".self_attn.grep_linear.weight", {8, head_dim});
-        load_tensor_alias(*weights, *source, internal + ".attention.gru_rel_pos_linear.bias", src + ".self_attn.grep_linear.bias", {8});
-        load_tensor_alias(*weights, *source, internal + ".attention.gru_rel_pos_const", src + ".self_attn.grep_a", {1, config_ref.num_attention_heads, 1, 1});
-        load_tensor_alias(*weights, *source, internal + ".self_attn_layer_norm.weight", src + ".self_attn_layer_norm.weight", {config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".self_attn_layer_norm.bias", src + ".self_attn_layer_norm.bias", {config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".fc1.weight", src + ".fc1.weight", {config_ref.intermediate_size, config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".fc1.bias", src + ".fc1.bias", {config_ref.intermediate_size});
-        load_tensor_alias(*weights, *source, internal + ".fc2.weight", src + ".fc2.weight", {config_ref.hidden_size, config_ref.intermediate_size});
-        load_tensor_alias(*weights, *source, internal + ".fc2.bias", src + ".fc2.bias", {config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".final_layer_norm.weight", src + ".final_layer_norm.weight", {config_ref.hidden_size});
-        load_tensor_alias(*weights, *source, internal + ".final_layer_norm.bias", src + ".final_layer_norm.bias", {config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".attention.q_proj.weight", src + ".self_attn.q_proj.weight", {config_ref.hidden_size, config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".attention.q_proj.bias", src + ".self_attn.q_proj.bias", {config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".attention.k_proj.weight", src + ".self_attn.k_proj.weight", {config_ref.hidden_size, config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".attention.k_proj.bias", src + ".self_attn.k_proj.bias", {config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".attention.v_proj.weight", src + ".self_attn.v_proj.weight", {config_ref.hidden_size, config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".attention.v_proj.bias", src + ".self_attn.v_proj.bias", {config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".attention.out_proj.weight", src + ".self_attn.out_proj.weight", {config_ref.hidden_size, config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".attention.out_proj.bias", src + ".self_attn.out_proj.bias", {config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".attention.gru_rel_pos_linear.weight", src + ".self_attn.grep_linear.weight", {8, head_dim});
+        load_tensor_alias(*weights, source, internal + ".attention.gru_rel_pos_linear.bias", src + ".self_attn.grep_linear.bias", {8});
+        load_tensor_alias(*weights, source, internal + ".attention.gru_rel_pos_const", src + ".self_attn.grep_a", {1, config_ref.num_attention_heads, 1, 1});
+        load_tensor_alias(*weights, source, internal + ".self_attn_layer_norm.weight", src + ".self_attn_layer_norm.weight", {config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".self_attn_layer_norm.bias", src + ".self_attn_layer_norm.bias", {config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".fc1.weight", src + ".fc1.weight", {config_ref.intermediate_size, config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".fc1.bias", src + ".fc1.bias", {config_ref.intermediate_size});
+        load_tensor_alias(*weights, source, internal + ".fc2.weight", src + ".fc2.weight", {config_ref.hidden_size, config_ref.intermediate_size});
+        load_tensor_alias(*weights, source, internal + ".fc2.bias", src + ".fc2.bias", {config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".final_layer_norm.weight", src + ".final_layer_norm.weight", {config_ref.hidden_size});
+        load_tensor_alias(*weights, source, internal + ".final_layer_norm.bias", src + ".final_layer_norm.bias", {config_ref.hidden_size});
     }
     weights->store->upload();
-    source->release_storage();
+    source.release_storage();
 
     return WavlmEncoderComponent(std::move(weights), backend);
 }
@@ -1016,6 +1027,12 @@ WavlmEncoderLayerOutput WavlmEncoderComponent::encode_layers(
         throw std::runtime_error("WavLM component is not initialized");
     }
     return state_->runner->encode_layers(input_values, batch, samples, output_layers);
+}
+
+void WavlmEncoderComponent::release_runtime_graph() {
+    if (state_ != nullptr && state_->runner != nullptr) {
+        state_->runner->release_runtime_graph();
+    }
 }
 
 }  // namespace engine::modules

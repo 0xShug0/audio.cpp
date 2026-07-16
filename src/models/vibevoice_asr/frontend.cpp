@@ -25,7 +25,7 @@ void validate_audio(const runtime::AudioBuffer & audio) {
 
 }  // namespace
 
-VibeVoiceASRFrontend::VibeVoiceASRFrontend(std::shared_ptr<const VibeVoiceAssets> assets)
+VibeVoiceASRFrontend::VibeVoiceASRFrontend(std::shared_ptr<const VibeVoiceASRAssets> assets)
     : assets_(std::move(assets)) {
     if (assets_ == nullptr) {
         throw std::runtime_error("VibeVoice-ASR frontend requires assets");

@@ -50,7 +50,7 @@ std::string replace_all(std::string text, const std::string & needle, const std:
     return text;
 }
 
-std::string decode_timestamp_token(const NemotronAssets & assets, int32_t token_id, bool & emitted_text) {
+std::string decode_timestamp_token(const NemotronASRAssets & assets, int32_t token_id, bool & emitted_text) {
     const auto & vocab = assets.tokenizer->id_to_token();
     if (token_id < 0 || token_id >= static_cast<int32_t>(vocab.size())) {
         return {};
@@ -71,7 +71,7 @@ std::string decode_timestamp_token(const NemotronAssets & assets, int32_t token_
 }
 
 std::vector<runtime::WordTimestamp> build_token_timestamps(
-    const NemotronAssets & assets,
+    const NemotronASRAssets & assets,
     const std::vector<int32_t> & token_ids,
     const std::vector<int32_t> & durations) {
     std::vector<runtime::WordTimestamp> out;
@@ -148,7 +148,7 @@ struct NemotronDecoderRuntime::JointGraph {
 };
 
 NemotronDecoderRuntime::NemotronDecoderRuntime(
-    std::shared_ptr<const NemotronAssets> assets,
+    std::shared_ptr<const NemotronASRAssets> assets,
     std::shared_ptr<const NemotronWeights> weights,
     engine::core::ExecutionContext & execution_context,
     size_t graph_arena_bytes)

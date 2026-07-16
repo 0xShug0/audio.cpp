@@ -1,5 +1,6 @@
 #include "engine/framework/runtime/model.h"
 
+#include "engine/framework/assets/model_package.h"
 #include "engine/framework/io/filesystem.h"
 
 #include <unordered_map>
@@ -40,6 +41,19 @@ std::vector<NamedAsset> discover_named_assets(
             const auto id = stem_counts[base_id] == 1 ? base_id : normalized_candidate_key(candidate);
             assets.push_back({id, std::filesystem::weakly_canonical(path)});
         }
+    }
+    return assets;
+}
+
+std::vector<NamedAsset> discover_named_assets_from_package_spec(
+    const std::filesystem::path & model_path,
+    const std::filesystem::path & spec_path,
+    engine::assets::ModelPackageResourceKind kind) {
+    const auto resources = engine::assets::discover_resources_from_package_spec(model_path, spec_path, kind);
+    std::vector<NamedAsset> assets;
+    assets.reserve(resources.size());
+    for (const auto & resource : resources) {
+        assets.push_back({resource.id, resource.path});
     }
     return assets;
 }

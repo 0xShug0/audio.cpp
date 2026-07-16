@@ -19,7 +19,7 @@ struct NemotronFrontendFeatures {
 
 class NemotronFrontend {
 public:
-    explicit NemotronFrontend(std::shared_ptr<const NemotronAssets> assets);
+    explicit NemotronFrontend(std::shared_ptr<const NemotronASRAssets> assets);
 
     NemotronFrontendFeatures extract(
         const engine::runtime::AudioBuffer & audio,
@@ -28,7 +28,7 @@ public:
     NemotronFrontendFeatures extract_waveform(const std::vector<float> & waveform, bool center) const;
 
 private:
-    std::shared_ptr<const NemotronAssets> assets_;
+    std::shared_ptr<const NemotronASRAssets> assets_;
     engine::audio::SparseMelFilterbank filterbank_;
     std::vector<float> window_;
 };

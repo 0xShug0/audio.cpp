@@ -1,0 +1,55 @@
+{
+  "family": "supertonic",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "tts_config": "model:config/tts.json",
+        "unicode_indexer": "model:config/unicode_indexer.json",
+        "voice_style_F1": "model:voice_styles/F1.json",
+        "voice_style_F2": "model:voice_styles/F2.json",
+        "voice_style_F3": "model:voice_styles/F3.json",
+        "voice_style_F4": "model:voice_styles/F4.json",
+        "voice_style_F5": "model:voice_styles/F5.json",
+        "voice_style_M1": "model:voice_styles/M1.json",
+        "voice_style_M2": "model:voice_styles/M2.json",
+        "voice_style_M3": "model:voice_styles/M3.json",
+        "voice_style_M4": "model:voice_styles/M4.json",
+        "voice_style_M5": "model:voice_styles/M5.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "tts_config": "model:config/tts.json",
+        "unicode_indexer": "model:config/unicode_indexer.json",
+        "voice_style_F1": "model:voice_styles/F1.json",
+        "voice_style_F2": "model:voice_styles/F2.json",
+        "voice_style_F3": "model:voice_styles/F3.json",
+        "voice_style_F4": "model:voice_styles/F4.json",
+        "voice_style_F5": "model:voice_styles/F5.json",
+        "voice_style_M1": "model:voice_styles/M1.json",
+        "voice_style_M2": "model:voice_styles/M2.json",
+        "voice_style_M3": "model:voice_styles/M3.json",
+        "voice_style_M4": "model:voice_styles/M4.json",
+        "voice_style_M5": "model:voice_styles/M5.json"
+      },
+      "tensors": {
+        "weights": "model:ggml/supertonic.safetensors"
+      }
+    }
+  ]
+}

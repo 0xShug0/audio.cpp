@@ -397,10 +397,10 @@ Vevo2VocoderRuntime::Vevo2VocoderRuntime(
     size_t graph_context_bytes,
     engine::assets::TensorStorageType matmul_weight_storage_type,
     engine::assets::TensorStorageType conv_weight_storage_type)
-    : config_(assets.vocoder_config),
+    : config_(assets.config.vocoder),
       execution_context_(execution_context),
       graph_context_bytes_(graph_context_bytes),
-      weight_source_(engine::assets::open_tensor_source(assets.paths.vocoder_weights_0)),
+      weight_source_(assets.vocoder_weights_0),
       weights_(load_vocoder_weights(
           execution_context.backend(),
           execution_context.backend_type(),
@@ -409,9 +409,7 @@ Vevo2VocoderRuntime::Vevo2VocoderRuntime(
           weight_context_bytes,
           matmul_weight_storage_type,
           conv_weight_storage_type)),
-      name_("vocoder"),
-      weights_path_(assets.paths.vocoder_weights_0),
-      config_path_(assets.paths.vocoder_config) {
+      name_("vocoder") {
     weight_source_->release_storage();
 }
 

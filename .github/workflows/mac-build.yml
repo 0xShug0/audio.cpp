@@ -5,10 +5,12 @@ on:
     branches:
       - ci/**
       - main
+      - dev
       - release-0.2
   pull_request:
     branches:
       - main
+      - dev
       - release-0.2
   workflow_dispatch:
 
@@ -38,4 +40,4 @@ jobs:
         run: |
           cmake --build "$BUILD_DIR" \
             --parallel "$(sysctl -n hw.logicalcpu)" \
-            --target audiocpp_cli audiocpp_server
+            --target audiocpp_cli audiocpp_server audiocpp_gguf

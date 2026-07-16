@@ -5,7 +5,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -61,8 +60,6 @@ private:
     mutable std::unique_ptr<Vevo2FMStepGraph> step_graph_;
     mutable std::vector<TimbreMelCacheEntry> timbre_mel_cache_;
     std::string name_;
-    std::filesystem::path weights_path_;
-    std::filesystem::path config_path_;
 };
 
 }  // namespace engine::models::vevo2

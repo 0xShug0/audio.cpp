@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "audio.cpp Supertonic Speaker",
+  "description": "Speak selected page text through an audio.cpp streaming TTS server.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Speak with audio.cpp",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:*/*",
+    "http://localhost:*/*"
+  ]
+}

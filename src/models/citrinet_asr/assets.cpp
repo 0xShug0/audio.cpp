@@ -1,6 +1,6 @@
 #include "engine/models/citrinet_asr/assets.h"
 
-#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/assets/weight_metadata.h"
 #include "engine/framework/io/filesystem.h"
@@ -14,30 +14,12 @@
 
 namespace engine::models::citrinet_asr {
 namespace io = engine::io;
+namespace json = engine::io::json;
 namespace asset_meta = engine::assets;
-CitrinetAssetPaths resolve_citrinet_assets(const std::filesystem::path & checkpoint_path) {
-    assets::ResourceBundle resources(checkpoint_path.parent_path());
-    resources.add_file("weights", checkpoint_path);
-    resources.add_file("config", assets::checkpoint_sidecar_config_path(checkpoint_path));
-
-    const auto config = resources.parse_json("config");
-    const auto * vocab_file = config.find("vocab_file");
-    if (vocab_file == nullptr || !vocab_file->is_string()) {
-        throw std::runtime_error("Citrinet config is missing vocab_file");
-    }
-    resources.add_model_file("vocab", vocab_file->as_string());
-
-    CitrinetAssetPaths paths;
-    paths.model_root = resources.model_root();
-    paths.checkpoint_path = resources.require_file("weights");
-    paths.config_path = resources.require_file("config");
-    paths.vocab_path = resources.require_file("vocab");
-    return paths;
-}
 
 namespace {
 
-std::vector<JasperBlockConfig> parse_jasper_config(const io::json::Value & value) {
+std::vector<JasperBlockConfig> parse_jasper_config(const json::Value & value) {
     std::vector<JasperBlockConfig> blocks;
     for (const auto & block_value : value.as_array()) {
         const auto & object = block_value.as_object();
@@ -80,44 +62,19 @@ std::vector<JasperBlockConfig> parse_jasper_config(const io::json::Value & value
     return blocks;
 }
 
-std::vector<std::string> load_vocab_file(const std::filesystem::path & path) {
-    const auto text = io::read_text_file(path);
-    std::vector<std::string> vocab;
-    size_t start = 0;
-    while (true) {
-        const size_t end = text.find('\n', start);
-        std::string piece = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        if (!piece.empty() && piece.back() == '\r') {
-            piece.pop_back();
-        }
-        vocab.push_back(std::move(piece));
-        if (end == std::string::npos) {
-            break;
-        }
-        start = end + 1;
-        if (start > text.size()) {
-            break;
-        }
-    }
-    if (vocab.empty()) {
-        throw std::runtime_error("empty vocab file: " + path.string());
-    }
-    return vocab;
-}
-
-CitrinetConfig parse_config(const io::json::Value & root) {
+CitrinetConfig parse_config(const json::Value & root) {
     CitrinetConfig cfg;
-    cfg.sample_rate = root.require("sample_rate").as_i64();
-    cfg.n_mels = root.require("n_mels").as_i64();
-    cfg.n_fft = root.require("n_fft").as_i64();
+    cfg.sample_rate = json::require_i64(root, "sample_rate");
+    cfg.n_mels = json::require_i64(root, "n_mels");
+    cfg.n_fft = json::require_i64(root, "n_fft");
     cfg.hop_length = static_cast<int64_t>(std::llround(root.require("window_stride").as_number() * static_cast<double>(cfg.sample_rate)));
     cfg.win_length = static_cast<int64_t>(std::llround(root.require("window_size").as_number() * static_cast<double>(cfg.sample_rate)));
-    cfg.pad_to = root.require("pad_to").as_i64();
-    cfg.vocab_size = root.require("vocab_size").as_i64();
-    cfg.num_classes = root.require("num_classes").as_i64();
-    cfg.blank_id = root.require("blank_id").as_i64();
-    cfg.window = root.require("window").as_string();
-    cfg.normalize = root.require("normalize").as_string();
+    cfg.pad_to = json::require_i64(root, "pad_to");
+    cfg.vocab_size = json::require_i64(root, "vocab_size");
+    cfg.num_classes = json::require_i64(root, "num_classes");
+    cfg.blank_id = json::require_i64(root, "blank_id");
+    cfg.window = json::require_string(root, "window");
+    cfg.normalize = json::require_string(root, "normalize");
     cfg.jasper = parse_jasper_config(root.require("jasper"));
     if (cfg.window != "hann") {
         throw std::runtime_error("unsupported Citrinet window: " + cfg.window);
@@ -153,22 +110,23 @@ CitrinetConfig parse_config(const io::json::Value & root) {
     return cfg;
 }
 
-CitrinetWeights load_citrinet_weights(const std::filesystem::path & checkpoint_path) {
-    const auto assets = resolve_citrinet_assets(checkpoint_path);
+CitrinetWeights load_citrinet_weights(engine::assets::ResourceBundle resources) {
     CitrinetWeights weights;
-    engine::assets::ResourceBundle resources(assets.model_root);
-    resources.add_file("weights", assets.checkpoint_path);
     const auto source = resources.open_tensor_source("weights");
     weights.source = source;
-    weights.config = parse_config(io::json::parse_file(assets.config_path));
+    weights.config = parse_config(resources.parse_json("config"));
     weights.window = source->require_f32("preprocessor.featurizer.window", {weights.config.win_length});
     weights.fb = source->require_f32(
         "preprocessor.featurizer.fb",
         {1, weights.config.n_mels, weights.config.n_fft / 2 + 1});
 
-    weights.vocab = load_vocab_file(assets.vocab_path);
-    if (static_cast<int64_t>(weights.vocab.size()) != weights.config.vocab_size) {
-        throw std::runtime_error("vocab size mismatch");
+    const auto tokenizer_model_path = resources.require_file("tokenizer");
+    weights.tokenizer_pieces = tokenizers::load_sentencepiece_model(tokenizer_model_path);
+    if (static_cast<int64_t>(weights.tokenizer_pieces.size()) != weights.config.vocab_size) {
+        throw std::runtime_error(
+            "Citrinet tokenizer model has " + std::to_string(weights.tokenizer_pieces.size()) +
+            " pieces but the config expects vocab_size " + std::to_string(weights.config.vocab_size) +
+            ": " + tokenizer_model_path.string());
     }
 
     weights.blocks.resize(weights.config.jasper.size());
@@ -262,10 +220,13 @@ std::string checkpoint_cache_key(const std::filesystem::path & checkpoint_path) 
 
 }  // namespace
 
-std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::filesystem::path & checkpoint_path) {
+std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::filesystem::path & model_path) {
     static std::mutex cache_mutex;
     static std::unordered_map<std::string, std::weak_ptr<const CitrinetWeights>> cache;
-    const auto key = checkpoint_cache_key(checkpoint_path);
+    auto resources = engine::assets::load_resource_bundle_from_package_spec(
+        model_path,
+        engine::assets::default_model_package_spec_path("citrinet_asr"));
+    const auto key = checkpoint_cache_key(resources.require_file("weights"));
     {
         std::lock_guard<std::mutex> lock(cache_mutex);
         if (const auto it = cache.find(key); it != cache.end()) {
@@ -274,7 +235,7 @@ std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::f
             }
         }
     }
-    auto loaded = std::make_shared<const CitrinetWeights>(load_citrinet_weights(checkpoint_path));
+    auto loaded = std::make_shared<const CitrinetWeights>(load_citrinet_weights(std::move(resources)));
     {
         std::lock_guard<std::mutex> lock(cache_mutex);
         cache[key] = loaded;

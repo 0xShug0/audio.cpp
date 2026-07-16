@@ -5,7 +5,6 @@
 #include "engine/models/vevo2/types.h"
 
 #include <cstddef>
-#include <filesystem>
 #include <memory>
 
 namespace engine::assets {
@@ -53,8 +52,6 @@ private:
     std::shared_ptr<const Vevo2ARWeights> weights_;
     mutable std::unique_ptr<Vevo2ARPrefillGraph> prefill_graph_;
     mutable std::unique_ptr<Vevo2ARDecodeGraph> decode_graph_;
-    std::filesystem::path weights_path_;
-    std::filesystem::path config_path_;
     mutable int64_t last_prompt_tokens_ = 0;
 };
 

@@ -7,7 +7,8 @@ param(
     [int]$Jobs = 0,
     [string]$OutputDir = "",
     [string]$CudaArchitectures = "default",
-    [string]$VsInstall = ""
+    [string]$VsInstall = "",
+    [switch]$SkipCudaRuntimeDlls
 )
 
 Set-StrictMode -Version Latest
@@ -94,7 +95,8 @@ function Write-PackageReadme {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Kind,
-        [Parameter(Mandatory = $true)][hashtable]$ProfileSettings
+        [Parameter(Mandatory = $true)][hashtable]$ProfileSettings,
+        [Parameter(Mandatory = $true)][bool]$IncludesCudaRuntimeDlls
     )
 
     $profileLabel = [string]$ProfileSettings["Label"]
@@ -110,26 +112,34 @@ function Write-PackageReadme {
     ) -join "`r`n"
 
     if ($Kind -eq "cuda") {
-        $body = @'
-# audio.cpp Windows CUDA Prebuilt
-
-This package contains:
-
-- `audiocpp_cli.exe`
-- `audiocpp_server.exe`
-- CUDA runtime DLLs required by this build
-- MSVC and OpenMP runtime DLLs required by this build
-
-## Requirements
-
-- 64-bit Windows
-- NVIDIA GPU with a compatible NVIDIA driver
-- Model files downloaded separately
-
-The CUDA Toolkit and Visual Studio Build Tools are not required to run this package.
-This CUDA build also includes the CPU backend, so it can run with `--backend cpu` or `--backend cuda`.
-
-'@ + $profileText + @'
+        $cudaRuntimeBullet = if ($IncludesCudaRuntimeDlls) { "- CUDA runtime DLLs required by this build" } else { "" }
+        $cudaRuntimeNote = if ($IncludesCudaRuntimeDlls) {
+            "The CUDA Toolkit and Visual Studio Build Tools are not required to run this package."
+        } else {
+            "This package does not include CUDA runtime DLLs. Download the matching `audiocpp-windows-cuda-runtime` package and place its DLLs next to these executables, or provide the CUDA runtime DLLs through `PATH`."
+        }
+        $cudaBodyLines = @(
+            "# audio.cpp Windows CUDA Prebuilt",
+            "",
+            "This package contains:",
+            "",
+            "- `audiocpp_cli.exe`",
+            "- `audiocpp_server.exe`",
+            $cudaRuntimeBullet,
+            "- MSVC and OpenMP runtime DLLs required by this build",
+            "",
+            "## Requirements",
+            "",
+            "- 64-bit Windows",
+            "- NVIDIA GPU with a compatible NVIDIA driver",
+            "- Model files downloaded separately",
+            "",
+            $cudaRuntimeNote,
+            "This CUDA build also includes the CPU backend, so it can run with `--backend cpu` or `--backend cuda`.",
+            $profileText
+        ) | Where-Object { $_ -ne "" }
+        $body = $cudaBodyLines -join "`r`n"
+        $body += @'
 
 ## Quick Use
 
@@ -232,6 +242,7 @@ function New-PrebuiltPackage {
     $buildArgs = @(
         "-Preset", $Preset,
         "-Target", "audiocpp_cli",
+        "-DeploymentBuild",
         "-Jobs", $Jobs.ToString(),
         "-CpuArch", $profileSettings.CpuArch,
         "-Llamafile", $profileSettings.Llamafile
@@ -247,6 +258,7 @@ function New-PrebuiltPackage {
     $buildArgs = @(
         "-Preset", $Preset,
         "-Target", "audiocpp_server",
+        "-DeploymentBuild",
         "-Jobs", $Jobs.ToString(),
         "-CpuArch", $profileSettings.CpuArch,
         "-Llamafile", $profileSettings.Llamafile
@@ -275,7 +287,7 @@ function New-PrebuiltPackage {
     Copy-RequiredDll "VCRUNTIME140_1.dll" @($crtDir) $stageDir | Out-Null
     Copy-RequiredDll "VCOMP140.DLL" @($ompDir) $stageDir | Out-Null
 
-    if ($Kind -eq "cuda") {
+    if ($Kind -eq "cuda" -and -not $SkipCudaRuntimeDlls) {
         $cudaRoot = Find-CudaRoot
         if ($cudaRoot -eq "") {
             throw "CUDA Toolkit was not found, so CUDA DLLs cannot be bundled."
@@ -289,7 +301,7 @@ function New-PrebuiltPackage {
         Copy-RequiredDll "cufft64_12.dll" $cudaDirs $stageDir | Out-Null
     }
 
-    Write-PackageReadme (Join-Path $stageDir "README.md") $Kind $profileSettings
+    Write-PackageReadme (Join-Path $stageDir "README.md") $Kind $profileSettings (-not ($Kind -eq "cuda" -and $SkipCudaRuntimeDlls))
 
     $zipPath = Join-Path $OutputDir "$packageName.zip"
     if (Test-Path -LiteralPath $zipPath) {

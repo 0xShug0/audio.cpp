@@ -22,7 +22,7 @@ struct HviskeEncodedAudio {
 class HviskeEncoderRuntime {
 public:
     HviskeEncoderRuntime(
-        std::shared_ptr<const HviskeAssets> assets,
+        std::shared_ptr<const HviskeASRAssets> assets,
         std::shared_ptr<const HviskeWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes);
@@ -41,7 +41,7 @@ private:
 
     void ensure_graph(int64_t input_frames, int64_t input_features);
 
-    std::shared_ptr<const HviskeAssets> assets_;
+    std::shared_ptr<const HviskeASRAssets> assets_;
     std::shared_ptr<const HviskeWeights> weights_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     size_t graph_arena_bytes_ = 0;

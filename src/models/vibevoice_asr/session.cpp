@@ -34,7 +34,7 @@ constexpr size_t kDefaultConnectorWeightContextBytes = 128ull * 1024ull * 1024ul
 constexpr size_t kDefaultDecoderWeightContextBytes = 4096ull * 1024ull * 1024ull;
 constexpr double kDefaultAudioChunkSeconds = 20.0 * 60.0;
 
-std::shared_ptr<const VibeVoiceAssets> require_assets(std::shared_ptr<const VibeVoiceAssets> assets) {
+std::shared_ptr<const VibeVoiceASRAssets> require_assets(std::shared_ptr<const VibeVoiceASRAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("VibeVoice-ASR session requires assets");
     }
@@ -520,7 +520,7 @@ int32_t sample_token(
 VibeVoiceASRSession::VibeVoiceASRSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const VibeVoiceAssets> assets)
+    std::shared_ptr<const VibeVoiceASRAssets> assets)
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),

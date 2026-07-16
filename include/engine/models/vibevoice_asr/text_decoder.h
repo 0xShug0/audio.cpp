@@ -103,7 +103,7 @@ struct VibeVoiceDecoderLayerOutputs {
 class VibeVoiceDecoderWeightsRuntime final {
 public:
     VibeVoiceDecoderWeightsRuntime(
-        std::shared_ptr<const VibeVoiceAssets> assets,
+        std::shared_ptr<const VibeVoiceASRAssets> assets,
         core::BackendType backend_type,
         int device,
         int threads,
@@ -116,7 +116,7 @@ public:
     VibeVoiceDecoderWeightsRuntime(const VibeVoiceDecoderWeightsRuntime &) = delete;
     VibeVoiceDecoderWeightsRuntime & operator=(const VibeVoiceDecoderWeightsRuntime &) = delete;
 
-    const VibeVoiceAssets & assets() const noexcept;
+    const VibeVoiceASRAssets & assets() const noexcept;
     const VibeVoiceDecoderWeights & weights() const noexcept;
     ggml_backend_t backend() const noexcept;
     common::ConstantTensorCache & constants() const noexcept;
@@ -140,7 +140,7 @@ public:
         int64_t cache_capacity) const;
 
 private:
-    std::shared_ptr<const VibeVoiceAssets> assets_;
+    std::shared_ptr<const VibeVoiceASRAssets> assets_;
     std::shared_ptr<const VibeVoiceDecoderWeights> weights_;
     std::unique_ptr<common::ConstantTensorCache> constants_;
     mutable std::unique_ptr<VibeVoiceDecoderEmbeddingGraph> embedding_graph_;
@@ -150,7 +150,7 @@ private:
 };
 
 VibeVoiceDecoderWeights load_vibevoice_decoder_weights(
-    const VibeVoiceAssets & assets,
+    const VibeVoiceASRAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,

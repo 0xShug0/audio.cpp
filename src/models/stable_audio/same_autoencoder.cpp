@@ -48,7 +48,7 @@ int64_t decoder_graph_latents(const StableAudioConfig & config, int64_t latent_t
     if (chunked && latent_tokens > kSameChunkLatents) {
         return kSameChunkLatents;
     }
-    if (!config.is_medium() && config.same_chunk_midpoint_shift) {
+    if (!config.medium_architecture && config.same_chunk_midpoint_shift) {
         return round_up_to_multiple(latent_tokens, config.pretransform_encoder_chunk_size / config.same_strides.back());
     }
     return latent_tokens;
@@ -526,7 +526,7 @@ StableAudioSameWeights load_stable_audio_same_weights(
         backend_type,
         "stable_audio.same.weights",
         weight_context_bytes != 0 ? weight_context_bytes :
-            (config.is_medium() ? kSameWeightContextBytesMedium : kSameWeightContextBytesSmall));
+            (config.medium_architecture ? kSameWeightContextBytesMedium : kSameWeightContextBytesSmall));
     weights.bottleneck_bias = weights.store->load_f32_tensor(source, "pretransform.model.bottleneck.bias", {1, config.latent_dim, 1});
     weights.bottleneck_scaling_factor = weights.store->load_f32_tensor(source, "pretransform.model.bottleneck.scaling_factor", {1, config.latent_dim, 1});
     weights.bottleneck_running_std = weights.store->load_f32_tensor(source, "pretransform.model.bottleneck.running_std", {1});
@@ -568,7 +568,7 @@ public:
           batch_(batch),
           latent_tokens_(latent_tokens),
           dim_(assets_->config.same_channels * assets_->config.same_c_mults.back()),
-          block_tokens_(assets_->config.is_medium() ? latent_tokens_ * (assets_->config.same_strides.back() + 1) :
+          block_tokens_(assets_->config.medium_architecture ? latent_tokens_ * (assets_->config.same_strides.back() + 1) :
                                                       assets_->config.pretransform_encoder_chunk_size +
                                                           assets_->config.pretransform_encoder_chunk_size /
                                                               assets_->config.same_strides.back()),
@@ -616,7 +616,7 @@ public:
         core::write_tensor_f32(bottleneck_noise_, bottleneck_noise);
         core::write_tensor_f32(new_token_noise_, token_noise);
         core::write_tensor_i32(positions_, positions_values_);
-        if (config.is_medium()) {
+        if (config.medium_architecture) {
             core::write_tensor_f16(attention_mask_, attention_mask_values_);
         }
         input_upload_ms += engine::debug::elapsed_ms(input_start, Clock::now());
@@ -645,7 +645,7 @@ public:
 private:
     void build() {
         const auto & config = assets_->config;
-        ggml_init_params params{config.is_medium() ? 1024ull * 1024ull * 1024ull : 512ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params params{config.medium_architecture ? 1024ull * 1024ull * 1024ull : 512ull * 1024ull * 1024ull, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("Stable Audio SAME ggml context initialization failed");
@@ -668,7 +668,7 @@ private:
         ggml_set_input(bottleneck_noise_.tensor);
         ggml_set_input(new_token_noise_.tensor);
         ggml_set_input(positions_.tensor);
-        if (config.is_medium()) {
+        if (config.medium_architecture) {
             attention_mask_ = core::make_tensor(
                 input_ctx,
                 GGML_TYPE_F16,
@@ -692,7 +692,7 @@ private:
             positions_values_[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         }
         core::write_tensor_i32(positions_, positions_values_);
-        if (config.is_medium()) {
+        if (config.medium_architecture) {
             attention_mask_values_ = make_sliding_attention_mask();
             core::write_tensor_f16(attention_mask_, attention_mask_values_);
         }
@@ -761,7 +761,7 @@ private:
             ensure_contiguous(ctx, hidden),
             core::TensorShape::from_dims({batch_, latent_tokens_ * (stride + 1), dim_}));
 
-        if (config.is_medium()) {
+        if (config.medium_architecture) {
             const core::TensorValue * mask = attention_mask_.valid() ? &attention_mask_ : nullptr;
             const int64_t sinusoidal = config.same_decoder_sinusoidal_blocks.empty() ? 0 : config.same_decoder_sinusoidal_blocks.back();
             const int64_t depth = static_cast<int64_t>(weights_.decoder_block.transformers.size());
@@ -913,7 +913,7 @@ public:
           threads_(std::max(1, execution.config().threads)),
           assets_(std::move(assets)),
           dim_(assets_->config.same_channels * assets_->config.same_c_mults.front()),
-          block_tokens_(assets_->config.is_medium() ? kSameChunkLatents * (assets_->config.same_strides.front() + 1) :
+          block_tokens_(assets_->config.medium_architecture ? kSameChunkLatents * (assets_->config.same_strides.front() + 1) :
                                                       assets_->config.pretransform_encoder_chunk_size +
                                                           assets_->config.pretransform_encoder_chunk_size /
                                                               assets_->config.same_strides.front()),
@@ -950,7 +950,7 @@ public:
             core::write_tensor_f32(new_token_noise_, token_noise);
         }
         core::write_tensor_i32(positions_, positions_values_);
-        if (config.is_medium()) {
+        if (config.medium_architecture) {
             core::write_tensor_f16(attention_mask_, attention_mask_values_);
         }
         core::set_backend_threads(backend_, threads_);
@@ -974,7 +974,7 @@ public:
 private:
     void build() {
         const auto & config = assets_->config;
-        ggml_init_params params{config.is_medium() ? 1024ull * 1024ull * 1024ull : 512ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params params{config.medium_architecture ? 1024ull * 1024ull * 1024ull : 512ull * 1024ull * 1024ull, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("Stable Audio SAME encoder ggml context initialization failed");
@@ -994,7 +994,7 @@ private:
                 core::TensorShape::from_dims({kSameChunkLatents, 1, dim_}));
             ggml_set_input(new_token_noise_.tensor);
         }
-        if (config.is_medium()) {
+        if (config.medium_architecture) {
             attention_mask_ = core::make_tensor(
                 input_ctx,
                 GGML_TYPE_F16,
@@ -1018,7 +1018,7 @@ private:
             positions_values_[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         }
         core::write_tensor_i32(positions_, positions_values_);
-        if (config.is_medium()) {
+        if (config.medium_architecture) {
             attention_mask_values_ = make_sliding_attention_mask();
             core::write_tensor_f16(attention_mask_, attention_mask_values_);
         }
@@ -1068,7 +1068,7 @@ private:
             ctx,
             ensure_contiguous(ctx, hidden),
             core::TensorShape::from_dims({1, kSameChunkLatents * (stride + 1), dim_}));
-        if (config.is_medium()) {
+        if (config.medium_architecture) {
             const core::TensorValue * mask = attention_mask_.valid() ? &attention_mask_ : nullptr;
             for (const auto & layer : weights_.encoder_block.transformers) {
                 hidden = same_transformer_layer(ctx, hidden, positions_, mask, layer, config, false);

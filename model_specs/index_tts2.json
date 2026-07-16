@@ -1,0 +1,98 @@
+{
+  "family": "index_tts2",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.yaml",
+        "bpe": "model:bpe.model",
+        "wav2vec2bert_config": "model:w2v-bert-2.0/config.json",
+        "wav2vec2bert_preprocessor_config": "model:w2v-bert-2.0/preprocessor_config.json",
+        "bigvgan_config": "model:bigvgan/config.json",
+        "qwen_emotion_config": "model:qwen0.6bemo4-merge/config.json",
+        "qwen_emotion_generation_config": "model:qwen0.6bemo4-merge/generation_config.json",
+        "qwen_emotion_tokenizer": "model:qwen0.6bemo4-merge/tokenizer.json",
+        "qwen_emotion_tokenizer_config": "model:qwen0.6bemo4-merge/tokenizer_config.json",
+        "qwen_emotion_vocab": "model:qwen0.6bemo4-merge/vocab.json",
+        "qwen_emotion_merges": "model:qwen0.6bemo4-merge/merges.txt"
+      },
+      "tensors": {
+        "gpt": {
+          "source": "weights:",
+          "prefix": "gpt"
+        },
+        "s2mel": {
+          "source": "weights:",
+          "prefix": "s2mel"
+        },
+        "speaker_matrix": {
+          "source": "weights:",
+          "prefix": "speaker_matrix"
+        },
+        "emotion_matrix": {
+          "source": "weights:",
+          "prefix": "emotion_matrix"
+        },
+        "wav2vec2bert_stats": {
+          "source": "weights:",
+          "prefix": "wav2vec2bert_stats"
+        },
+        "wav2vec2bert": {
+          "source": "weights:",
+          "prefix": "wav2vec2bert"
+        },
+        "semantic_codec": {
+          "source": "weights:",
+          "prefix": "semantic_codec"
+        },
+        "campplus": {
+          "source": "weights:",
+          "prefix": "campplus"
+        },
+        "bigvgan": {
+          "source": "weights:",
+          "prefix": "bigvgan"
+        },
+        "qwen_emotion": {
+          "source": "weights:",
+          "prefix": "qwen_emotion"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.yaml",
+        "bpe": "model:bpe.model",
+        "wav2vec2bert_config": "model:w2v-bert-2.0/config.json",
+        "wav2vec2bert_preprocessor_config": "model:w2v-bert-2.0/preprocessor_config.json",
+        "bigvgan_config": "model:bigvgan/config.json",
+        "qwen_emotion_config": "model:qwen0.6bemo4-merge/config.json",
+        "qwen_emotion_generation_config": "model:qwen0.6bemo4-merge/generation_config.json",
+        "qwen_emotion_tokenizer": "model:qwen0.6bemo4-merge/tokenizer.json",
+        "qwen_emotion_tokenizer_config": "model:qwen0.6bemo4-merge/tokenizer_config.json",
+        "qwen_emotion_vocab": "model:qwen0.6bemo4-merge/vocab.json",
+        "qwen_emotion_merges": "model:qwen0.6bemo4-merge/merges.txt"
+      },
+      "tensors": {
+        "gpt": "model:gpt.safetensors",
+        "s2mel": "model:s2mel.safetensors",
+        "speaker_matrix": "model:feat1.safetensors",
+        "emotion_matrix": "model:feat2.safetensors",
+        "wav2vec2bert_stats": "model:wav2vec2bert_stats.safetensors",
+        "wav2vec2bert": "model:w2v-bert-2.0/model.safetensors",
+        "semantic_codec": "model:semantic_codec_model.safetensors",
+        "campplus": "model:campplus.safetensors",
+        "bigvgan": "model:bigvgan/model.safetensors",
+        "qwen_emotion": "model:qwen0.6bemo4-merge/model.safetensors"
+      }
+    }
+  ]
+}

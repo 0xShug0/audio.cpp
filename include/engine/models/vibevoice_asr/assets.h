@@ -1,11 +1,11 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -92,20 +92,8 @@ struct VibeVoiceProcessorConfig {
     VibeVoiceAudioProcessorConfig audio_processor;
 };
 
-struct VibeVoiceAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path model_index_path;
-    std::filesystem::path preprocessor_config_path;
-    std::optional<std::filesystem::path> tokenizer_config_path;
-    std::optional<std::filesystem::path> tokenizer_json_path;
-    std::optional<std::filesystem::path> tokenizer_vocab_path;
-    std::optional<std::filesystem::path> tokenizer_merges_path;
-    std::vector<std::filesystem::path> model_shard_paths;
-};
-
-struct VibeVoiceAssets {
-    VibeVoiceAssetPaths paths;
+struct VibeVoiceASRAssets {
+    assets::ResourceBundle resources;
     VibeVoiceConfig config;
     VibeVoiceProcessorConfig processor;
     std::shared_ptr<const assets::TensorSource> model_weights;
@@ -116,7 +104,6 @@ struct VibeVoiceAssets {
     bool fine_tune_applied = false;
 };
 
-VibeVoiceAssetPaths resolve_vibevoice_assets(const std::filesystem::path & model_path);
-std::shared_ptr<const VibeVoiceAssets> load_vibevoice_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::vibevoice_asr

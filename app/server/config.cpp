@@ -62,6 +62,9 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
     config.device = engine::io::json::optional_i32(root, "device", config.device);
     config.threads = engine::io::json::optional_i32(root, "threads", config.threads);
     config.lazy_load = engine::io::json::optional_bool(root, "lazy_load", config.lazy_load);
+    if (const auto * value = root.find("model_spec_override")) {
+        config.model_spec_override = resolve_path(base, value->as_string());
+    }
     if (config.port <= 0 || config.port > 65535) {
         throw std::runtime_error("server port must be in 1..65535");
     }
@@ -77,6 +80,9 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         ServerModelConfig model;
         model.id = engine::io::json::require_string(item, "id");
         model.path = resolve_path(base, engine::io::json::require_string(item, "path"));
+        if (const auto * value = item.find("model_spec_override")) {
+            model.model_spec_override = resolve_path(base, value->as_string());
+        }
         model.family = engine::io::json::require_string(item, "family");
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);

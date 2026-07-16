@@ -23,7 +23,7 @@ constexpr size_t kDefaultEncoderGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultDecoderPrefillGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultDecoderDecodeGraphArenaBytes = 512ull * 1024ull * 1024ull;
 
-std::shared_ptr<const HviskeAssets> require_assets(std::shared_ptr<const HviskeAssets> assets) {
+std::shared_ptr<const HviskeASRAssets> require_assets(std::shared_ptr<const HviskeASRAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("Hviske ASR session requires assets");
     }
@@ -61,7 +61,7 @@ void validate_conv_weight_storage(engine::assets::TensorStorageType storage_type
     throw std::runtime_error(std::string(option_name) + " supports only native, f32, and f16");
 }
 
-void ensure_supported_language(const HviskeAssets & assets, const std::string & language) {
+void ensure_supported_language(const HviskeASRAssets & assets, const std::string & language) {
     if (language.empty()) {
         throw std::runtime_error("Hviske ASR requires a language");
     }
@@ -119,7 +119,7 @@ int64_t prepared_frontend_frames(const runtime::AudioPreparationContract & audio
 HviskeASRSession::HviskeASRSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const HviskeAssets> assets)
+    std::shared_ptr<const HviskeASRAssets> assets)
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),

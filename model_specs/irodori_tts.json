@@ -1,0 +1,42 @@
+{
+  "family": "irodori_tts",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "codec_weights": {
+          "source": "weights:",
+          "prefix": "codec_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "tokenizer": "../llm-jp-3-150m",
+        "codec": "../Semantic-DACVAE-Japanese-32dim"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "tokenizer_json": "tokenizer:tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "codec_weights": "codec:weights.safetensors"
+      }
+    }
+  ]
+}

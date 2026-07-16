@@ -211,7 +211,7 @@ private:
 };
 
 VibeVoiceConnectorWeightsBundle load_vibevoice_connector_weights(
-    const VibeVoiceAssets & assets,
+    const VibeVoiceASRAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
@@ -245,7 +245,7 @@ VibeVoiceConnectorWeightsBundle load_vibevoice_connector_weights(
 }
 
 VibeVoiceConnectorWeightsRuntime::VibeVoiceConnectorWeightsRuntime(
-    std::shared_ptr<const VibeVoiceAssets> assets,
+    std::shared_ptr<const VibeVoiceASRAssets> assets,
     core::BackendType backend_type,
     int device,
     int threads,
@@ -300,7 +300,7 @@ VibeVoiceConnectorWeightsRuntime::~VibeVoiceConnectorWeightsRuntime() {
     }
 }
 
-const VibeVoiceAssets & VibeVoiceConnectorWeightsRuntime::assets() const noexcept {
+const VibeVoiceASRAssets & VibeVoiceConnectorWeightsRuntime::assets() const noexcept {
     return *assets_;
 }
 

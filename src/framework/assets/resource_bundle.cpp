@@ -39,6 +39,20 @@ void ResourceBundle::add_file(std::string id, const std::filesystem::path & path
     }
 }
 
+void ResourceBundle::add_tensor_source(std::string id, const std::filesystem::path & path, std::string tensor_prefix) {
+    const auto key = id;
+    add_file(std::move(id), path);
+    auto [it, inserted] = tensor_resources_.emplace(
+        key,
+        TensorResource{
+            std::filesystem::weakly_canonical(path),
+            std::move(tensor_prefix),
+        });
+    if (!inserted) {
+        throw std::runtime_error("duplicate asset tensor resource id: " + it->first);
+    }
+}
+
 void ResourceBundle::add_model_file(std::string id, const std::filesystem::path & relative_path) {
     add_file(std::move(id), resolve_model_file(model_root_, relative_path));
 }
@@ -106,6 +120,10 @@ engine::io::json::Value ResourceBundle::parse_json(std::string_view id) const {
     return engine::io::json::parse_file(require_file(id));
 }
 
+engine::io::json::Value ResourceBundle::parse_jsonc(std::string_view id) const {
+    return engine::io::json::parse_jsonc_file(require_file(id));
+}
+
 engine::io::yaml::FlattenedDocument ResourceBundle::parse_flattened_yaml(std::string_view id) const {
     return engine::io::yaml::parse_flattened_document(read_text(id));
 }
@@ -116,7 +134,10 @@ std::shared_ptr<const TensorSource> ResourceBundle::open_tensor_source(std::stri
     if (it != tensor_sources_.end()) {
         return it->second;
     }
-    auto source = engine::assets::open_tensor_source(require_file(id));
+    const auto resource = tensor_resources_.find(key);
+    auto source = resource == tensor_resources_.end()
+        ? engine::assets::open_tensor_source(require_file(id))
+        : engine::assets::open_tensor_source(resource->second.path, resource->second.prefix);
     tensor_sources_.emplace(key, source);
     return source;
 }

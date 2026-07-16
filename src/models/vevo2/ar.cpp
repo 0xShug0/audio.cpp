@@ -121,7 +121,7 @@ std::shared_ptr<const Vevo2ARWeights> load_ar_weights(
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type,
     const assets::TensorSource & source) {
-    const auto & config = assets.ar_config;
+    const auto & config = assets.config.ar;
     const int64_t dim = ar_head_dim(config);
     auto weights = std::make_shared<Vevo2ARWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
@@ -889,16 +889,14 @@ Vevo2AutoregressiveRuntime::Vevo2AutoregressiveRuntime(
       prefill_graph_context_bytes_(prefill_graph_context_bytes),
       decode_graph_context_bytes_(decode_graph_context_bytes),
       tokenizer_(assets_),
-      weight_source_(assets::open_tensor_source(assets_->paths.ar_weights)),
+      weight_source_(assets_->ar_weights),
       weights_(load_ar_weights(
           *assets_,
           execution_context_.backend(),
           execution_context_.backend_type(),
           weight_context_bytes,
           weight_storage_type,
-          *weight_source_)),
-      weights_path_(assets_->paths.ar_weights),
-      config_path_(assets_->paths.ar_config) {
+          *weight_source_)) {
     weight_source_->release_storage();
 }
 
@@ -924,7 +922,7 @@ Vevo2TokenSequence Vevo2AutoregressiveRuntime::generate_content_style(
             execution_context_.config().threads,
             prefill_graph_context_bytes_,
             weights_,
-            assets_->ar_config,
+            assets_->config.ar,
             last_prompt_tokens_);
         prefill_graph_build_ms = engine::debug::elapsed_ms(build_start);
     }
@@ -938,13 +936,13 @@ Vevo2TokenSequence Vevo2AutoregressiveRuntime::generate_content_style(
             execution_context_.config().threads,
             decode_graph_context_bytes_,
             weights_,
-            assets_->ar_config,
+            assets_->config.ar,
             required_cache_steps);
         decode_graph_build_ms = engine::debug::elapsed_ms(build_start);
     }
 
     const auto prefill_start = Clock::now();
-    auto prefill = prefill_graph_->run(tokenized.input_ids, assets_->ar_config);
+    auto prefill = prefill_graph_->run(tokenized.input_ids, assets_->config.ar);
     const double prefill_run_ms = engine::debug::elapsed_ms(prefill_start);
     const auto import_start = Clock::now();
     decode_graph_->import_state(prefill.kv_state);
@@ -984,7 +982,7 @@ Vevo2TokenSequence Vevo2AutoregressiveRuntime::generate_content_style(
             break;
         }
         const auto decode_start = Clock::now();
-        logits = decode_graph_->run_step(token, assets_->ar_config);
+        logits = decode_graph_->run_step(token, assets_->config.ar);
         decode_step_ms += engine::debug::elapsed_ms(decode_start);
     }
 
@@ -1017,7 +1015,7 @@ int32_t Vevo2AutoregressiveRuntime::pad_token_id() const noexcept {
 }
 
 const Vevo2ARConfig & Vevo2AutoregressiveRuntime::config() const noexcept {
-    return assets_->ar_config;
+    return assets_->config.ar;
 }
 
 bool Vevo2AutoregressiveRuntime::weights_uploaded() const noexcept {

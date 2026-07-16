@@ -1,6 +1,6 @@
 #include "engine/models/miocodec/loader.h"
 
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/models/miocodec/session.h"
 
 #include <stdexcept>
@@ -9,52 +9,24 @@
 namespace engine::models::miocodec {
 namespace {
 
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("MioCodec model path does not exist: " + model_path.string());
-}
-
-bool has_miocodec_assets(const std::filesystem::path & root) {
-    return engine::io::is_existing_file(root / "config.yaml")
-        && engine::io::is_existing_file(root / "model.safetensors")
-        && engine::io::is_existing_file(root / "wavlm-base-plus-mlx" / "weights.safetensors");
-}
-
-std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoadRequest & request) {
-    return runtime::discover_named_assets(resolve_model_root(request.model_path), {"config.yaml"});
-}
-
-std::vector<runtime::NamedAsset> discover_weight_assets(const runtime::ModelLoadRequest & request) {
-    return runtime::discover_named_assets(
-        resolve_model_root(request.model_path),
-        {"model.safetensors", "wavlm-base-plus-mlx/weights.safetensors"});
-}
-
-runtime::CapabilitySet make_capabilities() {
-    runtime::CapabilitySet capabilities;
-    capabilities.supported_tasks = {
+runtime::CapabilitySet capabilities(const MioCodecAssets &) {
+    runtime::CapabilitySet out;
+    out.supported_tasks = {
         {runtime::VoiceTaskKind::VoiceConversion, {runtime::RunMode::Offline}},
         {runtime::VoiceTaskKind::SpeechToSpeech, {runtime::RunMode::Offline}},
     };
-    capabilities.supports_speaker_reference = true;
-    capabilities.supports_style_condition = false;
-    capabilities.supports_timestamps = false;
-    return capabilities;
+    out.supports_speaker_reference = true;
+    out.supports_style_condition = false;
+    out.supports_timestamps = false;
+    return out;
 }
 
-runtime::ModelMetadata make_metadata(const MioCodecAssets & assets) {
-    runtime::ModelMetadata metadata;
-    metadata.family = "miocodec";
-    metadata.variant = std::to_string(assets.config.sample_rate) + "hz-" + std::to_string(assets.config.codebook_size);
-    metadata.description = "MioCodec loaded from local extracted assets.";
-    metadata.config_candidates = {"config.yaml"};
-    metadata.weight_candidates = {"model.safetensors", "wavlm-base-plus-mlx/weights.safetensors"};
-    return metadata;
+runtime::ModelMetadata metadata(const MioCodecAssets & assets) {
+    runtime::ModelMetadata out;
+    out.family = "miocodec";
+    out.variant = std::to_string(assets.config.sample_rate) + "hz-" + std::to_string(assets.config.codebook_size);
+    out.description = "MioCodec loaded from local extracted assets.";
+    return out;
 }
 
 class MioCodecLoader final : public runtime::IVoiceModelLoader {
@@ -68,25 +40,35 @@ public:
             return false;
         }
         try {
-            return has_miocodec_assets(resolve_model_root(request.model_path));
+            (void) engine::assets::load_resource_bundle_from_package_spec(
+                request.model_path,
+                engine::assets::default_model_package_spec_path(family()));
+            return true;
         } catch (...) {
             return false;
         }
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_miocodec_assets(resolve_model_root(request.model_path));
+        const auto assets = load_miocodec_assets(request.model_path);
         runtime::ModelInspection inspection;
-        inspection.model_root = assets->paths.model_root;
-        inspection.metadata = make_metadata(*assets);
-        inspection.capabilities = make_capabilities();
-        inspection.discovered_configs = discover_config_assets(request);
-        inspection.discovered_weights = discover_weight_assets(request);
+        inspection.model_root = assets->resources.model_root();
+        inspection.metadata = metadata(*assets);
+        inspection.capabilities = capabilities(*assets);
+        const auto spec_path = engine::assets::default_model_package_spec_path(family());
+        inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
+            request.model_path,
+            spec_path,
+            engine::assets::ModelPackageResourceKind::Files);
+        inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
+            request.model_path,
+            spec_path,
+            engine::assets::ModelPackageResourceKind::Tensors);
         return inspection;
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_miocodec_model(resolve_model_root(request.model_path));
+        return load_miocodec_model(request.model_path);
     }
 };
 
@@ -123,7 +105,7 @@ std::unique_ptr<runtime::IVoiceTaskSession> MioCodecLoadedModel::create_task_ses
 
 std::unique_ptr<MioCodecLoadedModel> load_miocodec_model(const std::filesystem::path & model_path) {
     auto assets = load_miocodec_assets(model_path);
-    return std::make_unique<MioCodecLoadedModel>(make_metadata(*assets), make_capabilities(), std::move(assets));
+    return std::make_unique<MioCodecLoadedModel>(metadata(*assets), capabilities(*assets), std::move(assets));
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_miocodec_loader() {

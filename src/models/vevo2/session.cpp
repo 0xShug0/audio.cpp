@@ -605,8 +605,8 @@ Vevo2WhisperEmbeddingRuntime::Vevo2WhisperEmbeddingRuntime(
     : execution_context_(execution_context),
       backend_type_(execution_context.backend_type()),
       graph_context_bytes_(graph_context_bytes),
-      config_(assets.whisper_config),
-      weight_source_(engine::assets::open_tensor_source(assets.paths.whisper_weights)),
+      config_(assets.config.whisper),
+      weight_source_(assets.whisper_weights),
       weight_store_(std::make_shared<engine::core::BackendWeightStore>(
           execution_context.backend(),
           execution_context.backend_type(),
@@ -1085,10 +1085,10 @@ Vevo2Request Vevo2Session::make_request(const runtime::TaskRequest & request) co
     out.path = parsed.path;
     out.route = parsed.route;
     out.refs.target_text = request.text_input.has_value() ? request.text_input->text : std::string{};
-    out.generation.top_k = static_cast<int>(assets_->ar_config.generation_top_k);
-    out.generation.top_p = assets_->ar_config.generation_top_p;
-    out.generation.temperature = assets_->ar_config.generation_temperature;
-    out.generation.repetition_penalty = assets_->ar_config.generation_repetition_penalty;
+    out.generation.top_k = static_cast<int>(assets_->config.ar.generation_top_k);
+    out.generation.top_p = assets_->config.ar.generation_top_p;
+    out.generation.temperature = assets_->config.ar.generation_temperature;
+    out.generation.repetition_penalty = assets_->config.ar.generation_repetition_penalty;
     out.generation.use_prosody_code = route_defaults_to_prosody(out.route);
     out.generation.use_pitch_shift = route_defaults_to_pitch_shift(out.route);
     if (const auto target_text = runtime::find_option(request.options, {"target_text"})) {

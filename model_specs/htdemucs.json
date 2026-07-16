@@ -1,0 +1,36 @@
+{
+  "family": "htdemucs",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "manifest": "model:manifest.json",
+        "submodel_config": "model:955717e8/config.json"
+      },
+      "tensors": {
+        "submodel_weights": {
+          "source": "weights:",
+          "prefix": "submodel_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "submodel": "955717e8"
+      },
+      "files": {
+        "manifest": "model:manifest.json",
+        "submodel_config": "submodel:config.json"
+      },
+      "tensors": {
+        "submodel_weights": "submodel:model.safetensors"
+      }
+    }
+  ]
+}

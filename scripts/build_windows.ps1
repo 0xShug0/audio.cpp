@@ -12,6 +12,7 @@ param(
     [string]$NativeCpu = $null,
     [ValidateSet("ON", "OFF")]
     [string]$Llamafile = $null,
+    [switch]$DeploymentBuild,
     [string]$VsInstall = ""
 )
 
@@ -456,6 +457,8 @@ if ($arch -ne "") {
 Write-Host "CPU architecture profile: $($cpuArchSettings.Label)"
 Write-Host "Native CPU optimization: $($settings.Native)"
 Write-Host "llamafile SGEMM: $($settings.Llamafile)"
+$deploymentBuildValue = if ($DeploymentBuild) { "ON" } else { "OFF" }
+Write-Host "Deployment build: $deploymentBuildValue"
 
 if ($Clean) {
     $buildDirForClean = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) "build") $Preset
@@ -488,7 +491,8 @@ $configureArgs = @(
     "-DGGML_OPENMP=ON",
     "-DENGINE_ENABLE_NATIVE_CPU=$($settings.Native)",
     "-DENGINE_ENABLE_LLAMAFILE=$($settings.Llamafile)",
-    "-DENGINE_BUILD_TESTS=$($settings.BuildTests)"
+    "-DENGINE_BUILD_TESTS=$($settings.BuildTests)",
+    "-DAUDIOCPP_DEPLOYMENT_BUILD=$deploymentBuildValue"
 )
 $configureArgs += $cpuArchSettings.CMakeArgs
 if ($settings.CFlagsDebug -ne "") {

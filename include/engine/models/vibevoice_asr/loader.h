@@ -12,7 +12,7 @@ public:
     VibeVoiceASRLoadedModel(
         runtime::ModelMetadata metadata,
         runtime::CapabilitySet capabilities,
-        std::shared_ptr<const VibeVoiceAssets> assets);
+        std::shared_ptr<const VibeVoiceASRAssets> assets);
 
     const runtime::ModelMetadata & metadata() const noexcept override;
     const runtime::CapabilitySet & capabilities() const noexcept override;
@@ -23,7 +23,7 @@ public:
 private:
     runtime::ModelMetadata metadata_;
     runtime::CapabilitySet capabilities_;
-    std::shared_ptr<const VibeVoiceAssets> assets_;
+    std::shared_ptr<const VibeVoiceASRAssets> assets_;
 };
 
 std::unique_ptr<VibeVoiceASRLoadedModel> load_vibevoice_asr_model(const std::filesystem::path & model_path);

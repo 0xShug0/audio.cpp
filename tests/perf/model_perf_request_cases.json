@@ -904,9 +904,9 @@
       ]
     },
     {
-      "id": "moss_tts_voice_clone_long",
-      "coverage": "MOSS TTS voice clone, text/audio token generation, codec decode",
-      "family": "moss_tts",
+      "id": "moss_tts_nano_voice_clone_long",
+      "coverage": "MOSS-TTS-Nano voice clone, text/audio token generation, MOSS-Audio-Tokenizer-Nano decode",
+      "family": "moss_tts_nano",
       "model": "models/MOSS-TTS-Nano-100M",
       "task": "tts",
       "mode": "offline",

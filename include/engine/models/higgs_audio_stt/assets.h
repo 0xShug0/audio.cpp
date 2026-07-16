@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -65,26 +67,12 @@ struct HiggsAudioSTTConfig {
     std::vector<std::string> supported_languages;
 };
 
-struct HiggsAudioSTTAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path generation_config_path;
-    std::filesystem::path preprocessor_config_path;
-    std::filesystem::path chat_template_path;
-    std::filesystem::path model_index_path;
-    std::vector<std::filesystem::path> model_shard_paths;
-    std::filesystem::path tokenizer_config_path;
-    std::filesystem::path tokenizer_vocab_path;
-    std::filesystem::path tokenizer_merges_path;
-};
-
 struct HiggsAudioSTTAssets {
-    HiggsAudioSTTAssetPaths paths;
+    assets::ResourceBundle resources;
     HiggsAudioSTTConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
 };
 
-HiggsAudioSTTAssetPaths resolve_higgs_audio_stt_assets(const std::filesystem::path & model_path);
 std::shared_ptr<const HiggsAudioSTTAssets> load_higgs_audio_stt_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::higgs_audio_stt

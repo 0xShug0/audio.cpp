@@ -540,6 +540,11 @@ public:
         return out;
     }
 
+    void release_runtime_graph() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        release_graph();
+    }
+
 private:
     void release_graph() {
         if (gallocr_ != nullptr) {
@@ -605,8 +610,17 @@ BigVganVocoderComponent BigVganVocoderComponent::load_from_safetensors(
     const std::filesystem::path & checkpoint_path,
     core::BackendConfig backend,
     BigVganVocoderConfig config) {
+    return load_from_tensor_source(engine::assets::open_tensor_source(checkpoint_path), std::move(backend), std::move(config));
+}
+
+BigVganVocoderComponent BigVganVocoderComponent::load_from_tensor_source(
+    std::shared_ptr<const assets::TensorSource> source,
+    core::BackendConfig backend,
+    BigVganVocoderConfig config) {
     validate_config(config);
-    const auto source = engine::assets::open_tensor_source(checkpoint_path);
+    if (source == nullptr) {
+        throw std::runtime_error("BigVGAN component requires tensor source");
+    }
     auto weights = std::make_shared<BigVganVocoderWeights>();
     weights->config = std::move(config);
     weights->source_path = source->source_path();
@@ -786,6 +800,12 @@ BigVganVocoderOutput BigVganVocoderComponent::synthesize_chunked(
     out.samples = static_cast<int64_t>(out.waveform.size());
     out.sample_rate = weights_->config.sampling_rate;
     return out;
+}
+
+void BigVganVocoderComponent::release_runtime_graph() {
+    if (state_ != nullptr && state_->runner != nullptr) {
+        state_->runner->release_runtime_graph();
+    }
 }
 
 }  // namespace engine::modules

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>audio.cpp Speaker</title>
+  <link rel="stylesheet" href="speaker.css">
+</head>
+<body>
+  <main>
+    <h1>audio.cpp Speaker</h1>
+
+    <label>
+      Server
+      <input id="serverUrl" value="http://127.0.0.1:8080">
+    </label>
+
+    <div class="server-row">
+      <span>Backend</span>
+      <strong id="backendStatus">checking</strong>
+    </div>
+
+    <label>
+      Model id
+      <input id="modelId" value="supertonic-stream">
+    </label>
+
+    <div class="row">
+      <label>
+        Voice
+        <input id="voice" value="M1">
+      </label>
+      <label>
+        Sample rate
+        <input id="sampleRate" type="number" min="8000" max="192000" step="1" value="44100">
+      </label>
+    </div>
+
+    <div class="row">
+      <label>
+        Chunk chars
+        <input id="chunkChars" type="number" min="40" max="1000" step="10" value="180">
+      </label>
+      <label>
+        Steps
+        <input id="steps" type="number" min="1" max="64" step="1" value="8">
+      </label>
+    </div>
+
+    <textarea id="textInput" rows="5" placeholder="Text to speak"></textarea>
+
+    <div class="buttons">
+      <button id="speakSelection">Selection</button>
+      <button id="speakPage">Page</button>
+      <button id="stop">Stop</button>
+    </div>
+    <button class="wide-button" id="openOffline">Offline converter</button>
+
+    <section class="metrics" aria-label="Streaming metrics">
+      <div>
+        <span>Chunk</span>
+        <strong id="metricChunk">-</strong>
+      </div>
+      <div>
+        <span>First delta</span>
+        <strong id="metricFirstDelta">-</strong>
+      </div>
+      <div>
+        <span>Server TTFT</span>
+        <strong id="metricServerTtft">-</strong>
+      </div>
+      <div>
+        <span>Playback</span>
+        <strong id="metricDeltas">-</strong>
+      </div>
+    </section>
+
+    <div id="status">Ready.</div>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

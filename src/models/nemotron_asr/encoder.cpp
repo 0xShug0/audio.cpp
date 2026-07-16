@@ -490,7 +490,7 @@ struct NemotronEncoderRuntime::Graph {
 };
 
 NemotronEncoderRuntime::NemotronEncoderRuntime(
-    std::shared_ptr<const NemotronAssets> assets,
+    std::shared_ptr<const NemotronASRAssets> assets,
     std::shared_ptr<const NemotronWeights> weights,
     engine::core::ExecutionContext & execution_context,
     size_t graph_arena_bytes)

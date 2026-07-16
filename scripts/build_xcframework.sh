@@ -14,6 +14,7 @@ JOBS="$(sysctl -n hw.logicalcpu 2>/dev/null || echo 8)"
 CLEAN="OFF"
 LLAMAFILE="ON"
 NATIVE_CPU="ON"
+AUDIOCPP_DEPLOYMENT_BUILD="OFF"
 
 usage() {
     cat <<'EOF'
@@ -39,6 +40,7 @@ Options:
                         Default: ON
   --native-cpu ON|OFF   Build ggml CPU kernels with native host ISA flags.
                         Default: ON
+  --deployment-build    Embed package specs for standalone GGUF/model loading.
   -j, --jobs <n>        Parallel build jobs.
   -h, --help            Show this help.
 
@@ -86,6 +88,10 @@ while [[ $# -gt 0 ]]; do
         --native-cpu)
             NATIVE_CPU="$2"
             shift 2
+            ;;
+        --deployment-build)
+            AUDIOCPP_DEPLOYMENT_BUILD="ON"
+            shift
             ;;
         -j|--jobs)
             JOBS="$2"
@@ -185,7 +191,8 @@ archive_for_arch() {
         -DENGINE_ENABLE_NATIVE_CPU="$NATIVE_CPU" \
         -DGGML_METAL_EMBED_LIBRARY=ON \
         -DENGINE_BUILD_TESTS=OFF \
-        -DENGINE_BUILD_EXAMPLES=OFF
+        -DENGINE_BUILD_EXAMPLES=OFF \
+        -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
     )
     if [[ -n "$GENERATOR" ]]; then
         cmake_cmd+=(-G "$GENERATOR")

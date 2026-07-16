@@ -1,7 +1,6 @@
 #include "engine/models/omnivoice/assets.h"
 
-#include "engine/framework/assets/resource_bundle.h"
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/framework/io/json.h"
 
 #include <cmath>
@@ -12,52 +11,27 @@ namespace engine::models::omnivoice {
 namespace json = engine::io::json;
 namespace {
 
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("OmniVoice model path does not exist: " + model_path.string());
-}
-
-assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_path) {
-    assets::ResourceBundle resources(resolve_model_root(model_path));
-    resources.add_model_files({
-        {"config", "config.json", true},
-        {"weights", "model.safetensors", true},
-        {"tokenizer_json", "tokenizer.json", true},
-        {"tokenizer_config", "tokenizer_config.json", true},
-        {"chat_template", "chat_template.jinja", false},
-        {"audio_tokenizer_config", "audio_tokenizer/config.json", true},
-        {"audio_tokenizer_weights", "audio_tokenizer/model.safetensors", true},
-        {"audio_tokenizer_preprocessor", "audio_tokenizer/preprocessor_config.json", true},
-    });
-    return resources;
-}
-
 OmniVoiceConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
     OmniVoiceConfig config;
-    config.model_type = root.require("model_type").as_string();
-    config.audio_vocab_size = root.require("audio_vocab_size").as_i64();
-    config.audio_mask_id = root.require("audio_mask_id").as_i64();
-    config.num_audio_codebook = root.require("num_audio_codebook").as_i64();
+    config.model_type = json::require_string(root, "model_type");
+    config.audio_vocab_size = json::require_i64(root, "audio_vocab_size");
+    config.audio_mask_id = json::require_i64(root, "audio_mask_id");
+    config.num_audio_codebook = json::require_i64(root, "num_audio_codebook");
     config.audio_codebook_weights = json::optional_f32_array(root, "audio_codebook_weights");
     config.eos_token_id = json::optional_i64(root, "eos_token_id", 0);
     config.pad_token_id = json::optional_i64(root, "pad_token_id", 0);
 
     const auto & llm = root.require("llm_config");
-    config.llm.model_type = llm.require("model_type").as_string();
-    config.llm.vocab_size = llm.require("vocab_size").as_i64();
-    config.llm.hidden_size = llm.require("hidden_size").as_i64();
-    config.llm.intermediate_size = llm.require("intermediate_size").as_i64();
-    config.llm.num_hidden_layers = llm.require("num_hidden_layers").as_i64();
-    config.llm.num_attention_heads = llm.require("num_attention_heads").as_i64();
-    config.llm.num_key_value_heads = llm.require("num_key_value_heads").as_i64();
+    config.llm.model_type = json::require_string(llm, "model_type");
+    config.llm.vocab_size = json::require_i64(llm, "vocab_size");
+    config.llm.hidden_size = json::require_i64(llm, "hidden_size");
+    config.llm.intermediate_size = json::require_i64(llm, "intermediate_size");
+    config.llm.num_hidden_layers = json::require_i64(llm, "num_hidden_layers");
+    config.llm.num_attention_heads = json::require_i64(llm, "num_attention_heads");
+    config.llm.num_key_value_heads = json::require_i64(llm, "num_key_value_heads");
     config.llm.head_dim = json::optional_i64(llm, "head_dim", config.llm.hidden_size / config.llm.num_attention_heads);
-    config.llm.max_position_embeddings = llm.require("max_position_embeddings").as_i64();
+    config.llm.max_position_embeddings = json::require_i64(llm, "max_position_embeddings");
     config.llm.rms_norm_eps = json::optional_f32(llm, "rms_norm_eps", config.llm.rms_norm_eps);
     const auto * rope_parameters = llm.find("rope_parameters");
     if (rope_parameters != nullptr && rope_parameters->is_object()) {
@@ -65,7 +39,7 @@ OmniVoiceConfig parse_config(const assets::ResourceBundle & resources) {
     }
 
     const auto audio_tokenizer_root = resources.parse_json("audio_tokenizer_config");
-    config.audio_tokenizer.model_type = audio_tokenizer_root.require("model_type").as_string();
+    config.audio_tokenizer.model_type = json::require_string(audio_tokenizer_root, "model_type");
     config.audio_tokenizer.sample_rate = static_cast<int>(json::optional_i64(audio_tokenizer_root, "sample_rate", 24000));
     config.audio_tokenizer.semantic_sample_rate =
         static_cast<int>(json::optional_i64(audio_tokenizer_root, "semantic_sample_rate", 16000));
@@ -137,38 +111,14 @@ OmniVoiceConfig parse_config(const assets::ResourceBundle & resources) {
 
 }  // namespace
 
-OmniVoiceAssetPaths resolve_omnivoice_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
-    const auto * chat_template = resources.find_file("chat_template");
-    OmniVoiceAssetPaths paths;
-    paths.model_root = resources.model_root();
-    paths.config_path = resources.require_file("config");
-    paths.model_weights_path = resources.require_file("weights");
-    paths.tokenizer_json_path = resources.require_file("tokenizer_json");
-    paths.tokenizer_config_path = resources.require_file("tokenizer_config");
-    paths.chat_template_path = chat_template != nullptr ? *chat_template : std::filesystem::path{};
-    paths.audio_tokenizer_config_path = resources.require_file("audio_tokenizer_config");
-    paths.audio_tokenizer_weights_path = resources.require_file("audio_tokenizer_weights");
-    paths.audio_tokenizer_preprocessor_config_path = resources.require_file("audio_tokenizer_preprocessor");
-    return paths;
-}
-
 std::shared_ptr<const OmniVoiceAssets> load_omnivoice_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
     OmniVoiceAssets assets;
-    const auto * chat_template = resources.find_file("chat_template");
-    assets.paths.model_root = resources.model_root();
-    assets.paths.config_path = resources.require_file("config");
-    assets.paths.model_weights_path = resources.require_file("weights");
-    assets.paths.tokenizer_json_path = resources.require_file("tokenizer_json");
-    assets.paths.tokenizer_config_path = resources.require_file("tokenizer_config");
-    assets.paths.chat_template_path = chat_template != nullptr ? *chat_template : std::filesystem::path{};
-    assets.paths.audio_tokenizer_config_path = resources.require_file("audio_tokenizer_config");
-    assets.paths.audio_tokenizer_weights_path = resources.require_file("audio_tokenizer_weights");
-    assets.paths.audio_tokenizer_preprocessor_config_path = resources.require_file("audio_tokenizer_preprocessor");
-    assets.config = parse_config(resources);
-    assets.model_weights = resources.open_tensor_source("weights");
-    assets.audio_tokenizer_weights = resources.open_tensor_source("audio_tokenizer_weights");
+    assets.resources = assets::load_resource_bundle_from_package_spec(
+        model_path,
+        assets::default_model_package_spec_path("omnivoice"));
+    assets.config = parse_config(assets.resources);
+    assets.model_weights = assets.resources.open_tensor_source("weights");
+    assets.audio_tokenizer_weights = assets.resources.open_tensor_source("audio_tokenizer_weights");
     return std::make_shared<OmniVoiceAssets>(std::move(assets));
 }
 

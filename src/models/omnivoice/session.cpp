@@ -90,6 +90,8 @@ OmniVoiceGenerationOptions generation_options_from_options(const std::unordered_
         {"audio_chunk_threshold"})
         .value_or(options.audio_chunk_threshold_seconds);
     options.text_chunk_size = engine::text::parse_text_chunk_size_override(options_map);
+    options.text_chunk_mode = engine::text::parse_text_chunk_mode_override(options_map)
+        .value_or(engine::text::TextChunkMode::TagAware);
     return options;
 }
 
@@ -354,20 +356,30 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
         measured_decode_ms = engine::debug::elapsed_ms(decode_start, decode_end);
     } else {
         std::vector<std::string> text_chunks;
+        int64_t text_chunk_size = 0;
         if (use_explicit_text_chunking) {
+            text_chunk_size = *omni_request.generation.text_chunk_size;
             text_chunks = engine::text::split_text_chunks(
                 prompt.text,
-                *omni_request.generation.text_chunk_size);
+                text_chunk_size,
+                omni_request.generation.text_chunk_mode);
         } else {
             const double avg_tokens_per_char =
                 static_cast<double>(prompt.target_audio_tokens) /
                 static_cast<double>(std::max<size_t>(1, prompt.text.size()));
-            const int64_t chunk_len = std::max<int64_t>(
+            text_chunk_size = std::max<int64_t>(
                 1,
                 static_cast<int64_t>(omni_request.generation.audio_chunk_duration_seconds *
                                      static_cast<float>(prompt_builder_.frame_rate()) / avg_tokens_per_char));
-            text_chunks = prompt_builder_.chunk_text_punctuation(prompt.text, chunk_len, 3);
+            text_chunks = prompt_builder_.chunk_text_punctuation(prompt.text, text_chunk_size, 3);
         }
+        engine::debug::trace_log_scalar("omnivoice.text_chunk_size", text_chunk_size);
+        if (use_explicit_text_chunking) {
+            engine::debug::trace_log_scalar(
+                "omnivoice.text_chunk_mode",
+                engine::text::text_chunk_mode_name(omni_request.generation.text_chunk_mode));
+        }
+        engine::debug::trace_log_scalar("omnivoice.text_chunk_count", static_cast<int64_t>(text_chunks.size()));
         const bool has_reference_audio = omni_request.reference_audio_tokens.has_value();
         std::optional<OmniVoiceAudioTokens> first_chunk_reference = std::nullopt;
         std::string first_chunk_text;

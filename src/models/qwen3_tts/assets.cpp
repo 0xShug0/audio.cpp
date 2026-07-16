@@ -1,6 +1,6 @@
 #include "engine/models/qwen3_tts/assets.h"
 
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -9,23 +9,6 @@
 namespace engine::models::qwen3_tts {
 namespace json = engine::io::json;
 namespace {
-
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("Qwen3 TTS model path does not exist: " + model_path.string());
-}
-
-std::filesystem::path require_file(const std::filesystem::path & path, const char * role) {
-    if (!engine::io::is_existing_file(path)) {
-        throw std::runtime_error(std::string("Qwen3 TTS missing ") + role + ": " + path.string());
-    }
-    return path;
-}
 
 Qwen3TTSVariant parse_variant(const std::string & value) {
     if (value == "base") {
@@ -40,7 +23,7 @@ Qwen3TTSVariant parse_variant(const std::string & value) {
     throw std::runtime_error("Qwen3 TTS unsupported tts_model_type: " + value);
 }
 
-Qwen3TTSCodePredictorConfig parse_code_predictor_config(const engine::io::json::Value & value) {
+Qwen3TTSCodePredictorConfig parse_code_predictor_config(const json::Value & value) {
     Qwen3TTSCodePredictorConfig config;
     config.hidden_size = json::require_i64(value, "hidden_size");
     config.intermediate_size = json::require_i64(value, "intermediate_size");
@@ -54,7 +37,7 @@ Qwen3TTSCodePredictorConfig parse_code_predictor_config(const engine::io::json::
     return config;
 }
 
-Qwen3TTSTalkerConfig parse_talker_config(const engine::io::json::Value & value) {
+Qwen3TTSTalkerConfig parse_talker_config(const json::Value & value) {
     Qwen3TTSTalkerConfig config;
     config.max_position_embeddings = json::optional_i64(value, "max_position_embeddings", config.max_position_embeddings);
     config.hidden_size = json::require_i64(value, "hidden_size");
@@ -106,7 +89,7 @@ Qwen3TTSTalkerConfig parse_talker_config(const engine::io::json::Value & value) 
     return config;
 }
 
-Qwen3TTSSpeechTokenizerConfig parse_speech_tokenizer_config(const engine::io::json::Value & value) {
+Qwen3TTSSpeechTokenizerConfig parse_speech_tokenizer_config(const json::Value & value) {
     Qwen3TTSSpeechTokenizerConfig config;
     config.model_type = json::require_string(value, "model_type");
     config.input_sample_rate = static_cast<int>(json::require_i64(value, "input_sample_rate"));
@@ -118,29 +101,29 @@ Qwen3TTSSpeechTokenizerConfig parse_speech_tokenizer_config(const engine::io::js
     return config;
 }
 
-Qwen3TTSSpeakerEncoderConfig parse_speaker_encoder_config(const engine::io::json::Value & value) {
+Qwen3TTSSpeakerEncoderConfig parse_speaker_encoder_config(const json::Value & value) {
     Qwen3TTSSpeakerEncoderConfig config;
     config.embedding_dim = json::optional_i64(value, "enc_dim", 1024);
     config.sample_rate = static_cast<int>(json::optional_i64(value, "sample_rate", 24000));
     return config;
 }
 
-int64_t parse_generation_max_new_tokens(const Qwen3TTSAssetPaths & paths) {
-    const auto generation = engine::io::json::parse_file(paths.generation_config_path);
+int64_t parse_generation_max_new_tokens(const assets::ResourceBundle & resources) {
+    const auto generation = resources.parse_json("generation_config");
     return json::optional_i64(generation, "max_new_tokens", 2048);
 }
 
-Qwen3TTSConfig load_config(const Qwen3TTSAssetPaths & paths) {
-    const auto root = engine::io::json::parse_file(paths.config_path);
+Qwen3TTSConfig parse_config(const assets::ResourceBundle & resources) {
+    const auto root = resources.parse_json("config");
     Qwen3TTSConfig config;
     config.tts_model_type = json::require_string(root, "tts_model_type");
     config.variant = parse_variant(config.tts_model_type);
     config.tts_model_size = json::require_string(root, "tts_model_size");
     config.tokenizer_type = json::require_string(root, "tokenizer_type");
-    config.max_new_tokens = parse_generation_max_new_tokens(paths);
+    config.max_new_tokens = parse_generation_max_new_tokens(resources);
     config.talker = parse_talker_config(root.require("talker_config"));
     config.code_predictor = parse_code_predictor_config(root.require("talker_config").require("code_predictor_config"));
-    config.speech_tokenizer = parse_speech_tokenizer_config(engine::io::json::parse_file(paths.speech_tokenizer_config_path));
+    config.speech_tokenizer = parse_speech_tokenizer_config(resources.parse_json("speech_tokenizer_config"));
     config.tts_bos_token_id = json::require_i64(root, "tts_bos_token_id");
     config.tts_eos_token_id = json::require_i64(root, "tts_eos_token_id");
     config.tts_pad_token_id = json::require_i64(root, "tts_pad_token_id");
@@ -148,6 +131,10 @@ Qwen3TTSConfig load_config(const Qwen3TTSAssetPaths & paths) {
     if (config.has_speaker_encoder) {
         config.speaker_encoder = parse_speaker_encoder_config(root.require("speaker_encoder_config"));
     }
+    return config;
+}
+
+void validate_config(const Qwen3TTSConfig & config) {
     if (config.tokenizer_type != "qwen3_tts_tokenizer_12hz") {
         throw std::runtime_error("Qwen3 TTS currently supports qwen3_tts_tokenizer_12hz");
     }
@@ -160,30 +147,20 @@ Qwen3TTSConfig load_config(const Qwen3TTSAssetPaths & paths) {
     if (config.speech_tokenizer.model_type != "qwen3_tts_tokenizer_12hz") {
         throw std::runtime_error("Qwen3 TTS speech tokenizer must be qwen3_tts_tokenizer_12hz");
     }
-    return config;
 }
 
 }  // namespace
 
-Qwen3TTSAssetPaths resolve_qwen3_tts_assets(const std::filesystem::path & model_path) {
-    const auto root = resolve_model_root(model_path);
-    Qwen3TTSAssetPaths paths;
-    paths.model_root = root;
-    paths.config_path = require_file(root / "config.json", "config");
-    paths.generation_config_path = require_file(root / "generation_config.json", "generation config");
-    paths.model_weights_path = require_file(root / "model.safetensors", "model weights");
-    paths.tokenizer_config_path = require_file(root / "tokenizer_config.json", "text tokenizer config");
-    paths.tokenizer_vocab_path = require_file(root / "vocab.json", "text tokenizer vocab");
-    paths.tokenizer_merges_path = require_file(root / "merges.txt", "text tokenizer merges");
-    paths.speech_tokenizer_config_path = require_file(root / "speech_tokenizer" / "config.json", "speech tokenizer config");
-    paths.speech_tokenizer_weights_path = require_file(root / "speech_tokenizer" / "model.safetensors", "speech tokenizer weights");
-    return paths;
-}
-
 std::shared_ptr<const Qwen3TTSAssets> load_qwen3_tts_assets(const std::filesystem::path & model_path) {
+    auto resources = assets::load_resource_bundle_from_package_spec(
+        model_path,
+        assets::default_model_package_spec_path("qwen3_tts"));
     auto assets = std::make_shared<Qwen3TTSAssets>();
-    assets->paths = resolve_qwen3_tts_assets(model_path);
-    assets->config = load_config(assets->paths);
+    assets->config = parse_config(resources);
+    validate_config(assets->config);
+    assets->model_weights = resources.open_tensor_source("model_weights");
+    assets->speech_tokenizer_weights = resources.open_tensor_source("speech_tokenizer_weights");
+    assets->resources = std::move(resources);
     return assets;
 }
 

@@ -593,7 +593,7 @@ Qwen3TalkerWeights load_talker_weights(
     core::BackendType backend_type,
     size_t weight_context_bytes,
     engine::assets::TensorStorageType weight_storage_type) {
-    auto source = assets::open_tensor_source(assets.paths.model_weights_path);
+    const auto & source = *assets.model_weights;
     const auto & config = assets.config.talker;
     Qwen3TalkerWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
@@ -601,37 +601,37 @@ Qwen3TalkerWeights load_talker_weights(
         backend_type,
         "qwen3_tts.talker.weights",
         weight_context_bytes);
-    weights.codec_embedding = source->require_tensor(
+    weights.codec_embedding = source.require_tensor(
         "talker.model.codec_embedding.weight",
         assets::TensorStorageType::Native,
         {config.vocab_size, config.hidden_size});
     weights.code_predictor_embeddings.reserve(static_cast<size_t>(config.num_code_groups - 1));
     for (int64_t group = 0; group < config.num_code_groups - 1; ++group) {
-        weights.code_predictor_embeddings.push_back(source->require_tensor(
+        weights.code_predictor_embeddings.push_back(source.require_tensor(
             "talker.code_predictor.model.codec_embedding." + std::to_string(group) + ".weight",
             assets::TensorStorageType::Native,
             {assets.config.code_predictor.vocab_size, config.hidden_size}));
     }
-    weights.text_embedding = source->require_tensor(
+    weights.text_embedding = source.require_tensor(
         "talker.model.text_embedding.weight",
         assets::TensorStorageType::Native,
         {config.text_vocab_size, config.text_hidden_size});
     weights.text_projection_fc1 = {
-        source->require_tensor(
+        source.require_tensor(
             "talker.text_projection.linear_fc1.weight",
             weight_storage_type,
             {config.text_hidden_size, config.text_hidden_size}),
-        source->require_tensor(
+        source.require_tensor(
             "talker.text_projection.linear_fc1.bias",
             assets::TensorStorageType::F32,
             {config.text_hidden_size}),
     };
     weights.text_projection_fc2 = {
-        source->require_tensor(
+        source.require_tensor(
             "talker.text_projection.linear_fc2.weight",
             weight_storage_type,
             {config.hidden_size, config.text_hidden_size}),
-        source->require_tensor(
+        source.require_tensor(
             "talker.text_projection.linear_fc2.bias",
             assets::TensorStorageType::F32,
             {config.hidden_size}),
@@ -641,50 +641,50 @@ Qwen3TalkerWeights load_talker_weights(
     for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
         const std::string prefix = "talker.model.layers." + std::to_string(layer);
         TalkerLayerWeights w;
-        w.input_norm = source->require_f32_tensor(prefix + ".input_layernorm.weight", {config.hidden_size});
+        w.input_norm = source.require_f32_tensor(prefix + ".input_layernorm.weight", {config.hidden_size});
         w.q_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".self_attn.q_proj.weight",
             weight_storage_type,
             {config.num_attention_heads * dim, config.hidden_size});
         w.k_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".self_attn.k_proj.weight",
             weight_storage_type,
             {config.num_key_value_heads * dim, config.hidden_size});
         w.v_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".self_attn.v_proj.weight",
             weight_storage_type,
             {config.num_key_value_heads * dim, config.hidden_size});
         w.o_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".self_attn.o_proj.weight",
             weight_storage_type,
             {config.hidden_size, config.num_attention_heads * dim});
-        w.q_norm = source->require_f32_tensor(prefix + ".self_attn.q_norm.weight", {dim});
-        w.k_norm = source->require_f32_tensor(prefix + ".self_attn.k_norm.weight", {dim});
-        w.post_norm = source->require_f32_tensor(prefix + ".post_attention_layernorm.weight", {config.hidden_size});
+        w.q_norm = source.require_f32_tensor(prefix + ".self_attn.q_norm.weight", {dim});
+        w.k_norm = source.require_f32_tensor(prefix + ".self_attn.k_norm.weight", {dim});
+        w.post_norm = source.require_f32_tensor(prefix + ".post_attention_layernorm.weight", {config.hidden_size});
         w.gate_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".mlp.gate_proj.weight",
             weight_storage_type,
             {config.intermediate_size, config.hidden_size});
         w.up_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".mlp.up_proj.weight",
             weight_storage_type,
             {config.intermediate_size, config.hidden_size});
         w.down_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".mlp.down_proj.weight",
             weight_storage_type,
             {config.hidden_size, config.intermediate_size});
         weights.layers.push_back(std::move(w));
     }
-    weights.norm = source->require_f32_tensor("talker.model.norm.weight", {config.hidden_size});
+    weights.norm = source.require_f32_tensor("talker.model.norm.weight", {config.hidden_size});
     weights.codec_head = weights.store->load_tensor(
-        *source,
+        source,
         "talker.codec_head.weight",
         weight_storage_type,
         {config.vocab_size, config.hidden_size});
@@ -695,59 +695,59 @@ Qwen3TalkerWeights load_talker_weights(
     for (int64_t layer = 0; layer < predictor_config.num_hidden_layers; ++layer) {
         const std::string prefix = "talker.code_predictor.model.layers." + std::to_string(layer);
         TalkerLayerWeights w;
-        w.input_norm = source->require_f32_tensor(prefix + ".input_layernorm.weight", {predictor_config.hidden_size});
+        w.input_norm = source.require_f32_tensor(prefix + ".input_layernorm.weight", {predictor_config.hidden_size});
         w.q_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".self_attn.q_proj.weight",
             weight_storage_type,
             {predictor_config.num_attention_heads * predictor_dim, predictor_config.hidden_size});
         w.k_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".self_attn.k_proj.weight",
             weight_storage_type,
             {predictor_config.num_key_value_heads * predictor_dim, predictor_config.hidden_size});
         w.v_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".self_attn.v_proj.weight",
             weight_storage_type,
             {predictor_config.num_key_value_heads * predictor_dim, predictor_config.hidden_size});
         w.o_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".self_attn.o_proj.weight",
             weight_storage_type,
             {predictor_config.hidden_size, predictor_config.num_attention_heads * predictor_dim});
-        w.q_norm = source->require_f32_tensor(prefix + ".self_attn.q_norm.weight", {predictor_dim});
-        w.k_norm = source->require_f32_tensor(prefix + ".self_attn.k_norm.weight", {predictor_dim});
-        w.post_norm = source->require_f32_tensor(prefix + ".post_attention_layernorm.weight", {predictor_config.hidden_size});
+        w.q_norm = source.require_f32_tensor(prefix + ".self_attn.q_norm.weight", {predictor_dim});
+        w.k_norm = source.require_f32_tensor(prefix + ".self_attn.k_norm.weight", {predictor_dim});
+        w.post_norm = source.require_f32_tensor(prefix + ".post_attention_layernorm.weight", {predictor_config.hidden_size});
         w.gate_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".mlp.gate_proj.weight",
             weight_storage_type,
             {predictor_config.intermediate_size, predictor_config.hidden_size});
         w.up_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".mlp.up_proj.weight",
             weight_storage_type,
             {predictor_config.intermediate_size, predictor_config.hidden_size});
         w.down_proj = weights.store->load_tensor(
-            *source,
+            source,
             prefix + ".mlp.down_proj.weight",
             weight_storage_type,
             {predictor_config.hidden_size, predictor_config.intermediate_size});
         weights.code_predictor.layers.push_back(std::move(w));
     }
-    weights.code_predictor.norm = source->require_f32_tensor(
+    weights.code_predictor.norm = source.require_f32_tensor(
         "talker.code_predictor.model.norm.weight",
         {predictor_config.hidden_size});
     if (predictor_config.hidden_size != config.hidden_size) {
         weights.code_predictor.small_to_mtp_projection = GraphLinearTensorWeights{
             weights.store->load_tensor(
-                *source,
+                source,
                 "talker.code_predictor.small_to_mtp_projection.weight",
                 weight_storage_type,
                 {predictor_config.hidden_size, config.hidden_size}),
             weights.store->load_tensor(
-                *source,
+                source,
                 "talker.code_predictor.small_to_mtp_projection.bias",
                 assets::TensorStorageType::F32,
                 {predictor_config.hidden_size}),
@@ -756,7 +756,7 @@ Qwen3TalkerWeights load_talker_weights(
     weights.code_predictor.lm_heads.reserve(static_cast<size_t>(config.num_code_groups - 1));
     for (int64_t group = 0; group < config.num_code_groups - 1; ++group) {
         weights.code_predictor.lm_heads.push_back(weights.store->load_tensor(
-            *source,
+            source,
             "talker.code_predictor.lm_head." + std::to_string(group) + ".weight",
             weight_storage_type,
             {predictor_config.vocab_size, predictor_config.hidden_size}));

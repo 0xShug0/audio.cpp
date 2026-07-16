@@ -21,6 +21,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import torch
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 import yaml
 
@@ -82,6 +83,7 @@ class SnapshotSource:
     repo_id: str
     revision: str = "main"
     include_prefixes: tuple[str, ...] = ()
+    include_suffixes: tuple[str, ...] = ()
     exclude_prefixes: tuple[str, ...] = ()
 
 
@@ -188,8 +190,8 @@ CATALOG: tuple[ModelPackage, ...] = (
         required_files=("config.json", "kokoro-v1_0.safetensors", "voices/af_heart.safetensors"),
     ),
     ModelPackage(
-        id="moss_tts",
-        display_name="MOSS TTS Nano 100M",
+        id="moss_tts_nano_100m",
+        display_name="MOSS-TTS-Nano 100M",
         target_directory="MOSS-TTS-Nano-100M",
         source=CompositeSnapshotSource(
             placements=(
@@ -213,15 +215,15 @@ CATALOG: tuple[ModelPackage, ...] = (
             "audio_tokenizer/model-00001-of-00001.safetensors",
             "audio_tokenizer/model.safetensors.index.json",
         ),
-        description="Recommended MOSS package; assembles the TTS model and audio tokenizer dependency.",
+        description="Recommended MOSS-TTS-Nano package; assembles the TTS model and MOSS-Audio-Tokenizer-Nano dependency.",
     ),
     ModelPackage(
-        id="moss_tts_nano_100m",
-        display_name="MOSS TTS Nano 100M subcomponent",
+        id="moss_tts_nano_100m_model",
+        display_name="MOSS-TTS-Nano 100M model subcomponent",
         target_directory="MOSS-TTS-Nano-100M",
         source=SnapshotSource(repo_id="OpenMOSS-Team/MOSS-TTS-Nano-100M"),
-        required_files=("config.json", "model.safetensors", "tokenizer.model", "tokenizer_config.json"),
-        description="Subcomponent only. Use moss_tts for the full framework-ready MOSS runtime layout.",
+        required_files=("config.json", "pytorch_model.bin", "tokenizer.model", "tokenizer_config.json"),
+        description="Subcomponent only. Use moss_tts_nano_100m for the full framework-ready MOSS runtime layout.",
     ),
     ModelPackage(
         id="moss_audio_tokenizer_nano",
@@ -229,7 +231,72 @@ CATALOG: tuple[ModelPackage, ...] = (
         target_directory="MOSS-Audio-Tokenizer-Nano",
         source=SnapshotSource(repo_id="OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano"),
         required_files=("config.json", "model-00001-of-00001.safetensors", "model.safetensors.index.json"),
-        description="Subcomponent only. Use moss_tts for the full framework-ready MOSS runtime layout.",
+        description="Subcomponent only. Use moss_tts_nano_100m for the full framework-ready MOSS Nano runtime layout.",
+    ),
+    ModelPackage(
+        id="moss_audio_tokenizer_v2",
+        display_name="MOSS Audio Tokenizer v2 subcomponent",
+        target_directory="MOSS-Audio-Tokenizer-v2",
+        source=SnapshotSource(repo_id="OpenMOSS-Team/MOSS-Audio-Tokenizer-v2"),
+        required_files=(
+            "config.json",
+            "model.safetensors.index.json",
+            "model-00001-of-00003.safetensors",
+            "model-00002-of-00003.safetensors",
+            "model-00003-of-00003.safetensors",
+        ),
+        description="Subcomponent only. Use moss_tts_local_v1_5 for the full framework-ready MOSS-TTS-Local runtime layout.",
+    ),
+    ModelPackage(
+        id="moss_tts_local_v1_5",
+        display_name="MOSS-TTS-Local Transformer v1.5",
+        target_directory="MOSS-TTS-Local-Transformer-v1.5",
+        source=CompositeSnapshotSource(
+            placements=(
+                SnapshotPlacement(
+                    source=SnapshotSource(repo_id="OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5"),
+                    required_files=(
+                        "config.json",
+                        "model.safetensors",
+                        "tokenizer.json",
+                        "tokenizer_config.json",
+                        "vocab.json",
+                        "merges.txt",
+                        "special_tokens_map.json",
+                        "added_tokens.json",
+                        "chat_template.jinja",
+                    ),
+                ),
+                SnapshotPlacement(
+                    source=SnapshotSource(repo_id="OpenMOSS-Team/MOSS-Audio-Tokenizer-v2"),
+                    target_subdir="audio_tokenizer",
+                    required_files=(
+                        "config.json",
+                        "model.safetensors.index.json",
+                        "model-00001-of-00003.safetensors",
+                        "model-00002-of-00003.safetensors",
+                        "model-00003-of-00003.safetensors",
+                    ),
+                ),
+            ),
+        ),
+        required_files=(
+            "config.json",
+            "model.safetensors",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+            "special_tokens_map.json",
+            "added_tokens.json",
+            "chat_template.jinja",
+            "audio_tokenizer/config.json",
+            "audio_tokenizer/model.safetensors.index.json",
+            "audio_tokenizer/model-00001-of-00003.safetensors",
+            "audio_tokenizer/model-00002-of-00003.safetensors",
+            "audio_tokenizer/model-00003-of-00003.safetensors",
+        ),
+        description="MOSS-TTS-Local Transformer v1.5 with the MOSS-Audio-Tokenizer-v2 codec dependency.",
     ),
     ModelPackage(
         id="omnivoice",
@@ -766,6 +833,7 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
         required_files=(
             "model.safetensors",
+            "model_config.json",
             "../llm-jp-3-150m/tokenizer.json",
             "../Semantic-DACVAE-Japanese-32dim/weights.safetensors",
         ),
@@ -795,6 +863,7 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
         required_files=(
             "model.safetensors",
+            "model_config.json",
             "../llm-jp-3-150m/tokenizer.json",
             "../Semantic-DACVAE-Japanese-32dim/weights.safetensors",
         ),
@@ -853,6 +922,36 @@ CATALOG: tuple[ModelPackage, ...] = (
             "ggml/supertonic.safetensors",
             "voice_styles/M1.json",
         ),
+    ),
+    ModelPackage(
+        id="index_tts2",
+        display_name="IndexTTS2",
+        target_directory="IndexTTS-2",
+        source=SnapshotSource(repo_id="mlx-community/index-tts2-mlx"),
+        required_files=(
+            "config.yaml",
+            "bpe.model",
+            "gpt.safetensors",
+            "s2mel.safetensors",
+            "feat1.safetensors",
+            "feat2.safetensors",
+            "wav2vec2bert_stats.safetensors",
+            "semantic_codec_model.safetensors",
+            "campplus.safetensors",
+            "w2v-bert-2.0/config.json",
+            "w2v-bert-2.0/preprocessor_config.json",
+            "w2v-bert-2.0/model.safetensors",
+            "bigvgan/config.json",
+            "bigvgan/model.safetensors",
+            "qwen0.6bemo4-merge/config.json",
+            "qwen0.6bemo4-merge/generation_config.json",
+            "qwen0.6bemo4-merge/tokenizer.json",
+            "qwen0.6bemo4-merge/tokenizer_config.json",
+            "qwen0.6bemo4-merge/vocab.json",
+            "qwen0.6bemo4-merge/merges.txt",
+            "qwen0.6bemo4-merge/model.safetensors",
+        ),
+        description="Framework-ready IndexTTS2 safetensors layout with shared components at the model root.",
     ),
     ModelPackage(
         id="mel_band_roformer",
@@ -1109,6 +1208,7 @@ def package_payload(package: ModelPackage) -> dict[str, object]:
             "repo_id": source.repo_id,
             "revision": source.revision,
             "include_prefixes": list(source.include_prefixes),
+            "include_suffixes": list(source.include_suffixes),
             "exclude_prefixes": list(source.exclude_prefixes),
         }
         installable = True
@@ -1122,6 +1222,7 @@ def package_payload(package: ModelPackage) -> dict[str, object]:
                     "target_subdir": placement.target_subdir,
                     "required_files": list(placement.required_files),
                     "include_prefixes": list(placement.source.include_prefixes),
+                    "include_suffixes": list(placement.source.include_suffixes),
                     "exclude_prefixes": list(placement.source.exclude_prefixes),
                 }
                 for placement in source.placements
@@ -1206,6 +1307,8 @@ def list_hf_files(source: SnapshotSource) -> list[tuple[str, int | None]]:
             continue
         if source.include_prefixes and not any(path.startswith(prefix) for prefix in source.include_prefixes):
             continue
+        if source.include_suffixes and not any(path.endswith(suffix) for suffix in source.include_suffixes):
+            continue
         if any(path.startswith(prefix) for prefix in source.exclude_prefixes):
             continue
         size = entry.get("size")
@@ -1232,6 +1335,16 @@ def download_file(url: str, target: Path, expected_size: int | None) -> int:
 
 def validate_required_files(package: ModelPackage, root: Path) -> None:
     missing = [relative for relative in package.required_files if not (root / relative).exists()]
+    if missing:
+        raise RuntimeError(f"installed package is missing required files: {missing}")
+
+
+def validate_composite_required_files(package: ModelPackage, staged_root: Path, final_root: Path) -> None:
+    missing = [
+        relative
+        for relative in package.required_files
+        if not normalized_join(staged_root, relative).exists() and not normalized_join(final_root, relative).exists()
+    ]
     if missing:
         raise RuntimeError(f"installed package is missing required files: {missing}")
 
@@ -1396,6 +1509,17 @@ def convert_irodori_dacvae_weights(root: Path) -> None:
     write_checked_safetensors(tensors, output_path, input_path, overwrite=True)
 
 
+def write_irodori_model_config(root: Path) -> None:
+    input_path = root / "model.safetensors"
+    output_path = root / "model_config.json"
+    with safe_open(input_path, framework="pt", device="cpu") as handle:
+        metadata = handle.metadata()
+    config_json = metadata.get("config_json")
+    if config_json is None:
+        raise RuntimeError(f"Irodori-TTS model.safetensors is missing config_json metadata: {input_path}")
+    output_path.write_text(config_json, encoding="utf-8")
+
+
 def copy_bundled_model_manager_assets(asset_subdir: str, destination_root: Path, required_files: Iterable[str]) -> None:
     source_root = MODEL_MANAGER_ASSETS / asset_subdir
     validate_required_files_list(required_files, source_root, f"bundled model-manager assets {asset_subdir}")
@@ -1417,6 +1541,8 @@ def install_snapshot(package: ModelPackage, source: SnapshotSource, models_root:
         if package.id == "voxcpm2":
             convert_voxcpm2_audiovae(staging_dir)
             validate_required_files(package, staging_dir)
+        elif package.id == "moss_tts_nano_100m_model":
+            convert_moss_tts_weights(staging_dir)
         if target_dir.exists():
             if not overwrite:
                 raise RuntimeError(f"model directory already exists: {target_dir}")
@@ -1456,9 +1582,12 @@ def install_composite_snapshot(
         staged_package_root = staging_bundle / package.target_directory
         for placement in source.placements:
             destination_root = normalized_join(staged_package_root, placement.target_subdir)
+            final_root = normalized_join(package_root, placement.target_subdir)
+            if final_root.exists() and not overwrite:
+                validate_required_files_list(placement.required_files, final_root, str(final_root))
+                continue
             destination_root.mkdir(parents=True, exist_ok=True)
             install_snapshot_into_dir(placement.source, destination_root, placement.required_files)
-            final_root = normalized_join(package_root, placement.target_subdir)
             staged_roots[final_root] = destination_root
 
         if package.id == "vevo2":
@@ -1469,10 +1598,13 @@ def install_composite_snapshot(
         elif package.id == "ace_step":
             convert_ace_step_silence_latent(staged_package_root / "acestep-v15-turbo")
             convert_ace_step_silence_latent(staged_package_root / "acestep-v15-base")
-        elif package.id == "moss_tts":
+        elif package.id == "moss_tts_nano_100m":
             convert_moss_tts_weights(staged_package_root)
         elif package.id in {"irodori_tts_500m_v3", "irodori_tts_600m_v3_voice_design"}:
-            convert_irodori_dacvae_weights(staged_package_root.parent / "Semantic-DACVAE-Japanese-32dim")
+            write_irodori_model_config(staged_package_root)
+            dacvae_root = staged_package_root.parent / "Semantic-DACVAE-Japanese-32dim"
+            if dacvae_root.exists():
+                convert_irodori_dacvae_weights(dacvae_root)
         elif package.id == "vibevoice_asr":
             copy_bundled_model_manager_assets(
                 "vibevoice_1_5b",
@@ -1487,7 +1619,7 @@ def install_composite_snapshot(
                 staged_package_root,
                 ("tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt"),
             )
-        validate_required_files(package, staged_package_root)
+        validate_composite_required_files(package, staged_package_root, package_root)
 
         top_level_roots: list[Path] = []
         for final_root in sorted(staged_roots.keys(), key=lambda path: len(path.parts)):

@@ -24,7 +24,7 @@
 namespace {
 
 constexpr const char * kDefaultWarmupText =
-    "This is a fixed warmup request for the MOSS TTS session benchmark.";
+    "This is a fixed warmup request for the MOSS-TTS-Nano session benchmark.";
 
 std::string arg_value(int argc, char ** argv, const std::string & name, const std::string & fallback) {
     for (int i = 1; i + 1 < argc; ++i) {
@@ -121,17 +121,17 @@ void append_request_evidence_lines(
     const std::string & request_text,
     double wall_ms) {
     const std::string ts = timestamp_seconds_local();
-    lines.push_back(timing_line_scalar(ts, "moss_tts.request_char_count", std::to_string(request_text.size())));
+    lines.push_back(timing_line_scalar(ts, "moss_tts_nano.request_char_count", std::to_string(request_text.size())));
     {
         std::ostringstream wall_stream;
         wall_stream << std::fixed << std::setprecision(6) << wall_ms;
-        lines.push_back(timing_line_scalar(ts, "moss_tts.request_wall_ms", wall_stream.str()));
+        lines.push_back(timing_line_scalar(ts, "moss_tts_nano.request_wall_ms", wall_stream.str()));
     }
 }
 
 std::string summary_json(const engine::runtime::TaskResult & result, const std::string & request_text) {
     if (!result.audio_output.has_value()) {
-        throw std::runtime_error("MOSS TTS warm bench expected audio_output");
+        throw std::runtime_error("MOSS-TTS-Nano warm bench expected audio_output");
     }
     const auto & audio = *result.audio_output;
     double sum = 0.0;
@@ -185,15 +185,15 @@ int main(int argc, char ** argv) try {
     const std::string warmup_text = arg_value(argc, argv, "--warmup-text", kDefaultWarmupText);
     const std::vector<std::string> texts = arg_values(argc, argv, "--text");
     const std::filesystem::path clone_audio_path = arg_value(argc, argv, "--clone-audio", "resources/sample.wav");
-    const std::filesystem::path audio_out = arg_value(argc, argv, "--audio-out", "moss_tts_cpp_audio.wav");
+    const std::filesystem::path audio_out = arg_value(argc, argv, "--audio-out", "moss_tts_nano_cpp_audio.wav");
     const std::filesystem::path audio_out_dir = arg_value(argc, argv, "--audio-out-dir", "");
-    const std::filesystem::path timing_path = arg_value(argc, argv, "--timing-file", "/tmp/moss_tts_warm_bench.log");
+    const std::filesystem::path timing_path = arg_value(argc, argv, "--timing-file", "/tmp/moss_tts_nano_warm_bench.log");
     const auto request_options = parse_key_value_args(argc, argv, "--request-option");
 
     auto registry = engine::runtime::make_default_registry();
     engine::runtime::ModelLoadRequest load_request;
     load_request.model_path = model_path;
-    load_request.family_hint = "moss_tts";
+    load_request.family_hint = "moss_tts_nano";
     auto model = registry.load(load_request);
 
     engine::runtime::SessionOptions session_options;
@@ -214,7 +214,7 @@ int main(int argc, char ** argv) try {
     auto session_base = model->create_task_session(task, session_options);
     auto * session = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(session_base.get());
     if (session == nullptr) {
-        throw std::runtime_error("MOSS TTS warm bench expected an offline voice task session");
+        throw std::runtime_error("MOSS-TTS-Nano warm bench expected an offline voice task session");
     }
 
     const auto clone_wav = engine::audio::read_wav_f32(clone_audio_path);
@@ -253,7 +253,7 @@ int main(int argc, char ** argv) try {
     }
 
     if (texts.empty()) {
-        throw std::runtime_error("MOSS TTS warm bench requires at least one --text");
+        throw std::runtime_error("MOSS-TTS-Nano warm bench requires at least one --text");
     }
 
     std::vector<double> wall_sums(texts.size(), 0.0);
@@ -311,10 +311,10 @@ int main(int argc, char ** argv) try {
     }
     for (size_t request_index = 0; request_index < texts.size(); ++request_index) {
         std::cout << "average[" << request_index << "]\n";
-        std::cout << "moss_tts.request_wall_ms=" << (wall_sums[request_index] / static_cast<double>(iterations)) << "\n";
+        std::cout << "moss_tts_nano.request_wall_ms=" << (wall_sums[request_index] / static_cast<double>(iterations)) << "\n";
     }
     return 0;
 } catch (const std::exception & exc) {
-    std::cerr << "moss_tts_warm_bench failed: " << exc.what() << "\n";
+    std::cerr << "moss_tts_nano_warm_bench failed: " << exc.what() << "\n";
     return 1;
 }

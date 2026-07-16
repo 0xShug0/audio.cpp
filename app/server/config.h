@@ -19,6 +19,7 @@ struct ServerModelConfig {
 
     std::string id;
     std::filesystem::path path;
+    std::optional<std::filesystem::path> model_spec_override;
     std::string family;
     std::string task = "tts";
     std::string mode = "offline";
@@ -39,6 +40,7 @@ struct ServerConfig {
     int device = 0;
     int threads = 1;
     bool lazy_load = false;
+    std::optional<std::filesystem::path> model_spec_override;
     std::vector<ServerModelConfig> models;
 };
 

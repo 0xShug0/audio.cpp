@@ -38,6 +38,7 @@ struct PointwiseConv1dConfig {
     int64_t in_channels = 0;
     int64_t out_channels = 0;
     bool use_bias = true;
+    bool quant = false;
 };
 
 using PointwiseConv1dWeights = Conv1dWeights;

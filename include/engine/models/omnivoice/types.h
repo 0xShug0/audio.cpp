@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/text/chunking.h"
 #include "engine/framework/runtime/session.h"
 
 #include <cstdint>
@@ -31,6 +32,7 @@ struct OmniVoiceGenerationOptions {
     float audio_chunk_duration_seconds = 15.0F;
     float audio_chunk_threshold_seconds = 30.0F;
     std::optional<int64_t> text_chunk_size = std::nullopt;
+    engine::text::TextChunkMode text_chunk_mode = engine::text::TextChunkMode::TagAware;
 };
 
 struct OmniVoiceAudioTokens {

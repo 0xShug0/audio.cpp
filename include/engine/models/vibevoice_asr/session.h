@@ -31,7 +31,7 @@ public:
     VibeVoiceASRSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const VibeVoiceAssets> assets);
+        std::shared_ptr<const VibeVoiceASRAssets> assets);
     ~VibeVoiceASRSession() override;
 
     std::string family() const override;
@@ -76,7 +76,7 @@ private:
         const std::function<void(const std::vector<int32_t> &)> & token_callback);
 
     runtime::TaskSpec task_;
-    std::shared_ptr<const VibeVoiceAssets> assets_;
+    std::shared_ptr<const VibeVoiceASRAssets> assets_;
     size_t tokenizer_weight_context_bytes_ = 512ull * 1024ull * 1024ull;
     size_t connector_weight_context_bytes_ = 128ull * 1024ull * 1024ull;
     size_t decoder_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;

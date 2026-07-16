@@ -94,7 +94,7 @@ std::filesystem::path resolve_codec_model_path(const runtime::SessionOptions & o
     if (const auto value = runtime::find_option(options.options, {"codec_model"})) {
         return std::filesystem::path(*value);
     }
-    return default_codec_model_path(assets.paths.model_root);
+    return default_codec_model_path(assets.resources.model_root());
 }
 
 std::filesystem::path resolve_best_of_n_asr_model_path(
@@ -105,7 +105,7 @@ std::filesystem::path resolve_best_of_n_asr_model_path(
             {"best_of_n_asr_model"})) {
         return std::filesystem::path(*value);
     }
-    return default_asr_model_path(assets.paths.model_root);
+    return default_asr_model_path(assets.resources.model_root());
 }
 
 std::string normalized_best_of_n_language(std::string value) {
@@ -610,15 +610,15 @@ MioTTSSession::MioTTSSession(
     engine::debug::trace_log_scalar("miotts.codec_model_path", codec_model_path.string());
     codec_assets_ = miocodec::load_miocodec_assets(codec_model_path);
     codec_weights_ = miocodec::load_miocodec_weights(
-        codec_assets_->paths.model_weights_path,
+        *codec_assets_->model_weights,
         execution_context(),
         runtime::parse_size_mb_option(options.options, {"miotts.codec_weight_context_mb"}, kDefaultCodecWeightContextBytes),
         codec_assets_->config);
     engine::modules::WavlmEncoderConfig wavlm_config;
     wavlm_config.output_hidden_layer = 9;
     wavlm_config.weight_storage_type = lm_weight_type;
-    auto wavlm = engine::modules::WavlmEncoderComponent::load_from_safetensors(
-        codec_assets_->paths.wavlm_weights_path,
+    auto wavlm = engine::modules::WavlmEncoderComponent::load_from_tensor_source(
+        *codec_assets_->wavlm_weights,
         options.backend,
         wavlm_config);
     const size_t constant_context_bytes = runtime::parse_size_mb_option(

@@ -5,14 +5,21 @@
 #include "engine/framework/io/json.h"
 #include "engine/framework/io/safetensors.h"
 
+#include <gguf.h>
+
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <functional>
+#include <iomanip>
 #include <numeric>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace engine::assets {
 namespace {
@@ -64,10 +71,42 @@ bool raw_dtype_matches_ggml_type(std::string_view dtype, ggml_type type) {
            (normalized == "q4_1" && type == GGML_TYPE_Q4_1) ||
            (normalized == "q5_0" && type == GGML_TYPE_Q5_0) ||
            (normalized == "q5_1" && type == GGML_TYPE_Q5_1) ||
+           (normalized == "q2_k" && type == GGML_TYPE_Q2_K) ||
+           (normalized == "q3_k" && type == GGML_TYPE_Q3_K) ||
            (normalized == "q4_k" && type == GGML_TYPE_Q4_K) ||
            (normalized == "q5_k" && type == GGML_TYPE_Q5_K) ||
            (normalized == "q6_k" && type == GGML_TYPE_Q6_K) ||
            (normalized == "q8_0" && type == GGML_TYPE_Q8_0);
+}
+
+ggml_type parse_ggml_type_for_tensor_dtype(std::string_view dtype) {
+    const std::string normalized = lower_ascii(dtype);
+    if (normalized == "f32" || normalized == "float32") return GGML_TYPE_F32;
+    if (normalized == "f16" || normalized == "float16" || normalized == "fp16") return GGML_TYPE_F16;
+    if (normalized == "bf16" || normalized == "bfloat16") return GGML_TYPE_BF16;
+    if (normalized == "i8" || normalized == "int8") return GGML_TYPE_I8;
+    if (normalized == "i16" || normalized == "int16") return GGML_TYPE_I16;
+    if (normalized == "i32" || normalized == "int32") return GGML_TYPE_I32;
+    if (normalized == "i64" || normalized == "int64") return GGML_TYPE_I64;
+    if (normalized == "q4_0") return GGML_TYPE_Q4_0;
+    if (normalized == "q4_1") return GGML_TYPE_Q4_1;
+    if (normalized == "q5_0") return GGML_TYPE_Q5_0;
+    if (normalized == "q5_1") return GGML_TYPE_Q5_1;
+    if (normalized == "q8_0") return GGML_TYPE_Q8_0;
+    if (normalized == "q2_k") return GGML_TYPE_Q2_K;
+    if (normalized == "q3_k") return GGML_TYPE_Q3_K;
+    if (normalized == "q4_k") return GGML_TYPE_Q4_K;
+    if (normalized == "q5_k") return GGML_TYPE_Q5_K;
+    if (normalized == "q6_k") return GGML_TYPE_Q6_K;
+    throw std::runtime_error("unsupported tensor dtype for GGUF: " + std::string(dtype));
+}
+
+std::string dtype_for_ggml_type(ggml_type type) {
+    const char * name = ggml_type_name(type);
+    if (name == nullptr) {
+        throw std::runtime_error("GGUF tensor has an unknown ggml type");
+    }
+    return lower_ascii(name);
 }
 
 void validate_raw_tensor_byte_size(std::string_view name, const core::TensorShape & shape, ggml_type type, size_t bytes) {
@@ -378,7 +417,10 @@ public:
         const auto tensor = require_tensor_data(name);
         validate_expected_shape(name, tensor.metadata.shape, expected_shape);
         const ggml_type type = ggml_type_for_tensor_storage(tensor_storage_type_for_dtype(tensor.metadata.dtype));
-        return decode_tensor_data_f32(name, TensorData{shape_from_dims(tensor.metadata.shape), type, tensor.bytes});
+        const auto physical_shape = tensor.metadata.shape.empty()
+            ? shape_from_dims({1})
+            : shape_from_dims(tensor.metadata.shape);
+        return decode_tensor_data_f32(name, TensorData{physical_shape, type, tensor.bytes});
     }
 
     std::optional<std::vector<float>> optional_f32(
@@ -431,6 +473,225 @@ private:
     }
 
     engine::io::SafeTensorIndex index_;
+    mutable engine::io::BinaryBlob bytes_;
+};
+
+struct GgufTensorInfo {
+    std::string logical_name;
+    std::string physical_name;
+    std::string dtype;
+    std::vector<int64_t> shape;
+    ggml_type type = GGML_TYPE_F32;
+    size_t data_offset = 0;
+    size_t byte_size = 0;
+};
+
+class GgufTensorSource final : public TensorSource {
+public:
+    explicit GgufTensorSource(std::filesystem::path path)
+        : source_path_(std::filesystem::weakly_canonical(path)) {
+        ggml_context * tensor_context = nullptr;
+        gguf_context * gguf = gguf_init_from_file(
+            source_path_.string().c_str(),
+            gguf_init_params{true, &tensor_context});
+        if (gguf == nullptr || tensor_context == nullptr) {
+            if (gguf != nullptr) gguf_free(gguf);
+            if (tensor_context != nullptr) ggml_free(tensor_context);
+            throw std::runtime_error("failed to read GGUF tensor source: " + source_path_.string());
+        }
+        try {
+            data_begin_ = gguf_get_data_offset(gguf);
+            const int64_t logical_names_key = gguf_find_key(gguf, "audiocpp.tensor_names");
+            if (logical_names_key >= 0 &&
+                (gguf_get_kv_type(gguf, logical_names_key) != GGUF_TYPE_ARRAY ||
+                 gguf_get_arr_type(gguf, logical_names_key) != GGUF_TYPE_STRING ||
+                 gguf_get_arr_n(gguf, logical_names_key) != static_cast<size_t>(gguf_get_n_tensors(gguf)))) {
+                throw std::runtime_error("GGUF audiocpp.tensor_names metadata is invalid");
+            }
+            const int64_t count = gguf_get_n_tensors(gguf);
+            const int64_t ranks_key = gguf_find_key(gguf, "audiocpp.tensor_ranks");
+            const int64_t shapes_key = gguf_find_key(gguf, "audiocpp.tensor_shapes");
+            const bool has_exact_shapes = ranks_key >= 0 && shapes_key >= 0;
+            if ((ranks_key >= 0) != (shapes_key >= 0) ||
+                (has_exact_shapes &&
+                 (gguf_get_kv_type(gguf, ranks_key) != GGUF_TYPE_ARRAY ||
+                  gguf_get_arr_type(gguf, ranks_key) != GGUF_TYPE_INT32 ||
+                  gguf_get_arr_n(gguf, ranks_key) != static_cast<size_t>(count) ||
+                  gguf_get_kv_type(gguf, shapes_key) != GGUF_TYPE_ARRAY ||
+                  gguf_get_arr_type(gguf, shapes_key) != GGUF_TYPE_INT64))) {
+                throw std::runtime_error("GGUF audiocpp exact tensor shape metadata is invalid");
+            }
+            size_t shape_cursor = 0;
+            infos_.reserve(static_cast<size_t>(count));
+            for (int64_t i = 0; i < count; ++i) {
+                GgufTensorInfo info;
+                info.physical_name = gguf_get_tensor_name(gguf, i);
+                info.logical_name = logical_names_key >= 0
+                    ? gguf_get_arr_str(gguf, logical_names_key, static_cast<size_t>(i))
+                    : info.physical_name;
+                info.type = gguf_get_tensor_type(gguf, i);
+                info.dtype = dtype_for_ggml_type(info.type);
+                info.data_offset = gguf_get_tensor_offset(gguf, i);
+                info.byte_size = gguf_get_tensor_size(gguf, i);
+                const ggml_tensor * tensor = ggml_get_tensor(tensor_context, info.physical_name.c_str());
+                if (tensor == nullptr) {
+                    throw std::runtime_error("GGUF tensor metadata is missing: " + info.physical_name);
+                }
+                if (has_exact_shapes) {
+                    const auto * ranks = static_cast<const int32_t *>(gguf_get_arr_data(gguf, ranks_key));
+                    const auto * shapes = static_cast<const int64_t *>(gguf_get_arr_data(gguf, shapes_key));
+                    const int32_t tensor_rank = ranks[i];
+                    if (tensor_rank < 0 || tensor_rank > static_cast<int32_t>(core::kMaxTensorRank) ||
+                        shape_cursor + static_cast<size_t>(tensor_rank) > gguf_get_arr_n(gguf, shapes_key)) {
+                        throw std::runtime_error("GGUF contains invalid exact tensor dimensions");
+                    }
+                    if (tensor_rank > 0) {
+                        info.shape.assign(shapes + shape_cursor, shapes + shape_cursor + tensor_rank);
+                    } else {
+                        info.shape.clear();
+                    }
+                    shape_cursor += static_cast<size_t>(tensor_rank);
+                } else {
+                    const int dimensions = ggml_n_dims(tensor);
+                    info.shape.reserve(static_cast<size_t>(dimensions));
+                    for (int dim = dimensions - 1; dim >= 0; --dim) {
+                        info.shape.push_back(tensor->ne[dim]);
+                    }
+                }
+                if (!info_by_name_.emplace(info.logical_name, infos_.size()).second) {
+                    throw std::runtime_error("GGUF contains duplicate logical tensor name: " + info.logical_name);
+                }
+                infos_.push_back(std::move(info));
+            }
+            if (has_exact_shapes && shape_cursor != gguf_get_arr_n(gguf, shapes_key)) {
+                throw std::runtime_error("GGUF exact tensor shape metadata has trailing dimensions");
+            }
+        } catch (...) {
+            gguf_free(gguf);
+            ggml_free(tensor_context);
+            throw;
+        }
+        gguf_free(gguf);
+        ggml_free(tensor_context);
+        bytes_ = engine::io::read_binary_blob(source_path_);
+    }
+
+    const std::filesystem::path & source_path() const noexcept override { return source_path_; }
+
+    bool has_tensor(std::string_view name) const noexcept override {
+        return info_by_name_.find(std::string(name)) != info_by_name_.end();
+    }
+
+    TensorMetadata require_metadata(std::string_view name) const override {
+        const auto & info = require_info(name);
+        return {info.logical_name, info.dtype, info.shape};
+    }
+
+    std::vector<TensorMetadata> tensors() const override {
+        std::vector<TensorMetadata> out;
+        out.reserve(infos_.size());
+        for (const auto & info : infos_) out.push_back({info.logical_name, info.dtype, info.shape});
+        std::sort(out.begin(), out.end(), [](const TensorMetadata & lhs, const TensorMetadata & rhs) {
+            return lhs.name < rhs.name;
+        });
+        return out;
+    }
+
+    void release_storage() const override { bytes_ = engine::io::BinaryBlob(); }
+
+    RawTensorData require_tensor_data(std::string_view name) const override {
+        const auto & info = require_info(name);
+        const auto [data, byte_size] = require_data_range(info);
+        RawTensorData out;
+        out.metadata = {info.logical_name, info.dtype, info.shape};
+        out.bytes.resize(byte_size);
+        std::memcpy(out.bytes.data(), data, byte_size);
+        bytes_.discard_range(data_begin_ + info.data_offset, byte_size);
+        return out;
+    }
+
+    void set_backend_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        TensorStorageType storage_type,
+        const std::vector<int64_t> & expected_shape) const override {
+        const auto & info = require_info(name);
+        validate_expected_shape(name, info.shape, expected_shape);
+        const auto shape = shape_from_dims(expected_shape);
+        const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
+        const auto [data, byte_size] = require_data_range(info);
+        if (info.type == type) {
+            validate_raw_tensor_byte_size(name, shape, type, byte_size);
+            set_tensor_bytes(tensor, data, byte_size, name);
+            bytes_.discard_range(data_begin_ + info.data_offset, byte_size);
+            return;
+        }
+        std::vector<std::byte> raw_bytes(byte_size);
+        std::memcpy(raw_bytes.data(), data, byte_size);
+        const auto values = decode_tensor_data_f32(name, TensorData{shape, info.type, std::move(raw_bytes)});
+        set_backend_tensor_from_f32(tensor, name, values, shape, type);
+        bytes_.discard_range(data_begin_ + info.data_offset, byte_size);
+    }
+
+    void set_backend_f32_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        const std::vector<int64_t> & expected_shape) const override {
+        set_backend_tensor(tensor, name, TensorStorageType::F32, expected_shape);
+    }
+
+    std::vector<float> require_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        const auto tensor = require_tensor_data(name);
+        validate_expected_shape(name, tensor.metadata.shape, expected_shape);
+        const auto physical_shape = tensor.metadata.shape.empty()
+            ? shape_from_dims({1})
+            : shape_from_dims(tensor.metadata.shape);
+        return decode_tensor_data_f32(
+            name,
+            TensorData{physical_shape, require_info(name).type, tensor.bytes});
+    }
+
+    std::optional<std::vector<float>> optional_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        if (!has_tensor(name)) return std::nullopt;
+        return require_f32(name, expected_shape);
+    }
+
+    int64_t require_i64_scalar(std::string_view name) const override {
+        const auto & info = require_info(name);
+        if (info.type != GGML_TYPE_I64 || info.byte_size != sizeof(int64_t)) {
+            throw std::runtime_error("tensor is not an I64 scalar: " + std::string(name));
+        }
+        const auto [data, byte_size] = require_data_range(info);
+        (void) byte_size;
+        int64_t value = 0;
+        std::memcpy(&value, data, sizeof(value));
+        return value;
+    }
+
+private:
+    const GgufTensorInfo & require_info(std::string_view name) const {
+        const auto it = info_by_name_.find(std::string(name));
+        if (it == info_by_name_.end()) throw std::runtime_error("missing tensor: " + std::string(name));
+        return infos_[it->second];
+    }
+
+    std::pair<const std::byte *, size_t> require_data_range(const GgufTensorInfo & info) const {
+        if (bytes_.empty()) bytes_ = engine::io::read_binary_blob(source_path_);
+        const size_t offset = data_begin_ + info.data_offset;
+        if (offset > bytes_.size() || info.byte_size > bytes_.size() - offset) {
+            throw std::runtime_error("GGUF tensor data range is out of bounds: " + info.logical_name);
+        }
+        return {bytes_.data() + static_cast<std::ptrdiff_t>(offset), info.byte_size};
+    }
+
+    std::filesystem::path source_path_;
+    size_t data_begin_ = 0;
+    std::vector<GgufTensorInfo> infos_;
+    std::unordered_map<std::string, size_t> info_by_name_;
     mutable engine::io::BinaryBlob bytes_;
 };
 
@@ -569,7 +830,190 @@ private:
     std::unordered_map<std::string, std::shared_ptr<const TensorSource>> shard_sources_;
 };
 
+class CompositeTensorSource final : public TensorSource {
+public:
+    struct Component {
+        std::string prefix;
+        std::shared_ptr<const TensorSource> source;
+    };
+
+    CompositeTensorSource(std::filesystem::path source_path, std::vector<Component> components)
+        : source_path_(std::move(source_path)), components_(std::move(components)) {
+        for (size_t component_index = 0; component_index < components_.size(); ++component_index) {
+            auto & component = components_[component_index];
+            std::replace(component.prefix.begin(), component.prefix.end(), '\\', '/');
+            while (!component.prefix.empty() && component.prefix.front() == '/') component.prefix.erase(0, 1);
+            while (!component.prefix.empty() && component.prefix.back() == '/') component.prefix.pop_back();
+            if (component.prefix == "." || component.prefix.find("..") != std::string::npos) {
+                throw std::runtime_error("invalid packed GGUF tensor prefix: " + component.prefix);
+            }
+            for (const auto & tensor : component.source->tensors()) {
+                const std::string logical_name = component.prefix.empty()
+                    ? tensor.name
+                    : component.prefix + "/" + tensor.name;
+                if (!routes_.emplace(logical_name, Route{component_index, tensor.name}).second) {
+                    throw std::runtime_error("duplicate packed GGUF tensor name: " + logical_name);
+                }
+            }
+        }
+    }
+
+    const std::filesystem::path & source_path() const noexcept override { return source_path_; }
+    bool has_tensor(std::string_view name) const noexcept override {
+        return routes_.find(std::string(name)) != routes_.end();
+    }
+    TensorMetadata require_metadata(std::string_view name) const override {
+        const auto & route = require_route(name);
+        auto metadata = components_[route.component].source->require_metadata(route.name);
+        metadata.name = std::string(name);
+        return metadata;
+    }
+    std::vector<TensorMetadata> tensors() const override {
+        std::vector<TensorMetadata> result;
+        result.reserve(routes_.size());
+        for (const auto & [name, _] : routes_) result.push_back(require_metadata(name));
+        std::sort(result.begin(), result.end(), [](const auto & lhs, const auto & rhs) { return lhs.name < rhs.name; });
+        return result;
+    }
+    void release_storage() const override {
+        for (const auto & component : components_) component.source->release_storage();
+    }
+    RawTensorData require_tensor_data(std::string_view name) const override {
+        const auto & route = require_route(name);
+        auto data = components_[route.component].source->require_tensor_data(route.name);
+        data.metadata.name = std::string(name);
+        return data;
+    }
+    std::vector<float> require_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        const auto & route = require_route(name);
+        return components_[route.component].source->require_f32(route.name, expected_shape);
+    }
+    std::optional<std::vector<float>> optional_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        if (!has_tensor(name)) return std::nullopt;
+        return require_f32(name, expected_shape);
+    }
+    void set_backend_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        TensorStorageType storage_type,
+        const std::vector<int64_t> & expected_shape) const override {
+        const auto & route = require_route(name);
+        components_[route.component].source->set_backend_tensor(tensor, route.name, storage_type, expected_shape);
+    }
+    void set_backend_f32_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        const std::vector<int64_t> & expected_shape) const override {
+        set_backend_tensor(tensor, name, TensorStorageType::F32, expected_shape);
+    }
+    int64_t require_i64_scalar(std::string_view name) const override {
+        const auto & route = require_route(name);
+        return components_[route.component].source->require_i64_scalar(route.name);
+    }
+
+private:
+    struct Route {
+        size_t component = 0;
+        std::string name;
+    };
+    const Route & require_route(std::string_view name) const {
+        const auto it = routes_.find(std::string(name));
+        if (it == routes_.end()) throw std::runtime_error("missing packed tensor: " + std::string(name));
+        return it->second;
+    }
+
+    std::filesystem::path source_path_;
+    std::vector<Component> components_;
+    std::unordered_map<std::string, Route> routes_;
+};
+
+class PrefixedTensorSourceView final : public TensorSource {
+public:
+    PrefixedTensorSourceView(std::shared_ptr<const TensorSource> source, std::string prefix)
+        : source_(std::move(source)), prefix_(std::move(prefix)) {
+        std::replace(prefix_.begin(), prefix_.end(), '\\', '/');
+        while (!prefix_.empty() && prefix_.front() == '/') prefix_.erase(0, 1);
+        while (!prefix_.empty() && prefix_.back() == '/') prefix_.pop_back();
+        if (prefix_.empty()) throw std::runtime_error("packed tensor source prefix is empty");
+        const std::string marker = prefix_ + "/";
+        for (const auto & tensor : source_->tensors()) {
+            if (tensor.name.rfind(marker, 0) == 0) {
+                routes_.emplace(tensor.name.substr(marker.size()), tensor.name);
+            }
+        }
+        if (routes_.empty()) throw std::runtime_error("packed GGUF namespace does not exist: " + prefix_);
+    }
+
+    const std::filesystem::path & source_path() const noexcept override { return source_->source_path(); }
+    bool has_tensor(std::string_view name) const noexcept override {
+        return routes_.find(std::string(name)) != routes_.end();
+    }
+    TensorMetadata require_metadata(std::string_view name) const override {
+        auto metadata = source_->require_metadata(require_name(name));
+        metadata.name = std::string(name);
+        return metadata;
+    }
+    std::vector<TensorMetadata> tensors() const override {
+        std::vector<TensorMetadata> result;
+        result.reserve(routes_.size());
+        for (const auto & [name, _] : routes_) result.push_back(require_metadata(name));
+        std::sort(result.begin(), result.end(), [](const auto & lhs, const auto & rhs) { return lhs.name < rhs.name; });
+        return result;
+    }
+    void release_storage() const override { source_->release_storage(); }
+    RawTensorData require_tensor_data(std::string_view name) const override {
+        auto data = source_->require_tensor_data(require_name(name));
+        data.metadata.name = std::string(name);
+        return data;
+    }
+    std::vector<float> require_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        return source_->require_f32(require_name(name), expected_shape);
+    }
+    std::optional<std::vector<float>> optional_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        if (!has_tensor(name)) return std::nullopt;
+        return require_f32(name, expected_shape);
+    }
+    void set_backend_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        TensorStorageType storage_type,
+        const std::vector<int64_t> & expected_shape) const override {
+        source_->set_backend_tensor(tensor, require_name(name), storage_type, expected_shape);
+    }
+    void set_backend_f32_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        const std::vector<int64_t> & expected_shape) const override {
+        set_backend_tensor(tensor, name, TensorStorageType::F32, expected_shape);
+    }
+    int64_t require_i64_scalar(std::string_view name) const override {
+        return source_->require_i64_scalar(require_name(name));
+    }
+
+private:
+    const std::string & require_name(std::string_view name) const {
+        const auto it = routes_.find(std::string(name));
+        if (it == routes_.end()) throw std::runtime_error("missing tensor in namespace " + prefix_ + ": " + std::string(name));
+        return it->second;
+    }
+    std::shared_ptr<const TensorSource> source_;
+    std::string prefix_;
+    std::unordered_map<std::string, std::string> routes_;
+};
+
 }  // namespace
+
+ggml_type ggml_type_for_tensor_dtype(std::string_view dtype) {
+    return parse_ggml_type_for_tensor_dtype(dtype);
+}
 
 TensorDataF32 TensorSource::require_f32_tensor(std::string_view name) const {
     const auto metadata = require_metadata(name);
@@ -717,7 +1161,8 @@ std::string TensorSource::require_tensor_name(
 
 TensorStorageType parse_tensor_storage_type(std::string_view value) {
     const std::string normalized = lower_ascii(value);
-    if (normalized == "native" || normalized == "source" || normalized == "auto") {
+    if (normalized == "native" || normalized == "source" || normalized == "auto" || normalized == "orig" ||
+        normalized == "original") {
         return TensorStorageType::Native;
     }
     if (normalized == "f32" || normalized == "float32") {
@@ -740,6 +1185,12 @@ TensorStorageType parse_tensor_storage_type(std::string_view value) {
     }
     if (normalized == "q5_1") {
         return TensorStorageType::Q5_1;
+    }
+    if (normalized == "q2_k") {
+        return TensorStorageType::Q2_K;
+    }
+    if (normalized == "q3_k") {
+        return TensorStorageType::Q3_K;
     }
     if (normalized == "q4_k") {
         return TensorStorageType::Q4_K;
@@ -774,6 +1225,10 @@ ggml_type ggml_type_for_tensor_storage(TensorStorageType storage_type) {
             return GGML_TYPE_Q5_0;
         case TensorStorageType::Q5_1:
             return GGML_TYPE_Q5_1;
+        case TensorStorageType::Q2_K:
+            return GGML_TYPE_Q2_K;
+        case TensorStorageType::Q3_K:
+            return GGML_TYPE_Q3_K;
         case TensorStorageType::Q4_K:
             return GGML_TYPE_Q4_K;
         case TensorStorageType::Q5_K:
@@ -809,6 +1264,12 @@ TensorStorageType tensor_storage_type_for_dtype(std::string_view dtype) {
     if (normalized == "q5_1") {
         return TensorStorageType::Q5_1;
     }
+    if (normalized == "q2_k") {
+        return TensorStorageType::Q2_K;
+    }
+    if (normalized == "q3_k") {
+        return TensorStorageType::Q3_K;
+    }
     if (normalized == "q4_k") {
         return TensorStorageType::Q4_K;
     }
@@ -839,10 +1300,543 @@ std::vector<float> tensor_data_to_f32(std::string_view name, const TensorData & 
 }
 
 std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::path & path) {
-    if (path.extension() == ".safetensors") {
+    const std::string file_name = lower_ascii(path.filename().string());
+    static constexpr std::string_view kIndexSuffix = ".safetensors.index.json";
+    if (file_name.size() >= kIndexSuffix.size() &&
+        file_name.compare(file_name.size() - kIndexSuffix.size(), kIndexSuffix.size(), kIndexSuffix) == 0) {
+        return open_indexed_tensor_source(path, path.parent_path());
+    }
+    const std::string extension = lower_ascii(path.extension().string());
+    if (extension == ".safetensors") {
         return std::make_shared<SafeTensorSource>(path);
     }
+    if (extension == ".gguf") {
+        return std::make_shared<GgufTensorSource>(path);
+    }
     throw std::runtime_error("unsupported tensor source format: " + path.string());
+}
+
+std::shared_ptr<const TensorSource> open_tensor_source(
+    const std::filesystem::path & path,
+    std::string_view tensor_prefix) {
+    auto source = open_tensor_source(path);
+    if (tensor_prefix.empty()) return source;
+    return std::make_shared<PrefixedTensorSourceView>(std::move(source), std::string(tensor_prefix));
+}
+
+namespace {
+
+std::vector<std::pair<std::string, std::string>> read_gguf_embedded_sidecars(
+    const std::filesystem::path & path) {
+    ggml_context * tensor_context = nullptr;
+    gguf_context * gguf = gguf_init_from_file(
+        path.string().c_str(), gguf_init_params{true, &tensor_context});
+    if (gguf == nullptr) {
+        if (tensor_context != nullptr) ggml_free(tensor_context);
+        throw std::runtime_error("failed to read GGUF metadata: " + path.string());
+    }
+    std::vector<std::pair<std::string, std::string>> result;
+    try {
+        const int64_t names_key = gguf_find_key(gguf, "audiocpp.embedded_files.names");
+        const int64_t contents_key = gguf_find_key(gguf, "audiocpp.embedded_files.contents");
+        const int64_t offsets_key = gguf_find_key(gguf, "audiocpp.embedded_files.offsets");
+        const int64_t data_key = gguf_find_key(gguf, "audiocpp.embedded_files.data");
+        const bool blob_layout = offsets_key >= 0 || data_key >= 0;
+        if (names_key < 0 && contents_key < 0 && !blob_layout) {
+            gguf_free(gguf);
+            if (tensor_context != nullptr) ggml_free(tensor_context);
+            return result;
+        }
+        if (blob_layout) {
+            if (names_key < 0 || offsets_key < 0 || data_key < 0 ||
+                gguf_get_kv_type(gguf, names_key) != GGUF_TYPE_ARRAY ||
+                gguf_get_arr_type(gguf, names_key) != GGUF_TYPE_STRING ||
+                gguf_get_kv_type(gguf, offsets_key) != GGUF_TYPE_ARRAY ||
+                gguf_get_arr_type(gguf, offsets_key) != GGUF_TYPE_UINT64 ||
+                gguf_get_arr_n(gguf, offsets_key) != gguf_get_arr_n(gguf, names_key) + 1 ||
+                gguf_get_kv_type(gguf, data_key) != GGUF_TYPE_ARRAY ||
+                gguf_get_arr_type(gguf, data_key) != GGUF_TYPE_UINT8) {
+                throw std::runtime_error("GGUF embedded binary sidecar metadata is invalid");
+            }
+        } else if (names_key < 0 || contents_key < 0 ||
+            gguf_get_kv_type(gguf, names_key) != GGUF_TYPE_ARRAY ||
+            gguf_get_kv_type(gguf, contents_key) != GGUF_TYPE_ARRAY ||
+            gguf_get_arr_type(gguf, names_key) != GGUF_TYPE_STRING ||
+            gguf_get_arr_type(gguf, contents_key) != GGUF_TYPE_STRING ||
+            gguf_get_arr_n(gguf, names_key) != gguf_get_arr_n(gguf, contents_key)) {
+            throw std::runtime_error("GGUF embedded sidecar metadata is invalid");
+        }
+        const size_t count = gguf_get_arr_n(gguf, names_key);
+        const auto * offsets = blob_layout
+            ? static_cast<const uint64_t *>(gguf_get_arr_data(gguf, offsets_key))
+            : nullptr;
+        const auto * data = blob_layout
+            ? static_cast<const char *>(gguf_get_arr_data(gguf, data_key))
+            : nullptr;
+        const size_t data_size = blob_layout ? gguf_get_arr_n(gguf, data_key) : 0;
+        result.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+            std::string name = gguf_get_arr_str(gguf, names_key, i);
+            const std::filesystem::path relative(name);
+            const auto normalized = relative.lexically_normal();
+            if (name.empty() || relative.is_absolute() || normalized.empty() ||
+                *normalized.begin() == "..") {
+                throw std::runtime_error("GGUF contains an unsafe embedded sidecar name: " + name);
+            }
+            if (blob_layout) {
+                if (offsets[i] > offsets[i + 1] || offsets[i + 1] > data_size) {
+                    throw std::runtime_error("GGUF embedded sidecar byte range is invalid");
+                }
+                std::string content;
+                const size_t length = static_cast<size_t>(offsets[i + 1] - offsets[i]);
+                if (length > 0) content.assign(data + offsets[i], length);
+                result.emplace_back(normalized.generic_string(), std::move(content));
+            } else {
+                result.emplace_back(normalized.generic_string(), gguf_get_arr_str(gguf, contents_key, i));
+            }
+        }
+    } catch (...) {
+        gguf_free(gguf);
+        if (tensor_context != nullptr) ggml_free(tensor_context);
+        throw;
+    }
+    gguf_free(gguf);
+    if (tensor_context != nullptr) ggml_free(tensor_context);
+    return result;
+}
+
+}  // namespace
+
+bool gguf_has_embedded_sidecars(const std::filesystem::path & path) {
+    return !read_gguf_embedded_sidecars(path).empty();
+}
+
+std::optional<GgufEmbeddedModelSpec> read_gguf_embedded_model_spec(const std::filesystem::path & path) {
+    ggml_context * tensor_context = nullptr;
+    gguf_context * gguf = gguf_init_from_file(path.string().c_str(), gguf_init_params{true, &tensor_context});
+    if (gguf == nullptr) {
+        if (tensor_context != nullptr)
+            ggml_free(tensor_context);
+        throw std::runtime_error("failed to read GGUF metadata: " + path.string());
+    }
+    std::optional<GgufEmbeddedModelSpec> result;
+    try {
+        const int64_t version_key = gguf_find_key(gguf, "audiocpp.model_spec.version");
+        const int64_t family_key = gguf_find_key(gguf, "audiocpp.model_spec.family");
+        const int64_t json_key = gguf_find_key(gguf, "audiocpp.model_spec.json");
+        if (version_key >= 0 || family_key >= 0 || json_key >= 0) {
+            if (version_key < 0 || family_key < 0 || json_key < 0 ||
+                gguf_get_kv_type(gguf, version_key) != GGUF_TYPE_UINT32 ||
+                gguf_get_kv_type(gguf, family_key) != GGUF_TYPE_STRING ||
+                gguf_get_kv_type(gguf, json_key) != GGUF_TYPE_STRING) {
+                throw std::runtime_error("GGUF embedded model package spec metadata is invalid");
+            }
+            const uint32_t version = gguf_get_val_u32(gguf, version_key);
+            if (version != 1) {
+                throw std::runtime_error("unsupported GGUF embedded model package spec version: " +
+                                         std::to_string(version));
+            }
+            GgufEmbeddedModelSpec spec;
+            spec.family = gguf_get_val_str(gguf, family_key);
+            spec.json = gguf_get_val_str(gguf, json_key);
+            if (spec.family.empty() || spec.json.empty()) {
+                throw std::runtime_error("GGUF embedded model package spec is empty");
+            }
+            result = std::move(spec);
+        }
+    } catch (...) {
+        gguf_free(gguf);
+        if (tensor_context != nullptr)
+            ggml_free(tensor_context);
+        throw;
+    }
+    gguf_free(gguf);
+    if (tensor_context != nullptr)
+        ggml_free(tensor_context);
+    return result;
+}
+
+std::filesystem::path materialize_gguf_sidecars(const std::filesystem::path & path) {
+    const auto canonical = std::filesystem::weakly_canonical(path);
+    const auto sidecars = read_gguf_embedded_sidecars(canonical);
+    if (sidecars.empty()) {
+        throw std::runtime_error("GGUF does not contain embedded model sidecars: " + canonical.string());
+    }
+    const auto fingerprint_source =
+        canonical.string() + ":" + std::to_string(std::filesystem::file_size(canonical)) + ":" +
+        std::to_string(static_cast<long long>(std::filesystem::last_write_time(canonical).time_since_epoch().count()));
+    std::ostringstream fingerprint;
+    fingerprint << std::hex << std::hash<std::string>{}(fingerprint_source);
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp-gguf" / fingerprint.str();
+    std::filesystem::create_directories(root);
+    for (const auto & [name, content] : sidecars) {
+        const auto output_path = root / name;
+        if (engine::io::is_existing_file(output_path) && engine::io::read_text_file(output_path) == content) {
+            continue;
+        }
+        std::filesystem::create_directories(output_path.parent_path());
+        std::ofstream output(output_path, std::ios::binary | std::ios::trunc);
+        if (!output)
+            throw std::runtime_error("failed to materialize GGUF sidecar: " + output_path.string());
+        output.write(content.data(), static_cast<std::streamsize>(content.size()));
+        if (!output)
+            throw std::runtime_error("failed to write GGUF sidecar: " + output_path.string());
+    }
+    return root;
+}
+
+PreparedModelDirectory prepare_model_directory(const std::filesystem::path & model_path,
+    const std::filesystem::path & gguf_relative_path) {
+    std::filesystem::path gguf_path;
+    if (engine::io::is_existing_directory(model_path)) {
+        gguf_path = model_path / gguf_relative_path;
+    } else if (engine::io::is_existing_file(model_path)) {
+        gguf_path = model_path;
+    } else {
+        throw std::runtime_error("model path does not exist: " + model_path.string());
+    }
+    if (engine::io::is_existing_file(gguf_path) && lower_ascii(gguf_path.extension().string()) == ".gguf") {
+        const auto canonical_gguf = std::filesystem::weakly_canonical(gguf_path);
+        if (gguf_has_embedded_sidecars(gguf_path)) {
+            return {materialize_gguf_sidecars(gguf_path), canonical_gguf};
+        }
+        const auto external_root =
+            engine::io::is_existing_directory(model_path) ? model_path : model_path.parent_path();
+        return {std::filesystem::weakly_canonical(external_root), canonical_gguf};
+    }
+    const auto root = engine::io::is_existing_directory(model_path) ? model_path : model_path.parent_path();
+    return {std::filesystem::weakly_canonical(root), std::nullopt};
+}
+
+void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & inputs,
+                                    const std::filesystem::path & output_path, TensorStorageType weight_type,
+                                    bool overwrite, bool embed_sidecars,
+    const std::filesystem::path & requested_sidecar_root,
+                                    const std::vector<GgufEmbeddedFile> & extra_sidecars,
+                                    const std::optional<GgufEmbeddedModelSpec> & model_spec) {
+    if (inputs.empty()) {
+        throw std::runtime_error("GGUF conversion requires at least one tensor source");
+    }
+    if (engine::io::is_existing_file(output_path) && !overwrite) {
+        throw std::runtime_error("GGUF output already exists: " + output_path.string());
+    }
+    std::vector<CompositeTensorSource::Component> components;
+    components.reserve(inputs.size());
+    for (const auto & input : inputs) {
+        if (!engine::io::is_existing_file(input.path)) {
+            throw std::runtime_error("input tensor source does not exist: " + input.path.string());
+        }
+        try {
+            components.push_back({input.tensor_prefix, open_tensor_source(input.path)});
+        } catch (const std::exception & error) {
+            throw std::runtime_error("failed to open tensor source " + input.path.string() + ": " + error.what());
+        }
+    }
+    const auto sidecar_root = std::filesystem::weakly_canonical(
+        requested_sidecar_root.empty() ? inputs.front().path.parent_path() : requested_sidecar_root);
+    if (!engine::io::is_existing_directory(sidecar_root)) {
+        throw std::runtime_error("GGUF sidecar root is not a directory: " + sidecar_root.string());
+    }
+    auto source = std::make_shared<CompositeTensorSource>(sidecar_root, std::move(components));
+    const auto metadata = source->tensors();
+    if (metadata.empty()) {
+        throw std::runtime_error("cannot convert an empty tensor source to GGUF");
+    }
+    std::vector<TensorMetadata> convertible_metadata;
+    convertible_metadata.reserve(metadata.size());
+    for (const auto & item : metadata) {
+        const bool zero_element_tensor =
+            std::any_of(item.shape.begin(), item.shape.end(), [](int64_t dim) { return dim == 0; });
+        if (zero_element_tensor) {
+            continue;
+        }
+        convertible_metadata.push_back(item);
+    }
+    if (convertible_metadata.empty()) {
+        throw std::runtime_error("cannot convert a tensor source with only zero-element tensors to GGUF");
+    }
+
+    const bool preserve_source_dtype = weight_type == TensorStorageType::Native;
+    const ggml_type requested_type = preserve_source_dtype ? GGML_TYPE_COUNT : ggml_type_for_tensor_storage(weight_type);
+    if (!preserve_source_dtype && ggml_is_quantized(requested_type) && ggml_quantize_requires_imatrix(requested_type)) {
+        throw std::runtime_error("requested GGUF quantization requires an importance matrix");
+    }
+
+    const size_t context_bytes = std::max<size_t>(
+        1024 * 1024,
+        convertible_metadata.size() * (ggml_tensor_overhead() + 256));
+    ggml_context * tensor_context = ggml_init(ggml_init_params{context_bytes, nullptr, true});
+    if (tensor_context == nullptr) {
+        throw std::runtime_error("failed to allocate GGUF tensor metadata context");
+    }
+    gguf_context * gguf = gguf_init_empty();
+    if (gguf == nullptr) {
+        ggml_free(tensor_context);
+        throw std::runtime_error("failed to allocate GGUF context");
+    }
+
+    struct OutputTensor {
+        TensorMetadata metadata;
+        std::string physical_name;
+        ggml_type type = GGML_TYPE_F32;
+        TensorStorageType storage_type = TensorStorageType::Native;
+    };
+    std::vector<OutputTensor> outputs;
+    outputs.reserve(convertible_metadata.size());
+    std::vector<std::string> logical_names;
+    logical_names.reserve(convertible_metadata.size());
+    std::unordered_set<std::string> physical_names;
+
+    try {
+        gguf_set_val_str(gguf, "general.architecture", "audiocpp");
+        gguf_set_val_str(gguf, "general.name", sidecar_root.filename().string().c_str());
+        gguf_set_val_str(gguf, "audiocpp.tensor_name_format", "native");
+        gguf_set_val_str(gguf, "audiocpp.source_format",
+                         inputs.size() == 1 ? lower_ascii(inputs.front().path.extension().string()).c_str() : "packed");
+        const std::string output_weight_type =
+            preserve_source_dtype ? "orig" : lower_ascii(ggml_type_name(requested_type));
+        gguf_set_val_str(gguf, "audiocpp.weight_type", output_weight_type.c_str());
+        if (model_spec.has_value()) {
+            gguf_set_val_u32(gguf, "audiocpp.model_spec.version", 1);
+            gguf_set_val_str(gguf, "audiocpp.model_spec.family", model_spec->family.c_str());
+            gguf_set_val_str(gguf, "audiocpp.model_spec.json", model_spec->json.c_str());
+        }
+
+        std::vector<std::string> source_names;
+        std::vector<std::string> source_paths;
+        std::vector<const char *> source_name_ptrs;
+        std::vector<const char *> source_path_ptrs;
+        source_names.reserve(inputs.size());
+        source_paths.reserve(inputs.size());
+        for (const auto & input : inputs) {
+            source_names.push_back(input.tensor_prefix);
+            std::error_code relative_error;
+            const auto relative_path = std::filesystem::relative(input.path, sidecar_root, relative_error);
+            source_paths.push_back((relative_error || relative_path.empty()
+                ? std::filesystem::absolute(input.path).lexically_normal()
+                : relative_path).generic_string());
+        }
+        for (const auto & value : source_names) source_name_ptrs.push_back(value.c_str());
+        for (const auto & value : source_paths) source_path_ptrs.push_back(value.c_str());
+        gguf_set_arr_str(gguf, "audiocpp.tensor_sources.names", source_name_ptrs.data(), source_name_ptrs.size());
+        gguf_set_arr_str(gguf, "audiocpp.tensor_sources.paths", source_path_ptrs.data(), source_path_ptrs.size());
+
+        std::vector<std::string> embedded_names;
+        std::vector<const char *> embedded_name_ptrs;
+        std::vector<uint64_t> embedded_offsets{0};
+        std::vector<uint8_t> embedded_data;
+        if (embed_sidecars) {
+            constexpr uintmax_t kMaxEmbeddedSidecarBytes = 64u * 1024u * 1024u;
+            std::vector<std::filesystem::path> sidecar_paths;
+            std::error_code walk_error;
+            std::unordered_set<std::string> explicit_destinations;
+            for (const auto & sidecar : extra_sidecars) {
+                const auto normalized = sidecar.destination.lexically_normal();
+                if (normalized.empty() || normalized.is_absolute() || *normalized.begin() == "..") {
+                    throw std::runtime_error("invalid embedded sidecar destination: " + sidecar.destination.string());
+                }
+                if (!engine::io::is_existing_file(sidecar.source_path)) {
+                    throw std::runtime_error("embedded sidecar source does not exist: " + sidecar.source_path.string());
+                }
+                if (!explicit_destinations.insert(normalized.generic_string()).second) {
+                    throw std::runtime_error(
+                        "duplicate embedded sidecar destination: " + normalized.generic_string());
+                }
+            }
+            for (std::filesystem::recursive_directory_iterator it(sidecar_root, walk_error), end;
+                 !walk_error && it != end; it.increment(walk_error)) {
+                if (it->is_directory() &&
+                    (it->path().filename() == ".cache" || it->path().filename() == ".git")) {
+                    it.disable_recursion_pending();
+                    continue;
+                }
+                if (!it->is_regular_file()) continue;
+                const auto & path = it->path();
+                const std::string extension = lower_ascii(path.extension().string());
+                if (extension == ".safetensors" || extension == ".gguf" || extension == ".bin" ||
+                    extension == ".pt" || extension == ".pth" || path == output_path ||
+                    it->file_size() > kMaxEmbeddedSidecarBytes) {
+                    continue;
+                }
+                const auto relative = std::filesystem::relative(path, sidecar_root).generic_string();
+                if (explicit_destinations.find(relative) != explicit_destinations.end()) continue;
+                sidecar_paths.push_back(path);
+            }
+            if (walk_error) {
+                throw std::runtime_error("failed to enumerate model sidecars: " + walk_error.message());
+            }
+            std::sort(sidecar_paths.begin(), sidecar_paths.end());
+            for (const auto & path : sidecar_paths) {
+                const auto relative = std::filesystem::relative(path, sidecar_root);
+                const std::string content = engine::io::read_text_file(path);
+                embedded_names.push_back(relative.generic_string());
+                embedded_data.insert(embedded_data.end(), content.begin(), content.end());
+                embedded_offsets.push_back(static_cast<uint64_t>(embedded_data.size()));
+            }
+            for (const auto & sidecar : extra_sidecars) {
+                const std::string content = engine::io::read_text_file(sidecar.source_path);
+                embedded_names.push_back(sidecar.destination.lexically_normal().generic_string());
+                embedded_data.insert(embedded_data.end(), content.begin(), content.end());
+                embedded_offsets.push_back(static_cast<uint64_t>(embedded_data.size()));
+            }
+            if (embedded_names.empty()) {
+                throw std::runtime_error("no GGUF sidecars were found; provide "
+                                         "--root/--sidecar for a standalone GGUF "
+                                         "or pass --no-sidecars to explicitly create a "
+                                         "tensor-only container");
+            }
+            embedded_name_ptrs.reserve(embedded_names.size());
+            for (const auto & value : embedded_names)
+                embedded_name_ptrs.push_back(value.c_str());
+            if (!embedded_names.empty()) {
+                gguf_set_arr_str(gguf, "audiocpp.embedded_files.names", embedded_name_ptrs.data(),
+                                 embedded_name_ptrs.size());
+                gguf_set_arr_data(gguf, "audiocpp.embedded_files.offsets", GGUF_TYPE_UINT64, embedded_offsets.data(),
+                                  embedded_offsets.size());
+                gguf_set_arr_data(gguf, "audiocpp.embedded_files.data", GGUF_TYPE_UINT8, embedded_data.data(),
+                                  embedded_data.size());
+            }
+        }
+
+        for (size_t i = 0; i < convertible_metadata.size(); ++i) {
+            const auto & item = convertible_metadata[i];
+            if (item.shape.size() > core::kMaxTensorRank) {
+                throw std::runtime_error("GGUF supports tensor ranks from 0 to 4: " + item.name);
+            }
+            const ggml_type source_type = ggml_type_for_tensor_dtype(item.dtype);
+            const bool source_is_float = source_type == GGML_TYPE_F32 || source_type == GGML_TYPE_F16 ||
+                source_type == GGML_TYPE_BF16 || ggml_is_quantized(source_type);
+            const std::string normalized_name = lower_ascii(item.name);
+            const bool name_is_weight = item.name.size() >= 7 &&
+                item.name.compare(item.name.size() - 7, 7, ".weight") == 0;
+            const bool is_lookup_table = normalized_name.find("embed") != std::string::npos ||
+                normalized_name.find("codebook") != std::string::npos;
+            const bool can_quantize = !preserve_source_dtype && source_is_float && name_is_weight && item.shape.size() == 2 &&
+                !is_lookup_table && item.shape.back() % ggml_blck_size(requested_type) == 0;
+            const bool use_requested = !preserve_source_dtype &&
+                (!ggml_is_quantized(requested_type) ? source_is_float && !item.shape.empty() : can_quantize);
+            const bool use_f16_lookup = !preserve_source_dtype && ggml_is_quantized(requested_type) &&
+                source_is_float && is_lookup_table;
+            const ggml_type output_type = use_requested
+                ? requested_type
+                : (use_f16_lookup ? GGML_TYPE_F16 : source_type);
+            const TensorStorageType output_storage = use_requested
+                ? weight_type
+                : (use_f16_lookup ? TensorStorageType::F16 : TensorStorageType::Native);
+
+            std::string physical_name = item.name;
+            if (physical_name.size() >= GGML_MAX_NAME || !physical_names.insert(physical_name).second) {
+                physical_name = "_audiocpp." + std::to_string(i);
+                if (!physical_names.insert(physical_name).second) {
+                    throw std::runtime_error("failed to create a unique GGUF tensor alias");
+                }
+            }
+            // GGML requires at least one physical dimension. Preserve a safetensors
+            // rank-0 scalar as a one-element tensor and record rank 0 in the exact
+            // audio.cpp shape metadata below.
+            core::TensorShape shape = item.shape.empty()
+                ? shape_from_dims({1})
+                : shape_from_dims(item.shape);
+            const auto dims = core::to_ggml_dims(shape);
+            ggml_tensor * tensor = ggml_new_tensor(
+                tensor_context,
+                output_type,
+                static_cast<int>(shape.rank),
+                dims.data());
+            if (tensor == nullptr) {
+                throw std::runtime_error("failed to create GGUF tensor metadata: " + item.name);
+            }
+            ggml_set_name(tensor, physical_name.c_str());
+            gguf_add_tensor(gguf, tensor);
+            outputs.push_back({item, std::move(physical_name), output_type, output_storage});
+            logical_names.push_back(item.name);
+        }
+
+        std::vector<const char *> logical_name_ptrs;
+        logical_name_ptrs.reserve(logical_names.size());
+        for (const auto & name : logical_names) logical_name_ptrs.push_back(name.c_str());
+        gguf_set_arr_str(
+            gguf,
+            "audiocpp.tensor_names",
+            logical_name_ptrs.data(),
+            logical_name_ptrs.size());
+        std::vector<int32_t> exact_ranks;
+        std::vector<int64_t> exact_shapes;
+        exact_ranks.reserve(convertible_metadata.size());
+        for (const auto & item : convertible_metadata) {
+            exact_ranks.push_back(static_cast<int32_t>(item.shape.size()));
+            exact_shapes.insert(exact_shapes.end(), item.shape.begin(), item.shape.end());
+        }
+        gguf_set_arr_data(gguf, "audiocpp.tensor_ranks", GGUF_TYPE_INT32, exact_ranks.data(), exact_ranks.size());
+        gguf_set_arr_data(gguf, "audiocpp.tensor_shapes", GGUF_TYPE_INT64, exact_shapes.data(), exact_shapes.size());
+
+        const auto parent = output_path.parent_path();
+        if (!parent.empty()) std::filesystem::create_directories(parent);
+        auto temporary_path = output_path;
+        temporary_path += ".tmp";
+        std::filesystem::remove(temporary_path);
+        if (!gguf_write_to_file(gguf, temporary_path.string().c_str(), true)) {
+            throw std::runtime_error("failed to write GGUF metadata: " + temporary_path.string());
+        }
+
+        try {
+            std::ofstream output(temporary_path, std::ios::binary | std::ios::app);
+            if (!output) throw std::runtime_error("failed to append GGUF tensor data");
+            size_t cursor = 0;
+            std::vector<char> padding;
+            for (size_t i = 0; i < outputs.size(); ++i) {
+                const auto & item = outputs[i];
+                const size_t offset = gguf_get_tensor_offset(gguf, static_cast<int64_t>(i));
+                if (offset < cursor) throw std::runtime_error("GGUF tensor offsets are not monotonic");
+                padding.assign(offset - cursor, '\0');
+                if (!padding.empty()) output.write(padding.data(), static_cast<std::streamsize>(padding.size()));
+
+                RawTensorData raw;
+                if (item.storage_type == TensorStorageType::Native) {
+                    raw = source->require_tensor_data(item.metadata.name);
+                } else {
+                    const auto tensor = source->require_tensor(
+                        item.metadata.name,
+                        item.storage_type,
+                        item.metadata.shape);
+                    raw.metadata = item.metadata;
+                    raw.bytes = tensor.bytes;
+                }
+                const size_t expected_size = gguf_get_tensor_size(gguf, static_cast<int64_t>(i));
+                if (raw.bytes.size() != expected_size) {
+                    throw std::runtime_error("GGUF converted tensor byte size mismatch: " + item.metadata.name);
+                }
+                output.write(
+                    reinterpret_cast<const char *>(raw.bytes.data()),
+                    static_cast<std::streamsize>(raw.bytes.size()));
+                if (!output) throw std::runtime_error("failed to write GGUF tensor: " + item.metadata.name);
+                cursor = offset + raw.bytes.size();
+            }
+            output.close();
+            if (!output) throw std::runtime_error("failed to finalize GGUF tensor data");
+            if (engine::io::is_existing_file(output_path)) std::filesystem::remove(output_path);
+            std::filesystem::rename(temporary_path, output_path);
+        } catch (...) {
+            std::filesystem::remove(temporary_path);
+            throw;
+        }
+    } catch (...) {
+        gguf_free(gguf);
+        ggml_free(tensor_context);
+        throw;
+    }
+    gguf_free(gguf);
+    ggml_free(tensor_context);
+}
+
+void convert_tensor_source_to_gguf(
+    const std::filesystem::path & input_path,
+    const std::filesystem::path & output_path,
+    TensorStorageType weight_type,
+    bool overwrite,
+    bool embed_sidecars) {
+    convert_tensor_sources_to_gguf(
+        {{input_path, ""}}, output_path, weight_type, overwrite, embed_sidecars, input_path.parent_path());
 }
 
 std::vector<std::filesystem::path> indexed_tensor_source_shard_paths(

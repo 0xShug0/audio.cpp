@@ -10,6 +10,7 @@ VULKAN_MODE="off"
 WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
+AUDIOCPP_DEPLOYMENT_BUILD="OFF"
 NATIVE_CPU="ON"
 LLAMAFILE="ON"
 TARGETS=()
@@ -63,6 +64,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --with-warmbench)
             WITH_WARMBENCH="ON"
+            shift
+            ;;
+        --deployment-build)
+            AUDIOCPP_DEPLOYMENT_BUILD="ON"
             shift
             ;;
         --native-cpu)
@@ -198,6 +203,7 @@ echo "llamafile SGEMM: $LLAMAFILE"
 echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
 echo "Building warmbench: $WITH_WARMBENCH"
+echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
 
 "${RUNNER[@]}" cmake \
     -S . \
@@ -210,7 +216,8 @@ echo "Building warmbench: $WITH_WARMBENCH"
     -DENGINE_ENABLE_LLAMAFILE="$LLAMAFILE" \
     -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES" \
     -DENGINE_BUILD_TESTS="$WITH_TESTS" \
-    -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
+    -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH" \
+    -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
 
 BUILD_CMD=("${RUNNER[@]}" cmake --build "$BUILD_DIR" --parallel "$JOBS")
 for target in "${TARGETS[@]}"; do

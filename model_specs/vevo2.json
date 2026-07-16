@@ -1,0 +1,37 @@
+{
+  "family": "vevo2",
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "ar_config": "model:contentstyle_modeling/posttrained/config.json",
+        "ar_amphion_config": "model:contentstyle_modeling/posttrained/amphion_config.json",
+        "ar_generation_config": "model:contentstyle_modeling/posttrained/generation_config.json",
+        "ar_tokenizer_config": "model:contentstyle_modeling/posttrained/tokenizer_config.json",
+        "ar_tokenizer_json": "model:contentstyle_modeling/posttrained/tokenizer.json",
+        "ar_vocab": "model:contentstyle_modeling/posttrained/vocab.json",
+        "ar_merges": "model:contentstyle_modeling/posttrained/merges.txt",
+        "ar_added_tokens": "model:contentstyle_modeling/posttrained/added_tokens.json",
+        "ar_special_tokens": "model:contentstyle_modeling/posttrained/special_tokens_map.json",
+        "fm_config": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa/config.json",
+        "fm_text_config": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa_text/config.json",
+        "vocoder_config": "model:vocoder/config.json"
+      },
+      "tensors": {
+        "content_style_tokenizer_weights": "model:tokenizer/contentstyle_fvq16384_12.5hz/model.safetensors",
+        "prosody_tokenizer_weights": "model:tokenizer/prosody_fvq512_6.25hz/model.safetensors",
+        "ar_weights": "model:contentstyle_modeling/posttrained/model.safetensors",
+        "fm_weights": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa/model.safetensors",
+        "fm_whisper_stats": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa/whisper_stats.safetensors",
+        "fm_text_weights": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa_text/model.safetensors",
+        "fm_text_whisper_stats": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa_text/whisper_stats.safetensors",
+        "vocoder_weights_0": "model:vocoder/model.safetensors",
+        "vocoder_weights_1": "model:vocoder/model_1.safetensors",
+        "vocoder_weights_2": "model:vocoder/model_2.safetensors"
+      }
+    }
+  ]
+}

@@ -14,7 +14,7 @@ namespace engine::models::vibevoice_asr {
 class VibeVoiceASRSpeechEncoder {
 public:
     VibeVoiceASRSpeechEncoder(
-        std::shared_ptr<const VibeVoiceAssets> assets,
+        std::shared_ptr<const VibeVoiceASRAssets> assets,
         core::BackendType backend_type,
         int device,
         int threads,
@@ -26,7 +26,7 @@ public:
     VibeVoiceASRSpeechFeatures encode(const runtime::AudioBuffer & audio, uint64_t seed) const;
 
 private:
-    std::shared_ptr<const VibeVoiceAssets> assets_;
+    std::shared_ptr<const VibeVoiceASRAssets> assets_;
     std::optional<sampling::TorchCudaSamplingPolicy> sampling_policy_;
     VibeVoiceTokenizerWeightsRuntime tokenizer_;
     VibeVoiceConnectorWeightsRuntime connector_;

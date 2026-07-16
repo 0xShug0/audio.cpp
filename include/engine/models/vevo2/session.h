@@ -10,7 +10,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -137,7 +136,5 @@ private:
     std::vector<AudioFeatureCacheEntry> whisper_feature_cache_;
     std::vector<AudioTokenCacheEntry> content_style_token_cache_;
 };
-
-std::unique_ptr<runtime::ILoadedVoiceModel> load_vevo2_model(const runtime::ModelLoadRequest & request);
 
 }  // namespace engine::models::vevo2

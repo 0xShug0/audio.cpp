@@ -18,8 +18,8 @@ namespace {
 
 std::shared_ptr<const OmniVoiceTextTokenizer::Impl> load_impl(const OmniVoiceAssets & assets) {
     engine::tokenizers::LlamaBpeTokenizerSpec spec;
-    spec.tokenizer_config_path = assets.paths.tokenizer_config_path;
-    spec.tokenizer_json_path = assets.paths.tokenizer_json_path;
+    spec.tokenizer_config_path = assets.resources.require_file("tokenizer_config");
+    spec.tokenizer_json_path = assets.resources.require_file("tokenizer_json");
     spec.pre_type = engine::tokenizers::LlamaBpePreTokenizer::Qwen2;
 
     auto impl = std::make_shared<OmniVoiceTextTokenizer::Impl>();

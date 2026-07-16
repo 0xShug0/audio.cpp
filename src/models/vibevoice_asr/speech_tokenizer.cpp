@@ -1528,7 +1528,7 @@ private:
 };
 
 VibeVoiceTokenizerWeightsBundle load_vibevoice_tokenizer_weights(
-    const VibeVoiceAssets & assets,
+    const VibeVoiceASRAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
@@ -1702,7 +1702,7 @@ VibeVoiceTokenizerLatents unscale_vibevoice_acoustic_latents_for_decoder(
 }
 
 VibeVoiceTokenizerWeightsRuntime::VibeVoiceTokenizerWeightsRuntime(
-    std::shared_ptr<const VibeVoiceAssets> assets,
+    std::shared_ptr<const VibeVoiceASRAssets> assets,
     core::BackendType backend_type,
     int device,
     int threads,
@@ -1788,7 +1788,7 @@ void VibeVoiceTokenizerStreamingState::set_to_zero() {
     }
 }
 
-const VibeVoiceAssets & VibeVoiceTokenizerWeightsRuntime::assets() const noexcept {
+const VibeVoiceASRAssets & VibeVoiceTokenizerWeightsRuntime::assets() const noexcept {
     return *assets_;
 }
 

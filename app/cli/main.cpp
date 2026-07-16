@@ -50,6 +50,7 @@ void print_task_list_help() {
         << "    --device <n>\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
+        << "    --model-spec-override <json-or-directory>  Override package-spec resolution\n"
         << "    --config <id>\n"
         << "    --weight <id>\n"
         << "    --log  Stream framework progress and timing logs to stdout\n"
@@ -108,6 +109,7 @@ void print_task_list_help() {
         << "    --guidance-scale <float>\n"
         << "    --num-inference-steps <n>\n"
         << "    --text-chunk-size <chars>\n"
+        << "    --text-chunk-mode default|tag_aware|japanese|endline\n"
         << "  Inputs:\n"
         << "    --audio <wav>\n"
         << "    --text <text>\n"
@@ -247,6 +249,7 @@ void print_model_common_options(const engine::runtime::ModelInspection & inspect
             << "    --reference-duration-seconds <float>\n"
             << "    --num-inference-steps <n>\n"
             << "    --text-chunk-size <chars>\n"
+            << "    --text-chunk-mode default|tag_aware|japanese|endline\n"
             << "    --seed <n>\n";
     }
     if (model_supports_task(inspection, engine::runtime::VoiceTaskKind::Asr) ||
@@ -593,6 +596,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
                     collect_key_value_args(argc, argv, "--load-option"),
                     collect_key_value_args(argc, argv, "--session-option"),
                     collect_key_value_args(argc, argv, "--workflow-input"),
+                    optional_path_arg(argc, argv, "--model-spec-override"),
                     find_arg(argc, argv, "--audio-converter").value_or("ffmpeg"),
                 });
             return 0;
@@ -611,6 +615,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
 
         engine::runtime::ModelLoadRequest load_request;
         load_request.model_path = std::filesystem::path(*model_arg);
+        load_request.model_spec_override = optional_path_arg(argc, argv, "--model-spec-override");
         if (const auto family = find_arg(argc, argv, "--family")) {
             load_request.family_hint = *family;
         }

@@ -354,7 +354,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
     core::BackendType backend_type,
     assets::TensorStorageType linear_weight_storage_type,
     assets::TensorStorageType conv_weight_storage_type) {
-    auto source = assets::open_tensor_source(assets.paths.speech_tokenizer_weights_path);
+    const auto & source = *assets.speech_tokenizer_weights;
     auto weights = std::make_shared<Qwen3SpeechTokenizerEncoderWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
@@ -381,7 +381,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
     for (size_t i = 0; i < std::size(conv_prefixes); ++i) {
         weights->encoder_convs.push_back(load_conv(
             *weights->store,
-            *source,
+            source,
             conv_prefixes[i],
             conv_weight_storage_type,
             conv_channels[i][1],
@@ -398,7 +398,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
         ResBlockWeights block;
         block.conv1 = load_conv(
             *weights->store,
-            *source,
+            source,
             "encoder.encoder.layers." + std::to_string(idx) + ".block.1.conv",
             conv_weight_storage_type,
             channels / 2,
@@ -406,7 +406,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
             3);
         block.conv2 = load_conv(
             *weights->store,
-            *source,
+            source,
             "encoder.encoder.layers." + std::to_string(idx) + ".block.3.conv",
             conv_weight_storage_type,
             channels,
@@ -418,24 +418,24 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
     for (int layer = 0; layer < 8; ++layer) {
         const std::string prefix = "encoder.encoder_transformer.layers." + std::to_string(layer);
         TransformerLayerWeights block;
-        block.q = weights->store->load_tensor(*source, prefix + ".self_attn.q_proj.weight", linear_weight_storage_type, {512, 512});
-        block.k = weights->store->load_tensor(*source, prefix + ".self_attn.k_proj.weight", linear_weight_storage_type, {512, 512});
-        block.v = weights->store->load_tensor(*source, prefix + ".self_attn.v_proj.weight", linear_weight_storage_type, {512, 512});
-        block.o = weights->store->load_tensor(*source, prefix + ".self_attn.o_proj.weight", linear_weight_storage_type, {512, 512});
-        block.fc1 = weights->store->load_tensor(*source, prefix + ".mlp.fc1.weight", linear_weight_storage_type, {2048, 512});
-        block.fc2 = weights->store->load_tensor(*source, prefix + ".mlp.fc2.weight", linear_weight_storage_type, {512, 2048});
-        block.norm1_weight = source->require_f32_tensor(prefix + ".input_layernorm.weight", {512});
-        block.norm1_bias = source->require_f32_tensor(prefix + ".input_layernorm.bias", {512});
-        block.norm2_weight = source->require_f32_tensor(prefix + ".post_attention_layernorm.weight", {512});
-        block.norm2_bias = source->require_f32_tensor(prefix + ".post_attention_layernorm.bias", {512});
-        block.scale1 = source->require_f32_tensor(prefix + ".self_attn_layer_scale.scale", {512});
-        block.scale2 = source->require_f32_tensor(prefix + ".mlp_layer_scale.scale", {512});
+        block.q = weights->store->load_tensor(source, prefix + ".self_attn.q_proj.weight", linear_weight_storage_type, {512, 512});
+        block.k = weights->store->load_tensor(source, prefix + ".self_attn.k_proj.weight", linear_weight_storage_type, {512, 512});
+        block.v = weights->store->load_tensor(source, prefix + ".self_attn.v_proj.weight", linear_weight_storage_type, {512, 512});
+        block.o = weights->store->load_tensor(source, prefix + ".self_attn.o_proj.weight", linear_weight_storage_type, {512, 512});
+        block.fc1 = weights->store->load_tensor(source, prefix + ".mlp.fc1.weight", linear_weight_storage_type, {2048, 512});
+        block.fc2 = weights->store->load_tensor(source, prefix + ".mlp.fc2.weight", linear_weight_storage_type, {512, 2048});
+        block.norm1_weight = source.require_f32_tensor(prefix + ".input_layernorm.weight", {512});
+        block.norm1_bias = source.require_f32_tensor(prefix + ".input_layernorm.bias", {512});
+        block.norm2_weight = source.require_f32_tensor(prefix + ".post_attention_layernorm.weight", {512});
+        block.norm2_bias = source.require_f32_tensor(prefix + ".post_attention_layernorm.bias", {512});
+        block.scale1 = source.require_f32_tensor(prefix + ".self_attn_layer_scale.scale", {512});
+        block.scale2 = source.require_f32_tensor(prefix + ".mlp_layer_scale.scale", {512});
         weights->transformer_layers.push_back(std::move(block));
     }
 
     weights->downsample = load_conv(
         *weights->store,
-        *source,
+        source,
         "encoder.downsample.conv",
         conv_weight_storage_type,
         512,
@@ -447,7 +447,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
         modules::StreamingPadMode::Replicate);
     weights->semantic_projection = load_conv(
         *weights->store,
-        *source,
+        source,
         "encoder.quantizer.semantic_residual_vector_quantizer.input_proj",
         conv_weight_storage_type,
         256,
@@ -458,7 +458,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
         false);
     weights->acoustic_projection = load_conv(
         *weights->store,
-        *source,
+        source,
         "encoder.quantizer.acoustic_residual_vector_quantizer.input_proj",
         conv_weight_storage_type,
         256,
@@ -469,10 +469,10 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
         false);
 
     CodebookWeights semantic;
-    semantic.cluster_usage = source->require_f32(
+    semantic.cluster_usage = source.require_f32(
         "encoder.quantizer.semantic_residual_vector_quantizer.layers.0.codebook.cluster_usage",
         {2048});
-    semantic.embedding_sum = source->require_f32(
+    semantic.embedding_sum = source.require_f32(
         "encoder.quantizer.semantic_residual_vector_quantizer.layers.0.codebook.embed_sum",
         {2048, 256});
     weights->semantic_codebooks.push_back(std::move(semantic));
@@ -481,8 +481,8 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
         const std::string prefix =
             "encoder.quantizer.acoustic_residual_vector_quantizer.layers." + std::to_string(layer) + ".codebook.";
         CodebookWeights acoustic;
-        acoustic.cluster_usage = source->require_f32(prefix + "cluster_usage", {2048});
-        acoustic.embedding_sum = source->require_f32(prefix + "embed_sum", {2048, 256});
+        acoustic.cluster_usage = source.require_f32(prefix + "cluster_usage", {2048});
+        acoustic.embedding_sum = source.require_f32(prefix + "embed_sum", {2048, 256});
         weights->acoustic_codebooks.push_back(std::move(acoustic));
     }
 

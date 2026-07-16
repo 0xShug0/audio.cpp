@@ -9,6 +9,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace engine::assets {
+enum class ModelPackageResourceKind;
+}
+
 namespace engine::runtime {
 
 struct NamedAsset {
@@ -60,6 +64,7 @@ struct ModelInspection {
 
 struct ModelLoadRequest {
     std::filesystem::path model_path;
+    std::optional<std::filesystem::path> model_spec_override = std::nullopt;
     std::optional<std::string> family_hint = std::nullopt;
     std::optional<std::string> config_id = std::nullopt;
     std::optional<std::string> weight_id = std::nullopt;
@@ -69,6 +74,11 @@ struct ModelLoadRequest {
 std::vector<NamedAsset> discover_named_assets(
     const std::filesystem::path & root,
     const std::vector<std::string> & relative_candidates);
+
+std::vector<NamedAsset> discover_named_assets_from_package_spec(
+    const std::filesystem::path & model_path,
+    const std::filesystem::path & spec_path,
+    engine::assets::ModelPackageResourceKind kind);
 
 const NamedAsset * find_named_asset(
     const std::vector<NamedAsset> & assets,

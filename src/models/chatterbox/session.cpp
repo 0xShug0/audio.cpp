@@ -60,6 +60,22 @@ ChatterboxVoiceCloneConfig make_voice_clone_config(
     return config;
 }
 
+ChatterboxVoiceConversionConfig make_voice_conversion_config(
+    const std::unordered_map<std::string, std::string> & options) {
+    ChatterboxVoiceConversionConfig config;
+    config.s3gen_cfg_rate = runtime::parse_float_option(
+        options,
+        {"s3gen_cfg_rate"})
+        .value_or(config.s3gen_cfg_rate);
+    config.num_inference_steps = runtime::parse_positive_i64_option(
+        options,
+        {"num_inference_steps", "max_steps"},
+        config.num_inference_steps);
+    config.seed = runtime::parse_u32_option(options, {"seed"})
+        .value_or(runtime::random_u32_seed());
+    return config;
+}
+
 ChatterboxVoiceCloneConfig make_voice_clone_config(
     const std::unordered_map<std::string, std::string> & options,
     const std::string & language) {
@@ -124,6 +140,7 @@ std::unique_ptr<ChatterboxTtsComponent> make_chatterbox_component_for_language(
     engine::assets::TensorStorageType component_weight_storage_type,
     bool mem_saver,
     const std::string & language) {
+    require_chatterbox_tts_assets(assets);
     const bool use_multilingual = chatterbox_language_uses_multilingual_t3(language);
     return std::make_unique<ChatterboxTtsComponent>(
         load_t3_inference_weights(
@@ -134,6 +151,39 @@ std::unique_ptr<ChatterboxTtsComponent> make_chatterbox_component_for_language(
         load_chatterbox_english_tokenizer(
             use_multilingual ? assets.multilingual_tokenizer : assets.english_tokenizer),
         VoiceEncoderComponent::load_from_model_root(assets.model_root, options.backend),
+        S3TokenizerComponent::load_from_checkpoint(
+            assets.s3tokenizer_weights,
+            execution_context,
+            component_weight_storage_type),
+        CAMPPlusEncoderComponent::load_from_checkpoint(
+            assets.s3gen_weights,
+            execution_context,
+            component_weight_storage_type),
+        load_s3_flow_encoder_weights(
+            assets.s3gen_weights,
+            execution_context,
+            component_weight_storage_type),
+        load_s3_flow_decoder_weights(
+            assets.s3gen_weights,
+            execution_context,
+            component_weight_storage_type),
+        HiFTVocoderComponent::load_from_checkpoint(
+            assets.s3gen_weights,
+            execution_context,
+            component_weight_storage_type),
+        make_prompt_prep_config(options),
+        execution_context,
+        mem_saver);
+}
+
+std::unique_ptr<ChatterboxVcComponent> make_chatterbox_vc_component(
+    const ChatterboxAssetPaths & assets,
+    const runtime::SessionOptions & options,
+    const engine::core::ExecutionContext & execution_context,
+    engine::assets::TensorStorageType component_weight_storage_type,
+    bool mem_saver) {
+    require_chatterbox_vc_assets(assets);
+    return std::make_unique<ChatterboxVcComponent>(
         S3TokenizerComponent::load_from_checkpoint(
             assets.s3tokenizer_weights,
             execution_context,
@@ -265,8 +315,9 @@ ChatterboxSession::ChatterboxSession(
       component_weight_storage_type_(resolve_component_weight_storage_type(this->options())),
       mem_saver_(resolve_mem_saver(this->options())),
       conditionals_cache_(resolve_conditionals_cache_slots(this->options())) {
-    if (task_.task != runtime::VoiceTaskKind::VoiceCloning) {
-        throw std::runtime_error("Chatterbox session only supports --task clon");
+    if (task_.task != runtime::VoiceTaskKind::VoiceCloning &&
+        task_.task != runtime::VoiceTaskKind::VoiceConversion) {
+        throw std::runtime_error("Chatterbox session supports --task clon or --task vc");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Chatterbox session only supports offline mode");
@@ -288,6 +339,18 @@ runtime::RunMode ChatterboxSession::run_mode() const {
 }
 
 void ChatterboxSession::prepare(const runtime::SessionPreparationRequest & request) {
+    if (task_.task == runtime::VoiceTaskKind::VoiceConversion) {
+        if (!vc_component_) {
+            vc_component_ = make_chatterbox_vc_component(
+                *assets_,
+                this->options(),
+                execution_context(),
+                component_weight_storage_type_,
+                mem_saver_);
+        }
+        mark_prepared();
+        return;
+    }
     if (!request.text.has_value() || request.text->text.empty()) {
         throw std::runtime_error("Chatterbox prepare requires text input");
     }
@@ -342,7 +405,52 @@ void ChatterboxSession::prepare(const runtime::SessionPreparationRequest & reque
 
 runtime::TaskResult ChatterboxSession::run(const runtime::TaskRequest & request) {
     require_prepared("Chatterbox run()");
+    if (task_.task == runtime::VoiceTaskKind::VoiceConversion) {
+        return run_voice_conversion(request);
+    }
     return run_voice_cloning(request);
+}
+
+runtime::TaskResult ChatterboxSession::run_voice_conversion(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
+    if (!vc_component_) {
+        vc_component_ = make_chatterbox_vc_component(
+            *assets_,
+            this->options(),
+            execution_context(),
+            component_weight_storage_type_,
+            mem_saver_);
+    }
+
+    runtime::AudioBuffer source_audio;
+    if (const auto source_path = runtime::find_option(request.options, {"source_audio"})) {
+        source_audio = load_chatterbox_vc_audio_mono(*source_path, 16000);
+    } else if (request.audio_input.has_value()) {
+        source_audio = *request.audio_input;
+    } else {
+        throw std::runtime_error("Chatterbox VC requires --source-audio or audio_input");
+    }
+
+    runtime::AudioBuffer target_voice;
+    if (const auto target_path = runtime::find_option(request.options, {"target_voice"})) {
+        target_voice = load_chatterbox_vc_audio_mono(*target_path, 24000);
+    } else if (request.voice.has_value() && request.voice->speaker.has_value() &&
+        request.voice->speaker->audio.has_value()) {
+        target_voice = *request.voice->speaker->audio;
+    } else {
+        throw std::runtime_error("Chatterbox VC requires --target-voice or target speaker audio");
+    }
+
+    const auto config = make_voice_conversion_config(request.options);
+    auto outputs = vc_component_->convert(source_audio, target_voice, config);
+    runtime::TaskResult result;
+    result.audio_output = runtime::AudioBuffer{
+        24000,
+        1,
+        std::move(outputs.waveform),
+    };
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
+    return result;
 }
 
 runtime::TaskResult ChatterboxSession::run_voice_cloning(const runtime::TaskRequest & request) {

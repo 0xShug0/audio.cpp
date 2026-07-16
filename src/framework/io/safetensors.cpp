@@ -288,7 +288,14 @@ SafeTensorIndex load_safetensors_index(const std::filesystem::path & path) {
         const auto tensor_name = parse_string(header, pos);
         expect_char(header, pos, ':');
         if (tensor_name == "__metadata__") {
-            index.metadata = parse_string_map(header, pos);
+            skip_ws(header, pos);
+            if (pos < header.size() && header[pos] == '{') {
+                index.metadata = parse_string_map(header, pos);
+            } else {
+                // Some valid safetensors writers, including MLX, emit a null
+                // __metadata__ value instead of omitting the key.
+                skip_json_value(header, pos);
+            }
             skip_ws(header, pos);
             if (pos < header.size() && header[pos] == ',') {
                 ++pos;

@@ -214,7 +214,7 @@ std::vector<float> normalized_codebook(
 }
 
 DecoderConfig load_decoder_config(const Qwen3TTSAssets & assets) {
-    const auto root = engine::io::json::parse_file(assets.paths.speech_tokenizer_config_path);
+    const auto root = assets.resources.parse_json("speech_tokenizer_config");
     const auto & decoder = root.require("decoder_config");
     DecoderConfig config;
     config.codebook_size = json::require_i64(decoder, "codebook_size");
@@ -352,7 +352,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> load_weights(
     core::BackendType backend_type,
     assets::TensorStorageType linear_weight_storage_type,
     assets::TensorStorageType conv_weight_storage_type) {
-    auto source = assets::open_tensor_source(assets.paths.speech_tokenizer_weights_path);
+    const auto & source = *assets.speech_tokenizer_weights;
     auto weights = std::make_shared<Qwen3SpeechTokenizerDecoderWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
@@ -365,30 +365,30 @@ std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> load_weights(
 
     for (int64_t layer = 0; layer < config.num_semantic_quantizers; ++layer) {
         const std::string prefix = "decoder.quantizer.rvq_first.vq.layers." + std::to_string(layer) + "._codebook.";
-        weights->semantic_codebooks.push_back({normalized_codebook(*source, prefix, config.codebook_size, split_dim)});
+        weights->semantic_codebooks.push_back({normalized_codebook(source, prefix, config.codebook_size, split_dim)});
     }
     for (int64_t layer = 0; layer < config.num_quantizers - config.num_semantic_quantizers; ++layer) {
         const std::string prefix = "decoder.quantizer.rvq_rest.vq.layers." + std::to_string(layer) + "._codebook.";
-        weights->acoustic_codebooks.push_back({normalized_codebook(*source, prefix, config.codebook_size, split_dim)});
+        weights->acoustic_codebooks.push_back({normalized_codebook(source, prefix, config.codebook_size, split_dim)});
     }
     weights->semantic_output_proj = load_conv1x1_as_linear(
         *weights->store,
-        *source,
+        source,
         "decoder.quantizer.rvq_first.output_proj",
         linear_weight_storage_type,
         split_dim,
         config.hidden_size);
     weights->acoustic_output_proj = load_conv1x1_as_linear(
         *weights->store,
-        *source,
+        source,
         "decoder.quantizer.rvq_rest.output_proj",
         linear_weight_storage_type,
         split_dim,
         config.hidden_size);
-    weights->pre_conv = load_conv(*weights->store, *source, "decoder.pre_conv.conv", conv_weight_storage_type, config.hidden_size, config.latent_dim, 3);
+    weights->pre_conv = load_conv(*weights->store, source, "decoder.pre_conv.conv", conv_weight_storage_type, config.hidden_size, config.latent_dim, 3);
     weights->transformer_input_proj = load_linear(
         *weights->store,
-        *source,
+        source,
         "decoder.pre_transformer.input_proj",
         linear_weight_storage_type,
         config.latent_dim,
@@ -396,23 +396,23 @@ std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> load_weights(
     for (int64_t layer = 0; layer < config.num_layers; ++layer) {
         const std::string prefix = "decoder.pre_transformer.layers." + std::to_string(layer);
         TransformerLayerWeights block;
-        block.input_norm = load_rms_norm(*source, prefix + ".input_layernorm", config.hidden_size, config.rms_norm_eps);
-        block.post_norm = load_rms_norm(*source, prefix + ".post_attention_layernorm", config.hidden_size, config.rms_norm_eps);
-        block.attention.q = load_linear(*weights->store, *source, prefix + ".self_attn.q_proj", linear_weight_storage_type, config.hidden_size, config.num_heads * config.head_dim, false);
-        block.attention.k = load_linear(*weights->store, *source, prefix + ".self_attn.k_proj", linear_weight_storage_type, config.hidden_size, config.num_kv_heads * config.head_dim, false);
-        block.attention.v = load_linear(*weights->store, *source, prefix + ".self_attn.v_proj", linear_weight_storage_type, config.hidden_size, config.num_kv_heads * config.head_dim, false);
-        block.attention.o = load_linear(*weights->store, *source, prefix + ".self_attn.o_proj", linear_weight_storage_type, config.num_heads * config.head_dim, config.hidden_size, false);
-        block.mlp.gate = load_linear(*weights->store, *source, prefix + ".mlp.gate_proj", linear_weight_storage_type, config.hidden_size, config.intermediate_size, false);
-        block.mlp.up = load_linear(*weights->store, *source, prefix + ".mlp.up_proj", linear_weight_storage_type, config.hidden_size, config.intermediate_size, false);
-        block.mlp.down = load_linear(*weights->store, *source, prefix + ".mlp.down_proj", linear_weight_storage_type, config.intermediate_size, config.hidden_size, false);
-        block.attn_scale = source->require_f32(prefix + ".self_attn_layer_scale.scale", {config.hidden_size});
-        block.mlp_scale = source->require_f32(prefix + ".mlp_layer_scale.scale", {config.hidden_size});
+        block.input_norm = load_rms_norm(source, prefix + ".input_layernorm", config.hidden_size, config.rms_norm_eps);
+        block.post_norm = load_rms_norm(source, prefix + ".post_attention_layernorm", config.hidden_size, config.rms_norm_eps);
+        block.attention.q = load_linear(*weights->store, source, prefix + ".self_attn.q_proj", linear_weight_storage_type, config.hidden_size, config.num_heads * config.head_dim, false);
+        block.attention.k = load_linear(*weights->store, source, prefix + ".self_attn.k_proj", linear_weight_storage_type, config.hidden_size, config.num_kv_heads * config.head_dim, false);
+        block.attention.v = load_linear(*weights->store, source, prefix + ".self_attn.v_proj", linear_weight_storage_type, config.hidden_size, config.num_kv_heads * config.head_dim, false);
+        block.attention.o = load_linear(*weights->store, source, prefix + ".self_attn.o_proj", linear_weight_storage_type, config.num_heads * config.head_dim, config.hidden_size, false);
+        block.mlp.gate = load_linear(*weights->store, source, prefix + ".mlp.gate_proj", linear_weight_storage_type, config.hidden_size, config.intermediate_size, false);
+        block.mlp.up = load_linear(*weights->store, source, prefix + ".mlp.up_proj", linear_weight_storage_type, config.hidden_size, config.intermediate_size, false);
+        block.mlp.down = load_linear(*weights->store, source, prefix + ".mlp.down_proj", linear_weight_storage_type, config.intermediate_size, config.hidden_size, false);
+        block.attn_scale = source.require_f32(prefix + ".self_attn_layer_scale.scale", {config.hidden_size});
+        block.mlp_scale = source.require_f32(prefix + ".mlp_layer_scale.scale", {config.hidden_size});
         weights->transformer_layers.push_back(std::move(block));
     }
-    weights->transformer_norm = load_rms_norm(*source, "decoder.pre_transformer.norm", config.hidden_size, config.rms_norm_eps);
+    weights->transformer_norm = load_rms_norm(source, "decoder.pre_transformer.norm", config.hidden_size, config.rms_norm_eps);
     weights->transformer_output_proj = load_linear(
         *weights->store,
-        *source,
+        source,
         "decoder.pre_transformer.output_proj",
         linear_weight_storage_type,
         config.hidden_size,
@@ -423,7 +423,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> load_weights(
         UpsampleStageWeights stage;
         stage.upconv = load_conv_transpose(
             *weights->store,
-            *source,
+            source,
             prefix + ".0.conv",
             conv_weight_storage_type,
             config.latent_dim,
@@ -432,7 +432,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> load_weights(
             config.upsampling_ratios[i]);
         stage.convnext.dwconv = load_conv(
             *weights->store,
-            *source,
+            source,
             prefix + ".1.dwconv.conv",
             conv_weight_storage_type,
             config.latent_dim,
@@ -441,24 +441,24 @@ std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> load_weights(
             1,
             1,
             config.latent_dim);
-        stage.convnext.norm = load_layer_norm(*source, prefix + ".1.norm", config.latent_dim);
-        stage.convnext.pwconv1 = load_linear(*weights->store, *source, prefix + ".1.pwconv1", linear_weight_storage_type, config.latent_dim, config.latent_dim * 4);
-        stage.convnext.pwconv2 = load_linear(*weights->store, *source, prefix + ".1.pwconv2", linear_weight_storage_type, config.latent_dim * 4, config.latent_dim);
-        stage.convnext.gamma = source->require_f32(prefix + ".1.gamma", {config.latent_dim});
+        stage.convnext.norm = load_layer_norm(source, prefix + ".1.norm", config.latent_dim);
+        stage.convnext.pwconv1 = load_linear(*weights->store, source, prefix + ".1.pwconv1", linear_weight_storage_type, config.latent_dim, config.latent_dim * 4);
+        stage.convnext.pwconv2 = load_linear(*weights->store, source, prefix + ".1.pwconv2", linear_weight_storage_type, config.latent_dim * 4, config.latent_dim);
+        stage.convnext.gamma = source.require_f32(prefix + ".1.gamma", {config.latent_dim});
         weights->upsample_stages.push_back(std::move(stage));
     }
 
-    weights->decoder_input_conv = load_conv(*weights->store, *source, "decoder.decoder.0.conv", conv_weight_storage_type, config.latent_dim, config.decoder_dim, 7);
+    weights->decoder_input_conv = load_conv(*weights->store, source, "decoder.decoder.0.conv", conv_weight_storage_type, config.latent_dim, config.decoder_dim, 7);
     int64_t channels = config.decoder_dim;
     for (size_t i = 0; i < config.upsample_rates.size(); ++i) {
         const std::string prefix = "decoder.decoder." + std::to_string(i + 1) + ".block";
         const int64_t out_channels = channels / 2;
         DecoderBlockWeights block;
-        block.input_alpha = source->require_f32(prefix + ".0.alpha", {channels});
-        block.input_beta = source->require_f32(prefix + ".0.beta", {channels});
+        block.input_alpha = source.require_f32(prefix + ".0.alpha", {channels});
+        block.input_beta = source.require_f32(prefix + ".0.beta", {channels});
         block.upconv = load_conv_transpose(
             *weights->store,
-            *source,
+            source,
             prefix + ".1.conv",
             conv_weight_storage_type,
             channels,
@@ -468,20 +468,20 @@ std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> load_weights(
         for (int unit_index = 0; unit_index < 3; ++unit_index) {
             const std::string unit = prefix + "." + std::to_string(unit_index + 2);
             ResidualUnitWeights residual;
-            residual.act1_alpha = source->require_f32(unit + ".act1.alpha", {out_channels});
-            residual.act1_beta = source->require_f32(unit + ".act1.beta", {out_channels});
-            residual.conv1 = load_conv(*weights->store, *source, unit + ".conv1.conv", conv_weight_storage_type, out_channels, out_channels, 7, 1, unit_index == 0 ? 1 : unit_index == 1 ? 3 : 9);
-            residual.act2_alpha = source->require_f32(unit + ".act2.alpha", {out_channels});
-            residual.act2_beta = source->require_f32(unit + ".act2.beta", {out_channels});
-            residual.conv2 = load_conv(*weights->store, *source, unit + ".conv2.conv", conv_weight_storage_type, out_channels, out_channels, 1);
+            residual.act1_alpha = source.require_f32(unit + ".act1.alpha", {out_channels});
+            residual.act1_beta = source.require_f32(unit + ".act1.beta", {out_channels});
+            residual.conv1 = load_conv(*weights->store, source, unit + ".conv1.conv", conv_weight_storage_type, out_channels, out_channels, 7, 1, unit_index == 0 ? 1 : unit_index == 1 ? 3 : 9);
+            residual.act2_alpha = source.require_f32(unit + ".act2.alpha", {out_channels});
+            residual.act2_beta = source.require_f32(unit + ".act2.beta", {out_channels});
+            residual.conv2 = load_conv(*weights->store, source, unit + ".conv2.conv", conv_weight_storage_type, out_channels, out_channels, 1);
             block.residual_units.push_back(std::move(residual));
         }
         weights->decoder_blocks.push_back(std::move(block));
         channels = out_channels;
     }
-    weights->output_alpha = source->require_f32("decoder.decoder.5.alpha", {channels});
-    weights->output_beta = source->require_f32("decoder.decoder.5.beta", {channels});
-    weights->output_conv = load_conv(*weights->store, *source, "decoder.decoder.6.conv", conv_weight_storage_type, channels, 1, 7);
+    weights->output_alpha = source.require_f32("decoder.decoder.5.alpha", {channels});
+    weights->output_beta = source.require_f32("decoder.decoder.5.beta", {channels});
+    weights->output_conv = load_conv(*weights->store, source, "decoder.decoder.6.conv", conv_weight_storage_type, channels, 1, 7);
     weights->store->upload();
     return weights;
 }

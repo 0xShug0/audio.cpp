@@ -281,23 +281,23 @@ std::shared_ptr<const Qwen3SpeakerEncoderWeights> load_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets::TensorStorageType conv_weight_storage_type) {
-    auto source = engine::assets::open_tensor_source(assets.paths.model_weights_path);
+    const auto & source = *assets.model_weights;
     auto weights = std::make_shared<Qwen3SpeakerEncoderWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
         "qwen3_tts.speaker_encoder.weights",
         32ull * 1024ull * 1024ull);
-    weights->block0 = load_conv(*weights->store, *source, "blocks.0.conv", conv_weight_storage_type, 512, 128, 5, 1);
+    weights->block0 = load_conv(*weights->store, source, "blocks.0.conv", conv_weight_storage_type, 512, 128, 5, 1);
     for (int64_t block = 1; block <= 3; ++block) {
         SERes2NetWeights layer;
         const int64_t dilation = block + 1;
         const std::string prefix = "blocks." + std::to_string(block);
-        layer.tdnn1 = load_conv(*weights->store, *source, prefix + ".tdnn1.conv", conv_weight_storage_type, 512, 512, 1, 1);
+        layer.tdnn1 = load_conv(*weights->store, source, prefix + ".tdnn1.conv", conv_weight_storage_type, 512, 512, 1, 1);
         for (int64_t i = 0; i < 7; ++i) {
             layer.res2net.push_back(load_conv(
                 *weights->store,
-                *source,
+                source,
                 prefix + ".res2net_block.blocks." + std::to_string(i) + ".conv",
                 conv_weight_storage_type,
                 64,
@@ -305,17 +305,17 @@ std::shared_ptr<const Qwen3SpeakerEncoderWeights> load_weights(
                 3,
                 dilation));
         }
-        layer.tdnn2 = load_conv(*weights->store, *source, prefix + ".tdnn2.conv", conv_weight_storage_type, 512, 512, 1, 1);
-        layer.se_conv1 = load_conv(*weights->store, *source, prefix + ".se_block.conv1", conv_weight_storage_type, 128, 512, 1, 1);
-        layer.se_conv2 = load_conv(*weights->store, *source, prefix + ".se_block.conv2", conv_weight_storage_type, 512, 128, 1, 1);
+        layer.tdnn2 = load_conv(*weights->store, source, prefix + ".tdnn2.conv", conv_weight_storage_type, 512, 512, 1, 1);
+        layer.se_conv1 = load_conv(*weights->store, source, prefix + ".se_block.conv1", conv_weight_storage_type, 128, 512, 1, 1);
+        layer.se_conv2 = load_conv(*weights->store, source, prefix + ".se_block.conv2", conv_weight_storage_type, 512, 128, 1, 1);
         layer.dilation = dilation;
         weights->blocks.push_back(std::move(layer));
     }
-    weights->mfa = load_conv(*weights->store, *source, "mfa.conv", conv_weight_storage_type, 1536, 1536, 1, 1);
-    weights->asp_tdnn = load_conv(*weights->store, *source, "asp.tdnn.conv", conv_weight_storage_type, 128, 4608, 1, 1);
-    weights->asp_conv = load_conv(*weights->store, *source, "asp.conv", conv_weight_storage_type, 1536, 128, 1, 1);
+    weights->mfa = load_conv(*weights->store, source, "mfa.conv", conv_weight_storage_type, 1536, 1536, 1, 1);
+    weights->asp_tdnn = load_conv(*weights->store, source, "asp.tdnn.conv", conv_weight_storage_type, 128, 4608, 1, 1);
+    weights->asp_conv = load_conv(*weights->store, source, "asp.conv", conv_weight_storage_type, 1536, 128, 1, 1);
     weights->embedding_dim = assets.config.speaker_encoder.embedding_dim;
-    weights->fc = load_conv(*weights->store, *source, "fc", conv_weight_storage_type, weights->embedding_dim, 3072, 1, 1);
+    weights->fc = load_conv(*weights->store, source, "fc", conv_weight_storage_type, weights->embedding_dim, 3072, 1, 1);
     weights->store->upload();
     return weights;
 }

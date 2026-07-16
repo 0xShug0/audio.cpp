@@ -984,7 +984,7 @@ HDecOutputs build_hdec_layer(
 }
 
 HTDemucsWeights load_weights(
-    const DemucsSubmodelAssets & assets,
+    const HTDemucsSubmodelAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets_ns::TensorStorageType storage_type) {
@@ -1384,7 +1384,7 @@ public:
     };
 
     HTDemucsGraph(
-        std::shared_ptr<const DemucsSubmodelAssets> assets,
+        std::shared_ptr<const HTDemucsSubmodelAssets> assets,
         core::ExecutionContext & execution_context,
         assets_ns::TensorStorageType storage_type)
         : FixedShapeGraph(execution_context.backend(), execution_context.config().threads),
@@ -1654,7 +1654,7 @@ public:
 };
 
 HTDemucsPipeline::HTDemucsPipeline(
-    std::shared_ptr<const DemucsSubmodelAssets> assets,
+    std::shared_ptr<const HTDemucsSubmodelAssets> assets,
     core::ExecutionContext & execution_context,
     assets::TensorStorageType weight_storage_type)
     : assets_(std::move(assets)) {

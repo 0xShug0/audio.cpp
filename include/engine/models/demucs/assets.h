@@ -4,27 +4,15 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/model.h"
 
-#include <filesystem>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
 namespace engine::models::demucs {
 
-struct DemucsConvertedModelRef {
-    std::string signature;
-    std::string checkpoint_file;
-    std::filesystem::path output_dir;
-    int64_t tensor_count = 0;
-};
-
-struct DemucsBagManifest {
+struct HTDemucsManifest {
     std::string model_type;
     std::string name;
-    std::vector<DemucsConvertedModelRef> models;
-    std::vector<std::vector<float>> weights;
-    std::optional<float> segment_override_seconds = std::nullopt;
 };
 
 struct HTDemucsConfig {
@@ -83,22 +71,18 @@ struct HTDemucsConfig {
     int stft_frames = 0;
 };
 
-struct DemucsSubmodelAssets {
-    DemucsConvertedModelRef manifest_entry;
-    assets::ResourceBundle resources;
+struct HTDemucsSubmodelAssets {
     std::shared_ptr<const assets::TensorSource> tensor_source;
     HTDemucsConfig config;
 };
 
-struct DemucsAssets {
-    runtime::ModelMetadata metadata;
-    runtime::CapabilitySet capabilities;
-    DemucsBagManifest manifest;
-    std::vector<std::shared_ptr<const DemucsSubmodelAssets>> submodels;
+struct HTDemucsAssets {
+    assets::ResourceBundle resources;
+    HTDemucsManifest manifest;
+    std::vector<std::shared_ptr<const HTDemucsSubmodelAssets>> submodels;
 };
 
 void validate_demucs_weight_storage_type(assets::TensorStorageType storage_type);
-runtime::ModelInspection inspect_htdemucs_model(const runtime::ModelLoadRequest & request);
-std::shared_ptr<const DemucsAssets> load_htdemucs_assets(const runtime::ModelLoadRequest & request);
+std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(const runtime::ModelLoadRequest & request);
 
 }  // namespace engine::models::demucs

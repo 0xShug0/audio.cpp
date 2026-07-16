@@ -10,6 +10,34 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+option(AUDIOCPP_DEPLOYMENT_BUILD
+    "Compile model package specs into the runtime for self-contained deployments"
+    OFF)
+
+# Package layouts remain editable runtime data in normal builds. The converter always
+# carries the source catalog so the conversion binary is portable. Deployment builds
+# additionally compile the catalog into engine_runtime as a fallback for CLI/server.
+file(GLOB AUDIOCPP_MODEL_SPEC_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/model_specs/*.json")
+set(AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES "")
+set(AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES "")
+foreach(AUDIOCPP_MODEL_SPEC_FILE IN LISTS AUDIOCPP_MODEL_SPEC_FILES)
+    get_filename_component(AUDIOCPP_MODEL_SPEC_FAMILY "${AUDIOCPP_MODEL_SPEC_FILE}" NAME_WE)
+    file(READ "${AUDIOCPP_MODEL_SPEC_FILE}" AUDIOCPP_MODEL_SPEC_JSON)
+    string(APPEND AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES
+        "    {\"${AUDIOCPP_MODEL_SPEC_FAMILY}\", R\"AUDIOCPP_SPEC(${AUDIOCPP_MODEL_SPEC_JSON})AUDIOCPP_SPEC\"},\n")
+    if (AUDIOCPP_DEPLOYMENT_BUILD)
+        string(APPEND AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES
+            "    {\"${AUDIOCPP_MODEL_SPEC_FAMILY}\", R\"AUDIOCPP_SPEC(${AUDIOCPP_MODEL_SPEC_JSON})AUDIOCPP_SPEC\"},\n")
+    endif()
+endforeach()
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(GENERATE
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/model_package_specs.inc"
+    CONTENT "${AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES}")
+file(GENERATE
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/gguf_converter_model_specs.inc"
+    CONTENT "${AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES}")
+
 if (NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
@@ -102,6 +130,7 @@ add_compile_options(
 
 add_library(engine_runtime STATIC
     src/framework/assets/resource_bundle.cpp
+    src/framework/assets/model_package.cpp
     src/framework/assets/tensor_source.cpp
     src/framework/assets/torch_bin.cpp
     src/framework/core/module.cpp
@@ -150,6 +179,7 @@ add_library(engine_runtime STATIC
     src/framework/modules/hubert_encoder.cpp
     src/framework/modules/wavlm_encoder.cpp
     src/framework/modules/optimizations/fast_conv_modules.cpp
+    src/framework/modules/optimizations/fast_projection_modules.cpp
     src/framework/modules/recurrent_modules.cpp
     src/framework/modules/streaming_conv_modules.cpp
     src/framework/modules/attention/positional_encoding.cpp
@@ -159,6 +189,7 @@ add_library(engine_runtime STATIC
     src/framework/modules/attention/longformer_attention_gpu.cpp
     src/framework/modules/attention/common_relative_attention.cpp
     src/framework/modules/attention/relative_attention.cpp
+    src/framework/modules/attention/scaled_dot_product_attention.cpp
     src/framework/modules/attention/qwen_decoder.cpp
     src/framework/modules/attention/qwen_causal_decoder.cpp
     src/framework/modules/attention/cross_attention.cpp
@@ -201,12 +232,14 @@ add_library(engine_runtime STATIC
     src/framework/sampling/noise.cpp
     src/framework/sampling/torch_random.cpp
     src/models/roformer/assets.cpp
+    src/models/roformer/loader.cpp
     src/models/roformer/runtime.cpp
     src/models/roformer/session.cpp
     src/models/demucs/assets.cpp
     src/models/demucs/frontend.cpp
     src/models/demucs/pipeline.cpp
     src/models/demucs/postprocess.cpp
+    src/models/demucs/loader.cpp
     src/models/demucs/session.cpp
     src/models/omnivoice/assets.cpp
     src/models/omnivoice/tokenizer_text.cpp
@@ -238,6 +271,27 @@ add_library(engine_runtime STATIC
     src/models/miotts/causal_lm.cpp
     src/models/miotts/session.cpp
     src/models/miotts/loader.cpp
+    src/models/moss/moss_tts_local/assets.cpp
+    src/models/moss/moss_tts_local/backbone.cpp
+    src/models/moss/moss_tts_nano/assets.cpp
+    src/models/moss/moss_tts_nano/generator.cpp
+    src/models/moss/moss_tts_nano/global_transformer.cpp
+    src/models/moss/moss_tts_nano/local_frame_decoder.cpp
+    src/models/moss/moss_tts_nano/loader.cpp
+    src/models/moss/moss_tts_nano/prompt_builder.cpp
+    src/models/moss/moss_tts_nano/session.cpp
+    src/models/moss/moss_tts_nano/tokenizer_text.cpp
+    src/models/moss/shared/audio_tokenizer_decoder.cpp
+    src/models/moss/shared/audio_tokenizer_encoder.cpp
+    src/models/moss/shared/audio_tokenizer_config.cpp
+    src/models/moss/shared/audio_tokenizer_quantizer.cpp
+    src/models/moss/shared/sampling.cpp
+    src/models/moss/shared/token_rows.cpp
+    src/models/moss/moss_tts_local/depth_transformer.cpp
+    src/models/moss/moss_tts_local/generator.cpp
+    src/models/moss/moss_tts_local/loader.cpp
+    src/models/moss/moss_tts_local/tokenizer_text.cpp
+    src/models/moss/moss_tts_local/session.cpp
     src/models/voxcpm2/assets.cpp
     src/models/voxcpm2/audiovae.cpp
     src/models/voxcpm2/generator.cpp
@@ -290,6 +344,27 @@ add_library(engine_runtime STATIC
     src/models/higgs_audio_stt/postprocess.cpp
     src/models/higgs_audio_stt/session.cpp
     src/models/higgs_audio_stt/loader.cpp
+    src/models/irodori_tts/assets.cpp
+    src/models/irodori_tts/codec.cpp
+    src/models/irodori_tts/condition_encoder.cpp
+    src/models/irodori_tts/duration.cpp
+    src/models/irodori_tts/loader.cpp
+    src/models/irodori_tts/rf_dit.cpp
+    src/models/irodori_tts/session.cpp
+    src/models/irodori_tts/tokenizer_text.cpp
+    src/models/index_tts2/assets.cpp
+    src/models/index_tts2/audio_features.cpp
+    src/models/index_tts2/gpt.cpp
+    src/models/index_tts2/loader.cpp
+    src/models/index_tts2/qwen_emotion.cpp
+    src/models/index_tts2/request.cpp
+    src/models/index_tts2/s2mel.cpp
+    src/models/index_tts2/semantic_codec.cpp
+    src/models/index_tts2/semantic_encoder.cpp
+    src/models/index_tts2/session.cpp
+    src/models/index_tts2/style_encoder.cpp
+    src/models/index_tts2/tokenizer_text.cpp
+    src/models/index_tts2/vocoder.cpp
     src/models/nemotron_asr/assets.cpp
     src/models/nemotron_asr/frontend.cpp
     src/models/nemotron_asr/encoder.cpp
@@ -354,6 +429,7 @@ add_library(engine_runtime STATIC
     src/models/chatterbox/t3_weights.cpp
     src/models/chatterbox/text_tokenizer.cpp
     src/models/chatterbox/tts.cpp
+    src/models/chatterbox/vc.cpp
     src/models/chatterbox/voice_encoder_impl.cpp
     src/models/qwen3_forced_aligner/processor.cpp
     src/models/qwen3_forced_aligner/session.cpp
@@ -391,6 +467,11 @@ add_library(engine_runtime STATIC
     src/models/stable_audio/sampler.cpp
     src/models/stable_audio/session.cpp
     src/models/stable_audio/t5gemma.cpp
+    src/models/supertonic/assets.cpp
+    src/models/supertonic/loader.cpp
+    src/models/supertonic/runtime.cpp
+    src/models/supertonic/session.cpp
+    src/models/supertonic/tokenizer_text.cpp
     src/models/sortformer_diar/assets.cpp
     src/models/sortformer_diar/frontend.cpp
     src/models/sortformer_diar/graph.cpp
@@ -441,6 +522,7 @@ target_compile_definitions(yaml_vendor PUBLIC
 target_include_directories(engine_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_include_directories(engine_runtime PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 target_include_directories(engine_runtime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/sentencepiece/src
@@ -514,6 +596,15 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_server PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+add_executable(audiocpp_gguf
+    app/gguf/main.cpp
+)
+target_link_libraries(audiocpp_gguf PRIVATE engine_runtime ggml)
+target_include_directories(audiocpp_gguf PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(audiocpp_gguf PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 add_executable(model_perf
     tests/perf/model_perf.cpp
     app/cli/args.cpp
@@ -549,6 +640,42 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+add_executable(moss_tts_local_smoke
+    tests/moss_tts_local/moss_tts_local_smoke.cpp
+)
+
+target_link_libraries(moss_tts_local_smoke PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(codec_dequant_parity
+    tests/moss_tts_local/codec_dequant_parity.cpp
+)
+
+target_link_libraries(codec_dequant_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(codec_dequant_parity PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(codec_decode_parity
+    tests/moss_tts_local/codec_decode_parity.cpp
+)
+
+target_link_libraries(codec_decode_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(codec_decode_parity PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(codec_encode_parity
+    tests/moss_tts_local/codec_encode_parity.cpp
+)
+
+target_link_libraries(codec_encode_parity PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 if (ENGINE_BUILD_WARMBENCH)
     function(add_engine_warmbench target_name source_file)
         add_executable(${target_name}
@@ -564,8 +691,12 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)
+    add_engine_warmbench(index_tts2_warm_bench tests/index_tts2/index_tts2_warm_bench.cpp)
+    add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
+    add_engine_warmbench(moss_tts_nano_warm_bench tests/moss_tts_nano/moss_tts_nano_warm_bench.cpp)
+    add_engine_warmbench(moss_tts_local_warm_bench tests/moss_tts_local/moss_tts_local_warm_bench.cpp)
     add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)
     add_engine_warmbench(omnivoice_warm_bench tests/omnivoice/omnivoice_warm_bench.cpp)
     add_engine_warmbench(pocket_tts_warm_bench tests/pocket_tts/pocket_tts_warm_bench.cpp)
@@ -575,6 +706,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(seed_vc_warm_bench tests/seed_vc/seed_vc_warm_bench.cpp)
     add_engine_warmbench(silero_vad_warm_bench tests/silero_vad/silero_vad_warm_bench.cpp)
     add_engine_warmbench(sortformer_diar_warm_bench tests/sortformer_diar/sortformer_diar_warm_bench.cpp)
+    add_engine_warmbench(supertonic_warm_bench tests/supertonic/supertonic_warm_bench.cpp)
     add_engine_warmbench(vevo2_warm_bench tests/vevo2/vevo2_warm_bench.cpp)
     add_engine_warmbench(vibevoice_asr_warm_bench tests/vibevoice_asr/vibevoice_asr_warm_bench.cpp)
     add_engine_warmbench(voxcpm2_warm_bench tests/voxcpm2/voxcpm2_warm_bench.cpp)
@@ -604,11 +736,28 @@ if (ENGINE_BUILD_TESTS)
         COMMAND sentencepiece_tokenizer1_test
     )
 
+    add_engine_unittest(citrinet_tokenizer_decode_test tests/unittests/test_citrinet_tokenizer_decode.cpp)
+    target_compile_definitions(citrinet_tokenizer_decode_test PRIVATE
+        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+    )
+
+    add_test(
+        NAME citrinet_tokenizer_decode_test
+        COMMAND citrinet_tokenizer_decode_test
+    )
+
     add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
 
     add_test(
         NAME audio_dsp_test
         COMMAND audio_dsp_test
+    )
+
+    add_engine_unittest(wav_reader_test tests/unittests/test_wav_reader.cpp)
+
+    add_test(
+        NAME wav_reader_test
+        COMMAND wav_reader_test
     )
 
     add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
@@ -696,11 +845,44 @@ if (ENGINE_BUILD_TESTS)
         COMMAND conv_transpose_fast_path_test
     )
 
+    add_engine_unittest(supertonic_vector_convnext_exp_test tests/unittests/test_supertonic_vector_convnext_exp.cpp)
+
+    add_test(
+        NAME supertonic_vector_convnext_exp_test
+        COMMAND supertonic_vector_convnext_exp_test
+    )
+
     add_engine_unittest(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
 
     add_test(
         NAME depthwise_conv1d_lowering_test
         COMMAND depthwise_conv1d_lowering_test
+    )
+
+    add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
+    target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME gguf_tensor_source_test
+        COMMAND gguf_tensor_source_test
+    )
+
+    add_engine_unittest(scaled_dot_product_attention_test tests/unittests/test_scaled_dot_product_attention.cpp)
+
+    add_test(
+        NAME scaled_dot_product_attention_test
+        COMMAND scaled_dot_product_attention_test
+    )
+
+    add_engine_unittest(asr_standalone_gguf_test tests/unittests/test_asr_standalone_gguf.cpp)
+    target_include_directories(asr_standalone_gguf_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+    target_compile_definitions(asr_standalone_gguf_test PRIVATE
+        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+    )
+
+    add_test(
+        NAME asr_standalone_gguf_test
+        COMMAND asr_standalone_gguf_test
     )
 
     add_executable(server_multipart_test

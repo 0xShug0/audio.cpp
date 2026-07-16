@@ -1295,9 +1295,9 @@
       ]
     },
     {
-      "id": "moss_tts_voice_clone_long",
-      "coverage": "MOSS TTS voice clone, text/audio token generation, codec decode",
-      "family": "moss_tts",
+      "id": "moss_tts_nano_voice_clone_long",
+      "coverage": "MOSS-TTS-Nano voice clone, text/audio token generation, MOSS-Audio-Tokenizer-Nano decode",
+      "family": "moss_tts_nano",
       "model": "models/MOSS-TTS-Nano-100M",
       "task": "tts",
       "mode": "offline",
@@ -1309,10 +1309,180 @@
           "id": "long",
           "text": "The studio lights clicked on before the first phrase began, and the cloned voice should stay steady through this medium length request.",
           "voice_ref": "resources/a.wav",
-          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
           "seed": 1234,
-          "max_tokens": 120,
+          "max_tokens": 120
+        }
+      ]
+    },
+    {
+      "id": "moss_tts_nano_sampled_multi_request",
+      "coverage": "MOSS-TTS-Nano seeded sampled voice clone across varied request lengths in one session",
+      "family": "moss_tts_nano",
+      "model": "models/MOSS-TTS-Nano-100M",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "sampled_medium",
+          "text": "This sampled Nano request exercises temperature, top-k, top-p, and repetition penalty while keeping the cloned speaker steady.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1234,
+          "max_tokens": 180,
+          "do_sample": true,
+          "temperature": 1.7,
+          "top_p": 0.8,
+          "top_k": 25
+        },
+        {
+          "id": "sampled_longer",
+          "text": "The second sampled request is longer, because the path test should cover a realistic session where the same reference voice is reused after the first request and the generator must keep the speaker identity stable while producing another complete sentence with different wording.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1234,
+          "max_tokens": 220,
+          "do_sample": true,
+          "temperature": 1.7,
+          "top_p": 0.8,
+          "top_k": 25
+        }
+      ]
+    },
+    {
+      "id": "moss_tts_nano_text_chunk_mode",
+      "coverage": "MOSS-TTS-Nano framework text chunk mode override through request options",
+      "family": "moss_tts_nano",
+      "model": "models/MOSS-TTS-Nano-100M",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "endline_chunks",
+          "text": "The first Nano chunk should stay clear and natural.\nThe second Nano chunk should keep the same cloned voice.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1234,
+          "max_tokens": 80,
+          "text_chunk_size": 64,
+          "options": {
+            "text_chunk_mode": "endline"
+          }
+        }
+      ]
+    },
+    {
+      "id": "moss_tts_nano_continuation_text_chunk",
+      "coverage": "MOSS-TTS-Nano continuation mode without reference audio, including framework text chunking",
+      "family": "moss_tts_nano",
+      "model": "models/MOSS-TTS-Nano-100M",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "continuation_chunked",
+          "text": "The first Nano continuation chunk should be generated without a reference voice.\nThe second Nano continuation chunk should also be generated without a reference voice.",
+          "seed": 1234,
+          "max_tokens": 80,
+          "text_chunk_size": 64,
+          "options": {
+            "text_chunk_mode": "endline"
+          }
+        }
+      ]
+    },
+    {
+      "id": "moss_tts_local_text_only_greedy",
+      "coverage": "MOSS-TTS-Local text-only generation: Qwen3 backbone prefill, GPT-2 depth transformer, binary audio-end gate, 12-codebook sampling, MOSS-Audio-Tokenizer-v2 decode to 48 kHz stereo",
+      "family": "moss_tts_local",
+      "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "text_only_greedy",
+          "text": "The studio lights clicked on before the first phrase began, and the narrator kept a steady, natural tone.",
+          "seed": 1234,
           "do_sample": false
+        }
+      ]
+    },
+    {
+      "id": "moss_tts_local_voice_clone_sampled",
+      "coverage": "MOSS-TTS-Local voice clone: reference resample and loudness normalization, MOSS-Audio-Tokenizer-v2 encode to codes, clone-prefix build, generation, codec decode",
+      "family": "moss_tts_local",
+      "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "clone_sampled",
+          "text": "The cloned voice should stay steady and clear through this medium length request.",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "seed": 1234
+        }
+      ]
+    },
+    {
+      "id": "moss_tts_local_sampled_language",
+      "coverage": "MOSS-TTS-Local default sampled generation path with an explicit language template slot",
+      "family": "moss_tts_local",
+      "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "sampled_en",
+          "text": "This sampled request exercises temperature, top-k, top-p, and repetition penalty together.",
+          "language": "English",
+          "seed": 1234
+        }
+      ]
+    },
+    {
+      "id": "moss_tts_local_long_lived_session",
+      "coverage": "MOSS-TTS-Local long-lived session: long text-only, short clone, then long clone requests in one session to exercise backbone/depth/codec graph reuse, lazy encoder build, and stable memory after warmup",
+      "family": "moss_tts_local",
+      "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "long_text_only",
+          "text": "The harbor clerk opened the tall windows and began a careful morning report about the tide, the lantern, and the ships crossing the horizon.",
+          "seed": 1234
+        },
+        {
+          "id": "short_clone",
+          "text": "The shorter line should keep the same cloned speaker.",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "seed": 1234
+        },
+        {
+          "id": "long_clone_again",
+          "text": "After the short request, the same cloned voice describes the quiet station again in a longer passage so graph reuse and memory behavior stay visible.",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "seed": 1234
         }
       ]
     },
@@ -1353,6 +1523,29 @@
         {
           "id": "sample",
           "audio": "resources/sample.wav",
+          "language": "English",
+          "text": "Transcribe the speech exactly. Preserve numeric values."
+        }
+      ]
+    },
+    {
+      "id": "qwen3_asr_with_forced_aligner_words",
+      "coverage": "Qwen3 ASR integrated transcript decode followed by forced aligner word timestamps",
+      "family": "qwen3_asr",
+      "model": "models/Qwen3-ASR-0.6B",
+      "task": "asr",
+      "mode": "offline",
+      "session_options": {
+        "qwen3_asr.forced_aligner_model_path": "models/Qwen3-ForcedAligner-0.6B"
+      },
+      "outputs": [
+        "text",
+        "words"
+      ],
+      "requests": [
+        {
+          "id": "sample_words",
+          "audio": "resources/sample_16k.wav",
           "language": "English",
           "text": "Transcribe the speech exactly. Preserve numeric values."
         }
@@ -1786,6 +1979,52 @@
         {
           "id": "vocal",
           "audio": "resources/mel_roformer_test_15s.wav"
+        }
+      ]
+    },
+    {
+      "id": "index_tts2_chinese_voice_clone",
+      "coverage": "IndexTTS2 Chinese voice clone path with CJK tokenizer normalization",
+      "family": "index_tts2",
+      "model": "models/IndexTTS-2",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "chinese_voice_clone",
+          "text": "这个呀，就是我们精心制作准备的纪念品，大家可以看到这个色泽和这个材质啊，哎呀多么的光彩照人。",
+          "language": "zh",
+          "voice_ref": "resources/index_tts2/official_examples/voice_03.wav",
+          "seed": 1245
+        }
+      ]
+    },
+    {
+      "id": "index_tts2_chinese_emotion_text",
+      "coverage": "IndexTTS2 Chinese voice clone with Chinese emotion-text conditioning",
+      "family": "index_tts2",
+      "model": "models/IndexTTS-2",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "chinese_emotion_text",
+          "text": "快躲起来！是他要来了！他要来抓我们了！",
+          "language": "zh",
+          "voice_ref": "resources/index_tts2/official_examples/voice_12.wav",
+          "options": {
+            "use_emotion_text": true,
+            "emotion_text": "你吓死我了！你是鬼吗？",
+            "emotion_alpha": 0.6,
+            "use_random_emotion": false
+          },
+          "seed": 1246
         }
       ]
     }

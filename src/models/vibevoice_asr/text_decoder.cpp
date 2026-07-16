@@ -201,7 +201,7 @@ runtime::TransformerKVState empty_decoder_state(size_t layers) {
 }  // namespace
 
 VibeVoiceDecoderWeights load_vibevoice_decoder_weights(
-    const VibeVoiceAssets & assets,
+    const VibeVoiceASRAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
@@ -824,7 +824,7 @@ VibeVoiceDecoderCachedState::VibeVoiceDecoderCachedState(VibeVoiceDecoderCachedS
 VibeVoiceDecoderCachedState & VibeVoiceDecoderCachedState::operator=(VibeVoiceDecoderCachedState &&) noexcept = default;
 
 VibeVoiceDecoderWeightsRuntime::VibeVoiceDecoderWeightsRuntime(
-    std::shared_ptr<const VibeVoiceAssets> assets,
+    std::shared_ptr<const VibeVoiceASRAssets> assets,
     core::BackendType backend_type,
     int device,
     int threads,
@@ -872,7 +872,7 @@ VibeVoiceDecoderWeightsRuntime::~VibeVoiceDecoderWeightsRuntime() {
     }
 }
 
-const VibeVoiceAssets & VibeVoiceDecoderWeightsRuntime::assets() const noexcept {
+const VibeVoiceASRAssets & VibeVoiceDecoderWeightsRuntime::assets() const noexcept {
     return *assets_;
 }
 

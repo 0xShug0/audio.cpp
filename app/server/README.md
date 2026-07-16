@@ -48,6 +48,7 @@ cat > server.json <<'JSON'
       "id": "qwen3-asr",
       "family": "qwen3_asr",
       "path": "/path/to/models/Qwen3-ASR-0.6B",
+      "model_spec_override": "/optional/path/to/qwen3_asr.json",
       "task": "asr",
       "mode": "offline"
     }
@@ -57,6 +58,14 @@ JSON
 ```
 
 The server resolves model paths from this JSON exactly as written, so use paths that match your machine. Request-time audio paths are also user-provided paths.
+
+Package specs embedded in a GGUF are used automatically. Builds configured with
+`AUDIOCPP_DEPLOYMENT_BUILD=ON` also carry a compiled fallback catalog; normal builds
+discover `model_specs/<family>.json` on disk. `model_spec_override` explicitly replaces
+that resolution order. It accepts either one JSON file or a directory containing `<family>.json`.
+Set it at the top level to provide a server-wide override, or inside one model entry;
+the per-model value takes precedence. The equivalent command-line option is
+`--model-spec-override <json-or-directory>`.
 
 Set top-level `"backend"` to `"cuda"`, `"cpu"`, `"vulkan"`, or `"metal"`. CUDA is the optimized path for audio.cpp; CPU, Vulkan, and Metal are intended for portability and testing when the binary is built with that backend, but performance and model coverage may be lower. The server prints this expectation-setting message when a non-CUDA backend is selected.
 
@@ -212,7 +221,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
   -F file=@/path/to/input.wav
 ```
 
-`file` and `model` are required; `language` is optional. The uploaded bytes are spooled to a temporary file for the duration of the request and removed afterward.
+`file` and `model` are required; `language` is optional. Uploaded WAV bytes are decoded in memory and are not written to a temporary file.
 
 For streaming-capable ASR models configured with `mode: "streaming"`, pass `stream=true` to receive OpenAI-style transcription SSE:
 
@@ -228,7 +237,7 @@ The stream emits `transcript.text.delta` events, one final `transcript.text.done
 
 ### `GET /v1/audio/voices?model=<id>`
 
-Lists the cached voice ids and configured server voice preset names available for a TTS model, so a client can populate a voice picker instead of guessing generic names. For families that keep voice presets under `model_root/embeddings/*.safetensors` (`pocket_tts` today), this returns those ids too; for other families with no configured presets, or an unknown/missing `model` parameter, it returns an empty list.
+Lists the cached voice ids and configured server voice preset names available for a TTS model, so a client can populate a voice picker instead of guessing generic names. For families that keep voice presets under `model_root/embeddings/*.safetensors` (`pocket_tts` today), this returns those ids too. If `model` is omitted and the server has exactly one configured model, that model is used; if multiple models are configured, omit `model` only when an empty list is acceptable.
 
 ```bash
 curl 'http://127.0.0.1:8080/v1/audio/voices?model=pocket-tts'

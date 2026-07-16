@@ -541,21 +541,20 @@ void bind_component_weights(
 }  // namespace
 
 std::shared_ptr<const MioCodecWeights> load_miocodec_weights(
-    const std::filesystem::path & checkpoint_path,
+    const engine::assets::TensorSource & source,
     engine::core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
     const MioCodecConfig & config,
     engine::assets::TensorStorageType storage_type) {
-    const auto source = engine::assets::open_tensor_source(checkpoint_path);
     auto weights = std::make_shared<MioCodecWeights>();
-    weights->source_path = source->source_path();
+    weights->source_path = source.source_path();
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
         execution_context.backend(),
         execution_context.backend_type(),
         "miocodec.weights",
         weight_context_bytes);
 
-    const auto tensors = source->tensors();
+    const auto tensors = source.tensors();
     weights->tensors.reserve(tensors.size());
     for (const auto & tensor : tensors) {
         weights->parameter_count += num_elements(tensor.shape);
@@ -565,16 +564,16 @@ std::shared_ptr<const MioCodecWeights> load_miocodec_weights(
         weights->tensors.emplace(
             tensor.name,
             weights->store->load_tensor(
-                *source,
+                source,
                 tensor.name,
                 storage_type_for_miocodec_tensor(tensor.name, storage_type),
                 tensor.shape));
         ++weights->loaded_tensor_count;
     }
-    bind_component_weights(*weights, *source, storage_type);
-    weights->content_token_embeddings = build_content_token_embedding_table(*source, config);
+    bind_component_weights(*weights, source, storage_type);
+    weights->content_token_embeddings = build_content_token_embedding_table(source, config);
     weights->store->upload();
-    source->release_storage();
+    source.release_storage();
     return weights;
 }
 

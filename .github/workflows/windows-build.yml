@@ -5,10 +5,12 @@ on:
     branches:
       - ci/**
       - main
+      - dev
       - release-0.2
   pull_request:
     branches:
       - main
+      - dev
       - release-0.2
   workflow_dispatch:
 
@@ -34,3 +36,10 @@ jobs:
           .\scripts\build_windows.ps1 `
             -Preset windows-cpu-release `
             -Target audiocpp_server
+
+      - name: Build audiocpp_gguf
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1 `
+            -Preset windows-cpu-release `
+            -Target audiocpp_gguf

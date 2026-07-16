@@ -1,0 +1,52 @@
+{
+  "family": "omnivoice",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "audio_tokenizer_config": "model:audio_tokenizer/config.json",
+        "audio_tokenizer_preprocessor": "model:audio_tokenizer/preprocessor_config.json"
+      },
+      "optional_files": {
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        },
+        "audio_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "audio_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "audio_tokenizer_config": "model:audio_tokenizer/config.json",
+        "audio_tokenizer_preprocessor": "model:audio_tokenizer/preprocessor_config.json"
+      },
+      "optional_files": {
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors",
+        "audio_tokenizer_weights": "model:audio_tokenizer/model.safetensors"
+      }
+    }
+  ]
+}

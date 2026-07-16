@@ -23,7 +23,7 @@ public:
     HviskeASRSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const HviskeAssets> assets);
+        std::shared_ptr<const HviskeASRAssets> assets);
     ~HviskeASRSession() override;
 
     std::string family() const override;
@@ -45,7 +45,7 @@ private:
     HviskeDecodingOptions decoding_options_for_request(const runtime::TaskRequest & request) const;
 
     runtime::TaskSpec task_;
-    std::shared_ptr<const HviskeAssets> assets_;
+    std::shared_ptr<const HviskeASRAssets> assets_;
     std::shared_ptr<const HviskeWeights> weights_;
     size_t weight_context_bytes_ = 512ull * 1024ull * 1024ull;
     size_t encoder_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;

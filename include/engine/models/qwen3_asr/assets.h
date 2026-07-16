@@ -1,9 +1,12 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::assets {
@@ -71,27 +74,15 @@ struct Qwen3ASRConfig {
     std::vector<std::string> supported_languages;
 };
 
-struct Qwen3ASRAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path generation_config_path;
-    std::filesystem::path preprocessor_config_path;
-    std::filesystem::path processor_config_path;
-    std::filesystem::path chat_template_path;
-    std::filesystem::path model_weights_path;
-    std::filesystem::path tokenizer_config_path;
-    std::filesystem::path tokenizer_vocab_path;
-    std::filesystem::path tokenizer_merges_path;
-    std::filesystem::path tokenizer_json_path;
-};
-
 struct Qwen3ASRAssets {
-    Qwen3ASRAssetPaths paths;
+    assets::ResourceBundle resources;
     Qwen3ASRConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
 };
 
-Qwen3ASRAssetPaths resolve_qwen3_asr_assets(const std::filesystem::path & model_path);
 std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(
+    const std::filesystem::path & model_path,
+    std::string_view package_family);
 
 }  // namespace engine::models::qwen3_asr

@@ -32,45 +32,6 @@ assets::TensorStorageType option_weight_type(
     return storage_type;
 }
 
-int64_t checked_positive(int64_t value, const char * name) {
-    if (value <= 0) {
-        throw std::runtime_error(std::string("RoFormer expected positive ") + name);
-    }
-    return value;
-}
-
-class RoformerLoader final : public runtime::IVoiceModelLoader {
-public:
-    explicit RoformerLoader(RoformerFamily family) : family_(family) {}
-
-    std::string family() const override {
-        return family_name(family_);
-    }
-
-    bool can_load(const runtime::ModelLoadRequest & request) const override {
-        if (request.family_hint.has_value() && *request.family_hint != family()) {
-            return false;
-        }
-        try {
-            (void) inspect_roformer_model(request, family_);
-            return true;
-        } catch (...) {
-            return false;
-        }
-    }
-
-    runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        return inspect_roformer_model(request, family_);
-    }
-
-    std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_roformer_model(request, family_);
-    }
-
-private:
-    RoformerFamily family_;
-};
-
 runtime::AudioBuffer derive_instrumental(
     const runtime::AudioBuffer & mixture,
     const runtime::AudioBuffer & vocals) {
@@ -88,33 +49,6 @@ runtime::AudioBuffer derive_instrumental(
 }
 
 }  // namespace
-
-RoformerLoadedModel::RoformerLoadedModel(std::shared_ptr<const RoformerAssets> assets)
-    : assets_(std::move(assets)) {
-    if (assets_ == nullptr) {
-        throw std::runtime_error("RoFormer loaded model requires assets");
-    }
-}
-
-const runtime::ModelMetadata & RoformerLoadedModel::metadata() const noexcept {
-    return assets_->metadata;
-}
-
-const runtime::CapabilitySet & RoformerLoadedModel::capabilities() const noexcept {
-    return assets_->capabilities;
-}
-
-std::unique_ptr<runtime::IVoiceTaskSession> RoformerLoadedModel::create_task_session(
-    const runtime::TaskSpec & task,
-    const runtime::SessionOptions & options) const {
-    return std::make_unique<RoformerSession>(task, options, assets_);
-}
-
-std::unique_ptr<runtime::ILoadedVoiceModel> load_roformer_model(
-    const runtime::ModelLoadRequest & request,
-    RoformerFamily family) {
-    return std::make_unique<RoformerLoadedModel>(load_roformer_assets(request, family));
-}
 
 RoformerSession::RoformerSession(
     const runtime::TaskSpec & task,
@@ -138,12 +72,18 @@ RoformerSession::RoformerSession(
             : assets::TensorStorageType::Native;
     weight_storage_type_ = option_weight_type(
         RuntimeSessionBase::options(),
-        assets_->metadata.family + ".weight_type",
-        option_weight_type(RuntimeSessionBase::options(), "roformer.weight_type", default_weight_storage));
+        std::string(kMelBandRoformerFamily) + ".weight_type",
+        default_weight_storage);
     runtime_ = std::make_unique<RoformerRuntime>(assets_, execution_context(), weight_storage_type_);
     const auto & config = runtime_->config();
-    chunk_size_ = checked_positive(config.chunk_size, "chunk_size");
-    const int64_t overlap = checked_positive(config.inference_num_overlap, "num_overlap");
+    if (config.chunk_size <= 0) {
+        throw std::runtime_error("RoFormer config chunk_size must be positive");
+    }
+    if (config.inference_num_overlap <= 0) {
+        throw std::runtime_error("RoFormer config num_overlap must be positive");
+    }
+    chunk_size_ = config.chunk_size;
+    const int64_t overlap = config.inference_num_overlap;
     step_ = chunk_size_ / overlap;
     fade_size_ = chunk_size_ / 10;
     border_ = chunk_size_ - step_;
@@ -158,7 +98,7 @@ RoformerSession::RoformerSession(
 RoformerSession::~RoformerSession() = default;
 
 std::string RoformerSession::family() const {
-    return assets_->metadata.family;
+    return std::string(kMelBandRoformerFamily);
 }
 
 runtime::VoiceTaskKind RoformerSession::task_kind() const {
@@ -179,10 +119,7 @@ void RoformerSession::prepare(const runtime::SessionPreparationRequest & request
             std::to_string(assets_->config.sample_rate) + ", got " +
             std::to_string(request.audio->sample_rate));
     }
-    const bool mono_compatible =
-        assets_->config.family == RoformerFamily::MelBandRoformer &&
-        assets_->config.channels == 2 &&
-        request.audio->channels == 1;
+    const bool mono_compatible = assets_->config.channels == 2 && request.audio->channels == 1;
     if (request.audio->channels != assets_->config.channels && !mono_compatible) {
         throw std::runtime_error(
             "RoFormer prepare() channel mismatch: expected " +
@@ -201,10 +138,7 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
 
     const auto & config = runtime_->config();
     const auto & request_audio = *request.audio_input;
-    const bool original_mono =
-        config.family == RoformerFamily::MelBandRoformer &&
-        config.channels == 2 &&
-        request_audio.channels == 1;
+    const bool original_mono = config.channels == 2 && request_audio.channels == 1;
     if (request_audio.sample_rate != config.sample_rate ||
         (request_audio.channels != config.channels && !original_mono)) {
         throw std::runtime_error("RoFormer run() audio_input does not match prepared audio contract");
@@ -340,10 +274,6 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
     engine::debug::timing_log_scalar("mel_band_roformer.session.assemble_ms", engine::debug::elapsed_ms(assemble_start));
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(total_start));
     return result_task;
-}
-
-std::shared_ptr<runtime::IVoiceModelLoader> make_mel_loader() {
-    return std::make_shared<RoformerLoader>(RoformerFamily::MelBandRoformer);
 }
 
 }  // namespace engine::models::roformer

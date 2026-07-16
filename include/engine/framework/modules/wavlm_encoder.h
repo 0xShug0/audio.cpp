@@ -67,6 +67,10 @@ public:
         const std::filesystem::path & checkpoint_path,
         core::BackendConfig backend,
         WavlmEncoderConfig config = {});
+    static WavlmEncoderComponent load_from_tensor_source(
+        const assets::TensorSource & source,
+        core::BackendConfig backend,
+        WavlmEncoderConfig config = {});
 
     WavlmEncoderComponent() = default;
     WavlmEncoderComponent(
@@ -90,6 +94,7 @@ public:
         int64_t batch,
         int64_t samples,
         const std::vector<int64_t> & output_layers) const;
+    void release_runtime_graph();
 
 private:
     struct State;

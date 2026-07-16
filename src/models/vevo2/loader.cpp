@@ -1,40 +1,122 @@
 #include "engine/models/vevo2/loader.h"
 
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/assets/model_package.h"
 #include "engine/models/vevo2/assets.h"
 #include "engine/models/vevo2/session.h"
 
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
 namespace engine::models::vevo2 {
 namespace {
 
-bool has_vevo2_assets(const std::filesystem::path & root) {
-    return engine::io::is_existing_file(root / "tokenizer/contentstyle_fvq16384_12.5hz/model.safetensors") &&
-        engine::io::is_existing_file(root / "tokenizer/prosody_fvq512_6.25hz/model.safetensors") &&
-        engine::io::is_existing_file(root / "contentstyle_modeling/posttrained/model.safetensors") &&
-        engine::io::is_existing_file(root / "acoustic_modeling/fm_emilia101k_singnet7k_repa/model.safetensors") &&
-        engine::io::is_existing_file(root / "acoustic_modeling/fm_emilia101k_singnet7k_repa/whisper_stats.safetensors") &&
-        engine::io::is_existing_file(root / "vocoder/model.safetensors");
+runtime::ModelMetadata metadata(const Vevo2Assets &) {
+    runtime::ModelMetadata out;
+    out.family = "vevo2";
+    out.variant = "RMSnow/Vevo2";
+    out.description = "Vevo2 singing voice conversion draft loaded from local extracted assets.";
+    return out;
+}
+
+runtime::CapabilitySet capabilities(const Vevo2Assets &) {
+    runtime::CapabilitySet out;
+    out.supported_tasks = {
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::VoiceConversion, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::SpeechToSpeech, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::Svc, {runtime::RunMode::Offline}},
+    };
+    out.languages = {"en", "zh"};
+    out.supports_speaker_reference = true;
+    out.supports_style_condition = true;
+    return out;
+}
+
+runtime::ModelCliInterface cli(const Vevo2Assets &) {
+    runtime::ModelCliInterface out;
+    out.request_options = {
+        {
+            "route",
+            "route",
+            "VeVo2 route: zero_shot_tts, text_to_singing, svs, style_preserved_vc, "
+            "style_preserved_svc, style_converted_vc, style_converted_svc, editing, "
+            "singing_style_conversion, humming_to_singing, or instrument_to_singing",
+        },
+        {"source_audio", "wav", "Source speech or singing audio for conversion/editing routes."},
+        {"target_voice", "wav", "Target timbre reference audio."},
+        {"prosody_ref", "wav", "Prosody or melody reference audio."},
+        {"style_ref", "wav", "Style reference audio."},
+        {"target_text", "text", "Text or lyrics to vocalize."},
+        {"style_ref_text", "text", "Transcript for the style reference when text conditioning is used."},
+        {"use_prosody_code", "true|false", "Enable explicit prosody-code conditioning."},
+        {"predict_target_prosody", "true|false", "Predict target prosody during AR generation."},
+        {"use_pitch_shift", "true|false", "Pitch-align source/prosody/style references to the target voice."},
+        {"source_shift_steps", "n", "Manual pitch-shift semitone steps for source audio."},
+        {"prosody_shift_steps", "n", "Manual pitch-shift semitone steps for prosody reference audio."},
+        {"style_shift_steps", "n", "Manual pitch-shift semitone steps for style reference audio."},
+        {"target_duration_seconds", "seconds", "Target output duration hint for flow matching."},
+        {"reference_duration_seconds", "seconds", "Trim target voice reference duration before conditioning."},
+        {"temperature", "value", "AR sampling temperature."},
+        {"top_k", "n", "AR top-k sampling limit."},
+        {"top_p", "value", "AR nucleus sampling threshold."},
+        {"repetition_penalty", "value", "AR repetition penalty."},
+        {"max_tokens", "n", "Maximum generated AR content/style tokens."},
+        {"num_inference_steps", "n", "Flow-matching denoising steps."},
+        {"seed", "n", "Request seed; omitted means random."},
+        {"fm_noise_file", "path", "Optional flow-matching noise tensor file."},
+    };
+    out.session_options = {
+        {"vevo2.weight_type", "native|f32|f16|bf16|q8_0", "Default matmul weight storage type."},
+        {"vevo2.conv_weight_type", "native|f32|f16", "Default convolution weight storage type."},
+        {"vevo2.ar_weight_type", "native|f32|f16|bf16|q8_0", "AR matmul weight storage type."},
+        {"vevo2.ar_weight_context_mb", "n", "AR weight context size."},
+        {"vevo2.ar_prefill_graph_context_mb", "n", "AR prefill graph context size."},
+        {"vevo2.ar_decode_graph_context_mb", "n", "AR decode graph context size."},
+        {"vevo2.whisper_weight_type", "native|f32|f16|bf16|q8_0", "Whisper matmul weight storage type."},
+        {"vevo2.whisper_conv_weight_type", "native|f32|f16", "Whisper convolution weight storage type."},
+        {"vevo2.whisper_weight_context_mb", "n", "Whisper weight context size."},
+        {"vevo2.whisper_graph_context_mb", "n", "Whisper graph context size."},
+        {"vevo2.tokenizer_weight_type", "native|f32|f16|bf16|q8_0", "Tokenizer matmul weight storage type."},
+        {"vevo2.tokenizer_conv_weight_type", "native|f32|f16", "Tokenizer convolution weight storage type."},
+        {"vevo2.tokenizer_weight_context_mb", "n", "Tokenizer weight context size."},
+        {"vevo2.tokenizer_graph_context_mb", "n", "Tokenizer graph context size."},
+        {"vevo2.fm_weight_type", "native|f32|f16|bf16|q8_0", "Flow-matching matmul weight storage type."},
+        {"vevo2.fm_conv_weight_type", "native|f32|f16", "Flow-matching convolution weight storage type."},
+        {"vevo2.fm_weight_context_mb", "n", "Flow-matching weight context size."},
+        {"vevo2.fm_graph_context_mb", "n", "Flow-matching graph context size."},
+        {"vevo2.vocoder_weight_type", "native|f32|f16|bf16|q8_0", "Vocoder matmul weight storage type."},
+        {"vevo2.vocoder_conv_weight_type", "native|f32|f16", "Vocoder convolution weight storage type."},
+        {"vevo2.vocoder_weight_context_mb", "n", "Vocoder weight context size."},
+        {"vevo2.vocoder_graph_context_mb", "n", "Vocoder graph context size."},
+    };
+    out.load_options = {
+        {"vevo2.whisper_model_path", "dir", "Local Whisper model directory used by VeVo2 feature extraction."},
+    };
+    return out;
 }
 
 class Vevo2LoadedModel final : public runtime::ILoadedVoiceModel {
 public:
-    explicit Vevo2LoadedModel(std::shared_ptr<const Vevo2Assets> assets)
-        : assets_(std::move(assets)) {
+    Vevo2LoadedModel(
+        runtime::ModelMetadata metadata,
+        runtime::CapabilitySet capabilities,
+        std::shared_ptr<const Vevo2Assets> assets)
+        : metadata_(std::move(metadata)),
+          capabilities_(std::move(capabilities)),
+          assets_(std::move(assets)) {
         if (assets_ == nullptr) {
             throw std::runtime_error("Vevo2 loaded model requires assets");
         }
     }
 
     const runtime::ModelMetadata & metadata() const noexcept override {
-        return assets_->metadata;
+        return metadata_;
     }
 
     const runtime::CapabilitySet & capabilities() const noexcept override {
-        return assets_->capabilities;
+        return capabilities_;
     }
 
     std::unique_ptr<runtime::IVoiceTaskSession> create_task_session(
@@ -53,6 +135,8 @@ public:
     }
 
 private:
+    runtime::ModelMetadata metadata_;
+    runtime::CapabilitySet capabilities_;
     std::shared_ptr<const Vevo2Assets> assets_;
 };
 
@@ -66,17 +150,38 @@ public:
         if (request.family_hint.has_value() && *request.family_hint != family()) {
             return false;
         }
-        if (engine::io::is_existing_directory(request.model_path)) {
-            return has_vevo2_assets(std::filesystem::weakly_canonical(request.model_path));
+        try {
+            (void)engine::assets::load_resource_bundle_from_package_spec(
+                request.model_path,
+                engine::assets::default_model_package_spec_path(family()));
+            return true;
+        } catch (...) {
+            return false;
         }
-        if (engine::io::is_existing_file(request.model_path)) {
-            return has_vevo2_assets(std::filesystem::weakly_canonical(request.model_path.parent_path()));
-        }
-        return false;
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        return inspect_vevo2_model(request);
+        const auto whisper_path = request.options.find("vevo2.whisper_model_path");
+        const auto assets = load_vevo2_assets(
+            request.model_path,
+            whisper_path == request.options.end() || whisper_path->second.empty()
+                ? std::nullopt
+                : std::make_optional(std::filesystem::path(whisper_path->second)));
+        runtime::ModelInspection inspection;
+        inspection.model_root = assets->resources.model_root();
+        inspection.metadata = metadata(*assets);
+        inspection.capabilities = capabilities(*assets);
+        inspection.cli = cli(*assets);
+        const auto package_spec = engine::assets::default_model_package_spec_path(family());
+        inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
+            request.model_path,
+            package_spec,
+            engine::assets::ModelPackageResourceKind::Files);
+        inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
+            request.model_path,
+            package_spec,
+            engine::assets::ModelPackageResourceKind::Tensors);
+        return inspection;
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
@@ -87,7 +192,16 @@ public:
 }  // namespace
 
 std::unique_ptr<runtime::ILoadedVoiceModel> load_vevo2_model(const runtime::ModelLoadRequest & request) {
-    return std::make_unique<Vevo2LoadedModel>(load_vevo2_assets(request));
+    const auto whisper_path = request.options.find("vevo2.whisper_model_path");
+    auto assets = load_vevo2_assets(
+        request.model_path,
+        whisper_path == request.options.end() || whisper_path->second.empty()
+            ? std::nullopt
+            : std::make_optional(std::filesystem::path(whisper_path->second)));
+    return std::make_unique<Vevo2LoadedModel>(
+        metadata(*assets),
+        capabilities(*assets),
+        std::move(assets));
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_vevo2_loader() {

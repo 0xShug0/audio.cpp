@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/tokenizers/hf_tokenizer_json.h"
 
@@ -55,16 +56,8 @@ struct NemotronConfig {
     std::unordered_map<std::string, int64_t> prompt_dictionary;
 };
 
-struct NemotronAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path processor_config_path;
-    std::filesystem::path tokenizer_json_path;
-    std::filesystem::path weight_path;
-};
-
-struct NemotronAssets {
-    NemotronAssetPaths paths;
+struct NemotronASRAssets {
+    assets::ResourceBundle resources;
     NemotronConfig config;
     std::shared_ptr<const assets::TensorSource> source;
     std::shared_ptr<engine::tokenizers::HuggingFaceTokenizerJson> tokenizer;
@@ -73,7 +66,6 @@ struct NemotronAssets {
     bool trim_leading_space = false;
 };
 
-NemotronAssetPaths resolve_nemotron_asr_assets(const std::filesystem::path & model_path);
-std::shared_ptr<const NemotronAssets> load_nemotron_asr_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const NemotronASRAssets> load_nemotron_asr_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::nemotron_asr

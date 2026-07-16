@@ -50,7 +50,6 @@ private:
     std::shared_ptr<const Vevo2CocoTokenizerWeights> weights_;
     mutable std::unique_ptr<Vevo2CocoTokenizerGraph> graph_;
     std::string name_;
-    std::filesystem::path weights_path_;
 };
 
 class Vevo2ContentStyleTokenizerRuntime final {
@@ -95,7 +94,6 @@ private:
     std::vector<float> whisper_mean_;
     std::vector<float> whisper_std_;
     std::string name_;
-    std::filesystem::path weights_path_;
 };
 
 }  // namespace engine::models::vevo2

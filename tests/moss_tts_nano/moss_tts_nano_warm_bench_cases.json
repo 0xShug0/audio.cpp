@@ -1,0 +1,26 @@
+{
+  "default": {
+    "texts": [
+      "The studio lights clicked on just before the first reference phrase began, and the cloned voice should stay steady enough for a direct parity check.",
+      "This second sentence keeps the request short so we can compare the repeated request path without changing the speaker identity."
+    ]
+  },
+  "long_short_long": {
+    "texts": [
+      "MOSS-TTS-Nano should keep the cloned speaker stable even when a longer paragraph is followed by a shorter sentence and then another longer paragraph. This request is intentionally verbose so the Python reference uses its voice clone chunking path, giving us a real long form parity and performance case instead of a toy prompt that hides structural mistakes in the implementation.",
+      "This shorter sentence should still sound like the same speaker and should not force wasteful runtime behavior in the middle of the session.",
+      "We then return to another longer paragraph so we can confirm that the runtime revisits the larger workload cleanly, that the generated speech stays intelligible, and that the native path does not drift away from the Python reference after handling mixed request sizes in sequence."
+    ]
+  },
+  "sampled": {
+    "options": {
+      "do_sample": "true",
+      "repetition_penalty": 1.1,
+      "length_ratio_min": 0.80
+    },
+    "texts": [
+      "This sampled Nano request exercises temperature, top-k, top-p, and audio repetition penalty with the cloned speaker.",
+      "A second sampled request keeps the same speaker while changing the wording enough to verify the random path over another prompt."
+    ]
+  }
+}

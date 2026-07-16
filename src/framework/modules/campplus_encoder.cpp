@@ -602,11 +602,13 @@ void count_source_tensors(const assets::TensorSource & source, CampplusEncoderWe
 }
 
 std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
-    const std::filesystem::path & checkpoint_path,
+    std::shared_ptr<const assets::TensorSource> source,
     core::BackendConfig backend,
     CampplusEncoderConfig config) {
     validate_config(config);
-    const auto source = assets::open_tensor_source(checkpoint_path);
+    if (source == nullptr) {
+        throw std::runtime_error("CampPlus encoder requires tensor source");
+    }
     auto weights = std::make_shared<CampplusEncoderWeights>();
     weights->config = config;
     weights->source_path = source->source_path();
@@ -786,7 +788,14 @@ CampplusEncoderComponent CampplusEncoderComponent::load_from_safetensors(
     const std::filesystem::path & checkpoint_path,
     core::BackendConfig backend,
     CampplusEncoderConfig config) {
-    return CampplusEncoderComponent(load_typed_weights(checkpoint_path, backend, config), backend);
+    return load_from_tensor_source(assets::open_tensor_source(checkpoint_path), std::move(backend), std::move(config));
+}
+
+CampplusEncoderComponent CampplusEncoderComponent::load_from_tensor_source(
+    std::shared_ptr<const assets::TensorSource> source,
+    core::BackendConfig backend,
+    CampplusEncoderConfig config) {
+    return CampplusEncoderComponent(load_typed_weights(std::move(source), backend, config), backend);
 }
 
 CampplusEncoderComponent::CampplusEncoderComponent(
@@ -868,6 +877,17 @@ CampplusEncoderOutputs CampplusEncoderComponent::embed_from_features(
     outputs.embedding_size = weights_->config.embedding_size;
     outputs.embedding.assign(dense.begin(), dense.begin() + outputs.embedding_size);
     return outputs;
+}
+
+void CampplusEncoderComponent::release_runtime_graph() {
+    if (state_ == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    state_->runner.reset();
+    state_->weights = nullptr;
+    state_->frames = 0;
+    state_->backend = {};
 }
 
 }  // namespace engine::modules

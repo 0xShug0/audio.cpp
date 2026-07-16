@@ -1012,10 +1012,10 @@ Vevo2FlowMatchingRuntime::Vevo2FlowMatchingRuntime(
     size_t graph_context_bytes,
     engine::assets::TensorStorageType matmul_weight_storage_type,
     engine::assets::TensorStorageType conv_weight_storage_type)
-    : config_(assets.fm_config),
+    : config_(assets.config.fm),
       execution_context_(execution_context),
       graph_context_bytes_(graph_context_bytes),
-      weight_source_(engine::assets::open_tensor_source(assets.paths.fm_weights)),
+      weight_source_(assets.fm_weights),
       weights_(load_fm_weights(
           execution_context.backend(),
           execution_context.backend_type(),
@@ -1024,9 +1024,7 @@ Vevo2FlowMatchingRuntime::Vevo2FlowMatchingRuntime(
           weight_context_bytes,
           matmul_weight_storage_type,
           conv_weight_storage_type)),
-      name_("flow_matching_model"),
-      weights_path_(assets.paths.fm_weights),
-      config_path_(assets.paths.fm_config) {
+      name_("flow_matching_model") {
     weight_source_->release_storage();
 }
 

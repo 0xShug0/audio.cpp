@@ -80,7 +80,7 @@ void apply_dither_and_preemphasis(
 
 }  // namespace
 
-HviskeFrontend::HviskeFrontend(std::shared_ptr<const HviskeAssets> assets)
+HviskeFrontend::HviskeFrontend(std::shared_ptr<const HviskeASRAssets> assets)
     : assets_(std::move(assets)) {
     if (assets_ == nullptr) {
         throw std::runtime_error("Hviske frontend requires assets");

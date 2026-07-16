@@ -19,12 +19,12 @@ struct HviskeFrontendFeatures {
 
 class HviskeFrontend {
 public:
-    explicit HviskeFrontend(std::shared_ptr<const HviskeAssets> assets);
+    explicit HviskeFrontend(std::shared_ptr<const HviskeASRAssets> assets);
 
     HviskeFrontendFeatures extract(const engine::runtime::AudioBuffer & audio) const;
 
 private:
-    std::shared_ptr<const HviskeAssets> assets_;
+    std::shared_ptr<const HviskeASRAssets> assets_;
     engine::audio::SparseMelFilterbank filterbank_;
     std::vector<float> window_;
 };

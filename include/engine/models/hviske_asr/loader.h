@@ -13,7 +13,7 @@ public:
     HviskeASRLoadedModel(
         runtime::ModelMetadata metadata,
         runtime::CapabilitySet capabilities,
-        std::shared_ptr<const HviskeAssets> assets);
+        std::shared_ptr<const HviskeASRAssets> assets);
 
     const runtime::ModelMetadata & metadata() const noexcept override;
     const runtime::CapabilitySet & capabilities() const noexcept override;
@@ -24,7 +24,7 @@ public:
 private:
     runtime::ModelMetadata metadata_;
     runtime::CapabilitySet capabilities_;
-    std::shared_ptr<const HviskeAssets> assets_;
+    std::shared_ptr<const HviskeASRAssets> assets_;
 };
 
 std::unique_ptr<HviskeASRLoadedModel> load_hviske_asr_model(const std::filesystem::path & model_path);

@@ -93,6 +93,10 @@ public:
         const std::filesystem::path & checkpoint_path,
         core::BackendConfig backend,
         BigVganVocoderConfig config);
+    static BigVganVocoderComponent load_from_tensor_source(
+        std::shared_ptr<const assets::TensorSource> source,
+        core::BackendConfig backend,
+        BigVganVocoderConfig config);
 
     BigVganVocoderComponent() = default;
     BigVganVocoderComponent(
@@ -115,6 +119,7 @@ public:
         int64_t frames,
         int64_t chunk_frames,
         int64_t overlap_frames) const;
+    void release_runtime_graph();
 
 private:
     struct State;

@@ -624,12 +624,11 @@ std::vector<float> l2_normalized_rows(
 }
 
 std::pair<std::vector<float>, std::vector<float>> load_whisper_stats(
-    const std::filesystem::path & path,
+    const engine::assets::TensorSource & source,
     int64_t whisper_dim) {
-    const auto source = engine::assets::open_tensor_source(path);
-    auto mean = source->require_f32("mean", {whisper_dim});
-    auto std = source->require_f32("std", {whisper_dim});
-    source->release_storage();
+    auto mean = source.require_f32("mean", {whisper_dim});
+    auto std = source.require_f32("std", {whisper_dim});
+    source.release_storage();
     return {std::move(mean), std::move(std)};
 }
 
@@ -1089,10 +1088,10 @@ Vevo2ProsodyTokenizerRuntime::Vevo2ProsodyTokenizerRuntime(
     size_t graph_context_bytes,
     engine::assets::TensorStorageType matmul_weight_storage_type,
     engine::assets::TensorStorageType conv_weight_storage_type)
-    : config_(assets.prosody_tokenizer_config),
+    : config_(assets.config.prosody_tokenizer),
       execution_context_(execution_context),
       graph_context_bytes_(graph_context_bytes),
-      weight_source_(engine::assets::open_tensor_source(assets.paths.prosody_tokenizer_weights)),
+      weight_source_(assets.prosody_tokenizer_weights),
       weights_(load_coco_tokenizer_weights(
           config_,
           "prosody_tokenizer",
@@ -1102,8 +1101,7 @@ Vevo2ProsodyTokenizerRuntime::Vevo2ProsodyTokenizerRuntime(
           matmul_weight_storage_type,
           conv_weight_storage_type,
           *weight_source_)),
-      name_("prosody_tokenizer"),
-      weights_path_(assets.paths.prosody_tokenizer_weights) {
+      name_("prosody_tokenizer") {
     weight_source_->release_storage();
 }
 
@@ -1189,10 +1187,10 @@ Vevo2ContentStyleTokenizerRuntime::Vevo2ContentStyleTokenizerRuntime(
     size_t graph_context_bytes,
     engine::assets::TensorStorageType matmul_weight_storage_type,
     engine::assets::TensorStorageType conv_weight_storage_type)
-    : config_(assets.content_style_tokenizer_config),
+    : config_(assets.config.content_style_tokenizer),
       execution_context_(execution_context),
       graph_context_bytes_(graph_context_bytes),
-      weight_source_(engine::assets::open_tensor_source(assets.paths.content_style_tokenizer_weights)),
+      weight_source_(assets.content_style_tokenizer_weights),
       weights_(load_coco_tokenizer_weights(
           config_,
           "content_style_tokenizer",
@@ -1202,10 +1200,9 @@ Vevo2ContentStyleTokenizerRuntime::Vevo2ContentStyleTokenizerRuntime(
           matmul_weight_storage_type,
           conv_weight_storage_type,
           *weight_source_)),
-      name_("content_style_tokenizer"),
-      weights_path_(assets.paths.content_style_tokenizer_weights) {
+      name_("content_style_tokenizer") {
     if (config_.use_normed_whisper) {
-        auto stats = load_whisper_stats(assets.paths.fm_whisper_stats, config_.whisper_dim);
+        auto stats = load_whisper_stats(*assets.fm_whisper_stats, config_.whisper_dim);
         whisper_mean_ = std::move(stats.first);
         whisper_std_ = std::move(stats.second);
     }

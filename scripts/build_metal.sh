@@ -10,6 +10,7 @@ BUILD_TYPE="RelWithDebInfo"
 WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
+AUDIOCPP_DEPLOYMENT_BUILD="OFF"
 OPENMP_MODE="off"
 LLAMAFILE="ON"
 NATIVE_CPU="ON"
@@ -44,6 +45,7 @@ Options:
   --with-tests             Build framework unit tests.
   --with-examples          Build example binaries.
   --with-warmbench         Build warmbench helper binaries.
+  --deployment-build       Embed package specs for standalone GGUF/model loading.
   --target <name>          Build a specific CMake target. May be repeated.
   -j, --jobs <n>           Parallel build jobs.
   -h, --help               Show this help.
@@ -116,6 +118,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --with-warmbench)
             WITH_WARMBENCH="ON"
+            shift
+            ;;
+        --deployment-build)
+            AUDIOCPP_DEPLOYMENT_BUILD="ON"
             shift
             ;;
         --target)
@@ -207,6 +213,7 @@ CMAKE_CMD=(
     -DENGINE_BUILD_TESTS="$WITH_TESTS"
     -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES"
     -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
+    -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
 )
 
 if [[ -n "$GENERATOR" ]]; then
@@ -237,6 +244,7 @@ echo "Native CPU optimization: $NATIVE_CPU"
 echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
 echo "Building warmbench: $WITH_WARMBENCH"
+echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
 
 "${CMAKE_CMD[@]}"
 

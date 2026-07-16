@@ -108,7 +108,10 @@ engine::runtime::TaskRequest make_request(const engine::io::json::Value & object
     set_optional_option(request, object, "cfg_min_t");
     set_optional_option(request, object, "cfg_max_t");
     set_optional_option(request, object, "duration_scale");
-    set_optional_option(request, object, "seconds");
+    if (const auto * value = object.find("seconds"); value != nullptr && !value->is_null()) {
+        request.options["duration_seconds"] = option_text(*value);
+    }
+    set_optional_option(request, object, "duration_seconds");
     set_optional_option(request, object, "seed");
     set_optional_option(request, object, "trim_tail");
     const std::string ref_wav = optional_string(object, "ref_wav");
