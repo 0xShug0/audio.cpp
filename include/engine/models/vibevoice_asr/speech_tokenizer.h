@@ -94,7 +94,7 @@ struct VibeVoiceTokenizerWeightsBundle {
 class VibeVoiceTokenizerWeightsRuntime final {
 public:
     VibeVoiceTokenizerWeightsRuntime(
-        std::shared_ptr<const VibeVoiceAssets> assets,
+        std::shared_ptr<const VibeVoiceASRAssets> assets,
         core::BackendType backend_type,
         int device,
         int threads,
@@ -107,7 +107,7 @@ public:
     VibeVoiceTokenizerWeightsRuntime(const VibeVoiceTokenizerWeightsRuntime &) = delete;
     VibeVoiceTokenizerWeightsRuntime & operator=(const VibeVoiceTokenizerWeightsRuntime &) = delete;
 
-    const VibeVoiceAssets & assets() const noexcept;
+    const VibeVoiceASRAssets & assets() const noexcept;
     const VibeVoiceTokenizerWeightsBundle & weights() const noexcept;
     ggml_backend_t backend() const noexcept;
     common::ConstantTensorCache & constants() const noexcept;
@@ -137,7 +137,7 @@ public:
         std::vector<VibeVoiceTokenizerStreamingState *> states) const;
 
 private:
-    std::shared_ptr<const VibeVoiceAssets> assets_;
+    std::shared_ptr<const VibeVoiceASRAssets> assets_;
     std::shared_ptr<const VibeVoiceTokenizerWeightsBundle> weights_;
     std::unique_ptr<common::ConstantTensorCache> acoustic_encoder_constants_;
     std::unique_ptr<common::ConstantTensorCache> semantic_encoder_constants_;
@@ -155,7 +155,7 @@ private:
 };
 
 VibeVoiceTokenizerWeightsBundle load_vibevoice_tokenizer_weights(
-    const VibeVoiceAssets & assets,
+    const VibeVoiceASRAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,

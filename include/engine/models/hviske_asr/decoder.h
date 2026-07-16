@@ -30,7 +30,7 @@ struct HviskeDecodingOptions {
 class HviskeDecoderRuntime {
 public:
     HviskeDecoderRuntime(
-        std::shared_ptr<const HviskeAssets> assets,
+        std::shared_ptr<const HviskeASRAssets> assets,
         std::shared_ptr<const HviskeWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t prefill_graph_arena_bytes,
@@ -52,7 +52,7 @@ private:
     struct DecodeGraph;
     struct BeamDecodeGraph;
 
-    std::shared_ptr<const HviskeAssets> assets_;
+    std::shared_ptr<const HviskeASRAssets> assets_;
     std::shared_ptr<const HviskeWeights> weights_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     size_t prefill_graph_arena_bytes_ = 0;

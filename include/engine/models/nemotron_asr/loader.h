@@ -13,7 +13,7 @@ public:
     NemotronASRLoadedModel(
         runtime::ModelMetadata metadata,
         runtime::CapabilitySet capabilities,
-        std::shared_ptr<const NemotronAssets> assets);
+        std::shared_ptr<const NemotronASRAssets> assets);
 
     const runtime::ModelMetadata & metadata() const noexcept override;
     const runtime::CapabilitySet & capabilities() const noexcept override;
@@ -24,7 +24,7 @@ public:
 private:
     runtime::ModelMetadata metadata_;
     runtime::CapabilitySet capabilities_;
-    std::shared_ptr<const NemotronAssets> assets_;
+    std::shared_ptr<const NemotronASRAssets> assets_;
 };
 
 std::unique_ptr<NemotronASRLoadedModel> load_nemotron_asr_model(const std::filesystem::path & model_path);

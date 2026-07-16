@@ -10,10 +10,6 @@
 namespace engine::models::qwen3_tts {
 namespace {
 
-std::filesystem::path spec_path() {
-    return engine::assets::default_model_package_spec_path("qwen3_tts");
-}
-
 std::vector<std::string> supported_languages(const Qwen3TTSConfig & config) {
     std::vector<std::string> languages;
     languages.reserve(config.talker.codec_language_id.size() + 1);
@@ -26,6 +22,44 @@ std::vector<std::string> supported_languages(const Qwen3TTSConfig & config) {
     return languages;
 }
 
+runtime::ModelMetadata metadata(const Qwen3TTSAssets & assets) {
+    runtime::ModelMetadata out;
+    out.family = "qwen3_tts";
+    out.variant = assets.config.tts_model_size + "-" + assets.config.tts_model_type;
+    out.description = "Qwen3 TTS loaded from local extracted assets.";
+    return out;
+}
+
+runtime::CapabilitySet capabilities(const Qwen3TTSAssets & assets) {
+    runtime::CapabilitySet out;
+    if (assets.config.variant == Qwen3TTSVariant::Base) {
+        out.supported_tasks = {
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        };
+        out.supports_speaker_reference = true;
+    } else if (assets.config.variant == Qwen3TTSVariant::VoiceDesign) {
+        out.supported_tasks = {
+            {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline}},
+        };
+        out.supports_style_condition = true;
+    } else if (assets.config.variant == Qwen3TTSVariant::CustomVoice) {
+        out.supported_tasks = {
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        };
+        out.supports_style_condition = true;
+    }
+    out.languages = supported_languages(assets.config);
+    return out;
+}
+
+runtime::ModelCliInterface cli(const Qwen3TTSAssets &) {
+    runtime::ModelCliInterface out;
+    out.session_options = {
+        {"qwen3_tts.mem_saver", "true|false", "Release the talker cached-step graph after each request; default false."},
+    };
+    return out;
+}
+
 class Qwen3TTSLoader final : public runtime::IVoiceModelLoader {
 public:
     std::string family() const override {
@@ -34,7 +68,8 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
-            (void) engine::assets::load_resource_bundle_from_package_spec(request.model_path, spec_path());
+            const auto package_spec = engine::assets::default_model_package_spec_path(family());
+            (void) engine::assets::load_resource_bundle_from_package_spec(request.model_path, package_spec);
             return !request.family_hint.has_value() || *request.family_hint == family();
         } catch (...) {
             return false;
@@ -45,36 +80,17 @@ public:
         const auto assets = load_qwen3_tts_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->resources.model_root();
-        inspection.metadata.family = family();
-        inspection.metadata.variant = assets->config.tts_model_size + "-" + assets->config.tts_model_type;
-        inspection.metadata.description = "Qwen3 TTS loaded from local extracted assets.";
-        inspection.cli.session_options = {
-            {"qwen3_tts.mem_saver", "true|false", "Release the talker cached-step graph after each request; default false."},
-        };
-        if (assets->config.variant == Qwen3TTSVariant::Base) {
-            inspection.capabilities.supported_tasks = {
-                {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-            };
-            inspection.capabilities.supports_speaker_reference = true;
-        } else if (assets->config.variant == Qwen3TTSVariant::VoiceDesign) {
-            inspection.capabilities.supported_tasks = {
-                {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline}},
-            };
-            inspection.capabilities.supports_style_condition = true;
-        } else if (assets->config.variant == Qwen3TTSVariant::CustomVoice) {
-            inspection.capabilities.supported_tasks = {
-                {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-            };
-            inspection.capabilities.supports_style_condition = true;
-        }
-        inspection.capabilities.languages = supported_languages(assets->config);
+        inspection.metadata = metadata(*assets);
+        inspection.capabilities = capabilities(*assets);
+        inspection.cli = cli(*assets);
+        const auto package_spec = engine::assets::default_model_package_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path(),
+            package_spec,
             engine::assets::ModelPackageResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path(),
+            package_spec,
             engine::assets::ModelPackageResourceKind::Tensors);
         return inspection;
     }
@@ -122,32 +138,7 @@ std::unique_ptr<runtime::IVoiceTaskSession> Qwen3TTSLoadedModel::create_task_ses
 
 std::unique_ptr<Qwen3TTSLoadedModel> load_qwen3_tts_model(const std::filesystem::path & model_path) {
     auto assets = load_qwen3_tts_assets(model_path);
-
-    runtime::ModelMetadata metadata;
-    metadata.family = "qwen3_tts";
-    metadata.variant = assets->config.tts_model_size + "-" + assets->config.tts_model_type;
-    metadata.description = "Qwen3 TTS loaded from local extracted assets.";
-
-    runtime::CapabilitySet capabilities;
-    if (assets->config.variant == Qwen3TTSVariant::Base) {
-        capabilities.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-        };
-        capabilities.supports_speaker_reference = true;
-    } else if (assets->config.variant == Qwen3TTSVariant::VoiceDesign) {
-        capabilities.supported_tasks = {
-            {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline}},
-        };
-        capabilities.supports_style_condition = true;
-    } else if (assets->config.variant == Qwen3TTSVariant::CustomVoice) {
-        capabilities.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-        };
-        capabilities.supports_style_condition = true;
-    }
-    capabilities.languages = supported_languages(assets->config);
-
-    return std::make_unique<Qwen3TTSLoadedModel>(std::move(metadata), std::move(capabilities), std::move(assets));
+    return std::make_unique<Qwen3TTSLoadedModel>(metadata(*assets), capabilities(*assets), std::move(assets));
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_qwen3_tts_loader() {

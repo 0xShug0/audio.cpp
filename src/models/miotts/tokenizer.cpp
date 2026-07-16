@@ -21,11 +21,11 @@ int32_t require_token_id(
 
 std::shared_ptr<engine::tokenizers::LlamaBpeTokenizer> load_tokenizer(const MioTTSAssets & assets) {
     engine::tokenizers::LlamaBpeTokenizerSpec spec;
-    spec.vocab_path = assets.paths.tokenizer_vocab_path;
-    spec.merges_path = assets.paths.tokenizer_merges_path;
-    spec.tokenizer_config_path = assets.paths.tokenizer_config_path;
-    if (!assets.paths.tokenizer_json_path.empty()) {
-        spec.tokenizer_json_path = assets.paths.tokenizer_json_path;
+    spec.vocab_path = assets.resources.require_file("vocab");
+    spec.merges_path = assets.resources.require_file("merges");
+    spec.tokenizer_config_path = assets.resources.require_file("tokenizer_config");
+    if (const auto * tokenizer_json = assets.resources.find_file("tokenizer_json"); tokenizer_json != nullptr) {
+        spec.tokenizer_json_path = *tokenizer_json;
     }
     spec.pre_type = engine::tokenizers::LlamaBpePreTokenizer::Qwen35;
     return engine::tokenizers::load_llama_bpe_tokenizer(spec);

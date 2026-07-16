@@ -19,7 +19,7 @@ public:
     NemotronASRSessionBase(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const NemotronAssets> assets);
+        std::shared_ptr<const NemotronASRAssets> assets);
     ~NemotronASRSessionBase() override;
 
 protected:
@@ -38,7 +38,7 @@ protected:
         const NemotronTextDeltaCallback & on_text_delta = nullptr);
 
     runtime::TaskSpec task_;
-    std::shared_ptr<const NemotronAssets> assets_;
+    std::shared_ptr<const NemotronASRAssets> assets_;
     std::shared_ptr<const NemotronWeights> weights_;
     size_t weight_context_bytes_ = 3072ull * 1024ull * 1024ull;
     size_t encoder_graph_arena_bytes_ = 1024ull * 1024ull * 1024ull;
@@ -61,7 +61,7 @@ public:
     NemotronASROfflineSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const NemotronAssets> assets);
+        std::shared_ptr<const NemotronASRAssets> assets);
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;
@@ -77,7 +77,7 @@ public:
     NemotronASRStreamingSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const NemotronAssets> assets);
+        std::shared_ptr<const NemotronASRAssets> assets);
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;

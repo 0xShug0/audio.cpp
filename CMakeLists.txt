@@ -226,12 +226,14 @@ add_library(engine_runtime STATIC
     src/framework/sampling/noise.cpp
     src/framework/sampling/torch_random.cpp
     src/models/roformer/assets.cpp
+    src/models/roformer/loader.cpp
     src/models/roformer/runtime.cpp
     src/models/roformer/session.cpp
     src/models/demucs/assets.cpp
     src/models/demucs/frontend.cpp
     src/models/demucs/pipeline.cpp
     src/models/demucs/postprocess.cpp
+    src/models/demucs/loader.cpp
     src/models/demucs/session.cpp
     src/models/omnivoice/assets.cpp
     src/models/omnivoice/tokenizer_text.cpp

@@ -23,7 +23,7 @@ Qwen3TTSVariant parse_variant(const std::string & value) {
     throw std::runtime_error("Qwen3 TTS unsupported tts_model_type: " + value);
 }
 
-Qwen3TTSCodePredictorConfig parse_code_predictor_config(const engine::io::json::Value & value) {
+Qwen3TTSCodePredictorConfig parse_code_predictor_config(const json::Value & value) {
     Qwen3TTSCodePredictorConfig config;
     config.hidden_size = json::require_i64(value, "hidden_size");
     config.intermediate_size = json::require_i64(value, "intermediate_size");
@@ -37,7 +37,7 @@ Qwen3TTSCodePredictorConfig parse_code_predictor_config(const engine::io::json::
     return config;
 }
 
-Qwen3TTSTalkerConfig parse_talker_config(const engine::io::json::Value & value) {
+Qwen3TTSTalkerConfig parse_talker_config(const json::Value & value) {
     Qwen3TTSTalkerConfig config;
     config.max_position_embeddings = json::optional_i64(value, "max_position_embeddings", config.max_position_embeddings);
     config.hidden_size = json::require_i64(value, "hidden_size");
@@ -89,7 +89,7 @@ Qwen3TTSTalkerConfig parse_talker_config(const engine::io::json::Value & value) 
     return config;
 }
 
-Qwen3TTSSpeechTokenizerConfig parse_speech_tokenizer_config(const engine::io::json::Value & value) {
+Qwen3TTSSpeechTokenizerConfig parse_speech_tokenizer_config(const json::Value & value) {
     Qwen3TTSSpeechTokenizerConfig config;
     config.model_type = json::require_string(value, "model_type");
     config.input_sample_rate = static_cast<int>(json::require_i64(value, "input_sample_rate"));
@@ -101,7 +101,7 @@ Qwen3TTSSpeechTokenizerConfig parse_speech_tokenizer_config(const engine::io::js
     return config;
 }
 
-Qwen3TTSSpeakerEncoderConfig parse_speaker_encoder_config(const engine::io::json::Value & value) {
+Qwen3TTSSpeakerEncoderConfig parse_speaker_encoder_config(const json::Value & value) {
     Qwen3TTSSpeakerEncoderConfig config;
     config.embedding_dim = json::optional_i64(value, "enc_dim", 1024);
     config.sample_rate = static_cast<int>(json::optional_i64(value, "sample_rate", 24000));
@@ -113,7 +113,7 @@ int64_t parse_generation_max_new_tokens(const assets::ResourceBundle & resources
     return json::optional_i64(generation, "max_new_tokens", 2048);
 }
 
-Qwen3TTSConfig load_config(const assets::ResourceBundle & resources) {
+Qwen3TTSConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
     Qwen3TTSConfig config;
     config.tts_model_type = json::require_string(root, "tts_model_type");
@@ -131,6 +131,10 @@ Qwen3TTSConfig load_config(const assets::ResourceBundle & resources) {
     if (config.has_speaker_encoder) {
         config.speaker_encoder = parse_speaker_encoder_config(root.require("speaker_encoder_config"));
     }
+    return config;
+}
+
+void validate_config(const Qwen3TTSConfig & config) {
     if (config.tokenizer_type != "qwen3_tts_tokenizer_12hz") {
         throw std::runtime_error("Qwen3 TTS currently supports qwen3_tts_tokenizer_12hz");
     }
@@ -143,21 +147,17 @@ Qwen3TTSConfig load_config(const assets::ResourceBundle & resources) {
     if (config.speech_tokenizer.model_type != "qwen3_tts_tokenizer_12hz") {
         throw std::runtime_error("Qwen3 TTS speech tokenizer must be qwen3_tts_tokenizer_12hz");
     }
-    return config;
-}
-
-assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_path) {
-    return assets::load_resource_bundle_from_package_spec(
-        model_path,
-        assets::default_model_package_spec_path("qwen3_tts"));
 }
 
 }  // namespace
 
 std::shared_ptr<const Qwen3TTSAssets> load_qwen3_tts_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
+    auto resources = assets::load_resource_bundle_from_package_spec(
+        model_path,
+        assets::default_model_package_spec_path("qwen3_tts"));
     auto assets = std::make_shared<Qwen3TTSAssets>();
-    assets->config = load_config(resources);
+    assets->config = parse_config(resources);
+    validate_config(assets->config);
     assets->model_weights = resources.open_tensor_source("model_weights");
     assets->speech_tokenizer_weights = resources.open_tensor_source("speech_tokenizer_weights");
     assets->resources = std::move(resources);

@@ -1,14 +1,13 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace engine::assets {
-class TensorSource;
-}
 
 namespace engine::models::miotts {
 
@@ -39,24 +38,12 @@ struct MioTTSConfig {
     float frequency_penalty = 0.0F;
 };
 
-struct MioTTSAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path generation_config_path;
-    std::filesystem::path model_weights_path;
-    std::filesystem::path tokenizer_config_path;
-    std::filesystem::path tokenizer_vocab_path;
-    std::filesystem::path tokenizer_merges_path;
-    std::filesystem::path tokenizer_json_path;
-};
-
 struct MioTTSAssets {
-    MioTTSAssetPaths paths;
+    assets::ResourceBundle resources;
     MioTTSConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
 };
 
-MioTTSAssetPaths resolve_miotts_assets(const std::filesystem::path & model_path);
 std::shared_ptr<const MioTTSAssets> load_miotts_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::miotts

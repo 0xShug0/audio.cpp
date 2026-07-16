@@ -85,7 +85,7 @@ struct IrodoriLayerAdaLNModulation {
 };
 
 IrodoriRfDitWeights
-load_irodori_rf_dit_weights(const IrodoriAssets &assets, ggml_backend_t backend,
+load_irodori_rf_dit_weights(const IrodoriTTSAssets &assets, ggml_backend_t backend,
                             core::BackendType backend_type,
                             size_t weight_context_bytes,
                             assets::TensorStorageType weight_storage_type);
@@ -134,7 +134,7 @@ public:
     std::shared_ptr<State> state_;
   };
 
-  IrodoriRfSampler(std::shared_ptr<const IrodoriAssets> assets,
+  IrodoriRfSampler(std::shared_ptr<const IrodoriTTSAssets> assets,
                    core::ExecutionContext &execution_context,
                    size_t graph_arena_bytes, size_t weight_context_bytes,
                    assets::TensorStorageType weight_storage_type,

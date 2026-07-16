@@ -73,7 +73,7 @@ struct IrodoriCodecConfig {
     int64_t hop_length = 1920;
 };
 
-struct IrodoriAssets {
+struct IrodoriTTSAssets {
     assets::ResourceBundle resources;
     IrodoriModelConfig config;
     IrodoriCodecConfig codec;
@@ -81,6 +81,6 @@ struct IrodoriAssets {
     std::shared_ptr<const assets::TensorSource> codec_weights;
 };
 
-std::shared_ptr<const IrodoriAssets> load_irodori_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const IrodoriTTSAssets> load_irodori_tts_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::irodori_tts

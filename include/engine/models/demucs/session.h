@@ -1,6 +1,5 @@
 #pragma once
 
-#include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/demucs/assets.h"
 #include "engine/models/demucs/pipeline.h"
@@ -17,7 +16,7 @@ public:
     HTDemucsSession(
         const runtime::TaskSpec & task,
         const runtime::SessionOptions & options,
-        std::shared_ptr<const DemucsAssets> assets);
+        std::shared_ptr<const HTDemucsAssets> assets);
     ~HTDemucsSession() override;
 
     std::string family() const override;
@@ -28,7 +27,7 @@ public:
 
 private:
     runtime::TaskSpec task_;
-    std::shared_ptr<const DemucsAssets> assets_;
+    std::shared_ptr<const HTDemucsAssets> assets_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
     std::unique_ptr<HTDemucsPipeline> pipeline_;
     int64_t chunk_size_ = 0;
@@ -38,23 +37,5 @@ private:
     std::vector<float> result_work_;
     std::vector<float> counter_work_;
 };
-
-class HTDemucsLoadedModel final : public runtime::ILoadedVoiceModel {
-public:
-    explicit HTDemucsLoadedModel(std::shared_ptr<const DemucsAssets> assets);
-
-    const runtime::ModelMetadata & metadata() const noexcept override;
-    const runtime::CapabilitySet & capabilities() const noexcept override;
-    std::unique_ptr<runtime::IVoiceTaskSession> create_task_session(
-        const runtime::TaskSpec & task,
-        const runtime::SessionOptions & options) const override;
-
-private:
-    std::shared_ptr<const DemucsAssets> assets_;
-};
-
-std::unique_ptr<runtime::ILoadedVoiceModel> load_htdemucs_model(
-    const runtime::ModelLoadRequest & request);
-std::shared_ptr<runtime::IVoiceModelLoader> make_htdemucs_loader();
 
 }  // namespace engine::models::demucs

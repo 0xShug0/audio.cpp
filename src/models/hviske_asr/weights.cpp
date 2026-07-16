@@ -271,7 +271,7 @@ HviskeDecoderWeights load_decoder_weights(
 }  // namespace
 
 std::shared_ptr<const HviskeWeights> load_hviske_weights(
-    const HviskeAssets & assets,
+    const HviskeASRAssets & assets,
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
     engine::assets::TensorStorageType matmul_storage_type,

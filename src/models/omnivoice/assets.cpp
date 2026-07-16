@@ -14,24 +14,24 @@ namespace {
 OmniVoiceConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
     OmniVoiceConfig config;
-    config.model_type = root.require("model_type").as_string();
-    config.audio_vocab_size = root.require("audio_vocab_size").as_i64();
-    config.audio_mask_id = root.require("audio_mask_id").as_i64();
-    config.num_audio_codebook = root.require("num_audio_codebook").as_i64();
+    config.model_type = json::require_string(root, "model_type");
+    config.audio_vocab_size = json::require_i64(root, "audio_vocab_size");
+    config.audio_mask_id = json::require_i64(root, "audio_mask_id");
+    config.num_audio_codebook = json::require_i64(root, "num_audio_codebook");
     config.audio_codebook_weights = json::optional_f32_array(root, "audio_codebook_weights");
     config.eos_token_id = json::optional_i64(root, "eos_token_id", 0);
     config.pad_token_id = json::optional_i64(root, "pad_token_id", 0);
 
     const auto & llm = root.require("llm_config");
-    config.llm.model_type = llm.require("model_type").as_string();
-    config.llm.vocab_size = llm.require("vocab_size").as_i64();
-    config.llm.hidden_size = llm.require("hidden_size").as_i64();
-    config.llm.intermediate_size = llm.require("intermediate_size").as_i64();
-    config.llm.num_hidden_layers = llm.require("num_hidden_layers").as_i64();
-    config.llm.num_attention_heads = llm.require("num_attention_heads").as_i64();
-    config.llm.num_key_value_heads = llm.require("num_key_value_heads").as_i64();
+    config.llm.model_type = json::require_string(llm, "model_type");
+    config.llm.vocab_size = json::require_i64(llm, "vocab_size");
+    config.llm.hidden_size = json::require_i64(llm, "hidden_size");
+    config.llm.intermediate_size = json::require_i64(llm, "intermediate_size");
+    config.llm.num_hidden_layers = json::require_i64(llm, "num_hidden_layers");
+    config.llm.num_attention_heads = json::require_i64(llm, "num_attention_heads");
+    config.llm.num_key_value_heads = json::require_i64(llm, "num_key_value_heads");
     config.llm.head_dim = json::optional_i64(llm, "head_dim", config.llm.hidden_size / config.llm.num_attention_heads);
-    config.llm.max_position_embeddings = llm.require("max_position_embeddings").as_i64();
+    config.llm.max_position_embeddings = json::require_i64(llm, "max_position_embeddings");
     config.llm.rms_norm_eps = json::optional_f32(llm, "rms_norm_eps", config.llm.rms_norm_eps);
     const auto * rope_parameters = llm.find("rope_parameters");
     if (rope_parameters != nullptr && rope_parameters->is_object()) {
@@ -39,7 +39,7 @@ OmniVoiceConfig parse_config(const assets::ResourceBundle & resources) {
     }
 
     const auto audio_tokenizer_root = resources.parse_json("audio_tokenizer_config");
-    config.audio_tokenizer.model_type = audio_tokenizer_root.require("model_type").as_string();
+    config.audio_tokenizer.model_type = json::require_string(audio_tokenizer_root, "model_type");
     config.audio_tokenizer.sample_rate = static_cast<int>(json::optional_i64(audio_tokenizer_root, "sample_rate", 24000));
     config.audio_tokenizer.semantic_sample_rate =
         static_cast<int>(json::optional_i64(audio_tokenizer_root, "semantic_sample_rate", 16000));

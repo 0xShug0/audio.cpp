@@ -13,7 +13,7 @@ namespace {
 constexpr const char * kSystemPrompt =
     "You are a helpful assistant that transcribes audio input into text output in JSON format.";
 
-std::shared_ptr<const VibeVoiceAssets> require_assets(std::shared_ptr<const VibeVoiceAssets> assets) {
+std::shared_ptr<const VibeVoiceASRAssets> require_assets(std::shared_ptr<const VibeVoiceASRAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("VibeVoice-ASR tokenizer requires assets");
     }
@@ -45,7 +45,7 @@ std::string chat_message(const std::string & role, const std::string & content, 
 }  // namespace
 
 struct VibeVoiceASRTextTokenizer::Impl {
-    explicit Impl(const VibeVoiceAssets & assets)
+    explicit Impl(const VibeVoiceASRAssets & assets)
         : tokenizer(engine::tokenizers::LlamaBpeTokenizerSpec{
               assets.resources.require_file("tokenizer_vocab"),
               assets.resources.require_file("tokenizer_merges"),
@@ -67,7 +67,7 @@ struct VibeVoiceASRTextTokenizer::Impl {
     int32_t pad = 0;
 };
 
-VibeVoiceASRTextTokenizer::VibeVoiceASRTextTokenizer(std::shared_ptr<const VibeVoiceAssets> assets)
+VibeVoiceASRTextTokenizer::VibeVoiceASRTextTokenizer(std::shared_ptr<const VibeVoiceASRAssets> assets)
     : assets_(require_assets(std::move(assets))),
       impl_(std::make_shared<Impl>(*assets_)) {}
 

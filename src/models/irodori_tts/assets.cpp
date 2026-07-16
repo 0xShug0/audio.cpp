@@ -11,8 +11,9 @@ namespace engine::models::irodori_tts {
 namespace json = engine::io::json;
 namespace {
 
-IrodoriModelConfig parse_model_config_json(const std::string & raw) {
-    const auto root = engine::io::json::parse(raw);
+IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) {
+    const auto root = resources.parse_json("model_config");
+
     IrodoriModelConfig config;
     config.latent_dim = json::optional_i64(root, "latent_dim", config.latent_dim);
     config.latent_patch_size = json::optional_i64(root, "latent_patch_size", config.latent_patch_size);
@@ -100,6 +101,10 @@ IrodoriModelConfig parse_model_config_json(const std::string & raw) {
     return config;
 }
 
+IrodoriModelConfig parse_config(const assets::ResourceBundle & resources) {
+    return parse_model_config(resources);
+}
+
 void validate_model_weights(const IrodoriModelConfig & config, const assets::TensorSource & source) {
     assets::require_tensor_shape(source, "text_encoder.text_embedding.weight", {config.text_vocab_size, config.text_dim});
     assets::require_tensor_shape(source, "text_norm.weight", {config.text_dim});
@@ -142,6 +147,11 @@ void validate_codec_weights(const IrodoriCodecConfig & config, const assets::Ten
     assets::require_tensor_shape(source, "decoder.model.0.bias", {config.decoder_dim});
 }
 
+void validate_weight_anchors(const IrodoriTTSAssets & assets) {
+    validate_model_weights(assets.config, *assets.model_weights);
+    validate_codec_weights(assets.codec, *assets.codec_weights);
+}
+
 }  // namespace
 
 int64_t IrodoriModelConfig::patched_latent_dim() const noexcept {
@@ -172,17 +182,16 @@ float IrodoriModelConfig::caption_mlp_ratio_resolved() const noexcept {
     return caption_mlp_ratio > 0.0F ? caption_mlp_ratio : text_mlp_ratio;
 }
 
-std::shared_ptr<const IrodoriAssets> load_irodori_assets(const std::filesystem::path & model_path) {
-    auto assets = std::make_shared<IrodoriAssets>();
+std::shared_ptr<const IrodoriTTSAssets> load_irodori_tts_assets(const std::filesystem::path & model_path) {
+    auto assets = std::make_shared<IrodoriTTSAssets>();
     assets->resources = assets::load_resource_bundle_from_package_spec(
         model_path,
         assets::default_model_package_spec_path("irodori_tts"));
 
-    assets->config = parse_model_config_json(assets->resources.read_text("model_config"));
+    assets->config = parse_config(assets->resources);
     assets->model_weights = assets->resources.open_tensor_source("model_weights");
     assets->codec_weights = assets->resources.open_tensor_source("codec_weights");
-    validate_model_weights(assets->config, *assets->model_weights);
-    validate_codec_weights(assets->codec, *assets->codec_weights);
+    validate_weight_anchors(*assets);
     return assets;
 }
 

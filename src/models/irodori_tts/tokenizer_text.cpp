@@ -14,7 +14,7 @@ namespace {
 
 constexpr const char * kSentencePieceSpace = "\xE2\x96\x81";
 
-std::shared_ptr<const IrodoriAssets> require_assets(std::shared_ptr<const IrodoriAssets> assets) {
+std::shared_ptr<const IrodoriTTSAssets> require_assets(std::shared_ptr<const IrodoriTTSAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("Irodori-TTS text tokenizer requires assets");
     }
@@ -68,7 +68,7 @@ std::string byte_token(unsigned char value) {
 }  // namespace
 
 struct IrodoriTextTokenizer::Impl {
-    explicit Impl(std::shared_ptr<const IrodoriAssets> input_assets)
+    explicit Impl(std::shared_ptr<const IrodoriTTSAssets> input_assets)
         : assets(std::move(input_assets)) {
         const auto root = assets->resources.parse_json("tokenizer_json");
         const auto & model = root.require("model");
@@ -169,7 +169,7 @@ struct IrodoriTextTokenizer::Impl {
         return ids;
     }
 
-    std::shared_ptr<const IrodoriAssets> assets;
+    std::shared_ptr<const IrodoriTTSAssets> assets;
     std::vector<std::string> pieces;
     std::vector<float> scores;
     std::unordered_map<std::string, int32_t> token_to_id;
@@ -178,7 +178,7 @@ struct IrodoriTextTokenizer::Impl {
     int32_t unk = 0;
 };
 
-IrodoriTextTokenizer::IrodoriTextTokenizer(std::shared_ptr<const IrodoriAssets> assets)
+IrodoriTextTokenizer::IrodoriTextTokenizer(std::shared_ptr<const IrodoriTTSAssets> assets)
     : impl_(std::make_shared<Impl>(require_assets(std::move(assets)))) {}
 
 std::vector<int32_t> IrodoriTextTokenizer::encode(const std::string & text) const {

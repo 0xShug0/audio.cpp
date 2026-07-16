@@ -11,7 +11,7 @@
 #include "engine/models/ace_step/loader.h"
 #include "engine/models/chatterbox/loader.h"
 #include "engine/models/citrinet_asr/session.h"
-#include "engine/models/demucs/session.h"
+#include "engine/models/demucs/loader.h"
 #include "engine/models/heartmula/loader.h"
 #include "engine/models/higgs_audio_stt/loader.h"
 #include "engine/models/hviske_asr/loader.h"
@@ -28,7 +28,7 @@
 #include "engine/models/qwen3_asr/loader.h"
 #include "engine/models/qwen3_forced_aligner/loader.h"
 #include "engine/models/qwen3_tts/loader.h"
-#include "engine/models/roformer/session.h"
+#include "engine/models/roformer/loader.h"
 #include "engine/models/silero_vad/session.h"
 #include "engine/models/seed_vc/loader.h"
 #include "engine/models/sortformer_diar/loader.h"
@@ -230,7 +230,7 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         // engine::models::parakeet_tdt::make_parakeet_tdt_loader(),
         engine::models::ace_step::make_ace_step_loader(),
         engine::models::demucs::make_htdemucs_loader(),
-        engine::models::roformer::make_mel_loader(),
+        engine::models::roformer::make_mel_band_roformer_loader(),
         engine::models::omnivoice::make_omnivoice_loader(),
         engine::models::miocodec::make_miocodec_loader(),
         engine::models::miotts::make_miotts_loader(),

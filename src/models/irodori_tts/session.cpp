@@ -24,8 +24,8 @@ namespace engine::models::irodori_tts {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-std::shared_ptr<const IrodoriAssets>
-require_assets(std::shared_ptr<const IrodoriAssets> assets) {
+std::shared_ptr<const IrodoriTTSAssets>
+require_assets(std::shared_ptr<const IrodoriTTSAssets> assets) {
   if (assets == nullptr) {
     throw std::runtime_error("Irodori-TTS session requires assets");
   }
@@ -267,7 +267,7 @@ int find_flattening_point(const std::vector<float> &latent, int64_t frames,
 
 IrodoriTTSSession::IrodoriTTSSession(
     runtime::TaskSpec task, runtime::SessionOptions options,
-    std::shared_ptr<const IrodoriAssets> assets)
+    std::shared_ptr<const IrodoriTTSAssets> assets)
     : RuntimeSessionBase(options), task_(task),
       assets_(require_assets(std::move(assets))), tokenizer_(assets_),
       reference_speaker_cache_(resolve_reference_cache_slots(this->options())) {
@@ -326,8 +326,6 @@ IrodoriTTSSession::IrodoriTTSSession(
   assets_->codec_weights->release_storage();
   debug::trace_log_scalar("irodori_tts.model_root",
                           assets_->resources.model_root().string());
-  debug::trace_log_scalar("irodori_tts.codec_root",
-                          assets_->resources.require_file("codec_weights").parent_path().string());
   debug::trace_log_scalar("irodori_tts.config.use_speaker_condition",
                           assets_->config.use_speaker_condition);
   debug::trace_log_scalar("irodori_tts.config.use_caption_condition",

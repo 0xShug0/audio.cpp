@@ -10,6 +10,7 @@
 namespace engine::models::index_tts2 {
 namespace {
 
+namespace json = engine::io::json;
 namespace yaml = engine::io::yaml;
 
 IndexTTS2Config parse_config(const assets::ResourceBundle & resources) {
@@ -111,7 +112,22 @@ IndexTTS2Config parse_config(const assets::ResourceBundle & resources) {
     config.s2mel.wavenet_style_condition = yaml::optional_bool(document, "s2mel.wavenet.style_condition", config.s2mel.wavenet_style_condition);
 
     config.emo_num = yaml::require_list_i64(document, "emo_num");
+    return config;
+}
 
+void validate_qwen_emotion_config(const assets::ResourceBundle & resources) {
+    const auto root = resources.parse_json("qwen_emotion_config");
+    if (json::optional_string(root, "model_type", "") != "qwen3") {
+        throw std::runtime_error("IndexTTS2 Qwen emotion model must have model_type=qwen3");
+    }
+    if (json::optional_i64(root, "hidden_size", 0) != 1024 ||
+        json::optional_i64(root, "num_hidden_layers", 0) != 28 ||
+        json::optional_i64(root, "num_attention_heads", 0) != 16) {
+        throw std::runtime_error("IndexTTS2 Qwen emotion model config does not match expected 0.6B architecture");
+    }
+}
+
+void validate_config(const IndexTTS2Config & config, const assets::ResourceBundle & resources) {
     engine::io::require_positive(config.dataset_sample_rate, "dataset.sample_rate");
     engine::io::require_positive(config.dataset_mel_sample_rate, "dataset.mel.sample_rate");
     engine::io::require_positive(config.dataset_mel_n_fft, "dataset.mel.n_fft");
@@ -128,7 +144,7 @@ IndexTTS2Config parse_config(const assets::ResourceBundle & resources) {
     if (config.emo_num.empty()) {
         throw std::runtime_error("IndexTTS2 config emo_num must not be empty");
     }
-    return config;
+    validate_qwen_emotion_config(resources);
 }
 
 void validate_gpt_weights(const IndexTTS2Config & config, const assets::TensorSource & source) {
@@ -181,24 +197,22 @@ void validate_semantic_codec_weights(const IndexTTS2Config & config, const asset
     assets::require_tensor_shape(source, "decoder.1.weight", {config.semantic_codec.hidden_size, config.semantic_codec.vocos_dim});
 }
 
-void validate_qwen_config(const assets::ResourceBundle & resources) {
-    const auto root = resources.parse_json("qwen_emotion_config");
-    if (engine::io::json::optional_string(root, "model_type", "") != "qwen3") {
-        throw std::runtime_error("IndexTTS2 Qwen emotion model must have model_type=qwen3");
-    }
-    if (engine::io::json::optional_i64(root, "hidden_size", 0) != 1024 ||
-        engine::io::json::optional_i64(root, "num_hidden_layers", 0) != 28 ||
-        engine::io::json::optional_i64(root, "num_attention_heads", 0) != 16) {
-        throw std::runtime_error("IndexTTS2 Qwen emotion model config does not match expected 0.6B architecture");
-    }
-}
-
 void validate_qwen_weights(const assets::TensorSource & source) {
     assets::require_tensor_shape(source, "model.embed_tokens.weight", {151936, 1024});
     assets::require_tensor_shape(source, "model.layers.0.self_attn.q_proj.weight", {2048, 1024});
     assets::require_tensor_shape(source, "model.layers.0.self_attn.k_proj.weight", {1024, 1024});
     assets::require_tensor_shape(source, "model.layers.0.mlp.gate_proj.weight", {3072, 1024});
     assets::require_tensor_shape(source, "model.norm.weight", {1024});
+}
+
+void validate_weight_anchors(const IndexTTS2Assets & assets) {
+    validate_gpt_weights(assets.config, *assets.gpt_weights);
+    validate_s2mel_weights(assets.config, *assets.s2mel_weights);
+    validate_matrix_weights(assets.config, *assets.speaker_matrix, *assets.emotion_matrix);
+    validate_w2v_stats(assets.config, *assets.wav2vec2bert_stats);
+    validate_w2v_weights(*assets.wav2vec2bert_weights);
+    validate_semantic_codec_weights(assets.config, *assets.semantic_codec_weights);
+    validate_qwen_weights(*assets.qwen_emotion_weights);
 }
 
 }  // namespace
@@ -209,8 +223,8 @@ std::shared_ptr<const IndexTTS2Assets> load_index_tts2_assets(const std::filesys
         model_path,
         assets::default_model_package_spec_path("index_tts2"));
     assets->config = parse_config(assets->resources);
+    validate_config(assets->config, assets->resources);
 
-    validate_qwen_config(assets->resources);
     assets->gpt_weights = assets->resources.open_tensor_source("gpt");
     assets->s2mel_weights = assets->resources.open_tensor_source("s2mel");
     assets->speaker_matrix = assets->resources.open_tensor_source("speaker_matrix");
@@ -222,13 +236,7 @@ std::shared_ptr<const IndexTTS2Assets> load_index_tts2_assets(const std::filesys
     assets->bigvgan_weights = assets->resources.open_tensor_source("bigvgan");
     assets->qwen_emotion_weights = assets->resources.open_tensor_source("qwen_emotion");
 
-    validate_gpt_weights(assets->config, *assets->gpt_weights);
-    validate_s2mel_weights(assets->config, *assets->s2mel_weights);
-    validate_matrix_weights(assets->config, *assets->speaker_matrix, *assets->emotion_matrix);
-    validate_w2v_stats(assets->config, *assets->wav2vec2bert_stats);
-    validate_w2v_weights(*assets->wav2vec2bert_weights);
-    validate_semantic_codec_weights(assets->config, *assets->semantic_codec_weights);
-    validate_qwen_weights(*assets->qwen_emotion_weights);
+    validate_weight_anchors(*assets);
     return assets;
 }
 

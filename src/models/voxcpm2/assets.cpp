@@ -1,8 +1,8 @@
 #include "engine/models/voxcpm2/assets.h"
 
+#include "engine/framework/assets/model_package.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/io/config.h"
-#include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -12,30 +12,7 @@ namespace engine::models::voxcpm2 {
 namespace json = engine::io::json;
 namespace {
 
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("VoxCPM2 model path does not exist: " + model_path.string());
-}
-
-assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_path) {
-    assets::ResourceBundle resources(resolve_model_root(model_path));
-    resources.add_model_files({
-        {"config", "config.json", true},
-        {"weights", "model.safetensors", true},
-        {"audiovae_weights", "audiovae.safetensors", true},
-        {"tokenizer_config", "tokenizer_config.json", true},
-        {"tokenizer_json", "tokenizer.json", true},
-        {"special_tokens_map", "special_tokens_map.json", true},
-    });
-    return resources;
-}
-
-VoxCPM2RopeScalingConfig parse_rope_scaling(const engine::io::json::Value & value) {
+VoxCPM2RopeScalingConfig parse_rope_scaling(const json::Value & value) {
     VoxCPM2RopeScalingConfig config;
     config.type = json::optional_string(value, "type", "");
     config.long_factor = json::optional_f32_array(value, "long_factor");
@@ -45,7 +22,7 @@ VoxCPM2RopeScalingConfig parse_rope_scaling(const engine::io::json::Value & valu
     return config;
 }
 
-VoxCPM2MiniCPMConfig parse_lm_config(const engine::io::json::Value & value) {
+VoxCPM2MiniCPMConfig parse_lm_config(const json::Value & value) {
     VoxCPM2MiniCPMConfig config;
     config.bos_token_id = json::optional_i64(value, "bos_token_id", config.bos_token_id);
     config.eos_token_id = json::optional_i64(value, "eos_token_id", config.eos_token_id);
@@ -90,7 +67,7 @@ VoxCPM2MiniCPMConfig parse_lm_config(const engine::io::json::Value & value) {
 }
 
 VoxCPM2LocalTransformerConfig parse_local_transformer_config(
-    const engine::io::json::Value & value,
+    const json::Value & value,
     const char * label) {
     VoxCPM2LocalTransformerConfig config;
     config.hidden_dim = json::require_i64(value, "hidden_dim");
@@ -107,7 +84,7 @@ VoxCPM2LocalTransformerConfig parse_local_transformer_config(
     return config;
 }
 
-VoxCPM2DiTConfig parse_dit_config(const engine::io::json::Value & value) {
+VoxCPM2DiTConfig parse_dit_config(const json::Value & value) {
     const auto base = parse_local_transformer_config(value, "dit transformer");
     VoxCPM2DiTConfig config;
     config.hidden_dim = base.hidden_dim;
@@ -130,7 +107,7 @@ VoxCPM2DiTConfig parse_dit_config(const engine::io::json::Value & value) {
     return config;
 }
 
-VoxCPM2AudioVAEConfig parse_audio_vae_config(const engine::io::json::Value & value) {
+VoxCPM2AudioVAEConfig parse_audio_vae_config(const json::Value & value) {
     VoxCPM2AudioVAEConfig config;
     config.encoder_dim = json::require_i64(value, "encoder_dim");
     config.encoder_rates = json::require_i64_array(value, "encoder_rates");
@@ -195,17 +172,7 @@ VoxCPM2Config parse_config(const assets::ResourceBundle & resources) {
     return config;
 }
 
-void fill_paths(VoxCPM2AssetPaths & paths, assets::ResourceBundle & resources) {
-    paths.model_root = resources.model_root();
-    paths.config_path = resources.require_file("config");
-    paths.model_weights_path = resources.require_file("weights");
-    paths.audiovae_weights_path = resources.require_file("audiovae_weights");
-    paths.tokenizer_config_path = resources.require_file("tokenizer_config");
-    paths.tokenizer_json_path = resources.require_file("tokenizer_json");
-    paths.special_tokens_map_path = resources.require_file("special_tokens_map");
-}
-
-void validate_model_weight_anchors(const VoxCPM2Assets & assets) {
+void validate_weight_anchors(const VoxCPM2Assets & assets) {
     const auto & config = assets.config;
     const auto & weights = *assets.model_weights;
     assets::require_tensor_shape(weights, "base_lm.embed_tokens.weight", {config.lm.vocab_size, config.lm.hidden_size});
@@ -238,24 +205,18 @@ void validate_model_weight_anchors(const VoxCPM2Assets & assets) {
     assets::require_tensor_shape(vae, "decoder.model.1.weight_v", {config.audio_vae.decoder_dim, config.audio_vae.latent_dim, 1});
 }
 
-}  // namespace
-
-VoxCPM2AssetPaths resolve_voxcpm2_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
-    VoxCPM2AssetPaths paths;
-    fill_paths(paths, resources);
-    return paths;
 }
 
 std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
-    VoxCPM2Assets assets;
-    fill_paths(assets.paths, resources);
-    assets.config = parse_config(resources);
-    assets.model_weights = resources.open_tensor_source("weights");
-    assets.audiovae_weights = resources.open_tensor_source("audiovae_weights");
-    validate_model_weight_anchors(assets);
-    return std::make_shared<VoxCPM2Assets>(std::move(assets));
+    auto out = std::make_shared<VoxCPM2Assets>();
+    out->resources = assets::load_resource_bundle_from_package_spec(
+        model_path,
+        assets::default_model_package_spec_path("voxcpm2"));
+    out->config = parse_config(out->resources);
+    out->model_weights = out->resources.open_tensor_source("weights");
+    out->audiovae_weights = out->resources.open_tensor_source("audiovae_weights");
+    validate_weight_anchors(*out);
+    return out;
 }
 
 }  // namespace engine::models::voxcpm2

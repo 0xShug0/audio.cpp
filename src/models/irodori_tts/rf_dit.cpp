@@ -668,7 +668,7 @@ core::TensorValue build_block(
 } // namespace
 
 IrodoriRfDitWeights
-load_irodori_rf_dit_weights(const IrodoriAssets &assets, ggml_backend_t backend,
+load_irodori_rf_dit_weights(const IrodoriTTSAssets &assets, ggml_backend_t backend,
                             core::BackendType backend_type,
                             size_t weight_context_bytes,
                             assets::TensorStorageType weight_storage_type) {
@@ -905,7 +905,7 @@ public:
     const std::vector<IrodoriLayerAdaLNModulation> *backend_layers = nullptr;
   };
 
-  Impl(std::shared_ptr<const IrodoriAssets> assets,
+  Impl(std::shared_ptr<const IrodoriTTSAssets> assets,
        core::ExecutionContext &execution_context, size_t graph_arena_bytes,
        size_t weight_context_bytes,
        assets::TensorStorageType weight_storage_type, bool mem_saver)
@@ -2270,7 +2270,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
   };
 
-  std::shared_ptr<const IrodoriAssets> assets_;
+  std::shared_ptr<const IrodoriTTSAssets> assets_;
   IrodoriRfDitWeights weights_;
   ggml_backend_t backend_ = nullptr;
   core::BackendType backend_type_ = core::BackendType::Cpu;
@@ -2314,7 +2314,7 @@ IrodoriRfSampler::ModulationCache::ModulationCache() = default;
 IrodoriRfSampler::ModulationCache::~ModulationCache() = default;
 
 IrodoriRfSampler::IrodoriRfSampler(
-    std::shared_ptr<const IrodoriAssets> assets,
+    std::shared_ptr<const IrodoriTTSAssets> assets,
     core::ExecutionContext &execution_context, size_t graph_arena_bytes,
     size_t weight_context_bytes, assets::TensorStorageType weight_storage_type,
     bool mem_saver)

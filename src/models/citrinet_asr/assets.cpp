@@ -14,11 +14,12 @@
 
 namespace engine::models::citrinet_asr {
 namespace io = engine::io;
+namespace json = engine::io::json;
 namespace asset_meta = engine::assets;
 
 namespace {
 
-std::vector<JasperBlockConfig> parse_jasper_config(const io::json::Value & value) {
+std::vector<JasperBlockConfig> parse_jasper_config(const json::Value & value) {
     std::vector<JasperBlockConfig> blocks;
     for (const auto & block_value : value.as_array()) {
         const auto & object = block_value.as_object();
@@ -61,19 +62,19 @@ std::vector<JasperBlockConfig> parse_jasper_config(const io::json::Value & value
     return blocks;
 }
 
-CitrinetConfig parse_config(const io::json::Value & root) {
+CitrinetConfig parse_config(const json::Value & root) {
     CitrinetConfig cfg;
-    cfg.sample_rate = root.require("sample_rate").as_i64();
-    cfg.n_mels = root.require("n_mels").as_i64();
-    cfg.n_fft = root.require("n_fft").as_i64();
+    cfg.sample_rate = json::require_i64(root, "sample_rate");
+    cfg.n_mels = json::require_i64(root, "n_mels");
+    cfg.n_fft = json::require_i64(root, "n_fft");
     cfg.hop_length = static_cast<int64_t>(std::llround(root.require("window_stride").as_number() * static_cast<double>(cfg.sample_rate)));
     cfg.win_length = static_cast<int64_t>(std::llround(root.require("window_size").as_number() * static_cast<double>(cfg.sample_rate)));
-    cfg.pad_to = root.require("pad_to").as_i64();
-    cfg.vocab_size = root.require("vocab_size").as_i64();
-    cfg.num_classes = root.require("num_classes").as_i64();
-    cfg.blank_id = root.require("blank_id").as_i64();
-    cfg.window = root.require("window").as_string();
-    cfg.normalize = root.require("normalize").as_string();
+    cfg.pad_to = json::require_i64(root, "pad_to");
+    cfg.vocab_size = json::require_i64(root, "vocab_size");
+    cfg.num_classes = json::require_i64(root, "num_classes");
+    cfg.blank_id = json::require_i64(root, "blank_id");
+    cfg.window = json::require_string(root, "window");
+    cfg.normalize = json::require_string(root, "normalize");
     cfg.jasper = parse_jasper_config(root.require("jasper"));
     if (cfg.window != "hann") {
         throw std::runtime_error("unsupported Citrinet window: " + cfg.window);

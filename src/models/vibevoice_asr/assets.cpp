@@ -13,13 +13,7 @@ namespace engine::models::vibevoice_asr {
 namespace json = engine::io::json;
 namespace {
 
-assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_path) {
-    return assets::load_resource_bundle_from_package_spec(
-        model_path,
-        assets::default_model_package_spec_path("vibevoice_asr"));
-}
-
-VibeVoiceTokenizerConfig parse_tokenizer_config(const engine::io::json::Value & value, const char * label) {
+VibeVoiceTokenizerConfig parse_tokenizer_config(const json::Value & value, const char * label) {
     VibeVoiceTokenizerConfig config;
     config.channels = json::optional_i64(value, "channels", config.channels);
     config.causal = json::optional_bool(value, "causal", config.causal);
@@ -75,7 +69,7 @@ VibeVoiceTokenizerConfig parse_tokenizer_config(const engine::io::json::Value & 
     return config;
 }
 
-VibeVoiceDecoderConfig parse_decoder_config(const engine::io::json::Value & value) {
+VibeVoiceDecoderConfig parse_decoder_config(const json::Value & value) {
     const auto model_type = json::optional_string(value, "model_type", "");
     if (model_type != "qwen2") {
         throw std::runtime_error("VibeVoice config decoder model_type mismatch");
@@ -110,7 +104,7 @@ VibeVoiceDecoderConfig parse_decoder_config(const engine::io::json::Value & valu
     return config;
 }
 
-VibeVoiceDiffusionHeadConfig parse_diffusion_head_config(const engine::io::json::Value & value) {
+VibeVoiceDiffusionHeadConfig parse_diffusion_head_config(const json::Value & value) {
     VibeVoiceDiffusionHeadConfig config;
     config.ddpm_batch_mul = json::optional_i64(value, "ddpm_batch_mul", config.ddpm_batch_mul);
     config.ddpm_beta_schedule = json::optional_string(value, "ddpm_beta_schedule", config.ddpm_beta_schedule);
@@ -147,7 +141,7 @@ VibeVoiceDiffusionHeadConfig parse_diffusion_head_config(const engine::io::json:
     return config;
 }
 
-int64_t require_acoustic_vae_dim(const engine::io::json::Value & root) {
+int64_t require_acoustic_vae_dim(const json::Value & root) {
     // VibeVoice-7B's config.json spells this key "acostic_vae_dim".
     for (const char * key : {"acoustic_vae_dim", "acostic_vae_dim"}) {
         if (const auto * value = root.find(key); value != nullptr) {
@@ -216,7 +210,7 @@ VibeVoiceProcessorConfig parse_processor_config(const assets::ResourceBundle & r
     return config;
 }
 
-void validate_weight_anchors(const VibeVoiceAssets & assets) {
+void validate_weight_anchors(const VibeVoiceASRAssets & assets) {
     const auto & config = assets.config;
     const auto & weights = *assets.model_weights;
     const auto & decoder = config.decoder;
@@ -259,15 +253,17 @@ void validate_weight_anchors(const VibeVoiceAssets & assets) {
 
 }  // namespace
 
-std::shared_ptr<const VibeVoiceAssets> load_vibevoice_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
-    VibeVoiceAssets assets;
+std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(const std::filesystem::path & model_path) {
+    auto resources = assets::load_resource_bundle_from_package_spec(
+        model_path,
+        assets::default_model_package_spec_path("vibevoice_asr"));
+    VibeVoiceASRAssets assets;
     assets.resources = std::move(resources);
     assets.config = parse_config(assets.resources);
     assets.processor = parse_processor_config(assets.resources);
     assets.model_weights = assets.resources.open_tensor_source("model_weights");
     validate_weight_anchors(assets);
-    return std::make_shared<VibeVoiceAssets>(std::move(assets));
+    return std::make_shared<VibeVoiceASRAssets>(std::move(assets));
 }
 
 }  // namespace engine::models::vibevoice_asr

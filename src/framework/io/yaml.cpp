@@ -284,6 +284,10 @@ float require_float(const FlattenedDocument & document, const std::string & key)
     return std::stof(require_string(document, key));
 }
 
+bool require_bool(const FlattenedDocument & document, const std::string & key) {
+    return parse_bool_scalar(require_string(document, key), key);
+}
+
 bool optional_bool(const FlattenedDocument & document, const std::string & key, bool default_value) {
     const auto it = document.scalars.find(key);
     return it == document.scalars.end() ? default_value : parse_bool_scalar(it->second, key);
@@ -324,6 +328,16 @@ std::vector<std::string> require_list_strings(const FlattenedDocument & document
         throw std::runtime_error("Missing yaml list key: " + key);
     }
     return it->second;
+}
+
+std::vector<int> require_list_int(const FlattenedDocument & document, const std::string & key) {
+    const auto values = require_list_strings(document, key);
+    std::vector<int> out;
+    out.reserve(values.size());
+    for (const auto & value : values) {
+        out.push_back(std::stoi(value));
+    }
+    return out;
 }
 
 std::vector<int64_t> require_list_i64(const FlattenedDocument & document, const std::string & key) {

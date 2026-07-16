@@ -32,7 +32,7 @@ struct NemotronEncoderStreamState {
 class NemotronEncoderRuntime {
 public:
     NemotronEncoderRuntime(
-        std::shared_ptr<const NemotronAssets> assets,
+        std::shared_ptr<const NemotronASRAssets> assets,
         std::shared_ptr<const NemotronWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes);
@@ -61,7 +61,7 @@ private:
         bool first_chunk);
     const std::vector<float> & relative_positional_encoding(int64_t frames);
 
-    std::shared_ptr<const NemotronAssets> assets_;
+    std::shared_ptr<const NemotronASRAssets> assets_;
     std::shared_ptr<const NemotronWeights> weights_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     size_t graph_arena_bytes_ = 0;

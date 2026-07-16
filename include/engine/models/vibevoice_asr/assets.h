@@ -92,7 +92,7 @@ struct VibeVoiceProcessorConfig {
     VibeVoiceAudioProcessorConfig audio_processor;
 };
 
-struct VibeVoiceAssets {
+struct VibeVoiceASRAssets {
     assets::ResourceBundle resources;
     VibeVoiceConfig config;
     VibeVoiceProcessorConfig processor;
@@ -104,6 +104,6 @@ struct VibeVoiceAssets {
     bool fine_tune_applied = false;
 };
 
-std::shared_ptr<const VibeVoiceAssets> load_vibevoice_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::vibevoice_asr

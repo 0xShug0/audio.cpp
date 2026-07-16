@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
 #include <cstdint>
@@ -11,7 +12,6 @@
 namespace engine::models::stable_audio {
 
 struct StableAudioConfig {
-    std::string model_type;
     int64_t sample_size = 0;
     int sample_rate = 0;
     int audio_channels = 0;
@@ -67,8 +67,6 @@ struct StableAudioConfig {
     bool distribution_shift_use_sine = false;
     std::string pretransform_type;
     std::string prompt_conditioner_type;
-    std::string t5_model_name;
-    std::string t5_subfolder;
     int64_t t5_hidden_size = 768;
     int64_t t5_layers = 12;
     int64_t t5_attention_heads = 12;
@@ -82,30 +80,17 @@ struct StableAudioConfig {
     float t5_rms_norm_eps = 1.0e-6F;
     float t5_attn_logit_softcap = 50.0F;
     float t5_query_pre_attn_scalar = 64.0F;
-
-    bool is_medium() const noexcept;
-};
-
-struct StableAudioAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path model_config_path;
-    std::filesystem::path model_safetensors_path;
-    std::filesystem::path t5_root;
-    std::filesystem::path t5_config_path;
-    std::filesystem::path t5_safetensors_path;
-    std::filesystem::path t5_tokenizer_json_path;
-    std::filesystem::path t5_tokenizer_model_path;
-    std::filesystem::path t5_tokenizer_config_path;
+    bool medium_architecture = false;
 };
 
 struct StableAudioAssets {
-    StableAudioAssetPaths paths;
+    assets::ResourceBundle resources;
+    std::filesystem::path t5_tokenizer_model_path;
     StableAudioConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> t5_weights;
 };
 
-StableAudioAssetPaths resolve_stable_audio_assets(const std::filesystem::path & model_path);
 std::shared_ptr<const StableAudioAssets> load_stable_audio_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::stable_audio

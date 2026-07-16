@@ -2,31 +2,19 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/framework/io/yaml.h"
 #include "engine/framework/runtime/model.h"
 
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::models::roformer {
 
-enum class RoformerFamily {
-    BSRoformer,
-    MelBandRoformer,
-};
-
-struct RoformerModelConfig {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path weight_path;
-    bool config_is_json = false;
-};
+inline constexpr std::string_view kMelBandRoformerFamily = "mel_band_roformer";
 
 struct RoformerArchitectureConfig {
-    RoformerFamily family = RoformerFamily::BSRoformer;
     int sample_rate = 0;
     int channels = 0;
     int chunk_size = 0;
@@ -63,24 +51,13 @@ struct RoformerArchitectureConfig {
 };
 
 struct RoformerAssets {
-    runtime::ModelMetadata metadata;
-    runtime::CapabilitySet capabilities;
     assets::ResourceBundle resources;
     std::shared_ptr<const assets::TensorSource> tensor_source;
     RoformerArchitectureConfig config;
 };
 
 void validate_roformer_weight_storage_type(assets::TensorStorageType storage_type);
-std::string family_name(RoformerFamily family);
-std::string family_variant(RoformerFamily family);
-bool config_matches_family(
-    const engine::io::yaml::FlattenedDocument & parsed,
-    RoformerFamily family);
-runtime::ModelInspection inspect_roformer_model(
-    const runtime::ModelLoadRequest & request,
-    RoformerFamily family);
-std::shared_ptr<const RoformerAssets> load_roformer_assets(
-    const runtime::ModelLoadRequest & request,
-    RoformerFamily family);
+std::shared_ptr<const RoformerAssets> load_mel_band_roformer_assets(
+    const runtime::ModelLoadRequest & request);
 
 }  // namespace engine::models::roformer

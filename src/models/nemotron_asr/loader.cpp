@@ -9,28 +9,24 @@
 namespace engine::models::nemotron_asr {
 namespace {
 
-std::filesystem::path spec_path() {
-    return engine::assets::default_model_package_spec_path("nemotron_asr");
+runtime::ModelMetadata metadata(const NemotronASRAssets & assets) {
+    runtime::ModelMetadata out;
+    out.family = "nemotron_asr";
+    out.variant = assets.config.model_type;
+    out.description = "NVIDIA Nemotron 3.5 ASR streaming RNNT loaded from local assets.";
+    return out;
 }
 
-runtime::ModelMetadata nemotron_asr_metadata(const NemotronAssets & assets) {
-    runtime::ModelMetadata metadata;
-    metadata.family = "nemotron_asr";
-    metadata.variant = assets.config.model_type;
-    metadata.description = "NVIDIA Nemotron 3.5 ASR streaming RNNT loaded from local assets.";
-    return metadata;
-}
-
-runtime::CapabilitySet nemotron_asr_capabilities(const NemotronAssets & assets) {
-    runtime::CapabilitySet capabilities;
-    capabilities.supported_tasks = {
+runtime::CapabilitySet capabilities(const NemotronASRAssets & assets) {
+    runtime::CapabilitySet out;
+    out.supported_tasks = {
         {runtime::VoiceTaskKind::Asr, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     for (const auto & item : assets.config.prompt_dictionary) {
-        capabilities.languages.push_back(item.first);
+        out.languages.push_back(item.first);
     }
-    capabilities.supports_timestamps = true;
-    return capabilities;
+    out.supports_timestamps = true;
+    return out;
 }
 
 class NemotronASRLoader final : public runtime::IVoiceModelLoader {
@@ -41,7 +37,8 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
-            (void) engine::assets::load_resource_bundle_from_package_spec(request.model_path, spec_path());
+            const auto package_spec = engine::assets::default_model_package_spec_path(family());
+            (void) engine::assets::load_resource_bundle_from_package_spec(request.model_path, package_spec);
             return !request.family_hint.has_value() || *request.family_hint == family();
         } catch (...) {
             return false;
@@ -52,15 +49,16 @@ public:
         const auto assets = load_nemotron_asr_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->resources.model_root();
-        inspection.metadata = nemotron_asr_metadata(*assets);
-        inspection.capabilities = nemotron_asr_capabilities(*assets);
+        inspection.metadata = metadata(*assets);
+        inspection.capabilities = capabilities(*assets);
+        const auto package_spec = engine::assets::default_model_package_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path(),
+            package_spec,
             engine::assets::ModelPackageResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path(),
+            package_spec,
             engine::assets::ModelPackageResourceKind::Tensors);
         inspection.cli.request_options = {
             {"language", "code", "ASR prompt language such as en-US, da-DK, or auto."},
@@ -90,7 +88,7 @@ public:
 NemotronASRLoadedModel::NemotronASRLoadedModel(
     runtime::ModelMetadata metadata,
     runtime::CapabilitySet capabilities,
-    std::shared_ptr<const NemotronAssets> assets)
+    std::shared_ptr<const NemotronASRAssets> assets)
     : metadata_(std::move(metadata)),
       capabilities_(std::move(capabilities)),
       assets_(std::move(assets)) {}
@@ -120,9 +118,9 @@ std::unique_ptr<runtime::IVoiceTaskSession> NemotronASRLoadedModel::create_task_
 
 std::unique_ptr<NemotronASRLoadedModel> load_nemotron_asr_model(const std::filesystem::path & model_path) {
     auto assets = load_nemotron_asr_assets(model_path);
-    return std::make_unique<NemotronASRLoadedModel>(
-        nemotron_asr_metadata(*assets),
-        nemotron_asr_capabilities(*assets),
+        return std::make_unique<NemotronASRLoadedModel>(
+        metadata(*assets),
+        capabilities(*assets),
         std::move(assets));
 }
 

@@ -1,0 +1,39 @@
+{
+  "family": "miocodec",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.yaml"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        },
+        "wavlm_weights": {
+          "source": "weights:",
+          "prefix": "wavlm_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "wavlm": "wavlm-base-plus-mlx"
+      },
+      "files": {
+        "config": "model:config.yaml"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors",
+        "wavlm_weights": "wavlm:weights.safetensors"
+      }
+    }
+  ]
+}

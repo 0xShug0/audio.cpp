@@ -277,7 +277,7 @@ core::TensorValue encoder_block(core::ModuleBuildContext &ctx,
 } // namespace
 
 IrodoriCodecWeights
-load_irodori_codec_weights(const IrodoriAssets &assets, ggml_backend_t backend,
+load_irodori_codec_weights(const IrodoriTTSAssets &assets, ggml_backend_t backend,
                            core::BackendType backend_type,
                            size_t weight_context_bytes,
                            assets::TensorStorageType conv_storage_type) {
@@ -571,7 +571,7 @@ void normalize_reference_audio_in_place(std::vector<float> &mono,
 
 class IrodoriCodec::Impl {
 public:
-  Impl(std::shared_ptr<const IrodoriAssets> assets,
+  Impl(std::shared_ptr<const IrodoriTTSAssets> assets,
        core::ExecutionContext &execution_context, size_t graph_arena_bytes,
        size_t weight_context_bytes,
        assets::TensorStorageType weight_storage_type)
@@ -788,7 +788,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
   };
 
-  std::shared_ptr<const IrodoriAssets> assets_;
+  std::shared_ptr<const IrodoriTTSAssets> assets_;
   IrodoriCodecWeights weights_;
   ggml_backend_t backend_ = nullptr;
   core::BackendType backend_type_ = core::BackendType::Cpu;
@@ -798,7 +798,7 @@ private:
   std::unique_ptr<EncodeGraph> encode_graph_;
 };
 
-IrodoriCodec::IrodoriCodec(std::shared_ptr<const IrodoriAssets> assets,
+IrodoriCodec::IrodoriCodec(std::shared_ptr<const IrodoriTTSAssets> assets,
                            core::ExecutionContext &execution_context,
                            size_t graph_arena_bytes,
                            size_t weight_context_bytes,

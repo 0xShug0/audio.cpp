@@ -10,11 +10,7 @@
 namespace engine::models::qwen3_forced_aligner {
 namespace {
 
-std::filesystem::path spec_path() {
-    return engine::assets::default_model_package_spec_path("qwen3_forced_aligner");
-}
-
-std::shared_ptr<const engine::models::qwen3_asr::Qwen3ASRAssets> load_assets(
+std::shared_ptr<const engine::models::qwen3_asr::Qwen3ASRAssets> load_qwen3_forced_aligner_assets(
     const std::filesystem::path & model_path) {
     auto assets = engine::models::qwen3_asr::load_qwen3_asr_assets(model_path, "qwen3_forced_aligner");
     if (assets->config.thinker_model_type != "qwen3_forced_aligner") {
@@ -23,24 +19,22 @@ std::shared_ptr<const engine::models::qwen3_asr::Qwen3ASRAssets> load_assets(
     return assets;
 }
 
-runtime::ModelMetadata qwen3_forced_aligner_metadata(
-    const engine::models::qwen3_asr::Qwen3ASRAssets & assets) {
-    runtime::ModelMetadata metadata;
-    metadata.family = "qwen3_forced_aligner";
-    metadata.variant = assets.config.model_size.empty() ? assets.config.thinker_model_type : assets.config.model_size;
-    metadata.description = "Qwen3 forced aligner loaded from local assets.";
-    return metadata;
+runtime::ModelMetadata metadata(const engine::models::qwen3_asr::Qwen3ASRAssets & assets) {
+    runtime::ModelMetadata out;
+    out.family = "qwen3_forced_aligner";
+    out.variant = assets.config.model_size.empty() ? assets.config.thinker_model_type : assets.config.model_size;
+    out.description = "Qwen3 forced aligner loaded from local assets.";
+    return out;
 }
 
-runtime::CapabilitySet qwen3_forced_aligner_capabilities(
-    const engine::models::qwen3_asr::Qwen3ASRAssets & assets) {
-    runtime::CapabilitySet capabilities;
-    capabilities.supported_tasks = {
+runtime::CapabilitySet capabilities(const engine::models::qwen3_asr::Qwen3ASRAssets & assets) {
+    runtime::CapabilitySet out;
+    out.supported_tasks = {
         {runtime::VoiceTaskKind::Alignment, {runtime::RunMode::Offline}},
     };
-    capabilities.languages = assets.config.supported_languages;
-    capabilities.supports_timestamps = true;
-    return capabilities;
+    out.languages = assets.config.supported_languages;
+    out.supports_timestamps = true;
+    return out;
 }
 
 class Qwen3ForcedAlignerLoader final : public runtime::IVoiceModelLoader {
@@ -51,7 +45,7 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
-            (void) load_assets(request.model_path);
+            (void) load_qwen3_forced_aligner_assets(request.model_path);
             return !request.family_hint.has_value() || *request.family_hint == family();
         } catch (...) {
             return false;
@@ -59,18 +53,19 @@ public:
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_assets(request.model_path);
+        const auto assets = load_qwen3_forced_aligner_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->resources.model_root();
-        inspection.metadata = qwen3_forced_aligner_metadata(*assets);
-        inspection.capabilities = qwen3_forced_aligner_capabilities(*assets);
+        inspection.metadata = metadata(*assets);
+        inspection.capabilities = capabilities(*assets);
+        const auto package_spec = engine::assets::default_model_package_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path(),
+            package_spec,
             engine::assets::ModelPackageResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path(),
+            package_spec,
             engine::assets::ModelPackageResourceKind::Tensors);
         return inspection;
     }
@@ -111,10 +106,10 @@ std::unique_ptr<runtime::IVoiceTaskSession> Qwen3ForcedAlignerLoadedModel::creat
 }
 
 std::unique_ptr<Qwen3ForcedAlignerLoadedModel> load_qwen3_forced_aligner_model(const std::filesystem::path & model_path) {
-    auto assets = load_assets(model_path);
+    auto assets = load_qwen3_forced_aligner_assets(model_path);
     return std::make_unique<Qwen3ForcedAlignerLoadedModel>(
-        qwen3_forced_aligner_metadata(*assets),
-        qwen3_forced_aligner_capabilities(*assets),
+        metadata(*assets),
+        capabilities(*assets),
         std::move(assets));
 }
 

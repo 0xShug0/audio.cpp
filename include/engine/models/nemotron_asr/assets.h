@@ -56,7 +56,7 @@ struct NemotronConfig {
     std::unordered_map<std::string, int64_t> prompt_dictionary;
 };
 
-struct NemotronAssets {
+struct NemotronASRAssets {
     assets::ResourceBundle resources;
     NemotronConfig config;
     std::shared_ptr<const assets::TensorSource> source;
@@ -66,6 +66,6 @@ struct NemotronAssets {
     bool trim_leading_space = false;
 };
 
-std::shared_ptr<const NemotronAssets> load_nemotron_asr_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const NemotronASRAssets> load_nemotron_asr_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::nemotron_asr

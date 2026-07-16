@@ -1542,6 +1542,19 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
     if (metadata.empty()) {
         throw std::runtime_error("cannot convert an empty tensor source to GGUF");
     }
+    std::vector<TensorMetadata> convertible_metadata;
+    convertible_metadata.reserve(metadata.size());
+    for (const auto & item : metadata) {
+        const bool zero_element_tensor =
+            std::any_of(item.shape.begin(), item.shape.end(), [](int64_t dim) { return dim == 0; });
+        if (zero_element_tensor) {
+            continue;
+        }
+        convertible_metadata.push_back(item);
+    }
+    if (convertible_metadata.empty()) {
+        throw std::runtime_error("cannot convert a tensor source with only zero-element tensors to GGUF");
+    }
 
     const bool preserve_source_dtype = weight_type == TensorStorageType::Native;
     const ggml_type requested_type = preserve_source_dtype ? GGML_TYPE_COUNT : ggml_type_for_tensor_storage(weight_type);
@@ -1551,7 +1564,7 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
 
     const size_t context_bytes = std::max<size_t>(
         1024 * 1024,
-        metadata.size() * (ggml_tensor_overhead() + 256));
+        convertible_metadata.size() * (ggml_tensor_overhead() + 256));
     ggml_context * tensor_context = ggml_init(ggml_init_params{context_bytes, nullptr, true});
     if (tensor_context == nullptr) {
         throw std::runtime_error("failed to allocate GGUF tensor metadata context");
@@ -1569,9 +1582,9 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
         TensorStorageType storage_type = TensorStorageType::Native;
     };
     std::vector<OutputTensor> outputs;
-    outputs.reserve(metadata.size());
+    outputs.reserve(convertible_metadata.size());
     std::vector<std::string> logical_names;
-    logical_names.reserve(metadata.size());
+    logical_names.reserve(convertible_metadata.size());
     std::unordered_set<std::string> physical_names;
 
     try {
@@ -1685,8 +1698,8 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             }
         }
 
-        for (size_t i = 0; i < metadata.size(); ++i) {
-            const auto & item = metadata[i];
+        for (size_t i = 0; i < convertible_metadata.size(); ++i) {
+            const auto & item = convertible_metadata[i];
             if (item.shape.size() > core::kMaxTensorRank) {
                 throw std::runtime_error("GGUF supports tensor ranks from 0 to 4: " + item.name);
             }
@@ -1749,8 +1762,8 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             logical_name_ptrs.size());
         std::vector<int32_t> exact_ranks;
         std::vector<int64_t> exact_shapes;
-        exact_ranks.reserve(metadata.size());
-        for (const auto & item : metadata) {
+        exact_ranks.reserve(convertible_metadata.size());
+        for (const auto & item : convertible_metadata) {
             exact_ranks.push_back(static_cast<int32_t>(item.shape.size()));
             exact_shapes.insert(exact_shapes.end(), item.shape.begin(), item.shape.end());
         }

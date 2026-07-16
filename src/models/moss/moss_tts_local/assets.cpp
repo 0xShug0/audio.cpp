@@ -11,7 +11,7 @@ namespace engine::models::moss_tts_local {
 namespace json = engine::io::json;
 namespace {
 
-MossBackboneConfig parse_backbone_config(const engine::io::json::Value & value) {
+MossBackboneConfig parse_backbone_config(const json::Value & value) {
     MossBackboneConfig config;
     config.hidden_size = json::require_i64(value, "hidden_size");
     config.intermediate_size = json::require_i64(value, "intermediate_size");
@@ -35,7 +35,7 @@ MossBackboneConfig parse_backbone_config(const engine::io::json::Value & value) 
     return config;
 }
 
-MossLocalTransformerConfig parse_local_config(const engine::io::json::Value & value) {
+MossLocalTransformerConfig parse_local_config(const json::Value & value) {
     MossLocalTransformerConfig config;
     config.hidden_size = json::require_i64(value, "n_embd");
     config.intermediate_size = json::optional_i64(value, "n_inner", config.hidden_size * 4);
@@ -52,7 +52,7 @@ MossLocalTransformerConfig parse_local_config(const engine::io::json::Value & va
 
 }  // namespace
 
-MossTTSLocalConfig parse_config(const engine::io::json::Value & root) {
+MossTTSLocalConfig parse_model_config(const json::Value & root) {
     const auto model_type = json::optional_string(root, "model_type", "");
     if (model_type != "moss_tts_local") {
         throw std::runtime_error(
@@ -82,12 +82,16 @@ MossTTSLocalConfig parse_config(const engine::io::json::Value & root) {
     return config;
 }
 
+MossTTSLocalConfig parse_config(const assets::ResourceBundle & resources) {
+    return parse_model_config(resources.parse_json("config"));
+}
+
 std::shared_ptr<const MossTTSLocalAssets> load_moss_tts_local_assets(const std::filesystem::path & model_path) {
     MossTTSLocalAssets assets;
     assets.resources = assets::load_resource_bundle_from_package_spec(
         model_path,
         assets::default_model_package_spec_path("moss_tts_local"));
-    assets.config = parse_config(assets.resources.parse_json("config"));
+    assets.config = parse_config(assets.resources);
     assets.model_weights = assets.resources.open_tensor_source("model_weights");
     assets.audio_tokenizer_weights = assets.resources.open_tensor_source("audio_tokenizer_weights");
     return std::make_shared<MossTTSLocalAssets>(std::move(assets));

@@ -32,7 +32,7 @@ using NemotronTextDeltaCallback = std::function<void(const std::string &)>;
 class NemotronDecoderRuntime {
 public:
     NemotronDecoderRuntime(
-        std::shared_ptr<const NemotronAssets> assets,
+        std::shared_ptr<const NemotronASRAssets> assets,
         std::shared_ptr<const NemotronWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes);
@@ -55,7 +55,7 @@ private:
     int32_t run_joint_step(const float * encoder_frame);
     std::string decode_text(const std::vector<int32_t> & token_ids, bool keep_language_tags) const;
 
-    std::shared_ptr<const NemotronAssets> assets_;
+    std::shared_ptr<const NemotronASRAssets> assets_;
     std::shared_ptr<const NemotronWeights> weights_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     size_t graph_arena_bytes_ = 0;

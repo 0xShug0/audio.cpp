@@ -19,7 +19,7 @@ constexpr size_t kDefaultWeightContextBytes = 3072ull * 1024ull * 1024ull;
 constexpr size_t kDefaultEncoderGraphArenaBytes = 1024ull * 1024ull * 1024ull;
 constexpr size_t kDefaultDecoderGraphArenaBytes = 256ull * 1024ull * 1024ull;
 
-std::shared_ptr<const NemotronAssets> require_assets(std::shared_ptr<const NemotronAssets> assets) {
+std::shared_ptr<const NemotronASRAssets> require_assets(std::shared_ptr<const NemotronASRAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("Nemotron ASR session requires assets");
     }
@@ -102,7 +102,7 @@ NemotronFrontendFeatures slice_features(const NemotronFrontendFeatures & in, int
 NemotronASRSessionBase::NemotronASRSessionBase(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const NemotronAssets> assets)
+    std::shared_ptr<const NemotronASRAssets> assets)
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),
@@ -173,7 +173,7 @@ runtime::RunMode NemotronASRSessionBase::run_mode_impl() const {
 NemotronASROfflineSession::NemotronASROfflineSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const NemotronAssets> assets)
+    std::shared_ptr<const NemotronASRAssets> assets)
     : NemotronASRSessionBase(task, std::move(options), std::move(assets)) {}
 
 std::string NemotronASROfflineSession::family() const {
@@ -360,7 +360,7 @@ NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
 NemotronASRStreamingSession::NemotronASRStreamingSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const NemotronAssets> assets)
+    std::shared_ptr<const NemotronASRAssets> assets)
     : NemotronASRSessionBase(task, std::move(options), std::move(assets)) {}
 
 std::string NemotronASRStreamingSession::family() const {

@@ -247,43 +247,44 @@ Status labels:
 |---|---|
 | `Done` | Package-spec refactor is in place for this family. |
 | `No` | Package-spec refactor is not done, or the tested format is not usable. |
+| `Skip (...)` | Package-spec refactor is intentionally skipped. |
 | `Pass` | Covered by the path-test matrix with acceptable output. |
 | `Pass (TTS + clone)` | Both no-reference TTS and reference-audio voice cloning run successfully. |
 | `Pass (drift)` | Loads and runs, with known acceptable output drift. |
 | `No (...)` | Known unsupported, failing, or too much output drift. |
 | `---` | Not tested in the current GGUF path-test matrix. |
 
-| Family | Package-spec refactor | Safetensors tested after refactor | 16-bit GGUF tested | `orig` GGUF tested | `q8_0` GGUF tested |
+| Family | Package-spec refactor | Safetensors tested after refactor | `orig` GGUF tested | 16-bit GGUF tested | `q8_0` GGUF tested |
 |---|---|---|---|---|---|
 | `ace_step` | No | --- | --- | --- | --- |
 | `chatterbox` | No | --- | --- | --- | --- |
 | `citrinet_asr` | Done | Pass | --- | --- | Pass |
 | `heartmula` | No | --- | --- | --- | --- |
-| `higgs_audio_stt` | Done | Pass | Pass | --- | Pass |
-| `htdemucs` | No | --- | --- | --- | --- |
+| `higgs_audio_stt` | Done | Pass | --- | Pass | Pass |
+| `htdemucs` | Done | Pass | --- | Pass | Pass (drift) |
 | `hviske_asr` | Done | Pass | --- | --- | Pass |
-| `index_tts2` | Done | Pass | Pass (drift) | Pass | No (similarity drift, frame drift, text minor drift) |
-| `irodori_tts` | Done | Pass | Pass | --- | Pass (drift) |
-| `marblenet_vad` | No | --- | --- | --- | --- |
-| `mel_band_roformer` | No | --- | --- | --- | --- |
-| `miocodec` | No | --- | --- | --- | --- |
-| `miotts` | No | --- | --- | --- | --- |
-| `moss_tts_local` | Done | Pass | Pass | --- | No (similarity drift, frame drift, text minor drift) |
-| `moss_tts_nano` | Done | Pass | Pass | --- | No (similarity drift, frame drift, text large drift) |
-| `nemotron_asr` | Done | Pass | Pass | --- | Pass (minor filler drift) |
-| `omnivoice` | Done | Pass | No (runtime assert, no audio) | --- | No (runtime assert, no audio) |
+| `index_tts2` | Done | Pass | Pass | Pass (drift) | No (similarity drift, frame drift, text minor drift) |
+| `irodori_tts` | Done | Pass | --- | Pass | Pass (drift) |
+| `marblenet_vad` | Skip (tiny model) | --- | --- | --- | --- |
+| `mel_band_roformer` | Done | Pass | --- | Pass (drift) | Pass (drift) |
+| `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
+| `miotts` | Done | Pass | Pass | Pass (drift) | No (similarity drift, frame drift) |
+| `moss_tts_local` | Done | Pass | --- | Pass | No (similarity drift, frame drift, text minor drift) |
+| `moss_tts_nano` | Done | Pass | --- | Pass | No (similarity drift, frame drift, text large drift) |
+| `nemotron_asr` | Done | Pass | --- | Pass | Pass (minor filler drift) |
+| `omnivoice` | Done | Pass | --- | No (runtime assert, no audio) | No (runtime assert, no audio) |
 | `pocket_tts` | No | --- | --- | --- | --- |
-| `qwen3_asr` | Done | Pass | Pass | --- | Pass |
-| `qwen3_forced_aligner` | Done | Pass | Pass | --- | Pass |
-| `qwen3_tts` base | Done | Pass | No (similarity drift, frame drift, text minor drift) | --- | No (similarity drift, frame drift, text minor drift) |
-| `qwen3_tts` custom voice | Done | Pass | Pass (minor log-mel drift) | --- | No (similarity drift, frame drift, text minor drift) |
-| `qwen3_tts` voice design | Done | Pass | Pass (minor log-mel drift) | --- | No (similarity drift, frame drift, text minor drift) |
+| `qwen3_asr` | Done | Pass | --- | Pass | Pass |
+| `qwen3_forced_aligner` | Done | Pass | --- | Pass | Pass |
+| `qwen3_tts` base | Done | Pass | Pass | No (similarity drift, frame drift, text minor drift) | No (similarity drift, frame drift, text minor drift) |
+| `qwen3_tts` custom voice | Done | Pass | --- | Pass (drift) | No (similarity drift, frame drift, text minor drift) |
+| `qwen3_tts` voice design | Done | Pass | --- | Pass (drift) | No (similarity drift, frame drift, text minor drift) |
 | `seed_vc` | No | --- | --- | --- | --- |
-| `silero_vad` | No | --- | --- | --- | --- |
+| `silero_vad` | Skip (tiny model) | --- | --- | --- | --- |
 | `sortformer_diar` | No | --- | --- | --- | --- |
-| `stable_audio` | No | --- | --- | --- | --- |
-| `supertonic` | Done | Pass | --- | Pass | No (unsupported weight dtype) |
+| `stable_audio` | Done | Pass | --- | Pass (drift) | Pass (drift) |
+| `supertonic` | Done | Pass | Pass | --- | No (unsupported weight dtype) |
 | `vevo2` | No | --- | --- | --- | --- |
 | `vibevoice` | No | --- | --- | --- | --- |
-| `vibevoice_asr` | Done | Pass | Pass | --- | Pass |
-| `voxcpm2` | No | --- | --- | --- | --- |
+| `vibevoice_asr` | Done | Pass | --- | Pass | Pass |
+| `voxcpm2` | Done | Pass | Pass | No (clone similarity drift, frame drift) | No (similarity drift, frame drift) |

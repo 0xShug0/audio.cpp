@@ -14,7 +14,7 @@ class VibeVoiceASRTextTokenizer {
 public:
     struct Impl;
 
-    explicit VibeVoiceASRTextTokenizer(std::shared_ptr<const VibeVoiceAssets> assets);
+    explicit VibeVoiceASRTextTokenizer(std::shared_ptr<const VibeVoiceASRAssets> assets);
 
     VibeVoiceASRPrompt build_prompt(const VibeVoiceASRRequest & request, int64_t speech_tokens) const;
     std::vector<int32_t> encode(const std::string & text) const;
@@ -25,7 +25,7 @@ public:
     int32_t speech_pad_id() const noexcept;
 
 private:
-    std::shared_ptr<const VibeVoiceAssets> assets_;
+    std::shared_ptr<const VibeVoiceASRAssets> assets_;
     std::shared_ptr<const Impl> impl_;
 };
 

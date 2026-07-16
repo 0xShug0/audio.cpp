@@ -109,7 +109,7 @@ struct HviskeEncoderRuntime::Graph {
 };
 
 HviskeEncoderRuntime::HviskeEncoderRuntime(
-    std::shared_ptr<const HviskeAssets> assets,
+    std::shared_ptr<const HviskeASRAssets> assets,
     std::shared_ptr<const HviskeWeights> weights,
     engine::core::ExecutionContext & execution_context,
     size_t graph_arena_bytes)

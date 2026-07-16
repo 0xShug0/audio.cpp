@@ -13,7 +13,7 @@ public:
     IrodoriTTSLoadedModel(
         runtime::ModelMetadata metadata,
         runtime::CapabilitySet capabilities,
-        std::shared_ptr<const IrodoriAssets> assets);
+        std::shared_ptr<const IrodoriTTSAssets> assets);
 
     const runtime::ModelMetadata & metadata() const noexcept override;
     const runtime::CapabilitySet & capabilities() const noexcept override;
@@ -25,7 +25,7 @@ public:
 private:
     runtime::ModelMetadata metadata_;
     runtime::CapabilitySet capabilities_;
-    std::shared_ptr<const IrodoriAssets> assets_;
+    std::shared_ptr<const IrodoriTTSAssets> assets_;
 };
 
 std::unique_ptr<IrodoriTTSLoadedModel> load_irodori_tts_model(const std::filesystem::path & model_path);

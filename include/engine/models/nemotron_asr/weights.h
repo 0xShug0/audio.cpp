@@ -65,7 +65,7 @@ struct NemotronWeights {
 };
 
 std::shared_ptr<const NemotronWeights> load_nemotron_asr_weights(
-    const NemotronAssets & assets,
+    const NemotronASRAssets & assets,
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
     engine::assets::TensorStorageType matmul_storage_type,

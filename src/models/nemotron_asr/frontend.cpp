@@ -63,7 +63,7 @@ std::vector<float> prepare_waveform_impl(const engine::runtime::AudioBuffer & au
 
 }  // namespace
 
-NemotronFrontend::NemotronFrontend(std::shared_ptr<const NemotronAssets> assets)
+NemotronFrontend::NemotronFrontend(std::shared_ptr<const NemotronASRAssets> assets)
     : assets_(std::move(assets)) {
     if (assets_ == nullptr) {
         throw std::runtime_error("Nemotron ASR frontend requires assets");

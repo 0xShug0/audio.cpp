@@ -10,26 +10,22 @@
 namespace engine::models::qwen3_asr {
 namespace {
 
-std::filesystem::path spec_path() {
-    return engine::assets::default_model_package_spec_path("qwen3_asr");
+runtime::ModelMetadata metadata(const Qwen3ASRAssets & assets) {
+    runtime::ModelMetadata out;
+    out.family = "qwen3_asr";
+    out.variant = assets.config.model_size.empty() ? assets.config.model_type : assets.config.model_size;
+    out.description = "Qwen3 ASR loaded from local assets.";
+    return out;
 }
 
-runtime::ModelMetadata qwen3_asr_metadata(const Qwen3ASRAssets & assets) {
-    runtime::ModelMetadata metadata;
-    metadata.family = "qwen3_asr";
-    metadata.variant = assets.config.model_size.empty() ? assets.config.model_type : assets.config.model_size;
-    metadata.description = "Qwen3 ASR loaded from local assets.";
-    return metadata;
-}
-
-runtime::CapabilitySet qwen3_asr_capabilities(const Qwen3ASRAssets & assets) {
-    runtime::CapabilitySet capabilities;
-    capabilities.supported_tasks = {
+runtime::CapabilitySet capabilities(const Qwen3ASRAssets & assets) {
+    runtime::CapabilitySet out;
+    out.supported_tasks = {
         {runtime::VoiceTaskKind::Asr, {runtime::RunMode::Offline}},
     };
-    capabilities.languages = assets.config.supported_languages;
-    capabilities.supports_timestamps = false;
-    return capabilities;
+    out.languages = assets.config.supported_languages;
+    out.supports_timestamps = false;
+    return out;
 }
 
 class Qwen3ASRLoader final : public runtime::IVoiceModelLoader {
@@ -40,7 +36,8 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
-            (void) engine::assets::load_resource_bundle_from_package_spec(request.model_path, spec_path());
+            const auto package_spec = engine::assets::default_model_package_spec_path(family());
+            (void) engine::assets::load_resource_bundle_from_package_spec(request.model_path, package_spec);
             return !request.family_hint.has_value() || *request.family_hint == family();
         } catch (...) {
             return false;
@@ -51,15 +48,16 @@ public:
         const auto assets = load_qwen3_asr_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->resources.model_root();
-        inspection.metadata = qwen3_asr_metadata(*assets);
-        inspection.capabilities = qwen3_asr_capabilities(*assets);
+        inspection.metadata = metadata(*assets);
+        inspection.capabilities = capabilities(*assets);
+        const auto package_spec = engine::assets::default_model_package_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path(),
+            package_spec,
             engine::assets::ModelPackageResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path(),
+            package_spec,
             engine::assets::ModelPackageResourceKind::Tensors);
         return inspection;
     }
@@ -101,9 +99,9 @@ std::unique_ptr<runtime::IVoiceTaskSession> Qwen3ASRLoadedModel::create_task_ses
 
 std::unique_ptr<Qwen3ASRLoadedModel> load_qwen3_asr_model(const std::filesystem::path & model_path) {
     auto assets = load_qwen3_asr_assets(model_path);
-    return std::make_unique<Qwen3ASRLoadedModel>(
-        qwen3_asr_metadata(*assets),
-        qwen3_asr_capabilities(*assets),
+        return std::make_unique<Qwen3ASRLoadedModel>(
+        metadata(*assets),
+        capabilities(*assets),
         std::move(assets));
 }
 

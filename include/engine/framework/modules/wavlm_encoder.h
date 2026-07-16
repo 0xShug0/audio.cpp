@@ -67,6 +67,10 @@ public:
         const std::filesystem::path & checkpoint_path,
         core::BackendConfig backend,
         WavlmEncoderConfig config = {});
+    static WavlmEncoderComponent load_from_tensor_source(
+        const assets::TensorSource & source,
+        core::BackendConfig backend,
+        WavlmEncoderConfig config = {});
 
     WavlmEncoderComponent() = default;
     WavlmEncoderComponent(

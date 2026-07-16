@@ -108,7 +108,7 @@ struct IrodoriEncodedConditions {
 };
 
 IrodoriConditionEncoderWeights load_irodori_condition_encoder_weights(
-    const IrodoriAssets &assets, ggml_backend_t backend,
+    const IrodoriTTSAssets &assets, ggml_backend_t backend,
     core::BackendType backend_type, size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type);
 
@@ -144,7 +144,7 @@ core::TensorValue build_irodori_duration_predictor(
 
 class IrodoriConditionEncoder {
 public:
-  IrodoriConditionEncoder(std::shared_ptr<const IrodoriAssets> assets,
+  IrodoriConditionEncoder(std::shared_ptr<const IrodoriTTSAssets> assets,
                           core::ExecutionContext &execution_context,
                           size_t graph_arena_bytes, size_t weight_context_bytes,
                           assets::TensorStorageType weight_storage_type);

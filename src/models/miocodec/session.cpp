@@ -74,7 +74,7 @@ MioCodecSession::MioCodecSession(
         kDefaultCodecWeightContextBytes);
     const auto weight_storage_type = parse_miocodec_weight_type(options);
     codec_weights_ = load_miocodec_weights(
-        assets_->paths.model_weights_path,
+        *assets_->model_weights,
         execution_context(),
         weight_context_bytes,
         assets_->config,
@@ -82,8 +82,8 @@ MioCodecSession::MioCodecSession(
     engine::modules::WavlmEncoderConfig wavlm_config;
     wavlm_config.output_hidden_layer = 9;
     wavlm_config.weight_storage_type = weight_storage_type;
-    auto local_ssl_wavlm = engine::modules::WavlmEncoderComponent::load_from_safetensors(
-        assets_->paths.wavlm_weights_path,
+    auto local_ssl_wavlm = engine::modules::WavlmEncoderComponent::load_from_tensor_source(
+        *assets_->wavlm_weights,
         options.backend,
         wavlm_config);
     auto global_ssl_wavlm = engine::modules::WavlmEncoderComponent(local_ssl_wavlm.weights(), options.backend, true);

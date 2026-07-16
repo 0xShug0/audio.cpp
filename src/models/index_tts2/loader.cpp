@@ -9,6 +9,57 @@
 namespace engine::models::index_tts2 {
 namespace {
 
+runtime::ModelMetadata metadata(const IndexTTS2Assets & assets) {
+    runtime::ModelMetadata out;
+    out.family = "index_tts2";
+    out.variant = assets.config.version;
+    out.description = "IndexTTS2 loaded from local extracted assets.";
+    return out;
+}
+
+runtime::CapabilitySet capabilities(const IndexTTS2Assets &) {
+    runtime::CapabilitySet out;
+    out.supported_tasks = {
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
+    };
+    out.supports_speaker_reference = true;
+    out.supports_style_condition = true;
+    out.languages = {"English", "Chinese"};
+    return out;
+}
+
+runtime::ModelCliInterface cli(const IndexTTS2Assets &) {
+    runtime::ModelCliInterface out;
+    out.request_options = {
+        {"emotion_alpha", "float", "Blend strength for explicit emotion conditioning."},
+        {"emotion_vector", "float[,float...]", "Eight-value explicit emotion vector."},
+        {"use_emotion_text", "bool", "Infer emotion from text instead of reference audio."},
+        {"emotion_text", "text", "Text used when emotion-text conditioning is enabled."},
+        {"use_random_emotion", "bool", "Use random emotion weights in the emotion mixer."},
+        {"interval_silence_ms", "n", "Silence inserted between generated text chunks."},
+        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode used when text_chunk_size is set."},
+        {"length_penalty", "float", "GPT beam-search length penalty."},
+        {"num_beams", "n", "GPT beam count."},
+    };
+    out.session_options = {
+        {"index_tts2.weight_type", "native|f32|f16|bf16|q8_0", "Matmul weight storage type."},
+        {"index_tts2.conv_weight_type", "native|f32|f16", "Convolution weight storage type."},
+        {"index_tts2.gpt_graph_arena_mb", "n", "GPT graph arena size."},
+        {"index_tts2.s2mel_graph_arena_mb", "n", "S2Mel graph arena size."},
+        {"index_tts2.reference_graph_arena_mb", "n", "Reference encoder and codec graph arena size."},
+        {"index_tts2.emotion_text_prefill_graph_arena_mb", "n", "Emotion-text prefill graph arena size."},
+        {"index_tts2.emotion_text_decode_graph_arena_mb", "n", "Emotion-text cached-step graph arena size."},
+        {"index_tts2.emotion_text_max_new_tokens", "n", "Maximum generated tokens for emotion-text classification; default 256."},
+        {"index_tts2.weight_context_mb", "n", "Shared weight context size."},
+        {"index_tts2.mem_saver", "true|false", "Release staged reference and conditioning graphs after request phases; default false."},
+        {"index_tts2.speaker_cache_slots", "n", "Prepared speaker-reference cache slots; default 1."},
+        {"index_tts2.emotion_cache_slots", "n", "Prepared emotion-reference cache slots; default 1."},
+        {"index_tts2.emotion_text_cache_slots", "n", "Emotion-text weight cache slots; default 1."},
+    };
+    return out;
+}
+
 class IndexTTS2Loader final : public runtime::IVoiceModelLoader {
 public:
     std::string family() const override {
@@ -17,9 +68,10 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
+            const auto package_spec = engine::assets::default_model_package_spec_path(family());
             (void) engine::assets::load_resource_bundle_from_package_spec(
                 request.model_path,
-                engine::assets::default_model_package_spec_path(family()));
+                package_spec);
             return !request.family_hint.has_value() || *request.family_hint == family();
         } catch (...) {
             return false;
@@ -30,50 +82,17 @@ public:
         const auto assets = load_index_tts2_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->resources.model_root();
-        inspection.metadata.family = family();
-        inspection.metadata.variant = assets->config.version;
-        inspection.metadata.description = "IndexTTS2 loaded from local extracted assets.";
-        inspection.capabilities.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
-        };
-        inspection.capabilities.supports_speaker_reference = true;
-        inspection.capabilities.supports_style_condition = true;
-        inspection.capabilities.languages = {"English", "Chinese"};
-        inspection.cli.request_options = {
-            {"emotion_alpha", "float", "Blend strength for explicit emotion conditioning."},
-            {"emotion_vector", "float[,float...]", "Eight-value explicit emotion vector."},
-            {"use_emotion_text", "bool", "Infer emotion from text instead of reference audio."},
-            {"emotion_text", "text", "Text used when emotion-text conditioning is enabled."},
-            {"use_random_emotion", "bool", "Use random emotion weights in the emotion mixer."},
-            {"interval_silence_ms", "n", "Silence inserted between generated text chunks."},
-            {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode used when text_chunk_size is set."},
-            {"length_penalty", "float", "GPT beam-search length penalty."},
-            {"num_beams", "n", "GPT beam count."},
-        };
-        inspection.cli.session_options = {
-            {"index_tts2.weight_type", "native|f32|f16|bf16|q8_0", "Matmul weight storage type."},
-            {"index_tts2.conv_weight_type", "native|f32|f16", "Convolution weight storage type."},
-            {"index_tts2.gpt_graph_arena_mb", "n", "GPT graph arena size."},
-            {"index_tts2.s2mel_graph_arena_mb", "n", "S2Mel graph arena size."},
-            {"index_tts2.reference_graph_arena_mb", "n", "Reference encoder and codec graph arena size."},
-            {"index_tts2.emotion_text_prefill_graph_arena_mb", "n", "Emotion-text prefill graph arena size."},
-            {"index_tts2.emotion_text_decode_graph_arena_mb", "n", "Emotion-text cached-step graph arena size."},
-            {"index_tts2.emotion_text_max_new_tokens", "n", "Maximum generated tokens for emotion-text classification; default 256."},
-            {"index_tts2.weight_context_mb", "n", "Shared weight context size."},
-            {"index_tts2.mem_saver", "true|false", "Release staged reference and conditioning graphs after request phases; default false."},
-            {"index_tts2.speaker_cache_slots", "n", "Prepared speaker-reference cache slots; default 1."},
-            {"index_tts2.emotion_cache_slots", "n", "Prepared emotion-reference cache slots; default 1."},
-            {"index_tts2.emotion_text_cache_slots", "n", "Emotion-text weight cache slots; default 1."},
-        };
-        const auto spec_path = engine::assets::default_model_package_spec_path(family());
+        inspection.metadata = metadata(*assets);
+        inspection.capabilities = capabilities(*assets);
+        inspection.cli = cli(*assets);
+        const auto package_spec = engine::assets::default_model_package_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path,
+            package_spec,
             engine::assets::ModelPackageResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            spec_path,
+            package_spec,
             engine::assets::ModelPackageResourceKind::Tensors);
         return inspection;
     }
@@ -113,24 +132,9 @@ std::unique_ptr<runtime::IVoiceTaskSession> IndexTTS2LoadedModel::create_task_se
 
 std::unique_ptr<IndexTTS2LoadedModel> load_index_tts2_model(const std::filesystem::path & model_path) {
     auto assets = load_index_tts2_assets(model_path);
-
-    runtime::ModelMetadata metadata;
-    metadata.family = "index_tts2";
-    metadata.variant = assets->config.version;
-    metadata.description = "IndexTTS2 loaded from local extracted assets.";
-
-    runtime::CapabilitySet capabilities;
-    capabilities.supported_tasks = {
-        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
-    };
-    capabilities.supports_speaker_reference = true;
-    capabilities.supports_style_condition = true;
-    capabilities.languages = {"English", "Chinese"};
-
     return std::make_unique<IndexTTS2LoadedModel>(
-        std::move(metadata),
-        std::move(capabilities),
+        metadata(*assets),
+        capabilities(*assets),
         std::move(assets));
 }
 

@@ -11,23 +11,23 @@ namespace engine::models::qwen3_asr {
 namespace json = engine::io::json;
 namespace {
 
-Qwen3ASRAudioEncoderConfig parse_audio_encoder_config(const engine::io::json::Value & value) {
+Qwen3ASRAudioEncoderConfig parse_audio_encoder_config(const json::Value & value) {
     Qwen3ASRAudioEncoderConfig config;
-    config.num_mel_bins = value.require("num_mel_bins").as_i64();
-    config.encoder_layers = value.require("encoder_layers").as_i64();
-    config.encoder_attention_heads = value.require("encoder_attention_heads").as_i64();
-    config.encoder_ffn_dim = value.require("encoder_ffn_dim").as_i64();
-    config.d_model = value.require("d_model").as_i64();
+    config.num_mel_bins = json::require_i64(value, "num_mel_bins");
+    config.encoder_layers = json::require_i64(value, "encoder_layers");
+    config.encoder_attention_heads = json::require_i64(value, "encoder_attention_heads");
+    config.encoder_ffn_dim = json::require_i64(value, "encoder_ffn_dim");
+    config.d_model = json::require_i64(value, "d_model");
     // The Transformers checkpoint calls a small RoPE setting
     // max_position_embeddings. The audio tower still uses the same 1500-frame
     // sinusoidal table as the original Qwen checkpoint.
     config.max_source_positions = json::optional_i64(value, "max_source_positions", 1500);
-    config.n_window = value.require("n_window").as_i64();
-    config.n_window_infer = value.require("n_window_infer").as_i64();
-    config.conv_chunksize = value.require("conv_chunksize").as_i64();
-    config.downsample_hidden_size = value.require("downsample_hidden_size").as_i64();
-    config.output_dim = value.require("output_dim").as_i64();
-    config.activation_function = value.require("activation_function").as_string();
+    config.n_window = json::require_i64(value, "n_window");
+    config.n_window_infer = json::require_i64(value, "n_window_infer");
+    config.conv_chunksize = json::require_i64(value, "conv_chunksize");
+    config.downsample_hidden_size = json::require_i64(value, "downsample_hidden_size");
+    config.output_dim = json::require_i64(value, "output_dim");
+    config.activation_function = json::require_string(value, "activation_function");
     if (config.activation_function != "gelu") {
         throw std::runtime_error("Qwen3 ASR currently supports gelu audio activation");
     }
@@ -35,19 +35,19 @@ Qwen3ASRAudioEncoderConfig parse_audio_encoder_config(const engine::io::json::Va
 }
 
 Qwen3ASRTextDecoderConfig parse_text_decoder_config(
-    const engine::io::json::Value & thinker_config,
-    const engine::io::json::Value & text_config) {
+    const json::Value & thinker_config,
+    const json::Value & text_config) {
     Qwen3ASRTextDecoderConfig config;
-    config.vocab_size = text_config.require("vocab_size").as_i64();
+    config.vocab_size = json::require_i64(text_config, "vocab_size");
     config.output_size = json::optional_i64(thinker_config, "classify_num", config.vocab_size);
-    config.hidden_size = text_config.require("hidden_size").as_i64();
-    config.intermediate_size = text_config.require("intermediate_size").as_i64();
-    config.num_hidden_layers = text_config.require("num_hidden_layers").as_i64();
-    config.num_attention_heads = text_config.require("num_attention_heads").as_i64();
-    config.num_key_value_heads = text_config.require("num_key_value_heads").as_i64();
+    config.hidden_size = json::require_i64(text_config, "hidden_size");
+    config.intermediate_size = json::require_i64(text_config, "intermediate_size");
+    config.num_hidden_layers = json::require_i64(text_config, "num_hidden_layers");
+    config.num_attention_heads = json::require_i64(text_config, "num_attention_heads");
+    config.num_key_value_heads = json::require_i64(text_config, "num_key_value_heads");
     config.head_dim = json::optional_i64(text_config, "head_dim", config.hidden_size / config.num_attention_heads);
-    config.max_position_embeddings = text_config.require("max_position_embeddings").as_i64();
-    config.audio_token_id = thinker_config.require("audio_token_id").as_i64();
+    config.max_position_embeddings = json::require_i64(text_config, "max_position_embeddings");
+    config.audio_token_id = json::require_i64(thinker_config, "audio_token_id");
     config.audio_start_token_id = json::optional_i64(thinker_config, "audio_start_token_id", 0);
     config.audio_end_token_id = json::optional_i64(thinker_config, "audio_end_token_id", 0);
     config.pad_token_id = json::optional_i64(thinker_config, "pad_token_id", config.pad_token_id);
@@ -78,7 +78,7 @@ int64_t require_added_token_id(const assets::ResourceBundle & resources, std::st
     throw std::runtime_error("Qwen3 ASR tokenizer.json is missing token: " + std::string(content));
 }
 
-void add_supported_languages(Qwen3ASRConfig & config, const engine::io::json::Value & root) {
+void add_supported_languages(Qwen3ASRConfig & config, const json::Value & root) {
     static constexpr const char * kLanguages[] = {
         "Chinese", "English", "Cantonese", "Arabic", "German", "French", "Spanish", "Portuguese",
         "Indonesian", "Italian", "Korean", "Russian", "Thai", "Vietnamese", "Japanese", "Turkish",
@@ -108,7 +108,7 @@ Qwen3ASRConfig parse_config(const assets::ResourceBundle & resources) {
 
     Qwen3ASRConfig config;
     config.hf_transformers_layout = hf_layout;
-    config.model_type = root.require("model_type").as_string();
+    config.model_type = json::require_string(root, "model_type");
     config.thinker_model_type = json::optional_string(thinker_config, "model_type", config.model_type);
     config.model_size = json::optional_string(root, "model_size", hf_layout ? "Qwen3-ASR-1.7B-hf" : config.model_type);
     config.classify_num = json::optional_i64(thinker_config, "classify_num", 0);
@@ -133,9 +133,9 @@ Qwen3ASRConfig parse_config(const assets::ResourceBundle & resources) {
     const auto * feature_extractor = processor.find("feature_extractor");
     const auto & frontend = feature_extractor != nullptr && feature_extractor->is_object() ? *feature_extractor : processor;
     config.frontend.sample_rate = static_cast<int>(json::optional_i64(frontend, "sampling_rate", config.frontend.sample_rate));
-    config.frontend.feature_size = frontend.require("feature_size").as_i64();
-    config.frontend.hop_length = frontend.require("hop_length").as_i64();
-    config.frontend.n_fft = frontend.require("n_fft").as_i64();
+    config.frontend.feature_size = json::require_i64(frontend, "feature_size");
+    config.frontend.hop_length = json::require_i64(frontend, "hop_length");
+    config.frontend.n_fft = json::require_i64(frontend, "n_fft");
     config.timestamp_segment_time_ms = json::optional_i64(processor, "timestamp_segment_time", 0);
     if (config.timestamp_segment_time_ms == 0) {
         config.timestamp_segment_time_ms = json::optional_i64(root, "timestamp_segment_time", 0);

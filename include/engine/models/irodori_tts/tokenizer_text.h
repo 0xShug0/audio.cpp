@@ -17,7 +17,7 @@ struct IrodoriTokenizedText {
 
 class IrodoriTextTokenizer {
 public:
-    explicit IrodoriTextTokenizer(std::shared_ptr<const IrodoriAssets> assets);
+    explicit IrodoriTextTokenizer(std::shared_ptr<const IrodoriTTSAssets> assets);
 
     IrodoriTokenizedText encode_padded(const std::string & text, int64_t max_length) const;
     std::vector<int32_t> encode(const std::string & text) const;

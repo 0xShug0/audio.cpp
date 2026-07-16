@@ -22,7 +22,7 @@ class IrodoriTTSSession final : public runtime::RuntimeSessionBase,
                                 public runtime::IOfflineVoiceTaskSession {
 public:
   IrodoriTTSSession(runtime::TaskSpec task, runtime::SessionOptions options,
-                    std::shared_ptr<const IrodoriAssets> assets);
+                    std::shared_ptr<const IrodoriTTSAssets> assets);
   ~IrodoriTTSSession() override;
 
   std::string family() const override;
@@ -54,7 +54,7 @@ private:
   };
 
   runtime::TaskSpec task_;
-  std::shared_ptr<const IrodoriAssets> assets_;
+  std::shared_ptr<const IrodoriTTSAssets> assets_;
   IrodoriTextTokenizer tokenizer_;
   size_t condition_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
   size_t rf_graph_arena_bytes_ = 768ull * 1024ull * 1024ull;

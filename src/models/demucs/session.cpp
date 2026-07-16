@@ -4,7 +4,6 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/io/filesystem.h"
 
 #include <algorithm>
 #include <chrono>
@@ -29,41 +28,6 @@ assets::TensorStorageType option_weight_type(
     validate_demucs_weight_storage_type(storage_type);
     return storage_type;
 }
-
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("HTDemucs model path does not exist: " + model_path.string());
-}
-
-class HTDemucsLoader final : public runtime::IVoiceModelLoader {
-public:
-    std::string family() const override {
-        return "htdemucs";
-    }
-
-    bool can_load(const runtime::ModelLoadRequest & request) const override {
-        try {
-            const auto root = resolve_model_root(request.model_path);
-            return engine::io::is_existing_file(root / "manifest.json") &&
-                   (!request.family_hint.has_value() || *request.family_hint == family());
-        } catch (...) {
-            return false;
-        }
-    }
-
-    runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        return inspect_htdemucs_model(request);
-    }
-
-    std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_htdemucs_model(request);
-    }
-};
 
 std::pair<float, float> normalize_separator_audio(runtime::AudioBuffer & audio) {
     if (audio.channels <= 0 || audio.samples.empty()) {
@@ -105,35 +69,10 @@ std::pair<float, float> normalize_separator_audio(runtime::AudioBuffer & audio) 
 
 }  // namespace
 
-HTDemucsLoadedModel::HTDemucsLoadedModel(std::shared_ptr<const DemucsAssets> assets)
-    : assets_(std::move(assets)) {
-    if (assets_ == nullptr) {
-        throw std::runtime_error("HTDemucs loaded model requires assets");
-    }
-}
-
-const runtime::ModelMetadata & HTDemucsLoadedModel::metadata() const noexcept {
-    return assets_->metadata;
-}
-
-const runtime::CapabilitySet & HTDemucsLoadedModel::capabilities() const noexcept {
-    return assets_->capabilities;
-}
-
-std::unique_ptr<runtime::IVoiceTaskSession> HTDemucsLoadedModel::create_task_session(
-    const runtime::TaskSpec & task,
-    const runtime::SessionOptions & options) const {
-    return std::make_unique<HTDemucsSession>(task, options, assets_);
-}
-
-std::unique_ptr<runtime::ILoadedVoiceModel> load_htdemucs_model(const runtime::ModelLoadRequest & request) {
-    return std::make_unique<HTDemucsLoadedModel>(load_htdemucs_assets(request));
-}
-
 HTDemucsSession::HTDemucsSession(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options,
-    std::shared_ptr<const DemucsAssets> assets)
+    std::shared_ptr<const HTDemucsAssets> assets)
     : RuntimeSessionBase(options),
       task_(task),
       assets_(std::move(assets)) {
@@ -173,7 +112,7 @@ HTDemucsSession::HTDemucsSession(
 HTDemucsSession::~HTDemucsSession() = default;
 
 std::string HTDemucsSession::family() const {
-    return assets_->metadata.family;
+    return "htdemucs";
 }
 
 runtime::VoiceTaskKind HTDemucsSession::task_kind() const {
@@ -323,10 +262,6 @@ runtime::TaskResult HTDemucsSession::run(const runtime::TaskRequest & request) {
     debug::timing_log_scalar("htdemucs.merge_ms", merge_ms);
     debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(wall_start));
     return result;
-}
-
-std::shared_ptr<runtime::IVoiceModelLoader> make_htdemucs_loader() {
-    return std::make_shared<HTDemucsLoader>();
 }
 
 }  // namespace engine::models::demucs

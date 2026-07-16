@@ -10,15 +10,15 @@ namespace engine::models::moss_tts_nano {
 namespace json = engine::io::json;
 namespace {
 
-MossTTSNanoGlobalTransformerConfig parse_global_config(const engine::io::json::Value & root) {
+MossTTSNanoGlobalTransformerConfig parse_global_config(const json::Value & root) {
     const auto & gpt2 = root.require("gpt2_config");
     MossTTSNanoGlobalTransformerConfig config;
-    config.vocab_size = gpt2.require("vocab_size").as_i64();
-    config.hidden_size = gpt2.require("n_embd").as_i64();
+    config.vocab_size = json::require_i64(gpt2, "vocab_size");
+    config.hidden_size = json::require_i64(gpt2, "n_embd");
     config.intermediate_size = json::optional_i64(gpt2, "n_inner", 4 * config.hidden_size);
-    config.num_hidden_layers = gpt2.require("n_layer").as_i64();
-    config.num_attention_heads = gpt2.require("n_head").as_i64();
-    config.max_position_embeddings = gpt2.require("n_positions").as_i64();
+    config.num_hidden_layers = json::require_i64(gpt2, "n_layer");
+    config.num_attention_heads = json::require_i64(gpt2, "n_head");
+    config.max_position_embeddings = json::require_i64(gpt2, "n_positions");
     config.text_vocab_size = config.vocab_size;
     config.layer_norm_epsilon = json::optional_f32(gpt2, "layer_norm_epsilon", config.layer_norm_epsilon);
     config.rope_base = json::optional_f32(gpt2, "rope_base", config.rope_base);
@@ -26,7 +26,7 @@ MossTTSNanoGlobalTransformerConfig parse_global_config(const engine::io::json::V
 }
 
 MossTTSNanoLocalTransformerConfig parse_local_config(
-    const engine::io::json::Value & root,
+    const json::Value & root,
     const MossTTSNanoGlobalTransformerConfig & global,
     int64_t n_vq) {
     MossTTSNanoLocalTransformerConfig config;
@@ -40,7 +40,7 @@ MossTTSNanoLocalTransformerConfig parse_local_config(
     return config;
 }
 
-MossTTSNanoAudioTokenizerConfig parse_audio_tokenizer_config(const engine::io::json::Value & root) {
+MossTTSNanoAudioTokenizerConfig parse_audio_tokenizer_config(const json::Value & root) {
     MossTTSNanoAudioTokenizerConfig config;
     config.model_type = json::optional_string(root, "model_type", config.model_type);
     config.sample_rate = static_cast<int>(json::optional_i64(root, "sampling_rate", json::optional_i64(root, "sample_rate", config.sample_rate)));
@@ -55,22 +55,22 @@ MossTTSNanoAudioTokenizerConfig parse_audio_tokenizer_config(const engine::io::j
     return config;
 }
 
-MossTTSNanoConfig parse_config(
-    const engine::io::json::Value & tts_root,
-    const engine::io::json::Value & tokenizer_root) {
+MossTTSNanoConfig parse_model_config(
+    const json::Value & tts_root,
+    const json::Value & tokenizer_root) {
     MossTTSNanoConfig config;
-    config.model_type = tts_root.require("model_type").as_string();
-    config.architecture = tts_root.require("model_architecture").as_string();
+    config.model_type = json::require_string(tts_root, "model_type");
+    config.architecture = json::require_string(tts_root, "model_architecture");
     config.n_vq = json::optional_i64(tts_root, "n_vq", config.n_vq);
     config.audio_vocab_size = json::optional_i64(tts_root, "audio_vocab_size", config.audio_vocab_size);
     config.audio_pad_token_id = json::optional_i64(tts_root, "audio_pad_token_id", config.audio_pad_token_id);
     config.pad_token_id = json::optional_i64(tts_root, "pad_token_id", config.pad_token_id);
-    config.im_start_token_id = tts_root.require("im_start_token_id").as_i64();
-    config.im_end_token_id = tts_root.require("im_end_token_id").as_i64();
-    config.audio_start_token_id = tts_root.require("audio_start_token_id").as_i64();
-    config.audio_end_token_id = tts_root.require("audio_end_token_id").as_i64();
-    config.audio_user_slot_token_id = tts_root.require("audio_user_slot_token_id").as_i64();
-    config.audio_assistant_slot_token_id = tts_root.require("audio_assistant_slot_token_id").as_i64();
+    config.im_start_token_id = json::require_i64(tts_root, "im_start_token_id");
+    config.im_end_token_id = json::require_i64(tts_root, "im_end_token_id");
+    config.audio_start_token_id = json::require_i64(tts_root, "audio_start_token_id");
+    config.audio_end_token_id = json::require_i64(tts_root, "audio_end_token_id");
+    config.audio_user_slot_token_id = json::require_i64(tts_root, "audio_user_slot_token_id");
+    config.audio_assistant_slot_token_id = json::require_i64(tts_root, "audio_assistant_slot_token_id");
     config.audio_codebook_sizes = json::optional_i64_array(
         tts_root,
         "audio_codebook_sizes",
@@ -90,6 +90,12 @@ MossTTSNanoConfig parse_config(
     return config;
 }
 
+MossTTSNanoConfig parse_config(const assets::ResourceBundle & resources) {
+    return parse_model_config(
+        resources.parse_json("config"),
+        resources.parse_json("audio_tokenizer_config"));
+}
+
 }  // namespace
 
 std::shared_ptr<const MossTTSNanoAssets> load_moss_tts_nano_assets(const std::filesystem::path & model_path) {
@@ -97,9 +103,7 @@ std::shared_ptr<const MossTTSNanoAssets> load_moss_tts_nano_assets(const std::fi
     assets.resources = assets::load_resource_bundle_from_package_spec(
         model_path,
         assets::default_model_package_spec_path("moss_tts_nano"));
-    assets.config = parse_config(
-        assets.resources.parse_json("config"),
-        assets.resources.parse_json("audio_tokenizer_config"));
+    assets.config = parse_config(assets.resources);
     assets.model_weights = assets.resources.open_tensor_source("model_weights");
     assets.audio_tokenizer_weights = assets.resources.open_tensor_source("audio_tokenizer_weights");
     return std::make_shared<MossTTSNanoAssets>(std::move(assets));

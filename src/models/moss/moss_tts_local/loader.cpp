@@ -12,23 +12,44 @@
 namespace engine::models::moss_tts_local {
 namespace {
 
-runtime::CapabilitySet moss_tts_local_capabilities() {
-    runtime::CapabilitySet capabilities;
-    capabilities.supported_tasks = {
+runtime::CapabilitySet capabilities(const MossTTSLocalAssets &) {
+    runtime::CapabilitySet out;
+    out.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
         {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
     };
-    capabilities.languages = {"Auto"};
-    capabilities.supports_speaker_reference = true;
-    return capabilities;
+    out.languages = {"Auto"};
+    out.supports_speaker_reference = true;
+    return out;
 }
 
-runtime::ModelMetadata moss_tts_local_metadata() {
-    runtime::ModelMetadata metadata;
-    metadata.family = "moss_tts_local";
-    metadata.variant = "MOSS-TTS-Local-Transformer-v1.5";
-    metadata.description = "MOSS-TTS Local Transformer with the MOSS-Audio-Tokenizer-v2 codec.";
-    return metadata;
+runtime::ModelMetadata metadata(const MossTTSLocalAssets &) {
+    runtime::ModelMetadata out;
+    out.family = "moss_tts_local";
+    out.variant = "MOSS-TTS-Local-Transformer-v1.5";
+    out.description = "MOSS-TTS Local Transformer with the MOSS-Audio-Tokenizer-v2 codec.";
+    return out;
+}
+
+runtime::ModelCliInterface cli(const MossTTSLocalAssets &) {
+    runtime::ModelCliInterface out;
+    out.request_options = {
+        {"max_tokens", "n", "Maximum generated audio frames."},
+        {"do_sample", "true|false", "Enable stochastic audio-token sampling."},
+        {"temperature", "float", "Audio-token sampling temperature."},
+        {"top_p", "float", "Audio-token nucleus sampling limit."},
+        {"top_k", "n", "Audio-token top-k sampling limit."},
+        {"repetition_penalty", "float", "Audio-token repetition penalty."},
+        {"text_temperature", "float", "Text-gate sampling temperature."},
+        {"text_top_p", "float", "Text-gate nucleus sampling limit."},
+        {"text_top_k", "n", "Text-gate top-k sampling limit."},
+        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode; default splitter."},
+    };
+    out.session_options = {
+        {"moss_tts_local.weight_type", "auto|native|f32|f16|bf16|q8_0", "Backbone weight storage type."},
+        {"moss_tts_local.reference_cache_slots", "n", "Prepared reference-voice cache slots; default 1, set 0 to disable."},
+    };
+    return out;
 }
 
 class MossTTSLocalLoadedModel final : public runtime::ILoadedVoiceModel {
@@ -88,24 +109,9 @@ public:
         const auto assets = load_moss_tts_local_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->resources.model_root();
-        inspection.metadata = moss_tts_local_metadata();
-        inspection.capabilities = moss_tts_local_capabilities();
-        inspection.cli.request_options = {
-            {"max_tokens", "n", "Maximum generated audio frames."},
-            {"do_sample", "true|false", "Enable stochastic audio-token sampling."},
-            {"temperature", "float", "Audio-token sampling temperature."},
-            {"top_p", "float", "Audio-token nucleus sampling limit."},
-            {"top_k", "n", "Audio-token top-k sampling limit."},
-            {"repetition_penalty", "float", "Audio-token repetition penalty."},
-            {"text_temperature", "float", "Text-gate sampling temperature."},
-            {"text_top_p", "float", "Text-gate nucleus sampling limit."},
-            {"text_top_k", "n", "Text-gate top-k sampling limit."},
-            {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode; default splitter."},
-        };
-        inspection.cli.session_options = {
-            {"moss_tts_local.weight_type", "auto|native|f32|f16|bf16|q8_0", "Backbone weight storage type."},
-            {"moss_tts_local.reference_cache_slots", "n", "Prepared reference-voice cache slots; default 1, set 0 to disable."},
-        };
+        inspection.metadata = metadata(*assets);
+        inspection.capabilities = capabilities(*assets);
+        inspection.cli = cli(*assets);
         const auto spec_path = engine::assets::default_model_package_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
@@ -119,8 +125,9 @@ public:
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
+        auto assets = load_moss_tts_local_assets(request.model_path);
         return std::make_unique<MossTTSLocalLoadedModel>(
-            moss_tts_local_metadata(), moss_tts_local_capabilities(), load_moss_tts_local_assets(request.model_path));
+            metadata(*assets), capabilities(*assets), std::move(assets));
     }
 };
 

@@ -9,41 +9,41 @@
 namespace engine::models::supertonic {
 namespace {
 
-runtime::CapabilitySet supertonic_capabilities() {
-    runtime::CapabilitySet capabilities;
-    capabilities.supported_tasks = {
+runtime::CapabilitySet capabilities(const SupertonicAssets &) {
+    runtime::CapabilitySet out;
+    out.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
-    capabilities.languages = {
+    out.languages = {
         "en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu",
         "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "vi", "na",
     };
-    capabilities.supports_style_condition = true;
-    return capabilities;
+    out.supports_style_condition = true;
+    return out;
 }
 
-runtime::ModelMetadata supertonic_metadata() {
-    runtime::ModelMetadata metadata;
-    metadata.family = "supertonic";
-    metadata.variant = "supertonic-3";
-    metadata.description = "Supertonic 3 loaded from GGML safetensors assets.";
-    return metadata;
+runtime::ModelMetadata metadata(const SupertonicAssets &) {
+    runtime::ModelMetadata out;
+    out.family = "supertonic";
+    out.variant = "supertonic-3";
+    out.description = "Supertonic 3 loaded from GGML safetensors assets.";
+    return out;
 }
 
-runtime::ModelCliInterface supertonic_cli() {
-    runtime::ModelCliInterface cli;
-    cli.request_options = {
+runtime::ModelCliInterface cli(const SupertonicAssets &) {
+    runtime::ModelCliInterface out;
+    out.request_options = {
         {"voice_id", "M1|M2|M3|M4|M5|F1|F2|F3|F4|F5", "Preset voice style id, default M1; also exposed as --voice-id."},
         {"num_inference_steps", "n", "Flow denoising steps, default 8."},
         {"speaking_rate", "float", "Speech speed multiplier, default 1.05."},
         {"seed", "n", "Noise seed, default 1234."},
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode."},
     };
-    cli.session_options = {
+    out.session_options = {
         {"supertonic.weight_type", "native|f32|f16|bf16|q8_0", "Supertonic weight storage type."},
         {"supertonic.style_cache_slots", "n", "Preset voice style cache slots; default 4."},
     };
-    return cli;
+    return out;
 }
 
 class SupertonicLoader final : public runtime::IVoiceModelLoader {
@@ -65,9 +65,9 @@ public:
         const auto assets = load_supertonic_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->resources.model_root();
-        inspection.metadata = supertonic_metadata();
-        inspection.capabilities = supertonic_capabilities();
-        inspection.cli = supertonic_cli();
+        inspection.metadata = metadata(*assets);
+        inspection.capabilities = capabilities(*assets);
+        inspection.cli = cli(*assets);
         const auto spec_path = engine::assets::default_model_package_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
@@ -118,8 +118,8 @@ std::unique_ptr<runtime::IVoiceTaskSession> SupertonicLoadedModel::create_task_s
 std::unique_ptr<SupertonicLoadedModel> load_supertonic_model(const std::filesystem::path & model_path) {
     auto assets = load_supertonic_assets(model_path);
     return std::make_unique<SupertonicLoadedModel>(
-        supertonic_metadata(),
-        supertonic_capabilities(),
+        metadata(*assets),
+        capabilities(*assets),
         std::move(assets));
 }
 

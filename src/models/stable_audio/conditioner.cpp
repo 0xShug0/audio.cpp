@@ -25,7 +25,7 @@ std::shared_ptr<const StableAudioAssets> require_assets(std::shared_ptr<const St
 
 StableAudioConditionerInputs::StableAudioConditionerInputs(std::shared_ptr<const StableAudioAssets> assets)
     : assets_(require_assets(std::move(assets))),
-      t5_pieces_(engine::tokenizers::load_sentencepiece_model(assets_->paths.t5_tokenizer_model_path)) {}
+      t5_pieces_(engine::tokenizers::load_sentencepiece_model(assets_->t5_tokenizer_model_path)) {}
 
 StableAudioConditioningBatch StableAudioConditionerInputs::build(const StableAudioRequest & request) const {
     StableAudioConditioningBatch out;

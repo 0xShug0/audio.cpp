@@ -399,7 +399,7 @@ core::TensorValue log1p_tensor(core::ModuleBuildContext &ctx,
 } // namespace
 
 IrodoriConditionEncoderWeights load_irodori_condition_encoder_weights(
-    const IrodoriAssets &assets, ggml_backend_t backend,
+    const IrodoriTTSAssets &assets, ggml_backend_t backend,
     core::BackendType backend_type, size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type) {
   const auto &config = assets.config;
@@ -744,7 +744,7 @@ class IrodoriConditionEncoder::Impl {
 public:
   using Output = IrodoriConditionOutput;
 
-  Impl(std::shared_ptr<const IrodoriAssets> assets,
+  Impl(std::shared_ptr<const IrodoriTTSAssets> assets,
        core::ExecutionContext &execution_context, size_t graph_arena_bytes,
        size_t weight_context_bytes,
        assets::TensorStorageType weight_storage_type)
@@ -1109,7 +1109,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
   };
 
-  std::shared_ptr<const IrodoriAssets> assets_;
+  std::shared_ptr<const IrodoriTTSAssets> assets_;
   IrodoriConditionEncoderWeights weights_;
   ggml_backend_t backend_ = nullptr;
   core::BackendType backend_type_ = core::BackendType::Cpu;
@@ -1120,7 +1120,7 @@ private:
 };
 
 IrodoriConditionEncoder::IrodoriConditionEncoder(
-    std::shared_ptr<const IrodoriAssets> assets,
+    std::shared_ptr<const IrodoriTTSAssets> assets,
     core::ExecutionContext &execution_context, size_t graph_arena_bytes,
     size_t weight_context_bytes, assets::TensorStorageType weight_storage_type)
     : impl_(std::make_unique<Impl>(std::move(assets), execution_context,
