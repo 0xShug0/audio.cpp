@@ -396,7 +396,6 @@ add_library(engine_runtime STATIC
     src/models/vevo2/vocoder.cpp
     src/models/vevo2/loader.cpp
     src/models/seed_vc/assets.cpp
-    src/models/seed_vc/tensor_store_internal.cpp
     src/models/seed_vc/audio_features.cpp
     src/models/seed_vc/length_regulator.cpp
     src/models/seed_vc/astral_quantizer.cpp

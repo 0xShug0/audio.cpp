@@ -1,9 +1,11 @@
 #include "engine/models/seed_vc/rmvpe.h"
 
-#include "tensor_store_internal.h"
+#include "engine/models/seed_vc/assets.h"
 
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -18,6 +20,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -52,6 +55,41 @@ struct RmvpeGruOutputs {
     TensorValue sequence;
     TensorValue final_hidden;
 };
+
+struct SeedVcRmvpeWeights {
+    std::shared_ptr<engine::core::ExecutionContext> execution_context;
+    std::shared_ptr<engine::core::BackendWeightStore> store;
+    std::unordered_map<std::string, TensorValue> tensors;
+};
+
+SeedVcRmvpeWeights load_rmvpe_weights(
+    std::shared_ptr<const engine::assets::TensorSource> source,
+    engine::core::BackendConfig backend,
+    engine::assets::TensorStorageType storage_type) {
+    if (source == nullptr) {
+        throw std::runtime_error("Seed-VC RMVPE requires weights");
+    }
+    SeedVcRmvpeWeights weights;
+    weights.execution_context = std::make_shared<engine::core::ExecutionContext>(backend);
+    weights.store = std::make_shared<engine::core::BackendWeightStore>(
+        weights.execution_context->backend(),
+        weights.execution_context->backend_type(),
+        "seed_vc.rmvpe.weights",
+        256ull * 1024ull * 1024ull);
+    const auto tensors = source->tensors();
+    weights.tensors.reserve(tensors.size());
+    for (const auto & tensor : tensors) {
+        if (tensor.name.size() >= 20 &&
+            tensor.name.compare(tensor.name.size() - 20, 20, ".num_batches_tracked") == 0) {
+            continue;
+        }
+        weights.tensors.emplace(
+            tensor.name,
+            weights.store->load_tensor(*source, tensor.name, storage_type, tensor.shape));
+    }
+    weights.store->upload();
+    return weights;
+}
 
 const TensorValue & require_tensor(const SeedVcRmvpeWeights & weights, const std::string & name) {
     const auto it = weights.tensors.find(name);
@@ -844,18 +882,19 @@ struct SeedVcRmvpeF0Extractor::State {
     }
 
     std::mutex mutex;
+    SeedVcRmvpeWeights weights;
     FeatureGraph feature;
     GruGraph forward;
     GruGraph reverse;
     HeadGraph head;
 };
 
-SeedVcRmvpeF0Extractor::SeedVcRmvpeF0Extractor(std::shared_ptr<const SeedVcRmvpeWeights> weights)
-    : weights_(std::move(weights)),
-      state_(std::make_shared<State>()) {
-    if (weights_ == nullptr) {
-        throw std::runtime_error("Seed-VC RMVPE requires weights");
-    }
+SeedVcRmvpeF0Extractor::SeedVcRmvpeF0Extractor(
+    std::shared_ptr<const engine::assets::TensorSource> source,
+    engine::core::BackendConfig backend,
+    engine::assets::TensorStorageType storage_type)
+    : state_(std::make_shared<State>()) {
+    state_->weights = load_rmvpe_weights(std::move(source), std::move(backend), storage_type);
 }
 
 SeedVcRmvpeF0Extractor::~SeedVcRmvpeF0Extractor() = default;
@@ -866,7 +905,7 @@ std::vector<float> SeedVcRmvpeF0Extractor::infer_16k_mono(
     const std::vector<float> & waveform_16k,
     float threshold,
     size_t threads) const {
-    if (weights_ == nullptr || state_ == nullptr) {
+    if (state_ == nullptr) {
         throw std::runtime_error("Seed-VC RMVPE is not initialized");
     }
     auto timing_start = std::chrono::steady_clock::now();
@@ -883,14 +922,14 @@ std::vector<float> SeedVcRmvpeF0Extractor::infer_16k_mono(
     const int64_t feature_graph_frames = mel.padded_frames <= kRmvpeFeatureActiveFrames
         ? mel.padded_frames
         : kRmvpeFeatureGraphFrames;
-    state_->ensure_graphs(*weights_, feature_graph_frames);
+    state_->ensure_graphs(state_->weights, feature_graph_frames);
     timing_end = std::chrono::steady_clock::now();
     engine::debug::timing_log_scalar(
         "seed_vc.rmvpe.prepare_ms",
         engine::debug::elapsed_ms(timing_start, timing_end));
     timing_start = timing_end;
 
-    const auto backend = weights_->execution_context->backend();
+    const auto backend = state_->weights.execution_context->backend();
     std::vector<float> feature_window;
     std::vector<float> features(static_cast<size_t>(mel.padded_frames * kRmvpeFeatureDim), 0.0F);
     for (int64_t active_start = 0; active_start < mel.padded_frames; active_start += feature_step) {

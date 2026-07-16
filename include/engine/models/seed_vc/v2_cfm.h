@@ -2,13 +2,14 @@
 
 #include "engine/models/seed_vc/assets.h"
 
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/backend.h"
+
 #include <cstdint>
 #include <memory>
 #include <vector>
 
 namespace engine::models::seed_vc {
-
-struct SeedVcV2CfmWeights;
 
 struct SeedVcV2CfmEstimatorInput {
     std::vector<float> x;
@@ -46,7 +47,9 @@ class SeedVcV2CfmEstimator {
 public:
     SeedVcV2CfmEstimator() = default;
     SeedVcV2CfmEstimator(
-        std::shared_ptr<const SeedVcV2CfmWeights> weights,
+        std::shared_ptr<const engine::assets::TensorSource> source,
+        engine::core::BackendConfig backend,
+        engine::assets::TensorStorageType storage_type,
         SeedVcV2DitConfig config);
     ~SeedVcV2CfmEstimator();
 
@@ -61,7 +64,6 @@ public:
 private:
     struct State;
 
-    std::shared_ptr<const SeedVcV2CfmWeights> weights_;
     SeedVcV2DitConfig config_;
     std::shared_ptr<State> state_;
 };

@@ -1,14 +1,17 @@
 #include "engine/models/seed_vc/astral_quantizer.h"
 
-#include "tensor_store_internal.h"
+#include "engine/models/seed_vc/assets.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/modules/weight_binding.h"
 
 #include <ggml-alloc.h>
 
@@ -16,20 +19,23 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
 namespace engine::models::seed_vc {
 namespace {
 
-const engine::core::TensorValue & require_tensor(
-    const SeedVcAstralWeights & weights,
-    const std::string & name) {
-    const auto it = weights.tensors.find(name);
-    if (it == weights.tensors.end()) {
-        throw std::runtime_error("Seed-VC missing ASTRAL tensor: " + name);
-    }
-    return it->second;
+engine::core::TensorValue require_tensor(
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
+    const std::string & name,
+    engine::assets::TensorStorageType storage_type) {
+    return engine::modules::binding::tensor_from_named_source(
+        store,
+        source,
+        name,
+        seed_vc_component_storage_type(source, name, storage_type));
 }
 
 engine::core::TensorValue contiguous(
@@ -175,18 +181,20 @@ struct AstralWeights {
 };
 
 AstralWeights load_astral_weights(
-    const SeedVcAstralWeights & weights,
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
     const std::string & prefix,
     int64_t input_channels,
     int64_t channels,
     int64_t intermediate_channels,
     int64_t blocks,
-    int64_t code_dim) {
+    int64_t code_dim,
+    engine::assets::TensorStorageType storage_type) {
     const std::string root = prefix.empty() ? std::string() : prefix + ".";
     AstralWeights out;
     out.input_projection = engine::modules::Conv1dWeights{
-        require_tensor(weights, root + "encoder.input_projection.weight"),
-        require_tensor(weights, root + "encoder.input_projection.bias")};
+        require_tensor(store, source, root + "encoder.input_projection.weight", storage_type),
+        require_tensor(store, source, root + "encoder.input_projection.bias", storage_type)};
     engine::core::validate_shape(
         out.input_projection.weight,
         engine::core::TensorShape::from_dims({channels, input_channels, 1}),
@@ -200,8 +208,8 @@ AstralWeights load_astral_weights(
         const std::string base = root + "encoder.blocks." + std::to_string(block);
         AstralBlockWeights item;
         item.dwconv = engine::modules::DepthwiseConv1dWeights{
-            require_tensor(weights, base + ".dwconv.weight"),
-            require_tensor(weights, base + ".dwconv.bias")};
+            require_tensor(store, source, base + ".dwconv.weight", storage_type),
+            require_tensor(store, source, base + ".dwconv.bias", storage_type)};
         engine::core::validate_shape(
             item.dwconv.weight,
             engine::core::TensorShape::from_dims({channels, 1, 7}),
@@ -210,20 +218,20 @@ AstralWeights load_astral_weights(
             *item.dwconv.bias,
             engine::core::TensorShape::from_dims({channels}),
             "Seed-VC ASTRAL depthwise conv bias");
-        item.norm_weight = require_tensor(weights, base + ".norm.weight");
-        item.norm_bias = require_tensor(weights, base + ".norm.bias");
+        item.norm_weight = require_tensor(store, source, base + ".norm.weight", storage_type);
+        item.norm_bias = require_tensor(store, source, base + ".norm.bias", storage_type);
         item.pwconv1 = engine::modules::LinearWeights{
-            require_tensor(weights, base + ".pwconv1.weight"),
-            require_tensor(weights, base + ".pwconv1.bias")};
+            require_tensor(store, source, base + ".pwconv1.weight", storage_type),
+            require_tensor(store, source, base + ".pwconv1.bias", storage_type)};
         engine::core::validate_shape(
             item.pwconv1.weight,
             engine::core::TensorShape::from_dims({intermediate_channels, channels}),
             "Seed-VC ASTRAL pwconv1 weight");
-        item.grn_gamma = require_tensor(weights, base + ".grn.gamma");
-        item.grn_beta = require_tensor(weights, base + ".grn.beta");
+        item.grn_gamma = require_tensor(store, source, base + ".grn.gamma", storage_type);
+        item.grn_beta = require_tensor(store, source, base + ".grn.beta", storage_type);
         item.pwconv2 = engine::modules::LinearWeights{
-            require_tensor(weights, base + ".pwconv2.weight"),
-            require_tensor(weights, base + ".pwconv2.bias")};
+            require_tensor(store, source, base + ".pwconv2.weight", storage_type),
+            require_tensor(store, source, base + ".pwconv2.bias", storage_type)};
         engine::core::validate_shape(
             item.pwconv2.weight,
             engine::core::TensorShape::from_dims({channels, intermediate_channels}),
@@ -231,8 +239,8 @@ AstralWeights load_astral_weights(
         out.blocks.push_back(item);
     }
     out.quantizer_project_in = engine::modules::LinearWeights{
-        require_tensor(weights, root + "quantizer.project_in.weight"),
-        require_tensor(weights, root + "quantizer.project_in.bias")};
+        require_tensor(store, source, root + "quantizer.project_in.weight", storage_type),
+        require_tensor(store, source, root + "quantizer.project_in.bias", storage_type)};
     engine::core::validate_shape(
         out.quantizer_project_in.weight,
         engine::core::TensorShape::from_dims({code_dim, channels}),
@@ -297,30 +305,18 @@ std::vector<int32_t> pack_bsq_indices(
 class AstralRunner {
 public:
     AstralRunner(
-        const SeedVcAstralWeights & weights,
-        std::string prefix,
+        engine::core::ExecutionContext & execution_context,
+        AstralWeights weights,
         int64_t input_channels,
         int64_t channels,
         int64_t intermediate_channels,
-        int64_t blocks,
         int64_t code_dim)
-        : source_(weights),
-          graph_weights_(load_astral_weights(
-              weights,
-              prefix,
-              input_channels,
-              channels,
-              intermediate_channels,
-              blocks,
-              code_dim)),
+        : execution_context_(execution_context),
+          graph_weights_(std::move(weights)),
           input_channels_(input_channels),
           channels_(channels),
           intermediate_channels_(intermediate_channels),
-          code_dim_(code_dim) {
-        if (source_.execution_context == nullptr) {
-            throw std::runtime_error("Seed-VC ASTRAL runner requires execution context");
-        }
-    }
+          code_dim_(code_dim) {}
 
     ~AstralRunner() {
         release_graph();
@@ -339,7 +335,7 @@ public:
         }
         ensure_graph(batch, tokens);
         engine::core::write_tensor_f32(input_, hidden_states);
-        if (engine::core::compute_backend_graph(source_.execution_context->backend(), graph_) != GGML_STATUS_SUCCESS) {
+        if (engine::core::compute_backend_graph(execution_context_.backend(), graph_) != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ggml_backend_graph_compute failed for Seed-VC ASTRAL");
         }
         return engine::core::read_tensor_f32(output_.tensor);
@@ -379,7 +375,7 @@ private:
         engine::core::ModuleBuildContext ctx{
             ggml_,
             "seed_vc.astral",
-            source_.execution_context->backend_type()};
+            execution_context_.backend_type()};
         input_ = engine::core::make_tensor(
             ctx,
             GGML_TYPE_F32,
@@ -393,7 +389,7 @@ private:
             intermediate_channels_);
         graph_ = ggml_new_graph_custom(ggml_, 65536, false);
         ggml_build_forward_expand(graph_, output_.tensor);
-        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(source_.execution_context->backend()));
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_.backend()));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||
             !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
@@ -404,7 +400,7 @@ private:
         tokens_ = tokens;
     }
 
-    const SeedVcAstralWeights & source_;
+    engine::core::ExecutionContext & execution_context_;
     AstralWeights graph_weights_;
     int64_t input_channels_ = 0;
     int64_t channels_ = 0;
@@ -423,19 +419,22 @@ private:
 }  // namespace
 
 struct SeedVcAstralQuantizer::State {
+    std::shared_ptr<engine::core::ExecutionContext> execution_context;
+    std::shared_ptr<engine::core::BackendWeightStore> store;
     std::unique_ptr<AstralRunner> runner;
 };
 
 SeedVcAstralQuantizer::SeedVcAstralQuantizer(
-    std::shared_ptr<const SeedVcAstralWeights> weights,
+    std::shared_ptr<const engine::assets::TensorSource> source,
+    engine::core::BackendConfig backend,
+    engine::assets::TensorStorageType storage_type,
     std::string prefix,
     int64_t input_channels,
     int64_t channels,
     int64_t intermediate_channels,
     int64_t blocks,
     int64_t codebook_size)
-    : weights_(std::move(weights)),
-      prefix_(std::move(prefix)),
+    : prefix_(std::move(prefix)),
       input_channels_(input_channels),
       channels_(channels),
       intermediate_channels_(intermediate_channels),
@@ -443,20 +442,36 @@ SeedVcAstralQuantizer::SeedVcAstralQuantizer(
       code_dim_(static_cast<int64_t>(std::llround(std::log2(static_cast<double>(codebook_size))))),
       codebook_size_(codebook_size),
       state_(std::make_shared<State>()) {
-    if (weights_ == nullptr) {
+    if (source == nullptr) {
         throw std::runtime_error("Seed-VC ASTRAL requires weights");
     }
     if (input_channels_ <= 0 || channels_ <= 0 || intermediate_channels_ <= 0 || blocks_ <= 0 ||
         codebook_size_ <= 0 || (int64_t{1} << code_dim_) != codebook_size_) {
         throw std::runtime_error("Seed-VC ASTRAL config is invalid");
     }
-    state_->runner = std::make_unique<AstralRunner>(
-        *weights_,
+    state_->execution_context = std::make_shared<engine::core::ExecutionContext>(std::move(backend));
+    state_->store = std::make_shared<engine::core::BackendWeightStore>(
+        state_->execution_context->backend(),
+        state_->execution_context->backend_type(),
+        "seed_vc.astral.weights",
+        256ull * 1024ull * 1024ull);
+    auto weights = load_astral_weights(
+        *state_->store,
+        *source,
         prefix_,
         input_channels_,
         channels_,
         intermediate_channels_,
         blocks_,
+        code_dim_,
+        storage_type);
+    state_->store->upload();
+    state_->runner = std::make_unique<AstralRunner>(
+        *state_->execution_context,
+        std::move(weights),
+        input_channels_,
+        channels_,
+        intermediate_channels_,
         code_dim_);
 }
 

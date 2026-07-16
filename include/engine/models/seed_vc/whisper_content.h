@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/backend.h"
 #include "engine/framework/modules/whisper_embedding.h"
 
 #include <cstdint>
@@ -8,12 +10,13 @@
 
 namespace engine::models::seed_vc {
 
-struct SeedVcWhisperEncoderWeights;
-
 class SeedVcWhisperContentEncoder {
 public:
     SeedVcWhisperContentEncoder() = default;
-    explicit SeedVcWhisperContentEncoder(std::shared_ptr<const SeedVcWhisperEncoderWeights> weights);
+    SeedVcWhisperContentEncoder(
+        std::shared_ptr<const engine::assets::TensorSource> source,
+        engine::core::BackendConfig backend,
+        engine::assets::TensorStorageType storage_type);
     ~SeedVcWhisperContentEncoder();
 
     SeedVcWhisperContentEncoder(SeedVcWhisperContentEncoder &&) noexcept;
@@ -29,7 +32,6 @@ public:
 private:
     struct State;
 
-    std::shared_ptr<const SeedVcWhisperEncoderWeights> weights_;
     engine::modules::WhisperEmbeddingConfig config_;
     std::shared_ptr<State> state_;
 };

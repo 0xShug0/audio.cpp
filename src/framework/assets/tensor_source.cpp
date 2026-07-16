@@ -85,6 +85,7 @@ ggml_type parse_ggml_type_for_tensor_dtype(std::string_view dtype) {
     if (normalized == "f16" || normalized == "float16" || normalized == "fp16") return GGML_TYPE_F16;
     if (normalized == "bf16" || normalized == "bfloat16") return GGML_TYPE_BF16;
     if (normalized == "i8" || normalized == "int8") return GGML_TYPE_I8;
+    if (normalized == "bool" || normalized == "boolean") return GGML_TYPE_I8;
     if (normalized == "i16" || normalized == "int16") return GGML_TYPE_I16;
     if (normalized == "i32" || normalized == "int32") return GGML_TYPE_I32;
     if (normalized == "i64" || normalized == "int64") return GGML_TYPE_I64;

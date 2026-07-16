@@ -1,14 +1,17 @@
 #include "engine/models/seed_vc/v2_cfm.h"
 
-#include "tensor_store_internal.h"
+#include "engine/models/seed_vc/assets.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/modules/weight_binding.h"
 
 #include <cmath>
 #include <mutex>
@@ -27,28 +30,44 @@ namespace {
 using engine::core::TensorShape;
 using engine::core::TensorValue;
 
-const TensorValue & require_tensor(const SeedVcV2CfmWeights & weights, const std::string & name) {
-    const auto it = weights.tensors.find(name);
-    if (it == weights.tensors.end()) {
-        throw std::runtime_error("Seed-VC V2 CFM missing tensor: " + name);
-    }
-    return it->second;
+TensorValue require_tensor(
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
+    const std::string & name,
+    engine::assets::TensorStorageType storage_type) {
+    return engine::modules::binding::tensor_from_named_source(
+        store,
+        source,
+        name,
+        seed_vc_component_storage_type(source, name, storage_type));
 }
 
-engine::modules::LinearWeights linear_weights(const SeedVcV2CfmWeights & weights, const std::string & prefix) {
+engine::modules::LinearWeights linear_weights(
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
+    const std::string & prefix,
+    engine::assets::TensorStorageType storage_type) {
     return engine::modules::LinearWeights{
-        require_tensor(weights, prefix + ".weight"),
-        require_tensor(weights, prefix + ".bias")};
+        require_tensor(store, source, prefix + ".weight", storage_type),
+        require_tensor(store, source, prefix + ".bias", storage_type)};
 }
 
-engine::modules::LinearWeights linear_weights_no_bias(const SeedVcV2CfmWeights & weights, const std::string & prefix) {
+engine::modules::LinearWeights linear_weights_no_bias(
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
+    const std::string & prefix,
+    engine::assets::TensorStorageType storage_type) {
     return engine::modules::LinearWeights{
-        require_tensor(weights, prefix + ".weight"),
+        require_tensor(store, source, prefix + ".weight", storage_type),
         std::nullopt};
 }
 
-engine::modules::NormWeights rms_weight(const SeedVcV2CfmWeights & weights, const std::string & name) {
-    return engine::modules::NormWeights{require_tensor(weights, name), std::nullopt};
+engine::modules::NormWeights rms_weight(
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
+    const std::string & name,
+    engine::assets::TensorStorageType storage_type) {
+    return engine::modules::NormWeights{require_tensor(store, source, name, storage_type), std::nullopt};
 }
 
 TensorValue contiguous(engine::core::ModuleBuildContext & ctx, const TensorValue & value) {
@@ -137,32 +156,36 @@ struct CfmWeights {
     engine::modules::NormWeights final_norm;
 };
 
-CfmWeights load_cfm_weights(const SeedVcV2CfmWeights & weights, int64_t layers) {
+CfmWeights load_cfm_weights(
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
+    int64_t layers,
+    engine::assets::TensorStorageType storage_type) {
     const std::string root = "cfm.estimator.";
     CfmWeights out;
-    out.cond_projection = linear_weights(weights, root + "cond_projection");
-    out.cond_x_merge_linear = linear_weights(weights, root + "cond_x_merge_linear");
-    out.style_in = linear_weights(weights, root + "style_in");
-    out.t_embedder_0 = linear_weights(weights, root + "t_embedder.mlp.0");
-    out.t_embedder_2 = linear_weights(weights, root + "t_embedder.mlp.2");
-    out.final_mlp_0 = linear_weights(weights, root + "final_mlp.0");
-    out.final_mlp_2 = linear_weights(weights, root + "final_mlp.2");
+    out.cond_projection = linear_weights(store, source, root + "cond_projection", storage_type);
+    out.cond_x_merge_linear = linear_weights(store, source, root + "cond_x_merge_linear", storage_type);
+    out.style_in = linear_weights(store, source, root + "style_in", storage_type);
+    out.t_embedder_0 = linear_weights(store, source, root + "t_embedder.mlp.0", storage_type);
+    out.t_embedder_2 = linear_weights(store, source, root + "t_embedder.mlp.2", storage_type);
+    out.final_mlp_0 = linear_weights(store, source, root + "final_mlp.0", storage_type);
+    out.final_mlp_2 = linear_weights(store, source, root + "final_mlp.2", storage_type);
     out.layers.reserve(static_cast<size_t>(layers));
     for (int64_t layer = 0; layer < layers; ++layer) {
         const std::string prefix = root + "transformer.layers." + std::to_string(layer);
         CfmLayerWeights item;
-        item.attention_wqkv = linear_weights_no_bias(weights, prefix + ".attention.wqkv");
-        item.attention_wo = linear_weights_no_bias(weights, prefix + ".attention.wo");
-        item.attention_norm_linear = linear_weights(weights, prefix + ".attention_norm.linear");
-        item.attention_norm = rms_weight(weights, prefix + ".attention_norm.norm.weight");
-        item.ffn_norm = rms_weight(weights, prefix + ".ffn_norm.weight");
-        item.ff_w1 = linear_weights_no_bias(weights, prefix + ".feed_forward.w1");
-        item.ff_w2 = linear_weights_no_bias(weights, prefix + ".feed_forward.w2");
-        item.ff_w3 = linear_weights_no_bias(weights, prefix + ".feed_forward.w3");
+        item.attention_wqkv = linear_weights_no_bias(store, source, prefix + ".attention.wqkv", storage_type);
+        item.attention_wo = linear_weights_no_bias(store, source, prefix + ".attention.wo", storage_type);
+        item.attention_norm_linear = linear_weights(store, source, prefix + ".attention_norm.linear", storage_type);
+        item.attention_norm = rms_weight(store, source, prefix + ".attention_norm.norm.weight", storage_type);
+        item.ffn_norm = rms_weight(store, source, prefix + ".ffn_norm.weight", storage_type);
+        item.ff_w1 = linear_weights_no_bias(store, source, prefix + ".feed_forward.w1", storage_type);
+        item.ff_w2 = linear_weights_no_bias(store, source, prefix + ".feed_forward.w2", storage_type);
+        item.ff_w3 = linear_weights_no_bias(store, source, prefix + ".feed_forward.w3", storage_type);
         out.layers.push_back(item);
     }
-    out.final_norm_linear = linear_weights(weights, root + "transformer.norm.linear");
-    out.final_norm = rms_weight(weights, root + "transformer.norm.norm.weight");
+    out.final_norm_linear = linear_weights(store, source, root + "transformer.norm.linear", storage_type);
+    out.final_norm = rms_weight(store, source, root + "transformer.norm.norm.weight", storage_type);
     return out;
 }
 
@@ -355,14 +378,12 @@ TensorValue build_estimator_graph(
 class CfmEstimatorRunner {
 public:
     CfmEstimatorRunner(
-        const SeedVcV2CfmWeights & source,
+        engine::core::ExecutionContext & execution_context,
+        CfmWeights weights,
         SeedVcV2DitConfig config)
-        : source_(source),
+        : execution_context_(execution_context),
           config_(std::move(config)),
-          weights_(load_cfm_weights(source, config_.depth)) {
-        if (source_.execution_context == nullptr) {
-            throw std::runtime_error("Seed-VC V2 CFM runner requires execution context");
-        }
+          weights_(std::move(weights)) {
     }
 
     ~CfmEstimatorRunner() {
@@ -380,7 +401,7 @@ public:
         engine::core::write_tensor_f32(timestep_, input.timestep);
         ggml_backend_tensor_set(freqs_, freqs_values_.data(), 0, freqs_values_.size() * sizeof(float));
         ggml_backend_tensor_set(positions_, position_values_.data(), 0, position_values_.size() * sizeof(int32_t));
-        if (engine::core::compute_backend_graph(source_.execution_context->backend(), graph_) != GGML_STATUS_SUCCESS) {
+        if (engine::core::compute_backend_graph(execution_context_.backend(), graph_) != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ggml_backend_graph_compute failed for Seed-VC V2 CFM estimator");
         }
         SeedVcV2CfmEstimatorOutput out;
@@ -437,7 +458,7 @@ private:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize Seed-VC V2 CFM estimator graph context");
         }
-        engine::core::ModuleBuildContext ctx{ctx_, "seed_vc.v2_cfm.estimator", source_.execution_context->backend_type()};
+        engine::core::ModuleBuildContext ctx{ctx_, "seed_vc.v2_cfm.estimator", execution_context_.backend_type()};
         x_ = engine::core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({batch, config_.in_channels, frames}));
         prompt_ = engine::core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({batch, config_.in_channels, frames}));
         cond_ = engine::core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({batch, frames, config_.content_dim}));
@@ -468,7 +489,7 @@ private:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_, 131072, false);
         ggml_build_forward_expand(graph_, output_);
-        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(source_.execution_context->backend()));
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_.backend()));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||
             !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
@@ -484,7 +505,7 @@ private:
         frames_ = frames;
     }
 
-    const SeedVcV2CfmWeights & source_;
+    engine::core::ExecutionContext & execution_context_;
     SeedVcV2DitConfig config_;
     CfmWeights weights_;
     std::mutex mutex_;
@@ -633,24 +654,35 @@ std::vector<float> combine_cfg(
 }
 
 struct SeedVcV2CfmEstimator::State {
+    std::shared_ptr<engine::core::ExecutionContext> execution_context;
+    std::shared_ptr<engine::core::BackendWeightStore> store;
     std::unique_ptr<CfmEstimatorRunner> runner;
 };
 
 SeedVcV2CfmEstimator::SeedVcV2CfmEstimator(
-    std::shared_ptr<const SeedVcV2CfmWeights> weights,
+    std::shared_ptr<const engine::assets::TensorSource> source,
+    engine::core::BackendConfig backend,
+    engine::assets::TensorStorageType storage_type,
     SeedVcV2DitConfig config)
-    : weights_(std::move(weights)),
-      config_(std::move(config)),
+    : config_(std::move(config)),
       state_(std::make_shared<State>()) {
-    if (weights_ == nullptr || weights_->execution_context == nullptr) {
-        throw std::runtime_error("Seed-VC V2 CFM estimator requires loaded weights");
+    if (source == nullptr) {
+        throw std::runtime_error("Seed-VC V2 CFM estimator requires weights");
     }
     if (config_.hidden_dim <= 0 || config_.depth <= 0 || config_.num_heads <= 0 ||
         config_.in_channels <= 0 || config_.content_dim <= 0 || config_.style_encoder_dim <= 0 ||
         config_.hidden_dim % config_.num_heads != 0) {
         throw std::runtime_error("Seed-VC V2 CFM estimator config is invalid");
     }
-    state_->runner = std::make_unique<CfmEstimatorRunner>(*weights_, config_);
+    state_->execution_context = std::make_shared<engine::core::ExecutionContext>(backend);
+    state_->store = std::make_shared<engine::core::BackendWeightStore>(
+        state_->execution_context->backend(),
+        state_->execution_context->backend_type(),
+        "seed_vc.v2_cfm.estimator.weights",
+        256ull * 1024ull * 1024ull);
+    auto weights = load_cfm_weights(*state_->store, *source, config_.depth, storage_type);
+    state_->store->upload();
+    state_->runner = std::make_unique<CfmEstimatorRunner>(*state_->execution_context, std::move(weights), config_);
 }
 
 SeedVcV2CfmEstimator::~SeedVcV2CfmEstimator() = default;

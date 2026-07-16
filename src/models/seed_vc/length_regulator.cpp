@@ -1,12 +1,15 @@
 #include "engine/models/seed_vc/length_regulator.h"
 
-#include "tensor_store_internal.h"
+#include "engine/models/seed_vc/assets.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/modules/weight_binding.h"
 
 #include <ggml-alloc.h>
 
@@ -21,21 +24,26 @@
 namespace engine::models::seed_vc {
 namespace {
 
-const engine::core::TensorValue & require_tensor(
-    const SeedVcTensorStore & weights,
-    const std::string & name) {
-    const auto it = weights.tensors.find(name);
-    if (it == weights.tensors.end()) {
-        throw std::runtime_error("Seed-VC missing length regulator tensor: " + name);
-    }
-    return it->second;
+engine::core::TensorValue require_tensor(
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
+    const std::string & name,
+    engine::assets::TensorStorageType storage_type) {
+    return engine::modules::binding::tensor_from_named_source(
+        store,
+        source,
+        name,
+        seed_vc_component_storage_type(source, name, storage_type));
 }
 
-const engine::core::TensorValue * find_tensor(
-    const SeedVcTensorStore & weights,
+std::shared_ptr<engine::core::BackendWeightStore> make_store(
+    engine::core::ExecutionContext & execution_context,
     const std::string & name) {
-    const auto it = weights.tensors.find(name);
-    return it == weights.tensors.end() ? nullptr : &it->second;
+    return std::make_shared<engine::core::BackendWeightStore>(
+        execution_context.backend(),
+        execution_context.backend_type(),
+        "seed_vc." + name + ".weights",
+        256ull * 1024ull * 1024ull);
 }
 
 void validate_token_ids(
@@ -180,12 +188,14 @@ struct V1LengthRegulatorWeights {
 };
 
 CfmLengthRegulatorWeights load_cfm_weights(
-    const SeedVcTensorStore & weights,
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
     const std::string & prefix,
     int64_t codebook_size,
-    int64_t channels) {
+    int64_t channels,
+    engine::assets::TensorStorageType storage_type) {
     CfmLengthRegulatorWeights out;
-    out.embedding = require_tensor(weights, prefix + ".embedding.weight");
+    out.embedding = require_tensor(store, source, prefix + ".embedding.weight", storage_type);
     engine::core::validate_shape(
         out.embedding,
         engine::core::TensorShape::from_dims({codebook_size, channels}),
@@ -194,8 +204,8 @@ CfmLengthRegulatorWeights load_cfm_weights(
         const int conv_index = layer * 3;
         const int norm_index = conv_index + 1;
         out.convs[static_cast<size_t>(layer)] = engine::modules::Conv1dWeights{
-            require_tensor(weights, prefix + ".model." + std::to_string(conv_index) + ".weight"),
-            require_tensor(weights, prefix + ".model." + std::to_string(conv_index) + ".bias")};
+            require_tensor(store, source, prefix + ".model." + std::to_string(conv_index) + ".weight", storage_type),
+            require_tensor(store, source, prefix + ".model." + std::to_string(conv_index) + ".bias", storage_type)};
         engine::core::validate_shape(
             out.convs[static_cast<size_t>(layer)].weight,
             engine::core::TensorShape::from_dims({channels, channels, 3}),
@@ -205,9 +215,9 @@ CfmLengthRegulatorWeights load_cfm_weights(
             engine::core::TensorShape::from_dims({channels}),
             "Seed-VC CFM length regulator conv bias");
         out.norm_weights[static_cast<size_t>(layer)] =
-            require_tensor(weights, prefix + ".model." + std::to_string(norm_index) + ".weight");
+            require_tensor(store, source, prefix + ".model." + std::to_string(norm_index) + ".weight", storage_type);
         out.norm_biases[static_cast<size_t>(layer)] =
-            require_tensor(weights, prefix + ".model." + std::to_string(norm_index) + ".bias");
+            require_tensor(store, source, prefix + ".model." + std::to_string(norm_index) + ".bias", storage_type);
         engine::core::validate_shape(
             out.norm_weights[static_cast<size_t>(layer)],
             engine::core::TensorShape::from_dims({channels}),
@@ -221,15 +231,17 @@ CfmLengthRegulatorWeights load_cfm_weights(
 }
 
 V1LengthRegulatorWeights load_v1_weights(
-    const SeedVcTensorStore & weights,
+    engine::core::BackendWeightStore & store,
+    const engine::assets::TensorSource & source,
     const std::string & prefix,
     int64_t input_channels,
     int64_t channels,
-    int64_t f0_bins) {
+    int64_t f0_bins,
+    engine::assets::TensorStorageType storage_type) {
     V1LengthRegulatorWeights out;
     out.content_projection = engine::modules::LinearWeights{
-        require_tensor(weights, prefix + ".content_in_proj.weight"),
-        require_tensor(weights, prefix + ".content_in_proj.bias")};
+        require_tensor(store, source, prefix + ".content_in_proj.weight", storage_type),
+        require_tensor(store, source, prefix + ".content_in_proj.bias", storage_type)};
     engine::core::validate_shape(
         out.content_projection.weight,
         engine::core::TensorShape::from_dims({channels, input_channels}),
@@ -238,13 +250,13 @@ V1LengthRegulatorWeights load_v1_weights(
         *out.content_projection.bias,
         engine::core::TensorShape::from_dims({channels}),
         "Seed-VC V1 length regulator content projection bias");
-    if (const auto * f0_embedding = find_tensor(weights, prefix + ".f0_embedding.weight")) {
-        out.f0_embedding = *f0_embedding;
+    if (source.has_tensor(prefix + ".f0_embedding.weight")) {
+        out.f0_embedding = require_tensor(store, source, prefix + ".f0_embedding.weight", storage_type);
         engine::core::validate_shape(
             *out.f0_embedding,
             engine::core::TensorShape::from_dims({f0_bins, channels}),
             "Seed-VC V1 length regulator f0 embedding");
-        out.f0_mask = require_tensor(weights, prefix + ".f0_mask");
+        out.f0_mask = require_tensor(store, source, prefix + ".f0_mask", storage_type);
         engine::core::validate_shape(
             *out.f0_mask,
             engine::core::TensorShape::from_dims({1, channels}),
@@ -254,8 +266,8 @@ V1LengthRegulatorWeights load_v1_weights(
         const int conv_index = layer * 3;
         const int norm_index = conv_index + 1;
         out.convs[static_cast<size_t>(layer)] = engine::modules::Conv1dWeights{
-            require_tensor(weights, prefix + ".model." + std::to_string(conv_index) + ".weight"),
-            require_tensor(weights, prefix + ".model." + std::to_string(conv_index) + ".bias")};
+            require_tensor(store, source, prefix + ".model." + std::to_string(conv_index) + ".weight", storage_type),
+            require_tensor(store, source, prefix + ".model." + std::to_string(conv_index) + ".bias", storage_type)};
         engine::core::validate_shape(
             out.convs[static_cast<size_t>(layer)].weight,
             engine::core::TensorShape::from_dims({channels, channels, 3}),
@@ -265,9 +277,9 @@ V1LengthRegulatorWeights load_v1_weights(
             engine::core::TensorShape::from_dims({channels}),
             "Seed-VC V1 length regulator conv bias");
         out.norm_weights[static_cast<size_t>(layer)] =
-            require_tensor(weights, prefix + ".model." + std::to_string(norm_index) + ".weight");
+            require_tensor(store, source, prefix + ".model." + std::to_string(norm_index) + ".weight", storage_type);
         out.norm_biases[static_cast<size_t>(layer)] =
-            require_tensor(weights, prefix + ".model." + std::to_string(norm_index) + ".bias");
+            require_tensor(store, source, prefix + ".model." + std::to_string(norm_index) + ".bias", storage_type);
         engine::core::validate_shape(
             out.norm_weights[static_cast<size_t>(layer)],
             engine::core::TensorShape::from_dims({channels}),
@@ -278,8 +290,8 @@ V1LengthRegulatorWeights load_v1_weights(
             "Seed-VC V1 length regulator norm bias");
     }
     out.output_projection = engine::modules::Conv1dWeights{
-        require_tensor(weights, prefix + ".model.12.weight"),
-        require_tensor(weights, prefix + ".model.12.bias")};
+        require_tensor(store, source, prefix + ".model.12.weight", storage_type),
+        require_tensor(store, source, prefix + ".model.12.bias", storage_type)};
     engine::core::validate_shape(
         out.output_projection.weight,
         engine::core::TensorShape::from_dims({channels, channels, 1}),
@@ -758,35 +770,45 @@ private:
 }  // namespace
 
 struct SeedVcDiscreteLengthRegulator::State {
+    std::shared_ptr<engine::core::ExecutionContext> execution_context;
+    std::shared_ptr<engine::core::BackendWeightStore> store;
     std::unique_ptr<DiscreteLengthRegulatorRunner> runner;
 };
 
 struct SeedVcCfmLengthRegulator::State {
+    std::shared_ptr<engine::core::ExecutionContext> execution_context;
+    std::shared_ptr<engine::core::BackendWeightStore> store;
     std::unique_ptr<CfmLengthRegulatorRunner> runner;
 };
 
 struct SeedVcV1LengthRegulator::State {
+    std::shared_ptr<engine::core::ExecutionContext> execution_context;
+    std::shared_ptr<engine::core::BackendWeightStore> store;
     std::unique_ptr<V1LengthRegulatorRunner> runner;
 };
 
 SeedVcDiscreteLengthRegulator::SeedVcDiscreteLengthRegulator(
-    std::shared_ptr<const SeedVcV2ArWeights> weights,
+    std::shared_ptr<const engine::assets::TensorSource> source,
+    engine::core::BackendConfig backend,
+    engine::assets::TensorStorageType storage_type,
     std::string prefix)
-    : weights_(std::move(weights)),
-      prefix_(std::move(prefix)),
+    : prefix_(std::move(prefix)),
       state_(std::make_shared<State>()) {
-    if (weights_ == nullptr || weights_->execution_context == nullptr) {
-        throw std::runtime_error("Seed-VC length regulator requires loaded weights");
+    if (source == nullptr) {
+        throw std::runtime_error("Seed-VC length regulator requires weights");
     }
+    state_->execution_context = std::make_shared<engine::core::ExecutionContext>(backend);
+    state_->store = make_store(*state_->execution_context, "v2_ar.length_regulator");
     const std::string embedding_name = prefix_ + ".embedding.weight";
-    const auto & embedding = require_tensor(*weights_, embedding_name);
+    const auto embedding = require_tensor(*state_->store, *source, embedding_name, storage_type);
     if (embedding.shape.rank != 2) {
         throw std::runtime_error("Seed-VC length regulator embedding weight must be rank 2");
     }
     codebook_size_ = embedding.shape.dims[0];
     channels_ = embedding.shape.dims[1];
+    state_->store->upload();
     state_->runner = std::make_unique<DiscreteLengthRegulatorRunner>(
-        *weights_->execution_context,
+        *state_->execution_context,
         embedding,
         codebook_size_,
         channels_);
@@ -815,24 +837,28 @@ SeedVcLengthRegulatorOutput SeedVcDiscreteLengthRegulator::run(
 }
 
 SeedVcCfmLengthRegulator::SeedVcCfmLengthRegulator(
-    std::shared_ptr<const SeedVcV2CfmWeights> weights,
+    std::shared_ptr<const engine::assets::TensorSource> source,
+    engine::core::BackendConfig backend,
+    engine::assets::TensorStorageType storage_type,
     std::string prefix)
-    : weights_(std::move(weights)),
-      prefix_(std::move(prefix)),
+    : prefix_(std::move(prefix)),
       state_(std::make_shared<State>()) {
-    if (weights_ == nullptr || weights_->execution_context == nullptr) {
-        throw std::runtime_error("Seed-VC CFM length regulator requires loaded weights");
+    if (source == nullptr) {
+        throw std::runtime_error("Seed-VC CFM length regulator requires weights");
     }
+    state_->execution_context = std::make_shared<engine::core::ExecutionContext>(backend);
+    state_->store = make_store(*state_->execution_context, "v2_cfm.length_regulator");
     const std::string embedding_name = prefix_ + ".embedding.weight";
-    const auto & embedding = require_tensor(*weights_, embedding_name);
-    if (embedding.shape.rank != 2) {
+    const auto embedding = source->require_metadata(embedding_name);
+    if (embedding.shape.size() != 2) {
         throw std::runtime_error("Seed-VC CFM length regulator embedding weight must be rank 2");
     }
-    codebook_size_ = embedding.shape.dims[0];
-    channels_ = embedding.shape.dims[1];
-    auto cfm_weights = load_cfm_weights(*weights_, prefix_, codebook_size_, channels_);
+    codebook_size_ = embedding.shape[0];
+    channels_ = embedding.shape[1];
+    auto cfm_weights = load_cfm_weights(*state_->store, *source, prefix_, codebook_size_, channels_, storage_type);
+    state_->store->upload();
     state_->runner = std::make_unique<CfmLengthRegulatorRunner>(
-        *weights_->execution_context,
+        *state_->execution_context,
         cfm_weights,
         codebook_size_,
         channels_);
@@ -862,31 +888,36 @@ SeedVcLengthRegulatorOutput SeedVcCfmLengthRegulator::run(
 }
 
 SeedVcV1LengthRegulator::SeedVcV1LengthRegulator(
-    std::shared_ptr<const SeedVcV1ModelWeights> weights,
+    std::shared_ptr<const engine::assets::TensorSource> source,
+    engine::core::BackendConfig backend,
+    engine::assets::TensorStorageType storage_type,
     std::string prefix)
-    : weights_(std::move(weights)),
-      prefix_(std::move(prefix)),
+    : prefix_(std::move(prefix)),
       state_(std::make_shared<State>()) {
-    if (weights_ == nullptr || weights_->execution_context == nullptr) {
-        throw std::runtime_error("Seed-VC V1 length regulator requires loaded weights");
+    if (source == nullptr) {
+        throw std::runtime_error("Seed-VC V1 length regulator requires weights");
     }
+    state_->execution_context = std::make_shared<engine::core::ExecutionContext>(backend);
+    state_->store = make_store(*state_->execution_context, "v1.length_regulator");
     const std::string projection_name = prefix_ + ".content_in_proj.weight";
-    const auto & projection = require_tensor(*weights_, projection_name);
-    if (projection.shape.rank != 2) {
+    const auto projection = source->require_metadata(projection_name);
+    if (projection.shape.size() != 2) {
         throw std::runtime_error("Seed-VC V1 length regulator content projection weight must be rank 2");
     }
-    channels_ = projection.shape.dims[0];
-    input_channels_ = projection.shape.dims[1];
+    channels_ = projection.shape[0];
+    input_channels_ = projection.shape[1];
     const std::string f0_embedding_name = prefix_ + ".f0_embedding.weight";
-    if (const auto * f0_embedding = find_tensor(*weights_, f0_embedding_name)) {
-        if (f0_embedding->shape.rank != 2 || f0_embedding->shape.dims[1] != channels_) {
+    if (source->has_tensor(f0_embedding_name)) {
+        const auto f0_embedding = source->require_metadata(f0_embedding_name);
+        if (f0_embedding.shape.size() != 2 || f0_embedding.shape[1] != channels_) {
             throw std::runtime_error("Seed-VC V1 length regulator f0 embedding shape mismatch");
         }
-        f0_bins_ = f0_embedding->shape.dims[0];
+        f0_bins_ = f0_embedding.shape[0];
     }
-    auto v1_weights = load_v1_weights(*weights_, prefix_, input_channels_, channels_, f0_bins_);
+    auto v1_weights = load_v1_weights(*state_->store, *source, prefix_, input_channels_, channels_, f0_bins_, storage_type);
+    state_->store->upload();
     state_->runner = std::make_unique<V1LengthRegulatorRunner>(
-        *weights_->execution_context,
+        *state_->execution_context,
         v1_weights,
         input_channels_,
         channels_,

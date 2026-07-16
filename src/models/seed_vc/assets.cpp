@@ -5,10 +5,16 @@
 
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace engine::models::seed_vc {
 namespace json = engine::io::json;
 namespace {
+
+bool has_suffix(std::string_view value, std::string_view suffix) {
+    return value.size() >= suffix.size() &&
+        value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
 
 SeedVcLengthRegulatorConfig parse_length_regulator(
     const json::Value & value,
@@ -242,6 +248,23 @@ std::shared_ptr<const SeedVcAssets> load_seed_vc_assets(const std::filesystem::p
     assets->hubert_large_weights = assets->resources.open_tensor_source("hubert_large_weights");
     assets->wav2vec2_xlsr_weights = assets->resources.open_tensor_source("wav2vec2_xlsr_weights");
     return assets;
+}
+
+assets::TensorStorageType seed_vc_component_storage_type(
+    const assets::TensorSource & source,
+    std::string_view tensor_name,
+    assets::TensorStorageType requested_type) {
+    const auto metadata = source.require_metadata(tensor_name);
+    if (metadata.shape.size() <= 1 ||
+        tensor_name == "model.encoder.embed_positions.weight" ||
+        has_suffix(tensor_name, ".bias") ||
+        has_suffix(tensor_name, ".gamma") ||
+        has_suffix(tensor_name, ".beta") ||
+        has_suffix(tensor_name, ".running_mean") ||
+        has_suffix(tensor_name, ".running_var")) {
+        return assets::TensorStorageType::F32;
+    }
+    return requested_type;
 }
 
 }  // namespace engine::models::seed_vc

@@ -22,10 +22,6 @@
 namespace engine::modules {
 namespace {
 
-bool is_float_dtype(const std::string & dtype) {
-    return dtype == "F32" || dtype == "F16" || dtype == "BF16";
-}
-
 int64_t tensor_elements(const std::vector<int64_t> & shape) {
     if (shape.empty()) {
         throw std::runtime_error("HuBERT tensor shape is empty");
@@ -439,8 +435,10 @@ HubertEncoderComponent HubertEncoderComponent::load_from_tensor_source(
     const auto tensors = source->tensors();
     weights->tensors.reserve(tensors.size());
     for (const auto & tensor : tensors) {
-        if (!is_float_dtype(tensor.dtype)) {
-            throw std::runtime_error("HuBERT safetensors contains non-floating tensor: " + tensor.name);
+        try {
+            (void) engine::assets::tensor_storage_type_for_dtype(tensor.dtype);
+        } catch (const std::exception &) {
+            throw std::runtime_error("HuBERT contains unsupported tensor dtype for " + tensor.name + ": " + tensor.dtype);
         }
         if (tensor.name == "encoder.pos_conv_embed.conv.weight_g" ||
             tensor.name == "encoder.pos_conv_embed.conv.weight_v" ||

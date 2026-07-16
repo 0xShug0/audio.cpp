@@ -1,13 +1,14 @@
 #pragma once
 
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/backend.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace engine::models::seed_vc {
-
-struct SeedVcAstralWeights;
 
 struct SeedVcAstralQuantizerOutput {
     std::vector<int32_t> indices;
@@ -21,7 +22,9 @@ class SeedVcAstralQuantizer {
 public:
     SeedVcAstralQuantizer() = default;
     SeedVcAstralQuantizer(
-        std::shared_ptr<const SeedVcAstralWeights> weights,
+        std::shared_ptr<const engine::assets::TensorSource> source,
+        engine::core::BackendConfig backend,
+        engine::assets::TensorStorageType storage_type,
         std::string prefix,
         int64_t input_channels,
         int64_t channels,
@@ -48,7 +51,6 @@ public:
 private:
     struct State;
 
-    std::shared_ptr<const SeedVcAstralWeights> weights_;
     std::string prefix_;
     int64_t input_channels_ = 0;
     int64_t channels_ = 0;

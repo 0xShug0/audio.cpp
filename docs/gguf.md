@@ -279,7 +279,7 @@ Status labels:
 | `qwen3_tts` base | Done | Pass | Pass | No (similarity drift, frame drift, text minor drift) | No (similarity drift, frame drift, text minor drift) |
 | `qwen3_tts` custom voice | Done | Pass | --- | Pass (drift) | No (similarity drift, frame drift, text minor drift) |
 | `qwen3_tts` voice design | Done | Pass | --- | Pass (drift) | No (similarity drift, frame drift, text minor drift) |
-| `seed_vc` | No | --- | --- | --- | --- |
+| `seed_vc` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `silero_vad` | Skip (tiny model) | --- | --- | --- | --- |
 | `sortformer_diar` | No | --- | --- | --- | --- |
 | `stable_audio` | Done | Pass | --- | Pass (drift) | Pass (drift) |

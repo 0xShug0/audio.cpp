@@ -1,6 +1,6 @@
 #include "engine/models/seed_vc/session.h"
 
-#include "tensor_store_internal.h"
+#include "engine/models/seed_vc/assets.h"
 
 #include "engine/framework/modules/bigvgan_vocoder.h"
 #include "engine/framework/modules/campplus_encoder.h"
@@ -57,14 +57,6 @@ struct SeedVcRouteRuntime {
     };
 
     Route route = Route::V2VoiceConversion;
-    std::shared_ptr<const SeedVcV2ArWeights> v2_ar;
-    std::shared_ptr<const SeedVcV2CfmWeights> v2_cfm;
-    std::shared_ptr<const SeedVcV1ModelWeights> v1_svc;
-    std::shared_ptr<const SeedVcV1ModelWeights> v1_model;
-    std::shared_ptr<const SeedVcAstralWeights> astral_bsq32;
-    std::shared_ptr<const SeedVcAstralWeights> astral_bsq2048;
-    std::shared_ptr<const SeedVcRmvpeWeights> rmvpe;
-    std::shared_ptr<const SeedVcWhisperEncoderWeights> whisper_small;
     SeedVcDiscreteLengthRegulator v2_ar_length_regulator;
     SeedVcCfmLengthRegulator v2_cfm_length_regulator;
     SeedVcV2CfmEstimator v2_cfm_estimator;
@@ -1147,45 +1139,25 @@ std::shared_ptr<SeedVcRouteRuntime> open_route_runtime(
             throw std::runtime_error("Seed-VC v2_vc sources require a VoiceConversion session");
         }
         sources->route = SeedVcRouteRuntime::Route::V2VoiceConversion;
-        sources->v2_ar = load_seed_vc_checkpoint<SeedVcV2ArWeights>(
-            assets.v2_ar_weights,
-            "v2_ar",
-            backend,
-            {},
-            {},
-            default_weight_storage_type);
         sources->v2_ar_length_regulator = SeedVcDiscreteLengthRegulator(
-            sources->v2_ar,
-            "length_regulator");
-        sources->v2_cfm = load_seed_vc_checkpoint<SeedVcV2CfmWeights>(
-            assets.v2_cfm_weights,
-            "v2_cfm",
+            assets.v2_ar_weights,
             backend,
-            {"cfm.estimator.transformer.causal_mask"},
-            {},
-            default_weight_storage_type);
+            default_weight_storage_type,
+            "length_regulator");
         sources->v2_cfm_length_regulator = SeedVcCfmLengthRegulator(
-            sources->v2_cfm,
+            assets.v2_cfm_weights,
+            backend,
+            default_weight_storage_type,
             "length_regulator");
         sources->v2_cfm_estimator = SeedVcV2CfmEstimator(
-            sources->v2_cfm,
+            assets.v2_cfm_weights,
+            backend,
+            default_weight_storage_type,
             assets.config.v2_cfm);
-        sources->astral_bsq32 = load_seed_vc_checkpoint<SeedVcAstralWeights>(
-            assets.astral_bsq32_weights,
-            "astral_bsq32",
-            backend,
-            {"quantizer.mask"},
-            {},
-            default_weight_storage_type);
-        sources->astral_bsq2048 = load_seed_vc_checkpoint<SeedVcAstralWeights>(
-            assets.astral_bsq2048_weights,
-            "astral_bsq2048",
-            backend,
-            {"quantizer.mask"},
-            {},
-            default_weight_storage_type);
         sources->astral_bsq32_quantizer = SeedVcAstralQuantizer(
-            sources->astral_bsq32,
+            assets.astral_bsq32_weights,
+            backend,
+            default_weight_storage_type,
             "",
             assets.config.v2_astral_narrow.encoder_input_dim,
             assets.config.v2_astral_narrow.encoder_dim,
@@ -1193,7 +1165,9 @@ std::shared_ptr<SeedVcRouteRuntime> open_route_runtime(
             assets.config.v2_astral_narrow.encoder_blocks,
             assets.config.v2_astral_narrow.quantizer_codebook_size);
         sources->astral_bsq2048_quantizer = SeedVcAstralQuantizer(
-            sources->astral_bsq2048,
+            assets.astral_bsq2048_weights,
+            backend,
+            default_weight_storage_type,
             "",
             assets.config.v2_astral_wide.encoder_input_dim,
             assets.config.v2_astral_wide.encoder_dim,
@@ -1216,38 +1190,26 @@ std::shared_ptr<SeedVcRouteRuntime> open_route_runtime(
             throw std::runtime_error("Seed-VC v1_svc sources require an Svc session");
         }
         sources->route = SeedVcRouteRuntime::Route::V1SingingVoiceConversion;
-        sources->v1_svc = load_seed_vc_checkpoint<SeedVcV1ModelWeights>(
-            assets.v1_svc_weights,
-            "v1_svc",
-            backend,
-            {"cfm.estimator.input_pos"},
-            {},
-            default_weight_storage_type);
-        sources->v1_model = sources->v1_svc;
         sources->v1_length_regulator = SeedVcV1LengthRegulator(
-            sources->v1_model,
+            assets.v1_svc_weights,
+            backend,
+            default_weight_storage_type,
             "length_regulator");
         sources->v1_cfm_estimator = SeedVcV1CfmEstimator(
-            sources->v1_model,
+            assets.v1_svc_weights,
+            backend,
+            default_weight_storage_type,
             assets.config.v1_dit,
             assets.config.v1_wavenet,
             assets.config.v1_style_dim);
-        sources->rmvpe = load_seed_vc_checkpoint<SeedVcRmvpeWeights>(
+        sources->rmvpe_extractor = SeedVcRmvpeF0Extractor(
             assets.rmvpe_weights,
-            "rmvpe",
             backend,
-            {},
-            {".num_batches_tracked"},
             rmvpe_weight_storage_type);
-        sources->rmvpe_extractor = SeedVcRmvpeF0Extractor(sources->rmvpe);
-        sources->whisper_small = load_seed_vc_checkpoint<SeedVcWhisperEncoderWeights>(
+        sources->whisper_content = SeedVcWhisperContentEncoder(
             assets.whisper_small_weights,
-            "whisper_small",
             backend,
-            {},
-            {},
             default_weight_storage_type);
-        sources->whisper_content = SeedVcWhisperContentEncoder(sources->whisper_small);
         sources->bigvgan = engine::modules::BigVganVocoderComponent::load_from_tensor_source(
             assets.bigvgan_44k_weights,
             backend,
@@ -1257,29 +1219,22 @@ std::shared_ptr<SeedVcRouteRuntime> open_route_runtime(
             throw std::runtime_error("Seed-VC v1_whisper_bigvgan_vc sources require a VoiceConversion session");
         }
         sources->route = SeedVcRouteRuntime::Route::V1WhisperBigVganVoiceConversion;
-        sources->v1_model = load_seed_vc_checkpoint<SeedVcV1ModelWeights>(
-            assets.v1_whisper_bigvgan_weights,
-            "v1_whisper_bigvgan",
-            backend,
-            {"cfm.estimator.input_pos"},
-            {},
-            default_weight_storage_type);
         sources->v1_length_regulator = SeedVcV1LengthRegulator(
-            sources->v1_model,
+            assets.v1_whisper_bigvgan_weights,
+            backend,
+            default_weight_storage_type,
             "length_regulator");
         sources->v1_cfm_estimator = SeedVcV1CfmEstimator(
-            sources->v1_model,
+            assets.v1_whisper_bigvgan_weights,
+            backend,
+            default_weight_storage_type,
             assets.config.v1_whisper_bigvgan_dit,
             assets.config.v1_whisper_bigvgan_wavenet,
             assets.config.v1_whisper_bigvgan_style_dim);
-        sources->whisper_small = load_seed_vc_checkpoint<SeedVcWhisperEncoderWeights>(
+        sources->whisper_content = SeedVcWhisperContentEncoder(
             assets.whisper_small_weights,
-            "whisper_small",
             backend,
-            {},
-            {},
             default_weight_storage_type);
-        sources->whisper_content = SeedVcWhisperContentEncoder(sources->whisper_small);
         sources->bigvgan = engine::modules::BigVganVocoderComponent::load_from_tensor_source(
             assets.bigvgan_22k_weights,
             backend,
@@ -1289,18 +1244,15 @@ std::shared_ptr<SeedVcRouteRuntime> open_route_runtime(
             throw std::runtime_error("Seed-VC v1_xlsr_hift_vc sources require a VoiceConversion session");
         }
         sources->route = SeedVcRouteRuntime::Route::V1XlsrHiftVoiceConversion;
-        sources->v1_model = load_seed_vc_checkpoint<SeedVcV1ModelWeights>(
-            assets.v1_xlsr_hift_weights,
-            "v1_xlsr_hift",
-            backend,
-            {"cfm.estimator.input_pos"},
-            {},
-            default_weight_storage_type);
         sources->v1_length_regulator = SeedVcV1LengthRegulator(
-            sources->v1_model,
+            assets.v1_xlsr_hift_weights,
+            backend,
+            default_weight_storage_type,
             "length_regulator");
         sources->v1_cfm_estimator = SeedVcV1CfmEstimator(
-            sources->v1_model,
+            assets.v1_xlsr_hift_weights,
+            backend,
+            default_weight_storage_type,
             assets.config.v1_xlsr_hift_dit,
             assets.config.v1_xlsr_hift_wavenet,
             assets.config.v1_xlsr_hift_style_dim);

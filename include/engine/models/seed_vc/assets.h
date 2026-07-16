@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::models::seed_vc {
@@ -181,5 +182,9 @@ struct SeedVcAssets {
 };
 
 std::shared_ptr<const SeedVcAssets> load_seed_vc_assets(const std::filesystem::path & model_path);
+assets::TensorStorageType seed_vc_component_storage_type(
+    const assets::TensorSource & source,
+    std::string_view tensor_name,
+    assets::TensorStorageType requested_type);
 
 }  // namespace engine::models::seed_vc
