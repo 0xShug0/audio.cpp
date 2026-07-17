@@ -201,8 +201,6 @@ Qwen3TTSSession::Qwen3TTSSession(
         validate_matmul_weight_storage(storage_type, "qwen3_tts.weight_type");
         validate_talker_weight_storage(storage_type);
         talker_weight_storage_type_ = storage_type;
-        speech_encoder_weight_storage_type_ = storage_type;
-        speech_decoder_weight_storage_type_ = storage_type;
     }
     if (const auto it = options.options.find("qwen3_tts.conv_weight_type"); it != options.options.end()) {
         conv_weight_storage_type_ = engine::assets::parse_tensor_storage_type(it->second);
