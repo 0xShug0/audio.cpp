@@ -8,6 +8,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/models/moss/shared/audio_tokenizer_encoder.h"
 
 #include <cstdint>
@@ -115,8 +116,9 @@ int main(int argc, char ** argv) {
         engine::core::ExecutionContext execution_context(backend_config);
 
         std::cout << "loading codec encoder weights...\n" << std::flush;
+        const auto source = engine::assets::open_tensor_source(codec_dir);
         engine::models::moss::MossAudioTokenizerEncoder encoder(
-            codec_dir, execution_context, num_quantizers, kWeightContextBytes, kGraphArenaBytes);
+            *source, execution_context, num_quantizers, kWeightContextBytes, kGraphArenaBytes);
 
         std::cout << "encoding...\n" << std::flush;
         const auto codes = encoder.encode(stereo);
