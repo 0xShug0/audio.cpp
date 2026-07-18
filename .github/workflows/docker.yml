@@ -118,7 +118,6 @@ jobs:
             platforms: linux/amd64
             arch: amd64
             runs_on: ubuntu-24.04
-            free_disk: true
             cuda_version: "12.9.2"
             enabled: true
           - tag: cuda12
@@ -126,7 +125,6 @@ jobs:
             platforms: linux/arm64
             arch: arm64
             runs_on: ubuntu-24.04-arm
-            free_disk: true
             cuda_version: "12.9.2"
             enabled: true
           # ── CUDA 13 ──
@@ -135,7 +133,6 @@ jobs:
             platforms: linux/amd64
             arch: amd64
             runs_on: ubuntu-24.04
-            free_disk: true
             cuda_version: "13.3.0"
             enabled: true
           - tag: cuda13
@@ -143,7 +140,6 @@ jobs:
             platforms: linux/arm64
             arch: arm64
             runs_on: ubuntu-24.04-arm
-            free_disk: true
             cuda_version: "13.3.0"
             enabled: true
     steps:
@@ -167,18 +163,6 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Free disk space
-        if: ${{ matrix.enabled == true && matrix.free_disk }}
-        uses: ggml-org/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
       - name: Build and push
         id: push
         if: ${{ matrix.enabled == true }}
@@ -196,6 +180,7 @@ jobs:
             APP_REVISION=${{ github.sha }}
             IMAGE_URL=${{ github.server_url }}/${{ github.repository }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
+            ENGINE_ENABLE_NATIVE_CPU=OFF # disable for cross-arch portability
             ${{ matrix.cuda_version && format('CUDA_VERSION={0}', matrix.cuda_version) || '' }}
           cache-from: type=registry,ref=ghcr.io/${{ env.IMAGE_REPO }}:cache-${{ matrix.arch }}-${{ matrix.tag }}
           cache-to: type=registry,ref=ghcr.io/${{ env.IMAGE_REPO }}:cache-${{ matrix.arch }}-${{ matrix.tag }},mode=max
