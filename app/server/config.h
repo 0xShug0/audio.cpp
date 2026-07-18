@@ -24,6 +24,11 @@ struct ServerModelConfig {
     std::string task = "tts";
     std::string mode = "offline";
     bool lazy = false;
+    // Overrides ServerConfig::busy_timeout_ms for this model, and acts as the ceiling
+    // a per-request busy_timeout_ms is clamped to. Model runtimes differ by orders of
+    // magnitude (a short TTS clip vs. minutes of music generation), so one fleet-wide
+    // bound is either too tight for the slow models or useless for the fast ones.
+    std::optional<int> busy_timeout_ms;
     std::optional<std::string> config_id;
     std::optional<std::string> weight_id;
     std::unordered_map<std::string, std::string> load_options;

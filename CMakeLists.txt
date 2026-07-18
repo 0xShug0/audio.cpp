@@ -903,6 +903,21 @@ if (ENGINE_BUILD_TESTS)
         COMMAND server_multipart_test
     )
 
+    add_executable(server_busy_guard_test
+        tests/unittests/test_server_busy_guard.cpp
+    )
+    target_include_directories(server_busy_guard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+    find_package(Threads REQUIRED)
+    target_link_libraries(server_busy_guard_test PRIVATE Threads::Threads)
+
+    add_test(
+        NAME server_busy_guard_test
+        COMMAND server_busy_guard_test
+    )
+    # The suite deliberately drives threads against a held lock; bound it so a
+    # regression that reintroduces unbounded queuing fails instead of hanging CI.
+    set_tests_properties(server_busy_guard_test PROPERTIES TIMEOUT 60)
+
     add_executable(server_config_test
         tests/unittests/test_server_config.cpp
         app/server/config.cpp

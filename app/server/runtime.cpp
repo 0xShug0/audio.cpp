@@ -30,17 +30,19 @@ using engine::io::json::Value;
 
 using Clock = std::chrono::steady_clock;
 
-// Thrown when a model is occupied and the busy_timeout has elapsed. Mapped to
-// HTTP 503 so a client can retry or fail over rather than hang.
-class ServerBusyError : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
-
-std::int64_t steady_now_ms() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               Clock::now().time_since_epoch())
-        .count();
+// Per-request override for the busy timeout. Absent means "use the model's
+// configured ceiling"; a value is clamped to that ceiling by resolve_busy_timeout_ms
+// so a client can shorten its own wait but never weaken the guard.
+std::optional<int> parse_busy_timeout_override(const Value & body) {
+    const auto * value = body.find("busy_timeout_ms");
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    const auto requested = engine::io::json::optional_i32(body, "busy_timeout_ms", 0);
+    if (requested < 0) {
+        throw std::runtime_error("busy_timeout_ms must be >= 0 (0 means no client-side bound)");
+    }
+    return requested;
 }
 
 std::string json_quote(std::string_view value) {
@@ -773,39 +775,23 @@ struct ServerState::TimedTaskResult {
     std::optional<double> ttft_ms;
 };
 
-ServerState::ModelRunLock ServerState::acquire_model_run(LoadedModel & model) {
-    std::unique_lock<std::timed_mutex> lock(model.mutex, std::defer_lock);
-    const int timeout_ms = config_.busy_timeout_ms;
-    if (timeout_ms <= 0) {
-        lock.lock();  // guard disabled: original unbounded wait
-    } else {
-        // If the current holder has already run past the timeout, treat it as wedged
-        // and fail fast rather than queue behind it -- this is what stops requests
-        // piling up on a stuck GPU.
-        const auto since = model.busy_since_ms.load(std::memory_order_acquire);
-        if (since != 0) {
-            const auto held_ms = steady_now_ms() - since;
-            if (held_ms > timeout_ms) {
-                throw ServerBusyError(
-                    "model '" + model.config.id + "' is busy: current inference has run " +
-                    std::to_string(held_ms) + " ms (busy_timeout_ms=" + std::to_string(timeout_ms) +
-                    "); the previous request has likely wedged and cannot be cancelled");
-            }
-        }
-        if (!lock.try_lock_for(std::chrono::milliseconds(timeout_ms))) {
-            throw ServerBusyError(
-                "model '" + model.config.id + "' is busy: timed out after " +
-                std::to_string(timeout_ms) + " ms waiting for the inference lock");
-        }
-    }
-    model.busy_since_ms.store(steady_now_ms(), std::memory_order_release);
-    return ModelRunLock(model, std::move(lock));
+int ServerState::model_busy_timeout_ceiling(const LoadedModel & model) const {
+    return model.config.busy_timeout_ms.value_or(config_.busy_timeout_ms);
+}
+
+BusyGuard::Lock ServerState::acquire_model_run(
+    LoadedModel & model,
+    std::optional<int> request_timeout_ms) {
+    const int timeout_ms =
+        resolve_busy_timeout_ms(model_busy_timeout_ceiling(model), request_timeout_ms);
+    return model.busy.acquire(timeout_ms, model.config.id);
 }
 
 ServerState::TimedTaskResult ServerState::run_model(
     LoadedModel & model,
-    const engine::runtime::TaskRequest & request) {
-    ModelRunLock lock = acquire_model_run(model);
+    const engine::runtime::TaskRequest & request,
+    std::optional<int> busy_timeout_ms) {
+    BusyGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
     ensure_model_loaded_locked(model);
     if (model.offline == nullptr) {
         throw std::runtime_error("configured model does not provide offline execution: " + model.config.id);
@@ -819,8 +805,9 @@ ServerState::TimedTaskResult ServerState::run_model(
 ServerState::TimedTaskResult ServerState::run_streaming_model(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
-    const std::function<void(const engine::runtime::StreamEvent &)> & event_sink) {
-    ModelRunLock lock = acquire_model_run(model);
+    const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
+    std::optional<int> busy_timeout_ms) {
+    BusyGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
     ensure_model_loaded_locked(model);
     if (model.streaming == nullptr) {
         throw std::runtime_error("configured model does not provide streaming execution: " + model.config.id);
@@ -854,9 +841,10 @@ HttpResponse ServerState::handle_speech(const std::string & body_text) {
     if (body.find("stream_format") != nullptr || bool_field(body, "stream", false)) {
         return handle_speech_stream(model, request, body);
     }
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
     const auto timed_result = model.task.mode == engine::runtime::RunMode::Streaming
-        ? run_streaming_model(model, request)
-        : run_model(model, request);
+        ? run_streaming_model(model, request, {}, busy_timeout_ms)
+        : run_model(model, request, busy_timeout_ms);
     const auto & audio = select_audio_output(timed_result.result);
     const auto wav = encode_pcm16_wav(audio);
     const auto response_format = engine::io::json::optional_string(body, "response_format", "wav");
@@ -889,8 +877,9 @@ HttpResponse ServerState::handle_speech_stream(
         throw std::runtime_error("streaming speech stream_format must be sse or audio");
     }
 
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
     LoadedModel * model_ptr = &model;
-    auto stream_body = [this, model_ptr, request](HttpStreamWriter & writer) {
+    auto stream_body = [this, model_ptr, request, busy_timeout_ms](HttpStreamWriter & writer) {
         bool wrote_audio = false;
         const auto timed_result = run_streaming_model(
             *model_ptr,
@@ -912,7 +901,8 @@ HttpResponse ServerState::handle_speech_stream(
                             "}");
                     wrote_audio = true;
                 }
-            });
+            },
+            busy_timeout_ms);
         if (!wrote_audio) {
             throw std::runtime_error("streaming speech model produced no audio delta events");
         }
@@ -926,7 +916,7 @@ HttpResponse ServerState::handle_speech_stream(
     if (stream_format == "sse") {
         return sse_response(std::move(stream_body));
     }
-    return chunked_audio_response([this, model_ptr, request](HttpStreamWriter & writer) {
+    return chunked_audio_response([this, model_ptr, request, busy_timeout_ms](HttpStreamWriter & writer) {
         bool wrote_audio = false;
         (void)run_streaming_model(
             *model_ptr,
@@ -942,7 +932,8 @@ HttpResponse ServerState::handle_speech_stream(
                     writer.write(std::string(reinterpret_cast<const char *>(pcm.data()), pcm.size()));
                     wrote_audio = true;
                 }
-            });
+            },
+            busy_timeout_ms);
         if (!wrote_audio) {
             throw std::runtime_error("streaming speech model produced no audio delta events");
         }
@@ -964,10 +955,11 @@ HttpResponse ServerState::handle_transcription_json(const std::string & body_tex
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto request = build_openai_transcription_request(body, request_base_);
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
     if (bool_field(body, "stream", false)) {
-        return run_transcription_stream(model, request);
+        return run_transcription_stream(model, request, busy_timeout_ms);
     }
-    return run_transcription(model, request);
+    return run_transcription(model, request, busy_timeout_ms);
 }
 
 // Accepts the same multipart/form-data shape OpenAI's Whisper API (and clients built against it,
@@ -980,6 +972,7 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
     const MultipartPart * file_part = nullptr;
     std::string model_id;
     std::string language;
+    std::optional<int> busy_timeout_ms;
     bool stream = false;
     for (const auto & part : parts) {
         if (part.name == "file") {
@@ -988,6 +981,15 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
             model_id = part.data;
         } else if (part.name == "language") {
             language = part.data;
+        } else if (part.name == "busy_timeout_ms") {
+            try {
+                busy_timeout_ms = std::stoi(part.data);
+            } catch (const std::exception &) {
+                throw std::runtime_error("multipart busy_timeout_ms field must be an integer");
+            }
+            if (*busy_timeout_ms < 0) {
+                throw std::runtime_error("busy_timeout_ms must be >= 0 (0 means no client-side bound)");
+            }
         } else if (part.name == "stream") {
             if (part.data == "true" || part.data == "True" || part.data == "1") {
                 stream = true;
@@ -1021,15 +1023,18 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
     auto & model = require_model(body);
     const auto request = build_openai_transcription_request(body, request_base_, &file_part->data);
     if (stream) {
-        return run_transcription_stream(model, request);
+        return run_transcription_stream(model, request, busy_timeout_ms);
     }
-    return run_transcription(model, request);
+    return run_transcription(model, request, busy_timeout_ms);
 }
 
-HttpResponse ServerState::run_transcription(LoadedModel & model, const engine::runtime::TaskRequest & request) {
+HttpResponse ServerState::run_transcription(
+    LoadedModel & model,
+    const engine::runtime::TaskRequest & request,
+    std::optional<int> busy_timeout_ms) {
     const auto timed_result = model.task.mode == engine::runtime::RunMode::Streaming
-        ? run_streaming_model(model, request)
-        : run_model(model, request);
+        ? run_streaming_model(model, request, {}, busy_timeout_ms)
+        : run_model(model, request, busy_timeout_ms);
     const auto & result = timed_result.result;
     if (!result.text_output.has_value()) {
         throw std::runtime_error("model result did not contain transcript text");
@@ -1044,12 +1049,13 @@ HttpResponse ServerState::run_transcription(LoadedModel & model, const engine::r
 
 HttpResponse ServerState::run_transcription_stream(
     LoadedModel & model,
-    const engine::runtime::TaskRequest & request) {
+    const engine::runtime::TaskRequest & request,
+    std::optional<int> busy_timeout_ms) {
     if (model.task.mode != engine::runtime::RunMode::Streaming) {
         throw std::runtime_error("transcription stream=true requires a model configured with mode=streaming");
     }
     LoadedModel * model_ptr = &model;
-    return sse_response([this, model_ptr, request](HttpStreamWriter & writer) {
+    return sse_response([this, model_ptr, request, busy_timeout_ms](HttpStreamWriter & writer) {
         const auto timed_result = run_streaming_model(
             *model_ptr,
             request,
@@ -1062,7 +1068,8 @@ HttpResponse ServerState::run_transcription_stream(
                     "{\"type\":\"transcript.text.delta\",\"delta\":" +
                         json_quote(event.partial_text->text) +
                         "}");
-            });
+            },
+            busy_timeout_ms);
         if (!timed_result.result.text_output.has_value()) {
             throw std::runtime_error("streaming transcription result did not contain transcript text");
         }
@@ -1084,9 +1091,10 @@ HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
     const auto request = minitts::cli::build_request_from_json(
         request_json != nullptr ? *request_json : body,
         request_base_);
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
     const auto timed_result = model.task.mode == engine::runtime::RunMode::Streaming
-        ? run_streaming_model(model, request)
-        : run_model(model, request);
+        ? run_streaming_model(model, request, {}, busy_timeout_ms)
+        : run_model(model, request, busy_timeout_ms);
     return json_response(task_result_json(timed_result.result, timed_result.wall_ms));
 }
 
@@ -1103,7 +1111,8 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
         request,
         [&](const engine::runtime::StreamEvent & event) {
             events.push_back(event);
-        });
+        },
+        parse_busy_timeout_override(body));
     std::ostringstream out;
     out << "{\"events\":[";
     for (size_t i = 0; i < events.size(); ++i) {

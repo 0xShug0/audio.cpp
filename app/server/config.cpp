@@ -91,6 +91,14 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);
         model.lazy = engine::io::json::optional_bool(item, "lazy", config.lazy_load);
+        if (item.find("busy_timeout_ms") != nullptr) {
+            const auto busy_timeout_ms = engine::io::json::optional_i32(item, "busy_timeout_ms", 0);
+            if (busy_timeout_ms < 0) {
+                throw std::runtime_error(
+                    "busy_timeout_ms for model " + model.id + " must be >= 0 (0 disables the guard)");
+            }
+            model.busy_timeout_ms = busy_timeout_ms;
+        }
         if (const auto * value = item.find("config")) {
             model.config_id = value->as_string();
         }

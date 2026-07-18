@@ -44,10 +44,12 @@ bool has_arg(int argc, char ** argv, const std::string & name) {
 void print_help() {
     std::cout
         << "audiocpp_server --config <server.json> [--host <ip>] [--port <port>] [--backend <backend>]\n"
-        << "                [--device <id>] [--threads <n>]\n"
+        << "                [--device <id>] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--model-spec-override <json-or-directory>]\n"
         << "                [--log] [--log-file <path>]\n"
         << "  --backend cpu|cuda|vulkan|metal  default cuda\n"
+        << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
+        << "                                   busy this long; default 300000, 0 disables\n"
         << "\n"
         << "Endpoints:\n"
         << "  GET  /health\n"
@@ -95,11 +97,17 @@ int main(int argc, char ** argv) {
         if (const auto threads = arg_value(argc, argv, "--threads")) {
             config.threads = std::stoi(*threads);
         }
+        if (const auto busy_timeout = arg_value(argc, argv, "--busy-timeout-ms")) {
+            config.busy_timeout_ms = std::stoi(*busy_timeout);
+        }
         if (const auto model_spec = arg_value(argc, argv, "--model-spec-override")) {
             config.model_spec_override = std::filesystem::path(*model_spec);
         }
         if (config.threads <= 0) {
             throw std::runtime_error("--threads must be positive");
+        }
+        if (config.busy_timeout_ms < 0) {
+            throw std::runtime_error("--busy-timeout-ms must be >= 0 (0 disables the guard)");
         }
 
         minitts::server::ServerState state(config, std::filesystem::current_path());
