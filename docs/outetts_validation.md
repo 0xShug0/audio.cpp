@@ -415,8 +415,11 @@ gate:
   generation correctness. Default mode can therefore have a high transient
   peak while the aligner is retained; `outetts.mem_saver=true` releases the
   aligner and cached-step graph between phases.
-- Long-form output concatenates independently generated chunks; `max_tokens`
-  applies to each chunk.
+- Long-form output concatenates independently generated chunks. `max_tokens`
+  applies to each chunk; the runtime splits text further to fit an explicit cap
+  and retries a chunk that reaches the cap without EOS/audio-end as smaller
+  chunks rather than returning silently truncated speech. It reports an error
+  only when the remaining text cannot be split any further.
 - CPU and CUDA outputs are deterministic within each tested backend but are not
   expected to be byte-identical across backends.
 - The controlled CUDA sampling stream is PyTorch-compatible. CPU sampling is

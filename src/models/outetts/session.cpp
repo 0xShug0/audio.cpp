@@ -4,6 +4,7 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/text/chunking.h"
+#include "engine/framework/text/utf8.h"
 #include "engine/models/qwen3_asr/assets.h"
 #include "engine/models/qwen3_forced_aligner/session.h"
 
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <complex>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <limits>
 #include <sstream>
@@ -24,8 +26,15 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr int64_t kDefaultTextChunkSize = 2048;
+constexpr int64_t kDefaultTextChunkSize = 256;
+constexpr int64_t kAutomaticChunkTokenBudget = 4096;
 constexpr size_t kDefaultReferenceCacheSlots = 1;
+
+int64_t generation_budget_with_headroom(int64_t estimated_tokens) {
+  // The upstream heuristic is a useful lower bound, but sampled generation can
+  // occasionally need a little more room before emitting audio_end.
+  return estimated_tokens + std::max<int64_t>(128, estimated_tokens / 4);
+}
 
 uint64_t mix_cache_key(uint64_t key, uint64_t value) {
   key ^= value;
@@ -113,8 +122,10 @@ OuteTTSGenerateOptions
 generation_options(const runtime::TaskRequest &request,
                    const OuteTTSGenerationConfig &defaults,
                    bool voice_cloning,
-                   bool quantized_cloning) {
+                   bool quantized_cloning,
+                   int64_t automatic_max_new_tokens) {
   OuteTTSGenerateOptions out;
+  out.max_new_tokens = automatic_max_new_tokens;
   out.temperature = voice_cloning ? 0.4F : defaults.temperature;
   out.repetition_penalty = defaults.repetition_penalty;
   out.repetition_window = defaults.repetition_window;
@@ -151,6 +162,52 @@ generation_options(const runtime::TaskRequest &request,
     throw std::runtime_error("invalid OuteTTS generation options");
   }
   return out;
+}
+
+std::vector<runtime::TaskRequest> chunk_text_request_to_token_budget(
+    const runtime::TaskRequest &request, int64_t requested_chunk_size,
+    engine::text::TextChunkMode mode, int64_t token_budget) {
+  auto initial = runtime::chunk_text_request(request, requested_chunk_size,
+                                             mode);
+  std::deque<runtime::TaskRequest> pending(initial.begin(), initial.end());
+  std::vector<runtime::TaskRequest> chunks;
+  while (!pending.empty()) {
+    auto candidate = std::move(pending.front());
+    pending.pop_front();
+    if (!candidate.text_input.has_value()) {
+      chunks.push_back(std::move(candidate));
+      continue;
+    }
+    const auto budget =
+        estimate_text_generation_budget(candidate.text_input->text);
+    // The upstream estimate has an intentional 384-token floor. Preserve
+    // explicitly smaller limits for short requests instead of inventing empty
+    // or one-character chunks; a cap is still reported as an error after
+    // generation if the model cannot stop within that caller-provided limit.
+    if (budget.recommended_max_new_tokens <= token_budget ||
+        token_budget < 384) {
+      chunks.push_back(std::move(candidate));
+      continue;
+    }
+
+    const int64_t codepoints = static_cast<int64_t>(
+        engine::text::utf8_codepoint_count(candidate.text_input->text,
+                                           "OuteTTS text chunk"));
+    if (codepoints <= 1) {
+      throw std::runtime_error(
+          "OuteTTS max_tokens is too small for the requested text chunk");
+    }
+    const int64_t smaller_chunk_size = std::max<int64_t>(1, codepoints / 2);
+    auto smaller = runtime::chunk_text_request(candidate, smaller_chunk_size,
+                                               mode);
+    if (smaller.size() <= 1) {
+      throw std::runtime_error(
+          "OuteTTS could not split text to fit the max_tokens budget");
+    }
+    for (auto it = smaller.rbegin(); it != smaller.rend(); ++it)
+      pending.push_front(std::move(*it));
+  }
+  return chunks;
 }
 
 std::vector<std::string> split_words(const std::string &text) {
@@ -649,17 +706,36 @@ runtime::TaskResult OuteTTSSession::run(const runtime::TaskRequest &request) {
   const auto text_chunk_mode =
       engine::text::parse_text_chunk_mode_override(request.options)
           .value_or(engine::text::TextChunkMode::Default);
-  const auto chunk_requests = runtime::chunk_text_request(
-      request, text_chunk_size, text_chunk_mode);
-  if (chunk_requests.empty()) {
+  const auto explicit_max_tokens =
+      runtime::parse_i64_option(request.options, {"max_tokens"});
+  if (explicit_max_tokens.has_value() && *explicit_max_tokens <= 0) {
+    throw std::runtime_error("OuteTTS max_tokens must be positive");
+  }
+  const int64_t chunk_token_budget = std::min<int64_t>(
+      explicit_max_tokens.value_or(kAutomaticChunkTokenBudget),
+      kAutomaticChunkTokenBudget);
+  runtime::TaskRequest chunk_source = request;
+  // Reference conditioning is already represented by profile. Avoid copying
+  // the full reference waveform into every long-form chunk and retry.
+  if (profile != nullptr) {
+    chunk_source.voice.reset();
+    chunk_source.audio_input.reset();
+  }
+  const auto initial_chunk_requests = chunk_text_request_to_token_budget(
+      chunk_source, text_chunk_size, text_chunk_mode, chunk_token_budget);
+  if (initial_chunk_requests.empty()) {
     throw std::runtime_error("OuteTTS text chunking produced no requests");
   }
+  std::deque<runtime::TaskRequest> pending_chunks(
+      initial_chunk_requests.begin(), initial_chunk_requests.end());
   debug::trace_log_scalar("outetts.text_chunk_size", text_chunk_size);
   debug::trace_log_scalar("outetts.text_chunk_mode",
                           engine::text::text_chunk_mode_name(text_chunk_mode));
+  debug::trace_log_scalar("outetts.text_chunk_token_budget",
+                          chunk_token_budget);
   debug::trace_log_scalar(
       "outetts.text_chunk_count",
-      static_cast<int64_t>(chunk_requests.size()));
+      static_cast<int64_t>(initial_chunk_requests.size()));
   debug::trace_log_scalar("outetts.reference.cache_hit",
                           reference_cache_hit);
 
@@ -672,10 +748,13 @@ runtime::TaskResult OuteTTSSession::run(const runtime::TaskRequest &request) {
   double decode_ms = 0.0;
   double release_ms = 0.0;
   int64_t generated_tokens = 0;
+  int64_t retry_generated_tokens = 0;
   int64_t released_cache_capacity = 0;
-  for (size_t chunk_index = 0; chunk_index < chunk_requests.size();
-       ++chunk_index) {
-    const auto &chunk_request = chunk_requests[chunk_index];
+  int64_t retry_count = 0;
+  size_t chunk_index = 0;
+  while (!pending_chunks.empty()) {
+    auto chunk_request = std::move(pending_chunks.front());
+    pending_chunks.pop_front();
     const auto prompt_start = Clock::now();
     const auto prompt =
         profile != nullptr
@@ -684,15 +763,107 @@ runtime::TaskResult OuteTTSSession::run(const runtime::TaskRequest &request) {
             : tokenizer_.build_prompt(chunk_request.text_input->text);
     prompt_ms += debug::elapsed_ms(prompt_start);
 
+    const auto text_budget = estimate_text_generation_budget(
+        chunk_request.text_input->text);
+    const int64_t automatic_max_new_tokens = generation_budget_with_headroom(
+        text_budget.recommended_max_new_tokens);
+    const int64_t expected_generation_tokens = std::min(
+        automatic_max_new_tokens,
+        explicit_max_tokens.value_or(automatic_max_new_tokens));
+    const int64_t available_context =
+        assets_->generation.max_length - static_cast<int64_t>(prompt.size());
+    if (available_context <= 0) {
+      throw std::runtime_error(
+          "OuteTTS chunk " + std::to_string(chunk_index + 1) +
+          " prompt exhausts the generation context; use a shorter cloning "
+          "reference");
+    }
+    if (expected_generation_tokens > available_context) {
+      const int64_t codepoints = static_cast<int64_t>(
+          engine::text::utf8_codepoint_count(chunk_request.text_input->text,
+                                             "OuteTTS context retry"));
+      auto smaller = runtime::chunk_text_request(
+          chunk_request, std::max<int64_t>(1, codepoints / 2),
+          text_chunk_mode);
+      if (codepoints <= 1 || smaller.size() <= 1) {
+        throw std::runtime_error(
+            "OuteTTS chunk does not fit the generation context; reduce "
+            "text_chunk_size or use a shorter cloning reference");
+      }
+      debug::trace_log_scalar(
+          "outetts.retry." + std::to_string(retry_count) + ".reason",
+          std::string_view("context_budget"));
+      debug::trace_log_scalar(
+          "outetts.retry." + std::to_string(retry_count) + ".split_count",
+          static_cast<int64_t>(smaller.size()));
+      ++retry_count;
+      for (auto it = smaller.rbegin(); it != smaller.rend(); ++it)
+        pending_chunks.push_front(std::move(*it));
+      continue;
+    }
+
     auto generate_options =
         generation_options(chunk_request, assets_->generation,
-                           profile != nullptr, quantized_cloning);
+                           profile != nullptr, quantized_cloning,
+                           automatic_max_new_tokens);
+    generate_options.max_new_tokens =
+        std::min(generate_options.max_new_tokens, available_context);
     const auto generate_start = Clock::now();
-    const auto generated = llama(profile != nullptr).generate(
+    const auto generation = llama(profile != nullptr).generate(
         prompt, generate_options, tokenizer_.eos_id(),
         tokenizer_.audio_end_id());
     generate_ms += debug::elapsed_ms(generate_start);
+    const auto &generated = generation.tokens;
+
+    if (generation.stop_reason == OuteTTSStopReason::MaxTokens ||
+        generation.stop_reason == OuteTTSStopReason::ContextLimit) {
+      retry_generated_tokens += static_cast<int64_t>(generated.size());
+      const int64_t codepoints = static_cast<int64_t>(
+          engine::text::utf8_codepoint_count(chunk_request.text_input->text,
+                                             "OuteTTS generation retry"));
+      auto smaller = runtime::chunk_text_request(
+          chunk_request, std::max<int64_t>(1, codepoints / 2),
+          text_chunk_mode);
+      if (codepoints <= 1 || smaller.size() <= 1) {
+        throw std::runtime_error(
+            "OuteTTS reached " +
+            std::string(outetts_stop_reason_name(generation.stop_reason)) +
+            " before an audio end token and cannot split the remaining text "
+            "further; increase max_tokens");
+      }
+      const std::string retry_prefix =
+          "outetts.retry." + std::to_string(retry_count);
+      debug::trace_log_scalar(retry_prefix + ".reason",
+                              outetts_stop_reason_name(generation.stop_reason));
+      debug::trace_log_scalar(retry_prefix + ".generated_tokens",
+                              static_cast<int64_t>(generated.size()));
+      debug::trace_log_scalar(retry_prefix + ".text_codepoints",
+                              text_budget.non_whitespace_codepoints);
+      debug::trace_log_scalar(retry_prefix + ".split_count",
+                              static_cast<int64_t>(smaller.size()));
+      ++retry_count;
+      for (auto it = smaller.rbegin(); it != smaller.rend(); ++it)
+        pending_chunks.push_front(std::move(*it));
+      continue;
+    }
     generated_tokens += static_cast<int64_t>(generated.size());
+
+    debug::trace_log_scalar(
+        "outetts.chunk." + std::to_string(chunk_index) + ".text_codepoints",
+        text_budget.non_whitespace_codepoints);
+    debug::trace_log_scalar(
+        "outetts.chunk." + std::to_string(chunk_index) + ".text_words",
+        text_budget.words);
+    debug::trace_log_scalar(
+        "outetts.chunk." + std::to_string(chunk_index) +
+            ".recommended_max_new_tokens",
+        text_budget.recommended_max_new_tokens);
+    debug::trace_log_scalar(
+        "outetts.chunk." + std::to_string(chunk_index) + ".max_new_tokens",
+        generate_options.max_new_tokens);
+    debug::trace_log_scalar(
+        "outetts.chunk." + std::to_string(chunk_index) + ".stop_reason",
+        outetts_stop_reason_name(generation.stop_reason));
 
     std::vector<int32_t> c1;
     std::vector<int32_t> c2;
@@ -729,12 +900,18 @@ runtime::TaskResult OuteTTSSession::run(const runtime::TaskRequest &request) {
       released_cache_capacity += llama_->release_cached_step_graph();
       release_ms += debug::elapsed_ms(release_start);
     }
+    ++chunk_index;
   }
 
   runtime::TaskResult result;
   result.audio_output = std::move(merged_audio);
   debug::trace_log_scalar("outetts.mem_saver", mem_saver_);
   debug::trace_log_scalar("outetts.generated_tokens", generated_tokens);
+  debug::trace_log_scalar("outetts.retry_generated_tokens",
+                          retry_generated_tokens);
+  debug::trace_log_scalar("outetts.text_chunk_count_final",
+                          static_cast<int64_t>(chunk_index));
+  debug::trace_log_scalar("outetts.retry_count", retry_count);
   debug::trace_log_scalar("outetts.llama.step.released_cache_capacity",
                           released_cache_capacity);
   debug::timing_log_scalar("outetts.prompt_ms", prompt_ms);

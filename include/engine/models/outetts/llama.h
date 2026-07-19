@@ -7,12 +7,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 namespace engine::models::outetts {
 
 struct OuteTTSGenerateOptions {
-    int64_t max_new_tokens = 2048;
+    int64_t max_new_tokens = 4096;
     float temperature = 0.4F;
     float repetition_penalty = 1.1F;
     int64_t repetition_window = 64;
@@ -20,6 +21,20 @@ struct OuteTTSGenerateOptions {
     float top_p = 0.9F;
     float min_p = 0.05F;
     uint32_t seed = 0;
+};
+
+enum class OuteTTSStopReason {
+    Eos,
+    AudioEnd,
+    MaxTokens,
+    ContextLimit,
+};
+
+std::string_view outetts_stop_reason_name(OuteTTSStopReason reason) noexcept;
+
+struct OuteTTSGenerateResult {
+    std::vector<int32_t> tokens;
+    OuteTTSStopReason stop_reason = OuteTTSStopReason::MaxTokens;
 };
 
 class OuteTTSLlamaRuntime final {
@@ -37,7 +52,7 @@ public:
     OuteTTSLlamaRuntime(const OuteTTSLlamaRuntime &) = delete;
     OuteTTSLlamaRuntime & operator=(const OuteTTSLlamaRuntime &) = delete;
 
-    std::vector<int32_t> generate(
+    OuteTTSGenerateResult generate(
         const std::vector<int32_t> & prompt,
         const OuteTTSGenerateOptions & options,
         int32_t eos_id,

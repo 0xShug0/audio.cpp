@@ -388,6 +388,11 @@ struct OuteTTSLlamaRuntime::Impl {
     }
 
     ~Impl() {
+        // CachedStepGraph owns backend buffers and asks the backend to release
+        // graph resources in its destructor. Destroy it before its constants,
+        // weights, and backend. The previous order left a live graph holding a
+        // freed backend and caused a Linux CUDA segfault during session teardown.
+        step_graph.reset();
         constants.reset();
         weights.store.reset();
         if (backend != nullptr) {
@@ -554,7 +559,21 @@ OuteTTSLlamaRuntime::OuteTTSLlamaRuntime(
 
 OuteTTSLlamaRuntime::~OuteTTSLlamaRuntime() = default;
 
-std::vector<int32_t> OuteTTSLlamaRuntime::generate(
+std::string_view outetts_stop_reason_name(OuteTTSStopReason reason) noexcept {
+    switch (reason) {
+    case OuteTTSStopReason::Eos:
+        return "eos";
+    case OuteTTSStopReason::AudioEnd:
+        return "audio_end";
+    case OuteTTSStopReason::MaxTokens:
+        return "max_tokens";
+    case OuteTTSStopReason::ContextLimit:
+        return "context_limit";
+    }
+    return "unknown";
+}
+
+OuteTTSGenerateResult OuteTTSLlamaRuntime::generate(
     const std::vector<int32_t> & prompt,
     const OuteTTSGenerateOptions & options,
     int32_t eos_id,
@@ -567,8 +586,8 @@ std::vector<int32_t> OuteTTSLlamaRuntime::generate(
     }
     const auto total_start = std::chrono::steady_clock::now();
     std::vector<int32_t> all = prompt;
-    std::vector<int32_t> generated;
-    generated.reserve(static_cast<size_t>(options.max_new_tokens));
+    OuteTTSGenerateResult result;
+    result.tokens.reserve(static_cast<size_t>(options.max_new_tokens));
     std::mt19937 rng(options.seed);
     OuteTTSGenerateOptions sampling_options = options;
     auto prefill = impl_->prefill(prompt);
@@ -588,6 +607,7 @@ std::vector<int32_t> OuteTTSLlamaRuntime::generate(
     double cached_step_compute_ms = 0.0;
     for (int64_t i = 0; i < options.max_new_tokens; ++i) {
         if (static_cast<int64_t>(all.size()) >= impl_->assets->generation.max_length) {
+            result.stop_reason = OuteTTSStopReason::ContextLimit;
             break;
         }
         const auto sample_start = std::chrono::steady_clock::now();
@@ -597,8 +617,18 @@ std::vector<int32_t> OuteTTSLlamaRuntime::generate(
             std::move(logits), sampling_options, rng,
             impl_->sampling_policy, static_cast<uint64_t>(i));
         sample_ms += debug::elapsed_ms(sample_start);
-        generated.push_back(token);
-        if (token == eos_id || token == audio_end_id) {
+        result.tokens.push_back(token);
+        if (token == eos_id) {
+            result.stop_reason = OuteTTSStopReason::Eos;
+            break;
+        }
+        if (token == audio_end_id) {
+            result.stop_reason = OuteTTSStopReason::AudioEnd;
+            break;
+        }
+        // Do not execute one unused cached step after consuming the caller's
+        // final generation token.
+        if (i + 1 >= options.max_new_tokens) {
             break;
         }
         all.push_back(token);
@@ -608,13 +638,15 @@ std::vector<int32_t> OuteTTSLlamaRuntime::generate(
     }
     debug::trace_log_scalar(
         "outetts.llama.generated_tokens",
-        static_cast<int64_t>(generated.size()));
+        static_cast<int64_t>(result.tokens.size()));
+    debug::trace_log_scalar("outetts.llama.stop_reason",
+                            outetts_stop_reason_name(result.stop_reason));
     debug::timing_log_scalar("outetts.llama.sample_ms", sample_ms);
     debug::timing_log_scalar("outetts.llama.cached_step_compute_ms",
                              cached_step_compute_ms);
     debug::timing_log_scalar("outetts.llama.generate_total_ms",
                              debug::elapsed_ms(total_start));
-    return generated;
+    return result;
 }
 
 int64_t OuteTTSLlamaRuntime::release_cached_step_graph() {

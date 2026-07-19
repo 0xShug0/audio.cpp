@@ -591,14 +591,14 @@ audiocpp_cli --task tts --family outetts \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--max-tokens` | integer | `1024` | Maximum audio-token generation length. Too small a value truncates speech. |
+| `--max-tokens` | integer | automatic | Maximum audio-token generation length per chunk. When omitted, OuteTTS estimates a safe budget from the chunk's word and character counts. An explicit smaller cap causes additional text splitting; a chunk that unexpectedly reaches the cap is retried as smaller chunks instead of silently truncating speech. |
 | `--temperature` | float | `0.4` for cloning; model default for TTS | Sampling temperature. Voice cloning follows the official OuteTTS default without changing temperature between words. |
 | `--top-k` | integer | `40` | Top-k sampling limit. |
 | `--top-p` | float | `0.9` | Nucleus sampling limit. |
 | `--request-option min_p=<float>` | float | `0.05` | Minimum probability relative to the most likely token. |
 | `--repetition-penalty` | float | `1.1` | Repetition penalty over the latest 64 tokens. |
 | `--request-option seed=<n>` | integer | native clone: `4099`; quantized clone: `42` | Deterministic sampling seed. The defaults were separately verified for the native and Q8 cloning paths. |
-| `--text-chunk-size` | characters | `2048` | Framework long-form text chunk size. Each chunk is generated and decoded in the same loaded session, then appended to the output WAV. |
+| `--text-chunk-size` | characters | `256` | Initial framework long-form text chunk size. Each chunk is split further when needed to fit `max_tokens`, generated and decoded in the same loaded session, then appended to the output WAV. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |
 | `--reference-text` | text | none | Exact transcript of `--voice-ref`; required for voice cloning. |
 | `--request-option reference_language=<code>` | language code | `en` | Language used by the optional reference aligner. |
@@ -607,10 +607,12 @@ audiocpp_cli --task tts --family outetts \
 | `--session-option outetts.reference_cache_slots=<n>` | integer | `1` | LRU slots for prepared reference profiles (alignment, DAC codes, and word features). Set `0` to disable reuse. |
 | `--session-option outetts.mem_saver=true|false` | bool | `false` | Release the reusable Llama cached-step graph after each generated chunk and release the aligner runtime after preparing a reference. Model and DAC weights stay resident; later requests rebuild released state. |
 
-With logging enabled, OuteTTS reports framework chunk count, reference-profile
-cache hits/evictions, Llama runtime and step-graph rebuild/reuse, released cache
-capacity, and timings for reference alignment, DAC encode/decode, prompt
-construction, generation, and the complete session request. See
+With logging enabled, OuteTTS reports framework chunk count and token budget,
+per-chunk word/character counts, recommended and effective generation limits,
+the natural stop reason, reference-profile cache hits/evictions, Llama runtime
+and step-graph rebuild/reuse, released cache capacity, and timings for reference
+alignment, DAC encode/decode, prompt construction, generation, and the complete
+session request. See
 [OuteTTS validation](outetts_validation.md) for the reproducible long-lived
 session and memory test.
 

@@ -4,21 +4,20 @@
       "name": "tts_cold",
       "text": "This is the first OuteTTS request in a long-lived session.",
       "language": "en",
-      "max_tokens": 256,
+      "max_tokens": 1024,
       "seed": 1234
     },
     {
       "name": "tts_repeat",
       "text": "This is the first OuteTTS request in a long-lived session.",
       "language": "en",
-      "max_tokens": 256,
+      "max_tokens": 1024,
       "seed": 1234
     },
     {
       "name": "tts_longform",
       "text": "Long-form synthesis is split by the shared framework text chunker. Each sentence becomes a bounded request while model weights and the cached generation graph stay inside the same long-lived session. The generated audio chunks are appended in order to form one output waveform.",
       "language": "en",
-      "max_tokens": 256,
       "seed": 1234,
       "text_chunk_size": 100,
       "text_chunk_mode": "default"
@@ -30,7 +29,7 @@
       "voice_ref": "assets/resources/b.wav",
       "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
       "reference_language": "en",
-      "max_tokens": 256,
+      "max_tokens": 1024,
       "seed": 42
     },
     {
@@ -40,7 +39,7 @@
       "voice_ref": "assets/resources/b.wav",
       "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
       "reference_language": "en",
-      "max_tokens": 256,
+      "max_tokens": 1024,
       "seed": 42
     }
   ]

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -29,6 +30,18 @@ struct OuteTTSVoiceProfile {
   OuteTTSVoiceFeatures global_features;
   std::vector<OuteTTSVoiceWord> words;
 };
+
+struct OuteTTSTextGenerationBudget {
+  int64_t words = 0;
+  int64_t non_whitespace_codepoints = 0;
+  int64_t recommended_max_new_tokens = 0;
+};
+
+// Mirrors the sizing heuristic used by the upstream OuteTTS 1.0 runner. Audio
+// code generation is much denser than text tokenization, so a character-sized
+// chunk cannot safely use the same numeric value as its generated-token cap.
+OuteTTSTextGenerationBudget
+estimate_text_generation_budget(std::string_view text);
 
 class OuteTTSTokenizer {
 public:

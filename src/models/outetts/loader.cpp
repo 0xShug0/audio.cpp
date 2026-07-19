@@ -38,7 +38,9 @@ runtime::CapabilitySet capabilities(const OuteTTSAssets &) {
 runtime::ModelCliInterface cli(const OuteTTSAssets &) {
   runtime::ModelCliInterface out;
   out.request_options = {
-      {"max_tokens", "n", "Maximum generated text/audio tokens."},
+      {"max_tokens", "n",
+       "Maximum generated audio tokens per chunk. When omitted, OuteTTS "
+       "estimates a safe value from each chunk."},
       {"temperature", "float",
        "Sampling temperature; official cloning default 0.4."},
       {"top_k", "n", "Top-k sampling; official default 40."},
@@ -58,7 +60,8 @@ runtime::ModelCliInterface cli(const OuteTTSAssets &) {
       {"reference_language", "code",
        "Language code used to align the reference transcript; default en."},
       {"text_chunk_size", "n",
-       "Framework long-form text chunk size; default 2048 characters."},
+       "Framework long-form text chunk size; default 256 characters. Chunks "
+       "are split further when required by max_tokens."},
       {"text_chunk_mode", "default|tag_aware|japanese|endline",
        "Framework long-form text chunking mode."},
   };

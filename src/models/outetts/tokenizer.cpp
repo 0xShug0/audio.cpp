@@ -1,5 +1,6 @@
 #include "engine/models/outetts/tokenizer.h"
 
+#include "engine/framework/text/utf8.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 
 #include <algorithm>
@@ -111,6 +112,34 @@ std::string profile_codes(const OuteTTSVoiceProfile &profile,
 }
 
 } // namespace
+
+OuteTTSTextGenerationBudget
+estimate_text_generation_budget(std::string_view text) {
+  OuteTTSTextGenerationBudget out;
+  size_t position = 0;
+  while (position < text.size()) {
+    while (position < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[position])) != 0) {
+      ++position;
+    }
+    if (position >= text.size())
+      break;
+    const size_t begin = position;
+    while (position < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[position])) == 0) {
+      ++position;
+    }
+    ++out.words;
+    out.non_whitespace_codepoints += static_cast<int64_t>(
+        engine::text::utf8_codepoint_count(text.substr(begin, position - begin),
+                                           "OuteTTS text"));
+  }
+  const int64_t by_words = out.words * 72;
+  const int64_t by_characters = out.non_whitespace_codepoints * 12;
+  out.recommended_max_new_tokens =
+      std::max<int64_t>({256, by_words, by_characters}) + 128;
+  return out;
+}
 
 struct OuteTTSTokenizer::Impl {
   explicit Impl(const OuteTTSAssets &assets)
