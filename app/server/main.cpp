@@ -80,6 +80,14 @@ int main(int argc, char ** argv) {
         });
         std::signal(SIGINT, request_shutdown);
         std::signal(SIGTERM, request_shutdown);
+#ifdef SIGPIPE
+        // Writing to a socket whose peer has already disconnected (for example a
+        // client that closed an SSE/chunked stream early) would otherwise deliver
+        // SIGPIPE and terminate the whole server. Ignore it so the failed send
+        // surfaces as an EPIPE error on that single request thread, which
+        // handle_client already unwinds cleanly, instead of taking the process down.
+        std::signal(SIGPIPE, SIG_IGN);
+#endif
 
         auto config = minitts::server::load_server_config(*config_path);
         if (const auto host = arg_value(argc, argv, "--host")) {
