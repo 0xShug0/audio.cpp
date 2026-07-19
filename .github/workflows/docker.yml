@@ -27,6 +27,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  contents: read
   packages: write
 
 env:
@@ -180,7 +181,7 @@ jobs:
             APP_REVISION=${{ github.sha }}
             IMAGE_URL=${{ github.server_url }}/${{ github.repository }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
-            ENGINE_ENABLE_NATIVE_CPU=OFF # disable for cross-arch portability
+            ENGINE_ENABLE_NATIVE_CPU=OFF
             ${{ matrix.cuda_version && format('CUDA_VERSION={0}', matrix.cuda_version) || '' }}
           cache-from: type=registry,ref=ghcr.io/${{ env.IMAGE_REPO }}:cache-${{ matrix.arch }}-${{ matrix.tag }}
           cache-to: type=registry,ref=ghcr.io/${{ env.IMAGE_REPO }}:cache-${{ matrix.arch }}-${{ matrix.tag }},mode=max
