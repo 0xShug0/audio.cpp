@@ -83,6 +83,7 @@ WORKDIR /app
 FROM base AS full
 
 COPY --from=build /app/full /app
+COPY model_specs/ /app/model_specs/
 
 USER ubuntu
 
