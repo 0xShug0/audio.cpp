@@ -22,6 +22,7 @@ namespace {
 namespace binding = engine::modules::binding;
 
 struct PocketTTSDescriptor {
+    float default_temperature = 0.7F;
     bool pad_with_spaces_for_short_inputs = false;
     bool remove_semicolons = false;
     bool insert_bos_before_voice = false;
@@ -119,6 +120,8 @@ int64_t read_voice_state_i64_scalar(
 
 PocketTTSDescriptor descriptor_from_yaml(const io::yaml::FlattenedDocument & parsed) {
     PocketTTSDescriptor descriptor;
+    descriptor.default_temperature =
+        io::yaml::optional_float(parsed, "default_temperature").value_or(descriptor.default_temperature);
     const auto pad_it = parsed.scalars.find("pad_with_spaces_for_short_inputs");
     descriptor.pad_with_spaces_for_short_inputs = io::yaml::parse_bool_scalar(
         pad_it != parsed.scalars.end() ? pad_it->second : "false",
@@ -166,6 +169,11 @@ PocketTTSDescriptor descriptor_from_yaml(const io::yaml::FlattenedDocument & par
 
 PocketTTSDescriptor descriptor_from_builtin_defaults(const std::string & language) {
     PocketTTSDescriptor descriptor;
+    // Upstream pocket-tts defaults the english and english_2026-04 models to
+    // temperature 0.3 (human evals preferred it at equal WER/similarity).
+    if (language == "english" || language == "english_2026-04") {
+        descriptor.default_temperature = 0.3F;
+    }
     descriptor.pad_with_spaces_for_short_inputs = (language == "english_2026-01");
     descriptor.insert_bos_before_voice = (language != "english_2026-01");
     if (language.find("french_24l") != std::string::npos) {
@@ -188,6 +196,7 @@ PocketTTSDescriptor resolve_descriptor(
 
 PocketTTSModelConfig make_model_config(const PocketTTSDescriptor & descriptor) {
     PocketTTSModelConfig config;
+    config.default_temperature = descriptor.default_temperature;
     config.sample_rate = descriptor.sample_rate;
     config.frame_rate = descriptor.frame_rate;
     config.mimi_frame_rate = descriptor.frame_rate;

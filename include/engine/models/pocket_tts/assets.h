@@ -25,6 +25,7 @@ struct TransformerKVState;
 namespace engine::models::pocket_tts {
 
 struct PocketTTSModelConfig {
+    float default_temperature = 0.7F;
     int sample_rate = 24000;
     float frame_rate = 12.5F;
     float mimi_frame_rate = 12.5F;

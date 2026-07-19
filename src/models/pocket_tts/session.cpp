@@ -119,13 +119,13 @@ void apply_voice_condition(const std::optional<runtime::VoiceCondition> & voice,
 void apply_generation_options(
     const std::unordered_map<std::string, std::string> & options,
     GenerationRequest & generation_request) {
-    if (const auto embedding_path = runtime::find_option(options, {"voice_embedding_path"})) {
+    if (const auto embedding_path = runtime::find_option(options, {"voice_embedding_path", "pocket_tts.voice_embedding_path"})) {
         generation_request.voice.embedding_path = *embedding_path;
     }
-    if (const auto clone_text = runtime::find_option(options, {"voice_clone_text"})) {
+    if (const auto clone_text = runtime::find_option(options, {"voice_clone_text", "pocket_tts.voice_clone_text"})) {
         generation_request.voice.clone_prompt_text = *clone_text;
     }
-    if (const auto truncate = runtime::find_option(options, {"truncate_clone_audio"})) {
+    if (const auto truncate = runtime::find_option(options, {"truncate_clone_audio", "pocket_tts.truncate_clone_audio"})) {
         generation_request.voice.truncate_clone_audio = runtime::parse_bool_option(*truncate, "truncate_clone_audio");
     }
 }
@@ -134,28 +134,28 @@ void apply_session_generation_options(
     const std::unordered_map<std::string, std::string> & options,
     GenerationRequest & generation_request) {
     apply_generation_options(options, generation_request);
-    if (const auto max_steps = runtime::parse_int_option(options, {"max_steps"})) {
+    if (const auto max_steps = runtime::parse_int_option(options, {"max_steps", "pocket_tts.max_steps"})) {
         generation_request.max_steps = *max_steps;
     }
     if (const auto max_tokens = runtime::parse_int_option(
             options,
-            {"max_tokens"})) {
+            {"max_tokens", "pocket_tts.max_tokens"})) {
         generation_request.max_tokens = *max_tokens;
     }
     generation_request.text_chunk_size =
         engine::text::parse_text_chunk_size_override(options).value_or(kDefaultTextChunkSize);
-    if (const auto temperature = runtime::parse_float_option(options, {"temperature"})) {
+    if (const auto temperature = runtime::parse_float_option(options, {"temperature", "pocket_tts.temperature"})) {
         generation_request.temperature = *temperature;
     }
-    if (const auto noise_clamp = runtime::parse_float_option(options, {"noise_clamp"})) {
+    if (const auto noise_clamp = runtime::parse_float_option(options, {"noise_clamp", "pocket_tts.noise_clamp"})) {
         generation_request.noise_clamp = *noise_clamp;
     }
-    if (const auto eos_threshold = runtime::parse_float_option(options, {"eos_threshold"})) {
+    if (const auto eos_threshold = runtime::parse_float_option(options, {"eos_threshold", "pocket_tts.eos_threshold"})) {
         generation_request.eos_threshold = *eos_threshold;
     }
-    generation_request.seed = runtime::parse_u32_option(options, {"seed"})
+    generation_request.seed = runtime::parse_u32_option(options, {"seed", "pocket_tts.seed"})
         .value_or(runtime::random_u32_seed());
-    if (const auto noise_file = runtime::find_option(options, {"noise_file"})) {
+    if (const auto noise_file = runtime::find_option(options, {"noise_file", "pocket_tts.noise_file"})) {
         generation_request.noise_schedule_path = *noise_file;
     }
 }
@@ -165,35 +165,39 @@ void apply_request_generation_options(
     GenerationRequest & generation_request) {
     if (const auto frames_after_eos = runtime::parse_int_option(
             options,
-            {"frames_after_eos"})) {
+            {"frames_after_eos", "pocket_tts.frames_after_eos"})) {
         generation_request.frames_after_eos = *frames_after_eos;
     }
     if (const auto max_tokens = runtime::parse_int_option(
             options,
-            {"max_tokens"})) {
+            {"max_tokens", "pocket_tts.max_tokens"})) {
         generation_request.max_tokens = *max_tokens;
     }
     generation_request.text_chunk_size =
         engine::text::parse_text_chunk_size_override(options).value_or(kDefaultTextChunkSize);
 }
 
-GenerationRequest build_generation_request(const runtime::TaskRequest & request) {
+GenerationRequest build_generation_request(const runtime::TaskRequest & request, float default_temperature) {
     if (!request.text_input.has_value()) {
         throw std::runtime_error("PocketTTS run requires text_input");
     }
     validate_supported_style(request.voice);
 
     GenerationRequest generation_request;
+    generation_request.temperature = default_temperature;
     generation_request.text = request.text_input->text;
     apply_voice_condition(request.voice, generation_request.voice);
     apply_request_generation_options(request.options, generation_request);
     return generation_request;
 }
 
-GenerationRequest build_preparation_generation_request(const runtime::SessionPreparationRequest & request) {
+GenerationRequest build_preparation_generation_request(
+    const runtime::SessionPreparationRequest & request,
+    float default_temperature) {
     validate_supported_style(request.voice);
 
     GenerationRequest generation_request;
+    generation_request.temperature = default_temperature;
     if (request.text.has_value()) {
         generation_request.text = request.text->text;
     }
@@ -737,7 +741,8 @@ runtime::RunMode PocketTTSSession::run_mode() const {
 }
 
 void PocketTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
-    prepared_session_request_ = build_preparation_generation_request(request);
+    prepared_session_request_ =
+        build_preparation_generation_request(request, manifest_->model_config.default_temperature);
     if (!has_voice_selection(prepared_session_request_.voice)) {
         throw std::runtime_error(
             "PocketTTS session prepare() requires a session voice via --voice-id or --voice-ref");
@@ -755,7 +760,8 @@ runtime::TaskResult PocketTTSSession::run(const runtime::TaskRequest & request) 
     require_prepared("PocketTTS run()");
     runtime::TaskRequest effective_request = request;
     effective_request.voice.reset();
-    GenerationRequest generation_request = build_generation_request(effective_request);
+    GenerationRequest generation_request =
+        build_generation_request(effective_request, manifest_->model_config.default_temperature);
     generation_request.max_steps = prepared_session_request_.max_steps;
     generation_request.max_tokens = prepared_session_request_.max_tokens;
     generation_request.temperature = prepared_session_request_.temperature;
