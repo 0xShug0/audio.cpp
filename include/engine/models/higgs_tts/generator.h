@@ -67,6 +67,7 @@ private:
     HiggsTextTokenizer tokenizer_;
     size_t ar_decode_graph_arena_bytes_ = 0;
     std::optional<ReferencePrefixCache> reference_prefix_cache_;
+    bool reference_kv_ready_ = false;
     std::optional<HiggsCudaSamplingPolicy> cuda_sampling_policy_;
     std::unique_ptr<HiggsARKVCache> ar_kv_cache_;
     std::unique_ptr<HiggsARPrefillGraph> prefill_graph_;

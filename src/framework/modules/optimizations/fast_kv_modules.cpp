@@ -51,8 +51,8 @@ core::TensorValue FastKVSetRowsModule::build(
     if (row_index.shape.rank != 1 || (row_index.shape.dims[0] != 1 && row_index.shape.dims[0] != batch)) {
         throw std::runtime_error("FastKVSetRowsModule row_index must have shape {1} or {batch}");
     }
-    if (cache.type != GGML_TYPE_F32 || row.type != GGML_TYPE_F32) {
-        throw std::runtime_error("FastKVSetRowsModule requires f32 cache and row tensors");
+    if ((cache.type != GGML_TYPE_F32 && cache.type != GGML_TYPE_F16) || row.type != GGML_TYPE_F32) {
+        throw std::runtime_error("FastKVSetRowsModule requires an f32/f16 cache and an f32 row tensor");
     }
     if (row_index.type != GGML_TYPE_I32 && row_index.type != GGML_TYPE_I64) {
         throw std::runtime_error("FastKVSetRowsModule requires i32 or i64 row_index tensor");
@@ -69,16 +69,39 @@ core::TensorValue FastKVSetRowsModule::build(
         }
         auto flat_cache = core::reshape_tensor(ctx, cache, core::TensorShape::from_dims({steps, row_elems}));
         auto contiguous_row = tensor_layout::ensure_contiguous_layout_if_needed(ctx, row);
-        auto flat_row = core::reshape_tensor(ctx, contiguous_row, core::TensorShape::from_dims({1, row_elems}));
+        auto flat_row = core::wrap_tensor(
+            ggml_view_2d(
+                ctx.ggml,
+                contiguous_row.tensor,
+                row_elems,
+                1,
+                contiguous_row.tensor->nb[2],
+                0),
+            core::TensorShape::from_dims({1, row_elems}),
+            row.type);
         ggml_tensor * updated = ggml_set_rows(ctx.ggml, flat_cache.tensor, flat_row.tensor, row_index.tensor);
+        // ggml_set_rows src[2] is only a legacy dependency anchor for the
+        // destination. Point it at the underlying cache so the metadata-only
+        // flatten does not interrupt CUDA's ROPE -> VIEW -> SET_ROWS fusion.
+        updated->src[2] = cache.tensor;
         auto flat_updated = core::wrap_tensor(updated, flat_cache.shape, cache.type);
         return core::reshape_tensor(ctx, flat_updated, cache.shape);
     }
 
     auto flat_cache = core::reshape_tensor(ctx, cache, core::TensorShape::from_dims({batch * steps, row_elems}));
     auto contiguous_row = tensor_layout::ensure_contiguous_layout_if_needed(ctx, row);
-    auto flat_row = core::reshape_tensor(ctx, contiguous_row, core::TensorShape::from_dims({batch, row_elems}));
+    auto flat_row = core::wrap_tensor(
+        ggml_view_2d(
+            ctx.ggml,
+            contiguous_row.tensor,
+            row_elems,
+            batch,
+            contiguous_row.tensor->nb[3],
+            0),
+        core::TensorShape::from_dims({batch, row_elems}),
+        row.type);
     ggml_tensor * updated = ggml_set_rows(ctx.ggml, flat_cache.tensor, flat_row.tensor, row_index.tensor);
+    updated->src[2] = cache.tensor;
     auto flat_updated = core::wrap_tensor(updated, flat_cache.shape, cache.type);
     return core::reshape_tensor(ctx, flat_updated, cache.shape);
 }

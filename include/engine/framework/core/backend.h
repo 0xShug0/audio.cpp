@@ -74,6 +74,8 @@ void write_tensor_i32(const TensorValue & tensor, const int32_t * values, size_t
 void write_tensor_i32(const TensorValue & tensor, const std::vector<int32_t> & values);
 void read_tensor_f32_into(const ggml_tensor * tensor, std::vector<float> & values);
 std::vector<float> read_tensor_f32(const ggml_tensor * tensor);
+void read_tensor_f16_into(const ggml_tensor * tensor, std::vector<float> & values);
+std::vector<float> read_tensor_f16(const ggml_tensor * tensor);
 void read_tensor_i32_into(const ggml_tensor * tensor, std::vector<int32_t> & values);
 std::vector<int32_t> read_tensor_i32(const ggml_tensor * tensor);
 

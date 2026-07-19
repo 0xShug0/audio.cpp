@@ -1,0 +1,44 @@
+[
+  {
+    "id": "clone_first",
+    "text": "This cloned request prepares the reusable reference prefix.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 256,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 6134
+  },
+  {
+    "id": "clone_reuse",
+    "text": "This cloned request reuses the same reference prefix.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 256,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 6234
+  },
+  {
+    "id": "unconditioned",
+    "text": "This request intentionally generates an unconditioned random voice.",
+    "max_tokens": 256,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 6334
+  },
+  {
+    "id": "clone_after_unconditioned",
+    "text": "The cloned voice is rebuilt safely after the unconditioned request.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 256,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 6434
+  }
+]

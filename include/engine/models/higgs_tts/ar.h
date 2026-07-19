@@ -28,6 +28,7 @@ struct HiggsARWeights {
     core::TensorValue modality_embedding;
     HiggsQwenDecoderStackWeights decoder;
     core::TensorValue norm;
+    bool packed_qkv = false;
 };
 
 HiggsARWeights load_higgs_ar_weights(

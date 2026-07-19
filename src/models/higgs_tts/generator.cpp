@@ -20,7 +20,21 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr int64_t kInitialGeneratedCacheSteps = 512;
+constexpr int64_t kInitialGeneratedCacheSteps = 128;
+constexpr int64_t kMinimumCacheBucketSteps = 128;
+
+int64_t bucketed_initial_cache_steps(int64_t prompt_steps, int64_t max_tokens) {
+    const int64_t maximum = prompt_steps + max_tokens;
+    const int64_t required = prompt_steps + std::min(max_tokens, kInitialGeneratedCacheSteps);
+    int64_t bucket = kMinimumCacheBucketSteps;
+    while (bucket < required && bucket <= maximum / 2) {
+        bucket *= 2;
+    }
+    if (bucket < required) {
+        bucket = required;
+    }
+    return std::min(bucket, maximum);
+}
 
 void validate_generation_options(const HiggsGenerationOptions & options) {
     if (options.max_tokens <= 0) {
@@ -205,9 +219,21 @@ void HiggsGenerator::prepare(const HiggsGenerationRequest & request) {
         cache.prefix_tokens.assign(prepared.prompt.token_ids.begin(),
                                    prepared.prompt.token_ids.begin() +
                                        static_cast<ptrdiff_t>(prepared.prefix_steps));
+        const bool same_reference =
+            reference_prefix_cache_.has_value() &&
+            reference_prefix_cache_->reference_text == cache.reference_text &&
+            reference_prefix_cache_->reference_codes == cache.reference_codes &&
+            reference_prefix_cache_->reference_frames == cache.reference_frames &&
+            reference_prefix_cache_->reference_codebooks == cache.reference_codebooks &&
+            reference_prefix_cache_->prefix_steps == cache.prefix_steps &&
+            reference_prefix_cache_->prefix_tokens == cache.prefix_tokens;
         reference_prefix_cache_ = std::move(cache);
+        if (!same_reference) {
+            reference_kv_ready_ = false;
+        }
     } else {
         reference_prefix_cache_.reset();
+        reference_kv_ready_ = false;
     }
 }
 
@@ -328,20 +354,38 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     engine::debug::trace_log_scalar("higgs_tts.generator.reference_prefix_cache_hit", reference_cache_hit);
     engine::debug::trace_log_scalar("higgs_tts.generator.reference_prefix_steps", prepared.prefix_steps);
     const int64_t max_cache_steps = prompt_steps + request.options.max_tokens;
-    const int64_t initial_cache_steps =
-        prompt_steps + std::min(request.options.max_tokens, kInitialGeneratedCacheSteps);
-    if (ar_kv_cache_ == nullptr || !ar_kv_cache_->can_run(*ar_, initial_cache_steps)) {
+    const int64_t initial_cache_steps = bucketed_initial_cache_steps(prompt_steps, request.options.max_tokens);
+    const bool cache_rebuild =
+        ar_kv_cache_ == nullptr || !ar_kv_cache_->can_run(*ar_, initial_cache_steps) ||
+        ar_kv_cache_->cache_steps() != initial_cache_steps;
+    if (cache_rebuild) {
         decode_graph_.reset();
         ar_kv_cache_ = std::make_unique<HiggsARKVCache>(ar_, initial_cache_steps);
+        reference_kv_ready_ = false;
     }
-    ar_kv_cache_->reset();
-    if (prefill_graph_ == nullptr || !prefill_graph_->matches(*ar_, prompt_steps, 0)) {
+    const bool reference_kv_cache_hit =
+        reference_cache_hit && reference_kv_ready_ &&
+        ar_kv_cache_->valid_steps() >= prepared.prefix_steps;
+    const int64_t prefill_start_step = reference_kv_cache_hit ? prepared.prefix_steps : 0;
+    if (reference_kv_cache_hit) {
+        ar_kv_cache_->retain_prefix(prefill_start_step);
+    } else {
+        ar_kv_cache_->reset();
+    }
+    engine::debug::trace_log_scalar("higgs_tts.generator.reference_kv_cache_hit", reference_kv_cache_hit);
+    engine::debug::trace_log_scalar("higgs_tts.generator.prefill_start_step", prefill_start_step);
+    engine::debug::trace_log_scalar("higgs_tts.generator.prefill_run_steps", prompt_steps - prefill_start_step);
+    engine::debug::trace_log_scalar("higgs_tts.generator.kv_cache_steps", initial_cache_steps);
+    engine::debug::trace_log_scalar("higgs_tts.generator.kv_cache_rebuild", cache_rebuild);
+    if (prefill_graph_ == nullptr ||
+        !prefill_graph_->matches(*ar_, prompt_steps, prefill_start_step)) {
         prefill_graph_.reset();
         prefill_graph_ = std::make_unique<HiggsARPrefillGraph>(
-            ar_, prompt_steps, 0, ar_kv_cache_.get(), ar_decode_graph_arena_bytes_);
+            ar_, prompt_steps, prefill_start_step, ar_kv_cache_.get(), ar_decode_graph_arena_bytes_);
     }
-    auto prefill_output = prefill_graph_->run(prepared.ar_input, 0);
+    auto prefill_output = prefill_graph_->run(prepared.ar_input, prefill_start_step);
     prefill_graph_.reset();
+    reference_kv_ready_ = reference_cache_hit;
 
     if (decode_graph_ == nullptr || !decode_graph_->can_run(*ar_, ar_kv_cache_->cache_steps())) {
         decode_graph_ = std::make_unique<HiggsARDecodeGraph>(
@@ -420,6 +464,7 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
             decode_graph_.reset();
             ar_kv_cache_ = std::make_unique<HiggsARKVCache>(ar_, grown_cache_steps);
             ar_kv_cache_->import_state(kv_state);
+            engine::debug::trace_log_scalar("higgs_tts.generator.kv_cache_grown_steps", grown_cache_steps);
             decode_graph_ = std::make_unique<HiggsARDecodeGraph>(
                 ar_, ar_kv_cache_->cache_steps(), *ar_kv_cache_, ar_decode_graph_arena_bytes_);
             decode_graph_->begin_decode_run();

@@ -368,9 +368,9 @@ audiocpp_cli --task tts --family higgs_tts --model models/higgs-audio-v3-tts-4b 
 | `--text-chunk-size` | integer chars | `512` | Long-form chunk size. |
 | `--max-tokens` | integer | `1024` | Maximum generated AR tokens per chunk. |
 | `--temperature` | float | `0.8` | AR sampling temperature. |
-| `--top-k` | integer | `30` | AR top-k sampling limit. |
-| `--top-p` | float | `0.8` | AR nucleus sampling limit. |
-| `--repetition-penalty` | float | `1.1` | AR repetition penalty. |
+| `--top-k` | integer | `30` | AR top-k sampling limit. The narrower default is less prone to premature EOC than the Python client's `50`. |
+| `--top-p` | float | `0.8` | AR nucleus sampling limit. The Python client's unfiltered equivalent is `1.0`. |
+| `--repetition-penalty` | float | `1.1` | Accepted for Python API compatibility; Higgs audio-code sampling does not consume it. |
 
 ## IndexTTS2
 

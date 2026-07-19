@@ -84,6 +84,7 @@ struct QwenDecoderLayerConfig {
 struct QwenMLPWeights {
     LinearWeights gate_proj;
     LinearWeights up_proj;
+    std::optional<LinearWeights> gate_up_proj;
     LinearWeights down_proj;
 };
 

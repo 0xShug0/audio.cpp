@@ -175,6 +175,36 @@ std::vector<ggml_fp16_t> qwen_causal_prefill_mask_values(int64_t batch_size, int
     return out;
 }
 
+std::vector<ggml_fp16_t> qwen_causal_suffix_mask_values(
+    int64_t batch_size,
+    int64_t query_steps,
+    int64_t prefix_steps) {
+    if (batch_size <= 0) {
+        throw std::runtime_error("qwen_causal_suffix_mask_values requires positive batch size");
+    }
+    validate_steps(query_steps, "qwen_causal_suffix_mask_values");
+    if (prefix_steps < 0) {
+        throw std::runtime_error("qwen_causal_suffix_mask_values requires non-negative prefix steps");
+    }
+    const int64_t key_steps = prefix_steps + query_steps;
+    const auto masked = ggml_fp32_to_fp16(-INFINITY);
+    const auto visible = ggml_fp32_to_fp16(0.0F);
+    std::vector<ggml_fp16_t> one(static_cast<size_t>(query_steps * key_steps), masked);
+    for (int64_t row = 0; row < query_steps; ++row) {
+        const size_t row_offset = static_cast<size_t>(row * key_steps);
+        std::fill_n(
+            one.begin() + static_cast<std::ptrdiff_t>(row_offset),
+            prefix_steps + row + 1,
+            visible);
+    }
+    std::vector<ggml_fp16_t> out;
+    out.reserve(static_cast<size_t>(batch_size) * one.size());
+    for (int64_t batch = 0; batch < batch_size; ++batch) {
+        out.insert(out.end(), one.begin(), one.end());
+    }
+    return out;
+}
+
 void write_qwen_causal_prefill_mask(
     ggml_tensor * tensor,
     int64_t batch_size,

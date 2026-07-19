@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -106,13 +107,14 @@ void set_optional_option(
     }
 }
 
-engine::runtime::AudioBuffer read_reference_audio(const engine::io::json::Value & object) {
+std::optional<engine::runtime::AudioBuffer> read_reference_audio(
+    const engine::io::json::Value & object) {
     auto reference_path = optional_string(object, "reference_audio");
     if (reference_path.empty()) {
         reference_path = optional_string(object, "voice_ref");
     }
     if (reference_path.empty()) {
-        throw std::runtime_error("Higgs TTS warmbench request missing field: reference_audio");
+        return std::nullopt;
     }
     const auto wav = engine::audio::read_wav_f32(resolve_path(reference_path));
     return engine::runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples};
@@ -121,10 +123,12 @@ engine::runtime::AudioBuffer read_reference_audio(const engine::io::json::Value 
 engine::runtime::TaskRequest make_request(const engine::io::json::Value & object) {
     engine::runtime::TaskRequest request;
     request.text_input = engine::runtime::Transcript{required_string(object, "text"), ""};
-    request.voice = engine::runtime::VoiceCondition{};
-    request.voice->speaker = engine::runtime::VoiceReference{};
-    request.voice->speaker->audio = read_reference_audio(object);
-    request.options["reference_text"] = required_string(object, "reference_text");
+    if (auto reference_audio = read_reference_audio(object); reference_audio.has_value()) {
+        request.voice = engine::runtime::VoiceCondition{};
+        request.voice->speaker = engine::runtime::VoiceReference{};
+        request.voice->speaker->audio = std::move(*reference_audio);
+        request.options["reference_text"] = required_string(object, "reference_text");
+    }
     set_optional_option(request, object, "max_tokens", "max_tokens");
     set_optional_option(request, object, "temperature", "temperature");
     set_optional_option(request, object, "top_p", "top_p");
@@ -205,10 +209,18 @@ engine::io::json::Value step_json(
     if (!audio_path.empty()) {
         stem.emplace("audio", string(audio_path.string()));
     }
+    const auto & audio = *result.audio_output;
+    const double frames = static_cast<double>(
+        audio.samples.size() / static_cast<size_t>(std::max(1, audio.channels)));
+    const double duration_sec = audio.sample_rate > 0 ? frames / audio.sample_rate : 0.0;
+    const double rtf = duration_sec > 0.0 ? wall_ms / 1000.0 / duration_sec : 0.0;
     return engine::io::json::Value::make_object({
         {"request_index", number(static_cast<double>(request_index))},
         {"stems", engine::io::json::Value::make_array({engine::io::json::Value::make_object(std::move(stem))})},
-        {"metrics", engine::io::json::Value::make_object({{"wall_ms", number(wall_ms)}})},
+        {"metrics", engine::io::json::Value::make_object({
+            {"wall_ms", number(wall_ms)},
+            {"rtf", number(rtf)},
+        })},
     });
 }
 
@@ -238,7 +250,19 @@ int main(int argc, char ** argv) {
         const int threads = int_arg(argc, argv, "--threads", 8);
         const int warmup = int_arg(argc, argv, "--warmup", 0);
         const int iterations = int_arg(argc, argv, "--iterations", 1);
-        const std::string request_sequence_json = arg_value(argc, argv, "--request-sequence-json", "");
+        std::string request_sequence_json = arg_value(argc, argv, "--request-sequence-json", "");
+        const std::filesystem::path request_sequence_file =
+            arg_value(argc, argv, "--request-sequence-file", "");
+        if (request_sequence_json.empty() && !request_sequence_file.empty()) {
+            std::ifstream input(request_sequence_file, std::ios::binary);
+            if (!input) {
+                throw std::runtime_error(
+                    "failed to open Higgs TTS request sequence: " + request_sequence_file.string());
+            }
+            request_sequence_json.assign(
+                std::istreambuf_iterator<char>(input),
+                std::istreambuf_iterator<char>());
+        }
         const std::filesystem::path output_dir = arg_value(argc, argv, "--output-dir", "");
         const std::filesystem::path timing_path =
             arg_value(argc, argv, "--timing-file", "/tmp/higgs_tts_warm_bench_timing.log");
@@ -308,7 +332,16 @@ int main(int argc, char ** argv) {
             }
             timing_lines.push_back(
                 "higgs_tts.cpp.request_" + std::to_string(request_index) + ".wall_ms=" + std::to_string(wall_ms));
-            std::cout << "higgs_tts.cpp.wall_ms=" << wall_ms << "\n";
+            const auto & audio = *last_result.audio_output;
+            const double frames = static_cast<double>(
+                audio.samples.size() / static_cast<size_t>(std::max(1, audio.channels)));
+            const double duration_sec = audio.sample_rate > 0 ? frames / audio.sample_rate : 0.0;
+            const double rtf = duration_sec > 0.0 ? wall_ms / 1000.0 / duration_sec : 0.0;
+            timing_lines.push_back(
+                "higgs_tts.cpp.request_" + std::to_string(request_index) + ".rtf=" + std::to_string(rtf));
+            std::cout << "higgs_tts.cpp.request=" << request_index
+                      << " wall_ms=" << wall_ms
+                      << " rtf=" << rtf << "\n";
             steps.push_back(step_json(last_result, static_cast<int>(request_index), wall_ms, audio_path));
         }
 

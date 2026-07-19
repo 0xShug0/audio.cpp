@@ -79,6 +79,11 @@ std::vector<int32_t> qwen_position_ids(int64_t steps, int64_t offset = 0);
 
 std::vector<ggml_fp16_t> qwen_causal_prefill_mask_values(int64_t batch_size, int64_t steps);
 
+std::vector<ggml_fp16_t> qwen_causal_suffix_mask_values(
+    int64_t batch_size,
+    int64_t query_steps,
+    int64_t prefix_steps);
+
 void write_qwen_causal_prefill_mask(
     ggml_tensor * tensor,
     int64_t batch_size,

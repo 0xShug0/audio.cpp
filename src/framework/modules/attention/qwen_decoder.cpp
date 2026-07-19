@@ -332,35 +332,75 @@ core::TensorValue build_mlp(
     const core::TensorValue & input,
     const QwenDecoderLayerConfig & config,
     const QwenMLPWeights & weights) {
-    auto gate = LinearModule(
-                    {
-                        config.hidden_size,
-                        config.intermediate_size,
-                        weights.gate_proj.bias.has_value(),
-                        config.projection_precision,
-                    })
-                    .build(ctx, input, require_linear(weights.gate_proj, false, "QwenMLPWeights.gate_proj"));
-    if (config.activation_cast.enabled && config.activation_cast.after_mlp_projection) {
-        gate = activation_cast(ctx, gate, config.activation_cast);
+    core::TensorValue gate;
+    core::TensorValue up;
+    std::optional<core::TensorValue> packed_gate_up;
+    if (weights.gate_up_proj.has_value()) {
+        auto gate_up = LinearModule(
+                           {
+                               config.hidden_size,
+                               config.intermediate_size * 2,
+                               weights.gate_up_proj->bias.has_value(),
+                               config.projection_precision,
+                           })
+                           .build(
+                               ctx,
+                               input,
+                               require_linear(*weights.gate_up_proj, false, "QwenMLPWeights.gate_up_proj"));
+        packed_gate_up = gate_up;
+        gate = SliceModule({2, 0, config.intermediate_size}).build(ctx, gate_up);
+        up = SliceModule({2, config.intermediate_size, config.intermediate_size}).build(ctx, gate_up);
+    } else {
+        gate = LinearModule(
+                   {
+                       config.hidden_size,
+                       config.intermediate_size,
+                       weights.gate_proj.bias.has_value(),
+                       config.projection_precision,
+                   })
+                   .build(ctx, input, require_linear(weights.gate_proj, false, "QwenMLPWeights.gate_proj"));
+        up = LinearModule(
+                 {
+                     config.hidden_size,
+                     config.intermediate_size,
+                     weights.up_proj.bias.has_value(),
+                     config.projection_precision,
+                 })
+                 .build(ctx, input, require_linear(weights.up_proj, false, "QwenMLPWeights.up_proj"));
     }
-    gate = SiluModule{}.build(ctx, gate);
-    if (config.activation_cast.enabled && config.activation_cast.after_mlp_silu) {
-        gate = activation_cast(ctx, gate, config.activation_cast);
-    }
-    auto up = LinearModule(
-                  {
-                      config.hidden_size,
-                      config.intermediate_size,
-                      weights.up_proj.bias.has_value(),
-                      config.projection_precision,
-                  })
-                  .build(ctx, input, require_linear(weights.up_proj, false, "QwenMLPWeights.up_proj"));
-    if (config.activation_cast.enabled && config.activation_cast.after_mlp_projection) {
-        up = activation_cast(ctx, up, config.activation_cast);
-    }
-    auto gated = MulModule{}.build(ctx, gate, up);
-    if (config.activation_cast.enabled && config.activation_cast.after_mlp_mul) {
-        gated = activation_cast(ctx, gated, config.activation_cast);
+    const bool can_use_fused_swiglu =
+        !config.activation_cast.enabled ||
+        (!config.activation_cast.after_mlp_projection &&
+         !config.activation_cast.after_mlp_silu &&
+         !config.activation_cast.after_mlp_mul);
+    core::TensorValue gated;
+    if (can_use_fused_swiglu && packed_gate_up.has_value()) {
+        gated = core::wrap_tensor(
+            ggml_swiglu(ctx.ggml, packed_gate_up->tensor),
+            core::TensorShape::from_dims({
+                input.shape.dims[0],
+                input.shape.dims[1],
+                config.intermediate_size,
+            }),
+            packed_gate_up->type);
+    } else if (can_use_fused_swiglu) {
+        gated = core::wrap_tensor(
+            ggml_swiglu_split(ctx.ggml, gate.tensor, up.tensor),
+            gate.shape,
+            gate.type);
+    } else {
+        if (config.activation_cast.enabled && config.activation_cast.after_mlp_projection) {
+            gate = activation_cast(ctx, gate, config.activation_cast);
+            up = activation_cast(ctx, up, config.activation_cast);
+        }
+        gate = SiluModule{}.build(ctx, gate);
+        if (config.activation_cast.enabled && config.activation_cast.after_mlp_silu) {
+            gate = activation_cast(ctx, gate, config.activation_cast);
+        }
+        gated = MulModule{}.build(ctx, gate, up);
+        if (config.activation_cast.enabled && config.activation_cast.after_mlp_mul) {
+            gated = activation_cast(ctx, gated, config.activation_cast);
+        }
     }
     auto down = LinearModule(
                     {
@@ -441,8 +481,22 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
     v = core::ensure_backend_addressable_layout(ctx, v);
 
     auto q_heads = TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    auto all_k = prefix_key.has_value() ? ConcatModule({1}).build(ctx, *prefix_key, k) : k;
-    auto all_v = prefix_value.has_value() ? ConcatModule({1}).build(ctx, *prefix_value, v) : v;
+    auto attention_prefix_key = prefix_key;
+    auto attention_prefix_value = prefix_value;
+    if (attention_prefix_key.has_value() && attention_prefix_key->type != k.type) {
+        attention_prefix_key = core::wrap_tensor(
+            ggml_cast(ctx.ggml, attention_prefix_key->tensor, k.type),
+            attention_prefix_key->shape,
+            k.type);
+    }
+    if (attention_prefix_value.has_value() && attention_prefix_value->type != v.type) {
+        attention_prefix_value = core::wrap_tensor(
+            ggml_cast(ctx.ggml, attention_prefix_value->tensor, v.type),
+            attention_prefix_value->shape,
+            v.type);
+    }
+    auto all_k = attention_prefix_key.has_value() ? ConcatModule({1}).build(ctx, *attention_prefix_key, k) : k;
+    auto all_v = attention_prefix_value.has_value() ? ConcatModule({1}).build(ctx, *attention_prefix_value, v) : v;
     core::TensorValue context;
     if (!prefix_key.has_value() && attention_mask.has_value() &&
         config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGroupedViewKV) {
@@ -457,8 +511,10 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
             dim,
             *attention_mask,
             config_.attention_precision);
-    } else if (!prefix_key.has_value() && attention_mask.has_value() &&
-               config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGrouped) {
+    } else if (attention_mask.has_value() &&
+               (config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGrouped ||
+                (prefix_key.has_value() &&
+                 config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGroupedViewKV))) {
         q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
         auto k_heads = TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k);
         auto v_heads = TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v);

@@ -62,18 +62,25 @@ modules::QwenDecoderStackConfig make_higgs_qwen_stack_config(const HiggsTextConf
 
 class HiggsQwenDecoderComponent {
 public:
-    explicit HiggsQwenDecoderComponent(const HiggsTextConfig & config)
+    HiggsQwenDecoderComponent(const HiggsTextConfig & config, bool packed_qkv)
         : stack_config_(make_higgs_qwen_stack_config(config)),
           layer_config_(modules::qwen_decoder_layer_config_from_stack(stack_config_)),
-          layer_module_(layer_config_) {}
+          layer_module_([&] {
+              layer_config_.qkv_layout = packed_qkv
+                  ? modules::QwenDecoderQKVLayout::PackedQKV
+                  : modules::QwenDecoderQKVLayout::Separate;
+              return layer_config_;
+          }()) {}
 
     modules::QwenDecoderLayerOutputs build_prefill_layer(
         core::ModuleBuildContext & ctx,
         const core::TensorValue & input,
         const core::TensorValue & positions,
         const modules::QwenDecoderLayerWeights & weights,
-        const core::TensorValue & attention_mask) const {
-        return layer_module_.build(ctx, input, positions, weights, std::nullopt, std::nullopt, attention_mask);
+        const core::TensorValue & attention_mask,
+        const std::optional<core::TensorValue> & prefix_key = std::nullopt,
+        const std::optional<core::TensorValue> & prefix_value = std::nullopt) const {
+        return layer_module_.build(ctx, input, positions, weights, prefix_key, prefix_value, attention_mask);
     }
 
     modules::QwenDecoderLayerOutputs build_decode_layer(
@@ -144,23 +151,33 @@ modules::QwenDecoderLayerWeights load_layer_weights(
         store.load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size}),
         std::nullopt,
     };
-    // Keep Q/K/V separate here so Higgs exercises the framework Qwen decoder path.
-    // A packed-QKV fast path can be evaluated later as a framework-level optimization.
-    weights.self_attention.q_weight = store.load_tensor(
-        source,
-        prefix + ".self_attn.q_proj.weight",
-        storage_type,
-        {q_out, config.hidden_size});
-    weights.self_attention.k_weight = store.load_tensor(
-        source,
-        prefix + ".self_attn.k_proj.weight",
-        storage_type,
-        {kv_out, config.hidden_size});
-    weights.self_attention.v_weight = store.load_tensor(
-        source,
-        prefix + ".self_attn.v_proj.weight",
-        storage_type,
-        {kv_out, config.hidden_size});
+    {
+        const auto q = source.require_tensor(
+            prefix + ".self_attn.q_proj.weight",
+            storage_type,
+            {q_out, config.hidden_size});
+        const auto k = source.require_tensor(
+            prefix + ".self_attn.k_proj.weight",
+            storage_type,
+            {kv_out, config.hidden_size});
+        const auto v = source.require_tensor(
+            prefix + ".self_attn.v_proj.weight",
+            storage_type,
+            {kv_out, config.hidden_size});
+        if (q.type != k.type || q.type != v.type) {
+            throw std::runtime_error("Higgs TTS packed QKV weights require matching storage types");
+        }
+        std::vector<std::byte> packed;
+        packed.reserve(q.bytes.size() + k.bytes.size() + v.bytes.size());
+        packed.insert(packed.end(), q.bytes.begin(), q.bytes.end());
+        packed.insert(packed.end(), k.bytes.begin(), k.bytes.end());
+        packed.insert(packed.end(), v.bytes.begin(), v.bytes.end());
+        weights.self_attention.qkv_weight = store.make_tensor(
+            core::TensorShape::from_dims({q_out + 2 * kv_out, config.hidden_size}),
+            q.type,
+            packed.data(),
+            packed.size());
+    }
     weights.self_attention.out_weight = store.load_tensor(
         source,
         prefix + ".self_attn.o_proj.weight",
@@ -178,22 +195,31 @@ modules::QwenDecoderLayerWeights load_layer_weights(
         store.load_f32_tensor(source, prefix + ".post_attention_layernorm.weight", {config.hidden_size}),
         std::nullopt,
     };
-    weights.mlp.gate_proj = {
-        store.load_tensor(
-            source,
+    {
+        const auto gate = source.require_tensor(
             prefix + ".mlp.gate_proj.weight",
             storage_type,
-            {config.intermediate_size, config.hidden_size}),
-        std::nullopt,
-    };
-    weights.mlp.up_proj = {
-        store.load_tensor(
-            source,
+            {config.intermediate_size, config.hidden_size});
+        const auto up = source.require_tensor(
             prefix + ".mlp.up_proj.weight",
             storage_type,
-            {config.intermediate_size, config.hidden_size}),
-        std::nullopt,
-    };
+            {config.intermediate_size, config.hidden_size});
+        if (gate.type != up.type) {
+            throw std::runtime_error("Higgs TTS packed gate/up weights require matching storage types");
+        }
+        std::vector<std::byte> packed;
+        packed.reserve(gate.bytes.size() + up.bytes.size());
+        packed.insert(packed.end(), gate.bytes.begin(), gate.bytes.end());
+        packed.insert(packed.end(), up.bytes.begin(), up.bytes.end());
+        weights.mlp.gate_up_proj = modules::LinearWeights{
+            store.make_tensor(
+                core::TensorShape::from_dims({config.intermediate_size * 2, config.hidden_size}),
+                gate.type,
+                packed.data(),
+                packed.size()),
+            std::nullopt,
+        };
+    }
     weights.mlp.down_proj = {
         store.load_tensor(
             source,
@@ -331,6 +357,7 @@ HiggsARWeights load_higgs_ar_weights(
         {config.audio.num_codebooks * config.audio.vocab_size, config.text.hidden_size});
     weights.decoder = load_decoder_weights(*weights.store, source, config.text, weight_storage_type);
     weights.norm = weights.store->load_f32_tensor(source, "body.norm.weight", {config.text.hidden_size});
+    weights.packed_qkv = true;
     weights.store->upload();
     return weights;
 }
@@ -414,11 +441,11 @@ struct HiggsARKVCache::Impl {
         for (size_t layer = 0; layer < tensor_weights.decoder.layers.size(); ++layer) {
             key_tensors.push_back(core::make_tensor(
                 build_ctx,
-                GGML_TYPE_F32,
+                GGML_TYPE_F16,
                 core::TensorShape::from_dims({1, cache_steps, config.text.num_key_value_heads, dim})));
             value_tensors.push_back(core::make_tensor(
                 build_ctx,
-                GGML_TYPE_F32,
+                GGML_TYPE_F16,
                 core::TensorShape::from_dims({1, cache_steps, config.text.num_key_value_heads, dim})));
         }
         cache = runtime::TransformerKVCache(
@@ -568,7 +595,7 @@ struct HiggsARDecodeGraph::Impl {
             GGML_TYPE_F16);
 
         graph = ggml_new_graph_custom(ctx.get(), 65536, false);
-        const HiggsQwenDecoderComponent decoder(config.text);
+        const HiggsQwenDecoderComponent decoder(config.text, tensor_weights.packed_qkv);
         for (size_t layer_index = 0; layer_index < tensor_weights.decoder.layers.size(); ++layer_index) {
             auto out = decoder.build_decode_layer(
                 build_ctx,
@@ -761,7 +788,7 @@ struct HiggsARPrefillGraph::Impl {
           start_step(input_start_step),
           run_steps(input_prompt_steps - input_start_step),
           prefill_cache_steps(input_prompt_steps),
-          layerwise(input_prompt_steps >= kLayerwisePrefillMinSteps),
+          layerwise(input_prompt_steps >= kLayerwisePrefillMinSteps && input_start_step == 0),
           graph_arena_bytes(graph_arena_bytes) {
         if (runtime == nullptr) {
             throw std::runtime_error("Higgs TTS AR prefill graph requires runtime");
@@ -772,8 +799,8 @@ struct HiggsARPrefillGraph::Impl {
         if (start_step < 0 || start_step >= prompt_steps) {
             throw std::runtime_error("Higgs TTS AR prefill graph start step is outside the prompt");
         }
-        if (start_step != 0) {
-            throw std::runtime_error("Higgs TTS AR prefill graph requires full prompt prefill");
+        if (start_step > 0 && target_cache == nullptr) {
+            throw std::runtime_error("Higgs TTS AR suffix prefill requires a target KV cache");
         }
         if (layerwise) {
             engine::debug::timing_log_scalar("higgs_tts.ar.prefill.graph.build_ms", 0.0);
@@ -813,28 +840,48 @@ struct HiggsARPrefillGraph::Impl {
         graph = ggml_new_graph_custom(ctx.get(), 262144, false);
         keys.reserve(tensor_weights.decoder.layers.size());
         values.reserve(tensor_weights.decoder.layers.size());
-        const HiggsQwenDecoderComponent decoder(config.text);
+        const HiggsQwenDecoderComponent decoder(config.text, tensor_weights.packed_qkv);
         for (size_t layer_index = 0; layer_index < tensor_weights.decoder.layers.size(); ++layer_index) {
+            std::optional<core::TensorValue> prefix_key;
+            std::optional<core::TensorValue> prefix_value;
+            if (start_step > 0) {
+                prefix_key = higgs_cache_view(
+                    build_ctx,
+                    target_cache->key_tensor(layer_index),
+                    0,
+                    start_step,
+                    config.text.num_key_value_heads,
+                    config.text.head_dim);
+                prefix_value = higgs_cache_view(
+                    build_ctx,
+                    target_cache->value_tensor(layer_index),
+                    0,
+                    start_step,
+                    config.text.num_key_value_heads,
+                    config.text.head_dim);
+            }
             auto out = decoder.build_prefill_layer(
                 build_ctx,
                 x,
                 positions_value,
                 tensor_weights.decoder.layers[layer_index],
-                attention_mask_value);
+                attention_mask_value,
+                prefix_key,
+                prefix_value);
             x = out.output;
             if (target_cache != nullptr) {
                 auto key_dest = higgs_cache_view(
                     build_ctx,
                     target_cache->key_tensor(layer_index),
-                    0,
-                    prompt_steps,
+                    start_step,
+                    run_steps,
                     config.text.num_key_value_heads,
                     config.text.head_dim);
                 auto value_dest = higgs_cache_view(
                     build_ctx,
                     target_cache->value_tensor(layer_index),
-                    0,
-                    prompt_steps,
+                    start_step,
+                    run_steps,
                     config.text.num_key_value_heads,
                     config.text.head_dim);
                 ggml_build_forward_expand(graph, ggml_cpy(ctx.get(), out.key.tensor, key_dest.tensor));
@@ -861,7 +908,7 @@ struct HiggsARPrefillGraph::Impl {
         text_gate_values.assign(static_cast<size_t>(run_steps), 0.0F);
         code_gate_values.assign(static_cast<size_t>(run_steps), 0.0F);
         positions_values = modules::qwen_position_ids(run_steps, start_step);
-        attention_mask_values = modules::qwen_causal_prefill_mask_values(1, run_steps);
+        attention_mask_values = modules::qwen_causal_suffix_mask_values(1, run_steps, start_step);
         engine::debug::timing_log_scalar(
             "higgs_tts.ar.prefill.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
@@ -982,7 +1029,7 @@ struct HiggsARPrefillGraph::Impl {
                 attention_mask,
                 core::TensorShape::from_dims({1, 1, steps, steps}),
                 GGML_TYPE_F16);
-            const HiggsQwenDecoderComponent decoder(config.text);
+            const HiggsQwenDecoderComponent decoder(config.text, runtime.weights().packed_qkv);
             auto out = decoder.build_prefill_layer(
                 build_ctx,
                 x,
@@ -1157,6 +1204,11 @@ struct HiggsARPrefillGraph::Impl {
         if (candidate_start_step != start_step) {
             throw std::runtime_error("Higgs TTS AR prefill graph start step mismatch");
         }
+        if (start_step > 0 &&
+            (target_cache == nullptr || target_cache->valid_steps() < start_step ||
+             target_cache->current_end() != start_step)) {
+            throw std::runtime_error("Higgs TTS AR suffix prefill requires the retained prefix in KV cache");
+        }
         if (layerwise) {
             return run_layerwise(input);
         }
@@ -1201,7 +1253,7 @@ struct HiggsARPrefillGraph::Impl {
             0,
             out.output.codebook_logits.size() * sizeof(float));
         if (target_cache != nullptr) {
-            target_cache->advance_after_direct_append(prompt_steps);
+            target_cache->advance_after_direct_append(run_steps);
             out.wrote_cache = true;
             out.kv_state.current_end = prompt_steps;
             return out;

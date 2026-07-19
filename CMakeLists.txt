@@ -709,6 +709,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(chatterbox_warm_bench tests/chatterbox/chatterbox_warm_bench.cpp)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
+    add_engine_warmbench(higgs_tts_warm_bench tests/higgs_tts/higgs_tts_warm_bench.cpp)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)
     add_engine_warmbench(index_tts2_warm_bench tests/index_tts2/index_tts2_warm_bench.cpp)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
@@ -855,6 +856,16 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME encoder_module_test
         COMMAND encoder_module_test
+    )
+
+    add_engine_unittest(
+        qwen_decoder_packed_projection_test
+        tests/unittests/test_qwen_decoder_packed_projections.cpp
+    )
+
+    add_test(
+        NAME qwen_decoder_packed_projection_test
+        COMMAND qwen_decoder_packed_projection_test
     )
 
     add_engine_unittest(conv_transpose_fast_path_test tests/unittests/test_conv_transpose_fast_path.cpp)

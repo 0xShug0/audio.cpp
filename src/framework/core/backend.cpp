@@ -531,6 +531,18 @@ std::vector<float> read_tensor_f32(const ggml_tensor * tensor) {
     return read_tensor_typed<float>(tensor, GGML_TYPE_F32);
 }
 
+void read_tensor_f16_into(const ggml_tensor * tensor, std::vector<float> & values) {
+    const auto fp16_values = read_tensor_typed<ggml_fp16_t>(tensor, GGML_TYPE_F16);
+    values.resize(fp16_values.size());
+    ggml_fp16_to_fp32_row(fp16_values.data(), values.data(), static_cast<int64_t>(values.size()));
+}
+
+std::vector<float> read_tensor_f16(const ggml_tensor * tensor) {
+    std::vector<float> values;
+    read_tensor_f16_into(tensor, values);
+    return values;
+}
+
 void read_tensor_i32_into(const ggml_tensor * tensor, std::vector<int32_t> & values) {
     read_tensor_typed_into<int32_t>(tensor, GGML_TYPE_I32, values);
 }
