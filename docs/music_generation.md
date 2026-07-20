@@ -1,5 +1,11 @@
 # Music And Sound Generation
 
+| Model | Family | Main Route(s) | Quick Start |
+|---|---|---|---|
+| ACE-Step | `ace_step` | text-to-music, edit, cover, repaint | [ACE-Step](#ace-step) |
+| Stable Audio | `stable_audio` | music, SFX, init-audio, inpaint | [Stable Audio](#stable-audio) |
+| HeartMuLa | `heartmula` | lyrics/tags to music | [HeartMuLa](#heartmula) |
+
 Use `--task gen` for models that generate music, sound effects, or audio from text and optional audio conditioning. These models are not TTS models: text chunking for speech TTS does not apply unless a model explicitly documents a long-output mode.
 
 Common CLI shape:
@@ -10,7 +16,7 @@ audiocpp_cli --task gen --family <family> --model <model-dir> --backend cuda ...
 
 ## ACE-Step
 
-ACE-Step generates and edits music from prompts, lyrics, and optional source audio. See [ace_step.md](ace_step.md) for the full route manual.
+ACE-Step generates and edits music from prompts, lyrics, and optional source audio. See [ace_step.md](models/ace_step.md) for the full route manual.
 
 | Field | Value |
 |---|---|
@@ -38,7 +44,7 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 
 ## Stable Audio
 
-Stable Audio generates music or sound effects from text. It can also use source audio for init-audio or inpainting workflows. See [stable_audio.md](stable_audio.md) for the full Stable Audio manual.
+Stable Audio generates music or sound effects from text. It can also use source audio for init-audio or inpainting workflows. See [stable_audio.md](models/stable_audio.md) for the full Stable Audio manual.
 
 | Field | Value |
 |---|---|

@@ -83,7 +83,7 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 
 ## Community Models
 
-Community model ports live under `community_models` to make the ownership boundary clear while keeping them available through the normal audio.cpp CLI and server paths. Huge thanks to the contributors who bring these models in, test them, and keep pushing the framework into new territory.
+Community model ports live under `community_models` to make the ownership boundary clear while keeping them available through the normal audio.cpp CLI and server paths. Huge thanks to the contributors who bring these models in, test them, and keep pushing the framework into new territory. See [docs/community_models/models.md](docs/community_models/models.md) for community-model expectations and current entries.
 
 | Family | Task | Supported language(s) | Contributor | What They Added |
 |---|---|---|---|---|

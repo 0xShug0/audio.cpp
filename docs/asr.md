@@ -1,6 +1,16 @@
 # ASR Models
 
-This page covers ASR models that do not have a dedicated page. Qwen3 ASR is documented in [qwen3.md](qwen3.md).
+| Model | Family | Mode(s) | Quick Start |
+|---|---|---|---|
+| Qwen3 ASR | `qwen3_asr` | offline | [Qwen3 ASR](#qwen3-asr) |
+| Citrinet ASR | `citrinet_asr` | offline | [Citrinet ASR](#citrinet-asr) |
+| Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](#higgs-audio-stt) |
+| Hviske ASR | `hviske_asr` | offline | [Hviske ASR](#hviske-asr) |
+| Nemotron ASR | `nemotron_asr` | offline, streaming | [Nemotron ASR](#nemotron-asr) |
+| VibeVoice ASR | `vibevoice_asr` | offline | [VibeVoice ASR](#vibevoice-asr) |
+| Voxtral Realtime | `voxtral_realtime` | offline, streaming | [Voxtral Realtime](#voxtral-realtime) |
+
+This page covers ASR models. Detailed Qwen3 ASR and forced-alignment notes live in [Qwen3 models](models/qwen3.md).
 
 Common CLI shape:
 
@@ -9,6 +19,14 @@ audiocpp_cli --task asr --family <family> --model <model-dir> --backend cuda --a
 ```
 
 When `--mode streaming` is used, the selected model provides its default streaming policy.
+
+## Qwen3 ASR
+
+Qwen3 ASR transcribes speech and can be paired with Qwen3 Forced Aligner when timestamps are needed. See [Qwen3 models](models/qwen3.md) for the full ASR and alignment manual.
+
+```bash
+audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --text-out transcript.txt
+```
 
 ## Citrinet ASR
 

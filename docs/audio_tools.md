@@ -1,6 +1,14 @@
 # Audio Tools
 
-This page covers voice conversion, codec, and source-separation families. These models do not share one interface: MioCodec consumes source speech plus a target voice, while the separation models consume a mixture and write named stems.
+| Model | Family | Task(s) | Quick Start |
+|---|---|---|---|
+| MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
+| Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |
+| VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
+| HTDemucs | `htdemucs` | `sep` | [HTDemucs](#htdemucs) |
+| Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
+
+This page covers voice conversion, codec, and source-separation families. These models do not share one interface: conversion models consume source speech plus a target voice, while the separation models consume a mixture and write named stems.
 
 Common CLI shape:
 
@@ -41,6 +49,22 @@ audiocpp_cli --task s2s --family miocodec --model models/MioCodec-25Hz-44.1kHz-v
 | `--task` | `vc`, `s2s` | required | Conversion task. |
 | `--out` | WAV path | required | Output audio path. |
 | `--session-option miocodec.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Model weight type when supported by each component. |
+
+## Seed-VC
+
+Seed-VC provides voice conversion and singing voice conversion routes. See [Seed-VC](models/seed_vc.md) for the full route manual.
+
+```bash
+audiocpp_cli --task vc --family seed_vc --model models/Seed-VC --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
+```
+
+## VeVo2
+
+VeVo2 covers speech, singing, voice conversion, singing conversion, and editing routes. See [VeVo2](models/vevo2.md) for the full route manual.
+
+```bash
+audiocpp_cli --task vc --family vevo2 --model models/VeVo2 --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
+```
 
 ## HTDemucs
 
