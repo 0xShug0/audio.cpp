@@ -319,6 +319,7 @@ QwenDecoderLayerConfig qwen_decoder_layer_config_from_stack(const QwenDecoderSta
     out.rms_norm_eps = config.rms_norm_eps;
     out.rope_theta = config.rope_theta;
     out.rope_type = config.rope_type;
+    out.position_encoding = config.position_encoding;
     out.attention_precision = config.attention_precision;
     out.projection_precision = config.projection_precision;
     out.qkv_layout = config.qkv_layout;
@@ -429,14 +430,16 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
     }
     auto v = reshape_qwen_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
 
-    const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
-        ? &*weights.rope_frequency_factors
-        : nullptr;
-    q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
-    k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
-    if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
-        q = activation_cast(ctx, q, config_.activation_cast);
-        k = activation_cast(ctx, k, config_.activation_cast);
+    if (config_.position_encoding == QwenDecoderPositionEncoding::Rotary) {
+        const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
+            ? &*weights.rope_frequency_factors
+            : nullptr;
+        q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
+        k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+        if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
+            q = activation_cast(ctx, q, config_.activation_cast);
+            k = activation_cast(ctx, k, config_.activation_cast);
+        }
     }
     k = core::ensure_backend_addressable_layout(ctx, k);
     v = core::ensure_backend_addressable_layout(ctx, v);
@@ -563,14 +566,16 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     }
     auto v = reshape_qwen_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
 
-    const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
-        ? &*weights.rope_frequency_factors
-        : nullptr;
-    q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
-    k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
-    if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
-        q = activation_cast(ctx, q, config_.activation_cast);
-        k = activation_cast(ctx, k, config_.activation_cast);
+    if (config_.position_encoding == QwenDecoderPositionEncoding::Rotary) {
+        const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
+            ? &*weights.rope_frequency_factors
+            : nullptr;
+        q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
+        k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+        if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
+            q = activation_cast(ctx, q, config_.activation_cast);
+            k = activation_cast(ctx, k, config_.activation_cast);
+        }
     }
     k = core::ensure_backend_addressable_layout(ctx, k);
     v = core::ensure_backend_addressable_layout(ctx, v);

@@ -29,6 +29,11 @@ enum class QwenDecoderQKVLayout {
     PackedQKV,
 };
 
+enum class QwenDecoderPositionEncoding {
+    Rotary,
+    None,
+};
+
 struct QwenDecoderActivationCastPolicy {
     bool enabled = false;
     ggml_type type = GGML_TYPE_BF16;
@@ -71,6 +76,7 @@ struct QwenDecoderLayerConfig {
     float rms_norm_eps = 1e-5f;
     float rope_theta = 10000.0f;
     int rope_type = GGML_ROPE_TYPE_NEOX;
+    QwenDecoderPositionEncoding position_encoding = QwenDecoderPositionEncoding::Rotary;
     ggml_prec attention_precision = GGML_PREC_F32;
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     QwenDecoderQKVLayout qkv_layout = QwenDecoderQKVLayout::Separate;
@@ -146,6 +152,7 @@ struct QwenDecoderStackConfig {
     float rms_norm_eps = 1e-5f;
     float rope_theta = 10000.0f;
     int rope_type = GGML_ROPE_TYPE_NEOX;
+    QwenDecoderPositionEncoding position_encoding = QwenDecoderPositionEncoding::Rotary;
     ggml_prec attention_precision = GGML_PREC_F32;
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     QwenDecoderQKVLayout qkv_layout = QwenDecoderQKVLayout::Separate;
