@@ -56,7 +56,9 @@ Measured on Ubuntu 24.04 (WSL2) with OpenMP optimization:
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--temperature` | float | `0.8` | Main model sampling temperature. |
-| `--subtalker-temperature` | float | `0.8` | Acoustic decoder / subtalker sampling temperature. |
-| `--subtalker-do-sample` | bool | `true` | Enable sampling in the acoustic decoder. |
 | `--voice-ref` | path | `sample.wav` | Reference speaker WAV file for voice cloning. |
 | `--reference-text` | text | none | Transcript of the spoken reference speaker WAV. |
+| `--request-option speaker_embedding_file=<path>` | path | none | Optional pre-extracted speaker embedding `.emb.txt` file (contains 192 comma-separated floats). |
+| `--request-option speaker_embedding=<csv>` | csv floats | none | Optional raw comma-separated list of 192 speaker embedding float values. |
+| `--request-option subtalker_temperature=<float>` | float | `0.8` | Acoustic decoder / subtalker sampling temperature. |
+| `--request-option subtalker_do_sample=true\|false` | bool | `true` | Enable sampling in the acoustic decoder. |
