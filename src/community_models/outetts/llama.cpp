@@ -7,7 +7,7 @@
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
-#include "../../models/common/constant_tensor_cache.h"
+#include "../common/constant_tensor_cache.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
