@@ -15,7 +15,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "../../models/common/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -515,7 +515,7 @@ core::TensorValue causal_conv1d(
         GGML_TYPE_F32);
     if (weights.weight.type != GGML_TYPE_F32 && weights.weight.type != GGML_TYPE_F16) {
         throw std::runtime_error(
-            std::string("Qwen3 speech decoder depthwise conv does not support weight type: ") +
+            std::string("VieNeu-TTS speech decoder depthwise conv does not support weight type: ") +
             ggml_type_name(weights.weight.type));
     }
     ggml_tensor * result = nullptr;
@@ -523,7 +523,7 @@ core::TensorValue causal_conv1d(
         ggml_tensor * bias = nullptr;
         if (weights.use_bias) {
             if (!weights.bias.has_value()) {
-                throw std::runtime_error("Qwen3 speech decoder depthwise conv requires bias");
+                throw std::runtime_error("VieNeu-TTS speech decoder depthwise conv requires bias");
             }
             bias = core::reshape_tensor(build_ctx, *weights.bias, core::TensorShape::from_dims({weights.out_channels, 1})).tensor;
         }
@@ -916,13 +916,13 @@ public:
           backend_(execution_context.backend()),
           compute_threads_(std::max(1, execution_context.config().threads)) {
         if (weights_ == nullptr) {
-            throw std::runtime_error("Qwen3 speech decoder graph requires weights");
+            throw std::runtime_error("VieNeu-TTS speech decoder graph requires weights");
         }
         if (code_frames_ <= 0) {
-            throw std::runtime_error("Qwen3 speech decoder graph requires positive frame count");
+            throw std::runtime_error("VieNeu-TTS speech decoder graph requires positive frame count");
         }
         if (backend_ == nullptr) {
-            throw std::runtime_error("Qwen3 speech decoder backend is not initialized");
+            throw std::runtime_error("VieNeu-TTS speech decoder backend is not initialized");
         }
         const auto & config = weights_->config;
         waveform_frames_ = code_frames_;
@@ -940,7 +940,7 @@ public:
         };
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize Qwen3 speech decoder ggml context");
+            throw std::runtime_error("failed to initialize VieNeu-TTS speech decoder ggml context");
         }
 
         codes_ = ggml_new_tensor_3d(ctx_.get(), GGML_TYPE_I32, code_frames_, config.num_quantizers, 1);
@@ -1015,7 +1015,7 @@ public:
 
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-            throw std::runtime_error("failed to allocate Qwen3 speech decoder graph");
+            throw std::runtime_error("failed to allocate VieNeu-TTS speech decoder graph");
         }
         std::vector<int32_t> positions(static_cast<size_t>(code_frames_));
         for (int64_t i = 0; i < code_frames_; ++i) {
@@ -1046,7 +1046,7 @@ public:
         const int64_t input_frames = static_cast<int64_t>(code_count / weights_->config.num_quantizers);
         const size_t expected = static_cast<size_t>(code_frames_ * weights_->config.num_quantizers);
         if (code_count % static_cast<size_t>(weights_->config.num_quantizers) != 0 || input_frames <= 0 || input_frames > code_frames_) {
-            throw std::runtime_error("Qwen3 speech decoder code count exceeds graph capacity");
+            throw std::runtime_error("VieNeu-TTS speech decoder code count exceeds graph capacity");
         }
         const auto upload_start = Clock::now();
         std::vector<int32_t> tensor_codes(expected, 0);
@@ -1064,7 +1064,7 @@ public:
         ggml_backend_synchronize(backend_);
         last_graph_compute_ms_ = engine::debug::elapsed_ms(compute_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Qwen3 speech decoder graph compute failed");
+            throw std::runtime_error("VieNeu-TTS speech decoder graph compute failed");
         }
         const auto read_start = Clock::now();
         std::vector<float> audio(static_cast<size_t>(waveform_frames_), 0.0F);
@@ -1114,7 +1114,7 @@ Qwen3SpeechTokenizerDecoderRuntime::Qwen3SpeechTokenizerDecoderRuntime(
       execution_context_(&execution_context),
       graph_arena_bytes_(graph_arena_bytes) {
     if (assets_ == nullptr) {
-        throw std::runtime_error("Qwen3 speech tokenizer decoder requires assets");
+        throw std::runtime_error("VieNeu-TTS speech tokenizer decoder requires assets");
     }
     weights_ = load_weights(
         *assets_,
@@ -1134,10 +1134,10 @@ Qwen3SpeechTokenizerDecoderRuntime::~Qwen3SpeechTokenizerDecoderRuntime() = defa
 runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3SpeechCodes & codec_codes) const {
     const auto total_start = Clock::now();
     if (codec_codes.frames <= 0 || codec_codes.code_groups != weights_->config.num_quantizers) {
-        throw std::runtime_error("Qwen3 speech decoder received invalid codec shape");
+        throw std::runtime_error("VieNeu-TTS speech decoder received invalid codec shape");
     }
     if (static_cast<int64_t>(codec_codes.codes.size()) != codec_codes.frames * codec_codes.code_groups) {
-        throw std::runtime_error("Qwen3 speech decoder codec payload size mismatch");
+        throw std::runtime_error("VieNeu-TTS speech decoder codec payload size mismatch");
     }
     std::vector<float> samples;
     samples.reserve(static_cast<size_t>(codec_codes.frames * kDecodeSamplesPerCode));
@@ -1182,11 +1182,11 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
         ++chunks;
         const int64_t drop = context * kDecodeSamplesPerCode;
         if (drop > static_cast<int64_t>(decoded.size())) {
-            throw std::runtime_error("Qwen3 speech decoder chunk context exceeds decoded waveform");
+            throw std::runtime_error("VieNeu-TTS speech decoder chunk context exceeds decoded waveform");
         }
         const int64_t valid_samples = chunk_frames * kDecodeSamplesPerCode;
         if (valid_samples < drop || valid_samples > static_cast<int64_t>(decoded.size())) {
-            throw std::runtime_error("Qwen3 speech decoder valid sample range exceeds decoded waveform");
+            throw std::runtime_error("VieNeu-TTS speech decoder valid sample range exceeds decoded waveform");
         }
         samples.insert(
             samples.end(),
@@ -1206,7 +1206,7 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode_and_trim_referen
     const Qwen3SpeechCodes & reference_codes,
     const Qwen3SpeechCodes & generated_codes) const {
     if (reference_codes.code_groups != generated_codes.code_groups) {
-        throw std::runtime_error("Qwen3 speech decoder reference/generated code group mismatch");
+        throw std::runtime_error("VieNeu-TTS speech decoder reference/generated code group mismatch");
     }
     Qwen3SpeechCodes combined;
     combined.frames = reference_codes.frames + generated_codes.frames;
@@ -1221,7 +1221,7 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode_and_trim_referen
               static_cast<double>(audio.samples.size()))
         : 0;
     if (cut < 0 || cut > static_cast<int64_t>(audio.samples.size())) {
-        throw std::runtime_error("Qwen3 speech decoder reference trim is out of range");
+        throw std::runtime_error("VieNeu-TTS speech decoder reference trim is out of range");
     }
     audio.samples.erase(audio.samples.begin(), audio.samples.begin() + cut);
     return audio;

@@ -14,7 +14,7 @@
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/sampling/torch_random.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "../../models/common/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -183,7 +183,7 @@ std::string ascii_lower(std::string value) {
 template <typename Config>
 int64_t attention_head_dim(const Config & config) {
     if (config.num_attention_heads <= 0 || config.num_key_value_heads <= 0 || config.head_dim <= 0) {
-        throw std::runtime_error("Qwen3 talker attention configuration is invalid");
+        throw std::runtime_error("VieNeu-TTS talker attention configuration is invalid");
     }
     return config.head_dim;
 }
@@ -196,7 +196,7 @@ core::TensorValue cache_view(
     int64_t heads,
     int64_t head_dim) {
     if (start < 0 || steps <= 0 || start + steps > cache.shape.dims[1]) {
-        throw std::runtime_error("Qwen3 talker cache view range is invalid");
+        throw std::runtime_error("VieNeu-TTS talker cache view range is invalid");
     }
     return core::wrap_tensor(
         ggml_view_4d(
@@ -290,12 +290,12 @@ std::vector<float> linear_host(
     int64_t in_features,
     const LinearTensorWeights & weights) {
     if (weights.weight.shape.dims[0] <= 0 || weights.weight.shape.dims[1] != in_features) {
-        throw std::runtime_error("Qwen3 talker host linear weight shape mismatch");
+        throw std::runtime_error("VieNeu-TTS talker host linear weight shape mismatch");
     }
     const int64_t out_features = weights.weight.shape.dims[0];
-    const auto weight_values = assets::tensor_data_to_f32("Qwen3 talker host linear weight", weights.weight);
+    const auto weight_values = assets::tensor_data_to_f32("VieNeu-TTS talker host linear weight", weights.weight);
     const auto bias_values = weights.bias.has_value()
-        ? assets::tensor_data_to_f32("Qwen3 talker host linear bias", *weights.bias)
+        ? assets::tensor_data_to_f32("VieNeu-TTS talker host linear bias", *weights.bias)
         : std::vector<float>{};
     std::vector<float> output(static_cast<size_t>(rows * out_features), 0.0F);
     for (int64_t row = 0; row < rows; ++row) {
@@ -336,7 +336,7 @@ core::TensorValue project_code_predictor_input(
         return input;
     }
     if (!weights.code_predictor.small_to_mtp_projection.has_value()) {
-        throw std::runtime_error("Qwen3 code predictor requires small_to_mtp_projection weights");
+        throw std::runtime_error("VieNeu-TTS code predictor requires small_to_mtp_projection weights");
     }
     const auto & projection = *weights.code_predictor.small_to_mtp_projection;
     return modules::LinearModule({config.talker.hidden_size, config.code_predictor.hidden_size, projection.bias.has_value()})
@@ -348,11 +348,11 @@ std::vector<float> lookup_rows(
     int64_t dim,
     const std::vector<int32_t> & ids) {
     if (table.shape.rank != 2 || table.shape.dims[1] != dim) {
-        throw std::runtime_error("Qwen3 talker embedding table shape mismatch");
+        throw std::runtime_error("VieNeu-TTS talker embedding table shape mismatch");
     }
     const size_t row_bytes = ggml_row_size(table.type, dim);
     if (table.bytes.size() != static_cast<size_t>(table.shape.dims[0]) * row_bytes) {
-        throw std::runtime_error("Qwen3 talker embedding table byte size mismatch");
+        throw std::runtime_error("VieNeu-TTS talker embedding table byte size mismatch");
     }
     std::vector<float> output(static_cast<size_t>(ids.size() * static_cast<size_t>(dim)), 0.0F);
     for (size_t row = 0; row < ids.size(); ++row) {
@@ -370,7 +370,7 @@ std::vector<float> lookup_rows(
                 std::fprintf(stderr, "%d ", item);
             }
             std::fprintf(stderr, "\n");
-            throw std::runtime_error("Qwen3 talker embedding id out of range");
+            throw std::runtime_error("VieNeu-TTS talker embedding id out of range");
         }
         auto * dst = output.data() + row * static_cast<size_t>(dim);
         const size_t offset = static_cast<size_t>(id) * row_bytes;
@@ -383,7 +383,7 @@ std::vector<float> lookup_rows(
         } else if (table.type == GGML_TYPE_BF16) {
             ggml_bf16_to_fp32_row(reinterpret_cast<const ggml_bf16_t *>(src), dst, dim);
         } else {
-            throw std::runtime_error("Qwen3 talker embedding table must be f32, f16, or bf16");
+            throw std::runtime_error("VieNeu-TTS talker embedding table must be f32, f16, or bf16");
         }
     }
     return output;
@@ -404,7 +404,7 @@ std::vector<float> row_at(const std::vector<float> & rows, int64_t row, int64_t 
 
 std::vector<float> add_rows(const std::vector<float> & lhs, const std::vector<float> & rhs) {
     if (lhs.size() != rhs.size()) {
-        throw std::runtime_error("Qwen3 talker add_rows shape mismatch");
+        throw std::runtime_error("VieNeu-TTS talker add_rows shape mismatch");
     }
     std::vector<float> out(lhs.size(), 0.0F);
     for (size_t i = 0; i < lhs.size(); ++i) {
@@ -447,7 +447,7 @@ PromptEmbeddingState build_prompt_state(
     const VietneuTalkerWeights & weights) {
     const auto & config = root_config.talker;
     if (prefill.input_ids.size() < 8) {
-        throw std::runtime_error("Qwen3 talker prefill input ids are too short");
+        throw std::runtime_error("VieNeu-TTS talker prefill input ids are too short");
     }
     const auto tts_special_hidden = lookup_rows(
         weights.text_embedding,
@@ -468,11 +468,11 @@ PromptEmbeddingState build_prompt_state(
         const std::string speaker = ascii_lower(prefill.speaker);
         const auto speaker_it = config.speaker_id.find(speaker);
         if (speaker_it == config.speaker_id.end()) {
-            throw std::runtime_error("Qwen3 custom voice unsupported speaker: " + prefill.speaker);
+            throw std::runtime_error("VieNeu-TTS custom voice unsupported speaker: " + prefill.speaker);
         }
         const auto dialect_it = config.speaker_dialect.find(speaker);
         if (dialect_it == config.speaker_dialect.end()) {
-            throw std::runtime_error("Qwen3 custom voice missing dialect entry for speaker: " + prefill.speaker);
+            throw std::runtime_error("VieNeu-TTS custom voice missing dialect entry for speaker: " + prefill.speaker);
         }
         if ((language == "chinese" || language == "auto") && dialect_it->second.has_value()) {
             language = *dialect_it->second;
@@ -493,7 +493,7 @@ PromptEmbeddingState build_prompt_state(
     } else {
         const auto language_it = config.codec_language_id.find(language);
         if (language_it == config.codec_language_id.end()) {
-            throw std::runtime_error("Qwen3 talker unsupported language: " + prefill.language);
+            throw std::runtime_error("VieNeu-TTS talker unsupported language: " + prefill.language);
         }
         codec_prefix = {
             static_cast<int32_t>(config.codec_think_id),
@@ -652,10 +652,10 @@ PromptEmbeddingState build_prompt_state(
     }
 
     if (!prefill.speaker_embedding.has_value() || prefill.speaker_embedding->dims != config.hidden_size) {
-        throw std::runtime_error("Qwen3 talker voice clone prefill requires speaker embedding");
+        throw std::runtime_error("VieNeu-TTS talker voice clone prefill requires speaker embedding");
     }
     if (!prefill.reference_codes.has_value() || prefill.reference_ids.empty()) {
-        throw std::runtime_error("Qwen3 talker ICL prefill requires reference ids and codes");
+        throw std::runtime_error("VieNeu-TTS talker ICL prefill requires reference ids and codes");
     }
 
     PromptEmbeddingState state;
@@ -879,7 +879,7 @@ VietneuTalkerWeights load_talker_weights(
             weights.xvec_proj_ln_bias = source.require_f32_tensor("xvec_proj.1.bias", {config.hidden_size});
         }
     } else {
-        // Standard Qwen3 loading
+        // Standard VieNeu-TTS loading
         weights.codec_embedding = source.require_tensor(
             "talker.model.codec_embedding.weight",
             assets::TensorStorageType::Native,
@@ -1063,10 +1063,10 @@ public:
           threads_(threads),
           graph_arena_bytes_(graph_arena_bytes) {
         if (assets_ == nullptr) {
-            throw std::runtime_error("Qwen3 talker weights runtime requires assets");
+            throw std::runtime_error("VieNeu-TTS talker weights runtime requires assets");
         }
         if (threads_ <= 0) {
-            throw std::runtime_error("Qwen3 talker weights runtime requires positive thread count");
+            throw std::runtime_error("VieNeu-TTS talker weights runtime requires positive thread count");
         }
         backend_type_ = backend_type;
         sampling_policy_ = backend_type_ == core::BackendType::Cuda
@@ -1074,7 +1074,7 @@ public:
                   backend_type_,
                   device,
                   "vietneu_tts.talker.cuda_sampling_policy",
-                  "Qwen3 TTS",
+                  "VieNeu-TTS TTS",
                   engine::sampling::TorchCudaSamplingPolicyFailureMode::StrictCuda)
             : engine::sampling::TorchCudaSamplingPolicy{};
         backend_ = core::init_backend({backend_type_, device, threads_});
@@ -1153,12 +1153,12 @@ public:
         : weights_(std::move(weights)),
           prompt_capacity_(prompt_capacity) {
         if (prompt_capacity_ <= 0) {
-            throw std::runtime_error("Qwen3 talker prefill graph requires positive prompt capacity");
+            throw std::runtime_error("VieNeu-TTS talker prefill graph requires positive prompt capacity");
         }
         ggml_init_params params{weights_->graph_arena_bytes(), nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize Qwen3 talker prefill graph context");
+            throw std::runtime_error("failed to initialize VieNeu-TTS talker prefill graph context");
         }
         const auto & config = weights_->assets().config.talker;
         const auto & tensor_weights = weights_->weights();
@@ -1179,7 +1179,7 @@ public:
                                    make_qwen_decoder_weights(constants, tensor_weights.layers, tensor_weights.norm, tensor_weights.codec_head));
         for (const auto & layer : decoder_out.state.layers) {
             if (!layer.key.has_value() || !layer.value.has_value()) {
-                throw std::runtime_error("Qwen3 talker prefill decoder did not return K/V state");
+                throw std::runtime_error("VieNeu-TTS talker prefill decoder did not return K/V state");
             }
             keys_.push_back(layer.key->tensor);
             values_.push_back(layer.value->tensor);
@@ -1193,7 +1193,7 @@ public:
         constants.ensure_uploaded();
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
         if (buffer_ == nullptr) {
-            throw std::runtime_error("failed to allocate Qwen3 talker prefill graph");
+            throw std::runtime_error("failed to allocate VieNeu-TTS talker prefill graph");
         }
         std::vector<int32_t> positions(static_cast<size_t>(prompt_capacity_), 0);
         for (int64_t i = 0; i < prompt_capacity_; ++i) {
@@ -1221,14 +1221,14 @@ public:
     OutputWithCache run_with_state(const std::vector<float> & embeddings) {
         const auto & config = weights_->assets().config.talker;
         if (static_cast<int64_t>(embeddings.size()) != prompt_capacity_ * config.hidden_size) {
-            throw std::runtime_error("Qwen3 talker prefill embedding size mismatch");
+            throw std::runtime_error("VieNeu-TTS talker prefill embedding size mismatch");
         }
         ggml_backend_tensor_set(input_, embeddings.data(), 0, embeddings.size() * sizeof(float));
         core::set_backend_threads(weights_->backend(), weights_->threads());
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), graph_);
         ggml_backend_synchronize(weights_->backend());
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Qwen3 talker prefill graph compute failed");
+            throw std::runtime_error("VieNeu-TTS talker prefill graph compute failed");
         }
         OutputWithCache out;
         const auto & root_config = weights_->assets().config;
@@ -1276,12 +1276,12 @@ public:
         : weights_(std::move(weights)),
           cache_steps_(cache_steps) {
         if (cache_steps_ <= 0) {
-            throw std::runtime_error("Qwen3 talker cached step graph requires positive cache capacity");
+            throw std::runtime_error("VieNeu-TTS talker cached step graph requires positive cache capacity");
         }
         ggml_init_params params{weights_->graph_arena_bytes(), nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize Qwen3 talker cached step graph context");
+            throw std::runtime_error("failed to initialize VieNeu-TTS talker cached step graph context");
         }
         const auto & config = weights_->assets().config.talker;
         const auto & tensor_weights = weights_->weights();
@@ -1321,7 +1321,7 @@ public:
         constants.ensure_uploaded();
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
         if (buffer_ == nullptr) {
-            throw std::runtime_error("failed to allocate Qwen3 talker cached step graph");
+            throw std::runtime_error("failed to allocate VieNeu-TTS talker cached step graph");
         }
         attention_mask_buffer_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-INFINITY));
     }
@@ -1353,11 +1353,11 @@ public:
         last_timing_ = {};
         const auto & config = weights_->assets().config.talker;
         if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
-            throw std::runtime_error("Qwen3 talker cached step embedding size mismatch");
+            throw std::runtime_error("VieNeu-TTS talker cached step embedding size mismatch");
         }
 
         if (step_cache_.valid_steps() >= cache_steps_) {
-            throw std::runtime_error("Qwen3 talker cached step exceeds cache capacity");
+            throw std::runtime_error("VieNeu-TTS talker cached step exceeds cache capacity");
         }
         auto timing_start = Clock::now();
         ggml_backend_tensor_set(input_, embedding.data(), 0, embedding.size() * sizeof(float));
@@ -1384,7 +1384,7 @@ public:
         ggml_backend_synchronize(weights_->backend());
         last_timing_.graph_compute_ms = engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Qwen3 talker cached step graph compute failed");
+            throw std::runtime_error("VieNeu-TTS talker cached step graph compute failed");
         }
         VietneuTalkerPrefillResult out;
         const auto & root_config = weights_->assets().config;
@@ -1425,7 +1425,7 @@ private:
 
 int32_t argmax_index(const std::vector<float> & values) {
     if (values.empty()) {
-        throw std::runtime_error("Qwen3 talker cannot select from empty logits");
+        throw std::runtime_error("VieNeu-TTS talker cannot select from empty logits");
     }
     size_t best = 0;
     for (size_t i = 1; i < values.size(); ++i) {
@@ -1446,7 +1446,7 @@ int32_t sample_index(
     uint64_t seed,
     uint64_t call_index) {
     if (temperature <= 0.0F) {
-        throw std::runtime_error("Qwen3 sampler temperature must be positive");
+        throw std::runtime_error("VieNeu-TTS sampler temperature must be positive");
     }
     std::vector<int32_t> indices;
     indices.reserve(logits.size());
@@ -1456,7 +1456,7 @@ int32_t sample_index(
         }
     }
     if (indices.empty()) {
-        throw std::runtime_error("Qwen3 sampler has no finite logits");
+        throw std::runtime_error("VieNeu-TTS sampler has no finite logits");
     }
     std::sort(indices.begin(), indices.end(), [&](int32_t lhs, int32_t rhs) {
         return logits[static_cast<size_t>(lhs)] > logits[static_cast<size_t>(rhs)];
@@ -1505,7 +1505,7 @@ int32_t sample_index(
             }
         }
         if (best_token < 0) {
-            throw std::runtime_error("Qwen3 CUDA sampler failed to select a token");
+            throw std::runtime_error("VieNeu-TTS CUDA sampler failed to select a token");
         }
         return best_token;
     }
@@ -1521,7 +1521,7 @@ void apply_main_talker_processors(
     float repetition_penalty) {
     const int64_t expected_size = (static_cast<int64_t>(logits.size()) == config.text_vocab_size) ? config.text_vocab_size : config.vocab_size;
     if (static_cast<int64_t>(logits.size()) != expected_size) {
-        throw std::runtime_error("Qwen3 talker logits size mismatch");
+        throw std::runtime_error("VieNeu-TTS talker logits size mismatch");
     }
     const int64_t eos_token_id = expected_size == config.text_vocab_size ? 2 : config.codec_eos_token_id;
     if (step < 2 && eos_token_id >= 0 && eos_token_id < expected_size) {
@@ -1537,7 +1537,7 @@ void apply_main_talker_processors(
         return;
     }
     if (repetition_penalty <= 0.0F) {
-        throw std::runtime_error("Qwen3 talker repetition penalty must be positive");
+        throw std::runtime_error("VieNeu-TTS talker repetition penalty must be positive");
     }
     std::unordered_set<int32_t> seen_tokens;
     for (const int32_t token : generated_first_codes) {
@@ -1558,10 +1558,10 @@ std::vector<float> frame_embedding(
     const VietneuTalkerWeights & weights,
     const VietneuTTSTalkerConfig & config) {
     if (static_cast<int64_t>(frame.codes.size()) != config.num_code_groups) {
-        throw std::runtime_error("Qwen3 talker frame code group count mismatch");
+        throw std::runtime_error("VieNeu-TTS talker frame code group count mismatch");
     }
     if (static_cast<int64_t>(text_hidden.size()) != config.hidden_size) {
-        throw std::runtime_error("Qwen3 talker frame text hidden size mismatch");
+        throw std::runtime_error("VieNeu-TTS talker frame text hidden size mismatch");
     }
     std::vector<float> out = text_hidden;
     for (int64_t group = 0; group < config.num_code_groups; ++group) {
@@ -1582,12 +1582,12 @@ public:
         : weights_(std::move(weights)),
           code_groups_(weights_->assets().config.talker.num_code_groups) {
         if (code_groups_ <= 1) {
-            throw std::runtime_error("Qwen3 code predictor requires multiple code groups");
+            throw std::runtime_error("VieNeu-TTS code predictor requires multiple code groups");
         }
         ggml_init_params params{weights_->graph_arena_bytes(), nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize Qwen3 code predictor graph context");
+            throw std::runtime_error("failed to initialize VieNeu-TTS code predictor graph context");
         }
         const auto & config = weights_->assets().config.code_predictor;
         const int64_t head_dim = attention_head_dim(config);
@@ -1616,7 +1616,7 @@ public:
         constants.ensure_uploaded();
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
         if (buffer_ == nullptr) {
-            throw std::runtime_error("failed to allocate Qwen3 code predictor graph");
+            throw std::runtime_error("failed to allocate VieNeu-TTS code predictor graph");
         }
 
         step_attention_mask_buffer_.assign(static_cast<size_t>(code_groups_ + 1), ggml_fp32_to_fp16(-INFINITY));
@@ -1711,10 +1711,10 @@ private:
         const auto & config = weights_->assets().config;
         if (input.talker_hidden.dims != config.talker.hidden_size ||
             static_cast<int64_t>(input.talker_hidden.values.size()) != config.talker.hidden_size) {
-            throw std::runtime_error("Qwen3 code predictor talker hidden shape mismatch");
+            throw std::runtime_error("VieNeu-TTS code predictor talker hidden shape mismatch");
         }
         if (input.first_code < 0 || input.first_code >= config.talker.text_vocab_size) {
-            throw std::runtime_error("Qwen3 code predictor first code out of range");
+            throw std::runtime_error("VieNeu-TTS code predictor first code out of range");
         }
         std::vector<float> embeddings(static_cast<size_t>(2 * config.talker.hidden_size), 0.0F);
         std::copy(input.talker_hidden.values.begin(), input.talker_hidden.values.end(), embeddings.begin());
@@ -1755,7 +1755,7 @@ private:
         for (size_t layer_index = 0; layer_index < decoder_out.state.layers.size(); ++layer_index) {
             const auto & layer = decoder_out.state.layers[layer_index];
             if (!layer.key.has_value() || !layer.value.has_value()) {
-                throw std::runtime_error("Qwen3 code predictor prefill decoder did not return K/V state");
+                throw std::runtime_error("VieNeu-TTS code predictor prefill decoder did not return K/V state");
             }
             auto key_dest = cache_view(ctx, cache_keys_[layer_index], 0, 2, config.num_key_value_heads, head_dim);
             auto value_dest = cache_view(ctx, cache_values_[layer_index], 0, 2, config.num_key_value_heads, head_dim);
@@ -1851,7 +1851,7 @@ private:
     VietneuTalkerPrefillLogits run_prefill(const std::vector<float> & embeddings) {
         const auto & config = weights_->assets().config.talker;
         if (static_cast<int64_t>(embeddings.size()) != 2 * config.hidden_size) {
-            throw std::runtime_error("Qwen3 code predictor prefill embedding size mismatch");
+            throw std::runtime_error("VieNeu-TTS code predictor prefill embedding size mismatch");
         }
         auto timing_start = Clock::now();
         ggml_backend_tensor_set(prefill_input_, embeddings.data(), 0, embeddings.size() * sizeof(float));
@@ -1862,7 +1862,7 @@ private:
         ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Qwen3 code predictor prefill graph compute failed");
+            throw std::runtime_error("VieNeu-TTS code predictor prefill graph compute failed");
         }
         valid_steps_ = 2;
         current_end_ = 2;
@@ -1873,13 +1873,13 @@ private:
     VietneuTalkerPrefillLogits run_step(int64_t group, const std::vector<float> & embedding) {
         const auto & config = weights_->assets().config;
         if (group <= 0 || group >= code_groups_) {
-            throw std::runtime_error("Qwen3 code predictor step group out of range");
+            throw std::runtime_error("VieNeu-TTS code predictor step group out of range");
         }
         if (static_cast<int64_t>(embedding.size()) != config.talker.hidden_size) {
-            throw std::runtime_error("Qwen3 code predictor step embedding size mismatch");
+            throw std::runtime_error("VieNeu-TTS code predictor step embedding size mismatch");
         }
         if (valid_steps_ <= 0 || valid_steps_ >= code_groups_ + 1) {
-            throw std::runtime_error("Qwen3 code predictor cache state is invalid for step");
+            throw std::runtime_error("VieNeu-TTS code predictor cache state is invalid for step");
         }
         auto & step_graph = step_graphs_.at(static_cast<size_t>(group - 1));
         auto timing_start = Clock::now();
@@ -1905,7 +1905,7 @@ private:
         ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Qwen3 code predictor step graph compute failed");
+            throw std::runtime_error("VieNeu-TTS code predictor step graph compute failed");
         }
         ++valid_steps_;
         ++current_end_;
@@ -1954,10 +1954,10 @@ public:
           prompt_capacity_(prompt_capacity),
           generation_capacity_(generation_capacity) {
         if (weights_ == nullptr) {
-            throw std::runtime_error("Qwen3 talker step runtime requires weights runtime");
+            throw std::runtime_error("VieNeu-TTS talker step runtime requires weights runtime");
         }
         if (prompt_capacity_ <= 0 || generation_capacity_ <= 0) {
-            throw std::runtime_error("Qwen3 talker step runtime requires positive capacities");
+            throw std::runtime_error("VieNeu-TTS talker step runtime requires positive capacities");
         }
     }
 
@@ -1968,7 +1968,7 @@ public:
         const auto total_start = Clock::now();
         const int64_t max_new_tokens = options.max_new_tokens;
         if (max_new_tokens <= 0 || max_new_tokens > generation_capacity_) {
-            throw std::runtime_error("Qwen3 talker generation token count exceeds capacity");
+            throw std::runtime_error("VieNeu-TTS talker generation token count exceeds capacity");
         }
         std::mt19937 rng(options.seed);
         const auto prompt_state_start = Clock::now();
@@ -1983,7 +1983,7 @@ public:
         const auto & config = weights_->assets().config.talker;
         const int64_t prompt_steps = static_cast<int64_t>(state.prompt.size()) / config.hidden_size;
         if (prompt_steps <= 0 || prompt_steps > prompt_capacity_) {
-            throw std::runtime_error("Qwen3 talker prompt exceeds step runtime capacity");
+            throw std::runtime_error("VieNeu-TTS talker prompt exceeds step runtime capacity");
         }
         const auto prefill_start = Clock::now();
         auto prefill_output = run_prefill_embeddings_with_state(state.prompt, prompt_steps);
@@ -2153,7 +2153,7 @@ private:
         const std::vector<float> & embeddings,
         int64_t prompt_steps) {
         if (prompt_steps > prompt_capacity_) {
-            throw std::runtime_error("Qwen3 talker prompt exceeds step runtime capacity");
+            throw std::runtime_error("VieNeu-TTS talker prompt exceeds step runtime capacity");
         }
         double graph_build_ms = 0.0;
         const bool graph_cache_hit = graph_ != nullptr && graph_->matches(*weights_, prompt_steps);
@@ -2179,7 +2179,7 @@ private:
 
 VietneuTalkerStepRuntime::VietneuTalkerStepRuntime(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {
     if (impl_ == nullptr) {
-        throw std::runtime_error("Qwen3 talker step runtime requires implementation");
+        throw std::runtime_error("VieNeu-TTS talker step runtime requires implementation");
     }
 }
 

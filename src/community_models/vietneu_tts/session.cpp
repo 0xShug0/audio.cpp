@@ -3,8 +3,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
-#include "engine/community_models/vietneu_tts/prompt_tts_custom_voice.h"
-#include "engine/community_models/vietneu_tts/prompt_tts_voice_design.h"
+
 
 #include <algorithm>
 #include <chrono>
@@ -13,12 +12,42 @@
 #include <stdexcept>
 #include <utility>
 #include <sstream>
+#include <fstream>
 
 namespace engine::models::vietneu_tts {
 namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr int64_t kDefaultTextChunkSize = 8192;
+
+std::vector<float> parse_speaker_embedding_file(const std::string & filepath) {
+    std::ifstream ifs(filepath);
+    if (!ifs.is_open()) {
+        throw std::runtime_error("Failed to open speaker embedding file: " + filepath);
+    }
+    std::string content;
+    if (!std::getline(ifs, content)) {
+        throw std::runtime_error("Speaker embedding file is empty: " + filepath);
+    }
+    std::vector<float> vals;
+    std::stringstream ss(content);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        try {
+            token.erase(0, token.find_first_not_of(" \t\r\n"));
+            token.erase(token.find_last_not_of(" \t\r\n") + 1);
+            if (!token.empty()) {
+                vals.push_back(std::stof(token));
+            }
+        } catch (const std::exception & e) {
+            throw std::runtime_error("Failed to parse float value '" + token + "' in speaker embedding file: " + filepath + " (" + e.what() + ")");
+        }
+    }
+    if (vals.size() != 192) {
+        throw std::runtime_error("Speaker embedding file " + filepath + " must contain exactly 192 float values, but got " + std::to_string(vals.size()));
+    }
+    return vals;
+}
 
 runtime::AudioBuffer decode_moss_audio(
     const Qwen3SpeechCodes & codes,
@@ -49,7 +78,7 @@ runtime::AudioBuffer decode_moss_audio(
 
 std::shared_ptr<const VietneuTTSAssets> require_assets(std::shared_ptr<const VietneuTTSAssets> assets) {
     if (assets == nullptr) {
-        throw std::runtime_error("Qwen3 TTS session requires assets");
+        throw std::runtime_error("VieNeu-TTS TTS session requires assets");
     }
     return assets;
 }
@@ -61,7 +90,7 @@ VietneuTTSGenerationOptions generation_options_from_request(
     options.max_new_tokens = config.max_new_tokens;
     if (const auto value = runtime::parse_int_option(request.options, {"max_tokens"})) {
         if (*value <= 0) {
-            throw std::runtime_error("Qwen3 TTS max_tokens must be positive");
+            throw std::runtime_error("VieNeu-TTS TTS max_tokens must be positive");
         }
         options.max_new_tokens = *value;
     }
@@ -162,7 +191,7 @@ void validate_talker_weight_storage(engine::assets::TensorStorageType storage_ty
         storage_type == engine::assets::TensorStorageType::Q8_0) {
         return;
     }
-    throw std::runtime_error("Qwen3 TTS talker_weight_type currently supports only native, f32, f16, bf16, and q8_0");
+    throw std::runtime_error("VieNeu-TTS TTS talker_weight_type currently supports only native, f32, f16, bf16, and q8_0");
 }
 
 void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
@@ -262,7 +291,7 @@ VietneuTTSSession::VietneuTTSSession(
             key != "vietneu_tts.speech_decoder_weight_type" &&
             key != "vietneu_tts.voice_prompt_cache_slots" &&
             key != "vietneu_tts.mem_saver") {
-            throw std::runtime_error("unknown Qwen3 TTS session option: " + key);
+            throw std::runtime_error("unknown VieNeu-TTS TTS session option: " + key);
         }
     }
     talker_weights_ = talker_.create_weights_runtime(
@@ -289,13 +318,7 @@ VietneuTTSSession::VietneuTTSSession(
         throw std::runtime_error("Vietneu TTS currently supports offline sessions");
     }
     if (assets_->config.variant == VietneuTTSVariant::Base && task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Vietneu base TTS model only supports the Tts task");
-    }
-    if (assets_->config.variant == VietneuTTSVariant::VoiceDesign && task_.task != runtime::VoiceTaskKind::VoiceDesign) {
-        throw std::runtime_error("Vietneu voice design model only supports the VoiceDesign task");
-    }
-    if (assets_->config.variant == VietneuTTSVariant::CustomVoice && task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Vietneu custom voice model only supports the Tts task");
+        throw std::runtime_error("VieNeu-TTS base TTS model only supports the Tts task");
     }
     if (assets_->config.variant == VietneuTTSVariant::Base) {
         if (assets_->speech_tokenizer_weights->has_tensor("encoder.model.0.weight")) {
@@ -334,7 +357,7 @@ void VietneuTTSSession::prepare(const runtime::SessionPreparationRequest & reque
 }
 
 runtime::TaskResult VietneuTTSSession::run(const runtime::TaskRequest & request) {
-    require_prepared("Qwen3 TTS run");
+    require_prepared("VieNeu-TTS TTS run");
     const auto wall_start = Clock::now();
     auto release_talker_cached_step_graph = [&]() {
         if (mem_saver_) {
@@ -349,79 +372,10 @@ runtime::TaskResult VietneuTTSSession::run(const runtime::TaskRequest & request)
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
     const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
-    if (assets_->config.variant == VietneuTTSVariant::VoiceDesign) {
-        VietneuTTSVoiceDesignPromptBuilder prompt_builder(
-            text_tokenizer_,
-            assets_->config.talker.max_position_embeddings,
-            assets_->config.talker.max_position_embeddings);
-        double prefill_ms = 0.0;
-        double talker_ms = 0.0;
-        double decoder_ms = 0.0;
-        runtime::AudioBuffer merged_audio;
-        for (const auto & chunk_request : chunk_requests) {
-            const VietneuTTSRequest qwen_request = make_request(chunk_request);
-            const auto prefill_start = Clock::now();
-            const auto prefill = prompt_builder.build_prefill(qwen_request);
-            prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
-            const auto talker_start = Clock::now();
-            const auto codes = talker_step_->generate(
-                prefill,
-                qwen_request.generation,
-                qwen_request.generation.repetition_penalty);
-            talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
-            const auto decoder_start = Clock::now();
-            runtime::append_audio_buffer(
-                merged_audio,
-                decode_moss_audio(codes.generated_codes, *moss_speech_decoder_));
-            decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
-        }
-        release_talker_cached_step_graph();
-        runtime::TaskResult result;
-        result.audio_output = std::move(merged_audio);
-        debug::timing_log_scalar("vietneu_tts.voice_design_prefill_build_ms", prefill_ms);
-        debug::timing_log_scalar("vietneu_tts.talker_ms", talker_ms);
-        debug::timing_log_scalar("vietneu_tts.speech_decoder_ms", decoder_ms);
-        debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
-        return result;
-    }
-    if (assets_->config.variant == VietneuTTSVariant::CustomVoice) {
-        VietneuTTSCustomVoicePromptBuilder prompt_builder(
-            text_tokenizer_,
-            assets_->config.talker.max_position_embeddings,
-            assets_->config.talker.max_position_embeddings);
-        double prefill_ms = 0.0;
-        double talker_ms = 0.0;
-        double decoder_ms = 0.0;
-        runtime::AudioBuffer merged_audio;
-        for (const auto & chunk_request : chunk_requests) {
-            const VietneuTTSRequest qwen_request = make_request(chunk_request);
-            const auto prefill_start = Clock::now();
-            const auto prefill = prompt_builder.build_prefill(qwen_request);
-            prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
-            const auto talker_start = Clock::now();
-            const auto codes = talker_step_->generate(
-                prefill,
-                qwen_request.generation,
-                qwen_request.generation.repetition_penalty);
-            talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
-            const auto decoder_start = Clock::now();
-            runtime::append_audio_buffer(
-                merged_audio,
-                decode_moss_audio(codes.generated_codes, *moss_speech_decoder_));
-            decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
-        }
-        release_talker_cached_step_graph();
-        runtime::TaskResult result;
-        result.audio_output = std::move(merged_audio);
-        debug::timing_log_scalar("vietneu_tts.custom_voice_prefill_build_ms", prefill_ms);
-        debug::timing_log_scalar("vietneu_tts.talker_ms", talker_ms);
-        debug::timing_log_scalar("vietneu_tts.speech_decoder_ms", decoder_ms);
-        debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
-        return result;
-    }
+
     const VietneuTTSRequest first_request = make_request(chunk_requests.front());
     if (!first_request.voice_clone.has_value()) {
-        throw std::runtime_error("Qwen3 base TTS requires voice clone reference audio");
+        throw std::runtime_error("VieNeu-TTS base TTS requires voice clone reference audio");
     }
     VietneuTTSVoiceClonePromptBuilder prompt_builder(
         text_tokenizer_,
@@ -505,7 +459,7 @@ const Qwen3VoiceClonePrompt & VietneuTTSSession::resolve_voice_prompt(
         sample_hash,
     });
     if (cached == nullptr) {
-        throw std::runtime_error("Qwen3 TTS voice prompt cache insert failed");
+        throw std::runtime_error("VieNeu-TTS TTS voice prompt cache insert failed");
     }
     debug::trace_log_scalar("vietneu_tts.voice_prompt_cache.hit", 0);
     debug::trace_log_scalar("vietneu_tts.voice_prompt_cache.slots", static_cast<int64_t>(voice_prompt_cache_.capacity()));
@@ -516,7 +470,7 @@ const Qwen3VoiceClonePrompt & VietneuTTSSession::resolve_voice_prompt(
 
 VietneuTTSRequest VietneuTTSSession::make_request(const runtime::TaskRequest & request) const {
     if (!request.text_input.has_value()) {
-        throw std::runtime_error("Qwen3 TTS requires text input");
+        throw std::runtime_error("VieNeu-TTS TTS requires text input");
     }
     VietneuTTSRequest out;
     out.text = request.text_input->text;
@@ -539,18 +493,27 @@ VietneuTTSRequest VietneuTTSSession::make_request(const runtime::TaskRequest & r
                     {"reference_text"})) {
                 voice_clone.reference_text = *reference_text;
             }
-            if (const auto spk_emb_str = runtime::find_option(request.options, {"speaker_embedding"})) {
+            if (const auto spk_emb_file = runtime::find_option(request.options, {"speaker_embedding_file"})) {
+                voice_clone.speaker_embedding = parse_speaker_embedding_file(*spk_emb_file);
+            } else if (const auto spk_emb_str = runtime::find_option(request.options, {"speaker_embedding"})) {
                 std::vector<float> vals;
                 std::stringstream ss(*spk_emb_str);
                 std::string token;
                 while (std::getline(ss, token, ',')) {
                     try {
-                        vals.push_back(std::stof(token));
-                    } catch (...) {}
+                        token.erase(0, token.find_first_not_of(" \t\r\n"));
+                        token.erase(token.find_last_not_of(" \t\r\n") + 1);
+                        if (!token.empty()) {
+                            vals.push_back(std::stof(token));
+                        }
+                    } catch (const std::exception & e) {
+                        throw std::runtime_error("Failed to parse float value '" + token + "' in speaker_embedding option: " + e.what());
+                    }
                 }
-                if (vals.size() == 192) {
-                    voice_clone.speaker_embedding = vals;
+                if (vals.size() != 192) {
+                    throw std::runtime_error("speaker_embedding option must contain exactly 192 comma-separated float values, but got " + std::to_string(vals.size()));
                 }
+                voice_clone.speaker_embedding = vals;
             }
             bool x_vector_only = false;
             if (const auto value = runtime::find_option(
@@ -563,40 +526,6 @@ VietneuTTSRequest VietneuTTSSession::make_request(const runtime::TaskRequest & r
                 : Qwen3VoiceCloneMode::Icl;
             out.voice_clone = std::move(voice_clone);
         }
-    } else if (assets_->config.variant == VietneuTTSVariant::VoiceDesign) {
-        Qwen3VoiceDesignInput voice_design;
-        voice_design.instruct = runtime::find_option(
-            request.options,
-            {"instruct"})
-            .value_or("");
-        if (voice_design.instruct.empty()
-            && request.voice.has_value()
-            && request.voice->style.has_value()) {
-            const auto tag = request.voice->style->tags.find("instruct");
-            if (tag != request.voice->style->tags.end()) {
-                voice_design.instruct = tag->second;
-            }
-        }
-        out.voice_design = std::move(voice_design);
-    } else if (assets_->config.variant == VietneuTTSVariant::CustomVoice) {
-        Qwen3CustomVoiceInput custom_voice;
-        custom_voice.speaker = runtime::find_option(request.options, {"speaker"}).value_or("");
-        if (custom_voice.speaker.empty() && request.voice.has_value() && request.voice->speaker.has_value()) {
-            custom_voice.speaker = request.voice->speaker->cached_voice_id.value_or("");
-        }
-        custom_voice.instruct = runtime::find_option(
-            request.options,
-            {"instruct"})
-            .value_or("");
-        if (custom_voice.instruct.empty()
-            && request.voice.has_value()
-            && request.voice->style.has_value()) {
-            const auto tag = request.voice->style->tags.find("instruct");
-            if (tag != request.voice->style->tags.end()) {
-                custom_voice.instruct = tag->second;
-            }
-        }
-        out.custom_voice = std::move(custom_voice);
     }
     return out;
 }

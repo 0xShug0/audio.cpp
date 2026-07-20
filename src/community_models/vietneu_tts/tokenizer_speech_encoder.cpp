@@ -16,7 +16,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "../../models/common/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -269,7 +269,7 @@ core::TensorValue transformer_block(
 std::vector<float> codebook_embedding(const CodebookWeights & weights) {
     if (static_cast<int64_t>(weights.cluster_usage.size()) != kCodebookSize ||
         static_cast<int64_t>(weights.embedding_sum.size()) != kCodebookSize * kQuantizerDim) {
-        throw std::runtime_error("Qwen3 speech tokenizer codebook has invalid shape");
+        throw std::runtime_error("VieNeu-TTS speech tokenizer codebook has invalid shape");
     }
     std::vector<float> embedding(weights.embedding_sum.size(), 0.0F);
     for (int64_t code = 0; code < kCodebookSize; ++code) {
@@ -317,11 +317,11 @@ std::vector<int32_t> quantize_projected(
     }
 
     if (semantic_embeddings.empty() || static_cast<int64_t>(acoustic_embeddings.size()) < kValidQuantizers - 1) {
-        throw std::runtime_error("Qwen3 speech tokenizer has insufficient quantizer codebooks");
+        throw std::runtime_error("VieNeu-TTS speech tokenizer has insufficient quantizer codebooks");
     }
     if (static_cast<int64_t>(semantic.size()) != kQuantizerDim * frames ||
         static_cast<int64_t>(acoustic.size()) != kQuantizerDim * frames) {
-        throw std::runtime_error("Qwen3 speech tokenizer projected tensor size mismatch");
+        throw std::runtime_error("VieNeu-TTS speech tokenizer projected tensor size mismatch");
     }
 
     std::vector<int32_t> codes(static_cast<size_t>(frames * kValidQuantizers), 0);
@@ -504,13 +504,13 @@ public:
           backend_(execution_context.backend()),
           compute_threads_(std::max(1, execution_context.config().threads)) {
         if (weights_ == nullptr) {
-            throw std::runtime_error("Qwen3 speech tokenizer graph requires weights");
+            throw std::runtime_error("VieNeu-TTS speech tokenizer graph requires weights");
         }
         if (sample_capacity_ <= 0) {
-            throw std::runtime_error("Qwen3 speech tokenizer graph requires positive sample capacity");
+            throw std::runtime_error("VieNeu-TTS speech tokenizer graph requires positive sample capacity");
         }
         if (backend_ == nullptr) {
-            throw std::runtime_error("Qwen3 speech tokenizer backend is not initialized");
+            throw std::runtime_error("VieNeu-TTS speech tokenizer backend is not initialized");
         }
 
         ggml_init_params params{
@@ -520,7 +520,7 @@ public:
         };
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize Qwen3 speech tokenizer ggml context");
+            throw std::runtime_error("failed to initialize VieNeu-TTS speech tokenizer ggml context");
         }
 
         core::ModuleBuildContext build_ctx{
@@ -566,7 +566,7 @@ public:
 
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-            throw std::runtime_error("failed to allocate Qwen3 speech tokenizer graph");
+            throw std::runtime_error("failed to allocate VieNeu-TTS speech tokenizer graph");
         }
         std::vector<int32_t> positions(static_cast<size_t>(transformer_frames_), 0);
         for (int64_t i = 0; i < transformer_frames_; ++i) {
@@ -589,7 +589,7 @@ public:
 
     std::pair<std::vector<float>, std::vector<float>> run(const std::vector<float> & waveform) {
         if (static_cast<int64_t>(waveform.size()) > sample_capacity_) {
-            throw std::runtime_error("Qwen3 speech tokenizer waveform exceeds graph capacity");
+            throw std::runtime_error("VieNeu-TTS speech tokenizer waveform exceeds graph capacity");
         }
         std::vector<float> padded(static_cast<size_t>(sample_capacity_), 0.0F);
         std::copy(waveform.begin(), waveform.end(), padded.begin());
@@ -598,7 +598,7 @@ public:
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Qwen3 speech tokenizer graph compute failed");
+            throw std::runtime_error("VieNeu-TTS speech tokenizer graph compute failed");
         }
         std::vector<float> semantic(static_cast<size_t>(kQuantizerDim * frames_), 0.0F);
         std::vector<float> acoustic(static_cast<size_t>(kQuantizerDim * frames_), 0.0F);
@@ -637,7 +637,7 @@ Qwen3SpeechTokenizerEncoderRuntime::Qwen3SpeechTokenizerEncoderRuntime(
       execution_context_(&execution_context),
       graph_arena_bytes_(graph_arena_bytes) {
     if (assets_ == nullptr) {
-        throw std::runtime_error("Qwen3 speech tokenizer encoder requires assets");
+        throw std::runtime_error("VieNeu-TTS speech tokenizer encoder requires assets");
     }
     weights_ = load_weights(
         *assets_,
@@ -656,10 +656,10 @@ Qwen3SpeechTokenizerEncoderRuntime::~Qwen3SpeechTokenizerEncoderRuntime() = defa
 
 Qwen3SpeechCodes Qwen3SpeechTokenizerEncoderRuntime::encode(const runtime::AudioBuffer & audio) const {
     if (execution_context_ == nullptr) {
-        throw std::runtime_error("Qwen3 speech tokenizer execution context is missing");
+        throw std::runtime_error("VieNeu-TTS speech tokenizer execution context is missing");
     }
     if (audio.sample_rate <= 0 || audio.channels <= 0 || audio.samples.empty()) {
-        throw std::runtime_error("Qwen3 speech tokenizer requires non-empty reference audio");
+        throw std::runtime_error("VieNeu-TTS speech tokenizer requires non-empty reference audio");
     }
     const auto waveform = engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
         audio.samples,

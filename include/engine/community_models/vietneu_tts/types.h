@@ -11,8 +11,6 @@ namespace engine::models::vietneu_tts {
 
 enum class VietneuTTSVariant {
     Base,
-    VoiceDesign,
-    CustomVoice,
 };
 
 struct VietneuTTSGenerationOptions {
@@ -41,21 +39,10 @@ struct Qwen3VoiceCloneInput {
     std::optional<std::vector<float>> speaker_embedding = std::nullopt;
 };
 
-struct Qwen3VoiceDesignInput {
-    std::string instruct;
-};
-
-struct Qwen3CustomVoiceInput {
-    std::string speaker;
-    std::string instruct;
-};
-
 struct VietneuTTSRequest {
     std::string text;
     std::string language = "Auto";
     std::optional<Qwen3VoiceCloneInput> voice_clone = std::nullopt;
-    std::optional<Qwen3VoiceDesignInput> voice_design = std::nullopt;
-    std::optional<Qwen3CustomVoiceInput> custom_voice = std::nullopt;
     VietneuTTSGenerationOptions generation;
 };
 

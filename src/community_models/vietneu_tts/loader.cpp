@@ -37,16 +37,6 @@ runtime::CapabilitySet capabilities(const VietneuTTSAssets & assets) {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
         };
         out.supports_speaker_reference = true;
-    } else if (assets.config.variant == VietneuTTSVariant::VoiceDesign) {
-        out.supported_tasks = {
-            {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline}},
-        };
-        out.supports_style_condition = true;
-    } else if (assets.config.variant == VietneuTTSVariant::CustomVoice) {
-        out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-        };
-        out.supports_style_condition = true;
     }
     out.languages = supported_languages(assets.config);
     return out;
@@ -54,6 +44,13 @@ runtime::CapabilitySet capabilities(const VietneuTTSAssets & assets) {
 
 runtime::ModelCliInterface cli(const VietneuTTSAssets &) {
     runtime::ModelCliInterface out;
+    out.request_options = {
+        {"reference_text", "<text>", "Transcript of the reference speaker WAV."},
+        {"speaker_embedding_file", "<path>", "Path to the speaker embedding .emb.txt file."},
+        {"speaker_embedding", "<csv>", "Comma-separated list of 192 speaker embedding float values."},
+        {"subtalker_temperature", "<float>", "Acoustic decoder sampling temperature (default 0.8)."},
+        {"subtalker_do_sample", "true|false", "Enable sampling in the acoustic decoder (default true)."},
+    };
     out.session_options = {
         {"vietneu_tts.mem_saver", "true|false", "Release the talker cached-step graph after each request; default false."},
         {"vietneu_tts.voice_prompt_cache_slots", "n", "Voice prompt cache slots; default 1."},
@@ -134,16 +131,10 @@ std::unique_ptr<runtime::IVoiceTaskSession> VietneuTTSLoadedModel::create_task_s
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
     if (task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Qwen3 TTS only supports offline sessions");
+        throw std::runtime_error("VieNeu-TTS TTS only supports offline sessions");
     }
     if (assets_->config.variant == VietneuTTSVariant::Base && task.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Qwen3 base TTS model only supports the Tts task");
-    }
-    if (assets_->config.variant == VietneuTTSVariant::VoiceDesign && task.task != runtime::VoiceTaskKind::VoiceDesign) {
-        throw std::runtime_error("Qwen3 voice design model only supports the VoiceDesign task");
-    }
-    if (assets_->config.variant == VietneuTTSVariant::CustomVoice && task.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Qwen3 custom voice model only supports the Tts task");
+        throw std::runtime_error("VieNeu-TTS base TTS model only supports the Tts task");
     }
     return std::make_unique<VietneuTTSSession>(task, options, assets_);
 }

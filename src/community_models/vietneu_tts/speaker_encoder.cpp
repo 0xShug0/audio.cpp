@@ -13,7 +13,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "../../models/common/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -104,7 +104,7 @@ int64_t reflect_index(int64_t index, int64_t length) {
 
 std::vector<float> reflect_prepad(const std::vector<float> & waveform) {
     if (waveform.empty()) {
-        throw std::runtime_error("Qwen3 speaker encoder reference waveform is empty");
+        throw std::runtime_error("VieNeu-TTS speaker encoder reference waveform is empty");
     }
     std::vector<float> padded(static_cast<size_t>(static_cast<int64_t>(waveform.size()) + 2 * kPrepad), 0.0F);
     const int64_t samples = static_cast<int64_t>(waveform.size());
@@ -116,7 +116,7 @@ std::vector<float> reflect_prepad(const std::vector<float> & waveform) {
 
 audio::AudioTensor compute_reference_log_mel(const runtime::AudioBuffer & audio, int threads) {
     if (audio.sample_rate <= 0 || audio.channels <= 0 || audio.samples.empty()) {
-        throw std::runtime_error("Qwen3 speaker encoder requires non-empty reference audio");
+        throw std::runtime_error("VieNeu-TTS speaker encoder requires non-empty reference audio");
     }
     const auto padded = reflect_prepad(engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
         audio.samples,
@@ -166,7 +166,7 @@ core::TensorValue conv1d(
     const ConvWeights & conv,
     common::ConstantTensorCache & constants) {
     if (x.shape.dims[1] != conv.in_channels) {
-        throw std::runtime_error("Qwen3 speaker conv channel mismatch");
+        throw std::runtime_error("VieNeu-TTS speaker conv channel mismatch");
     }
     const int64_t padding = conv.dilation * (conv.kernel - 1) / 2;
     if (padding > 0) {
@@ -335,13 +335,13 @@ public:
           backend_(execution_context.backend()),
           compute_threads_(std::max(1, execution_context.config().threads)) {
         if (weights_ == nullptr) {
-            throw std::runtime_error("Qwen3 speaker encoder graph requires weights");
+            throw std::runtime_error("VieNeu-TTS speaker encoder graph requires weights");
         }
         if (frames_ <= 0) {
-            throw std::runtime_error("Qwen3 speaker encoder graph requires positive frame count");
+            throw std::runtime_error("VieNeu-TTS speaker encoder graph requires positive frame count");
         }
         if (backend_ == nullptr) {
-            throw std::runtime_error("Qwen3 speaker encoder backend is not initialized");
+            throw std::runtime_error("VieNeu-TTS speaker encoder backend is not initialized");
         }
 
         ggml_init_params params{
@@ -351,7 +351,7 @@ public:
         };
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize Qwen3 speaker encoder ggml context");
+            throw std::runtime_error("failed to initialize VieNeu-TTS speaker encoder ggml context");
         }
 
         core::ModuleBuildContext build_ctx{
@@ -383,7 +383,7 @@ public:
 
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-            throw std::runtime_error("failed to allocate Qwen3 speaker encoder graph");
+            throw std::runtime_error("failed to allocate VieNeu-TTS speaker encoder graph");
         }
     }
 
@@ -400,11 +400,11 @@ public:
 
     std::vector<float> run(const audio::AudioTensor & features) {
         if (features.shape.size() != 3 || features.shape[0] != 1 || features.shape[1] != kFeatureDim) {
-            throw std::runtime_error("Qwen3 speaker feature tensor has invalid shape");
+            throw std::runtime_error("VieNeu-TTS speaker feature tensor has invalid shape");
         }
         const int64_t valid_frames = features.shape[2];
         if (valid_frames > frames_) {
-            throw std::runtime_error("Qwen3 speaker feature tensor exceeds graph capacity");
+            throw std::runtime_error("VieNeu-TTS speaker feature tensor exceeds graph capacity");
         }
         std::vector<float> padded(static_cast<size_t>(kFeatureDim * frames_), 0.0F);
         for (int64_t c = 0; c < kFeatureDim; ++c) {
@@ -417,7 +417,7 @@ public:
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Qwen3 speaker encoder graph compute failed");
+            throw std::runtime_error("VieNeu-TTS speaker encoder graph compute failed");
         }
         std::vector<float> embedding(static_cast<size_t>(weights_->embedding_dim), 0.0F);
         ggml_backend_tensor_get(output_, embedding.data(), 0, embedding.size() * sizeof(float));
@@ -446,10 +446,10 @@ VietneuSpeakerEncoderRuntime::VietneuSpeakerEncoderRuntime(
       execution_context_(&execution_context),
       graph_arena_bytes_(graph_arena_bytes) {
     if (assets_ == nullptr) {
-        throw std::runtime_error("Qwen3 speaker encoder requires assets");
+        throw std::runtime_error("VieNeu-TTS speaker encoder requires assets");
     }
     if (!assets_->config.has_speaker_encoder) {
-        throw std::runtime_error("Qwen3 speaker encoder requires a base model with speaker_encoder_config");
+        throw std::runtime_error("VieNeu-TTS speaker encoder requires a base model with speaker_encoder_config");
     }
     weights_ = load_weights(*assets_, execution_context_->backend(), execution_context_->backend_type(), conv_weight_storage_type);
 }
@@ -460,7 +460,7 @@ VietneuSpeakerFeatures VietneuSpeakerEncoderRuntime::extract_features(const runt
     const int threads = execution_context_ != nullptr ? std::max(1, execution_context_->config().threads) : 1;
     auto mel = compute_reference_log_mel(audio, threads);
     if (mel.shape.size() != 3 || mel.shape[1] != kFeatureDim) {
-        throw std::runtime_error("Qwen3 speaker frontend produced invalid feature shape");
+        throw std::runtime_error("VieNeu-TTS speaker frontend produced invalid feature shape");
     }
     VietneuSpeakerFeatures features;
     features.values = std::move(mel.values);
@@ -475,7 +475,7 @@ VietneuSpeakerEmbedding VietneuSpeakerEncoderRuntime::encode(const runtime::Audi
 
 VietneuSpeakerEmbedding VietneuSpeakerEncoderRuntime::encode_features(const VietneuSpeakerFeatures & extracted) const {
     if (execution_context_ == nullptr) {
-        throw std::runtime_error("Qwen3 speaker encoder execution context is missing");
+        throw std::runtime_error("VieNeu-TTS speaker encoder execution context is missing");
     }
     const int threads = std::max(1, execution_context_->config().threads);
     audio::AudioTensor features;

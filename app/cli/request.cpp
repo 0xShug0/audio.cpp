@@ -7,7 +7,6 @@
 #include <filesystem>
 #include <string>
 #include <utility>
-#include <fstream>
 
 namespace minitts::cli {
 namespace {
@@ -310,19 +309,6 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
         request.voice = std::move(voice);
     }
     request.options = collect_key_value_args(argc, argv, "--request-option");
-    if (const auto voice_ref = find_arg(argc, argv, "--voice-ref")) {
-        std::filesystem::path ref_path(*voice_ref);
-        std::filesystem::path emb_path = ref_path.string() + ".emb.txt";
-        if (std::filesystem::exists(emb_path)) {
-            std::ifstream ifs(emb_path);
-            if (ifs.is_open()) {
-                std::string line;
-                if (std::getline(ifs, line)) {
-                    set_option(request.options, "speaker_embedding", line);
-                }
-            }
-        }
-    }
     if (!language.empty()) {
         set_option(request.options, "language", language);
     }
@@ -355,8 +341,6 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
     set_option_from_arg(argc, argv, "--max-tokens", "max_tokens", request.options);
     set_option_from_arg(argc, argv, "--max-steps", "max_steps", request.options);
     set_option_from_arg(argc, argv, "--temperature", "temperature", request.options);
-    set_option_from_arg(argc, argv, "--subtalker-temperature", "subtalker_temperature", request.options);
-    set_option_from_arg(argc, argv, "--subtalker-do-sample", "subtalker_do_sample", request.options);
     set_option_from_arg(argc, argv, "--top-k", "top_k", request.options);
     set_option_from_arg(argc, argv, "--top-p", "top_p", request.options);
     set_option_from_arg(argc, argv, "--repetition-penalty", "repetition_penalty", request.options);

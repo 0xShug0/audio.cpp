@@ -26,7 +26,7 @@ std::shared_ptr<const Qwen3TextTokenizer::Impl> load_impl(const VietneuTTSAssets
 
 Qwen3TextTokenizer::Qwen3TextTokenizer(std::shared_ptr<const VietneuTTSAssets> assets) {
     if (assets == nullptr) {
-        throw std::runtime_error("Qwen3 text tokenizer requires assets");
+        throw std::runtime_error("VieNeu-TTS text tokenizer requires assets");
     }
     impl_ = load_impl(*assets);
 }
