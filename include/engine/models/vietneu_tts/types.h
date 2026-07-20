@@ -38,6 +38,7 @@ struct Qwen3VoiceCloneInput {
     runtime::AudioBuffer reference_audio;
     std::string reference_text;
     Qwen3VoiceCloneMode mode = Qwen3VoiceCloneMode::Icl;
+    std::optional<std::vector<float>> speaker_embedding = std::nullopt;
 };
 
 struct Qwen3VoiceDesignInput {

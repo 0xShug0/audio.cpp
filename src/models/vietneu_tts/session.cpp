@@ -12,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#include <sstream>
 
 namespace engine::models::vietneu_tts {
 namespace {
@@ -537,6 +538,19 @@ VietneuTTSRequest VietneuTTSSession::make_request(const runtime::TaskRequest & r
                     request.options,
                     {"reference_text"})) {
                 voice_clone.reference_text = *reference_text;
+            }
+            if (const auto spk_emb_str = runtime::find_option(request.options, {"speaker_embedding"})) {
+                std::vector<float> vals;
+                std::stringstream ss(*spk_emb_str);
+                std::string token;
+                while (std::getline(ss, token, ',')) {
+                    try {
+                        vals.push_back(std::stof(token));
+                    } catch (...) {}
+                }
+                if (vals.size() == 192) {
+                    voice_clone.speaker_embedding = vals;
+                }
             }
             bool x_vector_only = false;
             if (const auto value = runtime::find_option(

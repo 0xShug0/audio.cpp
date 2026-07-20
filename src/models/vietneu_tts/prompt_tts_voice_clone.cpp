@@ -31,7 +31,10 @@ VietneuTTSVoiceClonePromptBuilder::VietneuTTSVoiceClonePromptBuilder(
 
 Qwen3VoiceClonePrompt VietneuTTSVoiceClonePromptBuilder::build_voice_prompt(const Qwen3VoiceCloneInput & input) const {
     Qwen3VoiceClonePrompt prompt;
-    if (speaker_encoder_ != nullptr) {
+    if (input.speaker_embedding.has_value()) {
+        prompt.speaker_embedding.dims = 192;
+        prompt.speaker_embedding.values = *input.speaker_embedding;
+    } else if (speaker_encoder_ != nullptr) {
         prompt.speaker_embedding = speaker_encoder_->encode(input.reference_audio);
     } else {
         prompt.speaker_embedding.dims = 192;
