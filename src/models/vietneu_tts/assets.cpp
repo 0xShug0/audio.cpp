@@ -31,6 +31,11 @@ VietneuTTSConfig parse_config(const assets::ResourceBundle & resources) {
     config.tts_bos_token_id = json::optional_i64(root, "bos_token_id", 1);
     config.tts_eos_token_id = json::optional_i64(root, "eos_token_id", 2);
     config.tts_pad_token_id = json::optional_i64(root, "pad_token_id", 0);
+    config.text_prompt_start_token_id = json::optional_i64(root, "text_prompt_start_token_id", 3);
+    config.text_prompt_end_token_id = json::optional_i64(root, "text_prompt_end_token_id", 4);
+    config.audio_ref_slot_token_id = json::optional_i64(root, "audio_ref_slot_token_id", 7);
+    config.audio_pad_token_id = json::optional_i64(root, "audio_pad_token_id", 1024);
+    config.speech_generation_start_token_id = json::optional_i64(root, "speech_generation_start_token_id", 5);
     config.local_num_hidden_layers = json::optional_i64(root, "local_num_hidden_layers", 1);
     config.local_num_attention_heads = json::optional_i64(root, "local_num_attention_heads", 8);
     config.local_intermediate_size = json::optional_i64(root, "local_intermediate_size", 2048);

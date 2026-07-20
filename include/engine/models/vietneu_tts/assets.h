@@ -78,6 +78,11 @@ struct VietneuTTSConfig {
     int64_t tts_bos_token_id = 0;
     int64_t tts_eos_token_id = 0;
     int64_t tts_pad_token_id = 0;
+    int64_t text_prompt_start_token_id = 3;
+    int64_t text_prompt_end_token_id = 4;
+    int64_t audio_ref_slot_token_id = 7;
+    int64_t audio_pad_token_id = 1024;
+    int64_t speech_generation_start_token_id = 5;
     bool has_speaker_encoder = false;
 
     // VieNeu-TTS specific extensions

@@ -570,49 +570,85 @@ PromptEmbeddingState build_prompt_state(
     }
 
     if (root_config.is_vieneu) {
-        if (!prefill.speaker_embedding.has_value() || prefill.speaker_embedding->dims != root_config.speaker_embedding_dim) {
-            throw std::runtime_error("VieNeu talker requires speaker embedding of dimension " + std::to_string(root_config.speaker_embedding_dim));
-        }
         PromptEmbeddingState state;
-        state.tts_pad = tts_pad;
-        const std::vector<int32_t> role_ids(prefill.input_ids.begin(), prefill.input_ids.begin() + 3);
-        append_rows(state.prompt, text_project_host(lookup_rows(weights.text_embedding, config.text_hidden_size, role_ids), 3, weights, config));
+        const int64_t hidden_size = config.hidden_size;
 
-        auto codec_embed = lookup_rows(weights.codec_embedding, config.hidden_size, codec_prefix);
-        std::vector<float> speaker_embed = prefill.speaker_embedding->values;
-        if (weights.xvec_proj_linear.has_value()) {
-            auto projected = linear_host(speaker_embed, 1, root_config.speaker_embedding_dim, *weights.xvec_proj_linear);
-            speaker_embed = layernorm_host(projected, *weights.xvec_proj_ln_weight, *weights.xvec_proj_ln_bias);
+        // 1. Project speaker embedding to create the speaker anchor vector
+        std::vector<float> speaker_anchor(hidden_size, 0.0f);
+        if (prefill.speaker_embedding.has_value() && !prefill.speaker_embedding->values.empty()) {
+            std::vector<float> speaker_embed = prefill.speaker_embedding->values;
+            if (weights.xvec_proj_linear.has_value()) {
+                auto projected = linear_host(speaker_embed, 1, root_config.speaker_embedding_dim, *weights.xvec_proj_linear);
+                speaker_anchor = layernorm_host(projected, *weights.xvec_proj_ln_weight, *weights.xvec_proj_ln_bias);
+            } else {
+                if (static_cast<int64_t>(speaker_embed.size()) == hidden_size) {
+                    speaker_anchor = speaker_embed;
+                }
+            }
         }
-        append_row(codec_embed, speaker_embed);
-        append_rows(codec_embed, lookup_rows(
-                                     weights.codec_embedding,
-                                     config.hidden_size,
-                                     {
-                                         static_cast<int32_t>(config.codec_pad_id),
-                                         static_cast<int32_t>(config.codec_bos_id),
-                                     }));
-        const int64_t codec_rows = static_cast<int64_t>(codec_embed.size()) / config.hidden_size;
-        append_rows(state.prompt, add_rows(repeat_row(tts_pad, codec_rows - 2), std::vector<float>(
-                              codec_embed.begin(),
-                              codec_embed.begin() + static_cast<std::ptrdiff_t>((codec_rows - 2) * config.hidden_size))));
-        append_row(state.prompt, add_rows(tts_bos, row_at(codec_embed, codec_rows - 2, config.hidden_size)));
 
-        const std::vector<int32_t> text_ids(prefill.input_ids.begin() + 3, prefill.input_ids.end() - 5);
-        auto text_embed = text_project_host(
-            lookup_rows(weights.text_embedding, config.text_hidden_size, text_ids),
-            static_cast<int64_t>(text_ids.size()),
-            weights,
-            config);
-        append_row(text_embed, tts_eos);
-        append_rows(state.prompt, add_rows(
-            text_embed,
-            lookup_rows(
-                weights.codec_embedding,
-                config.hidden_size,
-                std::vector<int32_t>(text_ids.size() + 1, static_cast<int32_t>(config.codec_pad_id)))));
-        append_row(state.prompt, add_rows(tts_pad, row_at(codec_embed, codec_rows - 1, config.hidden_size)));
-        state.trailing_text = tts_pad;
+        // 2. Build text prompt tokens list: [style_token_id, tps] + phone_ids + [tpe]
+        const int32_t style_token_id = 16;
+        const int32_t tps = static_cast<int32_t>(root_config.text_prompt_start_token_id);
+        const int32_t tpe = static_cast<int32_t>(root_config.text_prompt_end_token_id);
+        
+        std::vector<int32_t> text_token_ids;
+        text_token_ids.push_back(style_token_id);
+        text_token_ids.push_back(tps);
+        text_token_ids.insert(text_token_ids.end(), prefill.input_ids.begin(), prefill.input_ids.end());
+        text_token_ids.push_back(tpe);
+
+        // 3. Embed text prompt tokens
+        auto text_embed = lookup_rows(weights.text_embedding, hidden_size, text_token_ids);
+
+        // 4. If reference codes are present, build reference rows
+        std::vector<float> ref_embed;
+        if (prefill.reference_codes.has_value() && !prefill.reference_ids.empty()) {
+            const auto & ref_codes = *prefill.reference_codes;
+            const int64_t T_ref = ref_codes.frames;
+            const int32_t ref_slot = static_cast<int32_t>(root_config.audio_ref_slot_token_id);
+            auto ref_slot_embed = lookup_rows(weights.text_embedding, hidden_size, {ref_slot});
+
+            ref_embed.reserve(static_cast<size_t>(T_ref * hidden_size));
+            for (int64_t frame = 0; frame < T_ref; ++frame) {
+                std::vector<float> frame_emb = ref_slot_embed;
+                for (int64_t ch = 0; ch < ref_codes.code_groups; ++ch) {
+                    const int32_t code = ref_codes.codes[static_cast<size_t>(frame * ref_codes.code_groups + ch)];
+                    const auto code_emb = ch == 0
+                        ? lookup_rows(weights.codec_embedding, hidden_size, {code})
+                        : lookup_rows(weights.code_predictor_embeddings.at(static_cast<size_t>(ch - 1)), hidden_size, {code});
+                    for (int64_t dim = 0; dim < hidden_size; ++dim) {
+                        frame_emb[static_cast<size_t>(dim)] += code_emb[static_cast<size_t>(dim)];
+                    }
+                }
+                ref_embed.insert(ref_embed.end(), frame_emb.begin(), frame_emb.end());
+            }
+        }
+
+        // 5. Combine text embeds and ref embeds into final prompt state
+        state.prompt = std::move(text_embed);
+        if (!ref_embed.empty()) {
+            state.prompt.insert(state.prompt.end(), ref_embed.begin(), ref_embed.end());
+        }
+
+        // 6. Add speaker anchor to every row of prompt embeddings
+        for (size_t i = 0; i < state.prompt.size(); i += static_cast<size_t>(hidden_size)) {
+            for (size_t j = 0; j < static_cast<size_t>(hidden_size); ++j) {
+                state.prompt[i + j] += speaker_anchor[j];
+            }
+        }
+
+        // 7. Initialize tts_pad as: text_embeddings(speech_generation_start_token_id) + speaker_anchor
+        const int32_t sgs_id = static_cast<int32_t>(root_config.speech_generation_start_token_id);
+        auto sgs_embed = lookup_rows(weights.text_embedding, hidden_size, {sgs_id});
+        state.tts_pad = std::move(sgs_embed);
+        for (size_t j = 0; j < static_cast<size_t>(hidden_size); ++j) {
+            state.tts_pad[j] += speaker_anchor[j];
+        }
+
+        // 8. Trailing text is unused under VieNeu
+        state.trailing_text = {};
+
         return state;
     }
 

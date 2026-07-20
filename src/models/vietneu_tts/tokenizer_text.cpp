@@ -32,15 +32,15 @@ Qwen3TextTokenizer::Qwen3TextTokenizer(std::shared_ptr<const VietneuTTSAssets> a
 }
 
 std::string Qwen3TextTokenizer::build_assistant_prompt(const std::string & text) const {
-    return "<|im_start|>assistant\n" + text + "<|im_end|>\n<|im_start|>assistant\n";
+    return text;
 }
 
 std::string Qwen3TextTokenizer::build_reference_prompt(const std::string & text) const {
-    return "<|im_start|>assistant\n" + text + "<|im_end|>\n";
+    return text;
 }
 
 std::string Qwen3TextTokenizer::build_instruct_prompt(const std::string & text) const {
-    return "<|im_start|>user\n" + text + "<|im_end|>\n";
+    return text;
 }
 
 std::vector<int32_t> Qwen3TextTokenizer::encode(const std::string & text) const {
