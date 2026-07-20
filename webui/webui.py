@@ -2793,9 +2793,28 @@ def do_tts_or_stream(model, gen_mode, text, language, uploaded_voice, builtin_vo
             yield None, None, _t("❌ 流式生成失败：{error}",
                                  "❌ Streaming failed: {error}", error=e)
         return
-    out, msg = do_tts(model, text, language, uploaded_voice, builtin_voice,
-                      reference_text, seed, max_tokens, adv_values, adv_options,
-                      progress=progress)
+    # 离线合成本身是阻塞的 do_tts。旧版把它直接绑到按钮（普通函数），Gradio 会在
+    # 输出组件上显示原生的“处理中 X.Xs”计时；现在统一入口是 generator，上面那次
+    # 即时 yield 会顶掉原生计时器，于是这里自己计时：后台线程跑 do_tts，主生成器
+    # 每 ~0.5s 吐一次“已用时 Xs”，把秒数显示找回来（也顺带覆盖模型重载的等待）。
+    result = {}
+
+    def _run_offline():
+        result["value"] = do_tts(model, text, language, uploaded_voice, builtin_voice,
+                                 reference_text, seed, max_tokens, adv_values, adv_options,
+                                 progress=progress)
+
+    worker = threading.Thread(target=_run_offline, daemon=True)
+    t_offline = time.time()
+    worker.start()
+    while worker.is_alive():
+        worker.join(0.5)
+        if worker.is_alive():
+            yield None, None, _t("⏳ 生成中…已用时 {seconds:.1f}s",
+                                 "⏳ Generating… {seconds:.1f}s elapsed",
+                                 seconds=time.time() - t_offline)
+    out, msg = result.get("value",
+                          (None, _t("❌ 生成失败：无返回结果。", "❌ Generation failed: no result.")))
     yield None, out, msg
 
 
