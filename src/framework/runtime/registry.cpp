@@ -28,6 +28,7 @@
 #include "engine/models/qwen3_asr/loader.h"
 #include "engine/models/qwen3_forced_aligner/loader.h"
 #include "engine/models/qwen3_tts/loader.h"
+#include "engine/models/vietneu_tts/loader.h"
 #include "engine/models/roformer/loader.h"
 #include "engine/models/silero_vad/session.h"
 #include "engine/models/seed_vc/loader.h"
@@ -266,6 +267,7 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         engine::models::qwen3_asr::make_qwen3_asr_loader(),
         engine::models::index_tts2::make_index_tts2_loader(),
         engine::models::qwen3_tts::make_qwen3_tts_loader(),
+        engine::models::vietneu_tts::make_vietneu_tts_loader(),
         engine::models::sortformer_diar::make_sortformer_diar_loader(),
         engine::models::stable_audio::make_stable_audio_loader(),
         engine::models::supertonic::make_supertonic_loader(),

@@ -431,8 +431,10 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
     const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
         ? &*weights.rope_frequency_factors
         : nullptr;
-    q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
-    k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+    if (config_.rope_type >= 0) {
+        q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
+        k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+    }
     if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
         q = activation_cast(ctx, q, config_.activation_cast);
         k = activation_cast(ctx, k, config_.activation_cast);
@@ -569,8 +571,10 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
         ? &*weights.rope_frequency_factors
         : nullptr;
-    q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
-    k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+    if (config_.rope_type >= 0) {
+        q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
+        k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+    }
     if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
         q = activation_cast(ctx, q, config_.activation_cast);
         k = activation_cast(ctx, k, config_.activation_cast);
