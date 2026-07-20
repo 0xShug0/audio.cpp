@@ -75,12 +75,6 @@ Omit these unless you need explicit control. If `--seed` is omitted, models that
 |---|---|
 | Speech, voice clone, long-form TTS | [tts.md](tts.md) |
 | Music and sound generation | [music_generation.md](music_generation.md) |
-| ACE-Step music generation/editing | [ace_step.md](ace_step.md) |
-| Stable Audio music/SFX generation | [stable_audio.md](stable_audio.md) |
-| VeVo2 speech/singing conversion routes | [vevo2.md](vevo2.md) |
-| Seed-VC voice conversion and SVC | [seed_vc.md](seed_vc.md) |
-| Qwen3 TTS, ASR, forced alignment | [qwen3.md](qwen3.md) |
 | ASR models | [asr.md](asr.md) |
 | VAD and diarization | [speech_analysis.md](speech_analysis.md) |
 | Voice conversion codec and source separation | [audio_tools.md](audio_tools.md) |
-| Framework module optimization notes | [module_optimizations.md](module_optimizations.md) |

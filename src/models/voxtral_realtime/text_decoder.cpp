@@ -4,6 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/attention/qwen_causal_decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -304,32 +305,6 @@ struct TextAttentionOutput {
     core::TensorValue value;
 };
 
-core::TensorValue build_grouped_query_flash_attention(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    const core::TensorValue & attention_mask,
-    int64_t head_dim) {
-    const auto q = core::ensure_backend_addressable_layout(ctx, q_heads);
-    const auto k = core::ensure_backend_addressable_layout(ctx, k_heads);
-    const auto v = core::ensure_backend_addressable_layout(ctx, v_heads);
-    auto * flash = ggml_flash_attn_ext(
-        ctx.ggml,
-        q.tensor,
-        k.tensor,
-        v.tensor,
-        attention_mask.tensor,
-        1.0F / std::sqrt(static_cast<float>(head_dim)),
-        0.0F,
-        0.0F);
-    ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
-    return core::wrap_tensor(
-        flash,
-        core::TensorShape::from_dims({q.shape.dims[0], q.shape.dims[2], q.shape.dims[1], head_dim}),
-        GGML_TYPE_F32);
-}
-
 TextAttentionOutput build_text_attention(
     core::ModuleBuildContext & ctx,
     const VoxtralRealtimeTextConfig & config,
@@ -363,7 +338,11 @@ TextAttentionOutput build_text_attention(
     q = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     k = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     v = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto context = build_grouped_query_flash_attention(ctx, q, k, v, attention_mask, config.head_dim);
+    auto context = modules::GroupedQueryAttentionModule({
+        config.head_dim,
+        modules::GroupedQueryAttentionLowering::FlashGrouped,
+        GGML_PREC_F32,
+    }).build(ctx, q, k, v, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * config.head_dim}));
     return {
@@ -416,7 +395,11 @@ TextAttentionOutput build_text_attention_static(
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, updated_value.shape.rank}).build(ctx, updated_value);
     k_heads = core::wrap_tensor(ggml_cont(ctx.ggml, k_heads.tensor), k_heads.shape, k_heads.type);
     v_heads = core::wrap_tensor(ggml_cont(ctx.ggml, v_heads.tensor), v_heads.shape, v_heads.type);
-    auto context = build_grouped_query_flash_attention(ctx, q_heads, k_heads, v_heads, attention_mask, config.head_dim);
+    auto context = modules::GroupedQueryAttentionModule({
+        config.head_dim,
+        modules::GroupedQueryAttentionLowering::FlashGrouped,
+        GGML_PREC_F32,
+    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({1, 1, config.num_attention_heads * config.head_dim}));
     return {

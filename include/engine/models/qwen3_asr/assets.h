@@ -84,5 +84,7 @@ std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(const std::filesyste
 std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(
     const std::filesystem::path & model_path,
     std::string_view package_family);
+std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(
+    assets::ResourceBundle resources);
 
 }  // namespace engine::models::qwen3_asr

@@ -224,7 +224,6 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(
     out.stack.attention_precision = GGML_PREC_F32;
     out.stack.use_qk_norm = true;
     out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.stack.runtime.static_cache.transpose_context = true;
     out.logits_size = logits_size;
     out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     return out;

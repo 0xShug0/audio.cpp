@@ -935,6 +935,62 @@ CATALOG: tuple[ModelPackage, ...] = (
         description="Installs Irodori-TTS VoiceDesign plus the sibling llm-jp tokenizer and DACVAE codec dependencies required by the framework runtime.",
     ),
     ModelPackage(
+        id="outetts_1_0_1b",
+        display_name="OuteTTS 1.0 1B",
+        target_directory="Llama-OuteTTS-1.0-1B",
+        source=CompositeSnapshotSource(
+            placements=(
+                SnapshotPlacement(
+                    source=SnapshotSource(repo_id="OuteAI/Llama-OuteTTS-1.0-1B"),
+                    required_files=(
+                        "config.json",
+                        "generation_config.json",
+                        "model.safetensors",
+                        "special_tokens_map.json",
+                        "tokenizer.json",
+                        "tokenizer_config.json",
+                    ),
+                ),
+                SnapshotPlacement(
+                    source=SnapshotSource(repo_id="ibm-research/DAC.speech.v1.0"),
+                    target_subdir="../DAC.speech.v1.0",
+                    required_files=("config.json", "weights_24khz_1.5kbps_v1.0.pth"),
+                ),
+                SnapshotPlacement(
+                    source=SnapshotSource(repo_id="Qwen/Qwen3-ForcedAligner-0.6B"),
+                    target_subdir="../Qwen3-ForcedAligner-0.6B",
+                    required_files=(
+                        "config.json",
+                        "generation_config.json",
+                        "model.safetensors",
+                        "preprocessor_config.json",
+                        "tokenizer_config.json",
+                        "vocab.json",
+                        "merges.txt",
+                    ),
+                ),
+            ),
+        ),
+        required_files=(
+            "config.json",
+            "generation_config.json",
+            "model.safetensors",
+            "special_tokens_map.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "../DAC.speech.v1.0/config.json",
+            "../DAC.speech.v1.0/model.safetensors",
+            "../Qwen3-ForcedAligner-0.6B/config.json",
+            "../Qwen3-ForcedAligner-0.6B/generation_config.json",
+            "../Qwen3-ForcedAligner-0.6B/model.safetensors",
+            "../Qwen3-ForcedAligner-0.6B/preprocessor_config.json",
+            "../Qwen3-ForcedAligner-0.6B/tokenizer_config.json",
+            "../Qwen3-ForcedAligner-0.6B/vocab.json",
+            "../Qwen3-ForcedAligner-0.6B/merges.txt",
+        ),
+        description="Installs OuteTTS, its IBM DAC 1.5 kbps codec, and Qwen3 Forced Aligner for reliable voice cloning.",
+    ),
+    ModelPackage(
         id="stable_audio_3_small_music",
         display_name="Stable Audio 3 Small Music",
         target_directory="stable-audio-3-small-music",
@@ -1696,6 +1752,24 @@ def convert_irodori_dacvae_weights(root: Path) -> None:
     write_checked_safetensors(tensors, output_path, input_path, overwrite=True)
 
 
+def convert_outetts_dac_weights(root: Path) -> None:
+    input_path = root / "weights_24khz_1.5kbps_v1.0.pth"
+    output_path = root / "model.safetensors"
+    payload = torch.load(input_path, map_location="cpu", weights_only=True)
+    state = checkpoint_state_dict(payload)
+    tensors = tensor_state_dict(state)
+    expected = {
+        "quantizer.quantizers.0.codebook.weight": (1024, 8),
+        "quantizer.quantizers.1.codebook.weight": (1024, 8),
+        "decoder.model.0.weight_v": (1536, 1024, 7),
+        "decoder.model.6.weight_v": (1, 96, 7),
+    }
+    for name, shape in expected.items():
+        if name not in tensors or tuple(tensors[name].shape) != shape:
+            raise RuntimeError(f"unexpected OuteTTS DAC tensor {name}: {getattr(tensors.get(name), 'shape', None)}")
+    write_checked_safetensors(tensors, output_path, input_path, overwrite=True)
+
+
 def write_irodori_model_config(root: Path) -> None:
     input_path = root / "model.safetensors"
     output_path = root / "model_config.json"
@@ -1792,6 +1866,10 @@ def install_composite_snapshot(
             dacvae_root = staged_package_root.parent / "Semantic-DACVAE-Japanese-32dim"
             if dacvae_root.exists():
                 convert_irodori_dacvae_weights(dacvae_root)
+        elif package.id == "outetts_1_0_1b":
+            dac_root = staged_package_root.parent / "DAC.speech.v1.0"
+            if dac_root.exists():
+                convert_outetts_dac_weights(dac_root)
         elif package.id == "vibevoice_asr":
             copy_bundled_model_manager_assets(
                 "vibevoice_1_5b",

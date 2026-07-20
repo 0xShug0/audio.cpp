@@ -165,6 +165,26 @@ assets::ResourceBundle make_resource_bundle(
     return resources;
 }
 
+std::shared_ptr<const Qwen3ASRAssets> make_assets(
+    assets::ResourceBundle resources) {
+    if (!resources.has_file("preprocessor_config") &&
+        !resources.has_file("processor_config")) {
+        throw std::runtime_error(
+            "Qwen3 ASR requires preprocessor_config.json or processor_config.json");
+    }
+    const bool has_legacy_tokenizer =
+        resources.has_file("vocab") && resources.has_file("merges");
+    if (!has_legacy_tokenizer && !resources.has_file("tokenizer_json")) {
+        throw std::runtime_error(
+            "Qwen3 ASR requires vocab.json plus merges.txt, or tokenizer.json");
+    }
+    Qwen3ASRAssets assets;
+    assets.resources = std::move(resources);
+    assets.config = parse_config(assets.resources);
+    assets.model_weights = assets.resources.open_tensor_source("weights");
+    return std::make_shared<Qwen3ASRAssets>(std::move(assets));
+}
+
 }  // namespace
 
 std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(const std::filesystem::path & model_path) {
@@ -174,12 +194,12 @@ std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(const std::filesyste
 std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(
     const std::filesystem::path & model_path,
     std::string_view package_family) {
-    auto resources = make_resource_bundle(model_path, package_family);
-    Qwen3ASRAssets assets;
-    assets.resources = std::move(resources);
-    assets.config = parse_config(assets.resources);
-    assets.model_weights = assets.resources.open_tensor_source("weights");
-    return std::make_shared<Qwen3ASRAssets>(std::move(assets));
+    return make_assets(make_resource_bundle(model_path, package_family));
+}
+
+std::shared_ptr<const Qwen3ASRAssets> load_qwen3_asr_assets(
+    assets::ResourceBundle resources) {
+    return make_assets(std::move(resources));
 }
 
 }  // namespace engine::models::qwen3_asr

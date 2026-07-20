@@ -6,6 +6,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conditioning_modules.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -23,7 +24,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -214,7 +214,6 @@ core::TensorValue mimi_self_attention(
     common::ConstantTensorCache & constants) {
     constexpr int64_t kHeads = 8;
     constexpr int64_t kHeadDim = 64;
-    const modules::MatMulModule matmul;
     auto q = modules::LinearModule(binding::linear_config(kHiddenSize, kHiddenSize, false))
                  .build(ctx, input, binding::linear_data(constants, weights.q));
     auto k = modules::LinearModule(binding::linear_config(kHiddenSize, kHiddenSize, false))
@@ -227,16 +226,12 @@ core::TensorValue mimi_self_attention(
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto scores = matmul.build(ctx, q_heads, modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    scores = core::wrap_tensor(
-        ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(kHeadDim))),
-        scores.shape,
-        GGML_TYPE_F32);
-    scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
-    scores = core::ensure_backend_addressable_layout(ctx, scores);
-    auto attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
-    auto context = matmul.build(ctx, attn, v_heads);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+    auto context = modules::ScaledDotProductAttentionModule({
+        kHeadDim,
+        modules::ScaledDotProductAttentionLowering::Explicit,
+        GGML_PREC_F32,
+        modules::AttentionCausality::Causal,
+    }).build(ctx, q_heads, k_heads, v_heads);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], kHiddenSize}));
     return modules::LinearModule(binding::linear_config(kHiddenSize, kHiddenSize, false))

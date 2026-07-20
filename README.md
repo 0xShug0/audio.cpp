@@ -60,6 +60,7 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 | **miocodec** | audio codec, voice conversion backend | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz |
 | **miotts** | TTS, voice cloning | en, ja | MioTTS-1.7B |
 | **omnivoice** | TTS, voice cloning, voice design | 646+ langs | OmniVoice, Qwen3-0.6B based |
+| **outetts** | TTS, voice cloning | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | Llama-OuteTTS-1.0-1B |
 | **pocket_tts** | TTS, voice cloning | en, de, it, pt, es | PocketTTS-100M |
 | **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | Nemotron 3.5 ASR Streaming 0.6B |
 | **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B, Qwen3-ASR-1.7B-hf |
@@ -79,6 +80,14 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 | **moss_tts_nano** | TTS, voice cloning | auto | MOSS-TTS-Nano-100M |
 | **moss_tts_local** | TTS, voice cloning | auto, optional language hint | MOSS-TTS-Local-Transformer-v1.5 |
 | **supertonic** | TTS | en, ko, ja, ar, bg, cs, da, de, el, es, et, fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, na | Supertonic 3 |
+
+## Community Models
+
+Community model ports live under `community_models` to make the ownership boundary clear while keeping them available through the normal audio.cpp CLI and server paths. Huge thanks to the contributors who bring these models in, test them, and keep pushing the framework into new territory. See [docs/community_models/models.md](docs/community_models/models.md) for community-model expectations and current entries.
+
+| Family | Task | Supported language(s) | Contributor | What They Added |
+|---|---|---|---|---|
+| **outetts** | TTS, voice cloning | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
 
 WIP: Higgs Audio v3 TTS 4B, Fish Audio S2 Pro.
 
@@ -386,6 +395,7 @@ Recommended top-level install packages:
 | `moss_tts_local_v1_5` | MOSS-TTS-Local Transformer v1.5 | No |
 | `nemotron_asr` | Nemotron ASR | **Yes** |
 | `omnivoice` | OmniVoice | **Yes** |
+| `outetts_1_0_1b` | OuteTTS 1.0 1B with IBM DAC codec and Qwen3-aligned voice cloning | No |
 | `parakeet_tdt_0_6b_v3` | Parakeet TDT 0.6B v3 | **Yes** |
 | `pocket_tts` | PocketTTS | **Yes** |
 | `qwen3_asr_0_6b` | Qwen3 ASR 0.6B | **Yes** |
@@ -639,10 +649,10 @@ The framework also has a reusable GGUF tensor source and a streaming converter. 
 container reader is shared by all model families; a family still has to list a `.gguf`
 checkpoint as one of its accepted assets because model configuration and tensor naming
 remain architecture-specific. Qwen3 ASR, Qwen3 Forced Aligner, Qwen3 TTS, Nemotron
-3.5 ASR, VibeVoice-ASR, Higgs Audio STT, Hviske ASR, and Citrinet ASR currently accept
+3.5 ASR, VibeVoice-ASR, Higgs Audio STT, Hviske ASR, Citrinet ASR, and OuteTTS currently accept
 `model.gguf` (including `speech_tokenizer/model.gguf` for TTS). The converter recursively embeds sidecar files
 up to 64 MiB by default using binary-safe metadata, including nested tokenizer models,
-and Qwen3 ASR, Nemotron ASR, VibeVoice-ASR, Higgs Audio STT, Hviske ASR, and Citrinet ASR
+and Qwen3 ASR, Nemotron ASR, VibeVoice-ASR, Higgs Audio STT, Hviske ASR, Citrinet ASR, and OuteTTS
 can load the resulting `model.gguf` as a standalone file. The converter embeds the selected
 package spec in new GGUF files. Standalone conversion with embedded sidecars is the default
 and fails if required package resources are missing. Pass `--no-sidecars` only to explicitly

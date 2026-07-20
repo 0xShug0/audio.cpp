@@ -30,9 +30,6 @@ permissions:
   contents: read
   packages: write
 
-env:
-  IMAGE_REPO: ${{ github.repository }}
-
 jobs:
   # ── Check for new commits ───────────────────────────────────────────────────
   check-commits:
@@ -83,12 +80,17 @@ jobs:
     outputs:
       build_date: ${{ steps.date.outputs.date }}
       date_tag:   ${{ steps.date.outputs.tag }}
+      image_repo: ${{ steps.image_repo.outputs.image_repo }}
     steps:
       - name: Get build date
         id: date
         run: |
           echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           echo "tag=$(date -u +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+
+      - name: Determine lowercase image repository
+        id: image_repo
+        run: echo "image_repo=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
   # ── Build each arch, push by digest ─────────────────────────────────────────
   build:
@@ -174,7 +176,7 @@ jobs:
           target: full
           platforms: ${{ matrix.platforms }}
           provenance: false
-          outputs: type=image,name=ghcr.io/${{ env.IMAGE_REPO }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
+          outputs: type=image,name=ghcr.io/${{ needs.metadata.outputs.image_repo }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
           build-args: |
             BUILD_DATE=${{ needs.metadata.outputs.build_date }}
             APP_VERSION=${{ github.sha }}
@@ -183,8 +185,8 @@ jobs:
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
             ENGINE_ENABLE_NATIVE_CPU=OFF
             ${{ matrix.cuda_version && format('CUDA_VERSION={0}', matrix.cuda_version) || '' }}
-          cache-from: type=registry,ref=ghcr.io/${{ env.IMAGE_REPO }}:cache-${{ matrix.arch }}-${{ matrix.tag }}
-          cache-to: type=registry,ref=ghcr.io/${{ env.IMAGE_REPO }}:cache-${{ matrix.arch }}-${{ matrix.tag }},mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ needs.metadata.outputs.image_repo }}:cache-${{ matrix.arch }}-${{ matrix.tag }}
+          cache-to: type=registry,ref=ghcr.io/${{ needs.metadata.outputs.image_repo }}:cache-${{ matrix.arch }}-${{ matrix.tag }},mode=max
 
       - name: Upload digest
         if: ${{ matrix.enabled == true }}
@@ -245,7 +247,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          repo="ghcr.io/${{ env.IMAGE_REPO }}"
+          repo="ghcr.io/${{ needs.metadata.outputs.image_repo }}"
           date_tag="${{ needs.metadata.outputs.date_tag }}"
           short_sha="${{ needs.check-commits.outputs.short_sha }}"
           tag="${{ matrix.tag }}"

@@ -3,6 +3,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
@@ -16,7 +17,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -90,30 +90,11 @@ core::TensorValue attention_from_heads(
     const core::TensorValue & v_heads,
     int64_t dim,
     const std::optional<core::TensorValue> & attention_mask) {
-    const modules::MatMulModule matmul;
-    auto scores =
-        matmul.build(ctx, q_heads, modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    core::TensorValue attn;
-    if (attention_mask.has_value()) {
-        scores = ensure_contiguous(ctx, scores);
-        attn = core::wrap_tensor(
-            ggml_soft_max_ext(
-                ctx.ggml,
-                scores.tensor,
-                attention_mask->tensor,
-                1.0F / std::sqrt(static_cast<float>(dim)),
-                0.0F),
-            scores.shape,
-            GGML_TYPE_F32);
-    } else {
-        scores = core::wrap_tensor(
-            ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(dim))),
-            scores.shape,
-            GGML_TYPE_F32);
-        scores = ensure_contiguous(ctx, scores);
-        attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
-    }
-    return matmul.build(ctx, attn, v_heads);
+    return modules::ScaledDotProductAttentionModule({
+        dim,
+        modules::ScaledDotProductAttentionLowering::Explicit,
+        GGML_PREC_F32,
+    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
 }
 
 core::TensorValue encoder_layer(
@@ -153,7 +134,6 @@ core::TensorValue encoder_layer(
     auto v_heads =
         repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
     auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
     context = ensure_contiguous(ctx, context);
     context = core::reshape_tensor(
         ctx,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/module.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 
 #include <ggml.h>
 
@@ -8,28 +9,24 @@
 
 namespace engine::modules {
 
-enum class ScaledDotProductAttentionLowering {
-    Explicit,
-    Flash,
+enum class GroupedQueryAttentionLowering {
+    ManualRepeat,
+    FlashGrouped,
+    FlashGroupedViewKV,
 };
 
-enum class AttentionCausality {
-    NonCausal,
-    Causal,
-};
-
-struct ScaledDotProductAttentionConfig {
+struct GroupedQueryAttentionConfig {
     int64_t head_dim = 0;
-    ScaledDotProductAttentionLowering lowering = ScaledDotProductAttentionLowering::Explicit;
+    GroupedQueryAttentionLowering lowering = GroupedQueryAttentionLowering::FlashGrouped;
     ggml_prec precision = GGML_PREC_F32;
     AttentionCausality causality = AttentionCausality::NonCausal;
 };
 
-class ScaledDotProductAttentionModule {
+class GroupedQueryAttentionModule {
 public:
-    explicit ScaledDotProductAttentionModule(ScaledDotProductAttentionConfig config);
+    explicit GroupedQueryAttentionModule(GroupedQueryAttentionConfig config);
 
-    const ScaledDotProductAttentionConfig & config() const noexcept;
+    const GroupedQueryAttentionConfig & config() const noexcept;
     const core::ModuleSchema & schema() const noexcept;
 
     core::TensorValue build(
@@ -42,7 +39,7 @@ public:
     static const core::ModuleSchema & static_schema() noexcept;
 
 private:
-    ScaledDotProductAttentionConfig config_;
+    GroupedQueryAttentionConfig config_;
 };
 
 }  // namespace engine::modules

@@ -1,0 +1,65 @@
+{
+  "family": "outetts",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "dac_config": "model:dac/config.json"
+      },
+      "optional_files": {
+        "aligner_config": "model:aligner/config.json",
+        "aligner_generation_config": "model:aligner/generation_config.json",
+        "aligner_tokenizer_config": "model:aligner/tokenizer_config.json",
+        "aligner_preprocessor_config": "model:aligner/preprocessor_config.json",
+        "aligner_processor_config": "model:aligner/processor_config.json",
+        "aligner_chat_template": "model:aligner/chat_template.json",
+        "aligner_chat_template_jinja": "model:aligner/chat_template.jinja",
+        "aligner_vocab": "model:aligner/vocab.json",
+        "aligner_merges": "model:aligner/merges.txt",
+        "aligner_tokenizer_json": "model:aligner/tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "dac_weights": {
+          "source": "weights:",
+          "prefix": "dac_weights"
+        },
+        "aligner_weights": {
+          "source": "weights:",
+          "prefix": "aligner_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "dac": "../DAC.speech.v1.0"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "dac_config": "dac:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "dac_weights": "dac:model.safetensors"
+      }
+    }
+  ]
+}

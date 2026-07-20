@@ -7,6 +7,8 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/grouped_query_attention.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -234,39 +236,6 @@ core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::Te
     return output;
 }
 
-core::TensorValue attention_from_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    int64_t dim,
-    const std::optional<core::TensorValue> & attention_mask = std::nullopt) {
-    const modules::MatMulModule matmul;
-    auto scores = matmul.build(ctx, q_heads, modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    core::TensorValue attn;
-    if (attention_mask.has_value()) {
-        scores = core::ensure_backend_addressable_layout(ctx, scores);
-        attn = core::wrap_tensor(
-            ggml_soft_max_ext(
-                ctx.ggml,
-                scores.tensor,
-                attention_mask->tensor,
-                1.0F / std::sqrt(static_cast<float>(dim)),
-                0.0F),
-            scores.shape,
-            GGML_TYPE_F32);
-    } else {
-        scores = core::wrap_tensor(
-            ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(dim))),
-            scores.shape,
-            GGML_TYPE_F32);
-        scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
-        scores = core::ensure_backend_addressable_layout(ctx, scores);
-        attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
-    }
-    return matmul.build(ctx, attn, v_heads);
-}
-
 core::TensorValue cache_view(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & cache,
@@ -290,34 +259,6 @@ core::TensorValue cache_view(
             cache.tensor->nb[3],
             static_cast<size_t>(start) * cache.tensor->nb[2]),
         core::TensorShape::from_dims({1, steps, heads, dim}),
-        GGML_TYPE_F32);
-}
-
-core::TensorValue flash_attention_from_grouped_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    int64_t dim,
-    const core::TensorValue & attention_mask) {
-    if (!core::has_backend_addressable_layout(q_heads.tensor) ||
-        !core::has_backend_addressable_layout(k_heads.tensor) ||
-        !core::has_backend_addressable_layout(v_heads.tensor)) {
-        throw std::runtime_error("Vevo2 AR flash attention expects contiguous Q/K/V heads");
-    }
-    auto * flash = ggml_flash_attn_ext(
-        ctx.ggml,
-        q_heads.tensor,
-        k_heads.tensor,
-        v_heads.tensor,
-        attention_mask.tensor,
-        1.0F / std::sqrt(static_cast<float>(dim)),
-        0.0F,
-        0.0F);
-    ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
-    return core::wrap_tensor(
-        flash,
-        core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[2], q_heads.shape.dims[1], dim}),
         GGML_TYPE_F32);
 }
 
@@ -354,8 +295,12 @@ Vevo2ARLayerOutput decoder_layer(
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k), kv_repeats);
     auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+    auto context = modules::ScaledDotProductAttentionModule({
+        dim,
+        modules::ScaledDotProductAttentionLowering::Explicit,
+        GGML_PREC_F32,
+        modules::AttentionCausality::Causal,
+    }).build(ctx, q_heads, k_heads, v_heads);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(
         ctx,
@@ -406,7 +351,11 @@ Vevo2ARLayerOutput decoder_layer_with_static_cache_tail(
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, cache_value.shape.rank}).build(ctx, cache_value);
     k_heads = core::wrap_tensor(ggml_cont(ctx.ggml, k_heads.tensor), k_heads.shape, k_heads.type);
     v_heads = core::wrap_tensor(ggml_cont(ctx.ggml, v_heads.tensor), v_heads.shape, v_heads.type);
-    auto context = flash_attention_from_grouped_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
+    auto context = modules::GroupedQueryAttentionModule({
+        dim,
+        modules::GroupedQueryAttentionLowering::FlashGrouped,
+        GGML_PREC_F32,
+    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({1, 1, config.num_attention_heads * dim}));
     auto x = modules::AddModule{}.build(
