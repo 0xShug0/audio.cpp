@@ -5,6 +5,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -16,7 +17,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -171,15 +171,12 @@ core::TensorValue audio_self_attention(
     const HiggsAudioSTTAudioEncoderConfig & config,
     const core::TensorValue & attention_mask) {
     const int64_t head_dim = config.d_model / config.encoder_attention_heads;
-    const float scale = 1.0F / std::sqrt(static_cast<float>(head_dim));
     const modules::LinearModule q_proj({config.d_model, config.d_model, true});
     const modules::LinearModule k_proj({config.d_model, config.d_model, false});
     const modules::LinearModule v_proj({config.d_model, config.d_model, true});
     const modules::LinearModule out_proj({config.d_model, config.d_model, true});
-    const modules::MatMulModule matmul;
 
     auto q = q_proj.build(ctx, input, {weights.q_proj_weight, weights.q_proj_bias});
-    q = core::wrap_tensor(ggml_scale(ctx.ggml, q.tensor, scale), q.shape, GGML_TYPE_F32);
     q = ai::reshape_heads(ctx, core::ensure_backend_addressable_layout(ctx, q), config.encoder_attention_heads, head_dim);
     auto k = ai::reshape_heads(
         ctx,
@@ -194,11 +191,11 @@ core::TensorValue audio_self_attention(
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto scores = matmul.build(ctx, q_heads, modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    scores = core::ensure_backend_addressable_layout(ctx, scores);
-    auto attn = core::wrap_tensor(ggml_soft_max_ext(ctx.ggml, scores.tensor, attention_mask.tensor, 1.0F, 0.0F), scores.shape, GGML_TYPE_F32);
-    auto context = matmul.build(ctx, attn, v_heads);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+    auto context = modules::ScaledDotProductAttentionModule({
+        head_dim,
+        modules::ScaledDotProductAttentionLowering::Explicit,
+        GGML_PREC_F32,
+    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.d_model}));
     return out_proj.build(ctx, context, {weights.out_proj_weight, weights.out_proj_bias});

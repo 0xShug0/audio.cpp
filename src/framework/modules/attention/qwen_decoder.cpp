@@ -115,7 +115,8 @@ core::TensorValue attention_from_heads(
         scores = core::ensure_backend_addressable_layout(ctx, scores);
         attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
     }
-    return matmul.build(ctx, attn, v_heads);
+    auto context = matmul.build(ctx, attn, v_heads);
+    return TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
 }
 
 core::TensorValue attention_from_grouped_query_heads(
@@ -137,7 +138,7 @@ core::TensorValue attention_from_grouped_query_heads(
         auto v_head = SliceModule({1, key_value_head, 1}).build(ctx, v_heads);
         head_outputs.push_back(attention_from_heads(ctx, q_head, k_head, v_head, dim, attention_mask));
     }
-    return concat_all(ctx, head_outputs, 1);
+    return concat_all(ctx, head_outputs, 2);
 }
 
 core::TensorValue flash_attention_from_grouped_heads(
@@ -482,10 +483,6 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
             TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v),
             kv_repeats);
         context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-        context = TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-        if (config_.activation_cast.enabled && config_.activation_cast.after_context_transpose) {
-            context = activation_cast(ctx, context, config_.activation_cast);
-        }
     }
     if (config_.activation_cast.enabled && config_.activation_cast.after_attention) {
         context = activation_cast(ctx, context, config_.activation_cast);
@@ -653,12 +650,6 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     }
     if (config_.activation_cast.enabled && config_.activation_cast.after_attention) {
         context = activation_cast(ctx, context, config_.activation_cast);
-    }
-    if (config_.runtime.static_cache.transpose_context) {
-        context = TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-        if (config_.activation_cast.enabled && config_.activation_cast.after_context_transpose) {
-            context = activation_cast(ctx, context, config_.activation_cast);
-        }
     }
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(

@@ -38,7 +38,6 @@ struct QwenDecoderActivationCastPolicy {
     bool after_rope = false;
     bool after_static_cache_update = false;
     bool after_attention = false;
-    bool after_context_transpose = false;
     bool after_attention_output = false;
     bool after_residual = false;
     bool after_ffn_norm = false;
@@ -56,7 +55,6 @@ struct QwenDecoderAttentionPolicy {
 
 struct QwenDecoderStaticCachePolicy {
     QwenDecoderStaticCacheUpdateMode update_mode = QwenDecoderStaticCacheUpdateMode::ScratchTail;
-    bool transpose_context = false;
 };
 
 struct QwenDecoderRuntimePolicy {

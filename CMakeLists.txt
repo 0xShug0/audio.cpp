@@ -202,6 +202,7 @@ add_library(engine_runtime STATIC
     src/framework/modules/attention/common_relative_attention.cpp
     src/framework/modules/attention/relative_attention.cpp
     src/framework/modules/attention/scaled_dot_product_attention.cpp
+    src/framework/modules/attention/grouped_query_attention.cpp
     src/framework/modules/attention/streaming_frame_attention_cache.cpp
     src/framework/modules/attention/qwen_decoder.cpp
     src/framework/modules/attention/qwen_causal_decoder.cpp

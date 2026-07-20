@@ -67,7 +67,6 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(const VibeVoiceDecoder
     out.stack.rms_norm_eps = config.rms_norm_eps;
     out.stack.rope_theta = config.rope_theta;
     out.stack.use_qk_norm = false;
-    out.stack.runtime.static_cache.transpose_context = true;
     out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;

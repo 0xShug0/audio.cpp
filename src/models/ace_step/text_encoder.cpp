@@ -5,6 +5,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -17,7 +18,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
@@ -98,74 +98,6 @@ core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::Te
     return output;
 }
 
-std::array<int, core::kMaxTensorRank> transpose_last_two_axes(size_t rank) {
-    std::array<int, core::kMaxTensorRank> axes = {0, 1, 2, 3};
-    if (rank < 2) {
-        throw std::runtime_error("transpose_last_two_axes requires rank >= 2");
-    }
-    std::swap(axes[rank - 2], axes[rank - 1]);
-    return axes;
-}
-
-core::TensorValue matmul_f32(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & lhs,
-    const core::TensorValue & rhs) {
-    core::validate_rank_between(lhs, 2, core::kMaxTensorRank, "lhs");
-    core::validate_rank_between(rhs, lhs.shape.rank, lhs.shape.rank, "rhs");
-    const size_t rank = lhs.shape.rank;
-    for (size_t i = 0; i + 2 < rank; ++i) {
-        if (lhs.shape.dims[i] != rhs.shape.dims[i]) {
-            throw std::runtime_error("MatMul batch dimensions must match");
-        }
-    }
-    if (lhs.shape.dims[rank - 1] != rhs.shape.dims[rank - 2]) {
-        throw std::runtime_error("MatMul inner dimensions must match");
-    }
-
-    auto rhs_transposed = modules::TransposeModule({transpose_last_two_axes(rank), rank}).build(ctx, rhs);
-    rhs_transposed = ensure_contiguous(ctx, rhs_transposed);
-
-    core::TensorShape output_shape = lhs.shape;
-    output_shape.dims[rank - 1] = rhs.shape.dims[rank - 1];
-    ggml_tensor * output = ggml_mul_mat(ctx.ggml, rhs_transposed.tensor, lhs.tensor);
-    ggml_mul_mat_set_prec(output, GGML_PREC_F32);
-    return core::wrap_tensor(output, output_shape, GGML_TYPE_F32);
-}
-
-core::TensorValue attention_from_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    int64_t dim,
-    const std::optional<core::TensorValue> & attention_mask) {
-    auto scores =
-        matmul_f32(ctx, q_heads, modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    core::TensorValue attn;
-    if (attention_mask.has_value()) {
-        scores = ensure_contiguous(ctx, scores);
-        attn = core::wrap_tensor(
-            ggml_soft_max_ext(
-                ctx.ggml,
-                scores.tensor,
-                attention_mask->tensor,
-                1.0F / std::sqrt(static_cast<float>(dim)),
-                0.0F),
-            scores.shape,
-            GGML_TYPE_F32);
-    } else {
-        scores = core::wrap_tensor(
-            ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(dim))),
-            scores.shape,
-            GGML_TYPE_F32);
-        scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
-        scores = ensure_contiguous(ctx, scores);
-        attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
-    }
-    return matmul_f32(ctx, attn, v_heads);
-}
-
 core::TensorValue decoder_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -202,8 +134,12 @@ core::TensorValue decoder_layer(
         repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k), kv_repeats);
     auto v_heads =
         repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+    auto context = modules::ScaledDotProductAttentionModule({
+        dim,
+        modules::ScaledDotProductAttentionLowering::Explicit,
+        GGML_PREC_F32,
+        modules::AttentionCausality::Causal,
+    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
     context = ensure_contiguous(ctx, context);
     context = core::reshape_tensor(
         ctx,
