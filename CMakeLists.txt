@@ -410,17 +410,17 @@ add_library(engine_runtime STATIC
     src/models/qwen3_tts/prompt_tts_custom_voice.cpp
     src/models/qwen3_tts/session.cpp
     src/models/qwen3_tts/loader.cpp
-    src/models/vietneu_tts/assets.cpp
-    src/models/vietneu_tts/tokenizer_text.cpp
-    src/models/vietneu_tts/tokenizer_speech_encoder.cpp
-    src/models/vietneu_tts/tokenizer_speech_decoder.cpp
-    src/models/vietneu_tts/speaker_encoder.cpp
-    src/models/vietneu_tts/talker.cpp
-    src/models/vietneu_tts/prompt_tts_voice_clone.cpp
-    src/models/vietneu_tts/prompt_tts_voice_design.cpp
-    src/models/vietneu_tts/prompt_tts_custom_voice.cpp
-    src/models/vietneu_tts/session.cpp
-    src/models/vietneu_tts/loader.cpp
+    src/community_models/vietneu_tts/assets.cpp
+    src/community_models/vietneu_tts/tokenizer_text.cpp
+    src/community_models/vietneu_tts/tokenizer_speech_encoder.cpp
+    src/community_models/vietneu_tts/tokenizer_speech_decoder.cpp
+    src/community_models/vietneu_tts/speaker_encoder.cpp
+    src/community_models/vietneu_tts/talker.cpp
+    src/community_models/vietneu_tts/prompt_tts_voice_clone.cpp
+    src/community_models/vietneu_tts/prompt_tts_voice_design.cpp
+    src/community_models/vietneu_tts/prompt_tts_custom_voice.cpp
+    src/community_models/vietneu_tts/session.cpp
+    src/community_models/vietneu_tts/loader.cpp
     src/models/qwen3_asr/assets.cpp
     src/models/qwen3_asr/tokenizer_text.cpp
     src/models/qwen3_asr/frontend_whisper.cpp

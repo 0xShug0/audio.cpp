@@ -1,14 +1,14 @@
 #pragma once
 
-#include "engine/models/vietneu_tts/talker.h"
-#include "engine/models/vietneu_tts/tokenizer_text.h"
-#include "engine/models/vietneu_tts/types.h"
+#include "engine/community_models/vietneu_tts/talker.h"
+#include "engine/community_models/vietneu_tts/tokenizer_text.h"
+#include "engine/community_models/vietneu_tts/types.h"
 
 namespace engine::models::vietneu_tts {
 
-class VietneuTTSVoiceDesignPromptBuilder {
+class VietneuTTSCustomVoicePromptBuilder {
 public:
-    VietneuTTSVoiceDesignPromptBuilder(
+    VietneuTTSCustomVoicePromptBuilder(
         const Qwen3TextTokenizer & tokenizer,
         int64_t text_token_limit,
         int64_t instruction_token_limit);

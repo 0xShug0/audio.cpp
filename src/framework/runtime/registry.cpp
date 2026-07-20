@@ -29,7 +29,7 @@
 #include "engine/models/qwen3_asr/loader.h"
 #include "engine/models/qwen3_forced_aligner/loader.h"
 #include "engine/models/qwen3_tts/loader.h"
-#include "engine/models/vietneu_tts/loader.h"
+#include "engine/community_models/vietneu_tts/loader.h"
 #include "engine/models/roformer/loader.h"
 #include "engine/models/silero_vad/session.h"
 #include "engine/models/seed_vc/loader.h"

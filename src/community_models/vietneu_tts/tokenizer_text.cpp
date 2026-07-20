@@ -1,4 +1,4 @@
-#include "engine/models/vietneu_tts/tokenizer_text.h"
+#include "engine/community_models/vietneu_tts/tokenizer_text.h"
 
 #include "engine/framework/tokenizers/llama_bpe.h"
 

@@ -1,10 +1,10 @@
-#include "engine/models/vietneu_tts/session.h"
+#include "engine/community_models/vietneu_tts/session.h"
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
-#include "engine/models/vietneu_tts/prompt_tts_custom_voice.h"
-#include "engine/models/vietneu_tts/prompt_tts_voice_design.h"
+#include "engine/community_models/vietneu_tts/prompt_tts_custom_voice.h"
+#include "engine/community_models/vietneu_tts/prompt_tts_voice_design.h"
 
 #include <algorithm>
 #include <chrono>

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "engine/models/vietneu_tts/speaker_encoder.h"
-#include "engine/models/vietneu_tts/talker.h"
-#include "engine/models/vietneu_tts/tokenizer_speech_encoder.h"
-#include "engine/models/vietneu_tts/tokenizer_text.h"
-#include "engine/models/vietneu_tts/types.h"
+#include "engine/community_models/vietneu_tts/speaker_encoder.h"
+#include "engine/community_models/vietneu_tts/talker.h"
+#include "engine/community_models/vietneu_tts/tokenizer_speech_encoder.h"
+#include "engine/community_models/vietneu_tts/tokenizer_text.h"
+#include "engine/community_models/vietneu_tts/types.h"
 
 #include <optional>
 

@@ -1,4 +1,4 @@
-#include "engine/models/vietneu_tts/speaker_encoder.h"
+#include "engine/community_models/vietneu_tts/speaker_encoder.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/conversion.h"

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/models/vietneu_tts/assets.h"
-#include "engine/models/vietneu_tts/types.h"
+#include "engine/community_models/vietneu_tts/assets.h"
+#include "engine/community_models/vietneu_tts/types.h"
 
 #include <cstddef>
 #include <cstdint>

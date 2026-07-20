@@ -1,4 +1,4 @@
-#include "engine/models/vietneu_tts/talker.h"
+#include "engine/community_models/vietneu_tts/talker.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
@@ -236,7 +236,6 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(
     out.stack.attention_precision = GGML_PREC_F32;
     out.stack.use_qk_norm = true;
     out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.stack.runtime.static_cache.transpose_context = true;
     out.logits_size = logits_size;
     out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     return out;

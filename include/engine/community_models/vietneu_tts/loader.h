@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/framework/runtime/model.h"
-#include "engine/models/vietneu_tts/assets.h"
+#include "engine/community_models/vietneu_tts/assets.h"
 
 #include <filesystem>
 #include <memory>

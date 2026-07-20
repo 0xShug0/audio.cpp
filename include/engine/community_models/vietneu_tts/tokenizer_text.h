@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/models/vietneu_tts/assets.h"
+#include "engine/community_models/vietneu_tts/assets.h"
 
 #include <cstdint>
 #include <memory>

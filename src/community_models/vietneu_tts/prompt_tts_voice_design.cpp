@@ -1,4 +1,4 @@
-#include "engine/models/vietneu_tts/prompt_tts_voice_design.h"
+#include "engine/community_models/vietneu_tts/prompt_tts_voice_design.h"
 
 #include <stdexcept>
 #include <string>

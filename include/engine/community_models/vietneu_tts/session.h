@@ -2,13 +2,13 @@
 
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/vietneu_tts/assets.h"
-#include "engine/models/vietneu_tts/prompt_tts_voice_clone.h"
-#include "engine/models/vietneu_tts/speaker_encoder.h"
-#include "engine/models/vietneu_tts/talker.h"
-#include "engine/models/vietneu_tts/tokenizer_speech_decoder.h"
-#include "engine/models/vietneu_tts/tokenizer_speech_encoder.h"
-#include "engine/models/vietneu_tts/tokenizer_text.h"
+#include "engine/community_models/vietneu_tts/assets.h"
+#include "engine/community_models/vietneu_tts/prompt_tts_voice_clone.h"
+#include "engine/community_models/vietneu_tts/speaker_encoder.h"
+#include "engine/community_models/vietneu_tts/talker.h"
+#include "engine/community_models/vietneu_tts/tokenizer_speech_decoder.h"
+#include "engine/community_models/vietneu_tts/tokenizer_speech_encoder.h"
+#include "engine/community_models/vietneu_tts/tokenizer_text.h"
 
 #include "engine/models/moss/shared/audio_tokenizer_decoder.h"
 

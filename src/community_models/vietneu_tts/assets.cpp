@@ -1,4 +1,4 @@
-#include "engine/models/vietneu_tts/assets.h"
+#include "engine/community_models/vietneu_tts/assets.h"
 
 #include "engine/framework/assets/model_package.h"
 #include "engine/framework/io/json.h"

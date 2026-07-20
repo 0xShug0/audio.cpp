@@ -2,7 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/models/vietneu_tts/types.h"
+#include "engine/community_models/vietneu_tts/types.h"
 
 #include <cstdint>
 #include <filesystem>

@@ -1,7 +1,7 @@
-#include "engine/models/vietneu_tts/loader.h"
+#include "engine/community_models/vietneu_tts/loader.h"
 
 #include "engine/framework/assets/model_package.h"
-#include "engine/models/vietneu_tts/session.h"
+#include "engine/community_models/vietneu_tts/session.h"
 
 #include <algorithm>
 #include <stdexcept>
