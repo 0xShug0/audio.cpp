@@ -115,6 +115,13 @@ class ResponseDone(PipelineEvent):
     pass
 
 
+@dataclass
+class TurnDiscarded(PipelineEvent):
+    """A VAD turn ended without producing a conversational response."""
+
+    reason: str
+
+
 # ── audio helpers ───────────────────────────────────────────────────────
 
 
@@ -554,6 +561,7 @@ class RealtimePipeline:
                 continue
             audio = stopped.audio
             if audio is None or len(audio) < PIPELINE_SR * 0.3:  # < 0.3s: ignore
+                self._out_events.put(TurnDiscarded(reason="too_short"))
                 continue
             try:
                 self._run_turn(audio)
@@ -606,7 +614,11 @@ class RealtimePipeline:
 
         # ── STT ──
         text = self._stt.transcribe(audio)
-        if not text or self._cancel_scope.is_stale(gen):
+        if self._cancel_scope.is_stale(gen):
+            return
+        if not text:
+            logger.info("ASR returned no transcript; discarding realtime turn")
+            self._out_events.put(TurnDiscarded(reason="empty_transcript"))
             return
         logger.info("USER: %s", text)
         self._out_events.put(UserTranscript(text=text, partial=False))

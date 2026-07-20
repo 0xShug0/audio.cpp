@@ -1,0 +1,434 @@
+{
+  "_comment": "download_id -> files that must exist inside the installed model directory (relative paths, forward slashes). Mirrors ModelPackage.required_files in tools/model_manager.py - the post-install validation list, i.e. the final on-disk layout AFTER conversions (e.g. ace_step silence_latent.pt -> .safetensors). webui.py uses this to tell a complete install apart from a manually copied / interrupted directory. Regenerate after editing the model_manager CATALOG: venv\\Scripts\\python.exe with this repo's tools/ on sys.path, dump {p.id: list(p.required_files) for p in CATALOG}.",
+  "ace_step": [
+    "Qwen3-Embedding-0.6B/model.safetensors",
+    "acestep-5Hz-lm-1.7B/model.safetensors",
+    "acestep-v15-base/model.safetensors",
+    "acestep-v15-base/silence_latent.safetensors",
+    "acestep-v15-turbo/model.safetensors",
+    "acestep-v15-turbo/silence_latent.safetensors",
+    "vae/diffusion_pytorch_model.safetensors"
+  ],
+  "kokoro_82m_bf16": [
+    "config.json",
+    "kokoro-v1_0.safetensors",
+    "voices/af_heart.safetensors"
+  ],
+  "moss_tts_nano_100m": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.model",
+    "tokenizer_config.json",
+    "audio_tokenizer/config.json",
+    "audio_tokenizer/model-00001-of-00001.safetensors",
+    "audio_tokenizer/model.safetensors.index.json"
+  ],
+  "moss_tts_nano_100m_model": [
+    "config.json",
+    "pytorch_model.bin",
+    "tokenizer.model",
+    "tokenizer_config.json"
+  ],
+  "moss_audio_tokenizer_nano": [
+    "config.json",
+    "model-00001-of-00001.safetensors",
+    "model.safetensors.index.json"
+  ],
+  "moss_audio_tokenizer_v2": [
+    "config.json",
+    "model.safetensors.index.json",
+    "model-00001-of-00003.safetensors",
+    "model-00002-of-00003.safetensors",
+    "model-00003-of-00003.safetensors"
+  ],
+  "moss_tts_local_v1_5": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt",
+    "special_tokens_map.json",
+    "added_tokens.json",
+    "chat_template.jinja",
+    "audio_tokenizer/config.json",
+    "audio_tokenizer/model.safetensors.index.json",
+    "audio_tokenizer/model-00001-of-00003.safetensors",
+    "audio_tokenizer/model-00002-of-00003.safetensors",
+    "audio_tokenizer/model-00003-of-00003.safetensors"
+  ],
+  "omnivoice": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "audio_tokenizer/config.json",
+    "audio_tokenizer/model.safetensors"
+  ],
+  "qwen3_asr_0_6b": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt"
+  ],
+  "qwen3_asr_1_7b_hf": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "processor_config.json",
+    "tokenizer_config.json",
+    "tokenizer.json"
+  ],
+  "voxtral_realtime": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "params.json",
+    "processor_config.json",
+    "tekken.json"
+  ],
+  "higgs_audio_stt": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors.index.json",
+    "model-00001-of-00002.safetensors",
+    "model-00002-of-00002.safetensors",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt",
+    "../whisper-large-v3/preprocessor_config.json"
+  ],
+  "hviske_asr": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "tokenizer.model"
+  ],
+  "nemotron_asr": [
+    "config.json",
+    "model.safetensors",
+    "processor_config.json",
+    "tokenizer.json"
+  ],
+  "qwen3_forced_aligner_0_6b": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt"
+  ],
+  "qwen3_tts_0_6b_base": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "speech_tokenizer/config.json",
+    "speech_tokenizer/model.safetensors",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt"
+  ],
+  "qwen3_tts_1_7b_base": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "speech_tokenizer/config.json",
+    "speech_tokenizer/model.safetensors",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt"
+  ],
+  "qwen3_tts_1_7b_custom_voice": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "speech_tokenizer/config.json",
+    "speech_tokenizer/model.safetensors",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt"
+  ],
+  "qwen3_tts_1_7b_voice_design": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "speech_tokenizer/config.json",
+    "speech_tokenizer/model.safetensors",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt"
+  ],
+  "qwen3_tts_tokenizer_12hz": [
+    "config.json",
+    "model.safetensors"
+  ],
+  "chatterbox": [
+    "ve.safetensors",
+    "t3_cfg.safetensors",
+    "t3_mtl23ls_v2.safetensors",
+    "t3_mtl23ls_v3.safetensors",
+    "s3gen.safetensors",
+    "tokenizer.json",
+    "grapheme_mtl_merged_expanded_v1.json",
+    "Cangjie5_TC.json",
+    "conds.pt"
+  ],
+  "sortformer_diar_4spk_v1": [
+    "config.json",
+    "model.safetensors",
+    "processor_config.json"
+  ],
+  "parakeet_tdt_0_6b_v3": [
+    "config.json",
+    "model.safetensors",
+    "processor_config.json",
+    "tokenizer.json"
+  ],
+  "pocket_tts": [
+    "languages/english/model.safetensors",
+    "languages/english/tokenizer.model",
+    "languages/english/embeddings/alba.safetensors"
+  ],
+  "miocodec_25hz_44k_v2": [
+    "config.yaml",
+    "model.safetensors",
+    "wavlm-base-plus-mlx/config.json",
+    "wavlm-base-plus-mlx/weights.safetensors"
+  ],
+  "miotts_1_7b": [
+    "config.json",
+    "generation_config.json",
+    "tokenizer_config.json",
+    "tokenizer.json",
+    "vocab.json",
+    "merges.txt",
+    "model.safetensors"
+  ],
+  "vibevoice_asr": [
+    "config.json",
+    "model.safetensors.index.json",
+    "model-00001-of-00008.safetensors",
+    "model-00002-of-00008.safetensors",
+    "model-00003-of-00008.safetensors",
+    "model-00004-of-00008.safetensors",
+    "model-00005-of-00008.safetensors",
+    "model-00006-of-00008.safetensors",
+    "model-00007-of-00008.safetensors",
+    "model-00008-of-00008.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt"
+  ],
+  "vibevoice_1_5b": [
+    "config.json",
+    "model.safetensors.index.json",
+    "model-00001-of-00003.safetensors",
+    "model-00002-of-00003.safetensors",
+    "model-00003-of-00003.safetensors",
+    "preprocessor_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt"
+  ],
+  "vibevoice_7b": [
+    "config.json",
+    "model.safetensors.index.json",
+    "model-00001-of-00010.safetensors",
+    "model-00002-of-00010.safetensors",
+    "model-00003-of-00010.safetensors",
+    "model-00004-of-00010.safetensors",
+    "model-00005-of-00010.safetensors",
+    "model-00006-of-00010.safetensors",
+    "model-00007-of-00010.safetensors",
+    "model-00008-of-00010.safetensors",
+    "model-00009-of-00010.safetensors",
+    "model-00010-of-00010.safetensors",
+    "preprocessor_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt"
+  ],
+  "higgs_audio_v3_tts_4b": [
+    "chat_template.jinja",
+    "config.json",
+    "model.safetensors.index.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json"
+  ],
+  "heartmula": [
+    "tokenizer.json",
+    "gen_config.json",
+    "HeartMuLa-oss-3B/config.json",
+    "HeartMuLa-oss-3B/model.safetensors.index.json",
+    "HeartMuLa-oss-3B/model-00001-of-00004.safetensors",
+    "HeartMuLa-oss-3B/model-00002-of-00004.safetensors",
+    "HeartMuLa-oss-3B/model-00003-of-00004.safetensors",
+    "HeartMuLa-oss-3B/model-00004-of-00004.safetensors",
+    "HeartCodec-oss/config.json",
+    "HeartCodec-oss/model.safetensors.index.json",
+    "HeartCodec-oss/model-00001-of-00002.safetensors",
+    "HeartCodec-oss/model-00002-of-00002.safetensors"
+  ],
+  "irodori_tts_500m_v3": [
+    "model.safetensors",
+    "model_config.json",
+    "../llm-jp-3-150m/tokenizer.json",
+    "../Semantic-DACVAE-Japanese-32dim/weights.safetensors"
+  ],
+  "irodori_tts_600m_v3_voice_design": [
+    "model.safetensors",
+    "model_config.json",
+    "../llm-jp-3-150m/tokenizer.json",
+    "../Semantic-DACVAE-Japanese-32dim/weights.safetensors"
+  ],
+  "stable_audio_3_small_music": [
+    "model_config.json",
+    "model.safetensors",
+    "t5gemma-b-b-ul2/config.json",
+    "t5gemma-b-b-ul2/model.safetensors",
+    "t5gemma-b-b-ul2/tokenizer.json",
+    "t5gemma-b-b-ul2/tokenizer.model"
+  ],
+  "stable_audio_3_small_sfx": [
+    "model_config.json",
+    "model.safetensors",
+    "t5gemma-b-b-ul2/config.json",
+    "t5gemma-b-b-ul2/model.safetensors",
+    "t5gemma-b-b-ul2/tokenizer.json",
+    "t5gemma-b-b-ul2/tokenizer.model"
+  ],
+  "stable_audio_3_medium": [
+    "model_config.json",
+    "model.safetensors",
+    "t5gemma-b-b-ul2/config.json",
+    "t5gemma-b-b-ul2/model.safetensors",
+    "t5gemma-b-b-ul2/tokenizer.json",
+    "t5gemma-b-b-ul2/tokenizer.model"
+  ],
+  "supertonic_3": [
+    "config/tts.json",
+    "config/unicode_indexer.json",
+    "ggml/supertonic.safetensors",
+    "voice_styles/M1.json"
+  ],
+  "index_tts2": [
+    "config.yaml",
+    "bpe.model",
+    "gpt.safetensors",
+    "s2mel.safetensors",
+    "feat1.safetensors",
+    "feat2.safetensors",
+    "wav2vec2bert_stats.safetensors",
+    "semantic_codec_model.safetensors",
+    "campplus.safetensors",
+    "w2v-bert-2.0/config.json",
+    "w2v-bert-2.0/preprocessor_config.json",
+    "w2v-bert-2.0/model.safetensors",
+    "bigvgan/config.json",
+    "bigvgan/model.safetensors",
+    "qwen0.6bemo4-merge/config.json",
+    "qwen0.6bemo4-merge/generation_config.json",
+    "qwen0.6bemo4-merge/tokenizer.json",
+    "qwen0.6bemo4-merge/tokenizer_config.json",
+    "qwen0.6bemo4-merge/vocab.json",
+    "qwen0.6bemo4-merge/merges.txt",
+    "qwen0.6bemo4-merge/model.safetensors"
+  ],
+  "mel_band_roformer": [
+    "config.json",
+    "model.safetensors"
+  ],
+  "vevo2": [
+    "acoustic_modeling/fm_emilia101k_singnet7k_repa/config.json",
+    "acoustic_modeling/fm_emilia101k_singnet7k_repa/model.safetensors",
+    "acoustic_modeling/fm_emilia101k_singnet7k_repa/whisper_stats.safetensors",
+    "acoustic_modeling/fm_emilia101k_singnet7k_repa_text/config.json",
+    "acoustic_modeling/fm_emilia101k_singnet7k_repa_text/model.safetensors",
+    "acoustic_modeling/fm_emilia101k_singnet7k_repa_text/whisper_stats.safetensors",
+    "contentstyle_modeling/posttrained/amphion_config.json",
+    "contentstyle_modeling/posttrained/config.json",
+    "contentstyle_modeling/posttrained/generation_config.json",
+    "contentstyle_modeling/posttrained/merges.txt",
+    "contentstyle_modeling/posttrained/model.safetensors",
+    "contentstyle_modeling/posttrained/tokenizer.json",
+    "contentstyle_modeling/posttrained/tokenizer_config.json",
+    "contentstyle_modeling/posttrained/vocab.json",
+    "contentstyle_modeling/pretrained/config.json",
+    "contentstyle_modeling/pretrained/generation_config.json",
+    "contentstyle_modeling/pretrained/merges.txt",
+    "contentstyle_modeling/pretrained/model.safetensors",
+    "contentstyle_modeling/pretrained/tokenizer.json",
+    "contentstyle_modeling/pretrained/tokenizer_config.json",
+    "contentstyle_modeling/pretrained/vocab.json",
+    "tokenizer/contentstyle_fvq16384_12.5hz/model.safetensors",
+    "tokenizer/prosody_fvq512_6.25hz/model.safetensors",
+    "vocoder/config.json",
+    "vocoder/model.safetensors",
+    "vocoder/model_1.safetensors",
+    "vocoder/model_2.safetensors"
+  ],
+  "seed_vc": [
+    "seed_vc_manifest.json",
+    "v2/vc_wrapper.json",
+    "v2/ar.safetensors",
+    "v2/cfm.safetensors",
+    "v1/svc.json",
+    "v1/svc.safetensors",
+    "v1/whisper_bigvgan.json",
+    "v1/whisper_bigvgan.safetensors",
+    "v1/xlsr_hift.json",
+    "v1/xlsr_hift.safetensors",
+    "astral/bsq32.json",
+    "astral/bsq32.safetensors",
+    "astral/bsq2048.json",
+    "astral/bsq2048.safetensors",
+    "campplus/model.safetensors",
+    "rmvpe/model.safetensors",
+    "hift/config.json",
+    "hift/model.safetensors",
+    "bigvgan/v2_22khz_80band_256x/config.json",
+    "bigvgan/v2_22khz_80band_256x/model.safetensors",
+    "bigvgan/v2_44khz_128band_512x/config.json",
+    "bigvgan/v2_44khz_128band_512x/model.safetensors",
+    "whisper-small/config.json",
+    "whisper-small/model.safetensors",
+    "hubert-large-ll60k/config.json",
+    "hubert-large-ll60k/model.safetensors",
+    "wav2vec2-xls-r-300m/config.json",
+    "wav2vec2-xls-r-300m/model.safetensors"
+  ],
+  "citrinet_asr": [
+    "citrinet_256.safetensors",
+    "citrinet_256_config.json",
+    "citrinet_256_tokenizer.model",
+    "citrinet_256_vocab.txt"
+  ],
+  "marblenet_vad": [
+    "marblenet_vad.safetensors",
+    "marblenet_vad_config.json",
+    "marblenet_vad_labels.txt"
+  ],
+  "voxcpm2": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "audiovae.pth",
+    "audiovae.safetensors"
+  ],
+  "voxcpm2_audiovae": [
+    "audiovae.safetensors"
+  ],
+  "htdemucs": [
+    "manifest.json",
+    "955717e8/config.json",
+    "955717e8/model.safetensors"
+  ]
+}

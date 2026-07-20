@@ -47,6 +47,27 @@ import numpy as np
 import requests
 import gradio as gr
 
+try:
+    from ui_i18n import (
+        LANGUAGE_CHOICES,
+        get_language,
+        load_language,
+        param_spec as localized_param_spec,
+        save_language,
+        set_language,
+        text as ui_text,
+    )
+except ImportError:  # imported as the namespace package ``webui.webui`` in tests
+    from webui.ui_i18n import (
+        LANGUAGE_CHOICES,
+        get_language,
+        load_language,
+        param_spec as localized_param_spec,
+        save_language,
+        set_language,
+        text as ui_text,
+    )
+
 # 降噪：屏蔽 Gradio 内部触发、每次请求都会刷屏的 Starlette 弃用告警。
 warnings.filterwarnings("ignore", message=r".*HTTP_422_UNPROCESSABLE.*")
 
@@ -151,6 +172,11 @@ _silence_proactor_connection_reset()
 _silence_h11_content_length_race()
 _patch_gradio_render_config_race()
 
+
+def _t(zh, en, language=None, **values):
+    """Select UI copy in the active language."""
+    return ui_text(zh, en, language=language, **values)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(HERE)
 
@@ -162,14 +188,18 @@ LOG_DIR = os.path.join(HERE, "logs")
 for _d in (CONFIG_DIR, OUTPUT_DIR, VOICE_DIR, LOG_DIR):
     os.makedirs(_d, exist_ok=True)
 
+INITIAL_LANGUAGE = load_language()
+
 PROMPTS_DIR = VOICE_DIR                                    # built-in / reference voices
 CATALOG_PATH = os.path.join(CONFIG_DIR, "models_catalog.json")
 MODEL_PARAMS_PATH = os.path.join(CONFIG_DIR, "model_params.json")
+REQUIRED_FILES_PATH = os.path.join(CONFIG_DIR, "required_files.json")
 
 
 # Executable/name conventions differ per OS: Windows binaries carry a .exe suffix, POSIX ones don't.
 EXE_SUFFIX = ".exe" if os.name == "nt" else ""
 SERVER_EXE_NAME = "audiocpp_server" + EXE_SUFFIX
+GGUF_EXE_NAME = "audiocpp_gguf" + EXE_SUFFIX
 # The standalone server launcher, named only in messages telling the user which
 # script may be holding the port.
 SERVER_LAUNCHER = "run_server.bat" if os.name == "nt" else "run_server.sh"
@@ -277,104 +307,78 @@ if not os.path.isfile(SERVER_EXE) and os.path.isfile(_dev_server_exe(BACKEND)):
     SERVER_EXE = _dev_server_exe(BACKEND)
 LOG_PATH = os.path.join(LOG_DIR, "audiocpp_server_webui.log")
 LOAD_TIMEOUT = int(os.environ.get("AUDIOCPP_LOAD_TIMEOUT", "300"))
+GGUF_TYPES = ("orig", "f16", "bf16", "q8_0", "q2_k", "q3_k", "q4_k", "q5_k", "q6_k")
+
+# Only families with a model package spec can load the runtime GGUF produced by
+# audiocpp_gguf.  Keep this aligned with model_specs/*.json; a safetensors file
+# by itself is not evidence that the corresponding C++ loader supports GGUF.
+GGUF_NATIVE_FAMILIES = frozenset({
+    "citrinet_asr",
+    "higgs_audio_stt",
+    "hviske_asr",
+    "index_tts2",
+    "irodori_tts",
+    "moss_tts_local",
+    "moss_tts_nano",
+    "nemotron_asr",
+    "omnivoice",
+    "qwen3_asr",
+    "qwen3_forced_aligner",
+    "qwen3_tts",
+    "supertonic",
+    "vibevoice_asr",
+})
+
+# These families have input layouts the WebUI can assemble without guessing.
+# Other native-GGUF composite packages remain available through the converter
+# CLI until their explicit multi-input layout is added here.
+GGUF_SIMPLE_MODEL_FAMILIES = frozenset({
+    "higgs_audio_stt",
+    "hviske_asr",
+    "nemotron_asr",
+    "qwen3_asr",
+    "qwen3_forced_aligner",
+    "vibevoice_asr",
+})
+GGUF_WEBUI_CONVERTIBLE_FAMILIES = GGUF_SIMPLE_MODEL_FAMILIES | {"qwen3_tts"}
+
+
+def _find_gguf_exe():
+    """Find the converter in a development build or an integrated bundle.
+
+    Keep this separate from SERVER_EXE: developers normally run the executable
+    directly from their build tree's bin/, whereas portable users have it beside
+    the server binary under gpu/ or cpu/. Dev locations come from the same
+    DEV_BIN_DIRS scan the server uses, so non-Windows build-directory names
+    (linux-cuda-release, a plain build/bin, …) are covered too; the active
+    backend is tried first, then the other one.
+    """
+    other = "cpu" if BACKEND == "gpu" else "gpu"
+    candidates = [
+        os.environ.get("AUDIOCPP_GGUF"),
+        *(os.path.join(DEV_BIN_DIRS[b], GGUF_EXE_NAME)
+          for b in (BACKEND, other) if b in DEV_BIN_DIRS),
+        os.path.join(BUNDLE_ROOT, BACKEND, GGUF_EXE_NAME),
+        os.path.join(BUNDLE_ROOT, "gpu", GGUF_EXE_NAME),
+        os.path.join(BUNDLE_ROOT, "cpu", GGUF_EXE_NAME),
+        os.path.join(PROJECT_ROOT, "audiocpp-portable", "gpu", GGUF_EXE_NAME),
+        os.path.join(PROJECT_ROOT, "audiocpp-portable", "cpu", GGUF_EXE_NAME),
+    ]
+    seen = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate = os.path.normpath(candidate)
+        key = os.path.normcase(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 # model_manager.py is used to download not-yet-installed models in the background.
 MODELS_ROOT = os.path.join(BUNDLE_ROOT, "models")
-
-
-# --- UI language -------------------------------------------------------------
-# Strings live in locales/<lang>.json, one file per language. en.json is the
-# source of truth and the fallback for any key a translation is missing, so a
-# partial translation degrades to English rather than to a raw key. Adding a
-# language means dropping in a new JSON file — no code change here.
-#
-# Select with AUDIOCPP_LANG (e.g. AUDIOCPP_LANG=zh). The Blocks UI is built once
-# at import, so the language is fixed for the life of the process.
-LOCALE_DIR = os.path.join(HERE, "locales")
-DEFAULT_LANG = "en"
-
-
-def available_langs():
-    """Language codes with a locales/<code>.json file, sorted."""
-    try:
-        return sorted(f[:-5] for f in os.listdir(LOCALE_DIR) if f.endswith(".json"))
-    except OSError:
-        return []
-
-
-def _load_locale(lang):
-    try:
-        with open(os.path.join(LOCALE_DIR, lang + ".json"), encoding="utf-8") as fh:
-            return json.load(fh)
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError) as exc:
-        # A broken translation must not take the UI down: warn and fall back.
-        logging.warning("ignoring locale %s: %s", lang, exc)
-        return {}
-
-
-UI_LANG = os.environ.get("AUDIOCPP_LANG", DEFAULT_LANG).strip().lower() or DEFAULT_LANG
-_FALLBACK_STRINGS = _load_locale(DEFAULT_LANG)
-_STRINGS = _FALLBACK_STRINGS if UI_LANG == DEFAULT_LANG else _load_locale(UI_LANG)
-if not _STRINGS:
-    if UI_LANG != DEFAULT_LANG:
-        logging.warning("no strings for AUDIOCPP_LANG=%s; using %s (available: %s)",
-                        UI_LANG, DEFAULT_LANG, ", ".join(available_langs()) or "none")
-    UI_LANG = DEFAULT_LANG
-    _STRINGS = _FALLBACK_STRINGS
-
-
-def set_language(lang):
-    """Switch the active language, rebuilding everything derived from t().
-
-    The language picker calls this. It is process-wide, not per browser session:
-    Gradio builds one Blocks object shared by every connection, so there is nowhere
-    to hang per-session labels. That is fine for a local single-user tool.
-
-    Returns the language actually in effect (the request is ignored if the locale
-    has no strings), so callers can reflect reality back into the picker.
-    """
-    global UI_LANG, _STRINGS
-    lang = (lang or DEFAULT_LANG).strip().lower()
-    strings = _FALLBACK_STRINGS if lang == DEFAULT_LANG else _load_locale(lang)
-    if not strings:
-        logging.warning("no strings for language %s; staying on %s", lang, UI_LANG)
-        return UI_LANG
-    UI_LANG, _STRINGS = lang, strings
-    _rebuild_localized_tables()
-    return UI_LANG
-
-
-def t_opt(key):
-    """Localized string for `key`, or None when no locale defines it.
-
-    Unlike t(), a missing key is not an error here: catalog entries carry their own
-    English text and only *optionally* have a translation, so callers use this to
-    mean "translate this if someone has, otherwise keep what the data said"."""
-    s = _STRINGS.get(key)
-    return s if s is not None else _FALLBACK_STRINGS.get(key)
-
-
-def t(key, **fmt):
-    """Localized string for `key`, falling back to English and then the key itself.
-
-    Keyword args are applied with str.format, so a translation can reorder or drop
-    placeholders. A translation with a bad placeholder falls back rather than raising.
-    """
-    s = _STRINGS.get(key)
-    if s is None:
-        s = _FALLBACK_STRINGS.get(key, key)
-    if not fmt:
-        return s
-    try:
-        return s.format(**fmt)
-    except (KeyError, IndexError):
-        fallback = _FALLBACK_STRINGS.get(key, key)
-        try:
-            return fallback.format(**fmt)
-        except (KeyError, IndexError):
-            return fallback
 
 
 def _find_model_manager():
@@ -414,26 +418,11 @@ def _vram_shortfall(entry):
         return float(need), LOCAL_VRAM_GB
     return None
 
-# Wire values for the TTS language field: what the models expect, not display text.
-# "" = model default, "Auto" = let the model detect.
+# TTS 语言下拉的语种集合。下拉首位会合成一个 ("Auto", "") 选项（空串=模型默认/
+# 自动检测），所以这里不要再放字面量 "Auto"——带 lang_map 的家族会拒绝它，
+# 且界面上会出现两个分不清的 Auto。
 LANGS = ["", "english", "chinese", "french", "german", "italian",
-         "japanese", "korean", "portuguese", "russian", "spanish", "Auto"]
-
-
-def tts_language_choices():
-    """(label, wire value) for the TTS language picker.
-
-    Only the label is localized; the value stays the English name the server parses.
-    """
-    out = []
-    for value in LANGS:
-        if value == "":
-            out.append((t("label.model_default"), ""))
-        elif value == "Auto":
-            out.append((t("label.autodetect"), "Auto"))
-        else:
-            out.append((t("lang." + value), value))
-    return out
+         "japanese", "korean", "portuguese", "russian", "spanish"]
 
 # Which catalog task tokens each tab can drive. do_tts sends text + optional
 # reference voice, which fits both plain TTS ("tts") and voice cloning ("clon").
@@ -453,7 +442,9 @@ VDES_TASKS = ("vdes",)                    # 声音设计：文字 + 音色描述
 # the "高级参数 (JSON)" box lets you pass ANY model-specific option at run time.
 MODEL_PROFILES = {
     "vibevoice": {
-        "input_hint": t("hint.vibevoice"),
+        "input_hint": (
+            "**VibeVoice** 多说话人脚本：每行 `Speaker N: 内容`（纯文字自动包装）；"
+            "多音色用高级参数 `voice_samples`，不要传参考音频。"),
         "wrap_speaker_script": True,
         # VibeVoice has no internal text chunking. VRAM is bounded since the
         # layerwise-prefill/gallocr decode-graph fix, so chunks no longer need to be
@@ -468,7 +459,15 @@ MODEL_PROFILES = {
         "default_options": {"num_inference_steps": 10},
     },
     "voxcpm2": {
-        "input_hint": t("hint.voxcpm2"),
+        "input_hint": (
+            "**VoxCPM2** 声音克隆：上传干净的单人参考音色并填『参考文本』；长文本自动分段；"
+            "支持⚡流式生成（生成模式选『流式』，边生成边播放）。"),
+        # 服务端流式（server mode=streaming + /v1/audio/speech stream_format=sse）：
+        # delta 事件是 base64 的裸 PCM16，不带采样率——只能客户端自带。取值来自模型
+        # config.json 的 audio_vae.out_sample_rate（48000）。流式生成要求显式
+        # retry_badcase=false（generator.cpp:1259，重试逻辑与已推流的音频冲突）。
+        "supports_streaming": True,
+        "stream_sample_rate": 48000,
         # 8G 4060 实测标定（2026-07-05，CLI --log + nvidia-smi 抓峰值）：
         # - 峰值 ≈ 固定基线 + audiovae 解码图。基线（权重+KV+生成图）与文本长度/
         #   max_tokens 无关：max_tokens 128/300/1200 峰值都是 7634MiB（生成会提前
@@ -482,13 +481,16 @@ MODEL_PROFILES = {
         "chunk_chars": 60,
     },
     "qwen3_tts": {
-        "input_hint": t("hint.qwen3_tts"),
+        "input_hint": (
+            "**Qwen3-TTS** 声音克隆：建议上传参考音色并填『参考文本』，否则可能提前截断。"),
     },
     "pocket_tts": {
-        "input_hint": t("hint.pocket_tts"),
+        "input_hint": "**PocketTTS**：必须提供参考音色（上传/录制/内置）。",
     },
     "chatterbox": {
-        "input_hint": t("hint.chatterbox"),
+        "input_hint": (
+            "**Chatterbox** 声音克隆：必须提供参考音色；语言仅支持英/西/法/德/意/葡/韩"
+            "（**无中文**），留空=英语。"),
         # Chatterbox validates against 2-letter ISO codes (no zh/ja/ru, no auto),
         # so the shared dropdown's friendly names are translated here; names not
         # listed are genuinely unsupported by the model and rejected up front.
@@ -503,23 +505,39 @@ MODEL_PROFILES = {
         # 但 8G 卡上先撞显存：thinker prefill 图随时长超线性膨胀（4060 8G 实测
         # 65s 可过、70s 要 13.2GB、75s 要 14.6GB），所以客户端按 max_input_seconds
         # =60s 在静音处切段逐段转写再拼接，顺带解决 70~115s 音频原本的 OOM。
-        "input_hint": t("hint.qwen3_asr"),
+        "input_hint": ("**Qwen3-ASR**：长音频自动分段转写；"
+                       "语种/上下文/对话模式见『转写选项』。"),
         "max_input_seconds": 60,
     },
+    "voxtral_realtime": {
+        "input_hint": (
+            "**Voxtral Mini 4B Realtime**：自动语种转写；支持⚡流式转写，"
+            "勾选后按模型原生音频分块边转边出字；不输出时间戳。"),
+        "supports_streaming": True,
+    },
     "ace_step": {
-        "input_hint": t("hint.ace_step"),
+        "input_hint": (
+            "**ACE-Step** 音乐生成/编辑：提示词写风格/乐器/情绪（英文最佳），可填歌词。"
+            "编辑类 route 需上传源音频并建议先点『🔍 分析源音频』；参数详解见 webui/README.md。"),
         # 原版 turbo UI 默认 shift=3.0（C++ 端默认 1.0，仅 remix/extract 路由自带 3.0）。
         # 控件只发用户改过的项，所以这里显式发送，保证 UI 显示值=实际值。
         "default_options": {"shift": 3.0},
     },
     "stable_audio": {
-        "input_hint": t("hint.stable_audio"),
+        "input_hint": (
+            "**Stable Audio**：提示词**仅英文**，不用歌词；"
+            "上传源音频可做 init/inpaint（高级参数选 audio_input_kind）。"),
     },
     "heartmula": {
-        "input_hint": t("hint.heartmula"),
+        "input_hint": (
+            "**HeartMuLa**：高级参数 `tags` 必填（逗号分隔），『歌词』填唱词；"
+            "峰值显存 ~25G，8G 卡跑不动。"),
     },
     "vevo2": {
-        "input_hint": t("hint.vevo2"),
+        "input_hint": (
+            "**Vevo2**：源语音 + 目标音色，默认只换音色（保留说话风格）；"
+            "风格转换类 route 需 JSON 补 `style_ref` 等，详见 webui/README.md。"
+            "长音频自动分段，参考音色自动截 ≤10s。"),
         # 8G 4060 实测标定（2026-07-04/07-05）：FM 图一次建图，序列长度 =
         # 目标音色(prompt) + 源(target) 帧数（均 50fps，见 fm.cpp:782 cond_frames =
         # prompt_frames + target_frames）。cond≈25s（源15s+参考10s）就把 8G 吃满、
@@ -535,58 +553,144 @@ MODEL_PROFILES = {
         "vc_min_chunk_seconds": 6,       # 每段源时长下限，避免切得过碎
     },
     "seed_vc": {
-        "input_hint": t("hint.seed_vc"),
+        "input_hint": (
+            "**Seed-VC**：源语音 + 目标音色参考（几秒干净人声）；"
+            "默认 v2 路线，v1 旧路线在高级参数切换。"),
     },
     "miocodec": {
-        "input_hint": t("hint.miocodec"),
+        "input_hint": "**MioCodec**：codec 重建式转换——源提供内容，参考提供音色。",
     },
     "htdemucs": {
-        "input_hint": t("hint.htdemucs"),
+        "input_hint": "**HTDemucs**：输出 drums / bass / other / vocals 四轨。",
     },
     "mel_band_roformer": {
-        "input_hint": t("hint.mel_band_roformer"),
+        "input_hint": "**Mel-Band RoFormer**：输出人声轨 + 伴奏轨。",
+    },
+    "nemotron_asr": {
+        "input_hint": ("**Nemotron ASR**：100+ 语种；支持⚡流式转写"
+                       "（勾选后边转边出字，长音频不用干等）。"),
+        "supports_streaming": True,
+    },
+    "higgs_audio_stt": {
+        "input_hint": "**Higgs Audio STT**：支持⚡流式转写（勾选后边转边出字）。",
+        "supports_streaming": True,
+    },
+    "vibevoice_asr": {
+        "input_hint": "**VibeVoice-ASR**：离线转写，支持自动语种和说话人分段。",
     },
     "silero_vad": {
-        "input_hint": t("hint.silero_vad"),
+        "input_hint": "**Silero VAD**：检测音频中的语音段。",
     },
     "marblenet_vad": {
-        "input_hint": t("hint.marblenet_vad"),
+        "input_hint": "**MarbleNet VAD**：帧级语音活动检测，输出语音段列表。",
     },
     "sortformer_diar": {
-        "input_hint": t("hint.sortformer_diar"),
+        "input_hint": "**Sortformer**：说话人分离（谁在何时说话，≤4 人）。",
     },
     "qwen3_forced_aligner": {
-        "input_hint": t("hint.qwen3_forced_aligner"),
+        "input_hint": "**Qwen3 强制对齐**：『对齐文本』填音频原文，输出逐词时间戳（≤115 秒）。",
+    },
+    "index_tts2": {
+        "input_hint": (
+            "**IndexTTS2** 中/英声音克隆：**必须**提供参考音色（上传/录制/内置）；"
+            "情感控制在『高级参数』：emotion_text 填情绪参考文本（如“你吓死我了！”）+ "
+            "emotion_alpha 调强度，或 use_emotion_text 从朗读文本自动推断。"),
+        # 模型只认 zh/en 语种标签（docs/tts.md），共享下拉的其它语言直接拒绝。
+        "lang_map": {"chinese": "zh", "english": "en"},
+        "require_voice": True,
+    },
+    "irodori_tts": {
+        "input_hint": (
+            "**Irodori-TTS**（日语）：默认无参考直接生成；上传参考音色即自动切换克隆模式。"
+            "VoiceDesign 版走『声音设计』标签页，用日语 caption 描述音色。"),
+        "lang_map": {"japanese": "ja"},
+        # 会话默认 no_ref=true（忽略参考音频），带参考时必须显式关掉才走克隆路径。
+        "no_ref_toggle": True,
+        # 声音设计标签页的『音色描述』对本家族要发 options.caption（qwen3_tts 走
+        # 服务器的 instructions→instruct 映射，irodori session 只读 caption）。
+        "vdes_option_key": "caption",
+    },
+    "moss_tts_local": {
+        "input_hint": (
+            "**MOSS-TTS-Local**：纯文本直接生成；克隆时上传参考音色并尽量填『参考文本』。"
+            "输出 48kHz 立体声；语言下拉可留空（自动）或选择语言作为提示。"),
+    },
+    "moss_tts_nano": {
+        "input_hint": (
+            "**MOSS-TTS-Nano** 100M 轻量：无参考=文本续写式生成（音色随机）；"
+            "上传参考音色即声音克隆。"),
+    },
+    "supertonic": {
+        "input_hint": (
+            "**Supertonic 3** 预置音色多语种 TTS：在『高级参数』选 voice（M1-M5 男声 / "
+            "F1-F5 女声）和语速 speaking_rate；支持⚡流式生成；"
+            "**不支持**参考音频克隆（**无中文**）。"),
+        # Supertonic 的 C++ 会话支持 mode=streaming，并通过 pull events 按文本段
+        # 输出音频。SSE delta 是不带采样率的裸 PCM16，客户端需使用模型的 44.1kHz。
+        "supports_streaming": True,
+        "stream_sample_rate": 44100,
+        # 模型收 ISO 语种码（en/ko/ja/...），共享下拉的友好名在此转换；chinese 不在
+        # 支持列表所以不映射（选中会被 resolve_language 拒绝并提示）。
+        "lang_map": {
+            "english": "en", "french": "fr", "german": "de", "italian": "it",
+            "japanese": "ja", "korean": "ko", "portuguese": "pt",
+            "russian": "ru", "spanish": "es",
+        },
     },
 }
-# Languages Qwen3-ASR can be forced to (the model config.json's support_languages;
-# the prompt uses the English name). Blank/Auto = autodetect. Other ASR families
-# such as citrinet ignore the field.
-#
-# The wire value is always the English name — only the dropdown label is localized,
-# via the "lang.<value>" keys.
-QWEN3_ASR_LANG_VALUES = [
-    "Chinese", "English", "Cantonese", "Japanese", "Korean", "Russian",
-    "French", "German", "Spanish", "Portuguese", "Italian", "Arabic",
-    "Indonesian", "Thai", "Vietnamese", "Turkish", "Hindi", "Malay",
-    "Dutch", "Swedish", "Danish", "Finnish", "Polish", "Czech",
-    "Filipino", "Persian", "Greek", "Romanian", "Hungarian", "Macedonian",
+
+# Concise English hints.  The Chinese catalog/profile copy remains the detailed
+# reference; English intentionally keeps these notes short so model cards stay
+# aligned on narrower screens.
+MODEL_HINTS_EN = {
+    "vibevoice": "**VibeVoice**: use one `Speaker N:` line per speaker. Use `voice_samples` for multiple voices.",
+    "voxcpm2": "**VoxCPM2**: upload a clean voice reference and its transcript. Streaming is supported.",
+    "qwen3_tts": "**Qwen3-TTS**: a voice reference and matching transcript are recommended.",
+    "pocket_tts": "**PocketTTS** requires a voice reference.",
+    "chatterbox": "**Chatterbox** requires a voice reference and supports en/es/fr/de/it/pt/ko.",
+    "qwen3_asr": "**Qwen3-ASR** automatically splits long audio. Language and context are optional.",
+    "voxtral_realtime": "**Voxtral Mini 4B Realtime** auto-detects language and supports streaming transcription. Timestamps are not exposed.",
+    "ace_step": "**ACE-Step**: describe style, instruments and mood. Editing routes require source audio.",
+    "stable_audio": "**Stable Audio** accepts English prompts only. Source audio enables init/inpaint.",
+    "heartmula": "**HeartMuLa** requires `tags` and lyrics. Estimated peak VRAM is about 25 GB.",
+    "vevo2": "**Vevo2**: provide source audio and a target voice. Long audio is split automatically.",
+    "seed_vc": "**Seed-VC**: provide source audio and a clean target voice reference.",
+    "miocodec": "**MioCodec** reconstructs source content with the reference voice.",
+    "htdemucs": "**HTDemucs** outputs drums, bass, other and vocals.",
+    "mel_band_roformer": "**Mel-Band RoFormer** outputs vocals and accompaniment.",
+    "nemotron_asr": "**Nemotron ASR** supports 100+ languages and streaming transcription.",
+    "higgs_audio_stt": "**Higgs Audio STT** supports streaming transcription.",
+    "vibevoice_asr": "**VibeVoice-ASR** uses offline transcription with automatic language and speaker segmentation.",
+    "silero_vad": "**Silero VAD** detects speech segments.",
+    "marblenet_vad": "**MarbleNet VAD** detects frame-level speech activity.",
+    "sortformer_diar": "**Sortformer** identifies who spoke when (up to four speakers).",
+    "qwen3_forced_aligner": "**Qwen3 Forced Aligner** requires the source transcript and returns word timestamps.",
+    "index_tts2": "**IndexTTS2** (zh/en) requires a voice reference; emotion controls live in advanced parameters.",
+    "irodori_tts": "**Irodori-TTS** (Japanese) works without a reference; uploading one enables voice cloning.",
+    "moss_tts_local": "**MOSS-TTS-Local**: plain text works; add a voice reference and its transcript to clone. 48 kHz stereo output.",
+    "moss_tts_nano": "**MOSS-TTS-Nano** 100M: continuation mode without a reference, voice clone with one.",
+    "supertonic": "**Supertonic 3**: preset voices and streaming are supported; no voice cloning, no Chinese.",
+}
+# Qwen3-ASR 可强制的语种（模型 config.json 的 support_languages，prompt 里用英文名；
+# 留空/Auto = 自动检测）。citrinet 等其它 ASR 族忽略该字段。
+QWEN3_ASR_LANGUAGES = [
+    ("中文", "Chinese"), ("英语", "English"), ("粤语", "Cantonese"),
+    ("日语", "Japanese"), ("韩语", "Korean"), ("俄语", "Russian"),
+    ("法语", "French"), ("德语", "German"), ("西班牙语", "Spanish"),
+    ("葡萄牙语", "Portuguese"), ("意大利语", "Italian"), ("阿拉伯语", "Arabic"),
+    ("印尼语", "Indonesian"), ("泰语", "Thai"), ("越南语", "Vietnamese"),
+    ("土耳其语", "Turkish"), ("印地语", "Hindi"), ("马来语", "Malay"),
+    ("荷兰语", "Dutch"), ("瑞典语", "Swedish"), ("丹麦语", "Danish"),
+    ("芬兰语", "Finnish"), ("波兰语", "Polish"), ("捷克语", "Czech"),
+    ("菲律宾语", "Filipino"), ("波斯语", "Persian"), ("希腊语", "Greek"),
+    ("罗马尼亚语", "Romanian"), ("匈牙利语", "Hungarian"), ("马其顿语", "Macedonian"),
 ]
-def asr_language_choices():
-    """(label, wire value) for the ASR language picker, including the blank/auto row.
 
-    The label pairs the localized name with the English name the model expects, so a
-    zh user picking 中文 can see it maps to "Chinese" — but only when the two differ,
-    otherwise English would render as a stutter ("Chinese Chinese").
-    """
-    out = [(t("label.autodetect"), "")]
-    for value in QWEN3_ASR_LANG_VALUES:
-        name = t("lang." + value.lower())
-        out.append((name if name == value else f"{name} {value}", value))
-    return out
-
-
-DEFAULT_PROFILE ={"input_hint": "", "wrap_speaker_script": False, "default_options": {},
+DEFAULT_PROFILE = {"input_hint": "", "input_hint_en": "", "wrap_speaker_script": False,
+                   "default_options": {},
+                   # C++ 会话实现了 IStreamingVoiceTaskSession 的家族（server 需以
+                   # mode=streaming 加载才走流式路由）；见 registry 各家族 loader。
+                   "supports_streaming": False,
                    # Families with internal chunking handle long text fine; the client
                    # split only exists to bound each HTTP request (no 900 s timeout)
                    # and surface progress, so the budget can stay coarse.
@@ -598,22 +702,41 @@ _SPEAKER_RE = re.compile(r"^\s*Speaker\s+\d+\s*:", re.IGNORECASE | re.MULTILINE)
 
 def profile_for(entry):
     prof = {**DEFAULT_PROFILE, **MODEL_PROFILES.get(entry.get("family", ""), {})}
+    prof["input_hint_en"] = MODEL_HINTS_EN.get(entry.get("family", ""), "")
     if entry.get("input_hint"):
         prof["input_hint"] = entry["input_hint"]
+    if entry.get("input_hint_en"):
+        prof["input_hint_en"] = entry["input_hint_en"]
     if entry.get("default_options"):
         prof["default_options"] = {**prof.get("default_options", {}), **entry["default_options"]}
     return prof
 
 
-def model_hint_for(model_id):
+def supports_streaming(model_id):
+    entry = catalog_by_id(model_id) if model_id else None
+    return bool(entry) and bool(profile_for(entry).get("supports_streaming"))
+
+
+def asr_stream_update(model_id):
+    """Reset and show the ASR streaming toggle for the selected model."""
+    return gr.update(visible=supports_streaming(model_id), value=False)
+
+
+def model_hint_for(model_id, language=None):
     entry = catalog_by_id(model_id) if model_id else None
     if not entry:
         return ""
-    hint = profile_for(entry)["input_hint"]
+    language = language or get_language()
+    prof = profile_for(entry)
+    hint = _t(prof["input_hint"], prof["input_hint_en"], language)
     short = _vram_shortfall(entry)
     if short:
-        warn = t("warn.vram_hint_uninstalled" if not entry["installed"] else "warn.vram_hint",
-                 need=f"{short[0]:g}", have=f"{short[1]:g}")
+        warn = _t(
+            "⚠️ **显存提示**：该模型估算需 **≥{need:g}G** 显存，本机为 **{local:g}G**，运行可能很慢{tail}",
+            "⚠️ **VRAM**: estimated **≥{need:g} GB**, detected **{local:g} GB**. Performance may be poor{tail}",
+            language, need=short[0], local=short[1],
+            tail=(_t("，请谨慎下载。", ".", language) if not entry["installed"] else
+                  _t("。", ".", language)))
         hint = warn + ("\n\n" + hint if hint else "")
     return hint
 
@@ -635,8 +758,10 @@ def resolve_language(prof, language):
     code = lang_map.get(lang.lower())
     if code is not None:
         return code
-    raise gr.Error(t("err.lang_unsupported", language=language,
-                     supported=" / ".join(lang_map)))
+    raise gr.Error(_t(
+        "所选模型不支持语言「{selected}」。请改选：{supported}，或选 Auto 使用模型默认。",
+        "This model does not support {selected}. Choose {supported}, or choose Auto for the model default.",
+        selected=language, supported=" / ".join(lang_map)))
 
 
 def _as_speaker_script(text):
@@ -750,7 +875,9 @@ def _concat_wavs(blobs, out_path, keep_ratios=None):
             if params is None:
                 params = fmt
             elif fmt != params:
-                raise gr.Error(t("err.chunk_format_mismatch", fmt=fmt, params=params))
+                raise gr.Error(_t("分段音频格式不一致：{left} != {right}",
+                                  "Audio chunk formats differ: {left} != {right}",
+                                  left=fmt, right=params))
             n = w.getnframes()
             if keep_ratios is not None:
                 n = max(1, min(n, int(round(n * keep_ratios[i]))))
@@ -786,7 +913,8 @@ def _find_ffmpeg():
         return bundled
     found = shutil.which("ffmpeg")
     if not found:
-        raise gr.Error(t("err.ffmpeg_missing"))
+        raise gr.Error(_t("找不到 ffmpeg，无法转码非 WAV 音频。",
+                          "ffmpeg was not found; non-WAV audio cannot be converted."))
     return found
 
 
@@ -896,7 +1024,8 @@ def _ensure_wav(path, target_sr=None):
         with open(path, "rb") as f:
             head = f.read(12)
     except OSError as e:
-        raise gr.Error(t("err.audio_unreadable", path=path, error=e))
+        raise gr.Error(_t("读不到音频文件 {path}：{error}",
+                          "Cannot read audio file {path}: {error}", path=path, error=e))
     if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
         if target_sr is None:
             return _ensure_ascii_path(path)
@@ -911,7 +1040,7 @@ def _ensure_wav(path, target_sr=None):
     if cached and os.path.exists(cached):
         return cached
     ffmpeg = _find_ffmpeg()
-    ext = os.path.splitext(path)[1].lower() or t("label.no_extension")
+    ext = os.path.splitext(path)[1].lower() or "（无扩展名）"
     fd, out = tempfile.mkstemp(prefix="audiocpp_in_", suffix=".wav")
     os.close(fd)
     cmd = [ffmpeg, "-y", "-v", "error", "-i", path, "-map", "0:a:0"]
@@ -925,9 +1054,11 @@ def _ensure_wav(path, target_sr=None):
         except OSError:
             pass
         err = (proc.stderr or "").strip()[-300:]
-        raise gr.Error(t("err.ffmpeg_failed", ext=ext, error=err or t("err.unknown")))
-    note = t("log.resampled_to", sr=target_sr) if target_sr else ""
-    _ui_log(t("log.input_transcoded", name=os.path.basename(path), ext=ext, note=note))
+        raise gr.Error(_t("ffmpeg 转码 {ext} → wav 失败：{error}",
+                          "ffmpeg conversion {ext} → wav failed: {error}",
+                          ext=ext, error=err or _t("未知错误", "unknown error")))
+    note = f"，重采样到 {target_sr}Hz" if target_sr else ""
+    _ui_log(f"输入转码：{os.path.basename(path)}（{ext}）→ 16-bit PCM WAV{note}")
     _WAV_CACHE[key] = out
     return out
 
@@ -1061,39 +1192,61 @@ def _parse_adv_options(raw):
     try:
         obj = json.loads(raw)
     except Exception as e:
-        raise gr.Error(t("err.adv_json_invalid", error=e))
+        raise gr.Error(_t("高级参数不是合法 JSON：{error}",
+                          "Advanced options are not valid JSON: {error}", error=e))
     if not isinstance(obj, dict):
-        raise gr.Error(t("err.adv_json_not_object"))
+        raise gr.Error(_t('高级参数必须是 JSON 对象，例如 {"num_inference_steps": 10}',
+                          'Advanced options must be a JSON object, e.g. {"num_inference_steps": 10}'))
     return obj
 
 
-# Map known server-error fragments to an actionable hint key, so a raw 500 like
-# "requires a session voice via --voice-ref" becomes "please upload a reference voice".
-# Ordered specific -> generic; server_error() takes the FIRST match and localizes it.
+# Map known server-error fragments to an actionable Chinese hint, so a raw 500
+# like "requires a session voice via --voice-ref" becomes "请上传参考音色".
+# Ordered specific -> generic; server_error() takes the FIRST match.
 ERROR_HINTS = [
     (re.compile(r"failed to allocate .{0,40}graph|out of memory|cudaMalloc", re.I),
-     "hint.err.oom"),
+     "🧠 显存不足：这次请求的计算图放不进剩余显存，通常是音频/文本太长。"
+     "请剪短或分段后重试。"),
     (re.compile(r"invalid WAV RIFF header", re.I),
-     "hint.err.wav_only"),
+     "🎵 server 只支持 WAV 音频：上传的文件 webui 会自动转码，"
+     "手动填路径的参数（如 voice_samples）请先转成 .wav。"),
     (re.compile(r"unsupported Chatterbox language", re.I),
-     "hint.err.chatterbox_lang"),
+     "🌐 Chatterbox 只支持 en/es/fr/de/it/pt/ko（无中文/日文/俄文，也没有自动检测）。"
+     "请在“语言”里改选受支持的语言，或选 Auto 用默认（英语）。"),
     (re.compile(r"Stable Audio.{0,80}(English|prompt)|prompt.{0,80}(English|Stable Audio)", re.I),
-     "hint.err.stable_audio_english"),
+     "🎵 Stable Audio 的提示词只支持英文。请把“提示词”改成英文后重试。"),
     (re.compile(r"max_source_positions", re.I),
-     "hint.err.asr_too_long"),
+     "⏱ 音频过长：Qwen3-ASR 编码器上限 1500 token（约 13 token/秒），"
+     "单次最多约 115 秒。请把音频剪短或分段后再转写。"),
     (re.compile(r"exceeds fixed graph capacity|session_len_sec exceeds", re.I),
-     "hint.err.graph_capacity"),
+     "📏 音频超过模型的固定图容量（Sortformer 默认 20 秒、上限约 120 秒）。"
+     "webui 的说话人分离/对话模式会按时长自动重载；仍报错说明超过 120 秒上限，"
+     "请先剪短音频。"),
     (re.compile(r"combine voice_samples|voice_samples.{0,20}voice_ref", re.I),
-     "hint.err.voice_samples_conflict"),
+     "🔀 voice_samples 与单个参考音色不能同时用：多说话人时请不要上传参考音色。"),
     (re.compile(r"cached voice id", re.I),
-     "hint.err.needs_voice_file"),
+     "🎤 需要参考音频文件（不是 voice id）：请上传/录制一段参考音色。"),
     (re.compile(r"no valid Speaker|Speaker\s+N", re.I),
-     "hint.err.needs_speaker_script"),
+     "📝 需要多说话人脚本：每行写成 `Speaker 0: 内容`（多角色用 Speaker 0/1/…）。"),
     (re.compile(r"reference[-_ ]?text", re.I),
-     "hint.err.needs_reference_text"),
+     "🗒 需要参考文本：在“参考文本”里填参考音频里说的原话。"),
     (re.compile(r"voice[-_ ]?ref|voice[-_ ]?id|session voice|speaker reference|"
                 r"requires .{0,40}voice|requires audio", re.I),
-     "hint.err.needs_voice_ref"),
+     "🎤 该模型需要参考音色：上传/录制一段参考音频，或选一个内置参考音色后重试。"),
+]
+
+ERROR_HINTS_EN = [
+    (ERROR_HINTS[0][0], "Not enough VRAM. Shorten or split the input."),
+    (ERROR_HINTS[1][0], "The server requires WAV audio. Uploaded files are converted automatically."),
+    (ERROR_HINTS[2][0], "Chatterbox supports en/es/fr/de/it/pt/ko only."),
+    (ERROR_HINTS[3][0], "Stable Audio prompts must be in English."),
+    (ERROR_HINTS[4][0], "The audio exceeds the Qwen3-ASR input limit. Split it and retry."),
+    (ERROR_HINTS[5][0], "The audio exceeds this model's graph capacity."),
+    (ERROR_HINTS[6][0], "Do not combine voice_samples with a single voice reference."),
+    (ERROR_HINTS[7][0], "Upload a voice reference file."),
+    (ERROR_HINTS[8][0], "Use one `Speaker N:` line per speaker."),
+    (ERROR_HINTS[9][0], "Enter the transcript spoken in the reference audio."),
+    (ERROR_HINTS[10][0], "This model requires a voice reference."),
 ]
 
 
@@ -1107,24 +1260,36 @@ def _extract_server_message(text):
 def server_error(entry, status, text, extra=None):
     """Build a friendly gr.Error from a non-200 server response."""
     msg = _extract_server_message(text)
-    key = next((k for pat, k in ERROR_HINTS if pat.search(msg)), None)
+    language = get_language()
+    hints = ERROR_HINTS_EN if language == "en" else ERROR_HINTS
+    hint = next((h for pat, h in hints if pat.search(msg)), None)
+    if hint:
+        hint = _t(hint, hint, language)
     parts = [f"❌ server {status}"]
-    if key:
-        parts.append("💡 " + t(key))
+    if hint:
+        parts.append("💡 " + hint)
     else:
-        parts[0] = t("err.server_status", status=status, message=msg[:400])
+        parts[0] = f"❌ server {status}：{msg[:400]}"
     if extra:
         parts.append(extra)
-    if entry and not key:
-        ih = profile_for(entry).get("input_hint")
+    if entry and not hint:
+        prof = profile_for(entry)
+        ih = prof.get("input_hint_en" if language == "en" else "input_hint")
         if ih:
-            parts.append("ℹ️ " + ih)
+            parts.append("ℹ️ " + _t(ih, ih, language))
     return gr.Error("\n\n".join(parts))
+
+
+def connection_error(error):
+    return gr.Error(_t(
+        "无法连接 server @ {server}：{error}\n💡 server 可能已退出，请重新加载模型。",
+        "Cannot connect to server @ {server}: {error}\nReload the model and retry.",
+        server=SERVER, error=error))
 
 
 def _msg_from_error(e):
     """Human-readable text from a gr.Error/exception, for inline (non-popup) display."""
-    return getattr(e, "message", None) or str(e) or t("err.unknown")
+    return getattr(e, "message", None) or str(e) or _t("未知错误", "Unknown error")
 
 
 # Fallback catalog if models_catalog.json is missing/unreadable.
@@ -1155,8 +1320,8 @@ def _load_catalog():
 
 
 def _load_model_params():
-    """Per-family advanced-parameter specs for the TTS tab (configs/model_params.json).
-    Returns {family: [param_spec, ...]}; a missing/broken file -> {} (no knobs shown)."""
+    """Per-model/family advanced-parameter specs (configs/model_params.json).
+    Catalog id entries override family entries; a missing/broken file -> {}."""
     if os.path.isfile(MODEL_PARAMS_PATH):
         try:
             with open(MODEL_PARAMS_PATH, "r", encoding="utf-8") as f:
@@ -1166,8 +1331,25 @@ def _load_model_params():
     return {}
 
 
+def _load_required_files():
+    """download_id -> 安装完成后模型目录里必须存在的文件清单（configs/required_files.json，
+    由 model_manager.py CATALOG 的 required_files 预生成，含 .pt->.safetensors 等转换后
+    的最终布局）。用于把“手动拷贝/下载中断的不完整目录”和“已安装”区分开——不完整目录
+    server 端只会报 no registered model loader，用户看不出缺了什么。
+    文件缺失/损坏 -> {}（完整性检查停用，退回“目录存在即已安装”的旧行为）。"""
+    if os.path.isfile(REQUIRED_FILES_PATH):
+        try:
+            with open(REQUIRED_FILES_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {k: v for k, v in data.items() if isinstance(v, list)}
+        except Exception as e:
+            print(f"[webui] failed to read {REQUIRED_FILES_PATH}: {e}; 跳过模型完整性检查")
+    return {}
+
+
 CATALOG = _load_catalog()
 MODEL_PARAMS = _load_model_params()
+REQUIRED_FILES = _load_required_files()
 HOST = CATALOG.get("host", "127.0.0.1")
 PORT = int(CATALOG.get("port", 8080))
 DEVICE = int(CATALOG.get("device", 0))
@@ -1192,26 +1374,31 @@ _proc_lock = threading.Lock()
 _server_proc = None      # subprocess.Popen we launched, or None
 _loaded_id = None        # model id our managed server is serving
 _loaded_session_options = None   # 随本次加载写进 server config 的 session_options
+_loaded_mode = None              # 本次加载的运行模式（offline/streaming），None=未加载
+
+
+def _missing_required_files(entry):
+    """目录已存在但缺失的必须文件（相对模型目录）；目录不存在或无清单时返回 []。"""
+    req = REQUIRED_FILES.get(entry.get("download_id") or "")
+    if not req or not os.path.isdir(entry["abs_path"]):
+        return []
+    return [f for f in req if not os.path.isfile(os.path.join(entry["abs_path"], f))]
 
 
 def catalog_models():
-    """Catalog entries annotated with abs_path / installed / label."""
+    """Catalog entries annotated with abs_path / installed / incomplete / label.
+    installed 要求目录存在且 required_files 清单齐全；目录在但缺文件记为
+    incomplete（missing_files 列出缺什么），加载入口据此给出明确报错。"""
     out = []
     for m in CATALOG.get("models", []):
         rel = m.get("path", "")
         ap = rel if os.path.isabs(rel) else os.path.join(BUNDLE_ROOT, rel)
         entry = dict(m)
         entry["abs_path"] = os.path.normpath(ap).replace("\\", "/")
-        entry["installed"] = os.path.exists(entry["abs_path"])
-        # The catalog holds English text; a locale may override any entry's user-facing
-        # strings under "catalog.<id>.<field>". Untranslated entries keep the catalog's
-        # own wording, so a third-party catalog needs no locale work to stay readable.
-        mid = m.get("id", "?")
-        hint = t_opt(f"catalog.{mid}.input_hint")
-        if hint:
-            entry["input_hint"] = hint
-        entry["label"] = (t_opt(f"catalog.{mid}.display_name")
-                          or m.get("display_name") or mid)
+        entry["missing_files"] = _missing_required_files(entry)
+        entry["incomplete"] = bool(entry["missing_files"])
+        entry["installed"] = os.path.exists(entry["abs_path"]) and not entry["incomplete"]
+        entry["label"] = m.get("display_name") or m.get("id", "?")
         out.append(entry)
     return out
 
@@ -1223,19 +1410,27 @@ def catalog_by_id(model_id):
     return None
 
 
-def choices_for_tasks(tasks):
+def choices_for_tasks(tasks, language=None):
     """[(label, id)] for catalog models whose task is in `tasks`; missing ones flagged.
     未安装且估算显存超过本机的条目额外标注最低显存，防止白下载。"""
+    language = language or get_language()
     out = []
     for m in catalog_models():
         if m.get("task") not in tasks:
             continue
         label = m["label"]
-        if not m["installed"]:
-            label += " · " + t("label.not_installed")
+        if language == "en":
+            label = m.get("display_name_en") or (label if label.isascii() else m["id"])
+        else:
+            label = _t(label, label, language)
+        if m["incomplete"]:
+            label += _t(" · 目录不完整", " · incomplete", language)
+        elif not m["installed"]:
+            label += _t(" · 未安装", " · not installed", language)
             short = _vram_shortfall(m)
             if short:
-                label += " " + t("label.vram_estimate", need=f"{short[0]:g}")
+                label += _t(" ⚠️估算需≥{need:g}G显存", " ⚠️≥{need:g} GB VRAM", language,
+                            need=short[0])
         out.append((label, m["id"]))
     return out
 
@@ -1244,6 +1439,22 @@ def builtin_voices():
     if not os.path.isdir(PROMPTS_DIR):
         return []
     return sorted(f for f in os.listdir(PROMPTS_DIR) if f.lower().endswith(".wav"))
+
+
+def _voice_name_from_path(path):
+    """Original upload basename without its extension, for the save-name box."""
+    if not path:
+        return ""
+    return os.path.splitext(os.path.basename(path))[0]
+
+
+def _stage_tts_voice_upload(path):
+    """Preserve the uploaded filename before replacing its preview path."""
+    return _stage_upload(path, force_copy=True), _voice_name_from_path(path)
+
+
+def _stage_tts_voice_recording(path):
+    return _stage_recording(path), _voice_name_from_path(path)
 
 
 def _load_voice_texts():
@@ -1270,8 +1481,8 @@ def refresh_builtin_voices(current):
     choices = ["(none)"] + builtin_voices()
     if current not in choices:
         current = "(none)"
-    wav, ref = on_builtin_voice_change(current)
-    return gr.update(choices=choices, value=current), wav, ref
+    wav, ref, voice_name = on_tts_builtin_voice_change(current)
+    return gr.update(choices=choices, value=current), wav, ref, voice_name
 
 
 def on_builtin_voice_change(name):
@@ -1281,24 +1492,175 @@ def on_builtin_voice_change(name):
         return None, ""
     path = os.path.join(PROMPTS_DIR, name)
     ref = _load_voice_texts().get(os.path.splitext(name)[0], "")
-    return (path if os.path.isfile(path) else None), ref
+    return (_ensure_ascii_path(path) if os.path.isfile(path) else None), ref
+
+
+def on_tts_builtin_voice_change(name):
+    wav, ref = on_builtin_voice_change(name)
+    voice_name = (os.path.splitext(name)[0]
+                  if name and name != "(none)" else "")
+    return wav, ref, voice_name
+
+
+def _builtin_voice_filename(voice_name):
+    """Validate a user-facing voice name and normalize it to a WAV filename."""
+    name = (voice_name or "").strip()
+    if name.lower().endswith(".wav"):
+        name = name[:-4]
+    invalid = '<>:"/\\|?*'
+    if (not name or name in (".", "..") or name.endswith((" ", "."))
+            or any(ch in invalid or ord(ch) < 32 for ch in name)):
+        raise ValueError(_t(
+            "名称不能为空、不能是路径，也不能包含这些字符：{chars}",
+            "The name cannot be empty or a path, and cannot contain: {chars}",
+            chars=invalid))
+    return name + ".wav"
+
+
+def _write_voice_prompt(voice_stem, reference_text):
+    """Insert or replace one '<voice stem>|<transcript>' prompt_text record."""
+    prompt_path = os.path.join(PROMPTS_DIR, "prompt_text")
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        lines = []
+
+    transcript = " ".join((reference_text or "").splitlines()).strip()
+    record = f"{voice_stem}|{transcript}"
+    updated = False
+    output = []
+    for line in lines:
+        key, sep, _text = line.partition("|")
+        if sep and key.strip() == voice_stem:
+            if not updated:
+                output.append(record)
+                updated = True
+            continue
+        output.append(line)
+    if not updated:
+        output.append(record)
+
+    _save_voice_prompt_lines(output)
+
+
+def _save_voice_prompt_lines(lines):
+    """Atomically replace prompt_text with the supplied records."""
+    prompt_path = os.path.join(PROMPTS_DIR, "prompt_text")
+
+    fd, temp_path = tempfile.mkstemp(
+        prefix="prompt_text_", suffix=".tmp", dir=PROMPTS_DIR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(lines) + ("\n" if lines else ""))
+        os.replace(temp_path, prompt_path)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _delete_voice_prompt(voice_stem):
+    """Remove every prompt_text record for one built-in voice."""
+    prompt_path = os.path.join(PROMPTS_DIR, "prompt_text")
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        return
+    output = [
+        line for line in lines
+        if not (line.partition("|")[1]
+                and line.partition("|")[0].strip() == voice_stem)
+    ]
+    if output != lines:
+        _save_voice_prompt_lines(output)
+
+
+def save_builtin_voice(uploaded_voice, voice_name, reference_text):
+    """Copy a reference into voice/, update prompt_text, and refresh its list."""
+    if not (voice_name or "").strip():
+        return gr.skip(), _t(
+            "❌ 请填写内置参考音色名称。",
+            "❌ Enter a name for the built-in voice.")
+    if not uploaded_voice or not os.path.isfile(uploaded_voice):
+        return gr.skip(), _t(
+            "❌ 请先上传或录制参考音频。",
+            "❌ Upload or record a reference audio file first.")
+
+    try:
+        filename = _builtin_voice_filename(voice_name)
+        source_wav = _ensure_wav(uploaded_voice)
+        destination = os.path.join(PROMPTS_DIR, filename)
+        if os.path.abspath(source_wav) != os.path.abspath(destination):
+            fd, temp_path = tempfile.mkstemp(
+                prefix="voice_", suffix=".wav", dir=PROMPTS_DIR)
+            os.close(fd)
+            try:
+                shutil.copy2(source_wav, temp_path)
+                os.replace(temp_path, destination)
+            except Exception:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+                raise
+        _write_voice_prompt(os.path.splitext(filename)[0], reference_text)
+        choices = ["(none)"] + builtin_voices()
+        return gr.update(choices=choices, value=filename), _t(
+            "✅ 参考音色已保存：{filename}",
+            "✅ Voice reference saved: {filename}", filename=filename)
+    except Exception as e:
+        return gr.skip(), _t(
+            "❌ 保存参考音色失败：{error}",
+            "❌ Failed to save voice reference: {error}", error=e)
+
+
+def delete_builtin_voice(current):
+    """Delete the selected built-in WAV and its prompt_text record."""
+    if not current or current == "(none)":
+        return tuple(gr.skip() for _ in range(5))
+    try:
+        if os.path.basename(current) != current or not current.lower().endswith(".wav"):
+            raise ValueError(_t("无效的内置音色文件名。",
+                                 "Invalid built-in voice filename."))
+        path = os.path.join(PROMPTS_DIR, current)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(_t(
+                "找不到内置音色文件：{filename}",
+                "Built-in voice file not found: {filename}", filename=current))
+        os.remove(path)
+        _delete_voice_prompt(os.path.splitext(current)[0])
+        choices = ["(none)"] + builtin_voices()
+        return (gr.update(choices=choices, value="(none)"), None, "", "",
+                _t("✅ 已删除内置参考音色：{filename}",
+                   "✅ Built-in voice deleted: {filename}", filename=current))
+    except Exception as e:
+        return (*tuple(gr.skip() for _ in range(4)), _t(
+            "❌ 删除内置参考音色失败：{error}",
+            "❌ Failed to delete built-in voice: {error}", error=e))
 
 
 # --- config-driven advanced-parameter controls (TTS tab) -------------------
 def params_for(model_id):
-    """Advanced-parameter specs for a model, looked up by its catalog family."""
+    """Advanced-parameter specs: catalog id override, then family fallback."""
     entry = catalog_by_id(model_id) if model_id else None
     if not entry:
         return []
-    specs = MODEL_PARAMS.get(entry.get("family", ""), [])
+    specs = MODEL_PARAMS.get(entry.get("id", ""))
+    if specs is None:
+        specs = MODEL_PARAMS.get(entry.get("family", ""), [])
     return specs if isinstance(specs, list) else []
 
 
-def _make_param_component(p):
+def _make_param_component(p, language=None):
     """Build one Gradio control from a spec (type: slider|number|bool|text|choice).
 
     interactive=True is forced: inside @gr.render a control that is only wired to
     its own .change handler is otherwise inferred as output-only (read-only)."""
+    p = localized_param_spec(p, language)
     t = p.get("type", "number")
     label = p.get("label", p.get("name", ""))
     info = p.get("info")
@@ -1379,8 +1741,9 @@ def _write_temp_config(entry):
 
 
 def _stop_server():
-    global _server_proc, _loaded_id, _loaded_session_options
+    global _server_proc, _loaded_id, _loaded_session_options, _loaded_mode
     _loaded_session_options = None
+    _loaded_mode = None
     proc, _server_proc, _loaded_id = _server_proc, None, None
     if proc is not None and proc.poll() is None:
         try:
@@ -1483,23 +1846,25 @@ def _pump_server_output(proc):
             if line == last:
                 repeats += 1
                 if repeats % 50 == 0:
-                    _emit_log_line(f"[{_ts()}]   ... " + t("log.repeated_so_far", n=repeats) + "\n")
+                    _emit_log_line(f"[{_ts()}]   ... 上一行已重复 {repeats} 次\n")
                 continue
             if repeats:
-                _emit_log_line(f"[{_ts()}]   ... (" + t("log.repeated_total", n=repeats) + ")\n")
+                _emit_log_line(f"[{_ts()}]   ... (上一行共重复 {repeats} 次)\n")
             last, repeats = line, 0
             _emit_log_line(f"[{_ts()}] {line}")
     except Exception:
         pass
     finally:
         if repeats:
-            _emit_log_line(f"[{_ts()}]   ... (" + t("log.repeated_total", n=repeats) + ")\n")
+            _emit_log_line(f"[{_ts()}]   ... (上一行共重复 {repeats} 次)\n")
 
 
 def _start_server(entry):
     global _server_proc, _loaded_id
     if not os.path.isfile(SERVER_EXE):
-        raise gr.Error(t("err.server_exe_missing", path=SERVER_EXE))
+        raise gr.Error(_t("找不到 server：{path}（可用 AUDIOCPP_BACKEND=gpu|cpu 指定）",
+                          "Server not found: {path}. Set AUDIOCPP_BACKEND=gpu|cpu.",
+                          path=SERVER_EXE))
     cfg = _write_temp_config(entry)
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     _open_log_file(truncate=True)
@@ -1514,8 +1879,8 @@ def _start_server(entry):
         creationflags=flags, text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
     _loaded_id = entry["id"]
-    extra = f", threads={THREADS}" if SERVER_BACKEND == "cpu" else ""
-    _ui_log(t("log.server_starting", backend=SERVER_BACKEND, extra=extra, label=entry["label"]))
+    extra = f"，threads={THREADS}" if SERVER_BACKEND == "cpu" else ""
+    _ui_log(f"启动 audiocpp_server（backend={SERVER_BACKEND}{extra}），加载模型 {entry['label']} …")
     threading.Thread(target=_pump_server_output, args=(_server_proc,),
                      daemon=True).start()
 
@@ -1531,54 +1896,87 @@ def _wait_health(timeout):
     return False
 
 
-def ensure_model_loaded(model_id, expect_tasks=None, session_options=None):
+def ensure_model_loaded(model_id, expect_tasks=None, session_options=None, mode=None):
     """(Re)start the server so `model_id` is loaded. Returns a status string.
     session_options：额外写进本次 server config 的 session_options（string→string，
-    如 sortformer 的 session_len_sec）；与上次加载不一致时会重启重载。"""
-    global _loaded_session_options
+    如 sortformer 的 session_len_sec）；与上次加载不一致时会重启重载。
+    mode：覆盖 catalog 条目的运行模式（"streaming"/"offline"），流式转写/生成用；
+    与上次加载不一致时同样重启重载。"""
+    global _loaded_session_options, _loaded_mode
     if not model_id:
-        raise gr.Error(t("err.no_model_selected"))
+        raise gr.Error(_t("请先选择一个模型", "Select a model first."))
     entry = catalog_by_id(model_id)
     if entry is None:
-        raise gr.Error(t("err.model_id_unknown", model_id=model_id))
+        raise gr.Error(_t("catalog 里没有模型 id：{model}",
+                          "Model id not found in catalog: {model}", model=model_id))
     if not entry["installed"]:
-        raise gr.Error(t("err.model_not_installed", path=entry["abs_path"]))
+        if entry["incomplete"]:
+            missing = entry["missing_files"]
+            shown = "、".join(missing[:8]) + (f" 等 {len(missing)} 个" if len(missing) > 8 else "")
+            raise gr.Error(_t(
+                "模型目录不完整：{path}\n缺少文件：{missing}\n请点『⬇️ 下载模型』重新安装。",
+                "Model directory is incomplete: {path}\nMissing: {missing}\nClick Download to reinstall.",
+                path=entry["abs_path"], missing=shown))
+        raise gr.Error(_t("模型未安装：{path}", "Model is not installed: {path}",
+                          path=entry["abs_path"]))
     if expect_tasks and entry.get("task") not in expect_tasks:
-        raise gr.Error(t("err.model_wrong_task", model_id=model_id,
-                         task=entry.get("task"), expected="/".join(expect_tasks)))
+        raise gr.Error(_t(
+            "模型 {model} 的 task 是 {actual}，此处需要 {expected}",
+            "Model {model} has task {actual}; expected {expected}.",
+            model=model_id, actual=entry.get("task"), expected="/".join(expect_tasks)))
+    want_mode = mode or entry.get("mode", "offline")
+    mode_note = (_t("（流式模式）", " (streaming)")
+                 if want_mode == "streaming" else "")
 
     with _proc_lock:
         managed_alive = _server_proc is not None and _server_proc.poll() is None
         if (managed_alive and _loaded_id == model_id and server_alive()
-                and (session_options or {}) == (_loaded_session_options or {})):
-            return t("msg.model_loaded", label=entry["label"])
+                and (session_options or {}) == (_loaded_session_options or {})
+                and want_mode == (_loaded_mode or entry.get("mode", "offline"))):
+            return _t("✅ 已加载：{label}{mode}", "✅ Loaded: {label}{mode}",
+                      label=entry["label"], mode=mode_note)
 
         if not managed_alive and server_alive():
             # A server we didn't launch is holding the port.
             if session_options:
-                raise gr.Error(t("err.external_server_session", host=HOST, port=PORT,
-                                 options=session_options))
+                raise gr.Error(_t(
+                    "{host}:{port} 上的外部 server 无法调整 session 配置，请先关闭。",
+                    "The external server at {host}:{port} cannot change session settings. Stop it first.",
+                    host=HOST, port=PORT))
+            if mode and mode != entry.get("mode", "offline"):
+                raise gr.Error(_t(
+                    "{host}:{port} 上的外部 server 无法切换到 {mode} 模式，请先关闭。",
+                    "The external server at {host}:{port} cannot switch to {mode}. Stop it first.",
+                    host=HOST, port=PORT, mode=mode))
             if model_id in loaded_ids():
-                return t("msg.reusing_external_server", label=entry["label"])
-            raise gr.Error(t("err.external_server_port", host=HOST, port=PORT,
-                             launcher=SERVER_LAUNCHER))
+                return _t("✅ 复用外部 server：{label}",
+                          "✅ Using external server: {label}", label=entry["label"])
+            raise gr.Error(_t(
+                "检测到外部 server 占用 {host}:{port}，请先关闭或设置 AUDIOCPP_SERVER。",
+                "An external server is using {host}:{port}. Stop it or set AUDIOCPP_SERVER.",
+                host=HOST, port=PORT))
 
         _stop_server()
-        if session_options:
+        if session_options or want_mode != entry.get("mode", "offline"):
             entry = dict(entry)
-            entry["session_options"] = {
-                **(entry.get("session_options") or {}), **session_options}
+            entry["mode"] = want_mode
+            if session_options:
+                entry["session_options"] = {
+                    **(entry.get("session_options") or {}), **session_options}
         t0 = time.time()
         _start_server(entry)
         _loaded_session_options = dict(session_options) if session_options else None
+        _loaded_mode = want_mode
         if not _wait_health(LOAD_TIMEOUT):
             tail = _log_tail()
             _stop_server()
-            _ui_log(t("log.model_load_failed", label=entry["label"], timeout=LOAD_TIMEOUT))
-            raise gr.Error(t("err.model_load_failed", label=entry["label"],
-                             timeout=LOAD_TIMEOUT, tail=tail))
-        _ui_log(t("log.model_loaded", label=entry["label"], secs=f"{time.time() - t0:.1f}"))
-        return t("msg.model_loaded", label=entry["label"])
+            _ui_log(f"模型 {entry['label']} 加载失败/超时（{LOAD_TIMEOUT}s）")
+            raise gr.Error(_t("加载 {label} 失败/超时（{timeout}s）。\n日志尾部：\n{tail}",
+                              "Loading {label} failed or timed out ({timeout}s).\nLog tail:\n{tail}",
+                              label=entry["label"], timeout=LOAD_TIMEOUT, tail=tail))
+        _ui_log(f"模型 {entry['label']} 加载完成{mode_note}，用时 {time.time() - t0:.1f}s")
+        return _t("✅ 已加载：{label}{mode}", "✅ Loaded: {label}{mode}",
+                  label=entry["label"], mode=mode_note)
 
 
 def unload_model():
@@ -1590,26 +1988,77 @@ def unload_model():
         if managed_alive:
             label = _loaded_id or "(unknown)"
             _stop_server()
-            _ui_log(t("log.model_unloaded", label=label))
-            return t("msg.unloaded"), server_status()
+            _ui_log(f"已卸载模型 {label} 并停止 server，显存已释放")
+            return (_t("🧹 已卸载模型并释放显存，下次运行时会自动重新加载。",
+                       "🧹 Model unloaded and VRAM released. It will reload on the next run."),
+                    server_status())
         if server_alive():
-            return t("msg.unload_external", launcher=SERVER_LAUNCHER), server_status()
-        return t("msg.unload_not_running"), server_status()
+            return (_t("⚠️ 当前 server 不是本 WebUI 启动的，请在其启动窗口中关闭。",
+                       "⚠️ This server was started externally. Stop it from its own window."),
+                    server_status())
+        return _t("⚪ server 未运行，无需释放。", "⚪ Server is not running."), server_status()
 
 
 def server_status():
     if server_alive():
         ids = ", ".join(loaded_ids()) or "(none)"
         return f"✅ server @ {SERVER} · backend={BACKEND} · model id={ids}"
-    return t("msg.server_not_running", server=SERVER, load=t("btn.load"))
+    return _t("⚪ server 未运行 @ {server} — 选择模型并点『📥 加载模型』",
+              "⚪ Server is not running @ {server} — select a model and click Load.",
+              server=SERVER)
 
 
-def _api_usage_md():
-    """Third-party call instructions for the collapsible section under the status
-    line. Endpoints/fields track app/server/README.md; the URL comes from the
-    runtime SERVER so it cannot drift from AUDIOCPP_SERVER / the catalog config."""
-    return t("api.usage_md", server=SERVER, launcher=SERVER_LAUNCHER,
-             load=t("btn.load"))
+def _api_usage_md(language=None):
+    """状态行下方折叠区的第三方调用说明。端点/字段以 app/server/README.md 为准；
+    URL 取运行时的 SERVER，避免和 AUDIOCPP_SERVER / catalog 配置不一致。"""
+    language = language or get_language()
+    if language == "en":
+        return f"""
+Other applications can call the local `audiocpp_server` started by this WebUI.
+
+- Base URL: `{SERVER}/v1`
+- TTS: `POST {SERVER}/v1/audio/speech`
+- ASR: `POST {SERVER}/v1/audio/transcriptions`
+- Other tasks: `POST {SERVER}/v1/tasks/run`
+- `model` must be the currently loaded model id. Check it with `GET {SERVER}/v1/models`.
+- Audio paths in API JSON are paths on the server machine, not browser uploads.
+
+```bash
+curl {SERVER}/v1/audio/speech -H "Content-Type: application/json" -o out.wav \\
+  -d '{{"model":"qwen3-tts","input":"Hello from audio.cpp."}}'
+```
+
+The server stays running while the WebUI command window is open.
+"""
+    content = f"""
+第三方应用可以直接调用本 WebUI 启动的 `audiocpp_server`（OpenAI 风格 HTTP API），不经过本页面。
+
+- **URL 怎么填**：API 地址是 `{SERVER}`；OpenAI 兼容客户端的 Base URL 填 `{SERVER}/v1`。
+  生成语音：`POST {SERVER}/v1/audio/speech` · 音频转写：`POST {SERVER}/v1/audio/transcriptions`
+- **模型名称怎么填**：`model` 填模型 id（与本页模型列表一致，如 `qwen3-tts`、`vibevoice`），
+  且必须是**当前已加载**的那个 —— server 同一时刻只驻留一个模型，先在本页点『📥 加载模型』；
+  可用 `GET {SERVER}/v1/models` 查看当前可用的 id。
+- **TTS 请求示例**（响应默认是 WAV 音频；加 `"response_format": "json"` 改为返回 base64 的 JSON）：
+
+```bash
+curl {SERVER}/v1/audio/speech -H "Content-Type: application/json" -o out.wav \\
+  -d '{{"model": "qwen3-tts", "input": "你好，audio.cpp。", "voice_ref": "D:/voices/ref.wav", "reference_text": "参考音频里的原话", "seed": 1234}}'
+```
+
+- **ASR 请求示例**：`-d '{{"model": "qwen3-asr", "audio": "D:/audio/in.wav"}}'`；
+  可选 `"language"`（强制语种，如 `"Chinese"`）和 `"context"`（人名/术语偏置提示），仅 qwen3-asr 生效。
+  注意 `voice_ref` / `audio` 填的都是 **server 所在机器上的文件路径**（不是浏览器上传）。
+- **音乐生成（gen 模型）**：走通用路由 `POST {SERVER}/v1/tasks/run`，body 形如
+  `{{"model": "ace-step", "request": {{"text": "提示词", "lyrics": "歌词", "duration_seconds": 30,
+  "options": {{"tags": "pop,bright"}}}}}}`，响应 JSON 的 `audio` 字段是 base64 WAV。
+- **其它任务（vc/svc/s2s/sep/vad/diar/align）**：同样走 `POST {SERVER}/v1/tasks/run`，`request` 里用
+  `audio`（源音频路径）/ `voice_ref`（目标音色）/ `text`（对齐文本）等字段；分离多轨在响应的
+  `named_audio_outputs`，VAD/说话人/对齐结果在 `segments` / `speaker_turns` / `words`。
+- server 的生命周期跟随本 WebUI 的**命令行窗口**：只关浏览器页面不影响，server 仍可被第三方调用；
+  关掉命令窗口（webui.py 退出）才会连带关闭它。也可单独启动 server（如 {SERVER_LAUNCHER}）
+  供第三方应用调用。
+"""
+    return _t(content, content, language)
 
 
 # --- background model downloads (via tools/model_manager.py) ----------------
@@ -1647,8 +2096,9 @@ def _download_progress_note(entry):
     staging = os.path.join(staging_root, safe + ".partial")
     probe = staging if os.path.isdir(staging) else staging_root
     if not os.path.isdir(probe):
-        return t("msg.dl_no_data_yet")
-    return t("msg.dl_downloaded", size=_fmt_bytes(_dir_size_bytes(probe)))
+        return _t("尚未写入数据（正在连接/解析）", "Waiting for data…")
+    return _t("已下载 {size}", "Downloaded {size}",
+              size=_fmt_bytes(_dir_size_bytes(probe)))
 
 
 def hf_token_present():
@@ -1661,17 +2111,21 @@ def hf_token_present():
 def download_model(model_id, hf_token="", proxy=""):
     """Kick off `model_manager.py install <download_id>` in the background."""
     if not model_id:
-        return "❌ " + t("err.no_model_selected")
+        return _t("❌ 请先选择一个模型", "❌ Select a model first.")
     entry = catalog_by_id(model_id)
     if entry is None:
-        return "❌ " + t("err.model_id_unknown", model_id=model_id)
+        return _t("❌ catalog 里没有模型 id：{model}",
+                  "❌ Model id not found: {model}", model=model_id)
     if entry["installed"]:
-        return t("msg.dl_already_installed", label=entry["label"])
+        return _t("✅ {label} 已安装，无需下载", "✅ {label} is already installed.",
+                  label=entry["label"])
     dl_id = entry.get("download_id")
     if not dl_id:
-        return t("msg.dl_no_download_id", label=entry["label"])
+        return _t("⚠️ {label} 没有 download_id，请手动安装。",
+                  "⚠️ {label} has no download_id; install it manually.", label=entry["label"])
     if MODEL_MANAGER is None:
-        return t("err.model_manager_missing")
+        return _t("❌ 找不到 tools/model_manager.py",
+                  "❌ tools/model_manager.py was not found.")
 
     # Pass a token to the child so gated/private HF repos don't 401.
     env = os.environ.copy()
@@ -1687,18 +2141,26 @@ def download_model(model_id, hf_token="", proxy=""):
     if px:
         for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
             env[var] = px
-        proxy_note = t("msg.dl_via_proxy", proxy=px) + "\n\n"
-    warn = "" if (tok or hf_token_present()) else (t("warn.no_hf_token") + "\n\n")
+        proxy_note = _t("🌐 通过代理 {proxy}\n\n", "🌐 Proxy: {proxy}\n\n", proxy=px)
+    warn = "" if (tok or hf_token_present()) else _t(
+        "⚠️ 未检测到 HF token，受限模型可能返回 401。\n\n",
+        "⚠️ No HF token detected; gated models may return 401.\n\n")
     short = _vram_shortfall(entry)
     if short:
-        warn = t("warn.vram_before_download", need=f"{short[0]:g}",
-                 have=f"{short[1]:g}") + "\n\n" + warn
+        warn = _t("⚠️ **显存不足**：估算需 **≥{need:g}G**，本机为 **{local:g}G**。\n\n",
+                  "⚠️ **Low VRAM**: estimated **≥{need:g} GB**, detected **{local:g} GB**.\n\n",
+                  need=short[0], local=short[1]) + warn
+    if entry["incomplete"]:
+        warn = _t("⚠️ {path} 不完整（缺 {count} 个文件），将覆盖重装。\n\n",
+                  "⚠️ {path} is incomplete ({count} files missing); it will be reinstalled.\n\n",
+                  path=entry["abs_path"], count=len(entry["missing_files"])) + warn
 
     with _dl_lock:
         rec = _downloads.get(model_id)
         if rec and rec["proc"].poll() is None:
-            return (t("msg.dl_already_running", label=entry["label"])
-                    + f"\n```\n{_read_tail(rec['log'])}\n```")
+            return _t("⏳ {label} 已在后台下载中…\n```\n{tail}\n```",
+                      "⏳ {label} is already downloading…\n```\n{tail}\n```",
+                      label=entry["label"], tail=_read_tail(rec["log"]))
         log = _dl_log_path(model_id)
         logf = open(log, "w", encoding="utf-8", errors="replace")
         proc = subprocess.Popen(
@@ -1706,9 +2168,11 @@ def download_model(model_id, hf_token="", proxy=""):
              "--models-root", MODELS_ROOT, "--overwrite"],
             cwd=PROJECT_ROOT, stdout=logf, stderr=subprocess.STDOUT, env=env)
         _downloads[model_id] = {"proc": proc, "log": log}
-    _ui_log(t("log.dl_started", label=entry["label"], dl_id=dl_id, log=log))
-    return warn + proxy_note + t("msg.dl_started", label=entry["label"], dl_id=dl_id,
-                                 log=log, refresh=t("btn.refresh"))
+    _ui_log(f"开始后台下载 {entry['label']}（{dl_id}），日志：{log}")
+    return warn + proxy_note + _t(
+        "⏳ 已开始下载 **{label}**（{download_id}）。完成后刷新列表。\n日志：{log}",
+        "⏳ Download started: **{label}** ({download_id}). Refresh the list when complete.\nLog: {log}",
+        label=entry["label"], download_id=dl_id, log=log)
 
 
 def download_status(model_id):
@@ -1716,23 +2180,32 @@ def download_status(model_id):
     if entry is None:
         return ""
     if entry["installed"]:
-        return t("msg.dl_installed", label=entry["label"])
+        return _t("✅ {label} 已安装", "✅ {label} is installed.", label=entry["label"])
     rec = _downloads.get(model_id)
     if rec is None:
-        return t("msg.dl_not_started", label=entry["label"])
+        if entry["incomplete"]:
+            return _t("⚠️ {label} 目录不完整（缺 {count} 个文件），请重新下载。",
+                      "⚠️ {label} is incomplete ({count} files missing). Download it again.",
+                      label=entry["label"], count=len(entry["missing_files"]))
+        return _t("⚪ {label} 未安装，未开始下载", "⚪ {label} is not installed.",
+                  label=entry["label"])
     code = rec["proc"].poll()
     tail = _read_tail(rec["log"], n=12)
     if code is None:
-        return (t("msg.dl_running", label=entry["label"],
-                  progress=_download_progress_note(entry), ts=_ts())
-                + f"\n```\n{tail}\n```")
+        return _t("⏳ 正在下载 {label}… {progress} · 更新于 {time}\n```\n{tail}\n```",
+                  "⏳ Downloading {label}… {progress} · {time}\n```\n{tail}\n```",
+                  label=entry["label"], progress=_download_progress_note(entry),
+                  time=_ts(), tail=tail)
     if not rec.get("reported"):
         rec["reported"] = True
-        _ui_log(t("log.dl_exited", label=entry["label"], code=code))
+        _ui_log(f"{entry['label']} 下载进程结束 (exit {code})")
     if code == 0:
-        return (t("msg.dl_done", label=entry["label"], refresh=t("btn.refresh"))
-                + f"\n```\n{tail}\n```")
-    return t("msg.dl_failed", label=entry["label"], code=code) + f"\n```\n{tail}\n```"
+        return _t("✅ {label} 下载完成，请刷新列表。\n```\n{tail}\n```",
+                  "✅ {label} downloaded. Refresh the model list.\n```\n{tail}\n```",
+                  label=entry["label"], tail=tail)
+    return _t("❌ {label} 下载失败（exit {code}）。\n```\n{tail}\n```",
+              "❌ {label} download failed (exit {code}).\n```\n{tail}\n```",
+              label=entry["label"], code=code, tail=tail)
 
 
 def _download_running(model_id):
@@ -1749,6 +2222,238 @@ def download_start(model_id, hf_token="", proxy=""):
 def download_status_tick(model_id):
     """Timer tick: refresh status; stop the timer once the download is idle."""
     return download_status(model_id), gr.Timer(active=_download_running(model_id))
+
+
+def _gguf_entry(model_id, require_installed=True):
+    if not model_id:
+        return None, _t("请先选择一个模型", "Select a model first.")
+    entry = catalog_by_id(model_id)
+    if entry is None:
+        return None, _t("catalog 里没有模型 id：{model}",
+                         "Model id not found in catalog: {model}", model=model_id)
+    if require_installed and not entry["installed"]:
+        return None, _t("模型未完整安装。", "The model is not fully installed.")
+    return entry, ""
+
+
+def _gguf_output_path(entry):
+    model_path = entry["abs_path"]
+    if os.path.isfile(model_path) and model_path.lower().endswith(".gguf"):
+        return model_path
+    root = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
+    return os.path.join(root, "model.gguf")
+
+
+def _gguf_tensor_entrypoint(model_dir):
+    """Return a single-file or sharded safetensors entry point in model_dir."""
+    for name in ("model.safetensors.index.json", "model.safetensors"):
+        candidate = os.path.join(model_dir, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _gguf_conversion_inputs(entry):
+    """Build the converter's ordered (namespace, weights) input list."""
+    if entry["family"] not in GGUF_WEBUI_CONVERTIBLE_FAMILIES:
+        return []
+
+    model_path = entry["abs_path"]
+    if os.path.isfile(model_path):
+        lower = model_path.lower()
+        if lower.endswith(".safetensors") or lower.endswith(".safetensors.index.json"):
+            return [("", model_path)]
+        return []
+
+    # Qwen3-TTS is a composite package. Its GGUF package spec requires both
+    # tensor sources under the exact namespaces below.
+    if entry["family"] == "qwen3_tts":
+        model_weights = _gguf_tensor_entrypoint(model_path)
+        speech_weights = _gguf_tensor_entrypoint(os.path.join(model_path, "speech_tokenizer"))
+        if model_weights and speech_weights:
+            return [
+                ("model_weights", model_weights),
+                ("speech_tokenizer_weights", speech_weights),
+            ]
+        return []
+
+    source = _gguf_tensor_entrypoint(model_path)
+    return [("", source)] if source else []
+
+
+def _gguf_conversion_unavailable(entry):
+    family = entry["family"]
+    if family not in GGUF_NATIVE_FAMILIES:
+        return _t("当前模型后端暂不支持原生 GGUF。",
+                  "This model backend does not currently support native GGUF.")
+    if family not in GGUF_WEBUI_CONVERTIBLE_FAMILIES:
+        return _t("当前复合模型暂不能在 WebUI 自动转换。",
+                  "This composite model cannot yet be converted automatically in the WebUI.")
+    return ""
+
+
+def gguf_status(model_id):
+    entry, error = _gguf_entry(model_id, require_installed=False)
+    if entry is None:
+        return f"⚪ {error}"
+    unavailable = _gguf_conversion_unavailable(entry)
+    if unavailable:
+        return f"⚠️ {unavailable}"
+    if not entry["installed"]:
+        return _t("🧊 可转换，但模型未完整安装。",
+                  "🧊 Convertible, but the model is not fully installed.")
+    output = _gguf_output_path(entry)
+    converter = _find_gguf_exe()
+    if os.path.isfile(output):
+        return _t("🧊 已有GGUF，将优先加载该模型。", "🧊 GGUF is available and will be loaded first.")
+    if converter is None:
+        return _t("⚠️ 找不到转换器。", "⚠️ Converter not found.")
+    inputs = _gguf_conversion_inputs(entry)
+    if not inputs:
+        return _t("⚠️ 未找到可转换的模型权重。", "⚠️ No convertible model weights found.")
+    return _t("🧊 可转换。", "🧊 Ready to convert.")
+
+
+def _gguf_inspection_summary(output, text):
+    info, namespaces = {}, []
+    for line in (text or "").splitlines():
+        key, separator, value = line.partition("=")
+        if not separator:
+            continue
+        if key == "namespace":
+            namespaces.append(value)
+        else:
+            info[key] = value
+
+    yes_no = lambda value: _t("是" if value == "true" else "否",
+                              "Yes" if value == "true" else "No")
+    rows = [
+        _t("✅ 检查完成", "✅ Inspection complete"),
+        _t("文件：`{name}`", "File: `{name}`", name=os.path.basename(output)),
+        _t("路径：`{path}`", "Path: `{path}`", path=output),
+        _t("张量：{count}", "Tensors: {count}", count=info.get("tensors", "-")),
+        _t("内嵌资源：{value}", "Embedded sidecars: {value}",
+           value=yes_no(info.get("embedded_sidecars"))),
+        _t("内嵌模型配置：{value}", "Embedded model spec: {value}",
+           value=yes_no(info.get("embedded_model_spec"))),
+    ]
+    if info.get("model_spec_family"):
+        rows.append(_t("模型家族：{family}", "Model family: {family}",
+                       family=info["model_spec_family"]))
+    if namespaces:
+        rows.append(_t("权重命名空间：{items}", "Weight namespaces: {items}",
+                       items=", ".join(namespaces)))
+    return "  \n".join(rows)
+
+
+def inspect_gguf(model_id):
+    entry, error = _gguf_entry(model_id)
+    if entry is None:
+        return f"❌ {error}"
+    output = _gguf_output_path(entry)
+    if not os.path.isfile(output):
+        return _t("⚠️ 暂无 GGUF。", "⚠️ No GGUF yet.")
+    converter = _find_gguf_exe()
+    if converter is None:
+        return _t("❌ 找不到 `{name}`；已检查开发构建和 portable 的 gpu/cpu 目录。",
+                  "❌ {name} was not found in development or portable gpu/cpu paths.", name=GGUF_EXE_NAME)
+    try:
+        result = subprocess.run([converter, "--inspect", output], cwd=PROJECT_ROOT,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                timeout=120)
+    except Exception as exc:
+        return _t("❌ GGUF 检查无法启动：{error}", "❌ Could not start GGUF inspection: {error}", error=exc)
+    if result.returncode != 0:
+        return _t("❌ 检查失败（exit {code}）。", "❌ Inspection failed (exit {code}).", code=result.returncode)
+    _ui_log(f"检查 GGUF：{output}")
+    return _gguf_inspection_summary(output, result.stdout)
+
+
+def convert_model_to_gguf(model_id, weight_type, progress=gr.Progress()):
+    entry, error = _gguf_entry(model_id)
+    if entry is None:
+        return f"❌ {error}"
+    unavailable = _gguf_conversion_unavailable(entry)
+    if unavailable:
+        return f"❌ {unavailable}"
+    output = _gguf_output_path(entry)
+    if os.path.isfile(output):
+        return _t("⚠️ GGUF 已存在；请先检查或删除。", "⚠️ GGUF already exists; inspect or delete it first.")
+    converter = _find_gguf_exe()
+    if converter is None:
+        return _t("❌ 找不到 `{name}`；已检查开发构建和 portable 的 gpu/cpu 目录。",
+                  "❌ {name} was not found in development or portable gpu/cpu paths.", name=GGUF_EXE_NAME)
+    inputs = _gguf_conversion_inputs(entry)
+    if not inputs:
+        return _t("❌ 未找到可自动转换的模型权重。", "❌ No convertible model weights found.")
+    if weight_type not in GGUF_TYPES:
+        return _t("❌ 不支持的 GGUF 类型：{type}", "❌ Unsupported GGUF type: {type}", type=weight_type)
+
+    root = entry["abs_path"] if os.path.isdir(entry["abs_path"]) else os.path.dirname(inputs[0][1])
+    cmd = [converter]
+    for namespace, source in inputs:
+        cmd.extend(["--input", f"{namespace}={source}" if namespace else source])
+    cmd.extend(["--root", root, "--output", output,
+                "--type", weight_type, "--family", entry["family"]])
+    progress(0, desc=_t("正在转换 GGUF…", "Converting GGUF…"))
+    _ui_log(f"开始转换 GGUF：{entry['label']} ({weight_type})")
+    try:
+        result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=7200)
+    except subprocess.TimeoutExpired:
+        return _t("❌ GGUF 转换超过 2 小时，已停止。", "❌ GGUF conversion exceeded two hours and was stopped.")
+    except Exception as exc:
+        return _t("❌ 无法启动 GGUF 转换：{error}", "❌ Could not start GGUF conversion: {error}", error=exc)
+
+    if result.returncode != 0 or not os.path.isfile(output):
+        _ui_log(f"GGUF 转换失败：{entry['label']} (exit {result.returncode})")
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        details = []
+        if stdout:
+            details.append(f"stdout:\n{stdout}")
+        if stderr:
+            details.append(f"stderr:\n{stderr}")
+        process_output = "\n\n".join(details) or _t("（转换器没有输出）", "(The converter produced no output.)")
+        return _t(
+            "❌ 转换失败（exit {code}）。\n\n命令：\n```text\n{command}\n```\n\n详细信息：\n```text\n{output}\n```",
+            "❌ Conversion failed (exit {code}).\n\nCommand:\n```text\n{command}\n```\n\nDetails:\n```text\n{output}\n```",
+            code=result.returncode, command=subprocess.list2cmdline(cmd), output=process_output)
+
+    stopped = False
+    with _proc_lock:
+        if _loaded_id == model_id and _server_proc is not None and _server_proc.poll() is None:
+            _stop_server()
+            stopped = True
+    _ui_log(f"GGUF 转换完成：{entry['label']} → {output}")
+    stop_note = (_t("请点『加载模型』。", "Click Load.")
+                 if stopped else
+                 _t("点『加载模型』即可。", "Click Load to use it."))
+    return _t("✅ 转换成功。{note}", "✅ Conversion complete. {note}", note=stop_note)
+
+
+def delete_gguf(model_id):
+    entry, error = _gguf_entry(model_id)
+    if entry is None:
+        return f"❌ {error}", server_status()
+    output = _gguf_output_path(entry)
+    if not os.path.isfile(output):
+        return _t("⚠️ 暂无 GGUF。", "⚠️ No GGUF to delete."), server_status()
+    with _proc_lock:
+        if _loaded_id == model_id and _server_proc is not None and _server_proc.poll() is None:
+            _stop_server()
+        elif server_alive() and model_id in loaded_ids():
+            return _t("⚠️ 外部 server 正在使用该 GGUF；请先关闭它再删除。",
+                      "⚠️ An external server is using this GGUF. Stop it before deleting."), server_status()
+    temporary = output + ".tmp"
+    try:
+        os.remove(output)
+        if os.path.isfile(temporary):
+            os.remove(temporary)
+    except OSError as exc:
+        return _t("❌ 删除 GGUF 失败：{error}", "❌ Could not delete GGUF: {error}", error=exc), server_status()
+    _ui_log(f"删除 GGUF：{output}")
+    return _t("✅ 已删除：`{path}`", "✅ Deleted: `{path}`", path=output), server_status()
 
 
 # --- task handlers ---------------------------------------------------------
@@ -1771,10 +2476,10 @@ def _run_task(entry, model, req, timeout, log_label):
         r = requests.post(f"{SERVER}/v1/tasks/run",
                           json={"model": model, "request": req}, timeout=timeout)
     except requests.RequestException as e:
-        _ui_log(t("log.task_failed_unreachable", task=log_label))
-        raise gr.Error(t("err.server_unreachable", server=SERVER, error=e, load=t("btn.load")))
+        _ui_log(f"{log_label}失败：无法连接 server")
+        raise connection_error(e)
     if r.status_code != 200:
-        _ui_log(t("log.task_failed_status", task=log_label, status=r.status_code))
+        _ui_log(f"{log_label}失败：server {r.status_code}")
         raise server_error(entry, r.status_code, r.text)
     return r.json()
 
@@ -1796,7 +2501,7 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
            progress=gr.Progress()):
     try:
         if not (text or "").strip():
-            raise gr.Error(t("err.no_text"))
+            raise gr.Error(_t("请输入要合成的文字", "Enter text to synthesize."))
 
         entry = catalog_by_id(model)
         prof = profile_for(entry) if entry else DEFAULT_PROFILE
@@ -1809,9 +2514,25 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
         # 免得为一个注定被拒的请求重启 server。
         is_vibevoice = bool(entry) and entry.get("family") == "vibevoice"
         if is_vibevoice and _vibevoice_text_max_tokens(text) < _VIBEVOICE_MIN_EST_TOKENS:
-            raise gr.Error(t("err.vibevoice_text_too_short"))
+            raise gr.Error(_t(
+                "VibeVoice 是长文模型。请使用 ≥40 个汉字（英文约 ≥35 词），或改用短句模型。",
+                "VibeVoice is for long-form text. Use at least ~35 English words, or choose a short-text model."))
 
+        # 必须参考音色的家族（如 IndexTTS2）在加载模型前就拦下来，
+        # 免得等几十秒加载后才收到 server 报错。
+        if (prof.get("require_voice") and not uploaded_voice
+                and (not builtin_voice or builtin_voice == "(none)")):
+            raise gr.Error(_t(
+                "该模型必须提供参考音色：请上传/录制参考音频，或选择内置音色。",
+                "This model requires a voice reference: upload/record one or pick a built-in voice."))
+
+        # 加载/模式切换（可能几十秒）单独计时：状态栏的"用时"只含合成本身，
+        # 不报加载会让它看起来远小于实际等待时间。
+        t_load = time.time()
         ensure_model_loaded(model, TTS_TASKS)
+        load_s = time.time() - t_load
+        load_note = (_t("，含模型加载 {seconds:.1f}s", ", model load {seconds:.1f}s",
+                        seconds=load_s) if load_s >= 1.0 else "")
 
         # Model-specific knobs travel in a nested "options" object; the server merges
         # every key into the request options and each model reads what it understands.
@@ -1830,6 +2551,17 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
         if has_voice_samples and voice_path:
             voice_path = None
 
+        # 预置音色家族（Supertonic 的 M1-M5/F1-F5）：控件里的 voice 是请求顶层的
+        # cached-voice id，不是 options 项，从 options 里挪出去；有参考音频时以参考为准。
+        voice_preset = options.pop("voice", None)
+        # Irodori 会话默认 no_ref=true（无参考直接生成），带参考时须显式关掉才走克隆。
+        if prof.get("no_ref_toggle") and voice_path:
+            options.setdefault("no_ref", False)
+        # IndexTTS2：emotion_text 只在 use_emotion_text=true 时生效（request.cpp），
+        # 填了情绪参考文本却没勾选是最常见的坑，替用户补上。
+        if options.get("emotion_text") and "use_emotion_text" not in options:
+            options["use_emotion_text"] = True
+
         seed, seed_note = _resolve_seed(seed)
         payload = {
             "model": model,
@@ -1842,6 +2574,8 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
         )
         if voice_path:
             payload["voice_ref"] = _ensure_wav(voice_path)
+        elif voice_preset:
+            payload["voice"] = voice_preset
         if (reference_text or "").strip():
             payload["reference_text"] = reference_text
         if options:
@@ -1852,13 +2586,14 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
         chunks = _split_tts_chunks(text, prof.get("chunk_chars", 1000))
         if is_vibevoice:
             chunks = _merge_short_vibevoice_tail(chunks)
-        _ui_log(t("log.tts_start", model=model, chunks=len(chunks),
-                  chars=sum(len(c) for c in chunks)))
+        _ui_log(f"TTS 开始：model={model}，{len(chunks)} 段 / 共 {sum(len(c) for c in chunks)} 字")
         t_start = time.time()
         blobs = []
         for i, chunk in enumerate(chunks):
             if len(chunks) > 1:
-                progress((i, len(chunks)), desc=t("progress.tts_chunk", i=i + 1, n=len(chunks)))
+                progress((i, len(chunks)), desc=_t("合成 {index}/{total} 段…",
+                                                   "Synthesizing {index}/{total}…",
+                                                   index=i + 1, total=len(chunks)))
             payload["input"] = chunk
             if auto_vibevoice_max_tokens:
                 payload["max_tokens"] = _vibevoice_text_max_tokens(chunk, int(max_tokens))
@@ -1866,14 +2601,14 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
             try:
                 r = requests.post(f"{SERVER}/v1/audio/speech", json=payload, timeout=900)
             except requests.RequestException as e:
-                _ui_log(t("log.tts_failed_unreachable", i=i + 1, n=len(chunks)))
-                raise gr.Error(t("err.server_unreachable", server=SERVER, error=e, load=t("btn.load")))
+                _ui_log(f"TTS 失败：段 {i + 1}/{len(chunks)} 无法连接 server")
+                raise connection_error(e)
             if r.status_code != 200:
-                _ui_log(t("log.tts_failed_status", i=i + 1, n=len(chunks), status=r.status_code))
+                _ui_log(f"TTS 失败：段 {i + 1}/{len(chunks)}，server {r.status_code}")
                 raise server_error(entry, r.status_code, r.text)
             blobs.append(r.content)
-            _ui_log(t("log.tts_chunk_done", i=i + 1, n=len(chunks), chars=len(chunk),
-                      secs=f"{time.time() - t_chunk:.1f}"))
+            _ui_log(f"TTS 段 {i + 1}/{len(chunks)} 完成（{len(chunk)} 字，"
+                    f"{time.time() - t_chunk:.1f}s）")
 
         out = os.path.join(OUTPUT_DIR, f"audiocpp_tts_{int(time.time()*1000)}.wav")
         if len(blobs) == 1:
@@ -1882,14 +2617,238 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
         else:
             _concat_wavs(blobs, out)
         elapsed = time.time() - t_start
-        _ui_log(t("log.tts_done", out=out, secs=f"{elapsed:.1f}"))
-        parts_note = t("label.n_parts", n=len(blobs)) if len(blobs) > 1 else ""
-        return out, t("msg.generate_done", parts=parts_note, secs=f"{elapsed:.1f}",
-                      seed=seed_note)
+        _ui_log(f"TTS 完成：{out}，总用时 {elapsed:.1f}s")
+        parts_note = (_t("（{count} 段）", " ({count} parts)", count=len(blobs))
+                      if len(blobs) > 1 else "")
+        return out, _t("✅ 生成完成{parts}，用时 {seconds:.1f}s{load}。{seed}",
+                       "✅ Complete{parts} in {seconds:.1f}s{load}. {seed}",
+                       parts=parts_note, seconds=elapsed, load=load_note, seed=seed_note)
     except gr.Error as e:
         return None, _msg_from_error(e)
     except Exception as e:
-        return None, t("msg.generate_failed", error=e)
+        return None, _t("❌ 生成失败：{error}", "❌ Generation failed: {error}", error=e)
+
+
+def do_tts_stream(model, text, language, uploaded_voice, builtin_voice,
+                  reference_text, seed, max_tokens, adv_values, adv_options):
+    """流式 TTS 生成器：产出 (音频增量, 最终文件, 状态)。
+    音频增量是 (sr, np.int16 数组)，喂给 streaming=True 的 gr.Audio 逐段追加
+    播放；结束时把完整音频写成 wav 一并给普通输出组件（可下载/回放）。
+    server 端 /v1/audio/speech stream_format=sse 的 delta 是 base64 裸 PCM16。"""
+    if not (text or "").strip():
+        raise gr.Error(_t("请输入要合成的文字", "Enter text to synthesize."))
+    entry = catalog_by_id(model)
+    prof = profile_for(entry) if entry else DEFAULT_PROFILE
+    if not prof.get("supports_streaming"):
+        raise gr.Error(_t("模型 {model} 不支持流式生成。", "Model {model} does not support streaming.",
+                          model=model))
+    sr = int(prof.get("stream_sample_rate") or 0)
+    if sr <= 0:
+        raise gr.Error(_t("模型 {model} 缺少流式采样率配置。",
+                          "Model {model} has no streaming sample-rate setting.", model=model))
+
+    t_load = time.time()
+    ensure_model_loaded(model, TTS_TASKS, mode="streaming")
+    load_s = time.time() - t_load
+    load_note = (_t("，含模型加载 {seconds:.1f}s", ", model load {seconds:.1f}s",
+                    seconds=load_s) if load_s >= 1.0 else "")
+    options = _merged_options(prof, adv_values, adv_options)
+    family = entry.get("family") if entry else ""
+    if family == "voxcpm2":
+        # VoxCPM2 流式生成的硬性要求（generator.cpp:1259）：badcase 重试要
+        # 重新生成整段，与已经推给播放器的音频冲突，所以流式下强制关闭。
+        options["retry_badcase"] = False
+        options.pop("voxcpm2.retry_badcase", None)
+
+    voice_path = None
+    if uploaded_voice:
+        voice_path = uploaded_voice
+    elif builtin_voice and builtin_voice != "(none)":
+        voice_path = os.path.join(PROMPTS_DIR, builtin_voice)
+    # Supertonic 等预置音色家族要求 voice 位于请求顶层，而不是 options。
+    voice_preset = options.pop("voice", None)
+
+    seed, seed_note = _resolve_seed(seed)
+    payload = {
+        "model": model,
+        "language": resolve_language(prof, language),
+        "seed": seed,
+        "max_tokens": int(max_tokens),
+        "stream": True,
+        "stream_format": "sse",
+        "response_format": "pcm",
+        "options": options,
+    }
+    if voice_path:
+        payload["voice_ref"] = _ensure_wav(voice_path)
+    elif voice_preset:
+        payload["voice"] = voice_preset
+    if (reference_text or "").strip():
+        payload["reference_text"] = reference_text
+
+    chunks = _split_tts_chunks(text, prof.get("chunk_chars", 1000))
+    _ui_log(f"TTS 开始（流式）：model={model}，{len(chunks)} 段 / "
+            f"共 {sum(len(c) for c in chunks)} 字")
+    t_start = time.time()
+    all_parts = []          # 全部 PCM（拼最终 wav）
+    pending = []            # 未推给播放器的 PCM 增量（凑批再推，免得刷屏）
+    pending_samples = 0
+    min_push = int(sr * 0.4)   # 每 ~0.4s 音频推一次播放器
+    ttft_note = ""
+
+    def _flush():
+        nonlocal pending, pending_samples
+        if not pending:
+            return None
+        arr = pending[0] if len(pending) == 1 else np.concatenate(pending)
+        pending, pending_samples = [], 0
+        return arr
+
+    for i, chunk in enumerate(chunks):
+        seg_note = (_t("（{index}/{total} 段）", " ({index}/{total})",
+                       index=i + 1, total=len(chunks)) if len(chunks) > 1 else "")
+        payload["input"] = chunk
+        t_chunk = time.time()
+        try:
+            r = requests.post(f"{SERVER}/v1/audio/speech", json=payload,
+                              stream=True, timeout=900)
+        except requests.RequestException as e:
+            _ui_log(f"TTS 失败（流式）：段 {i + 1}/{len(chunks)} 无法连接 server")
+            raise connection_error(e)
+        with r:
+            if r.status_code != 200:
+                _ui_log(f"TTS 失败（流式）：段 {i + 1}/{len(chunks)}，server {r.status_code}")
+                raise server_error(entry, r.status_code, r.text)
+            for event in _iter_sse_events(r):
+                etype = event.get("type")
+                if etype == "speech.audio.delta":
+                    pcm = base64.b64decode(event.get("audio") or "")
+                    if not pcm:
+                        continue
+                    arr = np.frombuffer(pcm, dtype=np.int16)
+                    all_parts.append(arr)
+                    pending.append(arr)
+                    pending_samples += arr.size
+                    if pending_samples >= min_push:
+                        out_arr = _flush()
+                        done_s = sum(a.size for a in all_parts) / sr
+                        yield ((sr, out_arr), None,
+                               _t("⏳ 流式生成中{segment}…已生成 {seconds:.1f}s",
+                                  "⏳ Streaming{segment}… {seconds:.1f}s generated",
+                                  segment=seg_note, seconds=done_s))
+                elif etype == "speech.audio.done":
+                    if i == 0 and not ttft_note:
+                        ttft = (event.get("timing") or {}).get("ttft_ms")
+                        if ttft:
+                            ttft_note = _t("，首包 {seconds:.1f}s", ", first audio {seconds:.1f}s",
+                                           seconds=ttft / 1000)
+        _ui_log(f"TTS 段 {i + 1}/{len(chunks)} 完成（流式，{len(chunk)} 字，"
+                f"{time.time() - t_chunk:.1f}s）")
+
+    tail = _flush()
+    if tail is not None:
+        yield (sr, tail), None, _t("⏳ 流式生成收尾…", "⏳ Finishing stream…")
+    if not all_parts:
+        raise gr.Error(_t("流式生成没有产出音频。", "Streaming produced no audio."))
+    out = os.path.join(OUTPUT_DIR, f"audiocpp_tts_stream_{int(time.time() * 1000)}.wav")
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(np.concatenate(all_parts).tobytes())
+    elapsed = time.time() - t_start
+    audio_s = sum(a.size for a in all_parts) / sr
+    parts_note = (_t("（{count} 段）", " ({count} parts)", count=len(chunks))
+                  if len(chunks) > 1 else "")
+    _ui_log(f"TTS 完成（流式）：{out}，音频 {audio_s:.1f}s，总用时 {elapsed:.1f}s")
+    yield (None, out, _t(
+        "✅ 流式生成完成{parts}，音频 {audio:.1f}s，用时 {elapsed:.1f}s{ttft}{load}。{seed}",
+        "✅ Stream complete{parts}: {audio:.1f}s audio in {elapsed:.1f}s{ttft}{load}. {seed}",
+        parts=parts_note, audio=audio_s, elapsed=elapsed, ttft=ttft_note,
+        load=load_note, seed=seed_note))
+
+
+def do_tts_or_stream(model, gen_mode, text, language, uploaded_voice, builtin_voice,
+                     reference_text, seed, max_tokens, adv_values, adv_options,
+                     progress=gr.Progress()):
+    """TTS 按钮统一入口：离线模式原样走 do_tts（行为不变），流式模式走
+    do_tts_stream。输出：(流式播放增量, 输出文件, 状态)。
+    先 yield 一条即时提示——模型未加载/需切换模式时后续要静默等几十秒。"""
+    yield None, None, _t("⏳ 生成中…模型切换时可能需要重新加载。",
+                         "⏳ Generating… model switches may require a reload.")
+    if gen_mode == "流式":
+        try:
+            yield from do_tts_stream(model, text, language, uploaded_voice,
+                                     builtin_voice, reference_text, seed,
+                                     max_tokens, adv_values, adv_options)
+        except gr.Error as e:
+            yield None, None, _msg_from_error(e)
+        except Exception as e:
+            yield None, None, _t("❌ 流式生成失败：{error}",
+                                 "❌ Streaming failed: {error}", error=e)
+        return
+    out, msg = do_tts(model, text, language, uploaded_voice, builtin_voice,
+                      reference_text, seed, max_tokens, adv_values, adv_options,
+                      progress=progress)
+    yield None, out, msg
+
+
+def _iter_sse_events(response):
+    """逐个产出 SSE 事件（dict）。server 每个事件一行 `data: {json}`，事件间空行
+    分隔（write_sse）；`data: [DONE]` 表示流结束。type=error 的事件直接抛错。"""
+    for line in response.iter_lines(decode_unicode=True):
+        if not line or not line.startswith("data:"):
+            continue
+        data = line[len("data:"):].strip()
+        if data == "[DONE]":
+            return
+        try:
+            event = json.loads(data)
+        except ValueError:
+            continue
+        if event.get("type") == "error":
+            err = event.get("error") or {}
+            raise gr.Error(_t("server 流式错误：{error}", "Server stream error: {error}",
+                              error=err.get("message") or event))
+        yield event
+
+
+def _asr_transcribe_stream(model, entry, wav_path, extras, tag="ASR"):
+    """流式转写一个 WAV（server 需已按 mode=streaming 加载）：产出
+    (累计文本, 是否最终, ttft_ms)。整个文件一个请求——增量出字本身就解决了
+    离线路径靠分段缓解的"长音频干等"问题。"""
+    payload = {"model": model, "audio": wav_path, "stream": True, **extras}
+    try:
+        r = requests.post(f"{SERVER}/v1/audio/transcriptions", json=payload,
+                          stream=True, timeout=900)
+    except requests.RequestException as e:
+        _ui_log(f"{tag} 失败：无法连接 server")
+        raise connection_error(e)
+    with r:
+        if r.status_code != 200:
+            _ui_log(f"{tag} 失败：server {r.status_code}")
+            raise server_error(entry, r.status_code, r.text)
+        text = ""
+        for event in _iter_sse_events(r):
+            etype = event.get("type")
+            if etype == "transcript.text.delta":
+                delta = event.get("delta") or ""
+                if entry.get("family") == "voxtral_realtime":
+                    # Voxtral currently emits the cumulative transcript (and may
+                    # dispatch the same event twice), despite the server exposing
+                    # it as a delta. Replace instead of appending for this family.
+                    if delta == text:
+                        continue
+                    text = delta
+                else:
+                    text += delta
+                yield text, False, None
+            elif etype == "transcript.text.done":
+                final = (event.get("text") or text).strip()
+                ttft = (event.get("timing") or {}).get("ttft_ms")
+                yield final, True, ttft
+                return
+    raise gr.Error(_t("流式转写未收到最终结果。", "Streaming transcription returned no final result."))
 
 
 def _asr_transcribe_wav(model, entry, prof, wav_path, extras, tag="ASR"):
@@ -1898,15 +2857,15 @@ def _asr_transcribe_wav(model, entry, prof, wav_path, extras, tag="ASR"):
     WAV（测不出时长）走单请求。extras 是可选的 language/context 请求字段。
     返回 (text, dur, 段数)。"""
     dur = _audio_duration_seconds(wav_path)
-    dur_note = f"{dur:.1f}s" if dur is not None else t("label.unknown")
+    dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
     max_s = prof.get("max_input_seconds")
     chunks = [wav_path]
     if max_s and dur is not None and dur > max_s:
         chunks = [p for p, _ in
                   _split_wav_chunks(wav_path, max_s, pad_to_max=False)]
         if len(chunks) > 1:
-            _ui_log(t("log.asr_chunking", tag=tag, dur=dur_note, n=len(chunks),
-                      max_s=f"{max_s:.0f}"))
+            _ui_log(f"{tag} 长音频分段：{dur_note} → {len(chunks)} 段"
+                    f"（每段 ≤{max_s:.0f}s，静音处切分）")
     texts = []
     for i, chunk in enumerate(chunks):
         t_chunk = time.time()
@@ -1914,13 +2873,12 @@ def _asr_transcribe_wav(model, entry, prof, wav_path, extras, tag="ASR"):
         try:
             r = requests.post(f"{SERVER}/v1/audio/transcriptions", json=payload, timeout=900)
         except requests.RequestException as e:
-            _ui_log(t("log.tag_failed_unreachable", tag=tag))
-            raise gr.Error(t("err.server_unreachable", server=SERVER, error=e, load=t("btn.load")))
+            _ui_log(f"{tag} 失败：无法连接 server")
+            raise connection_error(e)
         if r.status_code != 200:
-            seg_note = t("log.seg_note", i=i + 1, n=len(chunks)) if len(chunks) > 1 else ""
-            _ui_log(t("log.tag_failed_status", tag=tag, status=r.status_code,
-                      dur=dur_note, seg=seg_note))
-            extra = t("err.audio_duration_note", secs=f"{dur:.1f}") if dur is not None else None
+            seg_note = f"，第 {i + 1}/{len(chunks)} 段" if len(chunks) > 1 else ""
+            _ui_log(f"{tag} 失败：server {r.status_code}（音频 {dur_note}{seg_note}）")
+            extra = f"⏱ 本次音频时长约 {dur:.1f} 秒" if dur is not None else None
             raise server_error(entry, r.status_code, r.text, extra=extra)
         try:
             data = r.json()
@@ -1928,16 +2886,18 @@ def _asr_transcribe_wav(model, entry, prof, wav_path, extras, tag="ASR"):
         except Exception:
             texts.append(r.text)
         if len(chunks) > 1:
-            _ui_log(t("log.tag_chunk_done", tag=tag, i=i + 1, n=len(chunks),
-                      secs=f"{time.time() - t_chunk:.1f}"))
-    text = texts[0] if len(chunks) == 1 else "\n".join(x for x in texts if x)
+            _ui_log(f"{tag} 段 {i + 1}/{len(chunks)} 完成"
+                    f"（{time.time() - t_chunk:.1f}s）")
+    text = texts[0] if len(chunks) == 1 else "\n".join(t for t in texts if t)
     return text, dur, len(chunks)
 
 
-def do_asr(model, audio_path, language="", context="", dialogue=False):
+def do_asr(model, audio_path, language="", context="", dialogue=False, stream=False):
+    """生成器：非流式路径只 yield 一次最终结果（行为与旧版 return 完全一致——
+    Gradio 对生成器处理器逐次刷新输出）；流式路径边收 SSE 增量边 yield。"""
     try:
         if not audio_path:
-            raise gr.Error(t("err.no_audio"))
+            raise gr.Error(_t("请上传或录制音频", "Upload or record audio."))
         audio_path = _ensure_wav(audio_path)
         # 可选转写参数：留空不发，请求体和原来完全一致（qwen3_asr 从 text_input
         # 读 context/language，其它族忽略；server 端 build_openai_transcription_request
@@ -1948,23 +2908,72 @@ def do_asr(model, audio_path, language="", context="", dialogue=False):
         if (context or "").strip():
             extras["context"] = context.strip()
         if dialogue:
-            return _asr_dialogue(model, audio_path, extras)
-        ensure_model_loaded(model, ASR_TASKS)
+            # 对话模式走 Sortformer 切段 + 逐段离线转写，与流式互斥（勾了也忽略）。
+            yield _asr_dialogue(model, audio_path, extras)
+            return
         entry = catalog_by_id(model)
         prof = profile_for(entry) if entry else DEFAULT_PROFILE
-        extras_note = "".join(f", {k}={v[:20]}" for k, v in extras.items())
-        _ui_log(t("log.asr_start", model=model, extras=extras_note))
+
+        if stream and prof.get("supports_streaming"):
+            yield "", _t("⏳ 转写中…模型切换时可能需要重新加载。",
+                          "⏳ Transcribing… model switches may require a reload.")
+            t_load = time.time()
+            ensure_model_loaded(model, ASR_TASKS, mode="streaming")
+            load_s = time.time() - t_load
+            load_note = (_t("，含模型加载 {seconds:.1f}s", ", model load {seconds:.1f}s",
+                            seconds=load_s) if load_s >= 1.0 else "")
+            extras_note = "".join(f"，{k}={v[:20]}" for k, v in extras.items())
+            _ui_log(f"ASR 开始（流式）：model={model}{extras_note}")
+            t_start = time.time()
+            dur = _audio_duration_seconds(audio_path)
+            dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
+            last_yield = 0.0
+            for text, is_final, ttft in _asr_transcribe_stream(
+                    model, entry, audio_path, extras):
+                if is_final:
+                    elapsed = time.time() - t_start
+                    ttft_note = (_t("，首字 {seconds:.1f}s", ", first text {seconds:.1f}s",
+                                    seconds=ttft / 1000) if ttft else "")
+                    _ui_log(f"ASR 完成（流式）：音频 {dur_note}，用时 {elapsed:.1f}s")
+                    yield text, _t(
+                        "✅ 流式转写完成（音频 {duration}），用时 {elapsed:.1f}s{ttft}{load}。",
+                        "✅ Streaming transcript complete ({duration}) in {elapsed:.1f}s{ttft}{load}.",
+                        duration=dur_note, elapsed=elapsed, ttft=ttft_note, load=load_note)
+                    return
+                # 增量刷新节流：delta 可能非常密，0.15s 一次足够"边转边出字"的观感
+                now = time.time()
+                if now - last_yield >= 0.15:
+                    last_yield = now
+                    yield text, _t("⏳ 流式转写中…（音频 {duration}）",
+                                   "⏳ Streaming transcript… ({duration})", duration=dur_note)
+            return
+        if stream and entry is not None:
+            raise gr.Error(_t("模型 {model} 不支持流式转写。",
+                              "Model {model} does not support streaming transcription.",
+                              model=model))
+
+        yield "", _t("⏳ 转写中…模型切换时可能需要重新加载。",
+                      "⏳ Transcribing… model switches may require a reload.")
+        t_load = time.time()
+        ensure_model_loaded(model, ASR_TASKS)
+        load_s = time.time() - t_load
+        load_note = (_t("，含模型加载 {seconds:.1f}s", ", model load {seconds:.1f}s",
+                        seconds=load_s) if load_s >= 1.0 else "")
+        extras_note = "".join(f"，{k}={v[:20]}" for k, v in extras.items())
+        _ui_log(f"ASR 开始：model={model}{extras_note}")
         t_start = time.time()
         text, dur, n = _asr_transcribe_wav(model, entry, prof, audio_path, extras)
         elapsed = time.time() - t_start
-        dur_note = f"{dur:.1f}s" if dur is not None else t("label.unknown")
-        parts_note = t("label.n_chunks", n=n) if n > 1 else ""
-        _ui_log(t("log.asr_done", dur=dur_note, parts=parts_note, secs=f"{elapsed:.1f}"))
-        return text, t("msg.asr_done", dur=dur_note, parts=parts_note, secs=f"{elapsed:.1f}")
+        dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
+        parts_note = (_t("，{count} 段", ", {count} parts", count=n) if n > 1 else "")
+        _ui_log(f"ASR 完成：音频 {dur_note}{parts_note}，用时 {elapsed:.1f}s")
+        yield text, _t("✅ 转写完成（音频 {duration}{parts}），用时 {elapsed:.1f}s{load}。",
+                       "✅ Transcript complete ({duration}{parts}) in {elapsed:.1f}s{load}.",
+                       duration=dur_note, parts=parts_note, elapsed=elapsed, load=load_note)
     except gr.Error as e:
-        return "", _msg_from_error(e)
+        yield "", _msg_from_error(e)
     except Exception as e:
-        return "", t("msg.transcribe_failed", error=e)
+        yield "", _t("❌ 转写失败：{error}", "❌ Transcription failed: {error}", error=e)
 
 
 # 对话模式：同一说话人相邻发言段合并的最大间隔 / 每段前后补的余量（防止
@@ -1984,8 +2993,9 @@ def _diar_session_options(dur):
     if dur is None or dur <= 20:
         return None
     if dur > SORTFORMER_MAX_SEC:
-        raise gr.Error(
-            t("err.diar_too_long", max_sec=SORTFORMER_MAX_SEC))
+        raise gr.Error(_t("说话人分离最长约 {seconds} 秒，请先剪短音频。",
+                          "Speaker diarization is limited to about {seconds}s. Shorten the audio.",
+                          seconds=SORTFORMER_MAX_SEC))
     return {"session_len_sec": str(min(SORTFORMER_MAX_SEC,
                                        ((int(dur) // 30) + 1) * 30))}
 
@@ -2007,7 +3017,8 @@ def _asr_dialogue(model, wav_path, extras):
     再换回 ASR（每次自动换载 ~5s）。"""
     diar = _first_installed_model("diar")
     if diar is None:
-        raise gr.Error(t("err.dialogue_needs_diar", tab=t("tab.analyze")))
+        raise gr.Error(_t("对话模式需要 Sortformer，请先在音频分析页下载安装。",
+                          "Dialogue mode requires Sortformer. Install it from Audio analysis."))
     entry = catalog_by_id(model)
     prof = profile_for(entry) if entry else DEFAULT_PROFILE
 
@@ -2017,27 +3028,27 @@ def _asr_dialogue(model, wav_path, extras):
             sr = w.getframerate()
             raw = w.readframes(w.getnframes())
     except Exception as e:
-        raise gr.Error(t("err.dialogue_needs_pcm", error=e))
+        raise gr.Error(_t("无法读取对话音频：{error}",
+                          "Cannot read dialogue audio: {error}", error=e))
     samples = np.frombuffer(raw, dtype=np.int16)
     total_dur = len(samples) / float(sr)
 
     t_start = time.time()
-    _ui_log(t("log.dialogue_diar_first", diar=diar["id"], dur=f"{total_dur:.1f}"))
+    _ui_log(f"对话模式：先用 {diar['id']} 做说话人分离（音频 {total_dur:.1f}s）")
     ensure_model_loaded(diar["id"], ("diar",),
                         session_options=_diar_session_options(total_dur))
     data = _run_task(diar, diar["id"], {"audio": wav16}, timeout=900,
-                     log_label=t("task.diarization"))
+                     log_label="说话人分离")
     turns = data.get("speaker_turns") or []
     if not turns:
-        raise gr.Error(t("err.no_speaker_turns"))
+        raise gr.Error(_t("没有检测到说话人发言段。", "No speaker turns were detected."))
 
     # 合并同一说话人的相邻发言段（间隔 ≤1s 且合并后不超过 ASR 单次上限），
     # 减少请求数并给 ASR 更完整的上下文。
     max_len = (prof.get("max_input_seconds") or 60) * sr
     merged = []                                     # [说话人, start, end] (样本数)
-    for turn in sorted(turns, key=lambda x: x["start_sample"]):
-        spk, s, e = (str(turn.get("speaker_id", "?")),
-                     turn["start_sample"], turn["end_sample"])
+    for t in sorted(turns, key=lambda t: t["start_sample"]):
+        spk, s, e = str(t.get("speaker_id", "?")), t["start_sample"], t["end_sample"]
         if (merged and merged[-1][0] == spk
                 and s - merged[-1][2] <= DIALOGUE_MERGE_GAP_S * sr
                 and e - merged[-1][1] <= max_len):
@@ -2046,8 +3057,10 @@ def _asr_dialogue(model, wav_path, extras):
             merged.append([spk, s, e])
     merged = [m for m in merged if m[2] - m[1] >= DIALOGUE_MIN_SEG_S * sr]
     if not merged:
-        raise gr.Error(t("err.turns_too_short"))
-    _ui_log(t("log.diar_done", turns=len(turns), merged=len(merged), model=model))
+        raise gr.Error(_t("说话人发言段都太短，无法转写。",
+                          "All detected speaker turns are too short to transcribe."))
+    _ui_log(f"说话人分离完成：{len(turns)} 个发言段 → 合并为 {len(merged)} 段；"
+            f"换回 {model} 逐段转写")
 
     ensure_model_loaded(model, ASR_TASKS)
     pad = int(DIALOGUE_PAD_S * sr)
@@ -2062,23 +3075,24 @@ def _asr_dialogue(model, wav_path, extras):
             ww.setframerate(sr)
             ww.writeframes(samples[a:b].tobytes())
         text, _, _ = _asr_transcribe_wav(model, entry, prof, seg_path, extras,
-                                         tag=t("label.dialogue_seg", i=idx, n=len(merged)))
+                                         tag=f"对话段 {idx}/{len(merged)}")
         if spk not in speakers:
             speakers.append(spk)
-        label = t("label.speaker_n", n=speakers.index(spk) + 1)
+        label = _t("说话人{index}", "Speaker {index}", index=speakers.index(spk) + 1)
         if text:
             lines.append(f"[{_fmt_mmss(s / sr)}-{_fmt_mmss(e / sr)}] {label}: {text}")
-        _ui_log(t("log.dialogue_seg_done", i=idx, n=len(merged), label=label,
-                  secs=f"{(e - s) / sr:.1f}"))
+        _ui_log(f"对话段 {idx}/{len(merged)} 完成（{label}，{(e - s) / sr:.1f}s）")
 
     elapsed = time.time() - t_start
-    _ui_log(t("log.dialogue_done", turns=len(merged), speakers=len(speakers),
-              secs=f"{elapsed:.1f}"))
+    _ui_log(f"对话转写完成：{len(merged)} 段发言、{len(speakers)} 个说话人，"
+            f"用时 {elapsed:.1f}s")
     if not lines:
-        return "", t("msg.dialogue_no_text")
-    return ("\n".join(lines),
-            t("msg.dialogue_done", dur=f"{total_dur:.1f}", turns=len(merged),
-              speakers=len(speakers), secs=f"{elapsed:.1f}"))
+        return "", _t("⚠️ 检测到发言段，但没有转写出文字。",
+                      "⚠️ Speaker turns were detected, but no text was transcribed.")
+    return ("\n".join(lines), _t(
+        "✅ 对话转写完成（音频 {duration:.1f}s，{turns} 段，{speakers} 人），用时 {elapsed:.1f}s。",
+        "✅ Dialogue transcript complete ({duration:.1f}s, {turns} turns, {speakers} speakers) in {elapsed:.1f}s.",
+        duration=total_dur, turns=len(merged), speakers=len(speakers), elapsed=elapsed))
 
 
 def do_music_gen(model, text, lyrics, source_audio, duration, seed,
@@ -2088,7 +3102,7 @@ def do_music_gen(model, text, lyrics, source_audio, duration, seed,
     task_route/audio + an options map); the response carries base64 WAV."""
     try:
         if not (text or "").strip():
-            raise gr.Error(t("err.no_prompt"))
+            raise gr.Error(_t("请输入音乐/音效提示词", "Enter a music or sound prompt."))
         ensure_model_loaded(model, GEN_TASKS)
         entry = catalog_by_id(model)
         prof = profile_for(entry) if entry else DEFAULT_PROFILE
@@ -2110,25 +3124,26 @@ def do_music_gen(model, text, lyrics, source_audio, duration, seed,
         if options:
             req["options"] = options
 
-        dur_note = req.get("duration_seconds", t("label.auto"))
-        _ui_log(t("log.gen_start", model=model, dur=dur_note))
+        dur_note = req.get("duration_seconds", _t("自动", "auto"))
+        _ui_log(f"音乐生成开始：model={model}，目标时长 {dur_note}s")
         t_start = time.time()
-        data = _run_task(entry, model, req, timeout=1800, log_label=t("task.music_gen"))
+        data = _run_task(entry, model, req, timeout=1800, log_label="音乐生成")
         b64 = data.get("audio")
         if not b64 and data.get("named_audio_outputs"):
             b64 = data["named_audio_outputs"][0].get("audio")
         if not b64:
-            raise gr.Error(t("err.no_audio_in_response_gen"))
+            raise gr.Error(_t("server 没有返回音频数据。", "The server returned no audio."))
         out = os.path.join(OUTPUT_DIR, f"audiocpp_gen_{int(time.time()*1000)}.wav")
         with open(out, "wb") as f:
             f.write(base64.b64decode(b64))
         elapsed = time.time() - t_start
-        _ui_log(t("log.gen_done", out=out, secs=f"{elapsed:.1f}"))
-        return out, t("msg.generate_done", parts="", secs=f"{elapsed:.1f}", seed=seed_note)
+        _ui_log(f"音乐生成完成：{out}，用时 {elapsed:.1f}s")
+        return out, _t("✅ 生成完成，用时 {seconds:.1f}s。{seed}",
+                       "✅ Complete in {seconds:.1f}s. {seed}", seconds=elapsed, seed=seed_note)
     except gr.Error as e:
         return None, _msg_from_error(e)
     except Exception as e:
-        return None, t("msg.generate_failed", error=e)
+        return None, _t("❌ 生成失败：{error}", "❌ Generation failed: {error}", error=e)
 
 
 # analyze 返回的字段 -> ACE-Step 高级参数（model_params.json 里的 name）
@@ -2145,10 +3160,11 @@ def do_music_analyze(model, source_audio, seed, adv_values):
     adv_values = dict(adv_values or {})
     try:
         if not source_audio:
-            raise gr.Error(t("err.no_source_audio"))
+            raise gr.Error(_t("请先上传源音频", "Upload source audio first."))
         entry = catalog_by_id(model)
         if not entry or entry.get("family") != "ace_step":
-            raise gr.Error(t("err.analysis_ace_only"))
+            raise gr.Error(_t("只有 ACE-Step 支持源音频分析。",
+                              "Source analysis is available for ACE-Step only."))
         ensure_model_loaded(model, GEN_TASKS)
 
         # 分析要可复现：seed=-1（随机）时固定为 1234，不跟生成共享随机性；
@@ -2157,15 +3173,16 @@ def do_music_analyze(model, source_audio, seed, adv_values):
         req = {"text": "analyze", "task_route": "analyze",
                "audio": _ensure_wav(source_audio), "seed": analyze_seed}
         dur = _audio_duration_seconds(req["audio"])
-        dur_note = f"{dur:.1f}s" if dur is not None else t("label.unknown")
-        _ui_log(t("log.src_analysis_start", model=model, dur=dur_note))
+        dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
+        _ui_log(f"源音频分析开始：model={model}，音频 {dur_note}")
         t_start = time.time()
-        data = _run_task(entry, model, req, timeout=1800, log_label=t("task.source_analysis"))
+        data = _run_task(entry, model, req, timeout=1800, log_label="源音频分析")
         raw = data.get("text") or ""
         try:
             info = json.loads(raw)
         except Exception:
-            raise gr.Error(t("err.analysis_not_json", raw=raw[:200]))
+            raise gr.Error(_t("server 返回的分析结果不是 JSON：{result}",
+                              "Server analysis result is not JSON: {result}", result=raw[:200]))
         elapsed = time.time() - t_start
 
         for src, dst in _ANALYZE_FILL_MAP:
@@ -2174,23 +3191,29 @@ def do_music_analyze(model, source_audio, seed, adv_values):
                 continue
             adv_values[dst] = v
 
-        lines = [t("msg.src_analysis_done", dur=dur_note, secs=f"{elapsed:.1f}")]
-        for key, label in (("caption", t("field.caption")), ("bpm", "BPM"),
-                           ("keyscale", t("field.keyscale")),
-                           ("timesignature", t("field.timesignature")),
-                           ("language", t("field.language")),
-                           ("genres", t("field.genres")), ("duration", t("field.duration"))):
+        lines = [_t("✅ 分析完成（音频 {duration}），用时 {elapsed:.1f}s；已回填高级参数。",
+                    "✅ Analysis complete ({duration}) in {elapsed:.1f}s; advanced options updated.",
+                    duration=dur_note, elapsed=elapsed)]
+        labels = (("caption", _t("描述", "Caption")), ("bpm", "BPM"),
+                  ("keyscale", _t("调性", "Key")),
+                  ("timesignature", _t("拍号", "Time signature")),
+                  ("language", _t("语言", "Language")),
+                  ("genres", _t("流派", "Genres")),
+                  ("duration", _t("时长(s)", "Duration (s)")))
+        for key, label in labels:
             v = info.get(key)
             if v not in (None, "", 0):
                 lines.append(f"- **{label}**：{v}")
         if info.get("lyrics"):
-            lines.append("- **" + t("field.lyrics") + f"**:\n```\n{info['lyrics']}\n```")
-        _ui_log(t("log.src_analysis_done", secs=f"{elapsed:.1f}"))
+            lines.append(_t("- **歌词**：\n```\n{lyrics}\n```",
+                            "- **Lyrics**:\n```\n{lyrics}\n```", lyrics=info["lyrics"]))
+        _ui_log(f"源音频分析完成：用时 {elapsed:.1f}s")
         return adv_values, dict(adv_values), "\n".join(lines)
     except gr.Error as e:
         return adv_values, gr.skip(), _msg_from_error(e)
     except Exception as e:
-        return adv_values, gr.skip(), t("msg.analyze_failed", error=e)
+        return adv_values, gr.skip(), _t("❌ 分析失败：{error}",
+                                         "❌ Analysis failed: {error}", error=e)
 
 
 def do_vc(model, source_audio, target_upload, builtin_voice, seed,
@@ -2203,7 +3226,7 @@ def do_vc(model, source_audio, target_upload, builtin_voice, seed,
     超限时按低能量点分段逐段转换，同一 voice_ref 保证各段音色一致，最后拼接。"""
     try:
         if not source_audio:
-            raise gr.Error(t("err.no_source_to_convert"))
+            raise gr.Error(_t("请上传要转换的源音频", "Upload source audio to convert."))
         ensure_model_loaded(model, VC_TASKS)
         entry = catalog_by_id(model)
         prof = profile_for(entry) if entry else DEFAULT_PROFILE
@@ -2237,28 +3260,31 @@ def do_vc(model, source_audio, target_upload, builtin_voice, seed,
         pieces = (_split_wav_chunks(source_audio, chunk_cap)
                   if chunk_cap else [(source_audio, 1.0)])
         dur = _audio_duration_seconds(source_audio)
-        dur_note = f"{dur:.1f}s" if dur is not None else t("label.unknown")
-        seg_note = (t("log.vc_seg_note", ref=f"{ref_sec:.0f}", n=len(pieces), cap=chunk_cap)
+        dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
+        seg_note = (_t("，参考 {reference:.0f}s，自适应分 {count} 段（每段 ≤{cap}s）",
+                       ", {reference:.0f}s reference, {count} adaptive parts (≤{cap}s)",
+                       reference=ref_sec, count=len(pieces), cap=chunk_cap)
                     if len(pieces) > 1 else "")
-        _ui_log(t("log.vc_start", model=model, dur=dur_note, seg=seg_note))
+        _ui_log(f"声音转换开始：model={model}，源音频 {dur_note}{seg_note}")
         t_start = time.time()
         blobs, ratios = [], []
         for i, (piece, ratio) in enumerate(pieces):
             if len(pieces) > 1:
-                progress((i, len(pieces)), desc=t("progress.vc_chunk", i=i + 1, n=len(pieces)))
+                progress((i, len(pieces)), desc=_t("转换 {index}/{total} 段…",
+                                                   "Converting {index}/{total}…",
+                                                   index=i + 1, total=len(pieces)))
             req["audio"] = piece
             t_seg = time.time()
-            data = _run_task(entry, model, req, timeout=1800, log_label=t("task.voice_conversion"))
+            data = _run_task(entry, model, req, timeout=1800, log_label="声音转换")
             b64 = data.get("audio")
             if not b64 and data.get("named_audio_outputs"):
                 b64 = data["named_audio_outputs"][0].get("audio")
             if not b64:
-                raise gr.Error(t("err.no_audio_in_response"))
+                raise gr.Error(_t("server 没有返回音频数据。", "The server returned no audio."))
             blobs.append(base64.b64decode(b64))
             ratios.append(ratio)
             if len(pieces) > 1:
-                _ui_log(t("log.vc_chunk_done", i=i + 1, n=len(pieces),
-                          secs=f"{time.time() - t_seg:.1f}"))
+                _ui_log(f"声音转换段 {i + 1}/{len(pieces)} 完成（{time.time() - t_seg:.1f}s）")
         out = os.path.join(OUTPUT_DIR, f"audiocpp_vc_{int(time.time()*1000)}.wav")
         if len(blobs) == 1 and ratios[0] >= 1.0:
             with open(out, "wb") as f:
@@ -2266,35 +3292,24 @@ def do_vc(model, source_audio, target_upload, builtin_voice, seed,
         else:
             _concat_wavs(blobs, out, keep_ratios=ratios)
         elapsed = time.time() - t_start
-        _ui_log(t("log.vc_done", out=out, secs=f"{elapsed:.1f}"))
-        parts_note = t("label.n_parts_joined", n=len(blobs)) if len(blobs) > 1 else ""
-        return out, t("msg.convert_done", parts=parts_note, secs=f"{elapsed:.1f}", seed=seed_note)
+        _ui_log(f"声音转换完成：{out}，用时 {elapsed:.1f}s")
+        parts_note = (_t("（{count} 段拼接）", " ({count} joined parts)", count=len(blobs))
+                      if len(blobs) > 1 else "")
+        return out, _t("✅ 转换完成{parts}，用时 {seconds:.1f}s。{seed}",
+                       "✅ Conversion complete{parts} in {seconds:.1f}s. {seed}",
+                       parts=parts_note, seconds=elapsed, seed=seed_note)
     except gr.Error as e:
         return None, _msg_from_error(e)
     except Exception as e:
-        return None, t("msg.convert_failed", error=e)
+        return None, _t("❌ 转换失败：{error}", "❌ Conversion failed: {error}", error=e)
 
 
-# Stem id -> localized label; ids not listed here are shown verbatim.
-STEM_LABELS = {k: t("stem." + k) for k in
-               ("vocals", "drums", "bass", "other", "instrumental",
-                "accompaniment", "audio")}
-
-
-def _rebuild_localized_tables():
-    """Recompute the module-level tables that call t() at import time.
-
-    set_language() calls this. Anything built once from t() would otherwise keep
-    the language that was active at import, so a switch would leave model hints,
-    stem names and the ASR language list in the old language.
-    """
-    global STEM_LABELS
-    STEM_LABELS = {k: t("stem." + k) for k in STEM_LABELS}
-    for family, profile in MODEL_PROFILES.items():
-        if "input_hint" in profile:
-            profile["input_hint"] = t("hint." + family)
-
-
+# 分轨 id -> 中文标签；未收录的 id 原样显示。
+STEM_LABELS = {"vocals": "人声", "drums": "鼓", "bass": "贝斯", "other": "其它",
+               "instrumental": "伴奏", "accompaniment": "伴奏", "audio": "输出"}
+STEM_LABELS_EN = {"vocals": "Vocals", "drums": "Drums", "bass": "Bass", "other": "Other",
+                  "instrumental": "Instrumental", "accompaniment": "Accompaniment",
+                  "audio": "Output"}
 MAX_SEP_STEMS = 4
 # 分离族（htdemucs / mel-band-roformer）的 prepare() 硬校验 44.1kHz（模型配置
 # sample_rate），不自己重采样；其它采样率的输入在 webui 侧先转到 44.1k。
@@ -2307,21 +3322,21 @@ def do_sep(model, audio_path):
     empty = [gr.update(value=None, visible=False) for _ in range(MAX_SEP_STEMS)]
     try:
         if not audio_path:
-            raise gr.Error(t("err.no_audio_to_separate"))
+            raise gr.Error(_t("请上传要分离的音频", "Upload audio to separate."))
         audio_path = _ensure_wav(audio_path, target_sr=SEP_SR)
         ensure_model_loaded(model, SEP_TASKS)
         entry = catalog_by_id(model)
         dur = _audio_duration_seconds(audio_path)
-        dur_note = f"{dur:.1f}s" if dur is not None else t("label.unknown")
-        _ui_log(t("log.sep_start", model=model, dur=dur_note))
+        dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
+        _ui_log(f"音源分离开始：model={model}，音频时长 {dur_note}")
         t_start = time.time()
         data = _run_task(entry, model, {"audio": audio_path},
-                         timeout=1800, log_label=t("task.separation"))
+                         timeout=1800, log_label="音源分离")
         stems = data.get("named_audio_outputs") or []
         if not stems and data.get("audio"):
             stems = [{"id": "audio", "audio": data["audio"]}]
         if not stems:
-            raise gr.Error(t("err.no_stems_in_response"))
+            raise gr.Error(_t("server 没有返回音轨数据。", "The server returned no tracks."))
         ts = int(time.time() * 1000)
         paths = []
         for stem in stems:
@@ -2335,21 +3350,29 @@ def do_sep(model, audio_path):
         for i in range(MAX_SEP_STEMS):
             if i < len(paths):
                 sid, p = paths[i]
-                zh = STEM_LABELS.get(sid)
+                language = get_language()
+                labels = STEM_LABELS_EN if language == "en" else STEM_LABELS
+                label = labels.get(sid)
+                if label:
+                    label = _t(label, label, language)
                 updates.append(gr.update(
-                    value=p, visible=True, label=f"{zh}（{sid}）" if zh else sid))
+                    value=p, visible=True, label=f"{label}（{sid}）" if label else sid))
             else:
                 updates.append(gr.update(value=None, visible=False))
         elapsed = time.time() - t_start
-        _ui_log(t("log.sep_done", n=len(paths), secs=f"{elapsed:.1f}"))
-        note = ("" if len(paths) <= MAX_SEP_STEMS
-                else t("label.extra_stems", n=len(paths) - MAX_SEP_STEMS))
-        return (*updates, [p for _, p in paths],
-                t("msg.sep_done", n=len(paths), note=note, secs=f"{elapsed:.1f}"))
+        _ui_log(f"音源分离完成：{len(paths)} 轨，用时 {elapsed:.1f}s")
+        note = ("" if len(paths) <= MAX_SEP_STEMS else
+                _t("，其余 {count} 轨见下载列表", "; {count} more in the download list",
+                   count=len(paths) - MAX_SEP_STEMS))
+        return (*updates, [p for _, p in paths], _t(
+            "✅ 分离完成（{count} 轨）{note}，用时 {elapsed:.1f}s。",
+            "✅ Separation complete ({count} tracks){note} in {elapsed:.1f}s.",
+            count=len(paths), note=note, elapsed=elapsed))
     except gr.Error as e:
         return (*empty, None, _msg_from_error(e))
     except Exception as e:
-        return (*empty, None, t("msg.separate_failed", error=e))
+        return (*empty, None, _t("❌ 分离失败：{error}",
+                                 "❌ Separation failed: {error}", error=e))
 
 
 # VAD/diar/align 输入统一转成 16 kHz 单声道后再发（见 _to_16k_mono_wav），
@@ -2366,13 +3389,14 @@ def do_analyze(model, audio_path, transcript, language):
     可读文本，原始 JSON 落盘供下载。"""
     try:
         if not audio_path:
-            raise gr.Error(t("err.no_audio"))
+            raise gr.Error(_t("请上传或录制音频", "Upload or record audio."))
         entry = catalog_by_id(model)
         task = entry.get("task") if entry else ""
         req = {"audio": _to_16k_mono_wav(_ensure_wav(audio_path))}
         if task == "align":
             if not (transcript or "").strip():
-                raise gr.Error(t("err.align_needs_transcript"))
+                raise gr.Error(_t("强制对齐需要填写音频原文。",
+                                  "Forced alignment requires the source transcript."))
             req["text"] = transcript.strip()
             if (language or "").strip():
                 req["language"] = language.strip()
@@ -2381,51 +3405,61 @@ def do_analyze(model, audio_path, transcript, language):
         ensure_model_loaded(model, ANALYZE_TASKS,
                             session_options=(_diar_session_options(dur)
                                              if task == "diar" else None))
-        dur_note = f"{dur:.1f}s" if dur is not None else t("label.unknown")
-        _ui_log(t("log.analyze_start", model=model, task=task, dur=dur_note))
+        dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
+        _ui_log(f"音频分析开始：model={model}（task={task}），音频 {dur_note}")
         t_start = time.time()
-        data = _run_task(entry, model, req, timeout=900, log_label=t("task.audio_analysis"))
+        data = _run_task(entry, model, req, timeout=900, log_label="音频分析")
 
         lines = []
         if data.get("segments"):
             segs = data["segments"]
-            lines.append(t("analyze.n_segments", n=len(segs)))
+            lines.append(_t("共 {count} 个语音段：", "{count} speech segments:", count=len(segs)))
             speech = 0
             for i, s in enumerate(segs, 1):
-                lines.append(f"{i:3d}. {_fmt_ts(s['start_sample'])} → {_fmt_ts(s['end_sample'])}"
-                             + "\u3000" + t("analyze.confidence", value=f"{s.get('confidence', 0):.2f}"))
+                lines.append(_t("{index:3d}. {start} → {end}　置信度 {confidence:.2f}",
+                                "{index:3d}. {start} → {end}  confidence {confidence:.2f}",
+                                index=i, start=_fmt_ts(s["start_sample"]),
+                                end=_fmt_ts(s["end_sample"]), confidence=s.get("confidence", 0)))
                 speech += s["end_sample"] - s["start_sample"]
-            lines.append(t("analyze.total_speech", secs=f"{speech / SR_ANALYZE:.1f}"))
+            lines.append(_t("语音总时长约 {seconds:.1f}s", "Total speech: {seconds:.1f}s",
+                            seconds=speech / SR_ANALYZE))
         if data.get("speaker_turns"):
             turns = data["speaker_turns"]
-            spk = sorted({turn.get("speaker_id", "?") for turn in turns})
-            lines.append(t("analyze.n_turns", n=len(turns), speakers=len(spk),
-                           ids=", ".join(spk)))
-            for i, turn in enumerate(turns, 1):
-                lines.append(f"{i:3d}. {_fmt_ts(turn['start_sample'])} → {_fmt_ts(turn['end_sample'])}"
-                             + "\u3000" + str(turn.get("speaker_id", "?")) + "\u3000"
-                             + t("analyze.confidence", value=f"{turn.get('confidence', 0):.2f}"))
+            spk = sorted({t.get("speaker_id", "?") for t in turns})
+            lines.append(_t("共 {turns} 个发言段、{speakers} 个说话人（{ids}）：",
+                            "{turns} turns, {speakers} speakers ({ids}):",
+                            turns=len(turns), speakers=len(spk), ids=", ".join(spk)))
+            for i, t in enumerate(turns, 1):
+                lines.append(_t("{index:3d}. {start} → {end}　{speaker}　置信度 {confidence:.2f}",
+                                "{index:3d}. {start} → {end}  {speaker}  confidence {confidence:.2f}",
+                                index=i, start=_fmt_ts(t["start_sample"]),
+                                end=_fmt_ts(t["end_sample"]), speaker=t.get("speaker_id", "?"),
+                                confidence=t.get("confidence", 0)))
         if data.get("words"):
-            lines.append(t("analyze.n_words", n=len(data["words"])))
+            lines.append(_t("共 {count} 个词的时间戳：", "Timestamps for {count} words:",
+                            count=len(data["words"])))
             for w in data["words"]:
                 lines.append(f"{_fmt_ts(w['start_sample'])} → {_fmt_ts(w['end_sample'])}"
-                             + "\u3000" + str(w.get("word", "")))
+                             f"　{w.get('word', '')}")
         if data.get("text"):
-            lines.append(t("analyze.text_output", text=data["text"]))
+            lines.append(_t("文本输出：{text}", "Text: {text}", text=data["text"]))
         if not lines:
-            lines.append(t("analyze.no_results"))
+            lines.append(_t("（模型没有返回可显示的分析结果）",
+                            "(The model returned no displayable result.)"))
 
         json_path = os.path.join(OUTPUT_DIR, f"audiocpp_analyze_{int(time.time()*1000)}.json")
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         elapsed = time.time() - t_start
-        _ui_log(t("log.analyze_done", secs=f"{elapsed:.1f}"))
+        _ui_log(f"音频分析完成：用时 {elapsed:.1f}s")
         return ("\n".join(lines), json_path,
-                t("msg.analyze_done", dur=dur_note, secs=f"{elapsed:.1f}"))
+                _t("✅ 分析完成（音频 {duration}），用时 {elapsed:.1f}s。",
+                   "✅ Analysis complete ({duration}) in {elapsed:.1f}s.",
+                   duration=dur_note, elapsed=elapsed))
     except gr.Error as e:
         return "", None, _msg_from_error(e)
     except Exception as e:
-        return "", None, t("msg.analyze_failed", error=e)
+        return "", None, _t("❌ 分析失败：{error}", "❌ Analysis failed: {error}", error=e)
 
 
 def _align_fields_visibility(model_id):
@@ -2440,39 +3474,47 @@ def do_vdes(model, text, instruct, seed, max_tokens, adv_values, adv_options):
     映射到模型的 instruct 选项），响应是 WAV 音频。"""
     try:
         if not (text or "").strip():
-            raise gr.Error(t("err.no_text"))
+            raise gr.Error(_t("请输入要合成的文字", "Enter text to synthesize."))
         if not (instruct or "").strip():
-            raise gr.Error(t("err.vdes_needs_description"))
+            raise gr.Error(_t("请填写音色描述。", "Enter a voice description."))
         ensure_model_loaded(model, VDES_TASKS)
         entry = catalog_by_id(model)
         prof = profile_for(entry) if entry else DEFAULT_PROFILE
         options = _merged_options(prof, adv_values, adv_options)
 
         seed, seed_note = _resolve_seed(seed)
-        payload = {"model": model, "input": text, "instructions": instruct,
+        payload = {"model": model, "input": text,
                    "seed": seed, "max_tokens": int(max_tokens)}
+        # 音色描述的落点按家族区分：qwen3_tts 走服务器的 instructions→instruct 映射；
+        # irodori 等只读自家 options 键（profile 里的 vdes_option_key，如 caption）。
+        vdes_key = prof.get("vdes_option_key")
+        if vdes_key:
+            options.setdefault(vdes_key, instruct)
+        else:
+            payload["instructions"] = instruct
         if options:
             payload["options"] = options
-        _ui_log(t("log.vdes_start", model=model, chars=len(text)))
+        _ui_log(f"声音设计开始：model={model}，{len(text)} 字")
         t_start = time.time()
         try:
             r = requests.post(f"{SERVER}/v1/audio/speech", json=payload, timeout=900)
         except requests.RequestException as e:
-            _ui_log(t("log.vdes_failed_unreachable"))
-            raise gr.Error(t("err.server_unreachable", server=SERVER, error=e, load=t("btn.load")))
+            _ui_log("声音设计失败：无法连接 server")
+            raise connection_error(e)
         if r.status_code != 200:
-            _ui_log(t("log.vdes_failed_status", status=r.status_code))
+            _ui_log(f"声音设计失败：server {r.status_code}")
             raise server_error(entry, r.status_code, r.text)
         out = os.path.join(OUTPUT_DIR, f"audiocpp_vdes_{int(time.time()*1000)}.wav")
         with open(out, "wb") as f:
             f.write(r.content)
         elapsed = time.time() - t_start
-        _ui_log(t("log.vdes_done", out=out, secs=f"{elapsed:.1f}"))
-        return out, t("msg.generate_done", parts="", secs=f"{elapsed:.1f}", seed=seed_note)
+        _ui_log(f"声音设计完成：{out}，用时 {elapsed:.1f}s")
+        return out, _t("✅ 生成完成，用时 {seconds:.1f}s。{seed}",
+                       "✅ Complete in {seconds:.1f}s. {seed}", seconds=elapsed, seed=seed_note)
     except gr.Error as e:
         return None, _msg_from_error(e)
     except Exception as e:
-        return None, t("msg.generate_failed", error=e)
+        return None, _t("❌ 生成失败：{error}", "❌ Generation failed: {error}", error=e)
 
 
 def _make_load_handler(tasks):
@@ -2492,126 +3534,95 @@ TAB_SPECS = [TTS_TASKS, ASR_TASKS, GEN_TASKS, VC_TASKS,
              SEP_TASKS, ANALYZE_TASKS, VDES_TASKS]
 
 
-# --- live language switching ------------------------------------------------
-# Gradio builds the Blocks tree once, baking each label in at construction, and it
-# offers no way to rebuild it in another language. So the picker re-labels every
-# component in place: this registry remembers which locale key produced which
-# property, and _relabel_updates() turns it back into one gr.update per component.
-#
-# The registry is derived rather than declared. Every localized string already goes
-# through t(), so a component's English text is enough to identify its key by
-# reverse lookup — which keeps ~120 call sites free of registration boilerplate.
-# Where several keys share one English string, reverse lookup cannot tell them
-# apart, so _english_key_index() checks whether the translations agree and drops the
-# ones that don't: such a component keeps its current label instead of risking the
-# wrong one.
-
-# Components whose `value` is display text rather than user data. Everything else
-# (Textbox, Dropdown, ...) holds a value the user or the wire owns: re-labelling it
-# would silently corrupt a request — e.g. a language Dropdown whose value is the
-# literal "Chinese" the server expects.
-_TEXT_VALUE_TYPES = (gr.Markdown, gr.Button, gr.HTML)
-_LABEL_PROPS = ("label", "placeholder", "info")
-
-_i18n_registry = []          # [(component, prop, key, format_args)]
-
-
-def i18n_register(comp, prop, key, **fmt):
-    """Register a property reverse lookup cannot find, and return `comp`.
-
-    Needed for strings built with format arguments: the component shows
-    "Model list (task=tts)" while the locale holds "Model list (task={task})", so
-    matching on text fails. Interpolated labels must say so here.
-    """
-    _i18n_registry.append((comp, prop, key, fmt))
-    return comp
-
-
-def _english_key_index():
-    """English string -> locale key, for identifying components by their text.
-
-    Keys sharing one English string are ambiguous by reverse lookup. They are only
-    a problem if some locale translates them differently, so check every installed
-    locale and drop the ones that disagree rather than guess.
-    """
-    by_text = {}
-    for key, text in _FALLBACK_STRINGS.items():
-        if isinstance(text, str) and text:
-            by_text.setdefault(text, []).append(key)
-
-    others = [_load_locale(code) for code in available_langs() if code != DEFAULT_LANG]
-    index = {}
-    for text, keys in by_text.items():
-        if len(keys) > 1:
-            ambiguous = any(len({loc.get(k, text) for k in keys}) > 1 for loc in others)
-            if ambiguous:
-                logging.warning("keys %s share the English text %r but differ when "
-                                "translated; they will not switch language", keys, text)
-                continue
-        index[text] = keys[0]
-    return index
-
-
-def build_i18n_registry(blocks):
-    """Record which locale key produced each localized property of each component."""
-    index = _english_key_index()
-    registry = []
-    for comp in blocks:
-        for prop in _LABEL_PROPS:
-            text = getattr(comp, prop, None)
-            if isinstance(text, str) and text in index:
-                registry.append((comp, prop, index[text], {}))
-        if isinstance(comp, _TEXT_VALUE_TYPES):
-            text = getattr(comp, "value", None)
-            if isinstance(text, str) and text in index:
-                registry.append((comp, "value", index[text], {}))
-    return registry
-
-
-def _relabel_updates():
-    """(components, updates) re-localizing every registered property."""
-    grouped = {}
-    for comp, prop, key, fmt in _i18n_registry:
-        grouped.setdefault(comp, {})[prop] = t(key, **fmt)
-    comps = list(grouped)
-    return comps, [gr.update(**props) for props in grouped.values()]
-
-
-# A locale may name itself via "lang.self"; otherwise the code is all we can show.
-# Deliberately not localized: someone stuck in a language they cannot read needs to
-# recognize their own language in this list.
-_LANG_SELF_NAMES = {"en": "English", "zh": "中文"}
-
-
-def language_choices():
-    """(display name, code) for every locales/<code>.json present."""
-    return [(_LANG_SELF_NAMES.get(code, code), code) for code in available_langs()]
-
-
 def refresh():
     """重读 catalog / 参数配置，刷新每个标签页的模型下拉和提示。
-    返回顺序：各页下拉更新（按 TAB_SPECS 顺序）、状态行、各页提示。"""
-    global CATALOG, MODEL_PARAMS
+    返回顺序：各页下拉更新（按 TAB_SPECS 顺序）、状态行、各页提示、
+    ASR 流式选项。"""
+    global CATALOG, MODEL_PARAMS, REQUIRED_FILES
     CATALOG = _load_catalog()
     MODEL_PARAMS = _load_model_params()
+    REQUIRED_FILES = _load_required_files()
     dropdowns, hints = [], []
     for tasks in TAB_SPECS:
         choices = choices_for_tasks(tasks)
         value = choices[0][1] if choices else None
         dropdowns.append(gr.update(choices=choices, value=value))
         hints.append(model_hint_for(value))
-    return (*dropdowns, server_status(), *hints)
+    asr_model_id = dropdowns[1]["value"] if len(dropdowns) > 1 else None
+    return (*dropdowns, server_status(), *hints, asr_stream_update(asr_model_id))
 
 
 atexit.register(_stop_server)
 
 
+_I18N_COMPONENTS = []
+
+
+def _localized(component, **props):
+    """Register translatable Gradio properties as ``prop=(zh, en)``."""
+    for prop, pair in props.items():
+        setattr(component, prop, _localized_prop_value(prop, pair, INITIAL_LANGUAGE))
+    _I18N_COMPONENTS.append((component, props))
+    return component
+
+
+def _localized_prop_value(prop, pair, language):
+    """Localize one component property without changing choice protocol values."""
+    if prop == "choices" and language == "zh-Hant":
+        localized = []
+        for choice in pair[0]:
+            if isinstance(choice, (tuple, list)) and len(choice) == 2:
+                label, value = choice
+            else:
+                label = value = choice
+            localized.append((_t(label, label, language), value))
+        return localized
+    return _t(pair[0], pair[1], language)
+
+
+def _localized_updates(language):
+    return [
+        gr.update(**{
+            prop: _localized_prop_value(prop, pair, language)
+            for prop, pair in props.items()
+        })
+        for _component, props in _I18N_COMPONENTS
+    ]
+
+
 CUSTOM_CSS = """
+
+.app-header {
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  flex-wrap: nowrap !important;
+  width: 100% !important;
+}
+.app-title { flex: 1 1 auto !important; min-width: 0 !important; }
+.app-title h1 { margin: 0 !important; }
+.language-switch {
+  flex: 0 0 118px !important;
+  width: 118px !important;
+  min-width: 118px !important;
+  max-width: 118px !important;
+  margin: 0 0 0 auto !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
 
 .audio-default { border: none !important; box-shadow: none !important; }
 
 .mm-btn-row { gap: 10px !important; }
-.mm-btn-row button { border-radius: var(--button-large-radius, var(--radius-lg)) !important; }
+.mm-btn-row button {
+  border-radius: var(--button-large-radius, var(--radius-lg)) !important;
+  white-space: nowrap !important;
+}
+.mm-btn-row button span { white-space: nowrap !important; }
+.gguf-btn-row { align-items: center !important; }
+.gguf-btn-row > * { align-self: center !important; }
 
 /* 长音频的波形出现横向滚动条时，WaveSurfer 的滚动层（58px 内容 + 滚动条）会
    溢出 Gradio 固定 58px 的 .waveform-container / #waveform，盖住下方的
@@ -2689,55 +3700,106 @@ _RESET_AUDIO_SEEK_JS = """
 """
 
 
+VDES_TEXT_DEFAULT_ZH = "你好，这是 audio.cpp 用文字描述设计出来的声音。"
+VDES_TEXT_DEFAULT_ZH_HANT = _t(VDES_TEXT_DEFAULT_ZH, VDES_TEXT_DEFAULT_ZH, "zh-Hant")
+VDES_TEXT_DEFAULT_EN = "Hello, this audio.cpp voice was created from a text description."
+
+
+def _vdes_text_language_update(language, current):
+    label = _t("要合成的文字", "Text to synthesize", language)
+    if current in (VDES_TEXT_DEFAULT_ZH, VDES_TEXT_DEFAULT_ZH_HANT, VDES_TEXT_DEFAULT_EN):
+        value = _t(VDES_TEXT_DEFAULT_ZH, VDES_TEXT_DEFAULT_EN, language)
+        return gr.update(label=label, value=value)
+    return gr.update(label=label)
+
+
 with gr.Blocks(title="audio.cpp WebUI") as demo:
-    with gr.Row():
-        gr.Markdown("# 🎙️ audio.cpp WebUI")
-        # Language names stay in their own language (English/中文), the one label a
-        # user who cannot read the current UI still has to be able to find.
-        lang_picker = gr.Dropdown(
-            label=t("label.ui_language"), choices=language_choices(),
-            value=UI_LANG, filterable=False, scale=0, min_width=170)
+    with gr.Row(elem_classes="app-header"):
+        _localized(
+            gr.Markdown("# 🎙️ audio.cpp WebUI", elem_classes="app-title",
+                        container=False, scale=0, min_width=250),
+            value=("# 🎙️ audio.cpp WebUI", "# 🎙️ audio.cpp WebUI"))
+        ui_language = gr.Dropdown(
+            choices=LANGUAGE_CHOICES, value=INITIAL_LANGUAGE,
+            interactive=True, filterable=False, allow_custom_value=False,
+            show_label=False, container=False,
+            elem_classes="language-switch", scale=0, min_width=118)
     status = gr.Markdown(server_status())
-    with gr.Accordion(t("acc.api_usage"), open=False):
-        gr.Markdown(_api_usage_md())
-    with gr.Accordion(t("acc.download_settings"), open=False):
+    with _localized(
+            gr.Accordion("🔌 API 调用说明", open=False),
+            label=("🔌 API 调用说明", "🔌 API usage")):
+        api_usage = gr.Markdown(_api_usage_md())
+    with _localized(
+            gr.Accordion("🔐 下载设置（可选，不保存）", open=False),
+            label=("🔐 下载设置（可选，不保存）", "🔐 Download settings (optional)")):
         with gr.Row():
-            hf_token = gr.Textbox(
-                label=t("label.hf_token"), type="password",
-                placeholder=t("ph.hf_token"))
-            proxy = gr.Textbox(
-                label=t("label.proxy"),
-                placeholder="http://127.0.0.1:7890")
+            hf_token = _localized(gr.Textbox(
+                label="HF token (下载受限模型时用)", type="password",
+                placeholder="hf_xxx —— 或先运行 huggingface-cli login"),
+                label=("HF token（下载受限模型时使用）", "HF token (for gated models)"),
+                placeholder=("hf_xxx —— 或先运行 huggingface-cli login",
+                             "hf_xxx — or run huggingface-cli login"))
+            proxy = _localized(gr.Textbox(
+                label="代理 (仅下载模型时使用)",
+                placeholder="http://127.0.0.1:7890"),
+                label=("代理（仅下载时使用）", "Proxy (downloads only)"),
+                placeholder=("http://127.0.0.1:7890", "http://127.0.0.1:7890"))
 
     # ---- 每个标签页共用的“模型管理”卡片、接线与高级参数渲染 ----
     def _model_manager_block(task_label, tasks):
-        """标准“模型管理”卡片：模型下拉 + 加载/刷新/下载/进度按钮 + 状态区。
+        """标准“模型管理”卡片：模型下拉、加载/下载与 GGUF 操作 + 状态区。
         返回组件 dict；接线见 _wire_model_manager（刷新按钮统一接在文件末尾）。"""
         choices = choices_for_tasks(tasks)
         with gr.Group():
-            gr.Markdown(t("sec.model_mgmt"))
-            model = i18n_register(
-                gr.Dropdown(label=t("label.model_list", task=task_label),
-                            choices=choices,
-                            value=(choices[0][1] if choices else None)),
-                "label", "label.model_list", task=task_label)
+            _localized(gr.Markdown("#### 🧩 模型管理"),
+                       value=("#### 🧩 模型管理", "#### 🧩 Model"))
+            model = _localized(gr.Dropdown(
+                label=f"模型列表 (task={task_label})", choices=choices,
+                value=(choices[0][1] if choices else None)),
+                label=(f"模型列表（task={task_label}）", f"Model (task={task_label})"),
+                choices=(choices_for_tasks(tasks, "zh"), choices_for_tasks(tasks, "en")))
             with gr.Row(elem_classes="mm-btn-row"):
-                load_btn = gr.Button(t("btn.load"), variant="primary",
-                                     size="lg", min_width=100)
-                refresh_btn = gr.Button(t("btn.refresh"), variant="primary",
-                                        size="lg", min_width=100)
-                dl_btn = gr.Button(t("btn.download"), variant="primary",
-                                   size="lg", min_width=100)
-                dl_stat_btn = gr.Button(t("btn.dl_progress"), variant="primary",
-                                        size="lg", min_width=100)
-                unload_btn = gr.Button(t("btn.unload"), variant="secondary",
-                                       size="lg", min_width=100)
+                load_btn = _localized(
+                    gr.Button("📥 加载模型", variant="primary", size="lg", min_width=100),
+                    value=("📥 加载模型", "📥 Load"))
+                refresh_btn = _localized(
+                    gr.Button("🔄 刷新列表", variant="primary", size="lg", min_width=100),
+                    value=("🔄 刷新列表", "🔄 Refresh"))
+                dl_btn = _localized(
+                    gr.Button("⬇️ 下载模型", variant="primary", size="lg", min_width=100),
+                    value=("⬇️ 下载模型", "⬇️\u00a0Download"))
+                dl_stat_btn = _localized(
+                    gr.Button("📊 下载进度", variant="primary", size="lg", min_width=100),
+                    value=("📊 下载进度", "📊 Progress"))
+                unload_btn = _localized(
+                    gr.Button("🧹 释放显存", variant="secondary", size="lg", min_width=100),
+                    value=("🧹 释放显存", "🧹 Unload"))
             load_status = gr.Markdown("")
             dl_status = gr.Markdown("")
+            with _localized(gr.Accordion("🧊 GGUF 工具（转换 / 检查 / 删除）", open=False),
+                            label=("🧊 GGUF 工具（转换 / 检查 / 删除）",
+                                   "🧊 GGUF tools (convert / inspect / delete)")):
+                with gr.Row(elem_classes="mm-btn-row gguf-btn-row"):
+                    gguf_type = _localized(gr.Dropdown(
+                        label="类型", show_label=False, choices=list(GGUF_TYPES), value="q8_0", scale=1, min_width=80),
+                        label=("类型", "Type"))
+                    gguf_convert_btn = _localized(
+                        gr.Button("🧊 转换", variant="secondary", scale=1, min_width=90),
+                        value=("🧊 转换", "🧊 Convert"))
+                    gguf_inspect_btn = _localized(
+                        gr.Button("🔎 检查", variant="secondary", scale=1, min_width=90),
+                        value=("🔎 检查", "🔎 Inspect"))
+                    gguf_delete_btn = _localized(
+                        gr.Button("🗑️ 删除", variant="stop", scale=1, min_width=90),
+                        value=("🗑️ 删除", "🗑️ Delete"))
+                gguf_message = gr.Markdown(gguf_status(model.value))
             timer = gr.Timer(3, active=False)
         return {"model": model, "load_btn": load_btn, "refresh_btn": refresh_btn,
                 "dl_btn": dl_btn, "dl_stat_btn": dl_stat_btn, "unload_btn": unload_btn,
-                "load_status": load_status, "dl_status": dl_status, "timer": timer}
+                "load_status": load_status, "dl_status": dl_status, "timer": timer,
+                "gguf_type": gguf_type, "gguf_convert_btn": gguf_convert_btn,
+                "gguf_inspect_btn": gguf_inspect_btn, "gguf_delete_btn": gguf_delete_btn,
+                "gguf_status": gguf_message}
 
     def _wire_model_manager(mm, tasks, hint):
         mm["load_btn"].click(_make_load_handler(tasks), mm["model"],
@@ -2748,30 +3810,38 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
                          [mm["dl_status"], mm["timer"]])
         mm["dl_stat_btn"].click(download_status, mm["model"], mm["dl_status"])
         mm["unload_btn"].click(unload_model, None, [mm["load_status"], status])
+        mm["gguf_convert_btn"].click(convert_model_to_gguf,
+                                      [mm["model"], mm["gguf_type"]], mm["gguf_status"])
+        mm["gguf_inspect_btn"].click(inspect_gguf, mm["model"], mm["gguf_status"])
+        mm["gguf_delete_btn"].click(delete_gguf, mm["model"], [mm["gguf_status"], status])
         mm["model"].change(model_hint_for, mm["model"], hint)
+        mm["model"].change(gguf_status, mm["model"], mm["gguf_status"])
 
     def _render_param_controls(model_comp, state_comp, skip=(), prefill_comp=None):
         """“高级参数”折叠区内容：按所选模型的 family 动态生成控件（gr.render），
         控件值写进共享 state（只有用户改过的项会随请求发送）。
         传入 prefill_comp（gr.State dict）时它也是渲染输入：程序化回填
         （如『🔍 分析源音频』）写 prefill 触发重渲染，把值显示在控件上。"""
-        inputs = [model_comp] if prefill_comp is None else [model_comp, prefill_comp]
+        inputs = ([model_comp, ui_language] if prefill_comp is None else
+                  [model_comp, ui_language, prefill_comp])
 
         @gr.render(inputs=inputs)
-        def _render(model_id, prefill=None):
+        def _render(model_id, language, prefill=None):
             specs = [p for p in params_for(model_id) if p.get("name") not in skip]
             if not specs:
-                gr.Markdown(t("msg.no_advanced_params"))
+                gr.Markdown(_t("*该模型无可调高级参数。*",
+                               "*No advanced options for this model.*", language))
                 return
             prefill = prefill or {}
             for p in specs:
                 if p["name"] in prefill:
                     p = {**p, "default": prefill[p["name"]]}
-                comp = _make_param_component(p)
+                comp = _make_param_component(p, language)
                 comp.change(_adv_updater(p["name"]), [state_comp, comp], state_comp)
 
     # ---------------- TTS / 声音克隆 ----------------
-    with gr.Tab(t("tab.tts")):
+    with _localized(gr.Tab("🗣️ TTS / 声音克隆"),
+                    label=("🗣️ TTS / 声音克隆", "🗣️ TTS / Voice cloning")):
         with gr.Row(equal_height=False):
             # 左列：模型管理 + 参考音频（声音克隆）
             with gr.Column(scale=1):
@@ -2779,20 +3849,41 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
                 tts_model = tts_mm["model"]
 
                 with gr.Group():
-                    gr.Markdown(t("sec.reference_audio"))
+                    _localized(gr.Markdown("#### 🎧 参考音频（声音克隆）"),
+                               value=("#### 🎧 参考音频（声音克隆）",
+                                      "#### 🎧 Voice reference"))
                     with gr.Row(elem_classes="voice-refresh-row"):
-                        tts_builtin = gr.Dropdown(
-                            label=t("label.builtin_voice"),
+                        tts_builtin = _localized(gr.Dropdown(
+                            label="内置参考音色",
                             choices=["(none)"] + builtin_voices(),
-                            value="(none)", scale=8)
+                            value="(none)", scale=8),
+                            label=("内置参考音色", "Built-in voice"))
                         tts_voice_refresh = gr.Button(
                             "🔄", scale=1, min_width=48)
-                    tts_upload = gr.Audio(
-                        label=t("label.upload_reference_voice"), type="filepath",
-                        elem_classes="audio-default")
-                    tts_ref_text = gr.Textbox(
-                        label=t("label.reference_text"), lines=2,
-                        placeholder=t("ph.reference_text"))
+                    tts_upload = _localized(gr.Audio(
+                        label="上传/录制参考音色（可选）", type="filepath",
+                        elem_classes="audio-default"),
+                        label=("上传/录制参考音色（可选）", "Upload/record voice (optional)"))
+                    tts_ref_text = _localized(gr.Textbox(
+                        label="参考文本", lines=2,
+                        placeholder="参考音频里说的原话（建议填写）"),
+                        label=("参考文本", "Reference transcript"),
+                        placeholder=("参考音频里说的原话（建议填写）",
+                                     "Words spoken in the reference audio"))
+                    tts_voice_name = _localized(gr.Textbox(
+                        label="内置参考音色命名",
+                        placeholder="例如：my_voice（将保存为 my_voice.wav）"),
+                        label=("内置参考音色命名", "Built-in voice name"),
+                        placeholder=("例如：my_voice（将保存为 my_voice.wav）",
+                                     "Example: my_voice (saved as my_voice.wav)"))
+                    with gr.Row():
+                        tts_voice_save = _localized(
+                            gr.Button("💾 保存参考音频"),
+                            value=("💾 保存参考音频", "💾 Save reference audio"))
+                        tts_voice_delete = _localized(
+                            gr.Button("🗑️ 删除内置音频", variant="stop"),
+                            value=("🗑️ 删除内置音频",
+                                   "🗑️ Delete built-in audio"))
 
                 # 切换模型后的提示，显示在参考音频整块下面
                 tts_hint = gr.Markdown(model_hint_for(tts_model.value))
@@ -2800,54 +3891,103 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
             # 右列：合成设置 + 合成内容 + 生成 + 输出
             with gr.Column(scale=1):
                 with gr.Group():
-                    gr.Markdown(t("sec.tts_settings"))
+                    _localized(gr.Markdown("#### ⚙️ 合成设置"),
+                               value=("#### ⚙️ 合成设置", "#### ⚙️ Synthesis settings"))
                     with gr.Row():
-                        tts_seed = gr.Number(label=t("label.seed"), value=1234, precision=0)
-                        tts_maxtok = gr.Number(label=t("label.max_tokens"), value=1200,
-                                               precision=0)
+                        tts_seed = _localized(
+                            gr.Number(label="seed（-1=随机）", value=1234, precision=0),
+                            label=("seed（-1=随机）", "seed (-1=random)"))
+                        tts_maxtok = _localized(
+                            gr.Number(label="max_tokens", value=1200, precision=0),
+                            label=("max_tokens", "max_tokens"))
                     tts_adv_state = gr.State({})
-                    with gr.Accordion(t("acc.advanced"), open=False):
+                    with _localized(
+                            gr.Accordion("高级参数（只发送改动过的项）", open=False),
+                            label=("高级参数（只发送改动过的项）", "Advanced options")):
                         _render_param_controls(tts_model, tts_adv_state)
 
-                    with gr.Accordion(t("acc.other_json"), open=False):
+                    with _localized(
+                            gr.Accordion("其它参数（JSON，覆盖控件）", open=False),
+                            label=("其它参数（JSON，覆盖控件）", "Other options (JSON override)")):
                         tts_adv = gr.Textbox(
                             label="",
                             placeholder='{"num_inference_steps": 10, "voice_samples": "D:/a.wav,D:/b.wav"}',
                             lines=3)
 
                 with gr.Group():
-                    gr.Markdown(t("sec.tts_content"))
-                    tts_text = gr.Textbox(
-                        label=t("label.text_to_speak"), lines=5,
-                        value=t("value.tts_sample_text"))
-                    tts_lang = gr.Dropdown(
-                        label=t("label.language_blank_default"),
-                        choices=tts_language_choices(), value="english")
+                    _localized(gr.Markdown("#### ✍️ 合成内容"),
+                               value=("#### ✍️ 合成内容", "#### ✍️ Text"))
+                    tts_text = _localized(gr.Textbox(
+                        label="要合成的文字", lines=5,
+                        value="Hello, this is audio dot cpp speaking from a web page."),
+                        label=("要合成的文字", "Text to synthesize"))
+                    tts_lang = _localized(gr.Dropdown(
+                        label="语言（Auto=模型默认）",
+                        choices=[("Auto", "")] + [(lang, lang) for lang in LANGS if lang],
+                        value=""),
+                        label=("语言（Auto=模型默认）", "Language (Auto=model default)"))
+                    tts_gen_mode = _localized(gr.Radio(
+                        label="生成模式（流式=边生成边播放）",
+                        choices=["离线", "流式"], value="离线",
+                        visible=supports_streaming(tts_model.value)),
+                        label=("生成模式（流式=边生成边播放）", "Generation mode"),
+                        choices=([("离线", "离线"), ("流式", "流式")],
+                                 [("Offline", "离线"), ("Streaming", "流式")]))
 
-                tts_btn = gr.Button(t("btn.tts"), variant="primary", size="lg")
+                tts_btn = _localized(
+                    gr.Button("🎵 生成语音", variant="primary", size="lg"),
+                    value=("🎵 生成语音", "🎵 Generate speech"))
                 with gr.Group():
-                    gr.Markdown(t("sec.output_audio"))
-                    tts_out = gr.Audio(label=t("label.output_audio"), type="filepath",
-                                       elem_classes="audio-default")
+                    _localized(gr.Markdown("#### 🔊 输出音频"),
+                               value=("#### 🔊 输出音频", "#### 🔊 Output"))
+                    tts_out_stream = _localized(gr.Audio(
+                        label="⚡ 流式播放（边生成边播）", streaming=True,
+                        autoplay=True, visible=False,
+                        elem_classes="audio-default"),
+                        label=("⚡ 流式播放（边生成边播）", "⚡ Streaming audio"))
+                    tts_out = _localized(
+                        gr.Audio(label="输出音频", type="filepath",
+                                 elem_classes="audio-default"),
+                        label=("输出音频", "Output audio"))
                     tts_msg = gr.Markdown("")
 
         _wire_model_manager(tts_mm, TTS_TASKS, tts_hint)
         tts_model.change(lambda: {}, None, tts_adv_state)  # reset knobs on model switch
-        tts_builtin.change(on_builtin_voice_change, tts_builtin,
-                           [tts_upload, tts_ref_text])
+        # 模型切换：只有支持流式的家族（voxcpm2）显示生成模式选择，并重置回离线。
+        tts_model.change(
+            lambda m: gr.update(visible=supports_streaming(m), value="离线"),
+            tts_model, tts_gen_mode)
+        # 流式播放组件只在选了流式模式时出现（离线路径的输出组件保持原样）。
+        tts_gen_mode.change(lambda v: gr.update(visible=(v == "流式")),
+                            tts_gen_mode, tts_out_stream)
+        tts_builtin.change(on_tts_builtin_voice_change, tts_builtin,
+                           [tts_upload, tts_ref_text, tts_voice_name])
         tts_voice_refresh.click(refresh_builtin_voices, tts_builtin,
-                                [tts_builtin, tts_upload, tts_ref_text])
+                                [tts_builtin, tts_upload, tts_ref_text,
+                                 tts_voice_name])
+        tts_voice_save.click(
+            save_builtin_voice,
+            [tts_upload, tts_voice_name, tts_ref_text],
+            [tts_builtin, tts_msg])
+        tts_voice_delete.click(
+            delete_builtin_voice,
+            tts_builtin,
+            [tts_builtin, tts_upload, tts_ref_text, tts_voice_name, tts_msg])
         # Clear the previous run's audio + status message the moment 生成 is
         # clicked, so a prior message doesn't linger next to the new run's
         # progress indicator (outputs otherwise update only when do_tts returns).
-        tts_btn.click(lambda: (None, ""), None, [tts_out, tts_msg]).then(
-            do_tts,
-            [tts_model, tts_text, tts_lang, tts_upload, tts_builtin,
+        # 流式播放器同样要清：streaming 组件在新一轮事件开始时不会自动复位，
+        # 上一轮的音频会留在播放器里直到新首包到达（模型重载时能有几十秒）。
+        tts_btn.click(lambda: (None, None, ""), None,
+                      [tts_out_stream, tts_out, tts_msg]).then(
+            do_tts_or_stream,
+            [tts_model, tts_gen_mode, tts_text, tts_lang, tts_upload, tts_builtin,
              tts_ref_text, tts_seed, tts_maxtok, tts_adv_state, tts_adv],
-            [tts_out, tts_msg])
+            [tts_out_stream, tts_out, tts_msg])
 
     # ---------------- ASR / 音频转写 ----------------
-    with gr.Tab(t("tab.asr")):
+    with _localized(gr.Tab("📝 ASR / 音频转写"),
+                    label=("📝 ASR / 音频转写", "📝 ASR / Transcription")):
         with gr.Row(equal_height=False):
             # 左列：模型管理 + 音频输入
             with gr.Column(scale=1):
@@ -2855,36 +3995,67 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
                 asr_model = asr_mm["model"]
 
                 with gr.Group():
-                    gr.Markdown(t("sec.audio_input"))
-                    asr_audio = gr.Audio(label=t("label.upload_or_record"), type="filepath",
-                                         elem_classes="audio-default")
-                with gr.Accordion(t("acc.asr_options"), open=False):
-                    asr_language = gr.Dropdown(
-                        label=t("label.force_language"),
-                        choices=asr_language_choices(), value="")
-                    asr_context = gr.Textbox(
-                        label=t("label.context_hint"), lines=2,
-                        placeholder=t("ph.context_hint"))
-                    asr_dialogue = gr.Checkbox(
-                        label=t("label.dialogue_mode"))
+                    _localized(gr.Markdown("#### 🎤 音频输入"),
+                               value=("#### 🎤 音频输入", "#### 🎤 Audio input"))
+                    asr_audio = _localized(
+                        gr.Audio(label="上传/录制音频", type="filepath",
+                                 elem_classes="audio-default"),
+                        label=("上传/录制音频", "Upload/record audio"))
+                with _localized(gr.Accordion("🎛 转写选项（可选）", open=False),
+                                label=("🎛 转写选项（可选）", "🎛 Options (optional)")):
+                    asr_language = _localized(gr.Dropdown(
+                        label="强制语种（留空=自动检测）",
+                        choices=[("自动检测", "")] +
+                                [(f"{zh} {en}", en) for zh, en in QWEN3_ASR_LANGUAGES],
+                        value=""),
+                        label=("强制语种（留空=自动检测）", "Language (blank=auto)"),
+                        choices=([("自动检测", "")] +
+                                 [(f"{zh} {en}", en) for zh, en in QWEN3_ASR_LANGUAGES],
+                                 [("Auto", "")] + [(en, en) for _zh, en in QWEN3_ASR_LANGUAGES]))
+                    asr_context = _localized(gr.Textbox(
+                        label="上下文提示", lines=2,
+                        placeholder="人名/术语等，帮助识别专有名词"),
+                        label=("上下文提示", "Context"),
+                        placeholder=("人名/术语等，帮助识别专有名词",
+                                     "Names or terms that may improve recognition"))
+                    asr_dialogue = _localized(gr.Checkbox(
+                        label="🗣 对话模式（≤120s，需 Sortformer）"),
+                        label=("🗣 对话模式（≤120s，需 Sortformer）",
+                               "🗣 Dialogue mode (≤120s; needs Sortformer)"))
+                asr_stream = _localized(gr.Checkbox(
+                    label="⚡ 流式转写（边转边出字，长音频不用干等；与对话模式互斥）",
+                    value=False, visible=supports_streaming(asr_model.value)),
+                    label=("⚡ 流式转写（与对话模式互斥）", "⚡ Streaming transcription"))
                 asr_hint = gr.Markdown(model_hint_for(asr_model.value))
-                asr_btn = gr.Button(t("btn.asr"), variant="primary", size="lg")
+                asr_btn = _localized(
+                    gr.Button("📝 开始转写", variant="primary", size="lg"),
+                    value=("📝 开始转写", "📝 Transcribe"))
 
             with gr.Column(scale=1):
                 with gr.Group():
-                    gr.Markdown(t("sec.asr_result"))
-                    asr_out = gr.Textbox(
-                        label=t("label.transcript"), lines=10,
-                        placeholder=t("ph.transcript"))
+                    _localized(gr.Markdown("#### 📄 识别结果"),
+                               value=("#### 📄 识别结果", "#### 📄 Transcript"))
+                    asr_out = _localized(gr.Textbox(
+                        label="转写文本", lines=10,
+                        placeholder="转写结果将显示在这里……"),
+                        label=("转写文本", "Transcript"),
+                        placeholder=("转写结果将显示在这里……", "Transcript appears here…"))
                     asr_msg = gr.Markdown("")
 
         _wire_model_manager(asr_mm, ASR_TASKS, asr_hint)
+        # 用户选模型时立即同步流式能力，不走默认队列；用 change 会同时接收
+        # 后端刷新下拉框的更新，和未安装模型的其它状态回调交错后可能留下旧的
+        # visible=False。程序化刷新由 refresh() 显式更新该控件。
+        asr_model.input(asr_stream_update, asr_model, asr_stream,
+                        queue=False, show_progress="hidden")
         asr_btn.click(lambda: ("", ""), None, [asr_out, asr_msg]).then(
-            do_asr, [asr_model, asr_audio, asr_language, asr_context, asr_dialogue],
+            do_asr, [asr_model, asr_audio, asr_language, asr_context, asr_dialogue,
+                     asr_stream],
             [asr_out, asr_msg])
 
     # ---------------- 音乐 / 音效生成 ----------------
-    with gr.Tab(t("tab.gen")):
+    with _localized(gr.Tab("🎵 音乐生成"),
+                    label=("🎵 音乐生成", "🎵 Music generation")):
         with gr.Row(equal_height=False):
             # 左列：模型管理 + 源音频（编辑类用法）
             with gr.Column(scale=1):
@@ -2892,12 +4063,15 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
                 gen_model = gen_mm["model"]
 
                 with gr.Group():
-                    gr.Markdown(t("sec.gen_source"))
-                    gen_audio = gr.Audio(
-                        label=t("label.upload_source_for_edit"),
-                        type="filepath", elem_classes="audio-default")
-                    gen_ana_btn = gr.Button(
-                        t("btn.analyze_source"))
+                    _localized(gr.Markdown("#### 🎧 源音频（可选，仅编辑类用法）"),
+                               value=("#### 🎧 源音频（可选，仅编辑类用法）",
+                                      "#### 🎧 Source audio (optional)"))
+                    gen_audio = _localized(gr.Audio(
+                        label="上传源音频（编辑类 route 用）",
+                        type="filepath", elem_classes="audio-default"),
+                        label=("上传源音频（编辑类 route 用）", "Upload source audio"))
+                    gen_ana_btn = _localized(gr.Button("🔍 分析源音频"),
+                                             value=("🔍 分析源音频", "🔍 Analyze source"))
                     gen_ana_msg = gr.Markdown("")
 
                 gen_hint = gr.Markdown(model_hint_for(gen_model.value))
@@ -2905,42 +4079,58 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
             # 右列：生成设置 + 提示词/歌词 + 生成 + 输出
             with gr.Column(scale=1):
                 with gr.Group():
-                    gr.Markdown(t("sec.gen_settings"))
+                    _localized(gr.Markdown("#### ⚙️ 生成设置"),
+                               value=("#### ⚙️ 生成设置", "#### ⚙️ Generation settings"))
                     with gr.Row():
-                        gen_duration = gr.Number(
-                            label=t("label.duration_seconds"), value=30, precision=1)
-                        gen_seed = gr.Number(label=t("label.seed"), value=1234, precision=0)
+                        gen_duration = _localized(
+                            gr.Number(label="时长(秒)，-1=自动", value=30, precision=1),
+                            label=("时长（秒，-1=自动）", "Duration (s; -1=auto)"))
+                        gen_seed = _localized(
+                            gr.Number(label="seed（-1=随机）", value=1234, precision=0),
+                            label=("seed（-1=随机）", "seed (-1=random)"))
                     gen_adv_state = gr.State({})
                     gen_prefill = gr.State({})   # 『🔍 分析源音频』回填 -> 触发控件重渲染
-                    with gr.Accordion(t("acc.advanced"), open=False):
+                    with _localized(
+                            gr.Accordion("高级参数（只发送改动过的项）", open=False),
+                            label=("高级参数（只发送改动过的项）", "Advanced options")):
                         _render_param_controls(gen_model, gen_adv_state,
                                                prefill_comp=gen_prefill)
 
-                    with gr.Accordion(t("acc.other_json"), open=False):
+                    with _localized(
+                            gr.Accordion("其它参数（JSON，覆盖控件）", open=False),
+                            label=("其它参数（JSON，覆盖控件）", "Other options (JSON override)")):
                         gen_adv = gr.Textbox(
                             label="",
                             placeholder='{"tags": "pop,bright,drums", "num_inference_steps": 8}',
                             lines=3)
 
                 with gr.Group():
-                    gr.Markdown(t("sec.prompt_lyrics"))
-                    gen_text = gr.Textbox(
-                        label=t("label.prompt"), lines=3,
-                        value="uplifting pop with bright synths and driving drums")
-                    gen_lyrics = gr.Textbox(
-                        label=t("label.lyrics_optional"), lines=4)
+                    _localized(gr.Markdown("#### ✍️ 提示词与歌词"),
+                               value=("#### ✍️ 提示词与歌词", "#### ✍️ Prompt and lyrics"))
+                    gen_text = _localized(gr.Textbox(
+                        label="提示词（英文效果最好）", lines=3,
+                        value="uplifting pop with bright synths and driving drums"),
+                        label=("提示词（英文效果最好）", "Prompt (English works best)"))
+                    gen_lyrics = _localized(gr.Textbox(label="歌词（可选）", lines=4),
+                                            label=("歌词（可选）", "Lyrics (optional)"))
 
-                gen_btn = gr.Button(t("btn.gen"), variant="primary", size="lg")
+                gen_btn = _localized(
+                    gr.Button("🎵 生成音乐", variant="primary", size="lg"),
+                    value=("🎵 生成音乐", "🎵 Generate music"))
                 with gr.Group():
-                    gr.Markdown(t("sec.output_audio"))
-                    gen_out = gr.Audio(label=t("label.output_audio"), type="filepath",
-                                       elem_classes="audio-default")
+                    _localized(gr.Markdown("#### 🔊 输出音频"),
+                               value=("#### 🔊 输出音频", "#### 🔊 Output"))
+                    gen_out = _localized(
+                        gr.Audio(label="输出音频", type="filepath",
+                                 elem_classes="audio-default"),
+                        label=("输出音频", "Output audio"))
                     gen_msg = gr.Markdown("")
 
         _wire_model_manager(gen_mm, GEN_TASKS, gen_hint)
         gen_model.change(lambda: ({}, {}, ""), None,
                          [gen_adv_state, gen_prefill, gen_ana_msg])  # 切换模型清空旋钮+分析信息
-        gen_ana_btn.click(lambda: t("msg.analyzing", load=t("btn.load")),
+        gen_ana_btn.click(lambda: _t("⏳ 分析中……（需先加载模型）",
+                                     "⏳ Analyzing… load the model first."),
                           None, gen_ana_msg).then(
             do_music_analyze, [gen_model, gen_audio, gen_seed, gen_adv_state],
             [gen_adv_state, gen_prefill, gen_ana_msg])
@@ -2951,7 +4141,8 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
             [gen_out, gen_msg])
 
     # ---------------- 声音转换 (vc / svc / s2s) ----------------
-    with gr.Tab(t("tab.vc")):
+    with _localized(gr.Tab("🎭 声音转换"),
+                    label=("🎭 声音转换", "🎭 Voice conversion")):
         with gr.Row(equal_height=False):
             # 左列：模型管理 + 源音频 + 目标音色
             with gr.Column(scale=1):
@@ -2959,42 +4150,63 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
                 vc_model = vc_mm["model"]
 
                 with gr.Group():
-                    gr.Markdown(t("sec.vc_source"))
-                    vc_source = gr.Audio(label=t("label.upload_source"), type="filepath",
-                                         elem_classes="audio-default")
+                    _localized(gr.Markdown("#### 🎙️ 源音频（要转换的内容）"),
+                               value=("#### 🎙️ 源音频（要转换的内容）",
+                                      "#### 🎙️ Source audio"))
+                    vc_source = _localized(
+                        gr.Audio(label="上传/录制源音频", type="filepath",
+                                 elem_classes="audio-default"),
+                        label=("上传/录制源音频", "Upload/record source"))
                 with gr.Group():
-                    gr.Markdown(t("sec.vc_target"))
+                    _localized(gr.Markdown("#### 🎧 目标音色（转换成谁的声音）"),
+                               value=("#### 🎧 目标音色（转换成谁的声音）",
+                                      "#### 🎧 Target voice"))
                     with gr.Row(elem_classes="voice-refresh-row"):
-                        vc_builtin = gr.Dropdown(
-                            label=t("label.builtin_voice"),
+                        vc_builtin = _localized(gr.Dropdown(
+                            label="内置参考音色",
                             choices=["(none)"] + builtin_voices(),
-                            value="(none)", scale=8)
+                            value="(none)", scale=8),
+                            label=("内置参考音色", "Built-in voice"))
                         vc_voice_refresh = gr.Button(
                             "🔄", scale=1, min_width=48)
-                    vc_target = gr.Audio(label=t("label.upload_target_voice"), type="filepath",
-                                         elem_classes="audio-default")
+                    vc_target = _localized(
+                        gr.Audio(label="上传/录制目标音色", type="filepath",
+                                 elem_classes="audio-default"),
+                        label=("上传/录制目标音色", "Upload/record target voice"))
 
                 vc_hint = gr.Markdown(model_hint_for(vc_model.value))
 
             # 右列：转换设置 + 转换 + 输出
             with gr.Column(scale=1):
                 with gr.Group():
-                    gr.Markdown(t("sec.vc_settings"))
-                    vc_seed = gr.Number(label=t("label.seed"), value=1234, precision=0)
+                    _localized(gr.Markdown("#### ⚙️ 转换设置"),
+                               value=("#### ⚙️ 转换设置", "#### ⚙️ Conversion settings"))
+                    vc_seed = _localized(
+                        gr.Number(label="seed（-1=随机）", value=1234, precision=0),
+                        label=("seed（-1=随机）", "seed (-1=random)"))
                     vc_adv_state = gr.State({})
-                    with gr.Accordion(t("acc.advanced"), open=False):
+                    with _localized(
+                            gr.Accordion("高级参数（只发送改动过的项）", open=False),
+                            label=("高级参数（只发送改动过的项）", "Advanced options")):
                         _render_param_controls(vc_model, vc_adv_state)
-                    with gr.Accordion(t("acc.other_json"), open=False):
+                    with _localized(
+                            gr.Accordion("其它参数（JSON，覆盖控件）", open=False),
+                            label=("其它参数（JSON，覆盖控件）", "Other options (JSON override)")):
                         vc_adv = gr.Textbox(
                             label="",
                             placeholder='{"route": "style_converted_vc", "style_ref": "D:/style.wav", "target_text": "……"}',
                             lines=3)
 
-                vc_btn = gr.Button(t("btn.vc"), variant="primary", size="lg")
+                vc_btn = _localized(
+                    gr.Button("🎭 开始转换", variant="primary", size="lg"),
+                    value=("🎭 开始转换", "🎭 Convert"))
                 with gr.Group():
-                    gr.Markdown(t("sec.output_audio"))
-                    vc_out = gr.Audio(label=t("label.output_audio"), type="filepath",
-                                      elem_classes="audio-default")
+                    _localized(gr.Markdown("#### 🔊 输出音频"),
+                               value=("#### 🔊 输出音频", "#### 🔊 Output"))
+                    vc_out = _localized(
+                        gr.Audio(label="输出音频", type="filepath",
+                                 elem_classes="audio-default"),
+                        label=("输出音频", "Output audio"))
                     vc_msg = gr.Markdown("")
 
         _wire_model_manager(vc_mm, VC_TASKS, vc_hint)
@@ -3009,7 +4221,8 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
             [vc_out, vc_msg])
 
     # ---------------- 音源分离 (sep) ----------------
-    with gr.Tab(t("tab.sep")):
+    with _localized(gr.Tab("🎚️ 音源分离"),
+                    label=("🎚️ 音源分离", "🎚️ Source separation")):
         with gr.Row(equal_height=False):
             # 左列：模型管理 + 输入音频
             with gr.Column(scale=1):
@@ -3017,21 +4230,32 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
                 sep_model = sep_mm["model"]
 
                 with gr.Group():
-                    gr.Markdown(t("sec.sep_input"))
-                    sep_audio = gr.Audio(label=t("label.upload_to_separate"), type="filepath",
-                                         elem_classes="audio-default")
+                    _localized(gr.Markdown("#### 🎵 输入音频"),
+                               value=("#### 🎵 输入音频", "#### 🎵 Audio input"))
+                    sep_audio = _localized(
+                        gr.Audio(label="上传要分离的歌曲/音频", type="filepath",
+                                 elem_classes="audio-default"),
+                        label=("上传要分离的歌曲/音频", "Upload audio to separate"))
                 sep_hint = gr.Markdown(model_hint_for(sep_model.value))
-                sep_btn = gr.Button(t("btn.sep"), variant="primary", size="lg")
+                sep_btn = _localized(
+                    gr.Button("🎚️ 开始分离", variant="primary", size="lg"),
+                    value=("🎚️ 开始分离", "🎚️ Separate"))
 
             # 右列：分离结果（各分轨播放器 + 文件下载）
             with gr.Column(scale=1):
                 with gr.Group():
-                    gr.Markdown(t("sec.sep_result"))
-                    sep_stems = [gr.Audio(label=t("label.stem_n", n=i + 1), type="filepath",
-                                          visible=False, elem_classes="audio-default")
-                                 for i in range(MAX_SEP_STEMS)]
-                    sep_files = gr.File(label=t("label.all_stem_files"), file_count="multiple",
-                                        interactive=False)
+                    _localized(gr.Markdown("#### 🔊 分离结果"),
+                               value=("#### 🔊 分离结果", "#### 🔊 Separated tracks"))
+                    sep_stems = [
+                        _localized(
+                            gr.Audio(label=f"音轨 {i + 1}", type="filepath",
+                                     visible=False, elem_classes="audio-default"),
+                            label=(f"音轨 {i + 1}", f"Track {i + 1}"))
+                        for i in range(MAX_SEP_STEMS)
+                    ]
+                    sep_files = _localized(
+                        gr.File(label="全部音轨文件", file_count="multiple", interactive=False),
+                        label=("全部音轨文件", "All track files"))
                     sep_msg = gr.Markdown("")
 
         _wire_model_manager(sep_mm, SEP_TASKS, sep_hint)
@@ -3042,7 +4266,8 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
             do_sep, [sep_model, sep_audio], [*sep_stems, sep_files, sep_msg])
 
     # ---------------- 音频分析 (vad / diar / align) ----------------
-    with gr.Tab(t("tab.analyze")):
+    with _localized(gr.Tab("🔎 音频分析"),
+                    label=("🔎 音频分析", "🔎 Audio analysis")):
         with gr.Row(equal_height=False):
             # 左列：模型管理 + 音频输入（align 模型多出对齐文本/语言）
             with gr.Column(scale=1):
@@ -3050,32 +4275,47 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
                 ana_model = ana_mm["model"]
 
                 with gr.Group():
-                    gr.Markdown(t("sec.audio_input"))
-                    ana_audio = gr.Audio(label=t("label.upload_or_record"), type="filepath",
-                                         elem_classes="audio-default")
-                    gr.Markdown(
-                        t("msg.auto_16k_mono"),
-                        elem_classes="hint-small")
+                    _localized(gr.Markdown("#### 🎤 音频输入"),
+                               value=("#### 🎤 音频输入", "#### 🎤 Audio input"))
+                    ana_audio = _localized(
+                        gr.Audio(label="上传/录制音频", type="filepath",
+                                 elem_classes="audio-default"),
+                        label=("上传/录制音频", "Upload/record audio"))
+                    _localized(
+                        gr.Markdown("*输入自动转 16 kHz 单声道。*", elem_classes="hint-small"),
+                        value=("*输入自动转 16 kHz 单声道。*",
+                               "*Input is converted to 16 kHz mono.*"))
                     _ana_is_align = bool(
                         ana_model.value and
                         (catalog_by_id(ana_model.value) or {}).get("task") == "align")
-                    ana_text = gr.Textbox(
-                        label=t("label.align_text"), lines=3,
-                        visible=_ana_is_align)
-                    ana_lang = gr.Textbox(
-                        label=t("label.language_optional"),
-                        visible=_ana_is_align)
+                    ana_text = _localized(gr.Textbox(
+                        label="对齐文本（align 必填：音频原文）", lines=3,
+                        visible=_ana_is_align),
+                        label=("对齐文本（align 必填：音频原文）",
+                               "Transcript (required for align)"))
+                    ana_lang = _localized(gr.Textbox(
+                        label="语言（可选，如 English / Chinese）",
+                        visible=_ana_is_align),
+                        label=("语言（可选，如 English / Chinese）",
+                               "Language (optional; e.g. English)"))
                 ana_hint = gr.Markdown(model_hint_for(ana_model.value))
-                ana_btn = gr.Button(t("btn.analyze"), variant="primary", size="lg")
+                ana_btn = _localized(
+                    gr.Button("🔎 开始分析", variant="primary", size="lg"),
+                    value=("🔎 开始分析", "🔎 Analyze"))
 
             # 右列：分析结果
             with gr.Column(scale=1):
                 with gr.Group():
-                    gr.Markdown(t("sec.analyze_result"))
-                    ana_out = gr.Textbox(
-                        label=t("label.analyze_output"), lines=14,
-                        placeholder=t("ph.analyze_output"))
-                    ana_json = gr.File(label=t("label.raw_json"), interactive=False)
+                    _localized(gr.Markdown("#### 📄 分析结果"),
+                               value=("#### 📄 分析结果", "#### 📄 Results"))
+                    ana_out = _localized(gr.Textbox(
+                        label="结果（时间单位：秒）", lines=14,
+                        placeholder="语音段 / 说话人 / 逐词时间戳将显示在这里……"),
+                        label=("结果（时间单位：秒）", "Results (seconds)"),
+                        placeholder=("语音段 / 说话人 / 逐词时间戳将显示在这里……",
+                                     "Segments, speakers or word timestamps appear here…"))
+                    ana_json = _localized(gr.File(label="原始 JSON 结果", interactive=False),
+                                          label=("原始 JSON 结果", "Raw JSON"))
                     ana_msg = gr.Markdown("")
 
         _wire_model_manager(ana_mm, ANALYZE_TASKS, ana_hint)
@@ -3085,7 +4325,8 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
             [ana_out, ana_json, ana_msg])
 
     # ---------------- 声音设计 (vdes) ----------------
-    with gr.Tab(t("tab.vdes")):
+    with _localized(gr.Tab("🎨 声音设计"),
+                    label=("🎨 声音设计", "🎨 Voice design")):
         with gr.Row(equal_height=False):
             # 左列：模型管理 + 生成设置
             with gr.Column(scale=1):
@@ -3093,15 +4334,24 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
                 vdes_model = vdes_mm["model"]
 
                 with gr.Group():
-                    gr.Markdown(t("sec.gen_settings"))
+                    _localized(gr.Markdown("#### ⚙️ 生成设置"),
+                               value=("#### ⚙️ 生成设置", "#### ⚙️ Generation settings"))
                     with gr.Row():
-                        vdes_seed = gr.Number(label=t("label.seed"), value=1234, precision=0)
-                        vdes_maxtok = gr.Number(label="max_tokens", value=1200, precision=0)
+                        vdes_seed = _localized(
+                            gr.Number(label="seed（-1=随机）", value=1234, precision=0),
+                            label=("seed（-1=随机）", "seed (-1=random)"))
+                        vdes_maxtok = _localized(
+                            gr.Number(label="max_tokens", value=1200, precision=0),
+                            label=("max_tokens", "max_tokens"))
                     vdes_adv_state = gr.State({})
-                    with gr.Accordion(t("acc.advanced"), open=False):
+                    with _localized(
+                            gr.Accordion("高级参数（只发送改动过的项）", open=False),
+                            label=("高级参数（只发送改动过的项）", "Advanced options")):
                         # instruct 有专用的『音色描述』输入框，这里不重复生成
                         _render_param_controls(vdes_model, vdes_adv_state, skip=("instruct",))
-                    with gr.Accordion(t("acc.other_json"), open=False):
+                    with _localized(
+                            gr.Accordion("其它参数（JSON，覆盖控件）", open=False),
+                            label=("其它参数（JSON，覆盖控件）", "Other options (JSON override)")):
                         vdes_adv = gr.Textbox(label="", placeholder='{"temperature": 0.9}',
                                               lines=3)
                 vdes_hint = gr.Markdown(model_hint_for(vdes_model.value))
@@ -3109,19 +4359,30 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
             # 右列：设计内容 + 生成 + 输出
             with gr.Column(scale=1):
                 with gr.Group():
-                    gr.Markdown(t("sec.vdes_content"))
-                    vdes_instruct = gr.Textbox(
-                        label=t("label.voice_description"), lines=3,
-                        placeholder=t("ph.voice_description"))
+                    _localized(gr.Markdown("#### ✍️ 设计内容"),
+                               value=("#### ✍️ 设计内容", "#### ✍️ Voice description"))
+                    vdes_instruct = _localized(gr.Textbox(
+                        label="音色描述（用文字描述想要的声音）", lines=3,
+                        placeholder="例：低沉磁性的中年男声，语速偏慢"),
+                        label=("音色描述（用文字描述想要的声音）", "Voice description"),
+                        placeholder=("例：低沉磁性的中年男声，语速偏慢",
+                                     "Example: a calm, deep middle-aged male voice"))
                     vdes_text = gr.Textbox(
-                        label=t("label.text_to_speak"), lines=5,
-                        value=t("value.vdes_sample_text"))
+                        label=_t("要合成的文字", "Text to synthesize", INITIAL_LANGUAGE),
+                        lines=5,
+                        value=_t(VDES_TEXT_DEFAULT_ZH, VDES_TEXT_DEFAULT_EN,
+                                 INITIAL_LANGUAGE))
 
-                vdes_btn = gr.Button(t("btn.vdes"), variant="primary", size="lg")
+                vdes_btn = _localized(
+                    gr.Button("🎨 生成语音", variant="primary", size="lg"),
+                    value=("🎨 生成语音", "🎨 Generate speech"))
                 with gr.Group():
-                    gr.Markdown(t("sec.output_audio"))
-                    vdes_out = gr.Audio(label=t("label.output_audio"), type="filepath",
-                                        elem_classes="audio-default")
+                    _localized(gr.Markdown("#### 🔊 输出音频"),
+                               value=("#### 🔊 输出音频", "#### 🔊 Output"))
+                    vdes_out = _localized(
+                        gr.Audio(label="输出音频", type="filepath",
+                                 elem_classes="audio-default"),
+                        label=("输出音频", "Output audio"))
                     vdes_msg = gr.Markdown("")
 
         _wire_model_manager(vdes_mm, VDES_TASKS, vdes_hint)
@@ -3134,8 +4395,15 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
 
     # 上传/录制后把文件换成短 ASCII 临时名，绕过 Gradio 在 Windows 上无法渲染
     # 含中文/超长文件名的声波图（见 _stage_upload）。只接输入类音频控件。
-    for _in_audio in (tts_upload, asr_audio, gen_audio, vc_source, vc_target,
-                      sep_audio, ana_audio):
+    tts_upload.upload(_stage_tts_voice_upload, tts_upload,
+                      [tts_upload, tts_voice_name])
+    tts_upload.stop_recording(_stage_tts_voice_recording, tts_upload,
+                              [tts_upload, tts_voice_name])
+    tts_upload.clear(lambda: (None, ""), None,
+                     [tts_upload, tts_voice_name])
+
+    for _in_audio in (asr_audio, gen_audio, vc_source, vc_target, sep_audio,
+                      ana_audio):
         # upload: 长文件强制换成新的稳定临时文件，避免 X 清空后再次上传长音频时
         # 前端复用旧 preview 状态导致波形不渲染。
         _in_audio.upload(lambda p: _stage_upload(p, force_copy=True), _in_audio, _in_audio)
@@ -3144,84 +4412,70 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
         # clear: 明确把后端值置空，避免长音频 preview fetch 被中断后控件状态残留。
         _in_audio.clear(lambda: None, None, _in_audio)
 
-    # 顺序与 refresh()/TAB_SPECS 一致：各页下拉、状态行、各页提示。
+    # 顺序与 refresh()/TAB_SPECS 一致：各页下拉、状态行、各页提示、
+    # ASR 流式选项。
     _refresh_outputs = [
         tts_model, asr_model, gen_model, vc_model, sep_model, ana_model, vdes_model,
         status,
         tts_hint, asr_hint, gen_hint, vc_hint, sep_hint, ana_hint, vdes_hint,
+        asr_stream,
     ]
     for _mm in (tts_mm, asr_mm, gen_mm, vc_mm, sep_mm, ana_mm, vdes_mm):
         _mm["refresh_btn"].click(refresh, None, _refresh_outputs)
-
-    # --- language picker -----------------------------------------------------
-    # Explicit entries were appended while the tree was built; keep them and add
-    # everything reverse lookup can find on top.
-    _i18n_registry.extend(build_i18n_registry(demo.blocks.values()))
-    _relabel_comps, _ = _relabel_updates()
-    _model_dropdowns = [tts_model, asr_model, gen_model, vc_model,
-                        sep_model, ana_model, vdes_model]
-    _hints = [tts_hint, asr_hint, gen_hint, vc_hint, sep_hint, ana_hint, vdes_hint]
-
-    # Sample texts are defaults the user is free to overwrite, so they are localized
-    # only while still untouched — see _sample_text_update.
-    _samples = [(tts_text, "value.tts_sample_text"),
-                (vdes_text, "value.vdes_sample_text")]
-
-    def _is_untouched_sample(current, key):
-        """True if the box still holds the sample text we put there.
-
-        Distinguishing that from something the user typed is what keeps a language
-        switch from throwing their input away. Checked before switching, so `key`
-        still resolves in the outgoing language.
-        """
-        return not (current or "").strip() or (current or "").strip() == t(key).strip()
-
-    def switch_language(lang, asr_lang, tts_lang, *rest):
-        """Re-localize the whole UI in place, preserving what the user picked.
-
-        Static labels come from the registry. Anything whose text is computed at
-        request time must be rebuilt by hand: the model dropdowns (their labels carry
-        the catalog's localized display_name plus "not installed"/VRAM notes), the
-        per-tab hints, the status line, and both language pickers, whose labels are
-        localized while their values stay the English names the server parses.
-        """
-        sample_values, selected = rest[:len(_samples)], rest[len(_samples):]
-        # Decide before switching, while the keys still resolve in the old language.
-        untouched = [_is_untouched_sample(v, k)
-                     for v, (_, k) in zip(sample_values, _samples)]
-        effective = set_language(lang)
-        sample_updates = [gr.update(value=t(k)) if fresh else gr.update()
-                          for fresh, (_, k) in zip(untouched, _samples)]
-        _, updates = _relabel_updates()
-
-        dropdowns, hints = [], []
-        for tasks, current in zip(TAB_SPECS, selected):
-            choices = choices_for_tasks(tasks)
-            # Keep the selection across the switch; only its label changed.
-            keep = current if any(c[1] == current for c in choices) else (
-                choices[0][1] if choices else None)
-            dropdowns.append(gr.update(choices=choices, value=keep))
-            hints.append(model_hint_for(keep))
-
-        return [gr.update(label=t("label.ui_language"), value=effective),
-                gr.update(choices=asr_language_choices(), value=asr_lang),
-                gr.update(choices=tts_language_choices(), value=tts_lang),
-                *sample_updates, *updates, *dropdowns, server_status(), *hints]
-
-    lang_picker.change(
-        switch_language,
-        [lang_picker, asr_language, tts_lang, *[c for c, _ in _samples],
-         *_model_dropdowns],
-        [lang_picker, asr_language, tts_lang, *[c for c, _ in _samples],
-         *_relabel_comps, *_model_dropdowns, status, *_hints])
     # 顶部状态行在建界面时只求值一次，浏览器刷新会看到那份静态初值（即使模型
     # 已加载也显示“server 未运行”）。server 本身就是状态的唯一真相源
     # （/health + /v1/models），每次页面加载重新探测即可，无需额外状态文件。
-    demo.load(server_status, None, status)
     # 音频播放器换源后把旧播放进度清回 0:00（见 _RESET_AUDIO_SEEK_JS 注释）。
     demo.load(None, None, None, js=_RESET_AUDIO_SEEK_JS)
-    gr.Markdown(
-        "---\n<center><small>" + t("footer") + "</small></center>")
+    _localized(
+        gr.Markdown(
+            "---\n<center><small>audio.cpp WebUI · 按需加载，同一时刻只驻留一个模型 · "
+            "详细说明见 webui/README.md</small></center>"),
+        value=(
+            "---\n<center><small>audio.cpp WebUI · 按需加载，同一时刻只驻留一个模型 · "
+            "详细说明见 webui/README.md</small></center>",
+            "---\n<center><small>audio.cpp WebUI · On-demand loading · One model at a time · "
+            "See webui/README.md</small></center>"))
+
+    def _language_updates(language, *values):
+        set_language(language)
+        model_ids, current_vdes_text = values[:7], values[7]
+        hints = [model_hint_for(model_id, language) for model_id in model_ids]
+        return (*_localized_updates(language),
+                _vdes_text_language_update(language, current_vdes_text),
+                server_status(), _api_usage_md(), *hints)
+
+    def _change_ui_language(language, *values):
+        language = save_language(language)
+        return _language_updates(language, *values)
+
+    def _page_load_updates(language, *model_ids):
+        """Refresh live status without re-rendering the already localized UI."""
+        set_language(language)
+        hints = [model_hint_for(model_id, language) for model_id in model_ids]
+        return server_status(), _api_usage_md(language), *hints
+
+    language_inputs = [
+        ui_language, tts_model, asr_model, gen_model, vc_model,
+        sep_model, ana_model, vdes_model, vdes_text,
+    ]
+    language_outputs = [
+        *[_component for _component, _props in _I18N_COMPONENTS],
+        vdes_text, status, api_usage,
+        tts_hint, asr_hint, gen_hint, vc_hint, sep_hint, ana_hint, vdes_hint,
+    ]
+
+    ui_language.change(
+        _change_ui_language,
+        language_inputs,
+        language_outputs,
+        show_progress="hidden")
+    demo.load(
+        _page_load_updates,
+        language_inputs[:8],
+        [status, api_usage,
+         tts_hint, asr_hint, gen_hint, vc_hint, sep_hint, ana_hint, vdes_hint],
+        show_progress="hidden")
 
 
 if __name__ == "__main__":

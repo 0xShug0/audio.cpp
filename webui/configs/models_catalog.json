@@ -1,361 +1,71 @@
 {
   "host": "127.0.0.1",
-  "port": 8081,
+  "port": 8080,
   "device": 0,
   "threads": 1,
-  "_comment": "Whitelist of every model family currently enabled in registry.cpp. The WebUI loads ONE model at a time by (re)starting audiocpp_server with a single-model config; paths are relative to the bundle root (where cpu/ gpu/ models/ live). Entries whose directory is missing show as 'not installed'; click Download Model in the UI to fetch them in the background (runs `python tools/model_manager.py install <download_id> --models-root <this>/models`). 'task' must be one of: tts, asr, vad, diar, sep, gen, clon, vc, s2s, align, vdes, spk, svc. UI tab mapping: tts/clon -> TTS tab, asr -> ASR, gen -> Music Generation, vc/svc/s2s -> Voice Conversion, sep -> Source Separation, vad/diar/align -> Audio Analysis, vdes -> Voice Design. 'download_id' is the model_manager package id (omit for bundled assets like silero_vad). Optional per-entry keys: input_hint (overrides the family hint in webui.py), default_options, min_vram_gb. User-facing strings here are English; a locale may override any entry via 'catalog.<id>.display_name' / 'catalog.<id>.input_hint' in webui/locales/<lang>.json. 'min_vram_gb' = ESTIMATED minimum CUDA VRAM (GB) to run typical requests at this entry's default precision/session_options - sources: docs/memory_saver.md official peak measurements (heartmula 25.6G@120s, stable-audio-medium 10.4G, chatterbox 13.4G, omnivoice 11.4G, qwen3-tts-1.7B 7.5G, stable-audio-small 3.7G), local RTX 4060 8G measurements (vibevoice 6.9G peak, ace-step w/ q8_0 preset), weight-size extrapolation for the rest. The UI warns when it exceeds detected local VRAM; exceeding means it may still run but will spill into shared memory and slow down badly.",
+  "_comment": "Whitelist of every model family currently enabled in registry.cpp. The WebUI loads ONE model at a time by (re)starting audiocpp_server with a single-model config; paths are relative to the bundle root (where cpu/ gpu/ models/ live). Entries whose directory is missing show as '未安装'; click 下载 in the UI to fetch them in the background (runs `python tools/model_manager.py install <download_id> --models-root <this>/models`). 'task' must be one of: tts, asr, vad, diar, sep, gen, clon, vc, s2s, align, vdes, spk, svc. UI tab mapping: tts/clon -> TTS 标签页, asr -> ASR, gen -> 音乐生成, vc/svc/s2s -> 声音转换, sep -> 音源分离, vad/diar/align -> 音频分析, vdes -> 声音设计. 'download_id' is the model_manager package id (omit for bundled assets like silero_vad). Optional per-entry keys: input_hint (overrides the family hint in webui.py), default_options, min_vram_gb. 'min_vram_gb' = ESTIMATED minimum CUDA VRAM (GB) to run typical requests at this entry's default precision/session_options — sources: docs/memory_saver.md official peak measurements (heartmula 25.6G@120s, stable-audio-medium 10.4G, chatterbox 13.4G, omnivoice 11.4G, qwen3-tts-1.7B 7.5G, stable-audio-small 3.7G), local RTX 4060 8G measurements (vibevoice 6.9G peak, ace-step w/ q8_0 preset), weight-size extrapolation for the rest. The UI warns when it exceeds detected local VRAM; exceeding means it may still run but will spill into shared memory and slow down badly.",
+
   "models": [
-    {
-      "id": "omnivoice",
-      "display_name": "OmniVoice (tts)",
-      "family": "omnivoice",
-      "path": "models/OmniVoice",
-      "task": "tts",
-      "mode": "offline",
-      "download_id": "omnivoice",
-      "min_vram_gb": 10
-    },
-    {
-      "id": "pocket-tts",
-      "display_name": "Pocket TTS (tts)",
-      "family": "pocket_tts",
-      "path": "models/pocket-tts",
-      "task": "tts",
-      "mode": "offline",
-      "download_id": "pocket_tts",
-      "min_vram_gb": 2
-    },
-    {
-      "id": "qwen3-tts",
-      "display_name": "Qwen3-TTS 0.6B (tts)",
-      "family": "qwen3_tts",
-      "path": "models/Qwen3-TTS-12Hz-0.6B-Base",
-      "task": "tts",
-      "mode": "offline",
-      "download_id": "qwen3_tts_0_6b_base",
-      "min_vram_gb": 5
-    },
-    {
-      "id": "qwen3-tts-1.7b",
-      "display_name": "Qwen3-TTS 1.7B Base (tts)",
-      "family": "qwen3_tts",
-      "path": "models/Qwen3-TTS-12Hz-1.7B-Base",
-      "task": "tts",
-      "mode": "offline",
-      "download_id": "qwen3_tts_1_7b_base",
-      "min_vram_gb": 8
-    },
-    {
-      "id": "qwen3-tts-1.7b-custom",
-      "display_name": "Qwen3-TTS 1.7B CustomVoice (tts)",
-      "family": "qwen3_tts",
-      "path": "models/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-      "task": "tts",
-      "mode": "offline",
-      "download_id": "qwen3_tts_1_7b_custom_voice",
-      "min_vram_gb": 8
-    },
-    {
-      "id": "miotts",
-      "display_name": "MioTTS 1.7B (tts; needs MioCodec)",
-      "family": "miotts",
-      "path": "models/MioTTS-1.7B",
-      "task": "tts",
-      "mode": "offline",
-      "download_id": "miotts_1_7b",
-      "min_vram_gb": 8
-    },
-    {
-      "id": "voxcpm2",
-      "display_name": "VoxCPM2 (tts)",
-      "family": "voxcpm2",
-      "path": "models/VoxCPM2",
-      "task": "tts",
-      "mode": "offline",
-      "download_id": "voxcpm2",
-      "session_options": {
-        "voxcpm2.weight_type": "q8_0"
-      },
-      "min_vram_gb": 6
-    },
-    {
-      "id": "vibevoice",
-      "display_name": "VibeVoice 1.5B (tts, long-form/multi-speaker)",
-      "family": "vibevoice",
-      "path": "models/VibeVoice-1.5B",
-      "task": "tts",
-      "mode": "offline",
-      "download_id": "vibevoice_1_5b",
-      "min_vram_gb": 7
-    },
-    {
-      "id": "chatterbox",
-      "display_name": "Chatterbox (voice clone)",
-      "family": "chatterbox",
-      "path": "models/chatterbox",
-      "task": "clon",
-      "mode": "offline",
-      "download_id": "chatterbox",
-      "min_vram_gb": 12
-    },
-    {
-      "id": "ace-step",
-      "display_name": "ACE-Step 1.5 (music gen)",
-      "family": "ace_step",
-      "path": "models/Ace-Step1.5",
-      "task": "gen",
-      "mode": "offline",
-      "download_id": "ace_step",
-      "session_options": {
-        "ace_step.mem_saver": "true",
-        "ace_step.dit_weight_type": "q8_0",
-        "ace_step.text_encoder_weight_type": "q8_0",
-        "ace_step.planner_weight_type": "q8_0"
-      },
-      "min_vram_gb": 8
-    },
-    {
-      "id": "stable-audio-small-music",
-      "display_name": "Stable Audio 3 Small Music (gen)",
-      "family": "stable_audio",
-      "path": "models/stable-audio-3-small-music",
-      "task": "gen",
-      "mode": "offline",
-      "download_id": "stable_audio_3_small_music",
-      "min_vram_gb": 4
-    },
-    {
-      "id": "stable-audio-small-sfx",
-      "display_name": "Stable Audio 3 Small SFX (gen)",
-      "family": "stable_audio",
-      "path": "models/stable-audio-3-small-sfx",
-      "task": "gen",
-      "mode": "offline",
-      "download_id": "stable_audio_3_small_sfx",
-      "min_vram_gb": 4
-    },
-    {
-      "id": "stable-audio-medium",
-      "display_name": "Stable Audio 3 Medium (gen)",
-      "family": "stable_audio",
-      "path": "models/stable-audio-3-medium",
-      "task": "gen",
-      "mode": "offline",
-      "download_id": "stable_audio_3_medium",
-      "session_options": {
-        "stable_audio.mem_saver": "true"
-      },
-      "min_vram_gb": 10
-    },
-    {
-      "id": "heartmula",
-      "display_name": "HeartMuLa 3B (music gen)",
-      "family": "heartmula",
-      "path": "models/HeartMuLa",
-      "task": "gen",
-      "mode": "offline",
-      "download_id": "heartmula",
-      "session_options": {
-        "heartmula.mem_saver": "true"
-      },
-      "min_vram_gb": 24
-    },
-    {
-      "id": "qwen3-asr",
-      "display_name": "Qwen3-ASR 0.6B (asr)",
-      "family": "qwen3_asr",
-      "path": "models/Qwen3-ASR-0.6B",
-      "task": "asr",
-      "mode": "offline",
-      "download_id": "qwen3_asr_0_6b",
-      "min_vram_gb": 3
-    },
-    {
-      "id": "citrinet-asr",
-      "display_name": "Citrinet ASR (asr)",
-      "family": "citrinet_asr",
-      "path": "models/citrinet",
-      "task": "asr",
-      "mode": "offline",
-      "download_id": "citrinet_asr",
-      "min_vram_gb": 2
-    },
-    {
-      "id": "nemotron-asr",
-      "display_name": "Nemotron 3.5 ASR 0.6B (asr, 100+ languages)",
-      "family": "nemotron_asr",
-      "path": "models/nemotron-3.5-asr-streaming-0.6b",
-      "task": "asr",
-      "mode": "offline",
-      "download_id": "nemotron_asr",
-      "min_vram_gb": 4,
-      "input_hint": "**Nemotron ASR**: 100+ languages, with BCP-47 language codes (e.g. en-US / zh-CN); leave blank for auto. The model handles long audio itself."
-    },
-    {
-      "id": "higgs-audio-stt",
-      "display_name": "Higgs Audio v3 STT (asr, English)",
-      "family": "higgs_audio_stt",
-      "path": "models/higgs-audio-v3-stt",
-      "task": "asr",
-      "mode": "offline",
-      "download_id": "higgs_audio_stt",
-      "min_vram_gb": 8,
-      "input_hint": "**Higgs Audio STT**: English transcription. You can put an instruction in the text box (the default is equivalent to 'Transcribe the speech.'); offline mode splits long audio automatically."
-    },
-    {
-      "id": "hviske-asr",
-      "display_name": "Hviske v5.3 (asr, Danish)",
-      "family": "hviske_asr",
-      "path": "models/hviske-v5.3",
-      "task": "asr",
-      "mode": "offline",
-      "download_id": "hviske_asr",
-      "min_vram_gb": 6,
-      "input_hint": "**Hviske ASR**: Danish only; the model chunks audio itself."
-    },
-    {
-      "id": "vibevoice-asr",
-      "display_name": "VibeVoice ASR (asr, multilingual + speaker segmentation)",
-      "family": "vibevoice_asr",
-      "path": "models/VibeVoice-ASR",
-      "task": "asr",
-      "mode": "offline",
-      "download_id": "vibevoice_asr",
-      "min_vram_gb": 20,
-      "input_hint": "**VibeVoice ASR**: automatic language detection, and can output segments/speaker turns. The text box takes a context hint (e.g. 'The recording is a meeting conversation.'). Weights are 17.3G, so an 8G card cannot run it."
-    },
-    {
-      "id": "vevo2",
-      "display_name": "Vevo2 (vc, voice conversion)",
-      "family": "vevo2",
-      "path": "models/Vevo2",
-      "task": "vc",
-      "mode": "offline",
-      "download_id": "vevo2",
-      "min_vram_gb": 6
-    },
-    {
-      "id": "vevo2-svc",
-      "display_name": "Vevo2 (svc, singing voice conversion)",
-      "family": "vevo2",
-      "path": "models/Vevo2",
-      "task": "svc",
-      "mode": "offline",
-      "download_id": "vevo2",
-      "min_vram_gb": 6,
-      "input_hint": "**Vevo2 singing voice conversion (svc)**: upload the source singing plus a target singer reference voice; the default is route=style_preserved_svc. Style-conversion routes such as style_converted_svc / singing_style_conversion need `style_ref` (a wav path local to the server) / `style_ref_text` / `target_text` added under 'Other parameters (JSON)'."
-    },
-    {
-      "id": "vevo2-s2s",
-      "display_name": "Vevo2 (s2s, speech editing)",
-      "family": "vevo2",
-      "path": "models/Vevo2",
-      "task": "s2s",
-      "mode": "offline",
-      "download_id": "vevo2",
-      "min_vram_gb": 6,
-      "input_hint": "**Vevo2 speech editing (s2s)**: upload the source speech to edit and put `{\"target_text\": \"the full replacement sentence\"}` under 'Other parameters (JSON)'. Editing preserves the original speaker's voice, so no target voice is needed."
-    },
-    {
-      "id": "seed-vc",
-      "display_name": "Seed-VC (vc, voice conversion)",
-      "family": "seed_vc",
-      "path": "models/SeedVC-MLX",
-      "task": "vc",
-      "mode": "offline",
-      "download_id": "seed_vc",
-      "min_vram_gb": 4
-    },
-    {
-      "id": "seed-vc-svc",
-      "display_name": "Seed-VC (svc, singing voice conversion)",
-      "family": "seed_vc",
-      "path": "models/SeedVC-MLX",
-      "task": "svc",
-      "mode": "offline",
-      "download_id": "seed_vc",
-      "min_vram_gb": 4,
-      "input_hint": "**Seed-VC singing voice conversion (svc)**: upload the source singing plus a target singer reference voice; the default is route=v1_svc (with F0 conditioning). `auto_f0_adjust` / `semi_tone_shift` / `f0_condition` can be tuned under 'Other parameters (JSON)'."
-    },
-    {
-      "id": "miocodec",
-      "display_name": "MioCodec (vc; codec dependency)",
-      "family": "miocodec",
-      "path": "models/MioCodec-25Hz-44.1kHz-v2",
-      "task": "vc",
-      "mode": "offline",
-      "download_id": "miocodec_25hz_44k_v2",
-      "min_vram_gb": 3
-    },
-    {
-      "id": "htdemucs",
-      "display_name": "HTDemucs (sep, source separation)",
-      "family": "htdemucs",
-      "path": "models/htdemucs",
-      "task": "sep",
-      "mode": "offline",
-      "download_id": "htdemucs",
-      "min_vram_gb": 3
-    },
-    {
-      "id": "mel-band-roformer",
-      "display_name": "Mel-Band RoFormer (sep, vocal separation)",
-      "family": "mel_band_roformer",
-      "path": "models/mel-roformer-mlx",
-      "task": "sep",
-      "mode": "offline",
-      "download_id": "mel_band_roformer",
-      "min_vram_gb": 3
-    },
-    {
-      "id": "silero-vad",
-      "display_name": "Silero VAD (vad, bundled)",
-      "family": "silero_vad",
-      "path": "assets/framework/models/silero_vad",
-      "task": "vad",
-      "mode": "offline",
-      "min_vram_gb": 1
-    },
-    {
-      "id": "marblenet-vad",
-      "display_name": "MarbleNet VAD (vad)",
-      "family": "marblenet_vad",
-      "path": "models/marblenet_vad",
-      "task": "vad",
-      "mode": "offline",
-      "download_id": "marblenet_vad",
-      "min_vram_gb": 1
-    },
-    {
-      "id": "sortformer-diar",
-      "display_name": "Sortformer Diarization 4spk (diar)",
-      "family": "sortformer_diar",
-      "path": "models/diar_sortformer_4spk-v1",
-      "task": "diar",
-      "mode": "offline",
-      "download_id": "sortformer_diar_4spk_v1",
-      "min_vram_gb": 2
-    },
-    {
-      "id": "qwen3-forced-aligner",
-      "display_name": "Qwen3 Forced Aligner (align)",
-      "family": "qwen3_forced_aligner",
-      "path": "models/Qwen3-ForcedAligner-0.6B",
-      "task": "align",
-      "mode": "offline",
-      "download_id": "qwen3_forced_aligner_0_6b",
-      "min_vram_gb": 3
-    },
-    {
-      "id": "qwen3-tts-1.7b-vdesign",
-      "display_name": "Qwen3-TTS 1.7B VoiceDesign (vdes)",
-      "family": "qwen3_tts",
-      "path": "models/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-      "task": "vdes",
-      "mode": "offline",
-      "download_id": "qwen3_tts_1_7b_voice_design",
-      "min_vram_gb": 8,
-      "input_hint": "**Qwen3-TTS VoiceDesign**: describe the voice you want in 'Voice description' (e.g. \"a deep, resonant middle-aged male voice, slow-paced\") and add the text to read — no reference audio needed."
-    }
+    { "id": "omnivoice",              "display_name": "OmniVoice (tts)",                       "family": "omnivoice",            "path": "models/OmniVoice",                       "task": "tts",   "mode": "offline", "download_id": "omnivoice",               "min_vram_gb": 10 },
+    { "id": "pocket-tts",             "display_name": "Pocket TTS (tts)",                      "family": "pocket_tts",           "path": "models/pocket-tts",                      "task": "tts",   "mode": "offline", "download_id": "pocket_tts",              "min_vram_gb": 2 },
+    { "id": "qwen3-tts",              "display_name": "Qwen3-TTS 0.6B (tts)",                  "family": "qwen3_tts",            "path": "models/Qwen3-TTS-12Hz-0.6B-Base",        "task": "tts",   "mode": "offline", "download_id": "qwen3_tts_0_6b_base",     "min_vram_gb": 5 },
+    { "id": "qwen3-tts-1.7b",         "display_name": "Qwen3-TTS 1.7B Base (tts)",             "family": "qwen3_tts",            "path": "models/Qwen3-TTS-12Hz-1.7B-Base",        "task": "tts",   "mode": "offline", "download_id": "qwen3_tts_1_7b_base",     "min_vram_gb": 8 },
+    { "id": "qwen3-tts-1.7b-custom",  "display_name": "Qwen3-TTS 1.7B CustomVoice (tts)",      "family": "qwen3_tts",            "path": "models/Qwen3-TTS-12Hz-1.7B-CustomVoice", "task": "tts",   "mode": "offline", "download_id": "qwen3_tts_1_7b_custom_voice", "min_vram_gb": 8 },
+    { "id": "miotts",                 "display_name": "MioTTS 1.7B (tts; needs MioCodec)",     "family": "miotts",               "path": "models/MioTTS-1.7B",                     "task": "tts",   "mode": "offline", "download_id": "miotts_1_7b",             "min_vram_gb": 8 },
+    { "id": "voxcpm2",                "display_name": "VoxCPM2 (tts)",                         "family": "voxcpm2",              "path": "models/VoxCPM2",                         "task": "tts",   "mode": "offline", "download_id": "voxcpm2",                 "session_options": { "voxcpm2.weight_type": "q8_0" }, "min_vram_gb": 6 },
+    { "id": "vibevoice",              "display_name": "VibeVoice 1.5B (tts, long-form/multi-speaker)", "family": "vibevoice",    "path": "models/VibeVoice-1.5B",                  "task": "tts",   "mode": "offline", "download_id": "vibevoice_1_5b",          "min_vram_gb": 7 },
+    { "id": "index-tts2",             "display_name": "IndexTTS2 (tts 中英克隆+情感)",            "display_name_en": "IndexTTS2 (tts, zh/en clone + emotion)", "family": "index_tts2", "path": "models/IndexTTS-2",        "task": "tts",   "mode": "offline", "download_id": "index_tts2",              "min_vram_gb": 8 },
+    { "id": "irodori-tts",            "display_name": "Irodori-TTS 500M (tts 日语)",             "display_name_en": "Irodori-TTS 500M (ja tts)",              "family": "irodori_tts", "path": "models/Irodori-TTS-500M-v3", "task": "tts",  "mode": "offline", "download_id": "irodori_tts_500m_v3",     "min_vram_gb": 4 },
+    { "id": "moss-tts-local",         "display_name": "MOSS-TTS-Local v1.5 (tts)",              "family": "moss_tts_local",       "path": "models/MOSS-TTS-Local-Transformer-v1.5", "task": "tts",   "mode": "offline", "download_id": "moss_tts_local_v1_5",     "min_vram_gb": 8 },
+    { "id": "moss-tts-nano",          "display_name": "MOSS-TTS-Nano 100M (tts)",               "family": "moss_tts_nano",        "path": "models/MOSS-TTS-Nano-100M",              "task": "tts",   "mode": "offline", "download_id": "moss_tts_nano_100m",      "min_vram_gb": 2 },
+    { "id": "supertonic",             "display_name": "Supertonic 3 (tts 预置音色/多语种)",        "display_name_en": "Supertonic 3 (tts, preset voices)",      "family": "supertonic", "path": "models/supertonic-3",       "task": "tts",   "mode": "offline", "download_id": "supertonic_3",            "min_vram_gb": 2 },
+
+    { "id": "chatterbox",             "display_name": "Chatterbox (voice clone)",              "family": "chatterbox",           "path": "models/chatterbox",                      "task": "clon",  "mode": "offline", "download_id": "chatterbox",              "min_vram_gb": 12 },
+
+    { "id": "ace-step",               "display_name": "ACE-Step 1.5 (music gen)",              "family": "ace_step",             "path": "models/Ace-Step1.5",                     "task": "gen",   "mode": "offline", "download_id": "ace_step",                "session_options": { "ace_step.mem_saver": "true", "ace_step.dit_weight_type": "q8_0", "ace_step.text_encoder_weight_type": "q8_0", "ace_step.planner_weight_type": "q8_0" }, "min_vram_gb": 8 },
+    { "id": "stable-audio-small-music","display_name": "Stable Audio 3 Small Music (gen)",     "family": "stable_audio",         "path": "models/stable-audio-3-small-music",      "task": "gen",   "mode": "offline", "download_id": "stable_audio_3_small_music", "min_vram_gb": 4 },
+    { "id": "stable-audio-small-sfx", "display_name": "Stable Audio 3 Small SFX (gen)",        "family": "stable_audio",         "path": "models/stable-audio-3-small-sfx",        "task": "gen",   "mode": "offline", "download_id": "stable_audio_3_small_sfx", "min_vram_gb": 4 },
+    { "id": "stable-audio-medium",    "display_name": "Stable Audio 3 Medium (gen)",           "family": "stable_audio",         "path": "models/stable-audio-3-medium",           "task": "gen",   "mode": "offline", "download_id": "stable_audio_3_medium",   "session_options": { "stable_audio.mem_saver": "true" }, "min_vram_gb": 10 },
+    { "id": "heartmula",              "display_name": "HeartMuLa 3B (music gen)",              "family": "heartmula",            "path": "models/HeartMuLa",                       "task": "gen",   "mode": "offline", "download_id": "heartmula",               "session_options": { "heartmula.mem_saver": "true" }, "min_vram_gb": 24 },
+
+    { "id": "qwen3-asr",              "display_name": "Qwen3-ASR 0.6B (asr)",                  "family": "qwen3_asr",            "path": "models/Qwen3-ASR-0.6B",                  "task": "asr",   "mode": "offline", "download_id": "qwen3_asr_0_6b",          "min_vram_gb": 3 },
+    { "id": "qwen3-asr-1.7b",         "display_name": "Qwen3-ASR 1.7B HF (asr)",               "family": "qwen3_asr",            "path": "models/Qwen3-ASR-1.7B-hf",               "task": "asr",   "mode": "offline", "download_id": "qwen3_asr_1_7b_hf",       "min_vram_gb": 6,
+      "input_hint": "**Qwen3-ASR 1.7B**（HF 原生权重，免转换）：精度高于 0.6B；长音频自动分段转写；8G 卡显存偏紧，长音频建议先短段试跑。" },
+    { "id": "citrinet-asr",           "display_name": "Citrinet ASR (asr)",                    "family": "citrinet_asr",         "path": "models/citrinet",                        "task": "asr",   "mode": "offline", "download_id": "citrinet_asr",            "min_vram_gb": 2 },
+    { "id": "nemotron-asr",           "display_name": "Nemotron 3.5 ASR 0.6B (asr, 100+语种)",  "family": "nemotron_asr",         "path": "models/nemotron-3.5-asr-streaming-0.6b", "task": "asr",   "mode": "offline", "download_id": "nemotron_asr",            "min_vram_gb": 4,
+      "input_hint": "**Nemotron ASR**：100+ 语种，语种码为 BCP-47（如 en-US / zh-CN），留空=auto；模型自带长音频处理。" },
+    { "id": "higgs-audio-stt",        "display_name": "Higgs Audio v3 STT (asr, 英语)",         "family": "higgs_audio_stt",      "path": "models/higgs-audio-v3-stt",              "task": "asr",   "mode": "offline", "download_id": "higgs_audio_stt",         "min_vram_gb": 8,
+      "input_hint": "**Higgs Audio STT**：英语转写；可在文本框填指令（默认相当于 Transcribe the speech.）；离线模式自动切分长音频。" },
+    { "id": "hviske-asr",             "display_name": "Hviske v5.3 (asr, 丹麦语)",              "family": "hviske_asr",           "path": "models/hviske-v5.3",                     "task": "asr",   "mode": "offline", "download_id": "hviske_asr",              "min_vram_gb": 6,
+      "input_hint": "**Hviske ASR**：丹麦语专用；模型侧自动分段。" },
+    { "id": "vibevoice-asr",          "display_name": "VibeVoice ASR (asr, 多语种+说话人分段)",   "family": "vibevoice_asr",        "path": "models/VibeVoice-ASR",                   "task": "asr",   "mode": "offline", "download_id": "vibevoice_asr",           "min_vram_gb": 20,
+      "input_hint": "**VibeVoice ASR**：自动语种，可输出分段/说话人轮次；文本框可填上下文提示（如 The recording is a meeting conversation.）。权重 17.3G，8G 卡跑不动。" },
+    { "id": "voxtral-realtime",       "display_name": "Voxtral Mini 4B Realtime (asr, 自动语种+流式)", "display_name_en": "Voxtral Mini 4B Realtime (asr, auto + streaming)", "family": "voxtral_realtime", "path": "models/Voxtral-Mini-4B-Realtime-2602", "task": "asr", "mode": "offline", "download_id": "voxtral_realtime", "session_options": { "voxtral_realtime.weight_type": "q8_0" }, "min_vram_gb": 8 },
+
+    { "id": "chatterbox-vc",           "display_name": "Chatterbox (vc 声音转换)",                "display_name_en": "Chatterbox (voice conversion)", "family": "chatterbox", "path": "models/chatterbox", "task": "vc", "mode": "offline", "download_id": "chatterbox", "min_vram_gb": 12,
+      "input_hint": "**Chatterbox VC**：上传源语音和目标音色参考；模型保留源语音内容，将说话人音色转换为目标音色，输出 24kHz 单声道。",
+      "input_hint_en": "**Chatterbox VC**: upload source speech and a target-voice reference. It preserves the source content and converts the speaker identity; output is 24 kHz mono." },
+    { "id": "vevo2",                  "display_name": "Vevo2 (vc 语音转换)",                    "family": "vevo2",                "path": "models/Vevo2",                           "task": "vc",    "mode": "offline", "download_id": "vevo2",                   "min_vram_gb": 6 },
+    { "id": "vevo2-svc",              "display_name": "Vevo2 (svc 歌声转换)",                   "family": "vevo2",                "path": "models/Vevo2",                           "task": "svc",   "mode": "offline", "download_id": "vevo2",                   "min_vram_gb": 6,
+      "input_hint": "**Vevo2 歌声转换 (svc)**：上传源歌声 + 目标歌手参考音色，默认 route=style_preserved_svc。style_converted_svc / singing_style_conversion 等风格转换 route 需在『其它参数(JSON)』里补 `style_ref`（服务器本地 wav 路径）/ `style_ref_text` / `target_text`。" },
+    { "id": "vevo2-s2s",              "display_name": "Vevo2 (s2s 语音编辑)",                   "family": "vevo2",                "path": "models/Vevo2",                           "task": "s2s",   "mode": "offline", "download_id": "vevo2",                   "min_vram_gb": 6,
+      "input_hint": "**Vevo2 语音编辑 (s2s)**：上传要编辑的源语音，并在『其它参数(JSON)』里填 `{\"target_text\": \"替换后的完整句子\"}`（编辑保持原说话人音色，可不上传目标音色）。" },
+    { "id": "seed-vc",                "display_name": "Seed-VC (vc 语音转换)",                  "family": "seed_vc",              "path": "models/SeedVC-MLX",                      "task": "vc",    "mode": "offline", "download_id": "seed_vc",                 "min_vram_gb": 4 },
+    { "id": "seed-vc-svc",            "display_name": "Seed-VC (svc 歌声转换)",                 "family": "seed_vc",              "path": "models/SeedVC-MLX",                      "task": "svc",   "mode": "offline", "download_id": "seed_vc",                 "min_vram_gb": 4,
+      "input_hint": "**Seed-VC 歌声转换 (svc)**：上传源歌声 + 目标歌手参考音色，默认 route=v1_svc（带 F0 条件）。可在『其它参数(JSON)』里调 `auto_f0_adjust` / `semi_tone_shift` / `f0_condition`。" },
+    { "id": "miocodec",               "display_name": "MioCodec (vc; codec dependency)",       "family": "miocodec",             "path": "models/MioCodec-25Hz-44.1kHz-v2",        "task": "vc",    "mode": "offline", "download_id": "miocodec_25hz_44k_v2",    "min_vram_gb": 3 },
+
+    { "id": "htdemucs",               "display_name": "HTDemucs (sep 音源分离)",                "family": "htdemucs",             "path": "models/htdemucs",                        "task": "sep",   "mode": "offline", "download_id": "htdemucs",                "min_vram_gb": 3 },
+    { "id": "mel-band-roformer",      "display_name": "Mel-Band RoFormer (sep 人声分离)",       "family": "mel_band_roformer",    "path": "models/mel-roformer-mlx",                "task": "sep",   "mode": "offline", "download_id": "mel_band_roformer",       "min_vram_gb": 3 },
+
+    { "id": "silero-vad",             "display_name": "Silero VAD (vad, bundled)",             "family": "silero_vad",           "path": "assets/framework/models/silero_vad",     "task": "vad",   "mode": "offline", "min_vram_gb": 1 },
+    { "id": "marblenet-vad",          "display_name": "MarbleNet VAD (vad)",                   "family": "marblenet_vad",        "path": "models/marblenet_vad",                   "task": "vad",   "mode": "offline", "download_id": "marblenet_vad",           "min_vram_gb": 1 },
+    { "id": "sortformer-diar",        "display_name": "Sortformer Diarization 4spk (diar)",    "family": "sortformer_diar",      "path": "models/diar_sortformer_4spk-v1",         "task": "diar",  "mode": "offline", "download_id": "sortformer_diar_4spk_v1", "min_vram_gb": 2 },
+    { "id": "qwen3-forced-aligner",   "display_name": "Qwen3 Forced Aligner (align)",          "family": "qwen3_forced_aligner", "path": "models/Qwen3-ForcedAligner-0.6B",        "task": "align", "mode": "offline", "download_id": "qwen3_forced_aligner_0_6b", "min_vram_gb": 3 },
+
+    { "id": "qwen3-tts-1.7b-vdesign", "display_name": "Qwen3-TTS 1.7B VoiceDesign (vdes)",     "family": "qwen3_tts",            "path": "models/Qwen3-TTS-12Hz-1.7B-VoiceDesign", "task": "vdes",  "mode": "offline", "download_id": "qwen3_tts_1_7b_voice_design", "min_vram_gb": 8,
+      "input_hint": "**Qwen3-TTS VoiceDesign**：在『音色描述』里用文字描述想要的声音（如“低沉磁性的中年男声，语速偏慢”），配上要念的文本即可，无需参考音频。" },
+    { "id": "irodori-tts-vdesign",    "display_name": "Irodori-TTS 600M VoiceDesign (vdes 日语)", "display_name_en": "Irodori-TTS 600M VoiceDesign (ja vdes)", "family": "irodori_tts", "path": "models/Irodori-TTS-600M-v3-VoiceDesign", "task": "vdes", "mode": "offline", "download_id": "irodori_tts_600m_v3_voice_design", "min_vram_gb": 4,
+      "input_hint": "**Irodori-TTS VoiceDesign**（日语）：『音色描述』用日语 caption 描述音色（如「落ち着いた大人の男性。深く響く声。」），文本填要念的日语内容，无需参考音频。" }
   ]
 }

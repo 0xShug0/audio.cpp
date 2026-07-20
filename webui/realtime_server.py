@@ -49,6 +49,7 @@ from realtime_pipeline import (
     ResponseDone,
     SpeechStarted,
     SpeechStopped,
+    TurnDiscarded,
     UserTranscript,
 )
 
@@ -217,6 +218,11 @@ def create_app() -> FastAPI:
                     elif isinstance(event, SpeechStopped):
                         await ws.send_json({
                             "type": "input_audio_buffer.speech_stopped",
+                        })
+                    elif isinstance(event, TurnDiscarded):
+                        await ws.send_json({
+                            "type": "input_audio_buffer.turn_discarded",
+                            "reason": event.reason,
                         })
                     elif isinstance(event, UserTranscript):
                         item_id = _generate_id("item")

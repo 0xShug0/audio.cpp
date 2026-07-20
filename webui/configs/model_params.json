@@ -2,7 +2,7 @@
   "_comment": "WebUI TTS 高级参数控件配置：按模型 family 动态生成控件（gr.render）。每项字段：name=选项键(随请求 options 透传给模型)；type=slider|number|bool|text|choice；label/info=显示文案；default=默认值(应等于模型默认，已按 src/models/<family>/*.cpp 校对)；minimum/maximum/step=数值范围；precision=0 表示整数；choices=下拉候选。规则：只有被用户改动过的控件值才会随请求发送；seed/max_tokens 已有专用输入框，勿在此重复；参考文本用『参考文本』框(reference_text)；文件路径/parity 类参数(如 *_noise_file)未纳入，可用『其它参数(JSON)』兜底框传。",
 
   "qwen3_tts": [
-    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info": "采样温度，越大越随机"},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.05, "minimum": 1.0, "maximum": 2.0, "step": 0.01},
@@ -43,8 +43,13 @@
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.2, "minimum": 1.0, "maximum": 2.0, "step": 0.01}
   ],
 
+  "chatterbox-vc": [
+    {"name": "s3gen_cfg_rate", "type": "slider", "label": "s3gen_cfg_rate（音色引导强度）", "label_en": "s3gen_cfg_rate (voice guidance)", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（生成步数）", "label_en": "num_inference_steps", "default": 10, "minimum": 1, "maximum": 100, "step": 1, "precision": 0}
+  ],
+
   "omnivoice": [
-    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0, "info": "flow-matching 步数"},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "speed", "type": "slider", "label": "speed", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
     {"name": "instruct", "type": "text", "label": "instruct（风格/音色指令）", "default": "", "placeholder": "如：以轻快的语气朗读"}
@@ -104,5 +109,41 @@
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（codec 步数）", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "infinite_mode", "type": "bool", "label": "infinite_mode（长输出分段生成）", "default": false},
     {"name": "codec_guidance_scale", "type": "slider", "label": "codec_guidance_scale", "default": 1.25, "minimum": 0.0, "maximum": 5.0, "step": 0.05}
+  ],
+
+  "index_tts2": [
+    {"name": "emotion_text", "type": "text", "label": "emotion_text（情绪参考文本）", "label_en": "emotion_text (emotion reference text)", "default": "", "placeholder": "例：你吓死我了！你是鬼吗？", "placeholder_en": "e.g. You scared me to death!", "info": "填写后自动开启情感条件（use_emotion_text）", "info_en": "Setting this enables emotion conditioning."},
+    {"name": "emotion_alpha", "type": "slider", "label": "emotion_alpha（情感强度）", "label_en": "emotion_alpha", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
+    {"name": "use_emotion_text", "type": "bool", "label": "use_emotion_text（从朗读文本推断情感）", "label_en": "use_emotion_text (infer from text)", "default": false},
+    {"name": "use_random_emotion", "type": "bool", "label": "use_random_emotion（随机情感）", "label_en": "use_random_emotion", "default": false},
+    {"name": "interval_silence_ms", "type": "number", "label": "interval_silence_ms（分段间静音）", "label_en": "interval_silence_ms", "default": 200, "minimum": 0, "step": 50, "precision": 0}
+  ],
+
+  "irodori_tts": [
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（RF 扩散步数）", "label_en": "num_inference_steps", "default": 40, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "duration_seconds", "type": "number", "label": "duration_seconds（0=模型自动预测时长）", "label_en": "duration_seconds (0 = auto)", "default": 0, "minimum": 0, "step": 0.5},
+    {"name": "duration_scale", "type": "slider", "label": "duration_scale（语速倒数，越大越慢）", "label_en": "duration_scale", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05}
+  ],
+
+  "moss_tts_local": [
+    {"name": "do_sample", "type": "bool", "label": "do_sample", "default": true},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.7, "minimum": 0.0, "maximum": 2.5, "step": 0.05},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 25, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.0, "minimum": 1.0, "maximum": 2.0, "step": 0.01}
+  ],
+
+  "moss_tts_nano": [
+    {"name": "do_sample", "type": "bool", "label": "do_sample", "default": true},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.7, "minimum": 0.0, "maximum": 2.5, "step": 0.05},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 25, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.0, "minimum": 1.0, "maximum": 2.0, "step": 0.01}
+  ],
+
+  "supertonic": [
+    {"name": "voice", "type": "choice", "label": "voice（预置音色：M 男声 / F 女声）", "label_en": "voice (M = male, F = female presets)", "default": "M1", "choices": ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]},
+    {"name": "speaking_rate", "type": "slider", "label": "speaking_rate（语速倍率）", "label_en": "speaking_rate", "default": 1.05, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（流匹配步数）", "label_en": "num_inference_steps", "default": 8, "minimum": 1, "step": 1, "precision": 0}
   ]
 }

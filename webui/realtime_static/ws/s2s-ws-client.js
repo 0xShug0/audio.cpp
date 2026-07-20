@@ -664,6 +664,13 @@ export class S2sWsRealtimeClient extends EventTarget {
         if (this._status === "user-speaking") this._setStatus("processing");
         break;
 
+      case "input_audio_buffer.turn_discarded":
+        // Local VAD produced a short/no-text turn, so no response.done will
+        // follow. Only clear the matching processing state: a newer utterance
+        // may already have moved the client back to user-speaking.
+        if (this._status === "processing") this._setStatus("connected");
+        break;
+
       case "response.created":
         // A response now owns the slot — count it and clear our create guard
         // (this confirms either our create or a server-initiated one).
