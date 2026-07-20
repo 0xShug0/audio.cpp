@@ -230,7 +230,7 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(
     out.stack.rms_norm_eps = config.rms_norm_eps;
     out.stack.rope_theta = config.rope_theta;
     if (is_vieneu && is_acoustic_decoder) {
-        out.stack.rope_type = -1; // Bypass RoPE
+        out.stack.position_encoding = modules::QwenDecoderPositionEncoding::None; // Bypass RoPE
         out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
     }
     out.stack.attention_precision = GGML_PREC_F32;
