@@ -1356,6 +1356,7 @@ public:
         if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
             throw std::runtime_error("Qwen3 talker cached step embedding size mismatch");
         }
+
         if (step_cache_.valid_steps() >= cache_steps_) {
             throw std::runtime_error("Qwen3 talker cached step exceeds cache capacity");
         }
@@ -1397,6 +1398,7 @@ public:
         ggml_backend_tensor_get(logits_output_, out.logits.values.data(), 0, out.logits.values.size() * sizeof(float));
         ggml_backend_tensor_get(hidden_output_, out.last_hidden.values.data(), 0, out.last_hidden.values.size() * sizeof(float));
         last_timing_.output_read_ms = engine::debug::elapsed_ms(timing_start, Clock::now());
+
         step_cache_.advance_after_direct_append(1);
         return out;
     }
@@ -1617,6 +1619,7 @@ public:
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate Qwen3 code predictor graph");
         }
+
         step_attention_mask_buffer_.assign(static_cast<size_t>(code_groups_ + 1), ggml_fp32_to_fp16(-INFINITY));
         int32_t prefill_positions[2] = {0, 1};
         ggml_backend_tensor_set(prefill_positions_, prefill_positions, 0, sizeof(prefill_positions));
@@ -1638,10 +1641,12 @@ public:
         std::mt19937 & rng,
         uint64_t & sample_call_index) {
         timing_ = {};
+
         auto embeddings = make_prefill_embeddings(input);
         VietneuTalkerFrameCodes out;
         out.codes.reserve(static_cast<size_t>(code_groups_));
         auto logits = run_prefill(embeddings);
+
         int32_t code = options.subtalker_do_sample
             ? sample_index(
                 logits.values,
@@ -1655,10 +1660,12 @@ public:
             : argmax_index(logits.values);
         out.codes.push_back(code);
         for (int64_t group = 1; group < code_groups_; ++group) {
-            const auto row = lookup_rows(
-                weights_->weights().code_predictor_embeddings.at(static_cast<size_t>(group - 1)),
-                weights_->assets().config.talker.hidden_size,
-                {code});
+            const auto & w = weights_->weights();
+            const auto row = weights_->assets().config.is_vieneu
+                ? (group == 1
+                    ? lookup_rows(w.codec_embedding, weights_->assets().config.talker.hidden_size, {code})
+                    : lookup_rows(w.code_predictor_embeddings.at(static_cast<size_t>(group - 2)), weights_->assets().config.talker.hidden_size, {code}))
+                : lookup_rows(w.code_predictor_embeddings.at(static_cast<size_t>(group - 1)), weights_->assets().config.talker.hidden_size, {code});
             logits = run_step(group, row);
             code = options.subtalker_do_sample
                 ? sample_index(
@@ -1678,6 +1685,17 @@ public:
 
     const CodePredictorTiming & timing() const noexcept {
         return timing_;
+    }
+
+    VietneuTalkerPrefillLogits read_text_logits() {
+        const auto & config = weights_->assets().config.talker;
+        VietneuTalkerPrefillLogits out;
+        out.vocab_size = config.text_vocab_size;
+        out.values.resize(static_cast<size_t>(config.text_vocab_size));
+        const auto timing_start = Clock::now();
+        ggml_backend_tensor_get(prefill_text_logits_, out.values.data(), 0, out.values.size() * sizeof(float));
+        timing_.output_read_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+        return out;
     }
 
 private:
@@ -1748,6 +1766,34 @@ private:
         prefill_logits_ = decoder_out.logits.tensor;
         ggml_set_output(prefill_logits_);
         ggml_build_forward_expand(prefill_graph_, prefill_logits_);
+
+        if (root_config.is_vieneu) {
+            ggml_tensor * slot0 = ggml_view_2d(
+                ctx.ggml,
+                decoder_out.sequence.tensor,
+                root_config.talker.hidden_size,
+                1,
+                decoder_out.sequence.tensor->nb[1],
+                0);
+            auto norm_module = modules::RMSNormModule({root_config.talker.hidden_size, config.rms_norm_eps, true, false});
+            auto norm_out = norm_module.build(
+                ctx,
+                core::wrap_tensor(slot0, core::TensorShape::from_dims({1, 1, root_config.talker.hidden_size}), GGML_TYPE_F32),
+                binding::norm_data(constants, tensor_weights.code_predictor.norm));
+            auto lm_head_module = modules::LinearModule(modules::LinearConfig{
+                root_config.talker.hidden_size,
+                root_config.talker.text_vocab_size,
+                false,
+                GGML_PREC_DEFAULT
+            });
+            auto text_logits = lm_head_module.build(
+                ctx,
+                norm_out,
+                binding::linear_data(constants, tensor_weights.codec_head));
+            prefill_text_logits_ = text_logits.tensor;
+            ggml_set_output(prefill_text_logits_);
+            ggml_build_forward_expand(prefill_graph_, prefill_text_logits_);
+        }
     }
 
     StepGraph build_step_graph(
@@ -1821,6 +1867,7 @@ private:
         }
         valid_steps_ = 2;
         current_end_ = 2;
+
         return read_logits(prefill_logits_);
     }
 
@@ -1868,6 +1915,7 @@ private:
 
     VietneuTalkerPrefillLogits read_logits(ggml_tensor * logits_tensor) {
         const auto & config = weights_->assets().config.code_predictor;
+
         VietneuTalkerPrefillLogits out;
         out.vocab_size = config.vocab_size;
         out.values.resize(static_cast<size_t>(config.vocab_size));
@@ -1877,6 +1925,8 @@ private:
         return out;
     }
 
+
+
     std::shared_ptr<const VietneuTalkerWeightsRuntime> weights_;
     int64_t code_groups_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -1885,6 +1935,7 @@ private:
     ggml_tensor * prefill_input_ = nullptr;
     ggml_tensor * prefill_positions_ = nullptr;
     ggml_tensor * prefill_logits_ = nullptr;
+    ggml_tensor * prefill_text_logits_ = nullptr;
     ggml_cgraph * prefill_graph_ = nullptr;
     std::vector<StepGraph> step_graphs_;
     std::vector<ggml_fp16_t> step_attention_mask_buffer_;
@@ -2009,9 +2060,12 @@ public:
                     options.seed,
                     sample_call_index++)
                 : argmax_index(logits);
+
             processor_ms += engine::debug::elapsed_ms(processor_start, Clock::now());
-            if (first_code == config.codec_eos_token_id) {
-                break;
+            if (!weights_->assets().config.is_vieneu) {
+                if (first_code == config.codec_eos_token_id) {
+                    break;
+                }
             }
             if (step + 1 >= max_new_tokens) {
                 break;
@@ -2030,6 +2084,15 @@ public:
             code_predictor_timing.output_read_ms += predictor_timing.output_read_ms;
             out.generated_codes.codes.insert(out.generated_codes.codes.end(), frame.codes.begin(), frame.codes.end());
             ++out.generated_codes.frames;
+
+            if (weights_->assets().config.is_vieneu) {
+                const auto text_logits = code_predictor_graph_->read_text_logits();
+                const int32_t text_token = argmax_index(text_logits.values);
+
+                if (text_token == config.codec_eos_token_id) {
+                    break;
+                }
+            }
 
             const auto frame_embed_start = Clock::now();
             const auto text_hidden = step < trailing_rows
