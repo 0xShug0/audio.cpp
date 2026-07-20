@@ -14,7 +14,7 @@
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/sampling/torch_random.h"
 
-#include "../../models/common/constant_tensor_cache.h"
+#include "../common/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>

@@ -13,7 +13,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../../models/common/constant_tensor_cache.h"
+#include "../common/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
