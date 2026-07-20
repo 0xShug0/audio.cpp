@@ -24,7 +24,7 @@
 #include "engine/models/moss/moss_tts_nano/loader.h"
 #include "engine/models/nemotron_asr/loader.h"
 #include "engine/models/omnivoice/loader.h"
-#include "engine/models/outetts/loader.h"
+#include "engine/community_models/outetts/loader.h"
 #include "engine/models/pocket_tts/loader.h"
 #include "engine/models/qwen3_asr/loader.h"
 #include "engine/models/qwen3_forced_aligner/loader.h"

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/framework/runtime/model.h"
-#include "engine/models/outetts/assets.h"
+#include "engine/community_models/outetts/assets.h"
 
 #include <filesystem>
 #include <memory>

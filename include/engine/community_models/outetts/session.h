@@ -2,10 +2,10 @@
 
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/outetts/assets.h"
-#include "engine/models/outetts/dac.h"
-#include "engine/models/outetts/llama.h"
-#include "engine/models/outetts/tokenizer.h"
+#include "engine/community_models/outetts/assets.h"
+#include "engine/community_models/outetts/dac.h"
+#include "engine/community_models/outetts/llama.h"
+#include "engine/community_models/outetts/tokenizer.h"
 
 #include <cstddef>
 #include <cstdint>

@@ -3,7 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session.h"
-#include "engine/models/outetts/assets.h"
+#include "engine/community_models/outetts/assets.h"
 
 #include <cstddef>
 #include <cstdint>

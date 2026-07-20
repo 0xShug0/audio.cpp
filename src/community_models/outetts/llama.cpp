@@ -1,4 +1,4 @@
-#include "engine/models/outetts/llama.h"
+#include "engine/community_models/outetts/llama.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -7,7 +7,7 @@
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
-#include "../common/constant_tensor_cache.h"
+#include "../../models/common/constant_tensor_cache.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>

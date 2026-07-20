@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/models/outetts/assets.h"
+#include "engine/community_models/outetts/assets.h"
 
 #include <cstdint>
 #include <memory>

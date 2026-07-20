@@ -1,7 +1,7 @@
-#include "engine/models/outetts/loader.h"
+#include "engine/community_models/outetts/loader.h"
 
 #include "engine/framework/assets/model_package.h"
-#include "engine/models/outetts/session.h"
+#include "engine/community_models/outetts/session.h"
 
 #include <stdexcept>
 #include <utility>

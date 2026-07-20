@@ -1,4 +1,4 @@
-#include "engine/models/outetts/assets.h"
+#include "engine/community_models/outetts/assets.h"
 
 #include "engine/framework/assets/model_package.h"
 #include "engine/framework/io/config.h"

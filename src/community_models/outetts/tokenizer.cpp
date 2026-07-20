@@ -1,4 +1,4 @@
-#include "engine/models/outetts/tokenizer.h"
+#include "engine/community_models/outetts/tokenizer.h"
 
 #include "engine/framework/text/utf8.h"
 #include "engine/framework/tokenizers/llama_bpe.h"

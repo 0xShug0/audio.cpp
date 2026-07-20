@@ -1,4 +1,4 @@
-#include "engine/models/outetts/dac.h"
+#include "engine/community_models/outetts/dac.h"
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"

@@ -1,4 +1,4 @@
-#include "engine/models/outetts/session.h"
+#include "engine/community_models/outetts/session.h"
 
 #include "engine/framework/audio/fft.h"
 #include "engine/framework/runtime/options.h"
