@@ -586,6 +586,7 @@ PromptEmbeddingState build_prompt_state(
                 }
             }
         }
+        std::fflush(stderr);
 
         // 2. Build text prompt tokens list: [style_token_id, tps] + phone_ids + [tpe]
         const int32_t style_token_id = 16;
@@ -631,7 +632,6 @@ PromptEmbeddingState build_prompt_state(
             state.prompt.insert(state.prompt.end(), ref_embed.begin(), ref_embed.end());
         }
 
-        // 6. Add speaker anchor to every row of prompt embeddings
         for (size_t i = 0; i < state.prompt.size(); i += static_cast<size_t>(hidden_size)) {
             for (size_t j = 0; j < static_cast<size_t>(hidden_size); ++j) {
                 state.prompt[i + j] += speaker_anchor[j];
@@ -2019,7 +2019,8 @@ public:
             generated_first_codes.push_back(first_code);
             VietneuTalkerCodePredictorInput predictor_input;
             predictor_input.talker_hidden = current.last_hidden;
-            predictor_input.first_code = first_code;
+            const int32_t sgs_id = static_cast<int32_t>(weights_->assets().config.speech_generation_start_token_id);
+            predictor_input.first_code = sgs_id;
             const auto code_predictor_start = Clock::now();
             const auto frame = code_predictor_graph_->generate(predictor_input, options, rng, sample_call_index);
             code_predictor_ms += engine::debug::elapsed_ms(code_predictor_start, Clock::now());

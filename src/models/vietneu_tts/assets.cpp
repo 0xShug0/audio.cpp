@@ -60,6 +60,8 @@ VietneuTTSConfig parse_config(const assets::ResourceBundle & resources) {
     config.talker.codec_pad_id = json::optional_i64(root, "audio_pad_token_id", 1024);
     config.talker.codec_think_bos_id = 0;
     config.talker.codec_think_eos_id = 0;
+    config.talker.rope_theta = json::optional_f32(root, "rope_theta", config.talker.rope_theta);
+    config.talker.rms_norm_eps = json::optional_f32(root, "rms_norm_eps", config.talker.rms_norm_eps);
 
     // Code predictor / Acoustic decoder
     config.code_predictor.hidden_size = config.talker.hidden_size;
@@ -69,6 +71,8 @@ VietneuTTSConfig parse_config(const assets::ResourceBundle & resources) {
     config.code_predictor.num_key_value_heads = config.local_num_attention_heads;
     config.code_predictor.head_dim = config.code_predictor.hidden_size / config.code_predictor.num_attention_heads;
     config.code_predictor.vocab_size = config.talker.vocab_size;
+    config.code_predictor.rope_theta = json::optional_f32(root, "rope_theta", config.code_predictor.rope_theta);
+    config.code_predictor.rms_norm_eps = json::optional_f32(root, "rms_norm_eps", config.code_predictor.rms_norm_eps);
 
     // Speech tokenizer
     config.speech_tokenizer.model_type = "vietneu_tts_tokenizer_12hz";
