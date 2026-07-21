@@ -568,6 +568,13 @@ target_link_libraries(engine_runtime PUBLIC ggml)
 target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_vendor)
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(engine_runtime PRIVATE OpenMP::OpenMP_CXX)
+    if (MSVC)
+        # MSVC's default /openmp implements only OpenMP 2.0 and rejects the
+        # '#pragma omp simd' directives in longformer_attention.cpp (error C7660).
+        # /openmp:experimental enables the OpenMP 4.0 SIMD support; it overrides the
+        # /openmp added by OpenMP::OpenMP_CXX above (harmless D9025 override notice).
+        target_compile_options(engine_runtime PRIVATE /openmp:experimental)
+    endif()
 endif()
 
 if (ENGINE_ENABLE_CUDA)

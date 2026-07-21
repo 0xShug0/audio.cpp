@@ -215,7 +215,22 @@ def _cmake_cache_backend(bin_dir):
     """gpu/cpu for a build tree whose directory name doesn't say, read from its
     CMakeCache.txt (GGML_CUDA:BOOL=ON). Returns None when there is no cache to
     read — an installed tree, or a layout we don't recognize."""
-    cache = os.path.join(os.path.dirname(bin_dir), "CMakeCache.txt")
+    # Walk up from the bin dir to find the build tree's CMakeCache.txt. Single-config
+    # generators put the exe in build/bin (cache one level up); multi-config ones
+    # (Visual Studio) nest it in build/bin/Release, so the cache sits two levels up.
+    cache = None
+    d = os.path.dirname(bin_dir)
+    for _ in range(4):
+        cand = os.path.join(d, "CMakeCache.txt")
+        if os.path.isfile(cand):
+            cache = cand
+            break
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    if cache is None:
+        return None
     try:
         with open(cache, encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -240,8 +255,14 @@ def _discover_dev_bin_dirs():
                       if os.path.isfile(os.path.join(d, SERVER_EXE_NAME)))
         if hits:
             out[backend] = hits[-1]
-    plain = os.path.join(PROJECT_ROOT, "build", "bin")
-    if os.path.isfile(os.path.join(plain, SERVER_EXE_NAME)):
+    # A plain `cmake -B build` lands in build/bin with single-config generators
+    # (Ninja, Makefiles); multi-config generators (Visual Studio, Xcode) nest the
+    # exe in a per-config subdir, so also look in build/bin/Release and .../Debug.
+    for plain in (os.path.join(PROJECT_ROOT, "build", "bin"),
+                  os.path.join(PROJECT_ROOT, "build", "bin", "Release"),
+                  os.path.join(PROJECT_ROOT, "build", "bin", "Debug")):
+        if not os.path.isfile(os.path.join(plain, SERVER_EXE_NAME)):
+            continue
         backend = _cmake_cache_backend(plain)
         # Only fill a backend the named-directory scan didn't already find, so an
         # explicit build/linux-cuda-release still wins over a stale plain build/.

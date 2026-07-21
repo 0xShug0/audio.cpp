@@ -32,24 +32,41 @@ save_file: Any = None
 yaml: Any = None
 
 
+def _ensure_download_deps() -> None:
+    """Import only what a plain snapshot/file download needs: huggingface_hub + yaml.
+
+    Downloading model weights must not require Torch — importing Torch pulls in
+    native DLLs (c10.dll etc.) that can fail to load in some environments (e.g. a
+    conda-based interpreter on Windows), which would needlessly block downloads for
+    models whose loading/inference happens entirely in the C++ server."""
+    global hf_hub_download, yaml
+    if hf_hub_download is not None:
+        return
+    from huggingface_hub import hf_hub_download as _hf_hub_download
+    import yaml as _yaml
+
+    hf_hub_download = _hf_hub_download
+    yaml = _yaml
+
+
 def _ensure_install_deps() -> None:
-    """Import Torch / huggingface_hub / safetensors / yaml on first install/convert use."""
+    """Import Torch / huggingface_hub / safetensors / yaml on first install/convert use.
+
+    Only needed for conversion (torch.load / safetensors round-trips). Snapshot
+    downloads should call _ensure_download_deps() instead, so they don't drag in Torch."""
     global torch, hf_hub_download, safe_open, load_file, save_file, yaml
     if torch is not None:
         return
+    _ensure_download_deps()
     import torch as _torch
-    from huggingface_hub import hf_hub_download as _hf_hub_download
     from safetensors import safe_open as _safe_open
     from safetensors.torch import load_file as _load_file
     from safetensors.torch import save_file as _save_file
-    import yaml as _yaml
 
     torch = _torch
-    hf_hub_download = _hf_hub_download
     safe_open = _safe_open
     load_file = _load_file
     save_file = _save_file
-    yaml = _yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -2702,7 +2719,6 @@ def command_info(args: argparse.Namespace) -> int:
 
 
 def command_install(args: argparse.Namespace) -> int:
-    _ensure_install_deps()
     package = PACKAGE_BY_ID.get(args.package_id)
     if package is None:
         raise RuntimeError(f"unknown package id: {args.package_id}")
@@ -2712,10 +2728,15 @@ def command_install(args: argparse.Namespace) -> int:
     if isinstance(source, UnsupportedSource):
         raise RuntimeError(f"{package.id} is not installable: {source.reason}")
     if isinstance(source, SnapshotSource):
+        # Plain download: huggingface_hub only, no Torch DLLs.
+        _ensure_download_deps()
         install_path = install_snapshot(package, source, models_root, args.overwrite)
     elif isinstance(source, CompositeSnapshotSource):
+        # Composite snapshots may run a Torch post-process step, so bring in full deps.
+        _ensure_install_deps()
         install_path = install_composite_snapshot(package, source, models_root, args.overwrite)
     else:
+        _ensure_install_deps()
         install_path = install_converter(
             package,
             source,
