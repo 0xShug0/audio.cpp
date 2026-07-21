@@ -11,6 +11,7 @@ import sys
 import wave
 from pathlib import Path
 
+import librosa
 import numpy as np
 
 
@@ -122,29 +123,6 @@ def stft_magnitude(samples: np.ndarray, n_fft: int = 1024, hop: int = 256) -> np
     return spec
 
 
-def hz_to_mel(freq: np.ndarray | float) -> np.ndarray | float:
-    return 2595.0 * np.log10(1.0 + np.asarray(freq) / 700.0)
-
-
-def mel_to_hz(mel: np.ndarray) -> np.ndarray:
-    return 700.0 * (np.power(10.0, mel / 2595.0) - 1.0)
-
-
-def mel_filterbank(sample_rate: int, n_fft: int, n_mels: int = 80) -> np.ndarray:
-    freq_bins = n_fft // 2 + 1
-    mel_points = np.linspace(float(hz_to_mel(0.0)), float(hz_to_mel(sample_rate / 2.0)), n_mels + 2)
-    hz_points = mel_to_hz(mel_points)
-    bins = np.floor((n_fft + 1) * hz_points / sample_rate).astype(np.int64)
-    filters = np.zeros((n_mels, freq_bins), dtype=np.float32)
-    for mel_index in range(n_mels):
-        left, center, right = bins[mel_index : mel_index + 3]
-        if center > left:
-            filters[mel_index, left:center] = (np.arange(left, center) - left) / (center - left)
-        if right > center:
-            filters[mel_index, center:right] = (right - np.arange(center, right)) / (right - center)
-    return filters
-
-
 def wav_similarity_detail(src_path: Path, baseline_path: Path) -> tuple[float, str]:
     src_rate, src_audio = read_wav_f32(src_path)
     baseline_rate, baseline_audio = read_wav_f32(baseline_path)
@@ -163,12 +141,13 @@ def wav_similarity_detail(src_path: Path, baseline_path: Path) -> tuple[float, s
     stft_cos = cosine_similarity(src_mag, baseline_mag)
     log_stft_cos = cosine_similarity(np.log1p(src_mag), np.log1p(baseline_mag))
 
-    if src_rate == baseline_rate and freq_bins > 0 and frames > 0:
-        filters = mel_filterbank(src_rate, 1024)
-        filters = filters[:, :freq_bins]
-        src_mel = np.log1p(filters @ src_mag)
-        baseline_mel = np.log1p(filters @ baseline_mag)
-        log_mel_cos = cosine_similarity(src_mel, baseline_mel)
+    if src_rate == baseline_rate and src_mono.size > 0 and baseline_mono.size > 0:
+        src_mel = librosa.feature.melspectrogram(y=mono(src_audio), sr=src_rate)
+        baseline_mel = librosa.feature.melspectrogram(y=mono(baseline_audio), sr=baseline_rate)
+        mel_frames = min(src_mel.shape[1], baseline_mel.shape[1])
+        src_log_mel = librosa.power_to_db(src_mel[:, :mel_frames], ref=1.0)
+        baseline_log_mel = librosa.power_to_db(baseline_mel[:, :mel_frames], ref=1.0)
+        log_mel_cos = cosine_similarity(src_log_mel, baseline_log_mel)
         log_mel_text = f"{log_mel_cos:.9f}"
     else:
         log_mel_text = "n/a"

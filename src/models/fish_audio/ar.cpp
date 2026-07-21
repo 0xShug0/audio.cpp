@@ -613,21 +613,43 @@ FishStaticDecoderOutputs build_fish_static_decoder(
     int64_t cache_steps,
     const core::TensorValue & attention_mask,
     const core::TensorValue & cache_slot,
+    std::vector<core::TensorValue> cache_keys,
+    std::vector<core::TensorValue> cache_values,
     bool norm_fastlayer_input) {
-    auto decoder = modules::QwenCausalDecoderModule(config).build_static_cache_tail(
-        ctx,
-        graph,
-        input,
-        positions,
-        weights,
-        cache_steps,
-        attention_mask,
-        cache_slot);
-    auto fast_hidden = norm_fastlayer_input ? decoder.hidden : decoder.sequence;
+    if (cache_keys.size() != weights.stack.layers.size() || cache_values.size() != weights.stack.layers.size()) {
+        throw std::runtime_error("Fish Audio static decoder cache layer count mismatch");
+    }
+    const int64_t step_elems = config.stack.num_key_value_heads * config.stack.head_dim;
+    auto x = input;
+    const auto layer_config = modules::qwen_decoder_layer_config_from_stack(config.stack);
+    const modules::QwenDecoderLayerModule layer_module(layer_config);
+    for (size_t layer_index = 0; layer_index < weights.stack.layers.size(); ++layer_index) {
+        auto out = layer_module.build_with_static_cache_tail(
+            ctx,
+            graph,
+            x,
+            positions,
+            weights.stack.layers[layer_index],
+            cache_keys[layer_index],
+            cache_values[layer_index],
+            cache_slot,
+            attention_mask);
+        x = out.output;
+    }
+    auto hidden = modules::RMSNormModule({config.stack.hidden_size, config.stack.rms_norm_eps, true, false})
+                      .build(ctx, x, weights.final_norm);
+    const auto logits = modules::LinearModule({
+                            config.stack.hidden_size,
+                            config.logits_size,
+                            config.use_lm_head_bias,
+                            config.lm_head_precision,
+                        })
+                            .build(ctx, hidden, weights.lm_head);
+    auto fast_hidden = norm_fastlayer_input ? hidden : x;
     return {
         fast_hidden,
-        decoder.logits,
-        std::move(decoder.cache),
+        logits,
+        runtime::TransformerKVCache(cache_steps, step_elems, std::move(cache_keys), std::move(cache_values)),
     };
 }
 
@@ -960,23 +982,60 @@ private:
         StepGraph(std::shared_ptr<const FishARWeightsRuntime> runtime, int64_t cache_steps)
             : runtime_(std::move(runtime)),
               cache_steps_(cache_steps) {
-            ggml_init_params params{runtime_->graph_arena_bytes(), nullptr, true};
-            ctx_.reset(ggml_init(params));
-            if (ctx_ == nullptr) {
+            ggml_init_params state_params{8ull * 1024ull * 1024ull, nullptr, true};
+            state_ctx_.reset(ggml_init(state_params));
+            if (state_ctx_ == nullptr) {
+                throw std::runtime_error("failed to initialize Fish Audio AR step state context");
+            }
+            ggml_init_params graph_params{runtime_->graph_arena_bytes(), nullptr, true};
+            graph_ctx_.reset(ggml_init(graph_params));
+            if (graph_ctx_ == nullptr) {
                 throw std::runtime_error("failed to initialize Fish Audio AR step context");
             }
             const auto & assets = runtime_->assets();
             const auto & config = assets.config.text;
-            core::ModuleBuildContext ctx{ctx_.get(), "fish_audio.ar.step", runtime_->backend_type()};
+            input_ = ggml_new_tensor_3d(state_ctx_.get(), GGML_TYPE_F32, config.dim, 1, 1);
+            position_ = ggml_new_tensor_1d(state_ctx_.get(), GGML_TYPE_I32, 1);
+            cache_slot_ = ggml_new_tensor_1d(state_ctx_.get(), GGML_TYPE_I32, 1);
+            mask_ = ggml_new_tensor_4d(state_ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, 1);
+            std::vector<core::TensorValue> cache_keys;
+            std::vector<core::TensorValue> cache_values;
+            cache_keys.reserve(runtime_->weights().slow_layers.size());
+            cache_values.reserve(runtime_->weights().slow_layers.size());
+            for (size_t layer = 0; layer < runtime_->weights().slow_layers.size(); ++layer) {
+                cache_keys.push_back(core::wrap_tensor(
+                    ggml_new_tensor_4d(
+                        state_ctx_.get(),
+                        GGML_TYPE_F32,
+                        config.head_dim,
+                        config.n_local_heads,
+                        cache_steps_,
+                        1),
+                    core::TensorShape::from_dims({1, cache_steps_, config.n_local_heads, config.head_dim}),
+                    GGML_TYPE_F32));
+                cache_values.push_back(core::wrap_tensor(
+                    ggml_new_tensor_4d(
+                        state_ctx_.get(),
+                        GGML_TYPE_F32,
+                        config.head_dim,
+                        config.n_local_heads,
+                        cache_steps_,
+                        1),
+                    core::TensorShape::from_dims({1, cache_steps_, config.n_local_heads, config.head_dim}),
+                    GGML_TYPE_F32));
+            }
+            state_buffer_ = ggml_backend_alloc_ctx_tensors(state_ctx_.get(), runtime_->backend());
+            if (state_buffer_ == nullptr) {
+                throw std::runtime_error("failed to allocate Fish Audio AR step state tensors");
+            }
+
+            core::ModuleBuildContext ctx{graph_ctx_.get(), "fish_audio.ar.step", runtime_->backend_type()};
             auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.dim}));
-            input_ = input.tensor;
-            position_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
-            cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
-            mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, 1);
+            input = core::wrap_tensor(ggml_cpy(ctx.ggml, input_, input.tensor), input.shape, input.type);
             auto position_value = core::wrap_tensor(position_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
             auto cache_slot_value = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
             auto mask_value = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, 1, cache_steps_}), GGML_TYPE_F16);
-            graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
+            graph_ = ggml_new_graph_custom(graph_ctx_.get(), 65536, false);
             auto & constants = runtime_->slow_step_constants();
             constants.begin_graph();
             auto decoder = build_fish_static_decoder(
@@ -989,6 +1048,8 @@ private:
                 cache_steps_,
                 mask_value,
                 cache_slot_value,
+                std::move(cache_keys),
+                std::move(cache_values),
                 assets.config.norm_fastlayer_input);
             cache_ = std::move(decoder.cache);
             hidden_ = decoder.hidden.tensor;
@@ -999,8 +1060,10 @@ private:
             ggml_build_forward_expand(graph_, hidden_);
             constants.finish_graph();
             constants.ensure_uploaded();
-            buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-            if (buffer_ == nullptr) {
+            gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+            if (gallocr_ == nullptr ||
+                !ggml_gallocr_reserve(gallocr_, graph_) ||
+                !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
                 throw std::runtime_error("failed to allocate Fish Audio AR step tensors");
             }
             mask_scratch_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-INFINITY));
@@ -1008,8 +1071,11 @@ private:
 
         ~StepGraph() {
             core::release_backend_graph_resources(runtime_->backend(), graph_);
-            if (buffer_ != nullptr) {
-                ggml_backend_buffer_free(buffer_);
+            if (gallocr_ != nullptr) {
+                ggml_gallocr_free(gallocr_);
+            }
+            if (state_buffer_ != nullptr) {
+                ggml_backend_buffer_free(state_buffer_);
             }
         }
 
@@ -1073,7 +1139,8 @@ private:
     private:
         std::shared_ptr<const FishARWeightsRuntime> runtime_;
         int64_t cache_steps_ = 0;
-        std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+        std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
+        std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx_;
         ggml_tensor * input_ = nullptr;
         ggml_tensor * position_ = nullptr;
         ggml_tensor * cache_slot_ = nullptr;
@@ -1083,28 +1150,66 @@ private:
         runtime::TransformerKVCache cache_;
         std::vector<ggml_fp16_t> mask_scratch_;
         ggml_cgraph * graph_ = nullptr;
-        ggml_backend_buffer_t buffer_ = nullptr;
+        ggml_gallocr_t gallocr_ = nullptr;
+        ggml_backend_buffer_t state_buffer_ = nullptr;
     };
 
     class FastGraph {
     public:
         explicit FastGraph(std::shared_ptr<const FishARWeightsRuntime> runtime)
             : runtime_(std::move(runtime)) {
-            ggml_init_params params{runtime_->graph_arena_bytes(), nullptr, true};
-            ctx_.reset(ggml_init(params));
-            if (ctx_ == nullptr) {
+            ggml_init_params state_params{8ull * 1024ull * 1024ull, nullptr, true};
+            state_ctx_.reset(ggml_init(state_params));
+            if (state_ctx_ == nullptr) {
+                throw std::runtime_error("failed to initialize Fish Audio fast AR state context");
+            }
+            ggml_init_params graph_params{runtime_->graph_arena_bytes(), nullptr, true};
+            graph_ctx_.reset(ggml_init(graph_params));
+            if (graph_ctx_ == nullptr) {
                 throw std::runtime_error("failed to initialize Fish Audio fast AR context");
             }
             const auto & config = runtime_->assets().config.fast;
             const auto & weights = runtime_->weights();
-            core::ModuleBuildContext ctx{ctx_.get(), "fish_audio.ar.fast", runtime_->backend_type()};
+            input_ = ggml_new_tensor_3d(state_ctx_.get(), GGML_TYPE_F32, config.dim, 1, 1);
+            position_ = ggml_new_tensor_1d(state_ctx_.get(), GGML_TYPE_I32, 1);
+            mask_ = ggml_new_tensor_4d(state_ctx_.get(), GGML_TYPE_F16, config.num_codebooks, 1, 1, 1);
+            std::vector<core::TensorValue> cache_keys;
+            std::vector<core::TensorValue> cache_values;
+            cache_keys.reserve(weights.fast_layers.size());
+            cache_values.reserve(weights.fast_layers.size());
+            for (size_t layer = 0; layer < weights.fast_layers.size(); ++layer) {
+                cache_keys.push_back(core::wrap_tensor(
+                    ggml_new_tensor_4d(
+                        state_ctx_.get(),
+                        GGML_TYPE_F32,
+                        config.head_dim,
+                        config.n_local_heads,
+                        config.num_codebooks,
+                        1),
+                    core::TensorShape::from_dims({1, config.num_codebooks, config.n_local_heads, config.head_dim}),
+                    GGML_TYPE_F32));
+                cache_values.push_back(core::wrap_tensor(
+                    ggml_new_tensor_4d(
+                        state_ctx_.get(),
+                        GGML_TYPE_F32,
+                        config.head_dim,
+                        config.n_local_heads,
+                        config.num_codebooks,
+                        1),
+                    core::TensorShape::from_dims({1, config.num_codebooks, config.n_local_heads, config.head_dim}),
+                    GGML_TYPE_F32));
+            }
+            state_buffer_ = ggml_backend_alloc_ctx_tensors(state_ctx_.get(), runtime_->backend());
+            if (state_buffer_ == nullptr) {
+                throw std::runtime_error("failed to allocate Fish Audio fast AR state tensors");
+            }
+
+            core::ModuleBuildContext ctx{graph_ctx_.get(), "fish_audio.ar.fast", runtime_->backend_type()};
             auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.dim}));
-            input_ = input.tensor;
-            position_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
-            mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, config.num_codebooks, 1, 1, 1);
+            input = core::wrap_tensor(ggml_cpy(ctx.ggml, input_, input.tensor), input.shape, input.type);
             auto position_value = core::wrap_tensor(position_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
             auto mask_value = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, 1, config.num_codebooks}), GGML_TYPE_F16);
-            graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
+            graph_ = ggml_new_graph_custom(graph_ctx_.get(), 32768, false);
             auto & constants = runtime_->fast_constants();
             constants.begin_graph();
             modules::QwenCausalDecoderWeights decoder_weights;
@@ -1114,27 +1219,28 @@ private:
             }
             decoder_weights.final_norm = binding::norm_data(constants, weights.fast_norm);
             decoder_weights.lm_head = binding::linear_data(constants, weights.fast_output);
-            auto decoder = modules::QwenCausalDecoderModule(make_fast_decoder_config(config))
-                               .build_static_cache_tail(
-                                   ctx,
-                                   graph_,
-                                   input,
-                                   position_value,
-                                   decoder_weights,
-                                   config.num_codebooks,
-                                   mask_value,
-                                   position_value);
-            for (size_t layer = 0; layer < weights.fast_layers.size(); ++layer) {
-                cache_keys_.push_back(decoder.cache.key_tensor(layer).tensor);
-                cache_values_.push_back(decoder.cache.value_tensor(layer).tensor);
-            }
+            auto decoder = build_fish_static_decoder(
+                ctx,
+                graph_,
+                input,
+                position_value,
+                decoder_weights,
+                make_fast_decoder_config(config),
+                config.num_codebooks,
+                mask_value,
+                position_value,
+                std::move(cache_keys),
+                std::move(cache_values),
+                true);
             logits_ = decoder.logits.tensor;
             ggml_set_output(logits_);
             ggml_build_forward_expand(graph_, logits_);
             constants.finish_graph();
             constants.ensure_uploaded();
-            buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-            if (buffer_ == nullptr) {
+            gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+            if (gallocr_ == nullptr ||
+                !ggml_gallocr_reserve(gallocr_, graph_) ||
+                !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
                 throw std::runtime_error("failed to allocate Fish Audio fast AR graph");
             }
             mask_scratch_.assign(static_cast<size_t>(config.num_codebooks), ggml_fp32_to_fp16(-INFINITY));
@@ -1142,8 +1248,11 @@ private:
 
         ~FastGraph() {
             core::release_backend_graph_resources(runtime_->backend(), graph_);
-            if (buffer_ != nullptr) {
-                ggml_backend_buffer_free(buffer_);
+            if (gallocr_ != nullptr) {
+                ggml_gallocr_free(gallocr_);
+            }
+            if (state_buffer_ != nullptr) {
+                ggml_backend_buffer_free(state_buffer_);
             }
         }
 
@@ -1190,16 +1299,16 @@ private:
 
     private:
         std::shared_ptr<const FishARWeightsRuntime> runtime_;
-        std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+        std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
+        std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx_;
         ggml_tensor * input_ = nullptr;
         ggml_tensor * position_ = nullptr;
         ggml_tensor * mask_ = nullptr;
         ggml_tensor * logits_ = nullptr;
-        std::vector<ggml_tensor *> cache_keys_;
-        std::vector<ggml_tensor *> cache_values_;
         std::vector<ggml_fp16_t> mask_scratch_;
         ggml_cgraph * graph_ = nullptr;
-        ggml_backend_buffer_t buffer_ = nullptr;
+        ggml_gallocr_t gallocr_ = nullptr;
+        ggml_backend_buffer_t state_buffer_ = nullptr;
     };
 
     void ensure_prefill_graph(int64_t steps, FishARProfile & profile) {
@@ -1250,7 +1359,6 @@ private:
         const auto biased = apply_semantic_bias(config, im_end_id(), slow_logits);
         profile.sample_bias_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         timing_start = Clock::now();
-        // Upstream Python accepts repetition_penalty on the request but does not apply it in this generation path.
         int32_t main_token = sample_from_logits(
             biased,
             options.temperature,

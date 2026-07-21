@@ -36,11 +36,13 @@ FishAudioCodes FishAudioGenerator::encode_reference(const runtime::AudioBuffer &
 FishAudioGenerationResult FishAudioGenerator::generate(
     const FishAudioRequest & request,
     const std::optional<FishAudioCodes> & reference_codes,
+    const std::optional<FishAudioConversationTurn> & previous_turn,
     bool mem_saver) {
     engine::debug::trace_log_scalar("fish_audio.request.has_reference", request.reference.has_value());
     engine::debug::trace_log_scalar("fish_audio.request.text_chars", static_cast<int64_t>(request.text.size()));
+    engine::debug::trace_log_scalar("fish_audio.request.has_previous_turn", previous_turn.has_value());
     const auto prompt_start = Clock::now();
-    const auto prompt = prompt_builder_.build(request, reference_codes);
+    const auto prompt = prompt_builder_.build(request, reference_codes, previous_turn);
     engine::debug::timing_log_scalar(
         "fish_audio.prompt_build_ms",
         engine::debug::elapsed_ms(prompt_start, Clock::now()));

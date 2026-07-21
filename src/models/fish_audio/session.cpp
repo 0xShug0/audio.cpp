@@ -439,14 +439,19 @@ runtime::TaskResult FishAudioSession::run(const runtime::TaskRequest & request) 
     engine::debug::trace_log_scalar("fish_audio.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
 
     runtime::AudioBuffer merged_audio;
-    for (const auto & chunk_request : chunk_requests) {
+    std::optional<FishAudioCodes> reference_codes = std::nullopt;
+    std::optional<FishAudioConversationTurn> previous_turn = std::nullopt;
+    for (size_t chunk_index = 0; chunk_index < chunk_requests.size(); ++chunk_index) {
+        const auto & chunk_request = chunk_requests[chunk_index];
         auto fish_request = make_request(chunk_request);
-        std::optional<FishAudioCodes> reference_codes = std::nullopt;
-        if (fish_request.reference.has_value()) {
+        if (fish_request.reference.has_value() && !reference_codes.has_value()) {
             reference_codes = resolve_reference_codes(*fish_request.reference);
         }
-        auto generated = generator_->generate(fish_request, reference_codes, mem_saver);
+        auto generated = generator_->generate(fish_request, reference_codes, previous_turn, mem_saver);
         runtime::append_audio_buffer(merged_audio, generated.audio);
+        if (chunk_requests.size() > 1) {
+            previous_turn = FishAudioConversationTurn{fish_request.text, std::move(generated.codes)};
+        }
     }
     runtime::TaskResult result;
     result.audio_output = std::move(merged_audio);

@@ -36,6 +36,11 @@ struct FishAudioCodes {
     int64_t frames = 0;
 };
 
+struct FishAudioConversationTurn {
+    std::string text;
+    FishAudioCodes codes;
+};
+
 struct FishAudioPrompt {
     std::vector<int32_t> matrix;
     int64_t codebook_rows = 0;

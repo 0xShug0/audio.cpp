@@ -9,7 +9,10 @@ class FishAudioPromptBuilder {
 public:
     FishAudioPromptBuilder(std::shared_ptr<const FishAudioAssets> assets, FishAudioTextTokenizer tokenizer);
 
-    FishAudioPrompt build(const FishAudioRequest & request, const std::optional<FishAudioCodes> & reference_codes) const;
+    FishAudioPrompt build(
+        const FishAudioRequest & request,
+        const std::optional<FishAudioCodes> & reference_codes,
+        const std::optional<FishAudioConversationTurn> & previous_turn) const;
 
 private:
     std::shared_ptr<const FishAudioAssets> assets_;

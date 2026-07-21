@@ -11,12 +11,34 @@ void append_tokens(std::vector<int32_t> & out, const std::vector<int32_t> & toke
     out.insert(out.end(), tokens.begin(), tokens.end());
 }
 
+struct CodeSpan {
+    int64_t start = 0;
+    const FishAudioCodes * codes = nullptr;
+};
+
 std::string reference_text_with_speakers(const std::string & text) {
     static const std::regex speaker_re(R"(<\|speaker:\d+\|>)");
     if (std::regex_search(text, speaker_re)) {
         return text;
     }
     return "<|speaker:0|>" + text;
+}
+
+void append_code_span(
+    std::vector<int32_t> & row0,
+    std::vector<CodeSpan> & spans,
+    const FishAudioTextTokenizer & tokenizer,
+    const FishAudioCodes & codes,
+    int64_t expected_codebooks) {
+    if (codes.codebooks != expected_codebooks) {
+        throw std::runtime_error("Fish Audio prompt codebook count mismatch");
+    }
+    const int64_t start = static_cast<int64_t>(row0.size());
+    const int32_t semantic_begin = tokenizer.semantic_begin_id();
+    for (int64_t frame = 0; frame < codes.frames; ++frame) {
+        row0.push_back(semantic_begin + codes.codes[static_cast<size_t>(frame)]);
+    }
+    spans.push_back({start, &codes});
 }
 
 }  // namespace
@@ -33,7 +55,8 @@ FishAudioPromptBuilder::FishAudioPromptBuilder(
 
 FishAudioPrompt FishAudioPromptBuilder::build(
     const FishAudioRequest & request,
-    const std::optional<FishAudioCodes> & reference_codes) const {
+    const std::optional<FishAudioCodes> & reference_codes,
+    const std::optional<FishAudioConversationTurn> & previous_turn) const {
     if (request.text.empty()) {
         throw std::runtime_error("Fish Audio request text must not be empty");
     }
@@ -43,26 +66,28 @@ FishAudioPrompt FishAudioPromptBuilder::build(
     }
 
     std::vector<int32_t> row0;
+    std::vector<CodeSpan> code_spans;
     if (request.reference.has_value()) {
         if (!reference_codes.has_value()) {
             throw std::runtime_error("Fish Audio reference request requires encoded reference codes");
-        }
-        if (reference_codes->codebooks != assets_->config.fast.num_codebooks) {
-            throw std::runtime_error("Fish Audio reference codebook count mismatch");
         }
         append_tokens(row0, tokenizer_.encode("<|im_start|>system\n"));
         append_tokens(row0, tokenizer_.encode("convert the provided text to speech reference to the following:\n\nText:\n"));
         append_tokens(row0, tokenizer_.encode(reference_text_with_speakers(request.reference->text)));
         append_tokens(row0, tokenizer_.encode("\n\nSpeech:\n"));
-        const int32_t semantic_begin = tokenizer_.semantic_begin_id();
-        for (int64_t frame = 0; frame < reference_codes->frames; ++frame) {
-            const int32_t code = reference_codes->codes[static_cast<size_t>(frame)];
-            row0.push_back(semantic_begin + code);
-        }
+        append_code_span(row0, code_spans, tokenizer_, *reference_codes, assets_->config.fast.num_codebooks);
         append_tokens(row0, tokenizer_.encode("<|im_end|>\n"));
     } else {
         append_tokens(row0, tokenizer_.encode("<|im_start|>system\n"));
         append_tokens(row0, tokenizer_.encode("convert the provided text to speech"));
+        append_tokens(row0, tokenizer_.encode("<|im_end|>\n"));
+    }
+    if (previous_turn.has_value()) {
+        append_tokens(row0, tokenizer_.encode("<|im_start|>user\n"));
+        append_tokens(row0, tokenizer_.encode(previous_turn->text));
+        append_tokens(row0, tokenizer_.encode("<|im_end|>\n"));
+        append_tokens(row0, tokenizer_.encode("<|im_start|>assistant\n<|voice|>"));
+        append_code_span(row0, code_spans, tokenizer_, previous_turn->codes, assets_->config.fast.num_codebooks);
         append_tokens(row0, tokenizer_.encode("<|im_end|>\n"));
     }
     append_tokens(row0, tokenizer_.encode("<|im_start|>user\n"));
@@ -78,21 +103,19 @@ FishAudioPrompt FishAudioPromptBuilder::build(
     for (int64_t step = 0; step < prompt.steps; ++step) {
         prompt.matrix[static_cast<size_t>(step)] = row0[static_cast<size_t>(step)];
     }
-    if (reference_codes.has_value()) {
-        int64_t semantic_index = 0;
-        for (int64_t step = 0; step < prompt.steps; ++step) {
-            const int32_t token = prompt.matrix[static_cast<size_t>(step)];
-            if (token < tokenizer_.semantic_begin_id() || token > tokenizer_.semantic_end_id()) {
-                continue;
+    for (const auto & span : code_spans) {
+        if (span.codes == nullptr) {
+            throw std::runtime_error("Fish Audio prompt code span is missing codes");
+        }
+        for (int64_t frame = 0; frame < span.codes->frames; ++frame) {
+            const int64_t step = span.start + frame;
+            if (step < 0 || step >= prompt.steps) {
+                throw std::runtime_error("Fish Audio prompt code span exceeds prompt length");
             }
-            if (semantic_index >= reference_codes->frames) {
-                break;
-            }
-            for (int64_t codebook = 0; codebook < reference_codes->codebooks; ++codebook) {
+            for (int64_t codebook = 0; codebook < span.codes->codebooks; ++codebook) {
                 prompt.matrix[static_cast<size_t>((codebook + 1) * prompt.steps + step)] =
-                    reference_codes->codes[static_cast<size_t>(codebook * reference_codes->frames + semantic_index)];
+                    span.codes->codes[static_cast<size_t>(codebook * span.codes->frames + frame)];
             }
-            ++semantic_index;
         }
     }
     return prompt;

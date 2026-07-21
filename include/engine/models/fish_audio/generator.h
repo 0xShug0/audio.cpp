@@ -27,6 +27,7 @@ public:
     FishAudioGenerationResult generate(
         const FishAudioRequest & request,
         const std::optional<FishAudioCodes> & reference_codes,
+        const std::optional<FishAudioConversationTurn> & previous_turn,
         bool mem_saver);
 
 private:
