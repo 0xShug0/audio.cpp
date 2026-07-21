@@ -305,7 +305,8 @@ void handle_client(SocketHandle client, IHttpHandler & handler) {
     UniqueSocket socket(client);
     try {
         const auto request = read_http_request(socket.get());
-        const auto response = handler.handle(request);
+        auto response = handler.handle(request);
+        response.headers["Access-Control-Allow-Origin"] = "*";
         if (response.stream_body) {
             send_all(socket.get(), serialize_stream_headers(response));
             ChunkedHttpStreamWriter writer(socket.get());
@@ -328,7 +329,9 @@ void handle_client(SocketHandle client, IHttpHandler & handler) {
         }
     } catch (const std::exception & ex) {
         try {
-            send_all(socket.get(), serialize_response(error_response(500, ex.what(), "server_error")));
+            auto err_response = error_response(500, ex.what(), "server_error");
+            err_response.headers["Access-Control-Allow-Origin"] = "*";
+            send_all(socket.get(), serialize_response(err_response));
         } catch (const std::exception & send_error) {
             std::cerr << "audiocpp_server failed to send error response: " << send_error.what() << "\n";
         }

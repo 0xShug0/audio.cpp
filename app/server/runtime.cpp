@@ -550,6 +550,14 @@ ServerState::ServerState(ServerConfig config, std::filesystem::path request_base
 
 HttpResponse ServerState::handle(const HttpRequest & request) {
   try {
+    if (request.method == "OPTIONS") {
+        HttpResponse response;
+        response.status = 204;
+        response.content_type = "text/plain";
+        response.headers["Access-Control-Allow-Headers"] = "*";
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST";
+        return response;
+    }
     if (request.method == "GET" && request.path == "/health") {
         return json_response(
             "{\"status\":\"ok\",\"backend\":\"" +
