@@ -1063,8 +1063,11 @@ def _ensure_wav(path, target_sr=None):
         raise gr.Error(_t("ffmpeg 转码 {ext} → wav 失败：{error}",
                           "ffmpeg conversion {ext} → wav failed: {error}",
                           ext=ext, error=err or _t("未知错误", "unknown error")))
-    note = f"，重采样到 {target_sr}Hz" if target_sr else ""
-    _ui_log(f"输入转码：{os.path.basename(path)}（{ext}）→ 16-bit PCM WAV{note}")
+    note = (_t("，重采样到 {sr}Hz", ", resampled to {sr}Hz", sr=target_sr)
+            if target_sr else "")
+    _ui_log(_t("输入转码：{name}（{ext}）→ 16-bit PCM WAV{note}",
+               "input transcoded: {name} ({ext}) → 16-bit PCM WAV{note}",
+               name=os.path.basename(path), ext=ext, note=note))
     _WAV_CACHE[key] = out
     return out
 
@@ -1349,7 +1352,8 @@ def _load_required_files():
                 data = json.load(f)
             return {k: v for k, v in data.items() if isinstance(v, list)}
         except Exception as e:
-            print(f"[webui] failed to read {REQUIRED_FILES_PATH}: {e}; 跳过模型完整性检查")
+            print(f"[webui] failed to read {REQUIRED_FILES_PATH}: {e}; "
+                  + _t("跳过模型完整性检查", "skipping model integrity check"))
     return {}
 
 
@@ -1852,17 +1856,23 @@ def _pump_server_output(proc):
             if line == last:
                 repeats += 1
                 if repeats % 50 == 0:
-                    _emit_log_line(f"[{_ts()}]   ... 上一行已重复 {repeats} 次\n")
+                    _emit_log_line(f"[{_ts()}]   ... " + _t(
+                        "上一行已重复 {count} 次", "previous line repeated {count} times",
+                        count=repeats) + "\n")
                 continue
             if repeats:
-                _emit_log_line(f"[{_ts()}]   ... (上一行共重复 {repeats} 次)\n")
+                _emit_log_line(f"[{_ts()}]   ... " + _t(
+                    "（上一行共重复 {count} 次）", "(previous line repeated {count} times total)",
+                    count=repeats) + "\n")
             last, repeats = line, 0
             _emit_log_line(f"[{_ts()}] {line}")
     except Exception:
         pass
     finally:
         if repeats:
-            _emit_log_line(f"[{_ts()}]   ... (上一行共重复 {repeats} 次)\n")
+            _emit_log_line(f"[{_ts()}]   ... " + _t(
+                "（上一行共重复 {count} 次）", "(previous line repeated {count} times total)",
+                count=repeats) + "\n")
 
 
 def _start_server(entry):
@@ -1885,8 +1895,11 @@ def _start_server(entry):
         creationflags=flags, text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
     _loaded_id = entry["id"]
-    extra = f"，threads={THREADS}" if SERVER_BACKEND == "cpu" else ""
-    _ui_log(f"启动 audiocpp_server（backend={SERVER_BACKEND}{extra}），加载模型 {entry['label']} …")
+    extra = (_t("，threads={threads}", ", threads={threads}", threads=THREADS)
+             if SERVER_BACKEND == "cpu" else "")
+    _ui_log(_t("启动 audiocpp_server（backend={backend}{extra}），加载模型 {label} …",
+               "starting audiocpp_server (backend={backend}{extra}), loading model {label} …",
+               backend=SERVER_BACKEND, extra=extra, label=entry['label']))
     threading.Thread(target=_pump_server_output, args=(_server_proc,),
                      daemon=True).start()
 
@@ -1976,11 +1989,15 @@ def ensure_model_loaded(model_id, expect_tasks=None, session_options=None, mode=
         if not _wait_health(LOAD_TIMEOUT):
             tail = _log_tail()
             _stop_server()
-            _ui_log(f"模型 {entry['label']} 加载失败/超时（{LOAD_TIMEOUT}s）")
+            _ui_log(_t("模型 {label} 加载失败/超时（{timeout}s）",
+                       "model {label} load failed/timed out ({timeout}s)",
+                       label=entry['label'], timeout=LOAD_TIMEOUT))
             raise gr.Error(_t("加载 {label} 失败/超时（{timeout}s）。\n日志尾部：\n{tail}",
                               "Loading {label} failed or timed out ({timeout}s).\nLog tail:\n{tail}",
                               label=entry["label"], timeout=LOAD_TIMEOUT, tail=tail))
-        _ui_log(f"模型 {entry['label']} 加载完成{mode_note}，用时 {time.time() - t0:.1f}s")
+        _ui_log(_t("模型 {label} 加载完成{mode_note}，用时 {seconds:.1f}s",
+                   "model {label} loaded{mode_note}, elapsed {seconds:.1f}s",
+                   label=entry['label'], mode_note=mode_note, seconds=time.time() - t0))
         return _t("✅ 已加载：{label}{mode}", "✅ Loaded: {label}{mode}",
                   label=entry["label"], mode=mode_note)
 
@@ -1994,7 +2011,9 @@ def unload_model():
         if managed_alive:
             label = _loaded_id or "(unknown)"
             _stop_server()
-            _ui_log(f"已卸载模型 {label} 并停止 server，显存已释放")
+            _ui_log(_t("已卸载模型 {label} 并停止 server，显存已释放",
+                       "unloaded model {label} and stopped server, VRAM released",
+                       label=label))
             return (_t("🧹 已卸载模型并释放显存，下次运行时会自动重新加载。",
                        "🧹 Model unloaded and VRAM released. It will reload on the next run."),
                     server_status())
@@ -2174,7 +2193,9 @@ def download_model(model_id, hf_token="", proxy=""):
              "--models-root", MODELS_ROOT, "--overwrite"],
             cwd=PROJECT_ROOT, stdout=logf, stderr=subprocess.STDOUT, env=env)
         _downloads[model_id] = {"proc": proc, "log": log}
-    _ui_log(f"开始后台下载 {entry['label']}（{dl_id}），日志：{log}")
+    _ui_log(_t("开始后台下载 {label}（{dl_id}），日志：{log}",
+               "started background download {label} ({dl_id}), log: {log}",
+               label=entry['label'], dl_id=dl_id, log=log))
     return warn + proxy_note + _t(
         "⏳ 已开始下载 **{label}**（{download_id}）。完成后刷新列表。\n日志：{log}",
         "⏳ Download started: **{label}** ({download_id}). Refresh the list when complete.\nLog: {log}",
@@ -2204,7 +2225,9 @@ def download_status(model_id):
                   time=_ts(), tail=tail)
     if not rec.get("reported"):
         rec["reported"] = True
-        _ui_log(f"{entry['label']} 下载进程结束 (exit {code})")
+        _ui_log(_t("{label} 下载进程结束 (exit {code})",
+                   "{label} download process ended (exit {code})",
+                   label=entry['label'], code=code))
     if code == 0:
         return _t("✅ {label} 下载完成，请刷新列表。\n```\n{tail}\n```",
                   "✅ {label} downloaded. Refresh the model list.\n```\n{tail}\n```",
@@ -2371,7 +2394,7 @@ def inspect_gguf(model_id):
         return _t("❌ GGUF 检查无法启动：{error}", "❌ Could not start GGUF inspection: {error}", error=exc)
     if result.returncode != 0:
         return _t("❌ 检查失败（exit {code}）。", "❌ Inspection failed (exit {code}).", code=result.returncode)
-    _ui_log(f"检查 GGUF：{output}")
+    _ui_log(_t("检查 GGUF：{output}", "checking GGUF: {output}", output=output))
     return _gguf_inspection_summary(output, result.stdout)
 
 
@@ -2402,7 +2425,9 @@ def convert_model_to_gguf(model_id, weight_type, progress=gr.Progress()):
     cmd.extend(["--root", root, "--output", output,
                 "--type", weight_type, "--family", entry["family"]])
     progress(0, desc=_t("正在转换 GGUF…", "Converting GGUF…"))
-    _ui_log(f"开始转换 GGUF：{entry['label']} ({weight_type})")
+    _ui_log(_t("开始转换 GGUF：{label} ({weight_type})",
+               "converting GGUF: {label} ({weight_type})",
+               label=entry['label'], weight_type=weight_type))
     try:
         result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True,
                                 encoding="utf-8", errors="replace", timeout=7200)
@@ -2412,7 +2437,9 @@ def convert_model_to_gguf(model_id, weight_type, progress=gr.Progress()):
         return _t("❌ 无法启动 GGUF 转换：{error}", "❌ Could not start GGUF conversion: {error}", error=exc)
 
     if result.returncode != 0 or not os.path.isfile(output):
-        _ui_log(f"GGUF 转换失败：{entry['label']} (exit {result.returncode})")
+        _ui_log(_t("GGUF 转换失败：{label} (exit {code})",
+                   "GGUF conversion failed: {label} (exit {code})",
+                   label=entry['label'], code=result.returncode))
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         details = []
@@ -2431,7 +2458,9 @@ def convert_model_to_gguf(model_id, weight_type, progress=gr.Progress()):
         if _loaded_id == model_id and _server_proc is not None and _server_proc.poll() is None:
             _stop_server()
             stopped = True
-    _ui_log(f"GGUF 转换完成：{entry['label']} → {output}")
+    _ui_log(_t("GGUF 转换完成：{label} → {output}",
+               "GGUF conversion done: {label} → {output}",
+               label=entry['label'], output=output))
     stop_note = (_t("请点『加载模型』。", "Click Load.")
                  if stopped else
                  _t("点『加载模型』即可。", "Click Load to use it."))
@@ -2458,7 +2487,7 @@ def delete_gguf(model_id):
             os.remove(temporary)
     except OSError as exc:
         return _t("❌ 删除 GGUF 失败：{error}", "❌ Could not delete GGUF: {error}", error=exc), server_status()
-    _ui_log(f"删除 GGUF：{output}")
+    _ui_log(_t("删除 GGUF：{output}", "deleting GGUF: {output}", output=output))
     return _t("✅ 已删除：`{path}`", "✅ Deleted: `{path}`", path=output), server_status()
 
 
@@ -2482,10 +2511,14 @@ def _run_task(entry, model, req, timeout, log_label):
         r = requests.post(f"{SERVER}/v1/tasks/run",
                           json={"model": model, "request": req}, timeout=timeout)
     except requests.RequestException as e:
-        _ui_log(f"{log_label}失败：无法连接 server")
+        _ui_log(_t("{log_label}失败：无法连接 server",
+                   "{log_label} failed: cannot connect to server",
+                   log_label=log_label))
         raise connection_error(e)
     if r.status_code != 200:
-        _ui_log(f"{log_label}失败：server {r.status_code}")
+        _ui_log(_t("{log_label}失败：server {code}",
+                   "{log_label} failed: server {code}",
+                   log_label=log_label, code=r.status_code))
         raise server_error(entry, r.status_code, r.text)
     return r.json()
 
@@ -2592,7 +2625,9 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
         chunks = _split_tts_chunks(text, prof.get("chunk_chars", 1000))
         if is_vibevoice:
             chunks = _merge_short_vibevoice_tail(chunks)
-        _ui_log(f"TTS 开始：model={model}，{len(chunks)} 段 / 共 {sum(len(c) for c in chunks)} 字")
+        _ui_log(_t("TTS 开始：model={model}，{count} 段 / 共 {chars} 字",
+                   "TTS started: model={model}, {count} chunks / {chars} chars total",
+                   model=model, count=len(chunks), chars=sum(len(c) for c in chunks)))
         t_start = time.time()
         blobs = []
         for i, chunk in enumerate(chunks):
@@ -2607,14 +2642,20 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
             try:
                 r = requests.post(f"{SERVER}/v1/audio/speech", json=payload, timeout=900)
             except requests.RequestException as e:
-                _ui_log(f"TTS 失败：段 {i + 1}/{len(chunks)} 无法连接 server")
+                _ui_log(_t("TTS 失败：段 {index}/{count} 无法连接 server",
+                           "TTS failed: chunk {index}/{count} cannot connect to server",
+                           index=i + 1, count=len(chunks)))
                 raise connection_error(e)
             if r.status_code != 200:
-                _ui_log(f"TTS 失败：段 {i + 1}/{len(chunks)}，server {r.status_code}")
+                _ui_log(_t("TTS 失败：段 {index}/{count}，server {code}",
+                           "TTS failed: chunk {index}/{count}, server {code}",
+                           index=i + 1, count=len(chunks), code=r.status_code))
                 raise server_error(entry, r.status_code, r.text)
             blobs.append(r.content)
-            _ui_log(f"TTS 段 {i + 1}/{len(chunks)} 完成（{len(chunk)} 字，"
-                    f"{time.time() - t_chunk:.1f}s）")
+            _ui_log(_t("TTS 段 {index}/{count} 完成（{chars} 字，{seconds:.1f}s）",
+                       "TTS chunk {index}/{count} done ({chars} chars, {seconds:.1f}s)",
+                       index=i + 1, count=len(chunks), chars=len(chunk),
+                       seconds=time.time() - t_chunk))
 
         out = os.path.join(OUTPUT_DIR, f"audiocpp_tts_{int(time.time()*1000)}.wav")
         if len(blobs) == 1:
@@ -2623,7 +2664,9 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
         else:
             _concat_wavs(blobs, out)
         elapsed = time.time() - t_start
-        _ui_log(f"TTS 完成：{out}，总用时 {elapsed:.1f}s")
+        _ui_log(_t("TTS 完成：{out}，总用时 {seconds:.1f}s",
+                   "TTS done: {out}, total {seconds:.1f}s",
+                   out=out, seconds=elapsed))
         parts_note = (_t("（{count} 段）", " ({count} parts)", count=len(blobs))
                       if len(blobs) > 1 else "")
         return out, _t("✅ 生成完成{parts}，用时 {seconds:.1f}s{load}。{seed}",
@@ -2693,8 +2736,9 @@ def do_tts_stream(model, text, language, uploaded_voice, builtin_voice,
         payload["reference_text"] = reference_text
 
     chunks = _split_tts_chunks(text, prof.get("chunk_chars", 1000))
-    _ui_log(f"TTS 开始（流式）：model={model}，{len(chunks)} 段 / "
-            f"共 {sum(len(c) for c in chunks)} 字")
+    _ui_log(_t("TTS 开始（流式）：model={model}，{count} 段 / 共 {chars} 字",
+               "TTS started (streaming): model={model}, {count} chunks / {chars} chars total",
+               model=model, count=len(chunks), chars=sum(len(c) for c in chunks)))
     t_start = time.time()
     all_parts = []          # 全部 PCM（拼最终 wav）
     pending = []            # 未推给播放器的 PCM 增量（凑批再推，免得刷屏）
@@ -2719,11 +2763,15 @@ def do_tts_stream(model, text, language, uploaded_voice, builtin_voice,
             r = requests.post(f"{SERVER}/v1/audio/speech", json=payload,
                               stream=True, timeout=900)
         except requests.RequestException as e:
-            _ui_log(f"TTS 失败（流式）：段 {i + 1}/{len(chunks)} 无法连接 server")
+            _ui_log(_t("TTS 失败（流式）：段 {index}/{count} 无法连接 server",
+                       "TTS failed (streaming): chunk {index}/{count} cannot connect to server",
+                       index=i + 1, count=len(chunks)))
             raise connection_error(e)
         with r:
             if r.status_code != 200:
-                _ui_log(f"TTS 失败（流式）：段 {i + 1}/{len(chunks)}，server {r.status_code}")
+                _ui_log(_t("TTS 失败（流式）：段 {index}/{count}，server {code}",
+                           "TTS failed (streaming): chunk {index}/{count}, server {code}",
+                           index=i + 1, count=len(chunks), code=r.status_code))
                 raise server_error(entry, r.status_code, r.text)
             for event in _iter_sse_events(r):
                 etype = event.get("type")
@@ -2748,8 +2796,10 @@ def do_tts_stream(model, text, language, uploaded_voice, builtin_voice,
                         if ttft:
                             ttft_note = _t("，首包 {seconds:.1f}s", ", first audio {seconds:.1f}s",
                                            seconds=ttft / 1000)
-        _ui_log(f"TTS 段 {i + 1}/{len(chunks)} 完成（流式，{len(chunk)} 字，"
-                f"{time.time() - t_chunk:.1f}s）")
+        _ui_log(_t("TTS 段 {index}/{count} 完成（流式，{chars} 字，{seconds:.1f}s）",
+                   "TTS chunk {index}/{count} done (streaming, {chars} chars, {seconds:.1f}s)",
+                   index=i + 1, count=len(chunks), chars=len(chunk),
+                   seconds=time.time() - t_chunk))
 
     tail = _flush()
     if tail is not None:
@@ -2766,7 +2816,9 @@ def do_tts_stream(model, text, language, uploaded_voice, builtin_voice,
     audio_s = sum(a.size for a in all_parts) / sr
     parts_note = (_t("（{count} 段）", " ({count} parts)", count=len(chunks))
                   if len(chunks) > 1 else "")
-    _ui_log(f"TTS 完成（流式）：{out}，音频 {audio_s:.1f}s，总用时 {elapsed:.1f}s")
+    _ui_log(_t("TTS 完成（流式）：{out}，音频 {audio:.1f}s，总用时 {seconds:.1f}s",
+               "TTS done (streaming): {out}, audio {audio:.1f}s, total {seconds:.1f}s",
+               out=out, audio=audio_s, seconds=elapsed))
     yield (None, out, _t(
         "✅ 流式生成完成{parts}，音频 {audio:.1f}s，用时 {elapsed:.1f}s{ttft}{load}。{seed}",
         "✅ Stream complete{parts}: {audio:.1f}s audio in {elapsed:.1f}s{ttft}{load}. {seed}",
@@ -2847,11 +2899,13 @@ def _asr_transcribe_stream(model, entry, wav_path, extras, tag="ASR"):
         r = requests.post(f"{SERVER}/v1/audio/transcriptions", json=payload,
                           stream=True, timeout=900)
     except requests.RequestException as e:
-        _ui_log(f"{tag} 失败：无法连接 server")
+        _ui_log(_t("{tag} 失败：无法连接 server",
+                   "{tag} failed: cannot connect to server", tag=tag))
         raise connection_error(e)
     with r:
         if r.status_code != 200:
-            _ui_log(f"{tag} 失败：server {r.status_code}")
+            _ui_log(_t("{tag} 失败：server {code}",
+                       "{tag} failed: server {code}", tag=tag, code=r.status_code))
             raise server_error(entry, r.status_code, r.text)
         text = ""
         for event in _iter_sse_events(r):
@@ -2889,8 +2943,9 @@ def _asr_transcribe_wav(model, entry, prof, wav_path, extras, tag="ASR"):
         chunks = [p for p, _ in
                   _split_wav_chunks(wav_path, max_s, pad_to_max=False)]
         if len(chunks) > 1:
-            _ui_log(f"{tag} 长音频分段：{dur_note} → {len(chunks)} 段"
-                    f"（每段 ≤{max_s:.0f}s，静音处切分）")
+            _ui_log(_t("{tag} 长音频分段：{dur_note} → {count} 段（每段 ≤{max_s:.0f}s，静音处切分）",
+                       "{tag} long-audio split: {dur_note} → {count} chunks (each ≤{max_s:.0f}s, split at silence)",
+                       tag=tag, dur_note=dur_note, count=len(chunks), max_s=max_s))
     texts = []
     for i, chunk in enumerate(chunks):
         t_chunk = time.time()
@@ -2898,12 +2953,17 @@ def _asr_transcribe_wav(model, entry, prof, wav_path, extras, tag="ASR"):
         try:
             r = requests.post(f"{SERVER}/v1/audio/transcriptions", json=payload, timeout=900)
         except requests.RequestException as e:
-            _ui_log(f"{tag} 失败：无法连接 server")
+            _ui_log(_t("{tag} 失败：无法连接 server",
+                       "{tag} failed: cannot connect to server", tag=tag))
             raise connection_error(e)
         if r.status_code != 200:
-            seg_note = f"，第 {i + 1}/{len(chunks)} 段" if len(chunks) > 1 else ""
-            _ui_log(f"{tag} 失败：server {r.status_code}（音频 {dur_note}{seg_note}）")
-            extra = f"⏱ 本次音频时长约 {dur:.1f} 秒" if dur is not None else None
+            seg_note = (_t("，第 {index}/{total} 段", ", part {index}/{total}",
+                           index=i + 1, total=len(chunks)) if len(chunks) > 1 else "")
+            _ui_log(_t("{tag} 失败：server {code}（音频 {dur_note}{seg_note}）",
+                       "{tag} failed: server {code} (audio {dur_note}{seg_note})",
+                       tag=tag, code=r.status_code, dur_note=dur_note, seg_note=seg_note))
+            extra = (_t("⏱ 本次音频时长约 {seconds:.1f} 秒", "⏱ audio is about {seconds:.1f}s long",
+                        seconds=dur) if dur is not None else None)
             raise server_error(entry, r.status_code, r.text, extra=extra)
         try:
             data = r.json()
@@ -2911,8 +2971,10 @@ def _asr_transcribe_wav(model, entry, prof, wav_path, extras, tag="ASR"):
         except Exception:
             texts.append(r.text)
         if len(chunks) > 1:
-            _ui_log(f"{tag} 段 {i + 1}/{len(chunks)} 完成"
-                    f"（{time.time() - t_chunk:.1f}s）")
+            _ui_log(_t("{tag} 段 {index}/{count} 完成（{seconds:.1f}s）",
+                       "{tag} chunk {index}/{count} done ({seconds:.1f}s)",
+                       tag=tag, index=i + 1, count=len(chunks),
+                       seconds=time.time() - t_chunk))
     text = texts[0] if len(chunks) == 1 else "\n".join(t for t in texts if t)
     return text, dur, len(chunks)
 
@@ -2948,7 +3010,9 @@ def do_asr(model, audio_path, language="", context="", dialogue=False, stream=Fa
             load_note = (_t("，含模型加载 {seconds:.1f}s", ", model load {seconds:.1f}s",
                             seconds=load_s) if load_s >= 1.0 else "")
             extras_note = "".join(f"，{k}={v[:20]}" for k, v in extras.items())
-            _ui_log(f"ASR 开始（流式）：model={model}{extras_note}")
+            _ui_log(_t("ASR 开始（流式）：model={model}{extras_note}",
+                       "ASR started (streaming): model={model}{extras_note}",
+                       model=model, extras_note=extras_note))
             t_start = time.time()
             dur = _audio_duration_seconds(audio_path)
             dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
@@ -2959,7 +3023,9 @@ def do_asr(model, audio_path, language="", context="", dialogue=False, stream=Fa
                     elapsed = time.time() - t_start
                     ttft_note = (_t("，首字 {seconds:.1f}s", ", first text {seconds:.1f}s",
                                     seconds=ttft / 1000) if ttft else "")
-                    _ui_log(f"ASR 完成（流式）：音频 {dur_note}，用时 {elapsed:.1f}s")
+                    _ui_log(_t("ASR 完成（流式）：音频 {dur_note}，用时 {seconds:.1f}s",
+                               "ASR done (streaming): audio {dur_note}, elapsed {seconds:.1f}s",
+                               dur_note=dur_note, seconds=elapsed))
                     yield text, _t(
                         "✅ 流式转写完成（音频 {duration}），用时 {elapsed:.1f}s{ttft}{load}。",
                         "✅ Streaming transcript complete ({duration}) in {elapsed:.1f}s{ttft}{load}.",
@@ -2985,13 +3051,17 @@ def do_asr(model, audio_path, language="", context="", dialogue=False, stream=Fa
         load_note = (_t("，含模型加载 {seconds:.1f}s", ", model load {seconds:.1f}s",
                         seconds=load_s) if load_s >= 1.0 else "")
         extras_note = "".join(f"，{k}={v[:20]}" for k, v in extras.items())
-        _ui_log(f"ASR 开始：model={model}{extras_note}")
+        _ui_log(_t("ASR 开始：model={model}{extras_note}",
+                   "ASR started: model={model}{extras_note}",
+                   model=model, extras_note=extras_note))
         t_start = time.time()
         text, dur, n = _asr_transcribe_wav(model, entry, prof, audio_path, extras)
         elapsed = time.time() - t_start
         dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
         parts_note = (_t("，{count} 段", ", {count} parts", count=n) if n > 1 else "")
-        _ui_log(f"ASR 完成：音频 {dur_note}{parts_note}，用时 {elapsed:.1f}s")
+        _ui_log(_t("ASR 完成：音频 {dur_note}{parts_note}，用时 {seconds:.1f}s",
+                   "ASR done: audio {dur_note}{parts_note}, elapsed {seconds:.1f}s",
+                   dur_note=dur_note, parts_note=parts_note, seconds=elapsed))
         yield text, _t("✅ 转写完成（音频 {duration}{parts}），用时 {elapsed:.1f}s{load}。",
                        "✅ Transcript complete ({duration}{parts}) in {elapsed:.1f}s{load}.",
                        duration=dur_note, parts=parts_note, elapsed=elapsed, load=load_note)
@@ -3059,7 +3129,9 @@ def _asr_dialogue(model, wav_path, extras):
     total_dur = len(samples) / float(sr)
 
     t_start = time.time()
-    _ui_log(f"对话模式：先用 {diar['id']} 做说话人分离（音频 {total_dur:.1f}s）")
+    _ui_log(_t("对话模式：先用 {id} 做说话人分离（音频 {seconds:.1f}s）",
+               "dialogue mode: first run speaker diarization with {id} (audio {seconds:.1f}s)",
+               id=diar['id'], seconds=total_dur))
     ensure_model_loaded(diar["id"], ("diar",),
                         session_options=_diar_session_options(total_dur))
     data = _run_task(diar, diar["id"], {"audio": wav16}, timeout=900,
@@ -3084,8 +3156,9 @@ def _asr_dialogue(model, wav_path, extras):
     if not merged:
         raise gr.Error(_t("说话人发言段都太短，无法转写。",
                           "All detected speaker turns are too short to transcribe."))
-    _ui_log(f"说话人分离完成：{len(turns)} 个发言段 → 合并为 {len(merged)} 段；"
-            f"换回 {model} 逐段转写")
+    _ui_log(_t("说话人分离完成：{turns} 个发言段 → 合并为 {merged} 段；换回 {model} 逐段转写",
+               "speaker diarization done: {turns} turns → merged into {merged} segments; switching back to {model} for per-segment transcription",
+               turns=len(turns), merged=len(merged), model=model))
 
     ensure_model_loaded(model, ASR_TASKS)
     pad = int(DIALOGUE_PAD_S * sr)
@@ -3106,11 +3179,14 @@ def _asr_dialogue(model, wav_path, extras):
         label = _t("说话人{index}", "Speaker {index}", index=speakers.index(spk) + 1)
         if text:
             lines.append(f"[{_fmt_mmss(s / sr)}-{_fmt_mmss(e / sr)}] {label}: {text}")
-        _ui_log(f"对话段 {idx}/{len(merged)} 完成（{label}，{(e - s) / sr:.1f}s）")
+        _ui_log(_t("对话段 {index}/{count} 完成（{label}，{seconds:.1f}s）",
+                   "dialogue turn {index}/{count} done ({label}, {seconds:.1f}s)",
+                   index=idx, count=len(merged), label=label, seconds=(e - s) / sr))
 
     elapsed = time.time() - t_start
-    _ui_log(f"对话转写完成：{len(merged)} 段发言、{len(speakers)} 个说话人，"
-            f"用时 {elapsed:.1f}s")
+    _ui_log(_t("对话转写完成：{merged} 段发言、{speakers} 个说话人，用时 {seconds:.1f}s",
+               "dialogue transcription done: {merged} turns, {speakers} speakers, elapsed {seconds:.1f}s",
+               merged=len(merged), speakers=len(speakers), seconds=elapsed))
     if not lines:
         return "", _t("⚠️ 检测到发言段，但没有转写出文字。",
                       "⚠️ Speaker turns were detected, but no text was transcribed.")
@@ -3150,7 +3226,9 @@ def do_music_gen(model, text, lyrics, source_audio, duration, seed,
             req["options"] = options
 
         dur_note = req.get("duration_seconds", _t("自动", "auto"))
-        _ui_log(f"音乐生成开始：model={model}，目标时长 {dur_note}s")
+        _ui_log(_t("音乐生成开始：model={model}，目标时长 {dur_note}s",
+                   "music generation started: model={model}, target duration {dur_note}s",
+                   model=model, dur_note=dur_note))
         t_start = time.time()
         data = _run_task(entry, model, req, timeout=1800, log_label="音乐生成")
         b64 = data.get("audio")
@@ -3162,7 +3240,9 @@ def do_music_gen(model, text, lyrics, source_audio, duration, seed,
         with open(out, "wb") as f:
             f.write(base64.b64decode(b64))
         elapsed = time.time() - t_start
-        _ui_log(f"音乐生成完成：{out}，用时 {elapsed:.1f}s")
+        _ui_log(_t("音乐生成完成：{out}，用时 {seconds:.1f}s",
+                   "music generation done: {out}, elapsed {seconds:.1f}s",
+                   out=out, seconds=elapsed))
         return out, _t("✅ 生成完成，用时 {seconds:.1f}s。{seed}",
                        "✅ Complete in {seconds:.1f}s. {seed}", seconds=elapsed, seed=seed_note)
     except gr.Error as e:
@@ -3199,7 +3279,9 @@ def do_music_analyze(model, source_audio, seed, adv_values):
                "audio": _ensure_wav(source_audio), "seed": analyze_seed}
         dur = _audio_duration_seconds(req["audio"])
         dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
-        _ui_log(f"源音频分析开始：model={model}，音频 {dur_note}")
+        _ui_log(_t("源音频分析开始：model={model}，音频 {dur_note}",
+                   "source audio analysis started: model={model}, audio {dur_note}",
+                   model=model, dur_note=dur_note))
         t_start = time.time()
         data = _run_task(entry, model, req, timeout=1800, log_label="源音频分析")
         raw = data.get("text") or ""
@@ -3232,7 +3314,9 @@ def do_music_analyze(model, source_audio, seed, adv_values):
         if info.get("lyrics"):
             lines.append(_t("- **歌词**：\n```\n{lyrics}\n```",
                             "- **Lyrics**:\n```\n{lyrics}\n```", lyrics=info["lyrics"]))
-        _ui_log(f"源音频分析完成：用时 {elapsed:.1f}s")
+        _ui_log(_t("源音频分析完成：用时 {seconds:.1f}s",
+                   "source audio analysis done: elapsed {seconds:.1f}s",
+                   seconds=elapsed))
         return adv_values, dict(adv_values), "\n".join(lines)
     except gr.Error as e:
         return adv_values, gr.skip(), _msg_from_error(e)
@@ -3290,7 +3374,9 @@ def do_vc(model, source_audio, target_upload, builtin_voice, seed,
                        ", {reference:.0f}s reference, {count} adaptive parts (≤{cap}s)",
                        reference=ref_sec, count=len(pieces), cap=chunk_cap)
                     if len(pieces) > 1 else "")
-        _ui_log(f"声音转换开始：model={model}，源音频 {dur_note}{seg_note}")
+        _ui_log(_t("声音转换开始：model={model}，源音频 {dur_note}{seg_note}",
+                   "voice conversion started: model={model}, source audio {dur_note}{seg_note}",
+                   model=model, dur_note=dur_note, seg_note=seg_note))
         t_start = time.time()
         blobs, ratios = [], []
         for i, (piece, ratio) in enumerate(pieces):
@@ -3309,7 +3395,9 @@ def do_vc(model, source_audio, target_upload, builtin_voice, seed,
             blobs.append(base64.b64decode(b64))
             ratios.append(ratio)
             if len(pieces) > 1:
-                _ui_log(f"声音转换段 {i + 1}/{len(pieces)} 完成（{time.time() - t_seg:.1f}s）")
+                _ui_log(_t("声音转换段 {index}/{count} 完成（{seconds:.1f}s）",
+                           "voice conversion segment {index}/{count} done ({seconds:.1f}s)",
+                           index=i + 1, count=len(pieces), seconds=time.time() - t_seg))
         out = os.path.join(OUTPUT_DIR, f"audiocpp_vc_{int(time.time()*1000)}.wav")
         if len(blobs) == 1 and ratios[0] >= 1.0:
             with open(out, "wb") as f:
@@ -3317,7 +3405,9 @@ def do_vc(model, source_audio, target_upload, builtin_voice, seed,
         else:
             _concat_wavs(blobs, out, keep_ratios=ratios)
         elapsed = time.time() - t_start
-        _ui_log(f"声音转换完成：{out}，用时 {elapsed:.1f}s")
+        _ui_log(_t("声音转换完成：{out}，用时 {seconds:.1f}s",
+                   "voice conversion done: {out}, elapsed {seconds:.1f}s",
+                   out=out, seconds=elapsed))
         parts_note = (_t("（{count} 段拼接）", " ({count} joined parts)", count=len(blobs))
                       if len(blobs) > 1 else "")
         return out, _t("✅ 转换完成{parts}，用时 {seconds:.1f}s。{seed}",
@@ -3353,7 +3443,9 @@ def do_sep(model, audio_path):
         entry = catalog_by_id(model)
         dur = _audio_duration_seconds(audio_path)
         dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
-        _ui_log(f"音源分离开始：model={model}，音频时长 {dur_note}")
+        _ui_log(_t("音源分离开始：model={model}，音频时长 {dur_note}",
+                   "source separation started: model={model}, audio duration {dur_note}",
+                   model=model, dur_note=dur_note))
         t_start = time.time()
         data = _run_task(entry, model, {"audio": audio_path},
                          timeout=1800, log_label="音源分离")
@@ -3385,7 +3477,9 @@ def do_sep(model, audio_path):
             else:
                 updates.append(gr.update(value=None, visible=False))
         elapsed = time.time() - t_start
-        _ui_log(f"音源分离完成：{len(paths)} 轨，用时 {elapsed:.1f}s")
+        _ui_log(_t("音源分离完成：{tracks} 轨，用时 {seconds:.1f}s",
+                   "source separation done: {tracks} tracks, elapsed {seconds:.1f}s",
+                   tracks=len(paths), seconds=elapsed))
         note = ("" if len(paths) <= MAX_SEP_STEMS else
                 _t("，其余 {count} 轨见下载列表", "; {count} more in the download list",
                    count=len(paths) - MAX_SEP_STEMS))
@@ -3431,7 +3525,9 @@ def do_analyze(model, audio_path, transcript, language):
                             session_options=(_diar_session_options(dur)
                                              if task == "diar" else None))
         dur_note = f"{dur:.1f}s" if dur is not None else _t("未知", "unknown")
-        _ui_log(f"音频分析开始：model={model}（task={task}），音频 {dur_note}")
+        _ui_log(_t("音频分析开始：model={model}（task={task}），音频 {dur_note}",
+                   "audio analysis started: model={model} (task={task}), audio {dur_note}",
+                   model=model, task=task, dur_note=dur_note))
         t_start = time.time()
         data = _run_task(entry, model, req, timeout=900, log_label="音频分析")
 
@@ -3476,7 +3572,9 @@ def do_analyze(model, audio_path, transcript, language):
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         elapsed = time.time() - t_start
-        _ui_log(f"音频分析完成：用时 {elapsed:.1f}s")
+        _ui_log(_t("音频分析完成：用时 {seconds:.1f}s",
+                   "audio analysis done: elapsed {seconds:.1f}s",
+                   seconds=elapsed))
         return ("\n".join(lines), json_path,
                 _t("✅ 分析完成（音频 {duration}），用时 {elapsed:.1f}s。",
                    "✅ Analysis complete ({duration}) in {elapsed:.1f}s.",
@@ -3519,21 +3617,27 @@ def do_vdes(model, text, instruct, seed, max_tokens, adv_values, adv_options):
             payload["instructions"] = instruct
         if options:
             payload["options"] = options
-        _ui_log(f"声音设计开始：model={model}，{len(text)} 字")
+        _ui_log(_t("声音设计开始：model={model}，{chars} 字",
+                   "voice design started: model={model}, {chars} chars",
+                   model=model, chars=len(text)))
         t_start = time.time()
         try:
             r = requests.post(f"{SERVER}/v1/audio/speech", json=payload, timeout=900)
         except requests.RequestException as e:
-            _ui_log("声音设计失败：无法连接 server")
+            _ui_log(_t("声音设计失败：无法连接 server",
+                       "voice design failed: cannot connect to server"))
             raise connection_error(e)
         if r.status_code != 200:
-            _ui_log(f"声音设计失败：server {r.status_code}")
+            _ui_log(_t("声音设计失败：server {code}",
+                       "voice design failed: server {code}", code=r.status_code))
             raise server_error(entry, r.status_code, r.text)
         out = os.path.join(OUTPUT_DIR, f"audiocpp_vdes_{int(time.time()*1000)}.wav")
         with open(out, "wb") as f:
             f.write(r.content)
         elapsed = time.time() - t_start
-        _ui_log(f"声音设计完成：{out}，用时 {elapsed:.1f}s")
+        _ui_log(_t("声音设计完成：{out}，用时 {seconds:.1f}s",
+                   "voice design done: {out}, elapsed {seconds:.1f}s",
+                   out=out, seconds=elapsed))
         return out, _t("✅ 生成完成，用时 {seconds:.1f}s。{seed}",
                        "✅ Complete in {seconds:.1f}s. {seed}", seconds=elapsed, seed=seed_note)
     except gr.Error as e:
