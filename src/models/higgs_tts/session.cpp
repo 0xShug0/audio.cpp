@@ -16,7 +16,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr int64_t kDefaultTextChunkSize = 4096;
+constexpr int64_t kDefaultTextChunkSize = 1024;
 
 void validate_matmul_weight_storage(assets::TensorStorageType storage_type, const char * option_name) {
     if (storage_type == assets::TensorStorageType::Native ||
@@ -64,16 +64,18 @@ HiggsGenerationOptions generation_options_from_request(
     const runtime::TaskRequest & request,
     const HiggsConfig & config) {
     HiggsGenerationOptions options;
-    options.max_tokens = 1024;
+    options.max_tokens = 2048;
     options.temperature = 0.8F;
     options.top_p = 0.8F;
     options.top_k = 30;
     options.repetition_penalty = 1.1F;
     if (const auto value = runtime::parse_int_option(request.options, {"max_tokens"})) {
-        if (*value <= 0) {
-            throw std::runtime_error("Higgs TTS max_tokens must be positive");
+        if (*value < 0) {
+            throw std::runtime_error("Higgs TTS max_tokens must be non-negative");
         }
-        options.max_tokens = *value;
+        if (*value > 0) {
+            options.max_tokens = *value;
+        }
     }
     if (const auto value = runtime::parse_float_option(request.options, {"temperature"})) {
         options.temperature = *value;
@@ -208,12 +210,15 @@ runtime::TaskResult HiggsTTSSession::run(const runtime::TaskRequest & request) {
     const auto wall_start = Clock::now();
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
-    const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
+    const auto text_chunk_mode =
+        engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
+    const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
     const std::string reference_text = runtime::find_option(request.options, {"reference_text"}).value_or("");
     const auto * reference_audio = find_reference_audio(request);
     const HiggsCodecEncodeOutput * reference_codes =
         reference_audio != nullptr ? &resolve_reference_codes(*reference_audio, reference_text) : nullptr;
     debug::trace_log_scalar("higgs_tts.text_chunk_size", text_chunk_size);
+    debug::trace_log_scalar("higgs_tts.text_chunk_mode", engine::text::text_chunk_mode_name(text_chunk_mode));
     debug::trace_log_scalar("higgs_tts.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
 
     runtime::AudioBuffer merged_audio;

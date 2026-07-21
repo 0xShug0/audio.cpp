@@ -34,8 +34,9 @@ runtime::ModelCliInterface cli(const FishAudioAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"reference_text", "TEXT", "Reference transcript used with speaker reference audio."},
-        {"max_new_tokens", "N", "Maximum Fish Audio semantic tokens to generate."},
-        {"chunk_length", "N", "Maximum UTF-8 bytes per Fish Speech text batch."},
+        {"max_new_tokens", "N", "Maximum Fish Audio semantic tokens to generate; default 2048, 0 uses the default."},
+        {"text_chunk_size", "N", "Long-form text chunk size; default 200."},
+        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode."},
         {"top_p", "FLOAT", "Top-p sampling value."},
         {"top_k", "N", "Top-k sampling value."},
         {"temperature", "FLOAT", "Sampling temperature."},

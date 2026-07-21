@@ -37,13 +37,14 @@ runtime::CapabilitySet capabilities(const HiggsAssets &) {
 runtime::ModelCliInterface cli(const HiggsAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"max_tokens", "n", "Maximum generated AR tokens."},
+        {"max_tokens", "n", "Maximum generated AR tokens; default 2048, 0 uses the default."},
         {"temperature", "float", "AR sampling temperature."},
         {"top_k", "n", "AR top-k sampling limit."},
         {"top_p", "float", "AR nucleus sampling probability."},
         {"repetition_penalty", "float", "Accepted for Python API compatibility; Higgs audio sampling does not consume it."},
         {"seed", "n", "Torch RNG seed."},
-        {"text_chunk_size", "n", "Long-form text chunk size."},
+        {"text_chunk_size", "n", "Long-form text chunk size; default 1024."},
+        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode."},
     };
     out.session_options = {
         {"higgs_tts.weight_type", "native|f32|f16|bf16|q8_0", "AR and codec weight storage type."},

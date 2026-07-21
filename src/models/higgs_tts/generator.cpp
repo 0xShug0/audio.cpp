@@ -38,7 +38,7 @@ int64_t bucketed_initial_cache_steps(int64_t prompt_steps, int64_t max_tokens) {
 
 void validate_generation_options(const HiggsGenerationOptions & options) {
     if (options.max_tokens <= 0) {
-        throw std::runtime_error("Higgs TTS max_tokens must be positive");
+        throw std::runtime_error("Higgs TTS max_tokens must be positive after default resolution");
     }
     if (!(options.temperature > 0.0F)) {
         throw std::runtime_error("Higgs TTS temperature must be positive");

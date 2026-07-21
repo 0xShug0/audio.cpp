@@ -5,6 +5,7 @@
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/text/chunking.h"
 #include "engine/models/fish_audio/ar.h"
 #include "engine/models/fish_audio/codec.h"
 #include "engine/models/fish_audio/generator.h"
@@ -110,19 +111,25 @@ uint64_t hash_audio_samples(const runtime::AudioBuffer & audio) {
 
 FishAudioGenerationOptions generation_options_from_request(const runtime::TaskRequest & request) {
     FishAudioGenerationOptions options;
-    options.max_new_tokens = runtime::parse_i64_option(request.options, {"max_new_tokens", "max_tokens"})
-        .value_or(options.max_new_tokens);
-    options.chunk_length = runtime::parse_i64_option(request.options, {"chunk_length"})
-        .value_or(options.chunk_length);
+    if (const auto value = runtime::parse_i64_option(request.options, {"max_new_tokens", "max_tokens"})) {
+        if (*value < 0) {
+            throw std::runtime_error("Fish Audio max_new_tokens must be non-negative");
+        }
+        if (*value > 0) {
+            options.max_new_tokens = *value;
+        }
+    }
+    options.text_chunk_size =
+        engine::text::parse_text_chunk_size_override(request.options).value_or(options.text_chunk_size);
     options.top_p = runtime::parse_float_option(request.options, {"top_p"}).value_or(options.top_p);
     options.top_k = runtime::parse_int_option(request.options, {"top_k"}).value_or(options.top_k);
     options.temperature = runtime::parse_float_option(request.options, {"temperature"}).value_or(options.temperature);
     options.seed = runtime::parse_u32_option(request.options, {"seed"}).value_or(options.seed);
     if (options.max_new_tokens <= 0) {
-        throw std::runtime_error("Fish Audio max_new_tokens must be positive");
+        throw std::runtime_error("Fish Audio max_new_tokens must be positive after default resolution");
     }
-    if (options.chunk_length <= 0) {
-        throw std::runtime_error("Fish Audio chunk_length must be positive");
+    if (options.text_chunk_size <= 0) {
+        throw std::runtime_error("Fish Audio text_chunk_size must be positive");
     }
     if (!(options.top_p > 0.0F && options.top_p <= 1.0F)) {
         throw std::runtime_error("Fish Audio top_p must be in (0, 1]");
@@ -331,8 +338,14 @@ void FishAudioSession::prepare(const runtime::SessionPreparationRequest & reques
         defaults.text = request.text->text;
         has_defaults = true;
     }
-    defaults.generation.max_new_tokens = runtime::parse_i64_option(request.options, {"max_new_tokens", "max_tokens"})
-        .value_or(defaults.generation.max_new_tokens);
+    if (const auto value = runtime::parse_i64_option(request.options, {"max_new_tokens", "max_tokens"})) {
+        if (*value < 0) {
+            throw std::runtime_error("Fish Audio max_new_tokens must be non-negative");
+        }
+        if (*value > 0) {
+            defaults.generation.max_new_tokens = *value;
+        }
+    }
     if (auto reference = reference_from_voice(*assets_, request.voice, request.options, "Fish Audio prepare");
         reference.has_value()) {
         defaults.reference = std::move(*reference);
@@ -417,14 +430,26 @@ runtime::TaskResult FishAudioSession::run(const runtime::TaskRequest & request) 
     require_prepared("Fish Audio run()");
     const auto wall_start = Clock::now();
     const bool mem_saver = mem_saver_from_options(options());
-    auto fish_request = make_request(request);
-    std::optional<FishAudioCodes> reference_codes = std::nullopt;
-    if (fish_request.reference.has_value()) {
-        reference_codes = resolve_reference_codes(*fish_request.reference);
+    const auto request_options = generation_options_from_request(request);
+    const auto text_chunk_mode =
+        engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
+    const auto chunk_requests = runtime::chunk_text_request(request, request_options.text_chunk_size, text_chunk_mode);
+    engine::debug::trace_log_scalar("fish_audio.text_chunk_size", request_options.text_chunk_size);
+    engine::debug::trace_log_scalar("fish_audio.text_chunk_mode", engine::text::text_chunk_mode_name(text_chunk_mode));
+    engine::debug::trace_log_scalar("fish_audio.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
+
+    runtime::AudioBuffer merged_audio;
+    for (const auto & chunk_request : chunk_requests) {
+        auto fish_request = make_request(chunk_request);
+        std::optional<FishAudioCodes> reference_codes = std::nullopt;
+        if (fish_request.reference.has_value()) {
+            reference_codes = resolve_reference_codes(*fish_request.reference);
+        }
+        auto generated = generator_->generate(fish_request, reference_codes, mem_saver);
+        runtime::append_audio_buffer(merged_audio, generated.audio);
     }
-    auto generated = generator_->generate(fish_request, reference_codes, mem_saver);
     runtime::TaskResult result;
-    result.audio_output = std::move(generated.audio);
+    result.audio_output = std::move(merged_audio);
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
     return result;
 }

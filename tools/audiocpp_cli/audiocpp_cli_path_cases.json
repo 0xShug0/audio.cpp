@@ -630,7 +630,7 @@
         {
           "id": "official_auto_voice_english",
           "text": "The field recorder captured a clean reference take, and the operator confirmed that every timestamp matched the written production notes.",
-          "chunk_length": 200,
+          "text_chunk_size": 200,
           "top_p": 0.8,
           "repetition_penalty": 1.1,
           "temperature": 0.8,
@@ -641,7 +641,7 @@
           "text": "The studio engineer checked the short voice prompt, confirmed the take was clear, and started the final render.",
           "voice_ref": "resources/sample.wav",
           "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
-          "chunk_length": 200,
+          "text_chunk_size": 200,
           "top_p": 0.8,
           "repetition_penalty": 1.1,
           "temperature": 0.8,
@@ -650,7 +650,7 @@
         {
           "id": "official_inline_control_tag",
           "text": "[whisper in small voice] The prototype actually worked after the last reset, and the control room stayed quiet until every green light appeared.",
-          "chunk_length": 200,
+          "text_chunk_size": 200,
           "top_p": 0.8,
           "repetition_penalty": 1.1,
           "temperature": 0.8,
