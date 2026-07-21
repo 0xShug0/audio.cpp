@@ -23,6 +23,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check loader/catalog sync
+        shell: pwsh
+        run: |
+          python tools/check_loader_catalog_sync.py --self-test
+          python tools/check_loader_catalog_sync.py
+
       - name: Build audiocpp_cli
         shell: pwsh
         run: |

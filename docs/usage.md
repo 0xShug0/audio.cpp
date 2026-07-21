@@ -11,7 +11,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--task` | `gen`, `tts`, `clon`, `vc`, `svc`, `s2s`, `asr`, `align`, `vad`, `diar`, `sep`, `vdes` | required | User task. |
-| `--family` | model family name | required | Selects the model implementation. |
+| `--family` | model family name | required | Selects the model implementation. Must match a registered loader (`audiocpp_cli --list-loaders`). |
 | `--model` | local model directory | required | Path to local model assets. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Inference backend. |
 | `--mode` | `offline`, `streaming` | `offline` | Run mode. Most models are offline. |
