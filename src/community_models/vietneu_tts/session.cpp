@@ -18,7 +18,7 @@ namespace engine::models::vietneu_tts {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-constexpr int64_t kDefaultTextChunkSize = 8192;
+constexpr int64_t kDefaultTextChunkSize = 200;
 
 std::vector<float> parse_speaker_embedding_file(const std::string & filepath) {
     std::ifstream ifs(filepath);
