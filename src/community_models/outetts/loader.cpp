@@ -94,6 +94,30 @@ class OuteTTSLoader final : public runtime::IVoiceModelLoader {
 public:
   std::string family() const override { return "outetts"; }
 
+  runtime::CapabilitySet advertised_capabilities() const override {
+    runtime::CapabilitySet out;
+    out.supported_tasks = {
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+    };
+    out.supports_speaker_reference = true;
+    return out;
+  }
+
+  std::vector<runtime::LoaderCompanion> advertised_companions() const override {
+    return {
+        {
+            "forced_aligner",
+            "outetts.aligner_model_path",
+            "session",
+            "qwen3_forced_aligner",
+            true,
+            {"speaker_reference"},
+            "Forced aligner (voice cloning)",
+            "",
+        },
+    };
+  }
+
   bool can_load(const runtime::ModelLoadRequest &request) const override {
     try {
       const auto package_spec =

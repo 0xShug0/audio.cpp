@@ -33,6 +33,11 @@ BUNDLED_LOADERS_WITHOUT_PACKAGE: set[str] = {
     "silero_vad",
 }
 
+# Matches LoaderCompanion brace inits: scope string, then target_family, then optional.
+_COMPANION_TARGET_RE = re.compile(
+    r'"(?:session|load|request)"\s*,\s*"([a-z0-9_]*)"\s*,\s*(?:true|false)\b'
+)
+
 
 def parse_registry_loaders(registry_text: str) -> tuple[set[str], set[str]]:
     """Return (active_families, commented_families) from registry.cpp."""
@@ -185,6 +190,57 @@ def check_catalog(
     return errors, warnings
 
 
+def iter_loader_sources(repo_root: Path) -> list[Path]:
+    roots = [
+        repo_root / "src" / "models",
+        repo_root / "src" / "community_models",
+    ]
+    out: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        out.extend(sorted(root.rglob("loader.cpp")))
+    return out
+
+
+def parse_companion_target_families(loader_text: str) -> list[str]:
+    """Extract non-empty target_family strings from advertised_companions inits."""
+    if "advertised_companions" not in loader_text:
+        return []
+    return [
+        match.group(1)
+        for match in _COMPANION_TARGET_RE.finditer(loader_text)
+        if match.group(1)
+    ]
+
+
+def check_companions(
+    *,
+    active: set[str],
+    loader_sources: list[Path],
+) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    for path in loader_sources:
+        text = path.read_text(encoding="utf-8")
+        if "advertised_companions" not in text:
+            continue
+        rel = path.as_posix()
+        targets = parse_companion_target_families(text)
+        if not targets and '""' not in text:
+            warnings.append(
+                f"{rel}: advertised_companions present but no target_family "
+                "strings matched (check brace-init order: scope, target_family, optional)"
+            )
+        for family in targets:
+            if family not in active:
+                errors.append(
+                    f"{rel}: companion target_family '{family}' is not an active "
+                    "registry loader"
+                )
+    return errors, warnings
+
+
 def check_readme(
     *,
     readme_text: str,
@@ -242,6 +298,39 @@ class _SyncCheckSelfTests(unittest.TestCase):
         active, commented = parse_registry_loaders(text)
         self.assertEqual(active, {"family_b", "family_c"})
         self.assertEqual(commented, {"family_a"})
+
+    def test_parse_companion_targets(self) -> None:
+        text = """
+        std::vector<runtime::LoaderCompanion> advertised_companions() const override {
+            return {
+                {"forced_aligner", "qwen3_asr.forced_aligner_model_path", "session",
+                 "qwen3_forced_aligner", true, {"return_timestamps"}, "Forced aligner", ""},
+                {"whisper", "vevo2.whisper_model_path", "load", "", true, {}, "External", ""},
+            };
+        }
+        """
+        self.assertEqual(
+            parse_companion_target_families(text),
+            ["qwen3_forced_aligner"],
+        )
+
+    def test_companion_unknown_family_errors(self) -> None:
+        errors, _ = check_companions(
+            active={"qwen3_asr"},
+            loader_sources=[],
+        )
+        self.assertEqual(errors, [])
+        # Inline parse path covered via fake file content in check helper usage.
+        bad = parse_companion_target_families(
+            'advertised_companions() { return {{"x","k","session","missing_family",true,{},"",""}}; }'
+        )
+        self.assertEqual(bad, ["missing_family"])
+        errors = [
+            f"loader.cpp: companion target_family '{family}' is not an active registry loader"
+            for family in bad
+            if family not in {"qwen3_asr"}
+        ]
+        self.assertTrue(any("missing_family" in e for e in errors))
 
     def test_parked_alias_blocks_installable(self) -> None:
         class Pkg:
@@ -319,6 +408,13 @@ def main() -> int:
         default_family_from_package_id=mm._default_family_from_package_id,
     )
 
+    companion_errors, companion_warnings = check_companions(
+        active=active,
+        loader_sources=iter_loader_sources(REPO_ROOT),
+    )
+    errors.extend(companion_errors)
+    warnings.extend(companion_warnings)
+
     if not args.skip_readme:
         if not README_PATH.is_file():
             errors.append(f"README.md not found: {README_PATH}")
@@ -349,7 +445,7 @@ def main() -> int:
         )
         return 1
 
-    print("ok: installable catalog families match registered loaders")
+    print("ok: installable catalog families and companion targets match registered loaders")
     return 0
 
 

@@ -159,6 +159,21 @@ public:
         return out;
     }
 
+    std::vector<runtime::LoaderCompanion> advertised_companions() const override {
+        return {
+            {
+                "whisper",
+                "vevo2.whisper_model_path",
+                "load",
+                "",
+                true,
+                {"speech_to_speech", "svc"},
+                "External Whisper encoder directory (not an audio.cpp loader family)",
+                "",
+            },
+        };
+    }
+
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         if (request.family_hint.has_value() && *request.family_hint != family()) {
             return false;
