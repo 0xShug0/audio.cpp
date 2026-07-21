@@ -88,15 +88,12 @@ struct GgmlContextDeleter {
 
 struct FishLayerWeights {
     assets::TensorDataF32 input_norm;
-    core::TensorValue q_proj;
-    core::TensorValue k_proj;
-    core::TensorValue v_proj;
+    core::TensorValue qkv_proj;
     core::TensorValue o_proj;
     std::optional<assets::TensorDataF32> q_norm;
     std::optional<assets::TensorDataF32> k_norm;
     assets::TensorDataF32 post_norm;
-    core::TensorValue gate_proj;
-    core::TensorValue up_proj;
+    core::TensorValue gate_up_proj;
     core::TensorValue down_proj;
 };
 
@@ -155,12 +152,14 @@ modules::QwenCausalDecoderConfig make_slow_decoder_config(const FishAudioTextCon
     out.stack.rope_theta = config.rope_base;
     out.stack.rope_type = GGML_ROPE_TYPE_NORMAL;
     out.stack.attention_precision = GGML_PREC_F32;
-    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::Separate;
+    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
     out.stack.use_qk_norm = config.attention_qk_norm;
     out.stack.activation_cast = fish_activation_cast_policy();
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
     out.logits_size = config.vocab_size;
     out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.lm_head_precision = GGML_PREC_F32;
@@ -179,12 +178,14 @@ modules::QwenCausalDecoderConfig make_fast_decoder_config(const FishAudioFastCon
     out.stack.rope_theta = config.rope_base;
     out.stack.rope_type = GGML_ROPE_TYPE_NORMAL;
     out.stack.attention_precision = GGML_PREC_F32;
-    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::Separate;
+    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
     out.stack.use_qk_norm = config.attention_qk_norm;
     out.stack.activation_cast = fish_activation_cast_policy();
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
     out.logits_size = config.vocab_size;
     out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.lm_head_precision = GGML_PREC_F32;
@@ -197,9 +198,7 @@ modules::QwenDecoderLayerWeights bind_layer(
     bool use_qk_norm) {
     modules::QwenDecoderLayerWeights out;
     out.input_norm = binding::norm_data(constants, weights.input_norm);
-    out.self_attention.q_weight = weights.q_proj;
-    out.self_attention.k_weight = weights.k_proj;
-    out.self_attention.v_weight = weights.v_proj;
+    out.self_attention.qkv_weight = weights.qkv_proj;
     out.self_attention.out_weight = weights.o_proj;
     if (use_qk_norm) {
         if (!weights.q_norm.has_value() || !weights.k_norm.has_value()) {
@@ -209,8 +208,7 @@ modules::QwenDecoderLayerWeights bind_layer(
         out.k_norm = binding::norm_data(constants, *weights.k_norm);
     }
     out.post_norm = binding::norm_data(constants, weights.post_norm);
-    out.mlp.gate_proj = binding::linear_data(constants, weights.gate_proj);
-    out.mlp.up_proj = binding::linear_data(constants, weights.up_proj);
+    out.mlp.gate_up_proj = binding::linear_data(constants, weights.gate_up_proj);
     out.mlp.down_proj = binding::linear_data(constants, weights.down_proj);
     return out;
 }
@@ -336,18 +334,47 @@ FishLayerWeights load_layer(
     assets::TensorStorageType storage_type) {
     FishLayerWeights w;
     w.input_norm = source.require_f32_tensor(prefix + ".attention_norm.weight", {hidden});
-    w.q_proj = store.load_tensor(source, prefix + ".attention.q_proj.weight", storage_type, {heads * head_dim, hidden});
-    w.k_proj = store.load_tensor(source, prefix + ".attention.k_proj.weight", storage_type, {kv_heads * head_dim, hidden});
-    w.v_proj = store.load_tensor(source, prefix + ".attention.v_proj.weight", storage_type, {kv_heads * head_dim, hidden});
+    {
+        const auto q = source.require_tensor(prefix + ".attention.q_proj.weight", storage_type, {heads * head_dim, hidden});
+        const auto k = source.require_tensor(prefix + ".attention.k_proj.weight", storage_type, {kv_heads * head_dim, hidden});
+        const auto v = source.require_tensor(prefix + ".attention.v_proj.weight", storage_type, {kv_heads * head_dim, hidden});
+        if (q.type != k.type || q.type != v.type) {
+            throw std::runtime_error("Fish Audio packed QKV weights require matching storage types");
+        }
+        std::vector<std::byte> packed;
+        packed.reserve(q.bytes.size() + k.bytes.size() + v.bytes.size());
+        packed.insert(packed.end(), q.bytes.begin(), q.bytes.end());
+        packed.insert(packed.end(), k.bytes.begin(), k.bytes.end());
+        packed.insert(packed.end(), v.bytes.begin(), v.bytes.end());
+        w.qkv_proj = store.make_tensor(
+            core::TensorShape::from_dims({(heads + 2 * kv_heads) * head_dim, hidden}),
+            q.type,
+            packed.data(),
+            packed.size());
+    }
     w.o_proj = store.load_tensor(source, prefix + ".attention.wo.weight", storage_type, {hidden, heads * head_dim});
     if (qk_norm) {
         w.q_norm = source.require_f32_tensor(prefix + ".attention.q_norm.weight", {head_dim});
         w.k_norm = source.require_f32_tensor(prefix + ".attention.k_norm.weight", {head_dim});
     }
     w.post_norm = source.require_f32_tensor(prefix + ".ffn_norm.weight", {hidden});
-    w.gate_proj = store.load_tensor(source, prefix + ".feed_forward.w1.weight", storage_type, {intermediate, hidden});
     w.down_proj = store.load_tensor(source, prefix + ".feed_forward.w2.weight", storage_type, {hidden, intermediate});
-    w.up_proj = store.load_tensor(source, prefix + ".feed_forward.w3.weight", storage_type, {intermediate, hidden});
+    {
+        const auto gate = source.require_tensor(prefix + ".feed_forward.w1.weight", storage_type, {intermediate, hidden});
+        const auto up = source.require_tensor(prefix + ".feed_forward.w3.weight", storage_type, {intermediate, hidden});
+        if (gate.type != up.type) {
+            throw std::runtime_error("Fish Audio packed gate/up weights require matching storage types");
+        }
+        std::vector<std::byte> packed;
+        packed.reserve(gate.bytes.size() + up.bytes.size());
+        packed.insert(packed.end(), gate.bytes.begin(), gate.bytes.end());
+        packed.insert(packed.end(), up.bytes.begin(), up.bytes.end());
+        w.gate_up_proj = store.make_tensor(
+            core::TensorShape::from_dims({intermediate * 2, hidden}),
+            gate.type,
+            packed.data(),
+            packed.size());
+    }
     return w;
 }
 
