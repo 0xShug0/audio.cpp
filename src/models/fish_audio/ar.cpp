@@ -48,7 +48,6 @@ struct FishARProfile {
     double prefill_input_upload_ms = 0.0;
     double prefill_graph_ms = 0.0;
     double prefill_output_read_ms = 0.0;
-    double prefill_state_read_ms = 0.0;
     double step_input_upload_ms = 0.0;
     double step_mask_upload_ms = 0.0;
     double step_graph_ms = 0.0;
@@ -57,7 +56,6 @@ struct FishARProfile {
     double fast_mask_upload_ms = 0.0;
     double fast_graph_ms = 0.0;
     double fast_output_read_ms = 0.0;
-    double import_prefill_state_ms = 0.0;
     double sample_bias_ms = 0.0;
     double sample_main_ms = 0.0;
     double sample_high_ms = 0.0;
@@ -117,7 +115,11 @@ struct SlowForwardOutput {
 
 struct SlowPrefillOutput {
     SlowForwardOutput forward;
-    runtime::TransformerKVState state;
+};
+
+struct FishPrefillCacheTarget {
+    std::vector<core::TensorValue> keys;
+    std::vector<core::TensorValue> values;
 };
 
 modules::QwenDecoderActivationCastPolicy fish_activation_cast_policy() {
@@ -811,8 +813,8 @@ public:
         if (max_new_tokens <= 0) {
             throw std::runtime_error("Fish Audio prompt leaves no room for generated tokens");
         }
-        ensure_prefill_graph(prompt.steps, profile);
         ensure_step_graph(prompt.steps + max_new_tokens, profile);
+        ensure_prefill_graph(prompt.steps, profile);
         ensure_fast_graph(profile);
         SampleState sample;
         sample.seed = options.seed;
@@ -830,9 +832,7 @@ public:
         }
         append_frame(generated_frame_major, frame);
         ++profile.generated_frames;
-        timing_start = Clock::now();
-        step_graph_->import_state(prefill.state);
-        profile.import_prefill_state_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+        step_graph_->finish_prefill(prompt.steps);
         bool ended_by_im_end = false;
         for (int64_t step = 1; step < max_new_tokens; ++step) {
             timing_start = Clock::now();
@@ -874,17 +874,25 @@ public:
 private:
     class PrefillGraph {
     public:
-        PrefillGraph(std::shared_ptr<const FishARWeightsRuntime> runtime, int64_t steps)
+        PrefillGraph(
+            std::shared_ptr<const FishARWeightsRuntime> runtime,
+            int64_t steps,
+            FishPrefillCacheTarget target_cache)
             : runtime_(std::move(runtime)),
-              steps_(steps) {
+              steps_(steps),
+              target_cache_(std::move(target_cache)) {
+            const auto & assets = runtime_->assets();
+            const auto & config = assets.config.text;
+            if (target_cache_.keys.size() != runtime_->weights().slow_layers.size() ||
+                target_cache_.values.size() != runtime_->weights().slow_layers.size()) {
+                throw std::runtime_error("Fish Audio prefill target cache layer count mismatch");
+            }
             ggml_init_params params{runtime_->graph_arena_bytes(), nullptr, true};
             ctx_.reset(ggml_init(params));
             if (ctx_ == nullptr) {
                 throw std::runtime_error("failed to initialize Fish Audio AR prefill context");
             }
             core::ModuleBuildContext ctx{ctx_.get(), "fish_audio.ar.prefill", runtime_->backend_type()};
-            const auto & assets = runtime_->assets();
-            const auto & config = assets.config.text;
             auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, steps_, config.dim}));
             input_ = input.tensor;
             positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, steps_);
@@ -903,32 +911,39 @@ private:
                 bind_slow_weights(*constants_, runtime_->weights(), config),
                 make_slow_decoder_config(config),
                 assets.config.norm_fastlayer_input);
-            for (const auto & layer : decoder.state.layers) {
+            graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
+            for (size_t layer_index = 0; layer_index < decoder.state.layers.size(); ++layer_index) {
+                const auto & layer = decoder.state.layers[layer_index];
                 if (!layer.key.has_value() || !layer.value.has_value()) {
                     throw std::runtime_error("Fish Audio prefill decoder did not produce K/V state");
                 }
-                keys_.push_back(layer.key->tensor);
-                values_.push_back(layer.value->tensor);
+                auto key_dest = runtime::view_transformer_kv_cache_steps(
+                    ctx,
+                    target_cache_.keys[layer_index],
+                    0,
+                    steps_,
+                    config.n_local_heads,
+                    config.head_dim,
+                    "Fish Audio prefill key cache",
+                    target_cache_.keys[layer_index].type);
+                auto value_dest = runtime::view_transformer_kv_cache_steps(
+                    ctx,
+                    target_cache_.values[layer_index],
+                    0,
+                    steps_,
+                    config.n_local_heads,
+                    config.head_dim,
+                    "Fish Audio prefill value cache",
+                    target_cache_.values[layer_index].type);
+                ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), layer.key->tensor, key_dest.tensor));
+                ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), layer.value->tensor, value_dest.tensor));
             }
             hidden_ = decoder.hidden.tensor;
             logits_ = decoder.logits.tensor;
             ggml_set_output(hidden_);
-            for (ggml_tensor * key : keys_) {
-                ggml_set_output(key);
-            }
-            for (ggml_tensor * value : values_) {
-                ggml_set_output(value);
-            }
             ggml_set_output(logits_);
-            graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
             ggml_build_forward_expand(graph_, logits_);
             ggml_build_forward_expand(graph_, hidden_);
-            for (ggml_tensor * key : keys_) {
-                ggml_build_forward_expand(graph_, key);
-            }
-            for (ggml_tensor * value : values_) {
-                ggml_build_forward_expand(graph_, value);
-            }
             constants_->finish_graph();
             constants_->ensure_uploaded();
             gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
@@ -972,18 +987,6 @@ private:
             ggml_backend_tensor_get(logits_, out.forward.logits.data(), 0, out.forward.logits.size() * sizeof(float));
             ggml_backend_tensor_get(hidden_, out.forward.hidden.data(), 0, out.forward.hidden.size() * sizeof(float));
             profile.prefill_output_read_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
-            out.state.current_end = steps_;
-            out.state.layers.resize(keys_.size());
-            const size_t values_per_layer = static_cast<size_t>(steps_ * config.n_local_heads * config.head_dim);
-            timing_start = Clock::now();
-            for (size_t i = 0; i < keys_.size(); ++i) {
-                out.state.layers[i].valid_steps = steps_;
-                out.state.layers[i].key.resize(values_per_layer);
-                out.state.layers[i].value.resize(values_per_layer);
-                ggml_backend_tensor_get(keys_[i], out.state.layers[i].key.data(), 0, values_per_layer * sizeof(float));
-                ggml_backend_tensor_get(values_[i], out.state.layers[i].value.data(), 0, values_per_layer * sizeof(float));
-            }
-            profile.prefill_state_read_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
             return out;
         }
 
@@ -997,11 +1000,10 @@ private:
         ggml_tensor * positions_ = nullptr;
         ggml_tensor * hidden_ = nullptr;
         ggml_tensor * logits_ = nullptr;
-        std::vector<ggml_tensor *> keys_;
-        std::vector<ggml_tensor *> values_;
         ggml_cgraph * graph_ = nullptr;
         ggml_gallocr_t gallocr_ = nullptr;
         std::unique_ptr<common::ConstantTensorCache> constants_;
+        FishPrefillCacheTarget target_cache_;
     };
 
     class StepGraph {
@@ -1108,8 +1110,20 @@ private:
 
         int64_t cache_steps() const noexcept { return cache_steps_; }
 
-        void import_state(const runtime::TransformerKVState & state) {
-            cache_.import_state(state);
+        FishPrefillCacheTarget prefill_target_cache() const {
+            FishPrefillCacheTarget out;
+            out.keys.reserve(runtime_->weights().slow_layers.size());
+            out.values.reserve(runtime_->weights().slow_layers.size());
+            for (size_t layer = 0; layer < runtime_->weights().slow_layers.size(); ++layer) {
+                out.keys.push_back(cache_.key_tensor(layer));
+                out.values.push_back(cache_.value_tensor(layer));
+            }
+            return out;
+        }
+
+        void finish_prefill(int64_t steps) {
+            cache_.retain_prefix(0);
+            cache_.advance_after_direct_append(steps);
             const auto masked = ggml_fp32_to_fp16(-INFINITY);
             const auto visible = ggml_fp32_to_fp16(0.0F);
             std::fill(mask_scratch_.begin(), mask_scratch_.end(), masked);
@@ -1341,7 +1355,10 @@ private:
     void ensure_prefill_graph(int64_t steps, FishARProfile & profile) {
         if (!prefill_graph_ || prefill_graph_->steps() != steps) {
             const auto build_start = Clock::now();
-            prefill_graph_ = std::make_unique<PrefillGraph>(runtime_, steps);
+            if (!step_graph_) {
+                throw std::runtime_error("Fish Audio AR prefill requires a step graph");
+            }
+            prefill_graph_ = std::make_unique<PrefillGraph>(runtime_, steps, step_graph_->prefill_target_cache());
             profile.graph_build_prefill_ms += engine::debug::elapsed_ms(build_start, Clock::now());
         }
     }
@@ -1350,6 +1367,7 @@ private:
         if (!step_graph_ || step_graph_->cache_steps() < cache_steps) {
             const auto build_start = Clock::now();
             step_graph_ = std::make_unique<StepGraph>(runtime_, cache_steps);
+            prefill_graph_.reset();
             profile.graph_build_step_ms += engine::debug::elapsed_ms(build_start, Clock::now());
         }
     }
@@ -1449,7 +1467,6 @@ private:
         engine::debug::timing_log_scalar("fish_audio.ar.profile.prefill_input_upload_ms", profile.prefill_input_upload_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.prefill_graph_ms", profile.prefill_graph_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.prefill_output_read_ms", profile.prefill_output_read_ms);
-        engine::debug::timing_log_scalar("fish_audio.ar.profile.prefill_state_read_ms", profile.prefill_state_read_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.step_input_upload_ms", profile.step_input_upload_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.step_mask_upload_ms", profile.step_mask_upload_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.step_graph_ms", profile.step_graph_ms);
@@ -1458,7 +1475,6 @@ private:
         engine::debug::timing_log_scalar("fish_audio.ar.profile.fast_mask_upload_ms", profile.fast_mask_upload_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.fast_graph_ms", profile.fast_graph_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.fast_output_read_ms", profile.fast_output_read_ms);
-        engine::debug::timing_log_scalar("fish_audio.ar.profile.import_prefill_state_ms", profile.import_prefill_state_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.sample_bias_ms", profile.sample_bias_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.sample_main_ms", profile.sample_main_ms);
         engine::debug::timing_log_scalar("fish_audio.ar.profile.sample_high_ms", profile.sample_high_ms);

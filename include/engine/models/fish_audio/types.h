@@ -10,7 +10,7 @@
 namespace engine::models::fish_audio {
 
 struct FishAudioGenerationOptions {
-    int64_t max_new_tokens = 2048;
+    int64_t max_new_tokens = 1024;
     int64_t text_chunk_size = 200;
     float top_p = 0.8F;
     int top_k = 30;
