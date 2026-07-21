@@ -255,12 +255,12 @@ audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR --ba
 
 ## Voxtral Realtime
 
-Voxtral Realtime is a Mistral realtime ASR model with offline and streaming sessions. It accepts the native Hugging Face model directory and standalone audio.cpp GGUF packages.
+Voxtral Realtime is a Mistral realtime ASR model with offline and streaming sessions. The model manager installs the Q8_0 standalone GGUF package by default; native Hugging Face directories and other standalone GGUF variants can also be used when provided directly.
 
 | Field | Value |
 |---|---|
 | Family | `voxtral_realtime` |
-| Model directory | `models/Voxtral-Mini-4B-Realtime-2602` or a standalone Voxtral GGUF |
+| Model path | `models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf` when installed through the model manager |
 | Task | `asr` |
 | Modes | `offline`, `streaming` |
 | Output | Transcription text |
@@ -270,19 +270,19 @@ Voxtral Realtime is a Mistral realtime ASR model with offline and streaming sess
 Offline CLI:
 
 ```bash
-audiocpp_cli --task asr --family voxtral_realtime --model <VOXTRAL_MODEL> --backend cuda --threads 8 --audio assets/resources/sample.wav --text-out transcript.txt
+audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --audio assets/resources/sample.wav --text-out transcript.txt
 ```
 
 Sampling and token-cap options can be passed through request options:
 
 ```bash
-audiocpp_cli --task asr --family voxtral_realtime --model <VOXTRAL_MODEL> --backend cuda --threads 8 --audio assets/resources/sample.wav --text-out transcript.txt --request-option max_new_tokens=256 --do-sample false --temperature 1.0 --top-p 1.0 --top-k 50 --seed 1234
+audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --audio assets/resources/sample.wav --text-out transcript.txt --request-option max_new_tokens=256 --do-sample false --temperature 1.0 --top-p 1.0 --top-k 50 --seed 1234
 ```
 
 Streaming CLI:
 
 ```bash
-audiocpp_cli --task asr --family voxtral_realtime --model <VOXTRAL_MODEL> --backend cuda --threads 8 --mode streaming --audio assets/resources/sample.wav --text-out transcript.txt
+audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --mode streaming --audio assets/resources/sample.wav --text-out transcript.txt
 ```
 
 Streaming server config:
@@ -299,7 +299,7 @@ Streaming server config:
     {
       "id": "voxtral-stream",
       "family": "voxtral_realtime",
-      "path": "/path/to/Voxtral-Mini-4B-Realtime-2602",
+      "path": "/path/to/voxtral-mini-4b-realtime-2602-q8_0.gguf",
       "task": "asr",
       "mode": "streaming"
     }

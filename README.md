@@ -420,7 +420,7 @@ For shared audio.cpp GGUF packages, the model manager installs the default Q8_0 
 | `vibevoice_1_5b` | VibeVoice 1.5B | No |
 | `vibevoice_7b` | VibeVoice 7B | No |
 | `vibevoice_asr` | VibeVoice ASR | No |
-| `voxtral_realtime` | Voxtral Mini 4B Realtime | **Yes** |
+| `voxtral_realtime` | Voxtral Mini 4B Realtime GGUF Q8_0 | **Yes** |
 | `voxcpm2` | VoxCPM2 | No |
 
 > [!WARNING]

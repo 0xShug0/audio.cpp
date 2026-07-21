@@ -306,7 +306,7 @@ Higgs Audio v3 TTS is a voice-clone TTS model. The current integration uses the 
 | Field | Value |
 |---|---|
 | Family | `higgs_audio_tts` |
-| Model directory | `models/Higgs-Audio-v3-TTS-4B-GGUF` when installed through the model manager |
+| Model path | `models/Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf` when installed through the model manager |
 | Task | `tts` |
 | Modes | `offline` |
 | Languages | Model auto-handles supported languages |
@@ -314,7 +314,7 @@ Higgs Audio v3 TTS is a voice-clone TTS model. The current integration uses the 
 | Built-in voices | Not exposed |
 
 ```bash
-audiocpp_cli --task tts --family higgs_audio_tts --model models/Higgs-Audio-v3-TTS-4B-GGUF --backend cuda --text "Hello from Higgs Audio." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
+audiocpp_cli --task tts --family higgs_audio_tts --model models/Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf --backend cuda --text "Hello from Higgs Audio." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
 
 The model manager installs the Q8_0 standalone GGUF package by default:
@@ -341,7 +341,7 @@ Fish Audio S2 Pro is a TTS and reference voice-clone model. The integration uses
 | Field | Value |
 |---|---|
 | Family | `fish_audio` |
-| Model directory | `models/Fish-Audio-S2-Pro-GGUF` when installed through the model manager |
+| Model path | `models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf` when installed through the model manager |
 | Task | `tts` |
 | Modes | `offline` |
 | Languages | Model auto-handles language; tested paths cover English and Chinese-style prompts |
@@ -351,13 +351,13 @@ Fish Audio S2 Pro is a TTS and reference voice-clone model. The integration uses
 Text-to-speech:
 
 ```bash
-audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF --backend cuda --text "Hello from Fish Audio." --out out.wav
+audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "Hello from Fish Audio." --out out.wav
 ```
 
 Reference voice clone:
 
 ```bash
-audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF --backend cuda --text "The final render is ready for review." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
+audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The final render is ready for review." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
 
 The model manager installs the Q8_0 standalone GGUF package by default:

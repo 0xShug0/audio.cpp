@@ -150,6 +150,7 @@ class ModelPackage:
     standalone: bool | None = None
     parent_package_id: str | None = None
     tasks: tuple[str, ...] = ()
+    modes: tuple[str, ...] = ()
     gated: bool | None = None
 
 
@@ -381,30 +382,18 @@ CATALOG: tuple[ModelPackage, ...] = (
     ),
     ModelPackage(
         id="voxtral_realtime",
-        display_name="Voxtral Mini 4B Realtime",
-        target_directory="Voxtral-Mini-4B-Realtime-2602",
+        display_name="Voxtral Mini 4B Realtime GGUF",
+        target_directory="Voxtral-Mini-4B-Realtime-2602-GGUF",
         source=SnapshotSource(
-            repo_id="mistralai/Voxtral-Mini-4B-Realtime-2602",
-            include_prefixes=(
-                "config.json",
-                "generation_config.json",
-                "model.safetensors",
-                "params.json",
-                "processor_config.json",
-                "tekken.json",
-            ),
+            repo_id="audio-cpp/audio.cpp-gguf",
+            include_prefixes=("Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf",),
+            strip_prefix="Voxtral-Mini-4B-Realtime-2602-GGUF/",
         ),
-        required_files=(
-            "config.json",
-            "generation_config.json",
-            "model.safetensors",
-            "params.json",
-            "processor_config.json",
-            "tekken.json",
-        ),
+        required_files=("voxtral-mini-4b-realtime-2602-q8_0.gguf",),
         family="voxtral_realtime",
         tasks=("asr",),
-        description="Native Hugging Face checkpoint for Voxtral realtime ASR; no conversion is required.",
+        modes=("offline", "streaming"),
+        description="Standalone audio.cpp Q8_0 GGUF package for Voxtral realtime ASR.",
     ),
     ModelPackage(
         id="fish_audio_s2_pro",
@@ -1512,7 +1501,7 @@ def package_payload(package: ModelPackage) -> dict[str, object]:
         "source": source_payload,
         "family": family,
         "tasks": tasks,
-        "modes": ["offline"] if tasks else [],
+        "modes": list(package.modes) if package.modes else (["offline"] if tasks else []),
         "standalone": standalone,
         "parent_package_id": parent_package_id,
         "gated": _package_is_gated(package),
