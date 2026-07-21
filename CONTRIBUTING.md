@@ -20,6 +20,12 @@ Please check the supported model table in [README.md](README.md) before starting
 
 If you want to add support for a model family that is already listed, please focus on improving the existing implementation instead of opening a duplicate port.
 
+When a loader is registered (or parked), keep the **package catalog** in sync. Installable `ModelPackage` entries must not advertise families that `audiocpp_cli --list-loaders` does not expose. Follow the checklist in [docs/maintainers/loader_and_catalog.md](docs/maintainers/loader_and_catalog.md) and run:
+
+```bash
+python3 tools/check_loader_catalog_sync.py
+```
+
 Good follow-up work for existing model families includes:
 
 - Better CLI or server examples
