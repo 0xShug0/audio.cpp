@@ -12,6 +12,8 @@
 
 This page covers ASR models. Detailed Qwen3 ASR and forced-alignment notes live in [Qwen3 models](models/qwen3.md).
 
+Runtime peer models (forced aligner, VAD, and similar path options) are advertised on `audiocpp_cli --list-loaders --json` as per-loader `companions`. See [Discovering loaders and companions](usage.md#discovering-loaders-and-companions).
+
 Common CLI shape:
 
 ```bash

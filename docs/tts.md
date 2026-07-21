@@ -87,7 +87,7 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 
 ## MioTTS
 
-MioTTS is a 1.7B voice-clone TTS path that uses MioCodec for acoustic decoding. It requires a reference voice.
+MioTTS is a 1.7B voice-clone TTS path that uses MioCodec for acoustic decoding. It requires a reference voice. MioCodec and optional best-of-N ASR peers are advertised under `loaders.miotts.companions` in `audiocpp_cli --list-loaders --json` (see [usage.md](usage.md#discovering-loaders-and-companions)).
 
 | Field | Value |
 |---|---|

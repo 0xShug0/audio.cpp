@@ -105,6 +105,10 @@ the forced aligner model path. Long audio is split inside the model session
 before ASR inference; word timestamps are shifted back onto the original audio
 timeline.
 
+Integrators can discover the aligner and VAD peers from
+`audiocpp_cli --list-loaders --json` under `loaders.qwen3_asr.companions`
+(see [usage.md](../usage.md#discovering-loaders-and-companions)).
+
 `audio_chunk_mode=auto` is the default. For transcript-only ASR, Qwen3 ASR uses
 fixed chunks. When word timestamps are requested, it uses bundled Silero VAD
 internally to choose speech-aware chunks before running ASR and alignment.

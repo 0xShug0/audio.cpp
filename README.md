@@ -301,7 +301,7 @@ Useful CLI features:
 - `--help` with `--task` shows task-oriented help
 - `--help` with `--model <path>` and optional `--family <family>` shows model-owned request, session, and load options
 - `--inspect` prints discovered configs, weights, and capabilities
-- `--list-loaders` prints registered model families (`--json` for the machine-readable contract)
+- `--list-loaders` prints registered model families (`--json` for the machine-readable contract: tasks, endpoints, and optional runtime `companions`)
 - `python tools/model_manager.py list --json` prints installable packages; keep it synced with loaders ([docs/maintainers/loader_and_catalog.md](docs/maintainers/loader_and_catalog.md))
 - `--batch-text-file <txt>` runs one offline request per non-empty line
 - `--batch-text-dir <dir>` runs one offline request per `.txt`, `.md`, or `.json` file, normalizing each file as one paragraph
@@ -369,7 +369,7 @@ The tool supports three main commands:
 - `info <package> --json` prints machine-readable package details
 - `install` downloads or converts one package into a models root
 
-The CLI also exposes the runtime loader catalog with `audiocpp_cli --list-loaders --json`, including task and endpoint metadata added by [PR #74](https://github.com/0xShug0/audio.cpp/pull/74).
+The CLI also exposes the runtime loader catalog with `audiocpp_cli --list-loaders --json` (`schema_version` 1). That export includes task and endpoint metadata ([PR #74](https://github.com/0xShug0/audio.cpp/pull/74)) and optional per-loader `companions` for runtime peer models (forced aligner, VAD, codec, and similar path options). Integrators should read companions from this contract rather than hard-coding family graphs. See [docs/usage.md](docs/usage.md#discovering-loaders-and-companions) and [docs/maintainers/loader_and_catalog.md](docs/maintainers/loader_and_catalog.md).
 
 Recommended top-level install packages:
 
