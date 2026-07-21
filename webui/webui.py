@@ -404,12 +404,16 @@ def _find_gguf_exe():
             return candidate
     return None
 
-# model_manager.py is used to download not-yet-installed models in the background.
+# model_manager_webui.py downloads not-yet-installed models in the background. It
+# wraps the upstream tools/model_manager.py CLI with resumable, Torch-free
+# downloads (falling back to the upstream tool if the wrapper isn't present).
 MODELS_ROOT = os.path.join(BUNDLE_ROOT, "models")
 
 
 def _find_model_manager():
     for c in (os.environ.get("AUDIOCPP_MODEL_MANAGER"),
+              os.path.join(BUNDLE_ROOT, "tools", "model_manager_webui.py"),
+              os.path.join(PROJECT_ROOT, "tools", "model_manager_webui.py"),
               os.path.join(BUNDLE_ROOT, "tools", "model_manager.py"),
               os.path.join(PROJECT_ROOT, "tools", "model_manager.py")):
         if c and os.path.isfile(c):
