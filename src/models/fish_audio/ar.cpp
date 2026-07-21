@@ -675,10 +675,17 @@ FishStaticDecoderOutputs build_fish_static_decoder(
                         })
                             .build(ctx, hidden, weights.lm_head);
     auto fast_hidden = norm_fastlayer_input ? hidden : x;
+    runtime::TransformerKVCacheOptions cache_options;
+    cache_options.allow_bf16_storage = true;
     return {
         fast_hidden,
         logits,
-        runtime::TransformerKVCache(cache_steps, step_elems, std::move(cache_keys), std::move(cache_values)),
+        runtime::TransformerKVCache(
+            cache_steps,
+            step_elems,
+            std::move(cache_keys),
+            std::move(cache_values),
+            cache_options),
     };
 }
 
@@ -1035,23 +1042,23 @@ private:
                 cache_keys.push_back(core::wrap_tensor(
                     ggml_new_tensor_4d(
                         state_ctx_.get(),
-                        GGML_TYPE_F32,
+                        GGML_TYPE_BF16,
                         config.head_dim,
                         config.n_local_heads,
                         cache_steps_,
                         1),
                     core::TensorShape::from_dims({1, cache_steps_, config.n_local_heads, config.head_dim}),
-                    GGML_TYPE_F32));
+                    GGML_TYPE_BF16));
                 cache_values.push_back(core::wrap_tensor(
                     ggml_new_tensor_4d(
                         state_ctx_.get(),
-                        GGML_TYPE_F32,
+                        GGML_TYPE_BF16,
                         config.head_dim,
                         config.n_local_heads,
                         cache_steps_,
                         1),
                     core::TensorShape::from_dims({1, cache_steps_, config.n_local_heads, config.head_dim}),
-                    GGML_TYPE_F32));
+                    GGML_TYPE_BF16));
             }
             state_buffer_ = ggml_backend_alloc_ctx_tensors(state_ctx_.get(), runtime_->backend());
             if (state_buffer_ == nullptr) {
@@ -1222,23 +1229,23 @@ private:
                 cache_keys.push_back(core::wrap_tensor(
                     ggml_new_tensor_4d(
                         state_ctx_.get(),
-                        GGML_TYPE_F32,
+                        GGML_TYPE_BF16,
                         config.head_dim,
                         config.n_local_heads,
                         config.num_codebooks,
                         1),
                     core::TensorShape::from_dims({1, config.num_codebooks, config.n_local_heads, config.head_dim}),
-                    GGML_TYPE_F32));
+                    GGML_TYPE_BF16));
                 cache_values.push_back(core::wrap_tensor(
                     ggml_new_tensor_4d(
                         state_ctx_.get(),
-                        GGML_TYPE_F32,
+                        GGML_TYPE_BF16,
                         config.head_dim,
                         config.n_local_heads,
                         config.num_codebooks,
                         1),
                     core::TensorShape::from_dims({1, config.num_codebooks, config.n_local_heads, config.head_dim}),
-                    GGML_TYPE_F32));
+                    GGML_TYPE_BF16));
             }
             state_buffer_ = ggml_backend_alloc_ctx_tensors(state_ctx_.get(), runtime_->backend());
             if (state_buffer_ == nullptr) {

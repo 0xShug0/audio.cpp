@@ -18,9 +18,12 @@ void validate_cache_tensor(const core::TensorValue & tensor, const TransformerKV
     if (options.allow_f16_storage && tensor.type == GGML_TYPE_F16) {
         return;
     }
+    if (options.allow_bf16_storage && tensor.type == GGML_TYPE_BF16) {
+        return;
+    }
     throw std::runtime_error(
-        options.allow_f16_storage
-            ? "TransformerKVCache supports only f32 and f16 cache tensors"
+        options.allow_f16_storage || options.allow_bf16_storage
+            ? "TransformerKVCache supports only f32/f16/bf16 cache tensors when enabled"
             : "TransformerKVCache requires f32 cache tensors");
 }
 
@@ -37,6 +40,10 @@ void write_cache_tensor(
         core::write_tensor_f16(tensor, values);
         return;
     }
+    if (options.allow_bf16_storage && tensor.type == GGML_TYPE_BF16) {
+        core::write_tensor_bf16(tensor, values);
+        return;
+    }
     throw std::runtime_error("TransformerKVCache requires f32 cache tensors");
 }
 
@@ -47,6 +54,9 @@ std::vector<float> read_cache_tensor(const core::TensorValue & tensor, const Tra
     }
     if (options.allow_f16_storage && tensor.type == GGML_TYPE_F16) {
         return core::read_tensor_f16(tensor.tensor);
+    }
+    if (options.allow_bf16_storage && tensor.type == GGML_TYPE_BF16) {
+        return core::read_tensor_bf16(tensor.tensor);
     }
     throw std::runtime_error("TransformerKVCache requires f32 cache tensors");
 }

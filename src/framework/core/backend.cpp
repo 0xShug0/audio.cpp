@@ -469,6 +469,26 @@ void write_tensor_f16(const TensorValue & tensor, const std::vector<float> & val
     write_tensor_f16(tensor, values.data(), values.size());
 }
 
+void write_tensor_bf16(const TensorValue & tensor, const float * values, size_t count) {
+    if (tensor.type != GGML_TYPE_BF16) {
+        throw std::runtime_error("write_tensor_bf16 requires GGML_TYPE_BF16 tensor");
+    }
+    if (tensor.shape.num_elements() != static_cast<int64_t>(count)) {
+        throw std::runtime_error(
+            "write_tensor_bf16 value count does not match tensor shape for tensor '" +
+            std::string(tensor.tensor != nullptr ? tensor.tensor->name : "<null>") +
+            "': expected " + std::to_string(tensor.shape.num_elements()) +
+            ", got " + std::to_string(count));
+    }
+    std::vector<ggml_bf16_t> bf16_values(count);
+    ggml_fp32_to_bf16_row(values, bf16_values.data(), static_cast<int64_t>(count));
+    ggml_backend_tensor_set(tensor.tensor, bf16_values.data(), 0, count * sizeof(ggml_bf16_t));
+}
+
+void write_tensor_bf16(const TensorValue & tensor, const std::vector<float> & values) {
+    write_tensor_bf16(tensor, values.data(), values.size());
+}
+
 void write_tensor_i32(const TensorValue & tensor, const int32_t * values, size_t count) {
     if (tensor.type != GGML_TYPE_I32) {
         throw std::runtime_error("write_tensor_i32 requires GGML_TYPE_I32 tensor");
@@ -540,6 +560,18 @@ void read_tensor_f16_into(const ggml_tensor * tensor, std::vector<float> & value
 std::vector<float> read_tensor_f16(const ggml_tensor * tensor) {
     std::vector<float> values;
     read_tensor_f16_into(tensor, values);
+    return values;
+}
+
+void read_tensor_bf16_into(const ggml_tensor * tensor, std::vector<float> & values) {
+    const auto bf16_values = read_tensor_typed<ggml_bf16_t>(tensor, GGML_TYPE_BF16);
+    values.resize(bf16_values.size());
+    ggml_bf16_to_fp32_row(bf16_values.data(), values.data(), static_cast<int64_t>(values.size()));
+}
+
+std::vector<float> read_tensor_bf16(const ggml_tensor * tensor) {
+    std::vector<float> values;
+    read_tensor_bf16_into(tensor, values);
     return values;
 }
 

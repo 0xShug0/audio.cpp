@@ -21,6 +21,7 @@ struct TransformerKVState {
 
 struct TransformerKVCacheOptions {
     bool allow_f16_storage = false;
+    bool allow_bf16_storage = false;
 };
 
 class TransformerKVCache {
