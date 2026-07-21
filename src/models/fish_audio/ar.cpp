@@ -1251,6 +1251,14 @@ private:
             if (state_buffer_ == nullptr) {
                 throw std::runtime_error("failed to allocate Fish Audio fast AR state tensors");
             }
+            for (const auto & cache : cache_keys) {
+                std::vector<uint8_t> zeros(static_cast<size_t>(ggml_nbytes(cache.tensor)), 0);
+                ggml_backend_tensor_set(cache.tensor, zeros.data(), 0, zeros.size());
+            }
+            for (const auto & cache : cache_values) {
+                std::vector<uint8_t> zeros(static_cast<size_t>(ggml_nbytes(cache.tensor)), 0);
+                ggml_backend_tensor_set(cache.tensor, zeros.data(), 0, zeros.size());
+            }
 
             core::ModuleBuildContext ctx{graph_ctx_.get(), "fish_audio.ar.fast", runtime_->backend_type()};
             auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.dim}));
