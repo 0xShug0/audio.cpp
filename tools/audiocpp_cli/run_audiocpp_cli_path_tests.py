@@ -349,7 +349,16 @@ def resolve_model_path(models_root: Path, value: str) -> Path:
     return models_root / path
 
 
+def resolve_model_override(value: Path | None) -> Path | None:
+    if value is None:
+        return None
+    if value.is_absolute():
+        return value
+    return REPO_ROOT / value
+
+
 def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path) -> list[str]:
+    model_path = resolve_model_override(args.model_path) or resolve_model_path(args.models_root, case["model"])
     command = [
         str(args.audiocpp_cli_bin),
         "--task",
@@ -357,7 +366,7 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
         "--family",
         case["family"],
         "--model",
-        str(resolve_model_path(args.models_root, case["model"])),
+        str(model_path),
         "--backend",
         case.get("backend", args.backend),
         "--mode",
@@ -498,6 +507,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--audiocpp-cli-bin", type=Path, default=DEFAULT_AUDIOCPP_CLI_BIN)
     parser.add_argument("--models-root", type=Path, default=DEFAULT_MODELS_ROOT)
+    parser.add_argument("--model-path", type=Path, help="Override the model path for every selected case")
     parser.add_argument("--backend", default="cuda", choices=["cpu", "cuda", "vulkan", "metal", "best"])
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS)
