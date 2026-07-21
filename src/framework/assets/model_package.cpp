@@ -56,6 +56,41 @@ bool is_gguf_file(const std::filesystem::path & path) {
     return extension == ".gguf";
 }
 
+std::vector<std::string> directory_gguf_files(const std::filesystem::path & path) {
+    std::vector<std::string> files;
+    if (!engine::io::is_existing_directory(path)) {
+        return files;
+    }
+    for (const auto & entry : std::filesystem::directory_iterator(path)) {
+        const auto candidate = entry.path();
+        if (is_gguf_file(candidate)) {
+            files.push_back(candidate.filename().string());
+        }
+    }
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+std::string directory_gguf_hint(std::string_view family) {
+    if (!active_model_path.has_value()) {
+        return {};
+    }
+    const auto files = directory_gguf_files(*active_model_path);
+    if (files.empty()) {
+        return {};
+    }
+    std::string message = "model directory has no default GGUF for family '" + std::string(family) +
+                          "': " + active_model_path->string() + "; found: ";
+    for (size_t i = 0; i < files.size(); ++i) {
+        if (i != 0) {
+            message += ", ";
+        }
+        message += files[i];
+    }
+    message += "; pass the GGUF file directly with --model, or rename it to model.gguf";
+    return message;
+}
+
 std::optional<std::filesystem::path> active_gguf_path() {
     if (!active_model_path.has_value())
         return std::nullopt;
@@ -377,6 +412,9 @@ std::filesystem::path default_model_package_spec_path(std::string_view family) {
     }
     if (const auto external = discover_external_model_spec(family)) {
         return *external;
+    }
+    if (const auto hint = directory_gguf_hint(family); !hint.empty()) {
+        throw std::runtime_error(hint);
     }
     throw std::runtime_error("model package spec not found for family '" + std::string(family) +
                              "' (provide --model-spec-override, embed it in the GGUF, enable "
