@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <random>
 #include <vector>
 
 namespace engine::models::higgs_audio_tts {
@@ -20,6 +21,7 @@ struct HiggsSamplingOptions {
     bool has_seed = false;
     uint64_t seed = 0;
     HiggsCudaSamplingPolicy cuda_policy;
+    std::mt19937 * fallback_rng = nullptr;
 };
 
 struct HiggsSamplerState {

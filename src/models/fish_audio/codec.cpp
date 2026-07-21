@@ -199,6 +199,9 @@ core::TensorValue zero_prefix_like(core::ModuleBuildContext & ctx, const core::T
         throw std::runtime_error("Fish Audio zero_prefix_like requires positive frames");
     }
     auto first = modules::SliceModule({2, 0, 1}).build(ctx, input);
+    if (ctx.backend_type == core::BackendType::Cpu) {
+        first = core::ensure_backend_addressable_layout(ctx, first);
+    }
     first = core::wrap_tensor(ggml_scale(ctx.ggml, first.tensor, 0.0F), first.shape, GGML_TYPE_F32);
     return modules::RepeatModule({core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], frames})})
         .build(ctx, first);
@@ -209,6 +212,9 @@ core::TensorValue zero_suffix_like(core::ModuleBuildContext & ctx, const core::T
         throw std::runtime_error("Fish Audio zero_suffix_like requires positive frames");
     }
     auto last = modules::SliceModule({2, input.shape.dims[2] - 1, 1}).build(ctx, input);
+    if (ctx.backend_type == core::BackendType::Cpu) {
+        last = core::ensure_backend_addressable_layout(ctx, last);
+    }
     last = core::wrap_tensor(ggml_scale(ctx.ggml, last.tensor, 0.0F), last.shape, GGML_TYPE_F32);
     return modules::RepeatModule({core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], frames})})
         .build(ctx, last);

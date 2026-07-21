@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <numeric>
+#include <random>
 #include <stdexcept>
 
 namespace engine::models::higgs_audio_tts {
@@ -292,9 +293,27 @@ int32_t sample_unseeded_torch_multinomial(const std::vector<float> & probs,
                                           const std::vector<int64_t> & candidates,
                                           uint64_t seed,
                                           uint64_t call_index,
-                                          const HiggsCudaSamplingPolicy & policy) {
-    require_cuda_sampling_policy(policy);
+                                          const HiggsCudaSamplingPolicy & policy,
+                                          std::mt19937 & fallback_rng) {
     const int64_t vocab_size = static_cast<int64_t>(probs.size());
+    if (!policy.cuda_fast_path) {
+        std::vector<double> weights;
+        if (candidates.empty()) {
+            weights.reserve(probs.size());
+            for (float prob : probs) {
+                weights.push_back(static_cast<double>(std::max(prob, 0.0F)));
+            }
+            std::discrete_distribution<int64_t> distribution(weights.begin(), weights.end());
+            return static_cast<int32_t>(distribution(fallback_rng));
+        }
+        weights.reserve(candidates.size());
+        for (const int64_t index : candidates) {
+            weights.push_back(static_cast<double>(std::max(probs[static_cast<size_t>(index)], 0.0F)));
+        }
+        std::discrete_distribution<size_t> distribution(weights.begin(), weights.end());
+        return static_cast<int32_t>(candidates[distribution(fallback_rng)]);
+    }
+    require_cuda_sampling_policy(policy);
 
     double best_rank = -std::numeric_limits<double>::infinity();
     int32_t best = -1;
@@ -374,8 +393,11 @@ int32_t sample_codebook_row(const float * logits,
         return sample_seeded_sglang_gumbel(
             scratch.probs, scratch.kept, options.seed & 0x7FFFFFFFull, call_index);
     }
+    if (options.fallback_rng == nullptr) {
+        throw std::runtime_error("Higgs TTS sampler fallback RNG is missing");
+    }
     return sample_unseeded_torch_multinomial(
-        scratch.probs, scratch.kept, options.seed, call_index, options.cuda_policy);
+        scratch.probs, scratch.kept, options.seed, call_index, options.cuda_policy, *options.fallback_rng);
 }
 
 } // namespace

@@ -24,6 +24,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -453,6 +454,7 @@ FishARWeights load_ar_weights(
 struct SampleState {
     uint64_t seed = 0;
     uint64_t call_index = 0;
+    std::mt19937 rng;
     std::vector<int32_t> previous_main;
 };
 
@@ -534,6 +536,15 @@ int32_t sample_from_logits(
     const sampling::TorchCudaSamplingPolicy & policy) {
     const auto distribution = logits_to_distribution(logits, temperature, top_p, top_k);
     const uint64_t call_index = state.call_index++;
+    if (!policy.cuda_fast_path) {
+        std::vector<double> weights;
+        weights.reserve(distribution.candidates.size());
+        for (const auto & candidate : distribution.candidates) {
+            weights.push_back(static_cast<double>(std::max(candidate.probability, 0.0F)));
+        }
+        std::discrete_distribution<size_t> sampler(weights.begin(), weights.end());
+        return distribution.candidates[sampler(state.rng)].index;
+    }
     int32_t best = 0;
     double best_score = -std::numeric_limits<double>::infinity();
     for (const auto & candidate : distribution.candidates) {
@@ -799,7 +810,7 @@ public:
               backend_config.device,
               "fish_audio.ar.cuda_sampling_policy",
               "Fish Audio",
-              sampling::TorchCudaSamplingPolicyFailureMode::StrictCuda)) {}
+              sampling::TorchCudaSamplingPolicyFailureMode::FallbackToDefault)) {}
 
     ~Impl() {
         step_graph_.reset();
@@ -825,6 +836,7 @@ public:
         ensure_fast_graph(profile);
         SampleState sample;
         sample.seed = options.seed;
+        sample.rng.seed(options.seed);
         sample.previous_main.assign(static_cast<size_t>(kRasWindow), 0);
         auto timing_start = Clock::now();
         auto embeddings = build_slow_embeddings(assets.config, weights, prompt.matrix.data(), prompt.steps);

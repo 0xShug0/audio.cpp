@@ -136,10 +136,6 @@ HiggsTTSSession::HiggsTTSSession(
     if (task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Higgs TTS only supports the Tts task");
     }
-    if (options.backend.type != core::BackendType::Cuda) {
-        throw std::runtime_error("Higgs TTS generation requires CUDA backend");
-    }
-
     ar_weight_context_bytes_ = runtime::parse_size_mb_option(
         options.options, {"higgs_audio_tts.ar_weight_context_mb"}, ar_weight_context_bytes_);
     codec_weight_context_bytes_ = runtime::parse_size_mb_option(

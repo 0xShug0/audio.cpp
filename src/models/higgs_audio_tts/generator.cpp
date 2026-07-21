@@ -411,15 +411,19 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     // Higgs audio-codebook sampler does not consume it.
     sampling.has_seed = request.options.seed.has_value();
     sampling.seed = request.options.seed.value_or(runtime::random_u64_seed());
-    if (!cuda_sampling_policy_.has_value()) {
+    std::mt19937 fallback_rng(static_cast<uint32_t>(sampling.seed));
+    sampling.fallback_rng = &fallback_rng;
+    if (!sampling.has_seed && !cuda_sampling_policy_.has_value()) {
         cuda_sampling_policy_ = engine::sampling::resolve_torch_cuda_sampling_policy(
             ar_->backend_type(),
             ar_->device(),
             "higgs_audio_tts.cuda_sampling_policy",
             "Higgs TTS",
-            engine::sampling::TorchCudaSamplingPolicyFailureMode::StrictCuda);
+            engine::sampling::TorchCudaSamplingPolicyFailureMode::FallbackToDefault);
     }
-    sampling.cuda_policy = *cuda_sampling_policy_;
+    if (cuda_sampling_policy_.has_value()) {
+        sampling.cuda_policy = *cuda_sampling_policy_;
+    }
     engine::debug::trace_log_scalar("higgs_audio_tts.sampler.temperature", sampling.temperature);
     engine::debug::trace_log_scalar("higgs_audio_tts.sampler.has_seed", sampling.has_seed);
     engine::debug::trace_log_scalar("higgs_audio_tts.sampler.seed", sampling.seed);
