@@ -371,7 +371,9 @@ runtime::TaskResult VietneuTTSSession::run(const runtime::TaskRequest & request)
     };
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
-    const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
+    const auto text_chunk_mode =
+        engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
+    const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
 
     const VietneuTTSRequest first_request = make_request(chunk_requests.front());
     if (!first_request.voice_clone.has_value()) {

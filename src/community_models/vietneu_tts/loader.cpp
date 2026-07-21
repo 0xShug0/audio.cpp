@@ -50,6 +50,8 @@ runtime::ModelCliInterface cli(const VietneuTTSAssets &) {
         {"speaker_embedding", "<csv>", "Comma-separated list of 192 speaker embedding float values."},
         {"subtalker_temperature", "<float>", "Acoustic decoder sampling temperature (default 0.8)."},
         {"subtalker_do_sample", "true|false", "Enable sampling in the acoustic decoder (default true)."},
+        {"text_chunk_size", "<int>", "Maximum character budget per chunk (default 200)."},
+        {"text_chunk_mode", "default|endline|tag_aware", "Text chunking mode (default 'default')."},
     };
     out.session_options = {
         {"vietneu_tts.mem_saver", "true|false", "Release the talker cached-step graph after each request; default false."},

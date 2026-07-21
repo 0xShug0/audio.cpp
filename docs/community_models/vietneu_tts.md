@@ -62,3 +62,5 @@ Measured on Ubuntu 24.04 (WSL2) with OpenMP optimization:
 | `--request-option speaker_embedding=<csv>` | csv floats | none | Optional raw comma-separated list of 192 speaker embedding float values. |
 | `--request-option subtalker_temperature=<float>` | float | `0.8` | Acoustic decoder / subtalker sampling temperature. |
 | `--request-option subtalker_do_sample=true\|false` | bool | `true` | Enable sampling in the acoustic decoder. |
+| `--text-chunk-size` / `--request-option text_chunk_size=<int>` | integer | `200` | Maximum character budget per text chunk. |
+| `--text-chunk-mode` / `--request-option text_chunk_mode=default\|endline\|tag_aware` | enum | `default` | Text chunking strategy (e.g. `endline` to split strictly on sentence boundaries / newlines). |
