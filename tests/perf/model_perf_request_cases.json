@@ -355,6 +355,27 @@
       ]
     },
     {
+      "id": "index_tts2_voice_clone",
+      "coverage": "IndexTTS2 English voice clone, HIP/ROCm perf case",
+      "family": "index_tts2",
+      "model": "models/IndexTTS-2",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "clone",
+          "text": "Hey, you. You're finally awake. You were trying to cross the border, right? Walked right into that Imperial ambush, same as us, and that thief over there.",
+          "language": "English",
+          "voice_ref": "assets/resources/a.wav",
+          "seed": 1234,
+          "do_sample": false
+        }
+      ]
+    },
+    {
       "id": "chatterbox_en_long_cfg",
       "coverage": "Chatterbox English voice clone, T3, S3 tokenizer, CFM/HiFT, CFG two-batch path, long text",
       "family": "chatterbox",

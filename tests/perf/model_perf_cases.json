@@ -26,6 +26,12 @@
       ]
     },
     {
+      "id": "index_tts2",
+      "family": "index_tts2",
+      "case_id": "index_tts2_voice_clone",
+      "request_id": "clone"
+    },
+    {
       "id": "chatterbox",
       "family": "chatterbox",
       "case_id": "chatterbox_en_long_cfg",
