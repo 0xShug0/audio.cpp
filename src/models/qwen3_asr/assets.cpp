@@ -1,6 +1,6 @@
 #include "engine/models/qwen3_asr/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -152,9 +152,9 @@ Qwen3ASRConfig parse_config(const assets::ResourceBundle & resources) {
 assets::ResourceBundle make_resource_bundle(
     const std::filesystem::path & model_path,
     std::string_view package_family) {
-    auto resources = assets::load_resource_bundle_from_package_spec(
+    auto resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path(package_family));
+        engine::model_spec::default_spec_path(package_family));
     if (!resources.has_file("preprocessor_config") && !resources.has_file("processor_config")) {
         throw std::runtime_error("Qwen3 ASR requires preprocessor_config.json or processor_config.json");
     }

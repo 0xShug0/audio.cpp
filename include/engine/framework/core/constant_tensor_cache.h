@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::common {
+namespace engine::core {
 
 namespace detail {
 
@@ -259,4 +259,4 @@ private:
     size_t cursor_ = 0;
 };
 
-}  // namespace engine::models::common
+}  // namespace engine::core

@@ -1,11 +1,9 @@
 #include "engine/models/heartmula/assets.h"
 
-#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
-#include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
 
-#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -13,50 +11,6 @@
 namespace engine::models::heartmula {
 namespace json = engine::io::json;
 namespace {
-
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("HeartMuLa model path does not exist: " + model_path.string());
-}
-
-assets::ResourceBundle make_resource_bundle(const std::filesystem::path & model_path) {
-    assets::ResourceBundle resources(resolve_model_root(model_path));
-    resources.add_model_files({
-        {"tokenizer_json", "tokenizer.json", true},
-        {"generation_config", "gen_config.json", true},
-        {"mula_config", "HeartMuLa-oss-3B/config.json", true},
-        {"mula_index", "HeartMuLa-oss-3B/model.safetensors.index.json", true},
-        {"codec_config", "HeartCodec-oss/config.json", true},
-        {"codec_index", "HeartCodec-oss/model.safetensors.index.json", true},
-    });
-    return resources;
-}
-
-void require_string_value(const std::string & actual, const char * expected, const char * label) {
-    if (actual != expected) {
-        throw std::runtime_error(
-            std::string("HeartMuLa config ") + label + " mismatch: expected " + expected + ", got " + actual);
-    }
-}
-
-void require_equal(int64_t actual, int64_t expected, const char * label) {
-    if (actual != expected) {
-        throw std::runtime_error(
-            std::string("HeartMuLa config ") + label + " mismatch: expected " + std::to_string(expected) +
-            ", got " + std::to_string(actual));
-    }
-}
-
-void require_non_empty(const std::vector<int64_t> & values, const char * label) {
-    if (values.empty()) {
-        throw std::runtime_error(std::string("HeartMuLa config contains empty ") + label);
-    }
-}
 
 int64_t pow2_i64(size_t exponent) {
     int64_t value = 1;
@@ -103,9 +57,13 @@ HeartMuLaConfig parse_mula_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("mula_config");
     HeartMuLaConfig config;
     config.model_type = json::optional_string(root, "model_type", "");
-    require_string_value(config.model_type, "heartmula", "model_type");
+    if (config.model_type != "heartmula") {
+        throw std::runtime_error("HeartMuLa config model_type must be heartmula");
+    }
     config.torch_dtype = json::optional_string(root, "torch_dtype", config.torch_dtype);
-    require_string_value(config.torch_dtype, "float32", "torch_dtype");
+    if (config.torch_dtype != "float32") {
+        throw std::runtime_error("HeartMuLa config torch_dtype must be float32");
+    }
     config.backbone_flavor = json::require_string(root, "backbone_flavor");
     config.decoder_flavor = json::require_string(root, "decoder_flavor");
     config.text_vocab_size = json::require_i64(root, "text_vocab_size");
@@ -142,9 +100,13 @@ HeartCodecConfig parse_codec_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("codec_config");
     HeartCodecConfig config;
     config.model_type = json::optional_string(root, "model_type", "");
-    require_string_value(config.model_type, "heartcodec", "codec model_type");
+    if (config.model_type != "heartcodec") {
+        throw std::runtime_error("HeartCodec config model_type must be heartcodec");
+    }
     config.torch_dtype = json::optional_string(root, "torch_dtype", config.torch_dtype);
-    require_string_value(config.torch_dtype, "float32", "codec torch_dtype");
+    if (config.torch_dtype != "float32") {
+        throw std::runtime_error("HeartCodec config torch_dtype must be float32");
+    }
     config.dim = json::require_i64(root, "dim");
     config.codebook_size = json::require_i64(root, "codebook_size");
     config.decay = json::optional_f32(root, "decay", config.decay);
@@ -195,45 +157,27 @@ HeartCodecConfig parse_codec_config(const assets::ResourceBundle & resources) {
     engine::io::require_positive(config.delay_kernel_size, "codec delay_kernel_size");
     engine::io::require_positive(config.init_channel, "codec init_channel");
     engine::io::require_positive(config.res_kernel_size, "codec res_kernel_size");
-    require_non_empty(config.downsample_factors, "downsample_factors");
-    require_non_empty(config.downsample_kernel_sizes, "downsample_kernel_sizes");
-    require_non_empty(config.upsample_factors, "upsample_factors");
-    require_non_empty(config.upsample_kernel_sizes, "upsample_kernel_sizes");
+    if (config.downsample_factors.empty() ||
+        config.downsample_kernel_sizes.empty() ||
+        config.upsample_factors.empty() ||
+        config.upsample_kernel_sizes.empty()) {
+        throw std::runtime_error("HeartCodec config contains empty sampling factors or kernels");
+    }
     engine::io::require_all_positive(config.downsample_factors, "downsample_factors");
     engine::io::require_all_positive(config.downsample_kernel_sizes, "downsample_kernel_sizes");
     engine::io::require_all_positive(config.upsample_factors, "upsample_factors");
     engine::io::require_all_positive(config.upsample_kernel_sizes, "upsample_kernel_sizes");
-    require_equal(
-        static_cast<int64_t>(config.downsample_factors.size()),
-        static_cast<int64_t>(config.downsample_kernel_sizes.size()),
-        "downsample factor/kernel count");
-    require_equal(
-        static_cast<int64_t>(config.upsample_factors.size()),
-        static_cast<int64_t>(config.upsample_kernel_sizes.size()),
-        "upsample factor/kernel count");
-    require_string_value(config.norm_type, "ada_norm_single", "codec norm_type");
+    if (config.downsample_factors.size() != config.downsample_kernel_sizes.size() ||
+        config.upsample_factors.size() != config.upsample_kernel_sizes.size()) {
+        throw std::runtime_error("HeartCodec config sampling factor/kernel counts must match");
+    }
+    if (config.norm_type != "ada_norm_single") {
+        throw std::runtime_error("HeartCodec config norm_type must be ada_norm_single");
+    }
     if (!config.causal) {
         throw std::runtime_error("HeartCodec config must be causal");
     }
     return config;
-}
-
-void fill_paths(
-    HeartMuLaAssetPaths & paths,
-    const assets::ResourceBundle & resources) {
-    paths.model_root = resources.model_root();
-    paths.tokenizer_json_path = resources.require_file("tokenizer_json");
-    paths.generation_config_path = resources.require_file("generation_config");
-    paths.mula_config_path = resources.require_file("mula_config");
-    paths.mula_index_path = resources.require_file("mula_index");
-    paths.codec_config_path = resources.require_file("codec_config");
-    paths.codec_index_path = resources.require_file("codec_index");
-    paths.mula_shard_paths = engine::assets::indexed_tensor_source_shard_paths(
-        paths.mula_index_path,
-        paths.mula_index_path.parent_path());
-    paths.codec_shard_paths = engine::assets::indexed_tensor_source_shard_paths(
-        paths.codec_index_path,
-        paths.codec_index_path.parent_path());
 }
 
 void validate_mula_weight_anchors(const HeartMuLaAssets & assets) {
@@ -374,26 +318,17 @@ void validate_codec_weight_anchors(const HeartMuLaAssets & assets) {
 
 }  // namespace
 
-HeartMuLaAssetPaths resolve_heartmula_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
-    HeartMuLaAssetPaths paths;
-    fill_paths(paths, resources);
-    return paths;
-}
-
 std::shared_ptr<const HeartMuLaAssets> load_heartmula_assets(const std::filesystem::path & model_path) {
-    auto resources = make_resource_bundle(model_path);
+    auto resources = engine::model_spec::load_resource_bundle(
+        model_path,
+        engine::model_spec::default_spec_path("heartmula"));
     HeartMuLaAssets assets;
-    fill_paths(assets.paths, resources);
-    assets.mula_config = parse_mula_config(resources);
-    assets.generation_config = parse_generation_config(resources);
-    assets.codec_config = parse_codec_config(resources);
-    assets.mula_weights = engine::assets::open_indexed_tensor_source(
-        assets.paths.mula_index_path,
-        assets.paths.mula_index_path.parent_path());
-    assets.codec_weights = engine::assets::open_indexed_tensor_source(
-        assets.paths.codec_index_path,
-        assets.paths.codec_index_path.parent_path());
+    assets.resources = std::move(resources);
+    assets.mula_config = parse_mula_config(assets.resources);
+    assets.generation_config = parse_generation_config(assets.resources);
+    assets.codec_config = parse_codec_config(assets.resources);
+    assets.mula_weights = assets.resources.open_tensor_source("mula_weights");
+    assets.codec_weights = assets.resources.open_tensor_source("codec_weights");
     validate_mula_weight_anchors(assets);
     validate_codec_weight_anchors(assets);
     return std::make_shared<HeartMuLaAssets>(std::move(assets));

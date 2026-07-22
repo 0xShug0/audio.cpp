@@ -1,0 +1,91 @@
+{
+  "family": "ace_step",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "dit_turbo_config": "model:acestep-v15-turbo/config.json",
+        "dit_base_config": "model:acestep-v15-base/config.json",
+        "lm_config": "model:acestep-5Hz-lm-1.7B/config.json",
+        "lm_tokenizer_config": "model:acestep-5Hz-lm-1.7B/tokenizer_config.json",
+        "lm_vocab": "model:acestep-5Hz-lm-1.7B/vocab.json",
+        "lm_merges": "model:acestep-5Hz-lm-1.7B/merges.txt",
+        "lm_tokenizer_json": "model:acestep-5Hz-lm-1.7B/tokenizer.json",
+        "lm_chat_template": "model:acestep-5Hz-lm-1.7B/chat_template.jinja",
+        "text_encoder_config": "model:Qwen3-Embedding-0.6B/config.json",
+        "text_encoder_tokenizer_config": "model:Qwen3-Embedding-0.6B/tokenizer_config.json",
+        "text_encoder_vocab": "model:Qwen3-Embedding-0.6B/vocab.json",
+        "text_encoder_merges": "model:Qwen3-Embedding-0.6B/merges.txt",
+        "text_encoder_tokenizer_json": "model:Qwen3-Embedding-0.6B/tokenizer.json",
+        "text_encoder_chat_template": "model:Qwen3-Embedding-0.6B/chat_template.jinja",
+        "vae_config": "model:vae/config.json"
+      },
+      "tensors": {
+        "dit_turbo_weights": {
+          "source": "weights:",
+          "prefix": "dit_turbo_weights"
+        },
+        "dit_turbo_silence_latent": {
+          "source": "weights:",
+          "prefix": "dit_turbo_silence_latent"
+        },
+        "dit_base_weights": {
+          "source": "weights:",
+          "prefix": "dit_base_weights"
+        },
+        "dit_base_silence_latent": {
+          "source": "weights:",
+          "prefix": "dit_base_silence_latent"
+        },
+        "lm_weights": {
+          "source": "weights:",
+          "prefix": "lm_weights"
+        },
+        "text_encoder_weights": {
+          "source": "weights:",
+          "prefix": "text_encoder_weights"
+        },
+        "vae_weights": {
+          "source": "weights:",
+          "prefix": "vae_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "dit_turbo_config": "model:acestep-v15-turbo/config.json",
+        "dit_base_config": "model:acestep-v15-base/config.json",
+        "lm_config": "model:acestep-5Hz-lm-1.7B/config.json",
+        "lm_tokenizer_config": "model:acestep-5Hz-lm-1.7B/tokenizer_config.json",
+        "lm_vocab": "model:acestep-5Hz-lm-1.7B/vocab.json",
+        "lm_merges": "model:acestep-5Hz-lm-1.7B/merges.txt",
+        "lm_tokenizer_json": "model:acestep-5Hz-lm-1.7B/tokenizer.json",
+        "lm_chat_template": "model:acestep-5Hz-lm-1.7B/chat_template.jinja",
+        "text_encoder_config": "model:Qwen3-Embedding-0.6B/config.json",
+        "text_encoder_tokenizer_config": "model:Qwen3-Embedding-0.6B/tokenizer_config.json",
+        "text_encoder_vocab": "model:Qwen3-Embedding-0.6B/vocab.json",
+        "text_encoder_merges": "model:Qwen3-Embedding-0.6B/merges.txt",
+        "text_encoder_tokenizer_json": "model:Qwen3-Embedding-0.6B/tokenizer.json",
+        "text_encoder_chat_template": "model:Qwen3-Embedding-0.6B/chat_template.jinja",
+        "vae_config": "model:vae/config.json"
+      },
+      "tensors": {
+        "dit_turbo_weights": "model:acestep-v15-turbo/model.safetensors",
+        "dit_turbo_silence_latent": "model:acestep-v15-turbo/silence_latent.safetensors",
+        "dit_base_weights": "model:acestep-v15-base/model.safetensors",
+        "dit_base_silence_latent": "model:acestep-v15-base/silence_latent.safetensors",
+        "lm_weights": "model:acestep-5Hz-lm-1.7B/model.safetensors",
+        "text_encoder_weights": "model:Qwen3-Embedding-0.6B/model.safetensors",
+        "vae_weights": "model:vae/diffusion_pytorch_model.safetensors"
+      }
+    }
+  ]
+}

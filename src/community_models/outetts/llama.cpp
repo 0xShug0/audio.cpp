@@ -7,7 +7,7 @@
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
@@ -162,7 +162,7 @@ modules::QwenCausalDecoderConfig decoder_config(const OuteTTSConfig & c) {
 
 modules::QwenCausalDecoderWeights graph_weights(
     const ModelWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     modules::QwenCausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & source : weights.layers) {
@@ -303,7 +303,7 @@ public:
     CachedStepGraph(
         const OuteTTSConfig & config,
         const ModelWeights & weights,
-        common::ConstantTensorCache & constants,
+        core::ConstantTensorCache & constants,
         ggml_backend_t backend,
         int threads,
         int64_t capacity)
@@ -367,7 +367,7 @@ public:
 private:
     OuteTTSConfig config_;
     const ModelWeights * weights_ = nullptr;
-    common::ConstantTensorCache * constants_ = nullptr;
+    core::ConstantTensorCache * constants_ = nullptr;
     ggml_backend_t backend_ = nullptr;
     int threads_ = 1;
     int64_t capacity_ = 0;
@@ -410,7 +410,7 @@ struct OuteTTSLlamaRuntime::Impl {
         }
         backend = core::init_backend({backend_type, device, threads});
         weights = load_weights(*assets, backend, backend_type, weight_context_bytes, storage_type);
-        constants = std::make_unique<common::ConstantTensorCache>(
+        constants = std::make_unique<core::ConstantTensorCache>(
             backend, threads, "outetts.llama.constants", constant_context_bytes);
     }
 
@@ -568,7 +568,7 @@ struct OuteTTSLlamaRuntime::Impl {
     int threads = 1;
     sampling::TorchCudaSamplingPolicy sampling_policy;
     ModelWeights weights;
-    std::unique_ptr<common::ConstantTensorCache> constants;
+    std::unique_ptr<core::ConstantTensorCache> constants;
     std::unique_ptr<CachedStepGraph> step_graph;
 };
 

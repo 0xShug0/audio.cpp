@@ -12,8 +12,6 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
-#include "ggml-cpu.h"
-
 #include <algorithm>
 #include <array>
 #include <cmath>

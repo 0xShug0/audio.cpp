@@ -40,7 +40,7 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 Use the base DiT instead of turbo:
 
 ```bash
-audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend cuda --task-route text2music --text "acoustic folk ballad" --lyrics "The river remembers our names" --duration-seconds 60 --session-option ace_step.dit_model_path=acestep-v15-base --session-option ace_step.lm_model_path=acestep-5Hz-lm-1.7B --out song.wav
+audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend cuda --task-route text2music --text "acoustic folk ballad" --lyrics "The river remembers our names" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-base --out song.wav
 ```
 
 ## Complete
@@ -184,7 +184,10 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--load-option ace_step.dit_model_path=<dir>` | `acestep-v15-turbo`, `acestep-v15-base` | `acestep-v15-turbo` | Select DiT variant inside the model root. |
-| `--load-option ace_step.lm_model_path=<dir>` | model subdir | `acestep-5Hz-lm-1.7B` | Select planner LM. |
 | `--session-option ace_step.dit_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | DiT weight type. |
 | `--session-option ace_step.planner_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Planner LM weight type. |
 | `--session-option ace_step.mem_saver=true|false` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+
+ACE-Step GGUF packages are variant-specific. Use the Turbo GGUF for the default
+`acestep-v15-turbo` path, and pass `--load-option ace_step.dit_model_path=acestep-v15-base`
+when loading a Base GGUF package.

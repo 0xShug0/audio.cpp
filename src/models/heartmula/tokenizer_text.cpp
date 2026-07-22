@@ -63,7 +63,7 @@ struct HeartMuLaTextTokenizer::Impl {
               {},
               {},
               {},
-              assets->paths.tokenizer_json_path,
+              assets->resources.require_file("tokenizer_json"),
               engine::tokenizers::LlamaBpePreTokenizer::Llama3,
           }) {}
 

@@ -9,6 +9,9 @@
 
 namespace engine::models::ace_step {
 
+constexpr int kAceStepAudioSampleRate = 48000;
+constexpr int kAceStepAudioChannels = 2;
+
 enum class AceStepTaskType {
     TextToMusic,
     Cover,

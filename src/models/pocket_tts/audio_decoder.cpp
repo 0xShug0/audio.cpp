@@ -1,5 +1,6 @@
 #include "engine/models/pocket_tts/audio_decoder.h"
 
+#include "engine/models/pocket_tts/backend_weights.h"
 #include "engine/models/pocket_tts/assets.h"
 
 #include <stdexcept>

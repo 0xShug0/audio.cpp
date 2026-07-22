@@ -1,6 +1,6 @@
 #include "engine/models/miotts/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -64,9 +64,9 @@ MioTTSConfig parse_config(const assets::ResourceBundle & resources) {
 
 std::shared_ptr<const MioTTSAssets> load_miotts_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<MioTTSAssets>();
-    assets->resources = assets::load_resource_bundle_from_package_spec(
+    assets->resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("miotts"));
+        engine::model_spec::default_spec_path("miotts"));
     assets->config = parse_config(assets->resources);
     assets->model_weights = assets->resources.open_tensor_source("weights");
     return assets;

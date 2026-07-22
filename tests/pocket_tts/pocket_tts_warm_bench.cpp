@@ -467,7 +467,7 @@ int main(int argc, char ** argv) {
         std::optional<int> noise_steps = std::nullopt;
         std::optional<std::string> noise_hash = std::nullopt;
         if (mode == "parity") {
-            noise_latent_dim = manifest.model_config.latent_dim;
+            noise_latent_dim = manifest->model_config.latent_dim;
             if (!std::filesystem::exists(*noise_path)) {
                 throw std::runtime_error("Pocket TTS noise file does not exist: " + noise_path->string());
             }

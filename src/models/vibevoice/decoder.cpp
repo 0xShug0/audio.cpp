@@ -13,7 +13,7 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/kv_cache.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -736,7 +736,7 @@ private:
         const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
         int64_t batch_size_ = 0;
         int64_t prompt_steps_ = 0;
-        common::ConstantTensorCache constants_;
+        core::ConstantTensorCache constants_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
         ggml_tensor * input_ = nullptr;
         ggml_tensor * positions_ = nullptr;
@@ -838,7 +838,7 @@ private:
     private:
         const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
         int64_t batch_size_ = 0;
-        common::ConstantTensorCache constants_;
+        core::ConstantTensorCache constants_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
         ggml_tensor * input_ = nullptr;
         ggml_tensor * hidden_output_ = nullptr;
@@ -927,7 +927,7 @@ VibeVoiceDecoderLayerOutputs build_vibevoice_decoder_layer_scratch_tail(
     const core::TensorValue & positions,
     const VibeVoiceDecoderLayerWeights & weights,
     const VibeVoiceDecoderConfig & config,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & attention_mask);
@@ -1499,7 +1499,7 @@ VibeVoiceDecoderWeightsRuntime::VibeVoiceDecoderWeightsRuntime(
     engine::debug::timing_log_scalar(
         "vibevoice.runtime.decoder_weights_load_ms",
         engine::debug::elapsed_ms(weights_started));
-    constants_ = std::make_unique<common::ConstantTensorCache>(
+    constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.decoder.constants",
@@ -1529,7 +1529,7 @@ ggml_backend_t VibeVoiceDecoderWeightsRuntime::backend() const noexcept {
     return backend_;
 }
 
-common::ConstantTensorCache & VibeVoiceDecoderWeightsRuntime::constants() const noexcept {
+core::ConstantTensorCache & VibeVoiceDecoderWeightsRuntime::constants() const noexcept {
     return *constants_;
 }
 
@@ -1772,7 +1772,7 @@ VibeVoiceDecoderLayerOutputs build_vibevoice_decoder_layer(
     const core::TensorValue & positions,
     const VibeVoiceDecoderLayerWeights & weights,
     const VibeVoiceDecoderConfig & config,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const std::optional<core::TensorValue> & prefix_key,
     const std::optional<core::TensorValue> & prefix_value,
     const std::optional<core::TensorValue> & attention_mask) {
@@ -1866,7 +1866,7 @@ VibeVoiceDecoderLayerOutputs build_vibevoice_decoder_layer_static_tail(
     const core::TensorValue & positions,
     const VibeVoiceDecoderLayerWeights & weights,
     const VibeVoiceDecoderConfig & config,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & cache_slot,
@@ -1967,7 +1967,7 @@ VibeVoiceDecoderLayerOutputs build_vibevoice_decoder_layer_scratch_tail(
     const core::TensorValue & positions,
     const VibeVoiceDecoderLayerWeights & weights,
     const VibeVoiceDecoderConfig & config,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & attention_mask) {

@@ -1,6 +1,6 @@
 #include "engine/models/voxcpm2/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/json.h"
@@ -209,9 +209,9 @@ void validate_weight_anchors(const VoxCPM2Assets & assets) {
 
 std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(const std::filesystem::path & model_path) {
     auto out = std::make_shared<VoxCPM2Assets>();
-    out->resources = assets::load_resource_bundle_from_package_spec(
+    out->resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("voxcpm2"));
+        engine::model_spec::default_spec_path("voxcpm2"));
     out->config = parse_config(out->resources);
     out->model_weights = out->resources.open_tensor_source("weights");
     out->audiovae_weights = out->resources.open_tensor_source("audiovae_weights");

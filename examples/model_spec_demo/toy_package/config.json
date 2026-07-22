@@ -1,0 +1,31 @@
+{
+  "model_type": "toy_qwen3_asr",
+  "model_size": "toy-0b",
+  "support_languages": ["English", "Chinese"],
+  "thinker_config": {
+    "model_type": "toy_qwen3_asr",
+    "audio_token_id": 151646,
+    "audio_config": {
+      "num_mel_bins": 128,
+      "encoder_layers": 2,
+      "encoder_attention_heads": 4,
+      "encoder_ffn_dim": 256,
+      "d_model": 128,
+      "n_window": 100,
+      "n_window_infer": 100,
+      "conv_chunksize": 100,
+      "downsample_hidden_size": 128,
+      "output_dim": 128,
+      "activation_function": "gelu"
+    },
+    "text_config": {
+      "vocab_size": 128,
+      "hidden_size": 128,
+      "intermediate_size": 256,
+      "num_hidden_layers": 2,
+      "num_attention_heads": 4,
+      "num_key_value_heads": 2,
+      "max_position_embeddings": 512
+    }
+  }
+}

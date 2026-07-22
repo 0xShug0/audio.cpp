@@ -7,7 +7,6 @@
 #include "engine/models/chatterbox/assets.h"
 
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -19,7 +18,6 @@ struct HiftVocoderWeights;
 namespace engine::models::chatterbox {
 
 namespace components {
-struct CampplusEncoderWeights;
 struct S3TokenizerV2Weights;
 }  // namespace components
 
@@ -88,10 +86,6 @@ struct VoiceEncoderWeights {
     std::vector<float> similarity_bias;
 };
 
-struct CampplusEncoderComponentWeights {
-    std::shared_ptr<const components::CampplusEncoderWeights> runtime_weights;
-};
-
 struct S3TokenizerComponentWeights {
     std::shared_ptr<const components::S3TokenizerV2Weights> runtime_weights;
 };
@@ -100,12 +94,13 @@ struct HiFTVocoderComponentWeights {
     std::shared_ptr<const engine::modules::HiftVocoderWeights> runtime_weights;
 };
 
-std::shared_ptr<const VoiceEncoderWeights> load_voice_encoder_weights(const std::filesystem::path & model_root);
+std::shared_ptr<const VoiceEncoderWeights> load_voice_encoder_weights(
+    const engine::assets::TensorSource & source);
 
 class VoiceEncoderComponent {
 public:
-    static VoiceEncoderComponent load_from_model_root(
-        const std::filesystem::path & model_root,
+    static VoiceEncoderComponent load_from_source(
+        const engine::assets::TensorSource & source,
         engine::core::BackendConfig backend);
 
     VoiceEncoderComponent(
@@ -123,18 +118,20 @@ private:
 };
 
 class CAMPPlusEncoderComponent {
+    struct State;
+
 public:
-    static CAMPPlusEncoderComponent load_from_checkpoint(
-        const std::filesystem::path & checkpoint_path,
+    static CAMPPlusEncoderComponent load_from_source(
+        std::shared_ptr<const engine::assets::TensorSource> source,
         const engine::core::ExecutionContext & execution_context,
         engine::assets::TensorStorageType weight_storage_type = engine::assets::TensorStorageType::Native);
 
-    CAMPPlusEncoderComponent(
-        std::shared_ptr<const CampplusEncoderComponentWeights> weights,
+    CAMPPlusEncoderComponent() = default;
+    explicit CAMPPlusEncoderComponent(
+        std::shared_ptr<State> state,
         const engine::core::ExecutionContext & execution_context);
 
     const engine::core::BackendConfig & backend() const noexcept;
-    const std::shared_ptr<const CampplusEncoderComponentWeights> & weights() const noexcept;
     SpeakerEncoderOutputs embed_from_audio(const runtime::AudioBuffer & audio) const;
     SpeakerEncoderOutputs embed_from_features(
         const std::vector<float> & features,
@@ -142,16 +139,14 @@ public:
         int64_t dims) const;
 
 private:
-    struct State;
-    std::shared_ptr<const CampplusEncoderComponentWeights> weights_;
     const engine::core::ExecutionContext * execution_context_ = nullptr;
     std::shared_ptr<State> state_;
 };
 
 class S3TokenizerComponent {
 public:
-    static S3TokenizerComponent load_from_checkpoint(
-        const std::filesystem::path & checkpoint_path,
+    static S3TokenizerComponent load_from_source(
+        const engine::assets::TensorSource & source,
         const engine::core::ExecutionContext & execution_context,
         engine::assets::TensorStorageType weight_storage_type = engine::assets::TensorStorageType::Native);
 
@@ -165,10 +160,10 @@ public:
         const runtime::AudioBuffer & audio,
         std::optional<int64_t> max_len) const;
     EmbedReferenceOutputs embed_reference(
-        const CampplusEncoderComponentWeights & speaker_weights,
+        const CAMPPlusEncoderComponent & speaker_encoder,
         const runtime::AudioBuffer & audio) const;
     EmbedReferenceOutputs embed_reference_from_wavs(
-        const CampplusEncoderComponentWeights & speaker_weights,
+        const CAMPPlusEncoderComponent & speaker_encoder,
         const runtime::AudioBuffer & audio_24k,
         const runtime::AudioBuffer & audio_16k) const;
 
@@ -181,8 +176,8 @@ private:
 
 class HiFTVocoderComponent {
 public:
-    static HiFTVocoderComponent load_from_checkpoint(
-        const std::filesystem::path & checkpoint_path,
+    static HiFTVocoderComponent load_from_source(
+        const engine::assets::TensorSource & source,
         const engine::core::ExecutionContext & execution_context,
         engine::assets::TensorStorageType weight_storage_type = engine::assets::TensorStorageType::Native);
 

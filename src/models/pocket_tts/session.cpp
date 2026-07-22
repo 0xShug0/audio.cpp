@@ -5,6 +5,8 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/pocket_tts/assets.h"
+#include "engine/models/pocket_tts/backend_weights.h"
+#include "engine/models/pocket_tts/voice_state_assets.h"
 #include "graph_common.h"
 
 #include <algorithm>

@@ -2,6 +2,9 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/modules/structural_modules.h"
+#include "engine/models/pocket_tts/backend_weights.h"
+#include "engine/models/pocket_tts/voice_state_assets.h"
 #include "graph_common.h"
 
 
@@ -351,7 +354,15 @@ public:
             ctx,
             x,
             weights.out_norm);
-        condition_ = graph_common::squeeze_single_frame_to_matrix(ctx, graph_common::last_frame(ctx, condition));
+        auto condition_last = modules::SliceModule({1, condition.shape.dims[1] - 1, 1}).build(ctx, condition);
+        core::validate_shape(
+            condition_last,
+            core::TensorShape::from_dims({condition.shape.dims[0], 1, condition.shape.dims[2]}),
+            "condition_last");
+        condition_ = core::reshape_tensor(
+            ctx,
+            condition_last,
+            core::TensorShape::from_dims({condition.shape.dims[0], condition.shape.dims[2]}));
         auto eos = modules::LinearModule({config_.hidden_size, 1, true}).build(
             ctx,
             condition_,

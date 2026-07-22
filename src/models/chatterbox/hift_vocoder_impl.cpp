@@ -19,7 +19,8 @@ using ResBlockWeights = FrameworkHiFTWeights::ResBlockWeights;
 using SnakeWeights = FrameworkHiFTWeights::SnakeWeights;
 
 bool is_float_dtype(const std::string & dtype) {
-    return dtype == "F32" || dtype == "F16" || dtype == "BF16";
+    const auto type = engine::assets::ggml_type_for_tensor_dtype(dtype);
+    return type == GGML_TYPE_F32 || type == GGML_TYPE_F16 || type == GGML_TYPE_BF16;
 }
 
 int64_t tensor_elements(const std::vector<int64_t> & shape) {
@@ -274,13 +275,12 @@ FrameworkHiFTConfig make_chatterbox_hift_config() {
 }
 
 std::shared_ptr<const FrameworkHiFTWeights> load_chatterbox_hift_weights(
-    const std::filesystem::path & checkpoint_path,
+    const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type) {
-    const auto source = engine::assets::open_tensor_source(checkpoint_path);
     auto weights = std::make_shared<FrameworkHiFTWeights>();
     weights->config = make_chatterbox_hift_config();
-    weights->source_path = source->source_path();
+    weights->source_path = source.source_path();
     weights->execution_context = std::shared_ptr<engine::core::ExecutionContext>(
         const_cast<engine::core::ExecutionContext *>(&execution_context),
         [](engine::core::ExecutionContext *) {});
@@ -290,7 +290,7 @@ std::shared_ptr<const FrameworkHiFTWeights> load_chatterbox_hift_weights(
         "chatterbox.hift.weights",
         768ull * 1024ull * 1024ull);
 
-    for (const auto & tensor : source->tensors()) {
+    for (const auto & tensor : source.tensors()) {
         if (tensor.name.rfind("mel2wav.", 0) != 0) {
             continue;
         }
@@ -304,7 +304,7 @@ std::shared_ptr<const FrameworkHiFTWeights> load_chatterbox_hift_weights(
     for (int index = 0; index < 5; ++index) {
         weights->f0_predictor.condnet.push_back(load_hift_weight_norm_conv1d(
             *weights->store,
-            *source,
+            source,
             "mel2wav.f0_predictor.condnet." + std::to_string(index * 2),
             512,
             index == 0 ? 80 : 512,
@@ -317,7 +317,7 @@ std::shared_ptr<const FrameworkHiFTWeights> load_chatterbox_hift_weights(
     }
     weights->f0_predictor.classifier = load_hift_linear(
         *weights->store,
-        *source,
+        source,
         "mel2wav.f0_predictor.classifier",
         1,
         512,
@@ -326,7 +326,7 @@ std::shared_ptr<const FrameworkHiFTWeights> load_chatterbox_hift_weights(
 
     weights->conv_pre = load_hift_weight_norm_conv1d(
         *weights->store,
-        *source,
+        source,
         "mel2wav.conv_pre",
         512,
         80,
@@ -337,25 +337,25 @@ std::shared_ptr<const FrameworkHiFTWeights> load_chatterbox_hift_weights(
         true,
         weight_storage_type);
     weights->ups.push_back(load_hift_weight_norm_conv_transpose1d(
-        *weights->store, *source, "mel2wav.ups.0", 512, 256, 16, 8, 4, true, weight_storage_type));
+        *weights->store, source, "mel2wav.ups.0", 512, 256, 16, 8, 4, true, weight_storage_type));
     weights->ups.push_back(load_hift_weight_norm_conv_transpose1d(
-        *weights->store, *source, "mel2wav.ups.1", 256, 128, 11, 5, 3, true, weight_storage_type));
+        *weights->store, source, "mel2wav.ups.1", 256, 128, 11, 5, 3, true, weight_storage_type));
     weights->ups.push_back(load_hift_weight_norm_conv_transpose1d(
-        *weights->store, *source, "mel2wav.ups.2", 128, 64, 7, 3, 2, true, weight_storage_type));
+        *weights->store, source, "mel2wav.ups.2", 128, 64, 7, 3, 2, true, weight_storage_type));
 
     weights->source_downs.push_back(load_hift_conv1d(
-        *weights->store, *source, "mel2wav.source_downs.0", 256, 18, 30, 15, 7, 1, true, weight_storage_type));
+        *weights->store, source, "mel2wav.source_downs.0", 256, 18, 30, 15, 7, 1, true, weight_storage_type));
     weights->source_downs.push_back(load_hift_conv1d(
-        *weights->store, *source, "mel2wav.source_downs.1", 128, 18, 6, 3, 1, 1, true, weight_storage_type));
+        *weights->store, source, "mel2wav.source_downs.1", 128, 18, 6, 3, 1, 1, true, weight_storage_type));
     weights->source_downs.push_back(load_hift_conv1d(
-        *weights->store, *source, "mel2wav.source_downs.2", 64, 18, 1, 1, 0, 1, true, weight_storage_type));
+        *weights->store, source, "mel2wav.source_downs.2", 64, 18, 1, 1, 0, 1, true, weight_storage_type));
 
     weights->source_resblocks.push_back(load_hift_resblock(
-        *weights->store, *source, "mel2wav.source_resblocks.0", 256, 7, {1, 3, 5}, weight_storage_type));
+        *weights->store, source, "mel2wav.source_resblocks.0", 256, 7, {1, 3, 5}, weight_storage_type));
     weights->source_resblocks.push_back(load_hift_resblock(
-        *weights->store, *source, "mel2wav.source_resblocks.1", 128, 7, {1, 3, 5}, weight_storage_type));
+        *weights->store, source, "mel2wav.source_resblocks.1", 128, 7, {1, 3, 5}, weight_storage_type));
     weights->source_resblocks.push_back(load_hift_resblock(
-        *weights->store, *source, "mel2wav.source_resblocks.2", 64, 11, {1, 3, 5}, weight_storage_type));
+        *weights->store, source, "mel2wav.source_resblocks.2", 64, 11, {1, 3, 5}, weight_storage_type));
 
     for (int up_index = 0; up_index < 3; ++up_index) {
         const int64_t channels = 256 >> up_index;
@@ -364,7 +364,7 @@ std::shared_ptr<const FrameworkHiFTWeights> load_chatterbox_hift_weights(
             const int block_index = up_index * 3 + kernel_index;
             weights->resblocks.push_back(load_hift_resblock(
                 *weights->store,
-                *source,
+                source,
                 "mel2wav.resblocks." + std::to_string(block_index),
                 channels,
                 kernels[static_cast<size_t>(kernel_index)],
@@ -375,7 +375,7 @@ std::shared_ptr<const FrameworkHiFTWeights> load_chatterbox_hift_weights(
 
     weights->conv_post = load_hift_weight_norm_conv1d(
         *weights->store,
-        *source,
+        source,
         "mel2wav.conv_post",
         18,
         64,
@@ -387,14 +387,14 @@ std::shared_ptr<const FrameworkHiFTWeights> load_chatterbox_hift_weights(
         weight_storage_type);
     weights->source_linear = load_hift_linear(
         *weights->store,
-        *source,
+        source,
         "mel2wav.m_source.l_linear",
         1,
         9,
         true,
         weight_storage_type);
     weights->store->upload();
-    source->release_storage();
+    source.release_storage();
     return weights;
 }
 
@@ -404,14 +404,11 @@ struct HiFTVocoderComponent::State {
     FrameworkHiFTComponent component;
 };
 
-HiFTVocoderComponent HiFTVocoderComponent::load_from_checkpoint(
-    const std::filesystem::path & checkpoint_path,
+HiFTVocoderComponent HiFTVocoderComponent::load_from_source(
+    const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type) {
-    auto runtime_weights = load_chatterbox_hift_weights(
-        checkpoint_path,
-        execution_context,
-        weight_storage_type);
+    auto runtime_weights = load_chatterbox_hift_weights(source, execution_context, weight_storage_type);
     auto weights = std::make_shared<HiFTVocoderComponentWeights>();
     weights->runtime_weights = std::move(runtime_weights);
     HiFTVocoderComponent component(std::move(weights), execution_context);

@@ -1,6 +1,6 @@
 #include "engine/community_models/outetts/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/json.h"
 #include "engine/models/qwen3_asr/assets.h"
@@ -161,8 +161,8 @@ load_embedded_aligner(const assets::ResourceBundle &resources) {
 
 std::shared_ptr<const OuteTTSAssets>
 load_outetts_assets(const std::filesystem::path &model_path) {
-  auto resources = assets::load_resource_bundle_from_package_spec(
-      model_path, assets::default_model_package_spec_path("outetts"));
+  auto resources = engine::model_spec::load_resource_bundle(
+      model_path, engine::model_spec::default_spec_path("outetts"));
   OuteTTSAssets model_assets;
   model_assets.config = parse_config(resources);
   model_assets.generation = parse_generation(resources);

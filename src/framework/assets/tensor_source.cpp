@@ -27,6 +27,28 @@ namespace {
 constexpr int64_t kParallelF32ConvertElements = 1ll << 20;
 constexpr int64_t kF32ConvertChunkElements = 1ll << 16;
 
+bool tensor_type_override_matches(std::string_view name, std::string_view pattern) {
+    if (pattern.empty()) {
+        return false;
+    }
+    if (pattern.back() == '*') {
+        pattern.remove_suffix(1);
+        return name.substr(0, pattern.size()) == pattern;
+    }
+    return name == pattern;
+}
+
+std::optional<TensorStorageType> find_tensor_type_override(
+    std::string_view name,
+    const std::vector<GgufTensorTypeOverride> & overrides) {
+    for (const auto & rule : overrides) {
+        if (tensor_type_override_matches(name, rule.pattern)) {
+            return rule.storage_type;
+        }
+    }
+    return std::nullopt;
+}
+
 core::TensorShape shape_from_dims(const std::vector<int64_t> & dims) {
     if (dims.empty() || dims.size() > core::kMaxTensorRank) {
         throw std::runtime_error("tensor rank must be between 1 and 4");
@@ -1430,18 +1452,18 @@ std::optional<GgufEmbeddedModelSpec> read_gguf_embedded_model_spec(const std::fi
                 gguf_get_kv_type(gguf, version_key) != GGUF_TYPE_UINT32 ||
                 gguf_get_kv_type(gguf, family_key) != GGUF_TYPE_STRING ||
                 gguf_get_kv_type(gguf, json_key) != GGUF_TYPE_STRING) {
-                throw std::runtime_error("GGUF embedded model package spec metadata is invalid");
+                throw std::runtime_error("GGUF embedded model spec metadata is invalid");
             }
             const uint32_t version = gguf_get_val_u32(gguf, version_key);
             if (version != 1) {
-                throw std::runtime_error("unsupported GGUF embedded model package spec version: " +
+                throw std::runtime_error("unsupported GGUF embedded model spec version: " +
                                          std::to_string(version));
             }
             GgufEmbeddedModelSpec spec;
             spec.family = gguf_get_val_str(gguf, family_key);
             spec.json = gguf_get_val_str(gguf, json_key);
             if (spec.family.empty() || spec.json.empty()) {
-                throw std::runtime_error("GGUF embedded model package spec is empty");
+                throw std::runtime_error("GGUF embedded model spec is empty");
             }
             result = std::move(spec);
         }
@@ -1514,7 +1536,8 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                                     bool overwrite, bool embed_sidecars,
     const std::filesystem::path & requested_sidecar_root,
                                     const std::vector<GgufEmbeddedFile> & extra_sidecars,
-                                    const std::optional<GgufEmbeddedModelSpec> & model_spec) {
+                                    const std::optional<GgufEmbeddedModelSpec> & model_spec,
+                                    const std::vector<GgufTensorTypeOverride> & type_overrides) {
     if (inputs.empty()) {
         throw std::runtime_error("GGUF conversion requires at least one tensor source");
     }
@@ -1718,12 +1741,26 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 (!ggml_is_quantized(requested_type) ? source_is_float && !item.shape.empty() : can_quantize);
             const bool use_f16_lookup = !preserve_source_dtype && ggml_is_quantized(requested_type) &&
                 source_is_float && is_lookup_table;
-            const ggml_type output_type = use_requested
+            const auto type_override = find_tensor_type_override(item.name, type_overrides);
+            const bool use_override = type_override.has_value() && *type_override != TensorStorageType::Native;
+            const ggml_type override_type = use_override ? ggml_type_for_tensor_storage(*type_override) : source_type;
+            if (use_override && ggml_is_quantized(override_type)) {
+                const bool can_quantize_override =
+                    source_is_float && item.shape.size() == 2 && item.shape.back() % ggml_blck_size(override_type) == 0;
+                if (!can_quantize_override) {
+                    throw std::runtime_error("GGUF tensor type override cannot quantize tensor: " + item.name);
+                }
+            }
+            const ggml_type output_type = type_override.has_value()
+                ? override_type
+                : (use_requested
                 ? requested_type
-                : (use_f16_lookup ? GGML_TYPE_F16 : source_type);
-            const TensorStorageType output_storage = use_requested
+                : (use_f16_lookup ? GGML_TYPE_F16 : source_type));
+            const TensorStorageType output_storage = type_override.has_value()
+                ? *type_override
+                : (use_requested
                 ? weight_type
-                : (use_f16_lookup ? TensorStorageType::F16 : TensorStorageType::Native);
+                : (use_f16_lookup ? TensorStorageType::F16 : TensorStorageType::Native));
 
             std::string physical_name = item.name;
             if (physical_name.size() >= GGML_MAX_NAME || !physical_names.insert(physical_name).second) {

@@ -11,7 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 option(AUDIOCPP_DEPLOYMENT_BUILD
-    "Compile model package specs into the runtime for self-contained deployments"
+    "Compile model specs into the runtime for self-contained deployments"
     OFF)
 
 # Package layouts remain editable runtime data in normal builds. The converter always
@@ -32,7 +32,7 @@ foreach(AUDIOCPP_MODEL_SPEC_FILE IN LISTS AUDIOCPP_MODEL_SPEC_FILES)
 endforeach()
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(GENERATE
-    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/model_package_specs.inc"
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/model_specs.inc"
     CONTENT "${AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES}")
 file(GENERATE
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/gguf_converter_model_specs.inc"
@@ -140,7 +140,8 @@ add_compile_options(
 
 add_library(engine_runtime STATIC
     src/framework/assets/resource_bundle.cpp
-    src/framework/assets/model_package.cpp
+    src/framework/model_spec/package.cpp
+    src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
     src/framework/assets/torch_bin.cpp
     src/framework/core/module.cpp
@@ -150,6 +151,7 @@ add_library(engine_runtime STATIC
     src/framework/core/host_memory.cpp
     src/framework/runtime/registry.cpp
     src/framework/runtime/model.cpp
+    src/framework/model_spec/metadata.cpp
     src/framework/runtime/session.cpp
     src/framework/runtime/artifacts.cpp
     src/framework/runtime/cache.cpp
@@ -270,12 +272,14 @@ add_library(engine_runtime STATIC
     src/models/omnivoice/session.cpp
     src/models/omnivoice/loader.cpp
     src/models/pocket_tts/assets.cpp
+    src/models/pocket_tts/backend_weights.cpp
     src/models/pocket_tts/acoustic_model.cpp
     src/models/pocket_tts/audio_decoder.cpp
     src/models/pocket_tts/flow_lm.cpp
     src/models/pocket_tts/mimi_decoder.cpp
     src/models/pocket_tts/mimi_encoder.cpp
     src/models/pocket_tts/text_conditioner.cpp
+    src/models/pocket_tts/voice_state_assets.cpp
     src/models/pocket_tts/voice_conditioner.cpp
     src/models/pocket_tts/loader.cpp
     src/models/pocket_tts/session.cpp
@@ -487,7 +491,6 @@ add_library(engine_runtime STATIC
     src/models/qwen3_forced_aligner/session.cpp
     src/models/qwen3_forced_aligner/loader.cpp
     src/models/ace_step/assets.cpp
-    src/models/ace_step/audio_preprocess.cpp
     src/models/ace_step/condition_encoder.cpp
     src/models/ace_step/cover_tokenizer.cpp
     src/models/ace_step/detokenizer.cpp
@@ -669,6 +672,14 @@ target_link_libraries(model_perf PRIVATE engine_runtime ggml)
 target_include_directories(model_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(model_perf PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(model_spec_demo
+    examples/model_spec_demo/model_spec_demo.cpp
+)
+target_link_libraries(model_spec_demo PRIVATE engine_runtime ggml)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(model_spec_demo PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 add_executable(miocodec_wavlm_parity

@@ -1,0 +1,59 @@
+{
+  "family": "chatterbox",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "english_tokenizer": "model:tokenizer.json",
+        "multilingual_tokenizer": "model:grapheme_mtl_merged_expanded_v1.json",
+        "cangjie_mapping": "model:Cangjie5_TC.json",
+        "builtin_conditionals": "model:conds.pt"
+      },
+      "tensors": {
+        "voice_encoder_weights": {
+          "source": "weights:",
+          "prefix": "voice_encoder"
+        },
+        "s3gen_weights": {
+          "source": "weights:",
+          "prefix": "s3gen"
+        },
+        "t3_english_weights": {
+          "source": "weights:",
+          "prefix": "t3_english"
+        },
+        "t3_multilingual_v2_weights": {
+          "source": "weights:",
+          "prefix": "t3_multilingual_v2"
+        },
+        "t3_multilingual_v3_weights": {
+          "source": "weights:",
+          "prefix": "t3_multilingual_v3"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "english_tokenizer": "model:tokenizer.json",
+        "multilingual_tokenizer": "model:grapheme_mtl_merged_expanded_v1.json",
+        "cangjie_mapping": "model:Cangjie5_TC.json",
+        "builtin_conditionals": "model:conds.pt"
+      },
+      "tensors": {
+        "voice_encoder_weights": "model:ve.safetensors",
+        "s3gen_weights": "model:s3gen.safetensors",
+        "t3_english_weights": "model:t3_cfg.safetensors",
+        "t3_multilingual_v2_weights": "model:t3_mtl23ls_v2.safetensors",
+        "t3_multilingual_v3_weights": "model:t3_mtl23ls_v3.safetensors"
+      }
+    }
+  ]
+}

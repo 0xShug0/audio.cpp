@@ -1,0 +1,44 @@
+{
+  "family": "heartmula",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "tokenizer_json": "model:tokenizer.json",
+        "generation_config": "model:gen_config.json",
+        "mula_config": "model:HeartMuLa-oss-3B/config.json",
+        "codec_config": "model:HeartCodec-oss/config.json"
+      },
+      "tensors": {
+        "mula_weights": {
+          "source": "weights:",
+          "prefix": "mula_weights"
+        },
+        "codec_weights": {
+          "source": "weights:",
+          "prefix": "codec_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "tokenizer_json": "model:tokenizer.json",
+        "generation_config": "model:gen_config.json",
+        "mula_config": "model:HeartMuLa-oss-3B/config.json",
+        "codec_config": "model:HeartCodec-oss/config.json"
+      },
+      "tensors": {
+        "mula_weights": "model:HeartMuLa-oss-3B/model.safetensors.index.json",
+        "codec_weights": "model:HeartCodec-oss/model.safetensors.index.json"
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 #include "engine/models/stable_audio/loader.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/models/stable_audio/foundation/session.h"
 #include "engine/models/stable_audio/session.h"
 
@@ -84,8 +84,8 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
-            const auto package_spec = engine::assets::default_model_package_spec_path(family());
-            (void) engine::assets::load_resource_bundle_from_package_spec(request.model_path, package_spec);
+            const auto package_spec = engine::model_spec::default_spec_path(family());
+            (void) engine::model_spec::load_resource_bundle(request.model_path, package_spec);
             return !request.family_hint.has_value() || *request.family_hint == family();
         } catch (...) {
             if (request.family_hint.has_value() && *request.family_hint == family()) {
@@ -102,15 +102,15 @@ public:
         inspection.metadata = metadata(*assets);
         inspection.capabilities = capabilities(*assets);
         inspection.cli = cli(*assets);
-        const auto package_spec = engine::assets::default_model_package_spec_path(family());
+        const auto package_spec = engine::model_spec::default_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             package_spec,
-            engine::assets::ModelPackageResourceKind::Files);
+            engine::model_spec::ResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             package_spec,
-            engine::assets::ModelPackageResourceKind::Tensors);
+            engine::model_spec::ResourceKind::Tensors);
         return inspection;
     }
 

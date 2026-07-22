@@ -1,6 +1,6 @@
 #include "engine/models/qwen3_tts/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -152,9 +152,9 @@ void validate_config(const Qwen3TTSConfig & config) {
 }  // namespace
 
 std::shared_ptr<const Qwen3TTSAssets> load_qwen3_tts_assets(const std::filesystem::path & model_path) {
-    auto resources = assets::load_resource_bundle_from_package_spec(
+    auto resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("qwen3_tts"));
+        engine::model_spec::default_spec_path("qwen3_tts"));
     auto assets = std::make_shared<Qwen3TTSAssets>();
     assets->config = parse_config(resources);
     validate_config(assets->config);

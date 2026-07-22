@@ -258,7 +258,9 @@ std::string shape_to_json(const std::vector<int64_t> & shape) {
 SafeTensorIndex load_safetensors_index(const std::filesystem::path & path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("failed to open safetensors file: " + path.string());
+        throw std::runtime_error(
+            "failed to open safetensors file: " + path.string() +
+            "; the file may be missing, malformed, or placed in the wrong location");
     }
 
     uint64_t header_len = 0;

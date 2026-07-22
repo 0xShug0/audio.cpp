@@ -16,7 +16,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -168,7 +168,7 @@ core::TensorValue speech_conv(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const ConvWeights & conv,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     const int64_t effective_kernel = (conv.kernel - 1) * conv.dilation + 1;
     const int64_t left_pad = effective_kernel - conv.stride;
     const int64_t right_pad = (conv.stride - (input.shape.dims[2] % conv.stride)) % conv.stride;
@@ -198,7 +198,7 @@ core::TensorValue speech_residual_block(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const ResBlockWeights & block,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto x = modules::EluModule{}.build(ctx, input);
     x = speech_conv(ctx, x, block.conv1, constants);
     x = modules::EluModule{}.build(ctx, x);
@@ -211,7 +211,7 @@ core::TensorValue mimi_self_attention(
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const TransformerLayerWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     constexpr int64_t kHeads = 8;
     constexpr int64_t kHeadDim = 64;
     const modules::MatMulModule matmul;
@@ -248,7 +248,7 @@ core::TensorValue transformer_block(
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const TransformerLayerWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     const modules::LayerNormModule norm({kHiddenSize, 1.0e-5F, true, true});
     auto x = norm.build(ctx, input, binding::norm_data(constants, weights.norm1_weight, weights.norm1_bias));
     auto attn_out = modules::LayerScaleModule{}.build(
@@ -496,7 +496,7 @@ public:
         std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> weights,
         int64_t sample_capacity,
         core::ExecutionContext & execution_context,
-        common::ConstantTensorCache & constants,
+        core::ConstantTensorCache & constants,
         size_t graph_arena_bytes)
         : weights_(std::move(weights)),
           sample_capacity_(sample_capacity),
@@ -645,7 +645,7 @@ Qwen3SpeechTokenizerEncoderRuntime::Qwen3SpeechTokenizerEncoderRuntime(
         execution_context_->backend_type(),
         linear_weight_storage_type,
         conv_weight_storage_type);
-    constants_ = std::make_unique<common::ConstantTensorCache>(
+    constants_ = std::make_unique<core::ConstantTensorCache>(
         execution_context_->backend(),
         std::max(1, execution_context_->config().threads),
         "vietneu_tts.speech_tokenizer_encoder.constants",

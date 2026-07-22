@@ -1,6 +1,6 @@
 #include "engine/models/vevo2/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -213,9 +213,9 @@ std::shared_ptr<const Vevo2Assets> load_vevo2_assets(
     const std::filesystem::path & model_path,
     const std::optional<std::filesystem::path> & whisper_model_path) {
     Vevo2Assets assets;
-    assets.resources = assets::load_resource_bundle_from_package_spec(
+    assets.resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("vevo2"));
+        engine::model_spec::default_spec_path("vevo2"));
     if (whisper_model_path.has_value()) {
         assets.resources.add_file("whisper_config", *whisper_model_path / "config.json");
         assets.resources.add_tensor_source("whisper_weights", *whisper_model_path / "model.safetensors");

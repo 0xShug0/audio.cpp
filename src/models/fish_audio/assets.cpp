@@ -1,6 +1,6 @@
 #include "engine/models/fish_audio/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/json.h"
 
@@ -114,9 +114,9 @@ void validate_weight_anchors(const FishAudioAssets & assets) {
 
 std::shared_ptr<const FishAudioAssets> load_fish_audio_assets(const std::filesystem::path & model_path) {
     FishAudioAssets assets;
-    assets.resources = assets::load_resource_bundle_from_package_spec(
+    assets.resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("fish_audio"));
+        engine::model_spec::default_spec_path("fish_audio"));
     assets.config = parse_config(assets.resources);
     assets.model_weights = assets.resources.open_tensor_source("model_weights");
     assets.codec_weights = assets.resources.open_tensor_source("codec_weights");

@@ -1,6 +1,6 @@
 #include "engine/models/citrinet_asr/session.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 
@@ -12,7 +12,7 @@ namespace engine::models::citrinet_asr {
 namespace {
 
 std::filesystem::path spec_path() {
-    return engine::assets::default_model_package_spec_path("citrinet_asr");
+    return engine::model_spec::default_spec_path("citrinet_asr");
 }
 
 engine::assets::TensorStorageType citrinet_weight_type_from_options(const runtime::SessionOptions & options) {
@@ -51,7 +51,7 @@ public:
             return false;
         }
         try {
-            (void) engine::assets::load_resource_bundle_from_package_spec(request.model_path, spec_path());
+            (void) engine::model_spec::load_resource_bundle(request.model_path, spec_path());
             return true;
         } catch (...) {
             return false;
@@ -62,7 +62,7 @@ public:
         if (request.config_id.has_value()) {
             throw std::runtime_error("Citrinet ASR does not expose selectable config assets");
         }
-        const auto resources = engine::assets::load_resource_bundle_from_package_spec(
+        const auto resources = engine::model_spec::load_resource_bundle(
             request.model_path,
             spec_path());
         const auto & weight_path = resources.require_file("weights");
@@ -78,11 +78,11 @@ public:
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             spec_path(),
-            engine::assets::ModelPackageResourceKind::Files);
+            engine::model_spec::ResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             spec_path(),
-            engine::assets::ModelPackageResourceKind::Tensors);
+            engine::model_spec::ResourceKind::Tensors);
         return inspection;
     }
 
@@ -167,7 +167,7 @@ std::unique_ptr<CitrinetASRLoadedModel> load_citrinet_asr_model(const runtime::M
     if (request.config_id.has_value()) {
         throw std::runtime_error("Citrinet ASR does not expose selectable config assets");
     }
-    const auto resources = engine::assets::load_resource_bundle_from_package_spec(
+    const auto resources = engine::model_spec::load_resource_bundle(
         request.model_path,
         spec_path());
     const auto & weight_path = resources.require_file("weights");

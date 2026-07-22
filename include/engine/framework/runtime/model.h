@@ -9,8 +9,8 @@
 #include <unordered_map>
 #include <vector>
 
-namespace engine::assets {
-enum class ModelPackageResourceKind;
+namespace engine::model_spec {
+enum class ResourceKind;
 }
 
 namespace engine::runtime {
@@ -78,7 +78,7 @@ std::vector<NamedAsset> discover_named_assets(
 std::vector<NamedAsset> discover_named_assets_from_package_spec(
     const std::filesystem::path & model_path,
     const std::filesystem::path & spec_path,
-    engine::assets::ModelPackageResourceKind kind);
+    engine::model_spec::ResourceKind kind);
 
 const NamedAsset * find_named_asset(
     const std::vector<NamedAsset> & assets,

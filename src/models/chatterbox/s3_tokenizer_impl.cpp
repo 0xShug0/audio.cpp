@@ -6,6 +6,7 @@
 #include "engine/framework/core/module.h"
 
 #include "ggml.h"
+#include "ggml-alloc.h"
 
 #include <mutex>
 
@@ -444,8 +445,14 @@ public:
 
         graph_ = ggml_new_graph_custom(ggml_, 65536, false);
         ggml_build_forward_expand(graph_, quant_out_.tensor);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, execution_context_.backend());
-        if (buffer_ == nullptr) {
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_.backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            if (gallocr_ != nullptr) {
+                ggml_gallocr_free(gallocr_);
+                gallocr_ = nullptr;
+            }
             ggml_free(ggml_);
             ggml_ = nullptr;
             throw std::runtime_error("failed to allocate backend tensors for S3 tokenizer");
@@ -474,9 +481,13 @@ public:
     }
 
     ~S3TokenizerBackendRunner() {
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
+        if (graph_ != nullptr) {
+            engine::core::release_backend_graph_resources(execution_context_.backend(), graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
         }
         if (ggml_ != nullptr) {
             ggml_free(ggml_);
@@ -513,7 +524,7 @@ private:
     int64_t time_ = 0;
     const engine::core::ExecutionContext & execution_context_;
     ggml_context * ggml_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     engine::core::TensorValue input_;
     engine::core::TensorValue cos_;
@@ -591,10 +602,9 @@ static std::shared_ptr<S3TokenizerInferenceSessionCache> make_s3_tokenizer_infer
 }
 
 static std::shared_ptr<const S3TokenizerV2Weights> load_s3tokenizer_v2_weights(
-    const std::filesystem::path & checkpoint_path,
+    const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type) {
-    const auto source = engine::assets::open_tensor_source(checkpoint_path);
     auto weights = std::make_shared<S3TokenizerV2Weights>();
     weights->execution_context = &execution_context;
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
@@ -604,7 +614,7 @@ static std::shared_ptr<const S3TokenizerV2Weights> load_s3tokenizer_v2_weights(
         768ull * 1024ull * 1024ull);
     weights->conv1 = load_tokenizer_conv1d(
         *weights->store,
-        *source,
+        source,
         "tokenizer.encoder.conv1",
         1280,
         128,
@@ -614,7 +624,7 @@ static std::shared_ptr<const S3TokenizerV2Weights> load_s3tokenizer_v2_weights(
         weight_storage_type);
     weights->conv2 = load_tokenizer_conv1d(
         *weights->store,
-        *source,
+        source,
         "tokenizer.encoder.conv2",
         1280,
         1280,
@@ -626,14 +636,14 @@ static std::shared_ptr<const S3TokenizerV2Weights> load_s3tokenizer_v2_weights(
     for (int layer = 0; layer < 6; ++layer) {
         const std::string prefix = "tokenizer.encoder.blocks." + std::to_string(layer);
         auto & block = weights->blocks[static_cast<size_t>(layer)];
-        block.attn_ln = load_tokenizer_layer_norm(*weights->store, *source, prefix + ".attn_ln", 1280);
+        block.attn_ln = load_tokenizer_layer_norm(*weights->store, source, prefix + ".attn_ln", 1280);
         block.attn_qkv_packed.out_features = 1280 * 3;
         block.attn_qkv_packed.in_features = 1280;
         block.attn_qkv_packed.use_bias = true;
         std::vector<float> qkv_weight(static_cast<size_t>(block.attn_qkv_packed.out_features * block.attn_qkv_packed.in_features));
-        auto query_weight = read_f32_tensor(*source, prefix + ".attn.query.weight", {1280, 1280});
-        auto key_weight = read_f32_tensor(*source, prefix + ".attn.key.weight", {1280, 1280});
-        auto value_weight = read_f32_tensor(*source, prefix + ".attn.value.weight", {1280, 1280});
+        auto query_weight = read_f32_tensor(source, prefix + ".attn.query.weight", {1280, 1280});
+        auto key_weight = read_f32_tensor(source, prefix + ".attn.key.weight", {1280, 1280});
+        auto value_weight = read_f32_tensor(source, prefix + ".attn.value.weight", {1280, 1280});
         std::copy(
             query_weight.begin(),
             query_weight.end(),
@@ -647,8 +657,8 @@ static std::shared_ptr<const S3TokenizerV2Weights> load_s3tokenizer_v2_weights(
             value_weight.end(),
             qkv_weight.begin() + static_cast<ptrdiff_t>(2 * 1280 * 1280));
         std::vector<float> qkv_bias(static_cast<size_t>(block.attn_qkv_packed.out_features), 0.0f);
-        auto query_bias = read_f32_tensor(*source, prefix + ".attn.query.bias", {1280});
-        auto value_bias = read_f32_tensor(*source, prefix + ".attn.value.bias", {1280});
+        auto query_bias = read_f32_tensor(source, prefix + ".attn.query.bias", {1280});
+        auto value_bias = read_f32_tensor(source, prefix + ".attn.value.bias", {1280});
         std::copy(
             query_bias.begin(),
             query_bias.end(),
@@ -666,21 +676,21 @@ static std::shared_ptr<const S3TokenizerV2Weights> load_s3tokenizer_v2_weights(
             std::move(qkv_bias));
         block.attn_out = load_tokenizer_linear(
             *weights->store,
-            *source,
+            source,
             prefix + ".attn.out",
             1280,
             1280,
             true,
             weight_storage_type);
-        auto fsmn_weight = read_f32_tensor(*source, prefix + ".attn.fsmn_block.weight", {1280, 1, 31});
+        auto fsmn_weight = read_f32_tensor(source, prefix + ".attn.fsmn_block.weight", {1280, 1, 31});
         block.fsmn_weight_tensor = weights->store->make_from_f32(
             engine::core::TensorShape::from_dims({1280, 1, 31}),
             weight_storage_type,
             std::move(fsmn_weight));
-        block.mlp_ln = load_tokenizer_layer_norm(*weights->store, *source, prefix + ".mlp_ln", 1280);
+        block.mlp_ln = load_tokenizer_layer_norm(*weights->store, source, prefix + ".mlp_ln", 1280);
         block.mlp_fc1 = load_tokenizer_linear(
             *weights->store,
-            *source,
+            source,
             prefix + ".mlp.0",
             5120,
             1280,
@@ -688,7 +698,7 @@ static std::shared_ptr<const S3TokenizerV2Weights> load_s3tokenizer_v2_weights(
             weight_storage_type);
         block.mlp_fc2 = load_tokenizer_linear(
             *weights->store,
-            *source,
+            source,
             prefix + ".mlp.2",
             1280,
             5120,
@@ -698,7 +708,7 @@ static std::shared_ptr<const S3TokenizerV2Weights> load_s3tokenizer_v2_weights(
     weights->quantizer_project_down =
         load_tokenizer_linear(
             *weights->store,
-            *source,
+            source,
             "tokenizer.quantizer._codebook.project_down",
             8,
             1280,
@@ -737,7 +747,7 @@ TokenizerOutputs compute_s3tokenizer_v2_codes(
 
 EmbedReferenceOutputs compute_s3_embed_ref_from_wavs(
     const S3TokenizerV2Weights & tokenizer_weights,
-    const CampplusEncoderWeights & speaker_weights,
+    const CAMPPlusEncoderComponent & speaker_encoder,
     const runtime::AudioBuffer & audio_24k,
     const runtime::AudioBuffer & audio_16k,
     S3TokenizerInferenceSessionCache * cache,
@@ -749,7 +759,7 @@ EmbedReferenceOutputs compute_s3_embed_ref_from_wavs(
         throw std::runtime_error("compute_s3_embed_ref_from_wavs expects 16 kHz audio_16k");
     }
     std::pair<S3PromptMelOutputs, double> prompt_mel_pair;
-    std::pair<CampplusEncoderOutputs, double> speaker_pair;
+    std::pair<SpeakerEncoderOutputs, double> speaker_pair;
     std::pair<TokenizerOutputs, double> prompt_tokens_pair;
     {
         const auto started = std::chrono::steady_clock::now();
@@ -760,7 +770,7 @@ EmbedReferenceOutputs compute_s3_embed_ref_from_wavs(
     }
     {
         const auto started = std::chrono::steady_clock::now();
-        auto value = compute_campplus_embedding_from_audio(speaker_weights, audio_16k, backend);
+        auto value = speaker_encoder.embed_from_audio(audio_16k);
         const auto ms =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         speaker_pair = std::make_pair(std::move(value), ms);
@@ -805,7 +815,7 @@ EmbedReferenceOutputs compute_s3_embed_ref_from_wavs(
 
 EmbedReferenceOutputs compute_s3_embed_ref(
     const S3TokenizerV2Weights & tokenizer_weights,
-    const CampplusEncoderWeights & speaker_weights,
+    const CAMPPlusEncoderComponent & speaker_encoder,
     const runtime::AudioBuffer & audio,
     S3TokenizerInferenceSessionCache * cache,
     engine::core::BackendConfig backend) {
@@ -821,7 +831,7 @@ EmbedReferenceOutputs compute_s3_embed_ref(
         audio_16k.channels = audio.channels;
         audio_16k.samples = resample_component_mono(audio.samples, audio.sample_rate, 16000);
     }
-    return compute_s3_embed_ref_from_wavs(tokenizer_weights, speaker_weights, audio_24k, audio_16k, cache, backend);
+    return compute_s3_embed_ref_from_wavs(tokenizer_weights, speaker_encoder, audio_24k, audio_16k, cache, backend);
 }
 
 
@@ -833,14 +843,11 @@ struct S3TokenizerComponent::State {
     std::shared_ptr<components::S3TokenizerInferenceSessionCache> cache;
 };
 
-S3TokenizerComponent S3TokenizerComponent::load_from_checkpoint(
-    const std::filesystem::path & checkpoint_path,
+S3TokenizerComponent S3TokenizerComponent::load_from_source(
+    const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type) {
-    auto runtime_weights = components::load_s3tokenizer_v2_weights(
-        checkpoint_path,
-        execution_context,
-        weight_storage_type);
+    auto runtime_weights = components::load_s3tokenizer_v2_weights(source, execution_context, weight_storage_type);
     auto weights = std::make_shared<S3TokenizerComponentWeights>();
     weights->runtime_weights = std::move(runtime_weights);
     S3TokenizerComponent component(std::move(weights), execution_context);
@@ -875,23 +882,23 @@ TokenizerOutputs S3TokenizerComponent::tokenize(
 }
 
 EmbedReferenceOutputs S3TokenizerComponent::embed_reference(
-    const CampplusEncoderComponentWeights & speaker_weights,
+    const CAMPPlusEncoderComponent & speaker_encoder,
     const runtime::AudioBuffer & audio) const {
     return components::compute_s3_embed_ref(
         *weights_->runtime_weights,
-        *speaker_weights.runtime_weights,
+        speaker_encoder,
         audio,
         state_->cache.get(),
         execution_context_->config());
 }
 
 EmbedReferenceOutputs S3TokenizerComponent::embed_reference_from_wavs(
-    const CampplusEncoderComponentWeights & speaker_weights,
+    const CAMPPlusEncoderComponent & speaker_encoder,
     const runtime::AudioBuffer & audio_24k,
     const runtime::AudioBuffer & audio_16k) const {
     return components::compute_s3_embed_ref_from_wavs(
         *weights_->runtime_weights,
-        *speaker_weights.runtime_weights,
+        speaker_encoder,
         audio_24k,
         audio_16k,
         state_->cache.get(),

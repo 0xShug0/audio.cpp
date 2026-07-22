@@ -13,7 +13,6 @@
 
 #include "ggml.h"
 #include "ggml-alloc.h"
-#include "ggml-cpu.h"
 
 #include <algorithm>
 #include <array>
@@ -198,18 +197,35 @@ void release_graph_resources(
     const engine::core::ExecutionContext * execution_context,
     ggml_cgraph *& graph,
     ggml_context *& ggml,
-    ggml_backend_buffer_t & buffer) {
+    ggml_gallocr_t & gallocr) {
     if (execution_context != nullptr && graph != nullptr) {
         engine::core::release_backend_graph_resources(execution_context->backend(), graph);
         graph = nullptr;
     }
-    if (buffer != nullptr) {
-        ggml_backend_buffer_free(buffer);
-        buffer = nullptr;
+    if (gallocr != nullptr) {
+        ggml_gallocr_free(gallocr);
+        gallocr = nullptr;
     }
     if (ggml != nullptr) {
         ggml_free(ggml);
         ggml = nullptr;
+    }
+}
+
+void allocate_graph_resources(
+    const engine::core::ExecutionContext & execution_context,
+    ggml_cgraph * graph,
+    ggml_gallocr_t & gallocr,
+    const char * label) {
+    gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context.backend()));
+    if (gallocr == nullptr ||
+        !ggml_gallocr_reserve(gallocr, graph) ||
+        !ggml_gallocr_alloc_graph(gallocr, graph)) {
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+            gallocr = nullptr;
+        }
+        throw std::runtime_error(std::string("failed to allocate backend tensors for ") + label);
     }
 }
 
@@ -1010,16 +1026,13 @@ private:
 
             graph_ = ggml_new_graph_custom(ggml_, 16384, false);
             ggml_build_forward_expand(graph_, output_.tensor);
-            buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, execution_context_->backend());
-            if (buffer_ == nullptr) {
-                throw std::runtime_error("failed to allocate backend tensors for S3 flow encoder embed/prelook");
-            }
+            allocate_graph_resources(*execution_context_, graph_, gallocr_, "S3 flow encoder embed/prelook");
             writer_.flush();
             engine::core::prepare_host_graph_plan(*execution_context_, graph_, cpu_plan_);
         }
 
         ~FlowEncoderEmbedPrelookBackendRunner() {
-            release_graph_resources(execution_context_, graph_, ggml_, buffer_);
+            release_graph_resources(execution_context_, graph_, ggml_, gallocr_);
         }
 
         void write_input(const std::vector<float> & input) {
@@ -1039,7 +1052,7 @@ private:
     private:
         const engine::core::ExecutionContext * execution_context_ = nullptr;
         ggml_context * ggml_ = nullptr;
-        ggml_backend_buffer_t buffer_ = nullptr;
+        ggml_gallocr_t gallocr_ = nullptr;
         ggml_cgraph * graph_ = nullptr;
         engine::core::TensorValue input_tensor_;
         engine::core::TensorValue output_;
@@ -1125,16 +1138,13 @@ private:
 
                 graph_ = ggml_new_graph_custom(ggml_, 24576, false);
                 ggml_build_forward_expand(graph_, output_.tensor);
-                buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, execution_context_->backend());
-                if (buffer_ == nullptr) {
-                    throw std::runtime_error("failed to allocate backend tensors for S3 flow encoder attention");
-                }
+                allocate_graph_resources(*execution_context_, graph_, gallocr_, "S3 flow encoder attention");
                 writer_.flush();
                 engine::core::prepare_host_graph_plan(*execution_context_, graph_, cpu_plan_);
             }
 
             ~FlowEncoderAttentionBackendRunner() {
-                release_graph_resources(execution_context_, graph_, ggml_, buffer_);
+                release_graph_resources(execution_context_, graph_, ggml_, gallocr_);
             }
 
             engine::core::TensorValue & input_tensor() {
@@ -1158,7 +1168,7 @@ private:
         private:
             const engine::core::ExecutionContext * execution_context_ = nullptr;
             ggml_context * ggml_ = nullptr;
-            ggml_backend_buffer_t buffer_ = nullptr;
+            ggml_gallocr_t gallocr_ = nullptr;
             ggml_cgraph * graph_ = nullptr;
             engine::core::TensorValue input_tensor_;
             engine::core::TensorValue attention_mask_;
@@ -1200,16 +1210,13 @@ private:
 
                 graph_ = ggml_new_graph_custom(ggml_, 16384, false);
                 ggml_build_forward_expand(graph_, output_.tensor);
-                buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, execution_context_->backend());
-                if (buffer_ == nullptr) {
-                    throw std::runtime_error("failed to allocate backend tensors for S3 flow encoder feed-forward");
-                }
+                allocate_graph_resources(*execution_context_, graph_, gallocr_, "S3 flow encoder feed-forward");
                 writer_.flush();
                 engine::core::prepare_host_graph_plan(*execution_context_, graph_, cpu_plan_);
             }
 
             ~FlowEncoderFeedForwardBackendRunner() {
-                release_graph_resources(execution_context_, graph_, ggml_, buffer_);
+                release_graph_resources(execution_context_, graph_, ggml_, gallocr_);
             }
 
             engine::core::TensorValue & input_tensor() {
@@ -1229,7 +1236,7 @@ private:
         private:
             const engine::core::ExecutionContext * execution_context_ = nullptr;
             ggml_context * ggml_ = nullptr;
-            ggml_backend_buffer_t buffer_ = nullptr;
+            ggml_gallocr_t gallocr_ = nullptr;
             ggml_cgraph * graph_ = nullptr;
             engine::core::TensorValue input_tensor_;
             engine::core::TensorValue output_;
@@ -1282,16 +1289,13 @@ private:
 
             graph_ = ggml_new_graph_custom(ggml_, 16384, false);
             ggml_build_forward_expand(graph_, output_.tensor);
-            buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, execution_context_->backend());
-            if (buffer_ == nullptr) {
-                throw std::runtime_error("failed to allocate backend tensors for S3 flow encoder upsample");
-            }
+            allocate_graph_resources(*execution_context_, graph_, gallocr_, "S3 flow encoder upsample");
             writer_.flush();
             engine::core::prepare_host_graph_plan(*execution_context_, graph_, cpu_plan_);
         }
 
         ~FlowEncoderUpsampleBackendRunner() {
-            release_graph_resources(execution_context_, graph_, ggml_, buffer_);
+            release_graph_resources(execution_context_, graph_, ggml_, gallocr_);
         }
 
         engine::core::TensorValue & input_tensor() {
@@ -1311,7 +1315,7 @@ private:
     private:
         const engine::core::ExecutionContext * execution_context_ = nullptr;
         ggml_context * ggml_ = nullptr;
-        ggml_backend_buffer_t buffer_ = nullptr;
+        ggml_gallocr_t gallocr_ = nullptr;
         ggml_cgraph * graph_ = nullptr;
         engine::core::TensorValue input_tensor_;
         engine::core::TensorValue output_;
@@ -1348,16 +1352,13 @@ private:
 
             graph_ = ggml_new_graph_custom(ggml_, 4096, false);
             ggml_build_forward_expand(graph_, output_.tensor);
-            buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, execution_context_->backend());
-            if (buffer_ == nullptr) {
-                throw std::runtime_error("failed to allocate backend tensors for S3 flow encoder after norm");
-            }
+            allocate_graph_resources(*execution_context_, graph_, gallocr_, "S3 flow encoder after norm");
             writer_.flush();
             engine::core::prepare_host_graph_plan(*execution_context_, graph_, cpu_plan_);
         }
 
         ~FlowEncoderAfterNormBackendRunner() {
-            release_graph_resources(execution_context_, graph_, ggml_, buffer_);
+            release_graph_resources(execution_context_, graph_, ggml_, gallocr_);
         }
 
         engine::core::TensorValue & input_tensor() {
@@ -1377,7 +1378,7 @@ private:
     private:
         const engine::core::ExecutionContext * execution_context_ = nullptr;
         ggml_context * ggml_ = nullptr;
-        ggml_backend_buffer_t buffer_ = nullptr;
+        ggml_gallocr_t gallocr_ = nullptr;
         ggml_cgraph * graph_ = nullptr;
         engine::core::TensorValue input_tensor_;
         engine::core::TensorValue output_;
@@ -1729,10 +1730,9 @@ void S3FlowSessionCache::release_decoder_graphs() {
 }
 
 std::shared_ptr<const S3FlowEncoderWeights> load_s3_flow_encoder_weights(
-    const std::filesystem::path & checkpoint_path,
+    const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type) {
-    const auto source = engine::assets::open_tensor_source(checkpoint_path);
     auto weights = std::make_shared<S3FlowEncoderWeights>();
     weights->execution_context = &execution_context;
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
@@ -1741,43 +1741,43 @@ std::shared_ptr<const S3FlowEncoderWeights> load_s3_flow_encoder_weights(
         "chatterbox.s3_flow_encoder.weights",
         1024ull * 1024ull * 1024ull);
     weights->input_embedding_tensor = weights->store->load_tensor(
-        *source,
+        source,
         "flow.input_embedding.weight",
         weight_storage_type,
         {6561, 512});
-    weights->speaker_affine = load_flow_linear(*weights->store, *source, "flow.spk_embed_affine_layer", 80, 192, true, weight_storage_type);
-    weights->encoder_proj = load_flow_linear(*weights->store, *source, "flow.encoder_proj", 80, 512, true, weight_storage_type);
-    weights->embed_linear = load_flow_linear(*weights->store, *source, "flow.encoder.embed.out.0", 512, 512, true, weight_storage_type);
-    weights->embed_norm = load_flow_layer_norm(*weights->store, *source, "flow.encoder.embed.out.1", 512);
+    weights->speaker_affine = load_flow_linear(*weights->store, source, "flow.spk_embed_affine_layer", 80, 192, true, weight_storage_type);
+    weights->encoder_proj = load_flow_linear(*weights->store, source, "flow.encoder_proj", 80, 512, true, weight_storage_type);
+    weights->embed_linear = load_flow_linear(*weights->store, source, "flow.encoder.embed.out.0", 512, 512, true, weight_storage_type);
+    weights->embed_norm = load_flow_layer_norm(*weights->store, source, "flow.encoder.embed.out.1", 512);
     weights->prelook_conv1 =
-        load_flow_conv1d(*weights->store, *source, "flow.encoder.pre_lookahead_layer.conv1", 512, 512, 4, 1, 0, weight_storage_type);
+        load_flow_conv1d(*weights->store, source, "flow.encoder.pre_lookahead_layer.conv1", 512, 512, 4, 1, 0, weight_storage_type);
     weights->prelook_conv2 =
-        load_flow_conv1d(*weights->store, *source, "flow.encoder.pre_lookahead_layer.conv2", 512, 512, 3, 1, 0, weight_storage_type);
+        load_flow_conv1d(*weights->store, source, "flow.encoder.pre_lookahead_layer.conv2", 512, 512, 3, 1, 0, weight_storage_type);
     auto load_layer = [&](const std::string & prefix) {
         S3FlowEncoderWeights::EncoderLayerWeights layer;
-        layer.norm_mha = load_flow_layer_norm(*weights->store, *source, prefix + ".norm_mha", 512);
-        layer.attn.q = load_flow_linear(*weights->store, *source, prefix + ".self_attn.linear_q", 512, 512, true, weight_storage_type);
-        layer.attn.k = load_flow_linear(*weights->store, *source, prefix + ".self_attn.linear_k", 512, 512, true, weight_storage_type);
-        layer.attn.v = load_flow_linear(*weights->store, *source, prefix + ".self_attn.linear_v", 512, 512, true, weight_storage_type);
-        layer.attn.out = load_flow_linear(*weights->store, *source, prefix + ".self_attn.linear_out", 512, 512, true, weight_storage_type);
-        layer.attn.pos = load_flow_linear(*weights->store, *source, prefix + ".self_attn.linear_pos", 512, 512, false, weight_storage_type);
-        layer.attn.pos_bias_u_tensor = weights->store->load_f32_tensor(*source, prefix + ".self_attn.pos_bias_u", {8, 64});
-        layer.attn.pos_bias_v_tensor = weights->store->load_f32_tensor(*source, prefix + ".self_attn.pos_bias_v", {8, 64});
-        layer.norm_ff = load_flow_layer_norm(*weights->store, *source, prefix + ".norm_ff", 512);
-        layer.ff.w1 = load_flow_linear(*weights->store, *source, prefix + ".feed_forward.w_1", 2048, 512, true, weight_storage_type);
-        layer.ff.w2 = load_flow_linear(*weights->store, *source, prefix + ".feed_forward.w_2", 512, 2048, true, weight_storage_type);
+        layer.norm_mha = load_flow_layer_norm(*weights->store, source, prefix + ".norm_mha", 512);
+        layer.attn.q = load_flow_linear(*weights->store, source, prefix + ".self_attn.linear_q", 512, 512, true, weight_storage_type);
+        layer.attn.k = load_flow_linear(*weights->store, source, prefix + ".self_attn.linear_k", 512, 512, true, weight_storage_type);
+        layer.attn.v = load_flow_linear(*weights->store, source, prefix + ".self_attn.linear_v", 512, 512, true, weight_storage_type);
+        layer.attn.out = load_flow_linear(*weights->store, source, prefix + ".self_attn.linear_out", 512, 512, true, weight_storage_type);
+        layer.attn.pos = load_flow_linear(*weights->store, source, prefix + ".self_attn.linear_pos", 512, 512, false, weight_storage_type);
+        layer.attn.pos_bias_u_tensor = weights->store->load_f32_tensor(source, prefix + ".self_attn.pos_bias_u", {8, 64});
+        layer.attn.pos_bias_v_tensor = weights->store->load_f32_tensor(source, prefix + ".self_attn.pos_bias_v", {8, 64});
+        layer.norm_ff = load_flow_layer_norm(*weights->store, source, prefix + ".norm_ff", 512);
+        layer.ff.w1 = load_flow_linear(*weights->store, source, prefix + ".feed_forward.w_1", 2048, 512, true, weight_storage_type);
+        layer.ff.w2 = load_flow_linear(*weights->store, source, prefix + ".feed_forward.w_2", 512, 2048, true, weight_storage_type);
         return layer;
     };
     for (int i = 0; i < 6; ++i) {
         weights->encoders.push_back(load_layer("flow.encoder.encoders." + std::to_string(i)));
     }
-    weights->up_layer_conv = load_flow_conv1d(*weights->store, *source, "flow.encoder.up_layer.conv", 512, 512, 5, 1, 0, weight_storage_type);
-    weights->up_embed_linear = load_flow_linear(*weights->store, *source, "flow.encoder.up_embed.out.0", 512, 512, true, weight_storage_type);
-    weights->up_embed_norm = load_flow_layer_norm(*weights->store, *source, "flow.encoder.up_embed.out.1", 512);
+    weights->up_layer_conv = load_flow_conv1d(*weights->store, source, "flow.encoder.up_layer.conv", 512, 512, 5, 1, 0, weight_storage_type);
+    weights->up_embed_linear = load_flow_linear(*weights->store, source, "flow.encoder.up_embed.out.0", 512, 512, true, weight_storage_type);
+    weights->up_embed_norm = load_flow_layer_norm(*weights->store, source, "flow.encoder.up_embed.out.1", 512);
     for (int i = 0; i < 4; ++i) {
         weights->up_encoders.push_back(load_layer("flow.encoder.up_encoders." + std::to_string(i)));
     }
-    weights->after_norm = load_flow_layer_norm(*weights->store, *source, "flow.encoder.after_norm", 512);
+    weights->after_norm = load_flow_layer_norm(*weights->store, source, "flow.encoder.after_norm", 512);
     weights->store->upload();
     return weights;
 }
@@ -1794,10 +1794,9 @@ S3FlowEncoderOutputs compute_s3_flow_encoder_forward(
 }
 
 std::shared_ptr<const S3FlowDecoderWeights> load_s3_flow_decoder_weights(
-    const std::filesystem::path & checkpoint_path,
+    const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type) {
-    const auto source = engine::assets::open_tensor_source(checkpoint_path);
     auto weights = std::make_shared<S3FlowDecoderWeights>();
     weights->execution_context = &execution_context;
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
@@ -1808,37 +1807,37 @@ std::shared_ptr<const S3FlowDecoderWeights> load_s3_flow_decoder_weights(
 
     auto load_causal_block = [&](const std::string & prefix, int64_t in_channels, int64_t out_channels) {
         S3FlowDecoderWeights::CausalBlockWeights block;
-        block.conv = load_decoder_conv1d(*weights->store, *source, prefix + ".block.0", out_channels, in_channels, 3, 1, true, weight_storage_type);
-        block.norm = load_decoder_layer_norm(*weights->store, *source, prefix + ".block.2", out_channels);
+        block.conv = load_decoder_conv1d(*weights->store, source, prefix + ".block.0", out_channels, in_channels, 3, 1, true, weight_storage_type);
+        block.norm = load_decoder_layer_norm(*weights->store, source, prefix + ".block.2", out_channels);
         return block;
     };
 
     auto load_resnet = [&](const std::string & prefix, int64_t in_channels, int64_t out_channels) {
         S3FlowDecoderWeights::ResnetBlockWeights block;
-        block.time_mlp = load_decoder_linear(*weights->store, *source, prefix + ".mlp.1", out_channels, 1024, true, weight_storage_type);
+        block.time_mlp = load_decoder_linear(*weights->store, source, prefix + ".mlp.1", out_channels, 1024, true, weight_storage_type);
         block.block1 = load_causal_block(prefix + ".block1", in_channels, out_channels);
         block.block2 = load_causal_block(prefix + ".block2", out_channels, out_channels);
-        block.res_conv = load_decoder_conv1d(*weights->store, *source, prefix + ".res_conv", out_channels, in_channels, 1, 1, true, weight_storage_type);
+        block.res_conv = load_decoder_conv1d(*weights->store, source, prefix + ".res_conv", out_channels, in_channels, 1, 1, true, weight_storage_type);
         return block;
     };
 
     auto load_transformer = [&](const std::string & prefix) {
         S3FlowDecoderWeights::TransformerBlockWeights block;
-        block.norm1 = load_decoder_layer_norm(*weights->store, *source, prefix + ".norm1", 256);
-        block.attn_q = load_decoder_linear(*weights->store, *source, prefix + ".attn1.to_q", 512, 256, false, weight_storage_type);
-        block.attn_k = load_decoder_linear(*weights->store, *source, prefix + ".attn1.to_k", 512, 256, false, weight_storage_type);
-        block.attn_v = load_decoder_linear(*weights->store, *source, prefix + ".attn1.to_v", 512, 256, false, weight_storage_type);
-        block.attn_out = load_decoder_linear(*weights->store, *source, prefix + ".attn1.to_out.0", 256, 512, true, weight_storage_type);
-        block.norm3 = load_decoder_layer_norm(*weights->store, *source, prefix + ".norm3", 256);
-        block.ff_proj_in = load_decoder_linear(*weights->store, *source, prefix + ".ff.net.0.proj", 1024, 256, true, weight_storage_type);
-        block.ff_proj_out = load_decoder_linear(*weights->store, *source, prefix + ".ff.net.2", 256, 1024, true, weight_storage_type);
+        block.norm1 = load_decoder_layer_norm(*weights->store, source, prefix + ".norm1", 256);
+        block.attn_q = load_decoder_linear(*weights->store, source, prefix + ".attn1.to_q", 512, 256, false, weight_storage_type);
+        block.attn_k = load_decoder_linear(*weights->store, source, prefix + ".attn1.to_k", 512, 256, false, weight_storage_type);
+        block.attn_v = load_decoder_linear(*weights->store, source, prefix + ".attn1.to_v", 512, 256, false, weight_storage_type);
+        block.attn_out = load_decoder_linear(*weights->store, source, prefix + ".attn1.to_out.0", 256, 512, true, weight_storage_type);
+        block.norm3 = load_decoder_layer_norm(*weights->store, source, prefix + ".norm3", 256);
+        block.ff_proj_in = load_decoder_linear(*weights->store, source, prefix + ".ff.net.0.proj", 1024, 256, true, weight_storage_type);
+        block.ff_proj_out = load_decoder_linear(*weights->store, source, prefix + ".ff.net.2", 256, 1024, true, weight_storage_type);
         return block;
     };
 
     weights->time_mlp_1 =
-        load_decoder_linear(*weights->store, *source, "flow.decoder.estimator.time_mlp.linear_1", 1024, 320, true, weight_storage_type);
+        load_decoder_linear(*weights->store, source, "flow.decoder.estimator.time_mlp.linear_1", 1024, 320, true, weight_storage_type);
     weights->time_mlp_2 =
-        load_decoder_linear(*weights->store, *source, "flow.decoder.estimator.time_mlp.linear_2", 1024, 1024, true, weight_storage_type);
+        load_decoder_linear(*weights->store, source, "flow.decoder.estimator.time_mlp.linear_2", 1024, 1024, true, weight_storage_type);
 
     weights->down_blocks.resize(1);
     weights->down_blocks[0].resnet = load_resnet("flow.decoder.estimator.down_blocks.0.0", 320, 256);
@@ -1846,7 +1845,7 @@ std::shared_ptr<const S3FlowDecoderWeights> load_s3_flow_decoder_weights(
         weights->down_blocks[0].transformers.push_back(load_transformer("flow.decoder.estimator.down_blocks.0.1." + std::to_string(i)));
     }
     weights->down_blocks[0].downsample =
-        load_decoder_conv1d(*weights->store, *source, "flow.decoder.estimator.down_blocks.0.2", 256, 256, 3, 1, true, weight_storage_type);
+        load_decoder_conv1d(*weights->store, source, "flow.decoder.estimator.down_blocks.0.2", 256, 256, 3, 1, true, weight_storage_type);
 
     weights->mid_blocks.resize(12);
     for (int block_index = 0; block_index < 12; ++block_index) {
@@ -1864,10 +1863,10 @@ std::shared_ptr<const S3FlowDecoderWeights> load_s3_flow_decoder_weights(
         weights->up_blocks[0].transformers.push_back(load_transformer("flow.decoder.estimator.up_blocks.0.1." + std::to_string(i)));
     }
     weights->up_blocks[0].upsample =
-        load_decoder_conv1d(*weights->store, *source, "flow.decoder.estimator.up_blocks.0.2", 256, 256, 3, 1, true, weight_storage_type);
+        load_decoder_conv1d(*weights->store, source, "flow.decoder.estimator.up_blocks.0.2", 256, 256, 3, 1, true, weight_storage_type);
 
     weights->final_block = load_causal_block("flow.decoder.estimator.final_block", 256, 256);
-    weights->final_proj = load_decoder_conv1d(*weights->store, *source, "flow.decoder.estimator.final_proj", 80, 256, 1, 1, true, weight_storage_type);
+    weights->final_proj = load_decoder_conv1d(*weights->store, source, "flow.decoder.estimator.final_proj", 80, 256, 1, 1, true, weight_storage_type);
     weights->store->upload();
     return weights;
 }

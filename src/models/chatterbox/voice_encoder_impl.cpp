@@ -273,35 +273,32 @@ std::vector<float> project_embedding(const VoiceEncoderWeights & weights, const 
 
 }  // namespace
 
-std::shared_ptr<const VoiceEncoderWeights> load_voice_encoder_weights(const std::filesystem::path & model_root) {
-    const auto weights_path = model_root / "ve.safetensors";
-    const auto source = engine::assets::open_tensor_source(weights_path);
-
+std::shared_ptr<const VoiceEncoderWeights> load_voice_encoder_weights(const engine::assets::TensorSource & source) {
     auto weights = std::make_shared<VoiceEncoderWeights>();
     weights->lstm_layers.resize(3);
-    weights->lstm_layers[0].weight_ih = source->require_f32("lstm.weight_ih_l0", {1024, 40});
-    weights->lstm_layers[0].weight_hh = source->require_f32("lstm.weight_hh_l0", {1024, 256});
-    weights->lstm_layers[0].bias_ih = source->require_f32("lstm.bias_ih_l0", {1024});
-    weights->lstm_layers[0].bias_hh = source->require_f32("lstm.bias_hh_l0", {1024});
-    weights->lstm_layers[1].weight_ih = source->require_f32("lstm.weight_ih_l1", {1024, 256});
-    weights->lstm_layers[1].weight_hh = source->require_f32("lstm.weight_hh_l1", {1024, 256});
-    weights->lstm_layers[1].bias_ih = source->require_f32("lstm.bias_ih_l1", {1024});
-    weights->lstm_layers[1].bias_hh = source->require_f32("lstm.bias_hh_l1", {1024});
-    weights->lstm_layers[2].weight_ih = source->require_f32("lstm.weight_ih_l2", {1024, 256});
-    weights->lstm_layers[2].weight_hh = source->require_f32("lstm.weight_hh_l2", {1024, 256});
-    weights->lstm_layers[2].bias_ih = source->require_f32("lstm.bias_ih_l2", {1024});
-    weights->lstm_layers[2].bias_hh = source->require_f32("lstm.bias_hh_l2", {1024});
-    weights->proj_weight = source->require_f32("proj.weight", {256, 256});
-    weights->proj_bias = source->require_f32("proj.bias", {256});
-    weights->similarity_weight = source->require_f32("similarity_weight", {1});
-    weights->similarity_bias = source->require_f32("similarity_bias", {1});
+    weights->lstm_layers[0].weight_ih = source.require_f32("lstm.weight_ih_l0", {1024, 40});
+    weights->lstm_layers[0].weight_hh = source.require_f32("lstm.weight_hh_l0", {1024, 256});
+    weights->lstm_layers[0].bias_ih = source.require_f32("lstm.bias_ih_l0", {1024});
+    weights->lstm_layers[0].bias_hh = source.require_f32("lstm.bias_hh_l0", {1024});
+    weights->lstm_layers[1].weight_ih = source.require_f32("lstm.weight_ih_l1", {1024, 256});
+    weights->lstm_layers[1].weight_hh = source.require_f32("lstm.weight_hh_l1", {1024, 256});
+    weights->lstm_layers[1].bias_ih = source.require_f32("lstm.bias_ih_l1", {1024});
+    weights->lstm_layers[1].bias_hh = source.require_f32("lstm.bias_hh_l1", {1024});
+    weights->lstm_layers[2].weight_ih = source.require_f32("lstm.weight_ih_l2", {1024, 256});
+    weights->lstm_layers[2].weight_hh = source.require_f32("lstm.weight_hh_l2", {1024, 256});
+    weights->lstm_layers[2].bias_ih = source.require_f32("lstm.bias_ih_l2", {1024});
+    weights->lstm_layers[2].bias_hh = source.require_f32("lstm.bias_hh_l2", {1024});
+    weights->proj_weight = source.require_f32("proj.weight", {256, 256});
+    weights->proj_bias = source.require_f32("proj.bias", {256});
+    weights->similarity_weight = source.require_f32("similarity_weight", {1});
+    weights->similarity_bias = source.require_f32("similarity_bias", {1});
     return weights;
 }
 
-VoiceEncoderComponent VoiceEncoderComponent::load_from_model_root(
-    const std::filesystem::path & model_root,
+VoiceEncoderComponent VoiceEncoderComponent::load_from_source(
+    const engine::assets::TensorSource & source,
     engine::core::BackendConfig backend) {
-    return VoiceEncoderComponent(load_voice_encoder_weights(model_root), backend);
+    return VoiceEncoderComponent(load_voice_encoder_weights(source), backend);
 }
 
 VoiceEncoderComponent::VoiceEncoderComponent(

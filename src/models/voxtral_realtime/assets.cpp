@@ -1,6 +1,6 @@
 #include "engine/models/voxtral_realtime/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/json.h"
 
@@ -146,9 +146,9 @@ VoxtralRealtimeConfig parse_config(const assets::ResourceBundle & resources) {
 
 std::shared_ptr<const VoxtralRealtimeAssets> load_voxtral_realtime_assets(const std::filesystem::path & model_path) {
     VoxtralRealtimeAssets assets;
-    assets.resources = assets::load_resource_bundle_from_package_spec(
+    assets.resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("voxtral_realtime"));
+        engine::model_spec::default_spec_path("voxtral_realtime"));
     assets.config = parse_config(assets.resources);
     assets.model_weights = assets.resources.open_tensor_source("weights");
     assets::require_tensor_shape(*assets.model_weights, "audio_tower.embedder.conv1.weight",

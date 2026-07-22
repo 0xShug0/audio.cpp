@@ -1,6 +1,6 @@
 #include "engine/models/miocodec/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/yaml.h"
 
 #include <numeric>
@@ -76,9 +76,9 @@ MioCodecConfig parse_config(const assets::ResourceBundle & resources) {
 
 std::shared_ptr<const MioCodecAssets> load_miocodec_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<MioCodecAssets>();
-    assets->resources = assets::load_resource_bundle_from_package_spec(
+    assets->resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("miocodec"));
+        engine::model_spec::default_spec_path("miocodec"));
     assets->config = parse_config(assets->resources);
     assets->model_weights = assets->resources.open_tensor_source("weights");
     assets->wavlm_weights = assets->resources.open_tensor_source("wavlm_weights");

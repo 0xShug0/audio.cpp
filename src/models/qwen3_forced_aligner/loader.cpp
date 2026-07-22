@@ -1,6 +1,6 @@
 #include "engine/models/qwen3_forced_aligner/loader.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/models/qwen3_asr/assets.h"
 #include "engine/models/qwen3_forced_aligner/session.h"
 
@@ -67,15 +67,15 @@ public:
         inspection.model_root = assets->resources.model_root();
         inspection.metadata = metadata(*assets);
         inspection.capabilities = capabilities(*assets);
-        const auto package_spec = engine::assets::default_model_package_spec_path(family());
+        const auto package_spec = engine::model_spec::default_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             package_spec,
-            engine::assets::ModelPackageResourceKind::Files);
+            engine::model_spec::ResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             package_spec,
-            engine::assets::ModelPackageResourceKind::Tensors);
+            engine::model_spec::ResourceKind::Tensors);
         return inspection;
     }
 

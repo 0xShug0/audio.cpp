@@ -22,7 +22,7 @@ namespace engine::core {
 class BackendWeightStore;
 }
 
-namespace engine::models::common {
+namespace engine::core {
 class ConstantTensorCache;
 }
 
@@ -110,7 +110,7 @@ public:
     const VibeVoiceASRAssets & assets() const noexcept;
     const VibeVoiceTokenizerWeightsBundle & weights() const noexcept;
     ggml_backend_t backend() const noexcept;
-    common::ConstantTensorCache & constants() const noexcept;
+    core::ConstantTensorCache & constants() const noexcept;
     int threads() const noexcept;
 
     VibeVoiceTokenizerLatents encode_acoustic(const runtime::AudioBuffer & audio) const;
@@ -139,11 +139,11 @@ public:
 private:
     std::shared_ptr<const VibeVoiceASRAssets> assets_;
     std::shared_ptr<const VibeVoiceTokenizerWeightsBundle> weights_;
-    std::unique_ptr<common::ConstantTensorCache> acoustic_encoder_constants_;
-    std::unique_ptr<common::ConstantTensorCache> semantic_encoder_constants_;
-    std::unique_ptr<common::ConstantTensorCache> acoustic_decoder_constants_;
-    std::unique_ptr<common::ConstantTensorCache> semantic_streaming_constants_;
-    std::unique_ptr<common::ConstantTensorCache> acoustic_streaming_constants_;
+    std::unique_ptr<core::ConstantTensorCache> acoustic_encoder_constants_;
+    std::unique_ptr<core::ConstantTensorCache> semantic_encoder_constants_;
+    std::unique_ptr<core::ConstantTensorCache> acoustic_decoder_constants_;
+    std::unique_ptr<core::ConstantTensorCache> semantic_streaming_constants_;
+    std::unique_ptr<core::ConstantTensorCache> acoustic_streaming_constants_;
     mutable std::unique_ptr<VibeVoiceTokenizerEncoderGraph> acoustic_encoder_graph_;
     mutable std::unique_ptr<VibeVoiceTokenizerEncoderGraph> semantic_encoder_graph_;
     mutable std::unique_ptr<VibeVoiceTokenizerDecoderGraph> acoustic_decoder_graph_;

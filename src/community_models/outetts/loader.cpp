@@ -1,6 +1,6 @@
 #include "engine/community_models/outetts/loader.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/community_models/outetts/session.h"
 
 #include <stdexcept>
@@ -97,8 +97,8 @@ public:
   bool can_load(const runtime::ModelLoadRequest &request) const override {
     try {
       const auto package_spec =
-          assets::default_model_package_spec_path(family());
-      (void)assets::load_resource_bundle_from_package_spec(request.model_path,
+          engine::model_spec::default_spec_path(family());
+      (void)engine::model_spec::load_resource_bundle(request.model_path,
                                                            package_spec);
       return !request.family_hint.has_value() ||
              *request.family_hint == family();
@@ -115,15 +115,15 @@ public:
     inspection.metadata = metadata(*model_assets);
     inspection.capabilities = capabilities(*model_assets);
     inspection.cli = cli(*model_assets);
-    const auto package_spec = assets::default_model_package_spec_path(family());
+    const auto package_spec = engine::model_spec::default_spec_path(family());
     inspection.discovered_configs =
         runtime::discover_named_assets_from_package_spec(
             request.model_path, package_spec,
-            assets::ModelPackageResourceKind::Files);
+            engine::model_spec::ResourceKind::Files);
     inspection.discovered_weights =
         runtime::discover_named_assets_from_package_spec(
             request.model_path, package_spec,
-            assets::ModelPackageResourceKind::Tensors);
+            engine::model_spec::ResourceKind::Tensors);
     return inspection;
   }
 

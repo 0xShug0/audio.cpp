@@ -117,7 +117,7 @@ ChatterboxVoiceConversionOutputs ChatterboxVcComponent::convert(
 
     const auto target_ref_start = std::chrono::steady_clock::now();
     auto target_ref = tokenizer_.embed_reference_from_wavs(
-        *speaker_encoder_.weights(),
+        speaker_encoder_,
         target_24k,
         target_16k);
     outputs.target_ref_ms = engine::debug::elapsed_ms(target_ref_start);

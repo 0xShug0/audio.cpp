@@ -18,7 +18,7 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/models/demucs/frontend.h"
 #include "engine/models/demucs/postprocess.h"
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -1409,7 +1409,7 @@ public:
             static_cast<double>(config_.segment_samples) / static_cast<double>(config_.hop_length)));
 
         init_context(768ull * 1024ull * 1024ull);
-        constants_ = std::make_unique<common::ConstantTensorCache>(
+        constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
             "htdemucs.constants",
@@ -1617,7 +1617,7 @@ private:
     HTDemucsConfig base_config_;
     HTDemucsConfig config_;
     HTDemucsWeights weights_;
-    std::unique_ptr<common::ConstantTensorCache> constants_;
+    std::unique_ptr<core::ConstantTensorCache> constants_;
     ggml_tensor * freq_input_ = nullptr;
     ggml_tensor * time_input_ = nullptr;
     ggml_tensor * freq_output_ = nullptr;

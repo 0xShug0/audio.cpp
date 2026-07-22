@@ -9,11 +9,11 @@
 #include <cstddef>
 #include <memory>
 
-namespace engine::models {
-
-namespace common {
+namespace engine::core {
 class ConstantTensorCache;
 }
+
+namespace engine::models {
 
 namespace vietneu_tts {
 
@@ -37,7 +37,7 @@ private:
     std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> weights_;
     core::ExecutionContext * execution_context_ = nullptr;
     size_t graph_arena_bytes_ = 0;
-    std::unique_ptr<common::ConstantTensorCache> constants_;
+    std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<Qwen3SpeechTokenizerEncoderGraph> graph_;
 };
 

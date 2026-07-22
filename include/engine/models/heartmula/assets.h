@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
 #include <cstdint>
@@ -77,20 +78,8 @@ struct HeartCodecConfig {
     int64_t res_kernel_size = 0;
 };
 
-struct HeartMuLaAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path tokenizer_json_path;
-    std::filesystem::path generation_config_path;
-    std::filesystem::path mula_config_path;
-    std::filesystem::path mula_index_path;
-    std::filesystem::path codec_config_path;
-    std::filesystem::path codec_index_path;
-    std::vector<std::filesystem::path> mula_shard_paths;
-    std::vector<std::filesystem::path> codec_shard_paths;
-};
-
 struct HeartMuLaAssets {
-    HeartMuLaAssetPaths paths;
+    assets::ResourceBundle resources;
     HeartMuLaConfig mula_config;
     HeartMuLaGenerationConfig generation_config;
     HeartCodecConfig codec_config;
@@ -98,7 +87,6 @@ struct HeartMuLaAssets {
     std::shared_ptr<const assets::TensorSource> codec_weights;
 };
 
-HeartMuLaAssetPaths resolve_heartmula_assets(const std::filesystem::path & model_path);
 std::shared_ptr<const HeartMuLaAssets> load_heartmula_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::heartmula

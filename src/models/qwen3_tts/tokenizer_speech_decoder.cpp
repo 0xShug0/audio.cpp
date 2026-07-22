@@ -6,6 +6,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -15,7 +16,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -490,7 +491,7 @@ core::TensorValue causal_conv1d(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const Conv1dWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     const int64_t kernel_extent = (weights.kernel - 1) * weights.dilation + 1;
     const int64_t left_pad = kernel_extent - weights.stride;
     const int64_t length = input.shape.dims[2];
@@ -569,7 +570,7 @@ core::TensorValue causal_conv_transpose1d(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const ConvTranspose1dWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     const int64_t right_trim = weights.kernel - weights.stride;
     auto output_bct = modules::ConvTranspose1dModule({
         weights.in_channels,
@@ -615,7 +616,7 @@ std::vector<float> snake_inv_beta_exp(const std::vector<float> & beta) {
 core::TensorValue snake_beta(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const std::vector<float> & alpha,
     const std::vector<float> & beta) {
     auto alpha_exp = constants.make_f32(
@@ -639,7 +640,7 @@ core::TensorValue codebook_decode(
     const CodebookWeights & codebook,
     int64_t dim,
     int64_t size,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto indices = core::wrap_tensor(
         codes_t_b,
         core::TensorShape::from_dims({codes_t_b->ne[1], codes_t_b->ne[0]}),
@@ -654,7 +655,7 @@ core::TensorValue quantizer_decode(
     core::ModuleBuildContext & build_ctx,
     ggml_tensor * codes_t_q_b,
     const Qwen3SpeechTokenizerDecoderWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     const auto & config = weights.config;
     const int64_t split_dim = config.codebook_dim / 2;
     core::TensorValue semantic_sum;
@@ -713,10 +714,11 @@ core::TensorValue attention(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     ggml_tensor * positions,
-    ggml_tensor * mask,
+    const core::TensorValue & attention_mask,
     const AttentionWeights & weights,
     const DecoderConfig & config,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants,
+    Qwen3TTSPerfMode perf_mode) {
     const int64_t kv_repeat = config.num_heads / config.num_kv_heads;
     auto q_value = modules::LinearModule(binding::linear_config(weights.q.input_dim, weights.q.output_dim, weights.q.use_bias))
                        .build(build_ctx, input, binding::linear_data(constants, weights.q.weight, weights.q.bias));
@@ -751,63 +753,53 @@ core::TensorValue attention(
         core::wrap_tensor(k, core::TensorShape::from_dims({batch, seq, config.num_kv_heads, config.head_dim}), GGML_TYPE_F32),
         position_value)
             .tensor;
-    const float scale = 1.0F / std::sqrt(static_cast<float>(config.head_dim));
-    std::vector<ggml_tensor *> batches;
-    batches.reserve(static_cast<size_t>(batch));
-    for (int64_t b = 0; b < batch; ++b) {
-        std::vector<ggml_tensor *> heads;
-        heads.reserve(static_cast<size_t>(config.num_heads));
-        for (int64_t h = 0; h < config.num_heads; ++h) {
-            const int64_t kv_head = h / kv_repeat;
-            auto * qh = ggml_view_2d(
-                ctx,
-                q,
-                config.head_dim,
-                seq,
-                q->nb[2],
-                static_cast<size_t>(h) * q->nb[1] + static_cast<size_t>(b) * q->nb[3]);
-            auto * kh = ggml_view_2d(
-                ctx,
-                k,
-                config.head_dim,
-                seq,
-                k->nb[2],
-                static_cast<size_t>(kv_head) * k->nb[1] + static_cast<size_t>(b) * k->nb[3]);
-            auto * vh = ggml_view_2d(
-                ctx,
-                v,
-                config.head_dim,
-                seq,
-                v->nb[2],
-                static_cast<size_t>(kv_head) * v->nb[1] + static_cast<size_t>(b) * v->nb[3]);
-            auto * scores = ggml_mul_mat(
-                ctx,
-                core::has_backend_addressable_layout(kh) ? kh : ggml_cont(ctx, kh),
-                core::has_backend_addressable_layout(qh) ? qh : ggml_cont(ctx, qh));
-            scores = ggml_scale(ctx, scores, scale);
-            scores = ggml_add(ctx, scores, mask);
-            auto * attn = ggml_soft_max(ctx, core::has_backend_addressable_layout(scores) ? scores : ggml_cont(ctx, scores));
-            auto * vh_t = ggml_transpose(ctx, vh);
-            auto * context = ggml_mul_mat(
-                ctx,
-                core::has_backend_addressable_layout(vh_t) ? vh_t : ggml_cont(ctx, vh_t),
-                core::has_backend_addressable_layout(attn) ? attn : ggml_cont(ctx, attn));
-            heads.push_back(context);
+    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(
+        build_ctx,
+        core::wrap_tensor(q, core::TensorShape::from_dims({batch, seq, config.num_heads, config.head_dim}), GGML_TYPE_F32));
+    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(
+        build_ctx,
+        core::wrap_tensor(k, core::TensorShape::from_dims({batch, seq, config.num_kv_heads, config.head_dim}), GGML_TYPE_F32));
+    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(
+        build_ctx,
+        core::wrap_tensor(v, core::TensorShape::from_dims({batch, seq, config.num_kv_heads, config.head_dim}), GGML_TYPE_F32));
+    if (kv_repeat > 1) {
+        std::vector<core::TensorValue> repeated_k;
+        std::vector<core::TensorValue> repeated_v;
+        repeated_k.reserve(static_cast<size_t>(config.num_heads));
+        repeated_v.reserve(static_cast<size_t>(config.num_heads));
+        for (int64_t head = 0; head < config.num_kv_heads; ++head) {
+            auto one_k = modules::SliceModule({1, head, 1}).build(build_ctx, k_heads);
+            auto one_v = modules::SliceModule({1, head, 1}).build(build_ctx, v_heads);
+            for (int64_t repeat = 0; repeat < kv_repeat; ++repeat) {
+                repeated_k.push_back(one_k);
+                repeated_v.push_back(one_v);
+            }
         }
-        auto * batch_output = heads.front();
-        for (size_t i = 1; i < heads.size(); ++i) {
-            batch_output = ggml_concat(ctx, batch_output, heads[i], 0);
+        k_heads = repeated_k.front();
+        v_heads = repeated_v.front();
+        for (size_t index = 1; index < repeated_k.size(); ++index) {
+            k_heads = modules::ConcatModule({1}).build(build_ctx, k_heads, repeated_k[index]);
+            v_heads = modules::ConcatModule({1}).build(build_ctx, v_heads, repeated_v[index]);
         }
-        batches.push_back(ggml_reshape_3d(ctx, batch_output, config.num_heads * config.head_dim, seq, 1));
     }
-    auto * merged = batches.front();
-    for (size_t i = 1; i < batches.size(); ++i) {
-        merged = ggml_concat(ctx, merged, batches[i], 2);
-    }
+    auto context = modules::ScaledDotProductAttentionModule({
+        config.head_dim,
+        perf_mode == Qwen3TTSPerfMode::FlashAttention
+            ? modules::ScaledDotProductAttentionLowering::Flash
+            : modules::ScaledDotProductAttentionLowering::Explicit,
+        GGML_PREC_F32,
+        modules::AttentionCausality::NonCausal,
+    }).build(
+        build_ctx,
+        q_heads,
+        k_heads,
+        v_heads,
+        attention_mask);
+    context = core::ensure_backend_addressable_layout(build_ctx, context);
     return modules::LinearModule(binding::linear_config(weights.o.input_dim, weights.o.output_dim, weights.o.use_bias))
         .build(
             build_ctx,
-            core::wrap_tensor(merged, core::TensorShape::from_dims({batch, seq, config.num_heads * config.head_dim}), GGML_TYPE_F32),
+            core::reshape_tensor(build_ctx, context, core::TensorShape::from_dims({batch, seq, config.num_heads * config.head_dim})),
             binding::linear_data(constants, weights.o.weight, weights.o.bias));
 }
 
@@ -815,7 +807,7 @@ core::TensorValue mlp(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const MlpWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto gate_linear = modules::LinearModule(binding::linear_config(weights.gate.input_dim, weights.gate.output_dim, weights.gate.use_bias))
                            .build(build_ctx, input, binding::linear_data(constants, weights.gate.weight, weights.gate.bias));
     auto gate = modules::SiluModule{}.build(build_ctx, gate_linear);
@@ -829,7 +821,7 @@ core::TensorValue layer_scale(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const std::vector<float> & scale,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     return core::wrap_tensor(
         ggml_mul(
             build_ctx.ggml,
@@ -843,7 +835,7 @@ core::TensorValue convnext(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input_bct,
     const ConvNeXtWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto hidden = causal_conv1d(build_ctx, input_bct, weights.dwconv, constants);
     hidden = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(build_ctx, hidden);
     hidden = modules::LayerNormModule({static_cast<int64_t>(weights.norm.weight.size()), weights.norm.eps, true, true})
@@ -868,7 +860,7 @@ core::TensorValue residual_unit(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const ResidualUnitWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto hidden = snake_beta(
         build_ctx,
         input,
@@ -909,12 +901,14 @@ public:
         std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> weights,
         int64_t code_frames,
         core::ExecutionContext & execution_context,
-        common::ConstantTensorCache & constants,
-        size_t graph_arena_bytes)
+        core::ConstantTensorCache & constants,
+        size_t graph_arena_bytes,
+        Qwen3TTSPerfMode perf_mode)
         : weights_(std::move(weights)),
           code_frames_(code_frames),
           backend_(execution_context.backend()),
-          compute_threads_(std::max(1, execution_context.config().threads)) {
+          compute_threads_(std::max(1, execution_context.config().threads)),
+          perf_mode_(perf_mode) {
         if (weights_ == nullptr) {
             throw std::runtime_error("Qwen3 speech decoder graph requires weights");
         }
@@ -947,7 +941,11 @@ public:
         ggml_set_input(codes_);
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, code_frames_);
         ggml_set_input(positions_);
-        mask_ = ggml_new_tensor_2d(ctx_.get(), GGML_TYPE_F32, code_frames_, code_frames_);
+        if (perf_mode_ == Qwen3TTSPerfMode::FlashAttention) {
+            mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, code_frames_, code_frames_, 1, 1);
+        } else {
+            mask_ = ggml_new_tensor_2d(ctx_.get(), GGML_TYPE_F32, code_frames_, code_frames_);
+        }
         ggml_set_input(mask_);
 
         core::ModuleBuildContext build_ctx{
@@ -968,7 +966,10 @@ public:
         for (const auto & layer : weights_->transformer_layers) {
             auto attn_in = modules::RMSNormModule({static_cast<int64_t>(layer.input_norm.weight.size()), layer.input_norm.eps, true, false})
                                .build(build_ctx, hidden, binding::norm(constants, layer.input_norm.weight));
-            auto attn_out = attention(ctx_.get(), build_ctx, attn_in, positions_, mask_, layer.attention, config, constants);
+            auto attention_mask = perf_mode_ == Qwen3TTSPerfMode::FlashAttention
+                ? core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, code_frames_, code_frames_}), GGML_TYPE_F16)
+                : core::wrap_tensor(mask_, core::TensorShape::from_dims({code_frames_, code_frames_}), GGML_TYPE_F32);
+            auto attn_out = attention(ctx_.get(), build_ctx, attn_in, positions_, attention_mask, layer.attention, config, constants, perf_mode_);
             hidden = modules::AddModule{}.build(build_ctx, hidden, layer_scale(build_ctx, attn_out, layer.attn_scale, constants));
             auto mlp_in = modules::RMSNormModule({static_cast<int64_t>(layer.post_norm.weight.size()), layer.post_norm.eps, true, false})
                               .build(build_ctx, hidden, binding::norm(constants, layer.post_norm.weight));
@@ -1023,7 +1024,15 @@ public:
         }
         const auto mask = make_mask(code_frames_, config.sliding_window);
         ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(mask_, mask.data(), 0, mask.size() * sizeof(float));
+        if (perf_mode_ == Qwen3TTSPerfMode::FlashAttention) {
+            std::vector<ggml_fp16_t> mask_f16(mask.size());
+            for (size_t index = 0; index < mask.size(); ++index) {
+                mask_f16[index] = ggml_fp32_to_fp16(mask[index]);
+            }
+            ggml_backend_tensor_set(mask_, mask_f16.data(), 0, mask_f16.size() * sizeof(ggml_fp16_t));
+        } else {
+            ggml_backend_tensor_set(mask_, mask.data(), 0, mask.size() * sizeof(float));
+        }
     }
 
     ~Qwen3SpeechTokenizerDecoderGraph() {
@@ -1038,7 +1047,10 @@ public:
         int64_t code_frames,
         ggml_backend_t backend,
         int threads) const {
-        return weights_.get() == &weights && code_frames_ >= code_frames && backend_ == backend &&
+        const bool frame_match = perf_mode_ == Qwen3TTSPerfMode::FlashAttention
+            ? code_frames_ == code_frames
+            : code_frames_ >= code_frames;
+        return weights_.get() == &weights && frame_match && backend_ == backend &&
             compute_threads_ == std::max(1, threads);
     }
 
@@ -1098,6 +1110,7 @@ private:
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
+    Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
     double last_input_upload_ms_ = 0.0;
     double last_graph_compute_ms_ = 0.0;
     double last_output_read_ms_ = 0.0;
@@ -1109,10 +1122,12 @@ Qwen3SpeechTokenizerDecoderRuntime::Qwen3SpeechTokenizerDecoderRuntime(
     size_t graph_arena_bytes,
     size_t constant_context_bytes,
     assets::TensorStorageType linear_weight_storage_type,
-    assets::TensorStorageType conv_weight_storage_type)
+    assets::TensorStorageType conv_weight_storage_type,
+    Qwen3TTSPerfMode perf_mode)
     : assets_(std::move(assets)),
       execution_context_(&execution_context),
-      graph_arena_bytes_(graph_arena_bytes) {
+      graph_arena_bytes_(graph_arena_bytes),
+      perf_mode_(perf_mode) {
     if (assets_ == nullptr) {
         throw std::runtime_error("Qwen3 speech tokenizer decoder requires assets");
     }
@@ -1122,7 +1137,7 @@ Qwen3SpeechTokenizerDecoderRuntime::Qwen3SpeechTokenizerDecoderRuntime(
         execution_context_->backend_type(),
         linear_weight_storage_type,
         conv_weight_storage_type);
-    constants_ = std::make_unique<common::ConstantTensorCache>(
+    constants_ = std::make_unique<core::ConstantTensorCache>(
         execution_context_->backend(),
         std::max(1, execution_context_->config().threads),
         "qwen3_tts.speech_tokenizer_decoder.constants",
@@ -1171,7 +1186,8 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
                 std::max(chunk_frames, graph_capacity_frames),
                 *execution_context_,
                 *constants_,
-                graph_arena_bytes_);
+                graph_arena_bytes_,
+                perf_mode_);
             graph_build_ms += engine::debug::elapsed_ms(build_start, Clock::now());
             ++graph_rebuilds;
         }

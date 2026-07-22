@@ -14,7 +14,7 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/kv_cache.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -45,7 +45,7 @@ struct GgmlContextDeleter {
 
 modules::QwenDecoderLayerWeights to_qwen_layer_weights(
     const VibeVoiceDecoderLayerWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     modules::QwenDecoderLayerWeights out;
     out.input_norm = binding::norm_data(constants, weights.input_norm);
     out.self_attention = weights.self_attention;
@@ -77,7 +77,7 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(const VibeVoiceDecoder
 
 modules::QwenCausalDecoderWeights make_qwen_decoder_weights(
     const VibeVoiceDecoderWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     modules::QwenCausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & layer : weights.layers) {
@@ -854,7 +854,7 @@ VibeVoiceDecoderWeightsRuntime::VibeVoiceDecoderWeightsRuntime(
     engine::debug::timing_log_scalar(
         "vibevoice.runtime.decoder_weights_load_ms",
         engine::debug::elapsed_ms(weights_started));
-    constants_ = std::make_unique<common::ConstantTensorCache>(
+    constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.decoder.constants",
@@ -883,7 +883,7 @@ ggml_backend_t VibeVoiceDecoderWeightsRuntime::backend() const noexcept {
     return backend_;
 }
 
-common::ConstantTensorCache & VibeVoiceDecoderWeightsRuntime::constants() const noexcept {
+core::ConstantTensorCache & VibeVoiceDecoderWeightsRuntime::constants() const noexcept {
     return *constants_;
 }
 

@@ -1,6 +1,6 @@
 #include "engine/models/seed_vc/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -228,9 +228,9 @@ SeedVcConfig parse_config(const assets::ResourceBundle & resources) {
 
 std::shared_ptr<const SeedVcAssets> load_seed_vc_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<SeedVcAssets>();
-    assets->resources = assets::load_resource_bundle_from_package_spec(
+    assets->resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("seed_vc"));
+        engine::model_spec::default_spec_path("seed_vc"));
     assets->config = parse_config(assets->resources);
     assets->v2_ar_weights = assets->resources.open_tensor_source("v2_ar_weights");
     assets->v2_cfm_weights = assets->resources.open_tensor_source("v2_cfm_weights");

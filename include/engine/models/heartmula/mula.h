@@ -15,7 +15,7 @@ namespace engine::core {
 class BackendWeightStore;
 }
 
-namespace engine::models::common {
+namespace engine::core {
 class ConstantTensorCache;
 }
 
@@ -188,9 +188,9 @@ public:
     ggml_backend_t backend() const noexcept;
     core::BackendType backend_type() const noexcept;
     int device() const noexcept;
-    common::ConstantTensorCache & backbone_constants() const noexcept;
-    common::ConstantTensorCache & decoder_constants() const noexcept;
-    common::ConstantTensorCache & embedding_constants() const noexcept;
+    core::ConstantTensorCache & backbone_constants() const noexcept;
+    core::ConstantTensorCache & decoder_constants() const noexcept;
+    core::ConstantTensorCache & embedding_constants() const noexcept;
     int threads() const noexcept;
     size_t backbone_prefill_graph_arena_bytes() const noexcept;
     size_t backbone_step_graph_arena_bytes() const noexcept;
@@ -231,9 +231,9 @@ public:
 private:
     std::shared_ptr<const HeartMuLaAssets> assets_;
     std::shared_ptr<const HeartMuLaWeights> weights_;
-    std::unique_ptr<common::ConstantTensorCache> backbone_constants_;
-    std::unique_ptr<common::ConstantTensorCache> decoder_constants_;
-    std::unique_ptr<common::ConstantTensorCache> embedding_constants_;
+    std::unique_ptr<core::ConstantTensorCache> backbone_constants_;
+    std::unique_ptr<core::ConstantTensorCache> decoder_constants_;
+    std::unique_ptr<core::ConstantTensorCache> embedding_constants_;
     mutable std::unique_ptr<HeartMuLaBackbonePrefillGraph> backbone_prefill_graph_;
     mutable std::unique_ptr<HeartMuLaBackboneCachedStepGraph> backbone_cached_step_graph_;
     mutable std::unique_ptr<HeartMuLaDecoderPrefillGraph> decoder_prefill_graph_;
@@ -265,7 +265,7 @@ HeartMuLaTransformerLayerOutputs build_heartmula_transformer_layer(
     const HeartMuLaTransformerLayerWeights & weights,
     const HeartMuLaTransformerConfig & config,
     const core::TensorValue & rope_factors,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const std::optional<core::TensorValue> & prefix_key = std::nullopt,
     const std::optional<core::TensorValue> & prefix_value = std::nullopt,
     const std::optional<core::TensorValue> & attention_mask = std::nullopt);

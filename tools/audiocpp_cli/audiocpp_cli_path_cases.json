@@ -1994,7 +1994,7 @@
       "id": "marblenet_vad_offline",
       "coverage": "MarbleNet VAD offline frontend and segment postprocess",
       "family": "marblenet_vad",
-      "model": "models/marblenet_vad",
+      "model": "assets/framework/models/marblenet_vad",
       "task": "vad",
       "mode": "offline",
       "outputs": [

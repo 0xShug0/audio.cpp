@@ -92,7 +92,7 @@ struct S3FlowCFMTimingBreakdown {
 };
 
 std::shared_ptr<const S3FlowEncoderWeights> load_s3_flow_encoder_weights(
-    const std::filesystem::path & checkpoint_path,
+    const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type = engine::assets::TensorStorageType::Native);
 S3FlowEncoderOutputs compute_s3_flow_encoder_forward(
@@ -104,7 +104,7 @@ S3FlowEncoderOutputs compute_s3_flow_encoder_forward(
     int64_t hidden_size,
     engine::core::BackendConfig backend = {});
 std::shared_ptr<const S3FlowDecoderWeights> load_s3_flow_decoder_weights(
-    const std::filesystem::path & checkpoint_path,
+    const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type = engine::assets::TensorStorageType::Native);
 S3FlowDecoderOutputs compute_s3_flow_decoder_forward(

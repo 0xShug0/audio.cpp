@@ -1,6 +1,6 @@
 #include "engine/models/higgs_audio_tts/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/json.h"
 
@@ -159,9 +159,9 @@ void validate_weight_anchors(const HiggsAssets & assets) {
 
 std::shared_ptr<const HiggsAssets> load_higgs_assets(const std::filesystem::path & model_path) {
     HiggsAssets assets;
-    assets.resources = assets::load_resource_bundle_from_package_spec(
+    assets.resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("higgs_audio_tts"));
+        engine::model_spec::default_spec_path("higgs_audio_tts"));
     assets.config = parse_config(assets.resources);
     assets.weights = assets.resources.open_tensor_source("weights");
     validate_weight_anchors(assets);

@@ -1,6 +1,6 @@
 #include "engine/models/roformer/loader.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/models/roformer/session.h"
 
 #include <stdexcept>
@@ -39,7 +39,7 @@ runtime::ModelCliInterface cli(const RoformerAssets &) {
 
 runtime::ModelInspection inspect_model(const runtime::ModelLoadRequest & request) {
     const auto assets = load_mel_band_roformer_assets(request);
-    const auto package_spec = engine::assets::default_model_package_spec_path(std::string(kMelBandRoformerFamily));
+    const auto package_spec = engine::model_spec::default_spec_path(std::string(kMelBandRoformerFamily));
     runtime::ModelInspection inspection;
     inspection.model_root = assets->resources.model_root();
     inspection.metadata = metadata(*assets);
@@ -48,11 +48,11 @@ runtime::ModelInspection inspect_model(const runtime::ModelLoadRequest & request
     inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
         request.model_path,
         package_spec,
-        engine::assets::ModelPackageResourceKind::Files);
+        engine::model_spec::ResourceKind::Files);
     inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
         request.model_path,
         package_spec,
-        engine::assets::ModelPackageResourceKind::Tensors);
+        engine::model_spec::ResourceKind::Tensors);
     return inspection;
 }
 

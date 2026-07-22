@@ -10,7 +10,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <algorithm>
 #include <cmath>
@@ -228,7 +228,7 @@ core::TensorValue apply_rope_fast(
 
 core::TensorValue apply_rope_exact(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & input,
     int64_t head_dim) {
     if (input.shape.rank != 4 || input.shape.dims[3] != head_dim || head_dim % 2 != 0) {
@@ -292,7 +292,7 @@ std::vector<float> local_attention_mask(int64_t heads, int64_t frames, int64_t w
 }
 
 core::TensorValue make_window_mask(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     int64_t heads,
     int64_t frames,
     int64_t window_size) {
@@ -302,7 +302,7 @@ core::TensorValue make_window_mask(
 }
 
 core::TensorValue make_i32_constant(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorShape & shape,
     const std::vector<int32_t> & values) {
     return constants.make_tensor(
@@ -313,7 +313,7 @@ core::TensorValue make_i32_constant(
 }
 
 core::TensorValue make_ones_i32(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorShape & shape) {
     return make_i32_constant(
         constants,
@@ -322,7 +322,7 @@ core::TensorValue make_ones_i32(
 }
 
 core::TensorValue make_ones_f32(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorShape & shape) {
     return constants.make_f32(
         shape,
@@ -330,7 +330,7 @@ core::TensorValue make_ones_f32(
 }
 
 TimeMaskConstants make_full_time_mask(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     int64_t frames,
     int64_t channels_per_group) {
     return {
@@ -342,7 +342,7 @@ TimeMaskConstants make_full_time_mask(
 }
 
 InterpolationConstants make_interpolation_constants(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     int64_t content_frames,
     int64_t stft_frames,
     const MioCodecConvTranspose1dWeights & upsample) {
@@ -369,7 +369,7 @@ InterpolationConstants make_interpolation_constants(
 
 core::TensorValue attention(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & mask,
     const core::TensorValue & positions,
     const core::TensorValue & input,
@@ -447,7 +447,7 @@ std::pair<core::TensorValue, std::optional<core::TensorValue>> adaln(
 
 core::TensorValue transformer(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & input,
     const MioCodecTransformerWeights & weights,
     const std::optional<core::TensorValue> & condition,
@@ -529,7 +529,7 @@ core::TensorValue transformer(
 
 core::TensorValue fsq_quantized(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & input,
     const MioCodecQuantizerWeights & weights) {
     auto latent = engine::modules::LinearModule({768, 5, weights.input_projection.bias.has_value()}).build(

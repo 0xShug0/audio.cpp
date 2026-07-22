@@ -1,6 +1,6 @@
 #include "engine/models/stable_audio/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -169,9 +169,9 @@ void parse_t5_base_config(const assets::ResourceBundle & resources, StableAudioC
 
 std::shared_ptr<const StableAudioAssets> load_stable_audio_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<StableAudioAssets>();
-    assets->resources = assets::load_resource_bundle_from_package_spec(
+    assets->resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("stable_audio"));
+        engine::model_spec::default_spec_path("stable_audio"));
     assets->t5_tokenizer_model_path = assets->resources.require_file("t5_tokenizer_model");
     assets->config = parse_config(assets->resources);
     if (assets->config.prompt_conditioner_type == "t5gemma") {

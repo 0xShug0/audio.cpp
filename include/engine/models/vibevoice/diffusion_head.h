@@ -16,7 +16,7 @@ namespace engine::core {
 class BackendWeightStore;
 }
 
-namespace engine::models::common {
+namespace engine::core {
 class ConstantTensorCache;
 }
 
@@ -75,7 +75,7 @@ public:
     const VibeVoiceDiffusionHeadWeights & weights() const noexcept;
     ggml_backend_t backend() const noexcept;
     core::BackendType backend_type() const noexcept;
-    common::ConstantTensorCache & constants() const noexcept;
+    core::ConstantTensorCache & constants() const noexcept;
     int threads() const noexcept;
 
     VibeVoiceDiffusionPrediction predict(
@@ -89,7 +89,7 @@ public:
 private:
     std::shared_ptr<const VibeVoiceAssets> assets_;
     std::shared_ptr<const VibeVoiceDiffusionHeadWeights> weights_;
-    std::unique_ptr<common::ConstantTensorCache> constants_;
+    std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<VibeVoiceDiffusionHeadGraph> graph_;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
@@ -110,6 +110,6 @@ core::TensorValue build_vibevoice_diffusion_head(
     const core::TensorValue & condition,
     const VibeVoiceDiffusionHeadWeights & weights,
     const VibeVoiceDiffusionHeadConfig & config,
-    common::ConstantTensorCache & constants);
+    core::ConstantTensorCache & constants);
 
 }  // namespace engine::models::vibevoice

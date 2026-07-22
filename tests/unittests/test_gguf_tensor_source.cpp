@@ -1,4 +1,4 @@
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/safetensors.h"
@@ -215,18 +215,18 @@ void test_embedded_model_spec_roundtrip_and_precedence() {
                                                    engine::assets::GgufEmbeddedModelSpec{"embedded_test", spec_json});
 
     const auto embedded = engine::assets::read_gguf_embedded_model_spec(gguf);
-    engine::test::require(embedded.has_value(), "GGUF lost its embedded model package spec");
+    engine::test::require(embedded.has_value(), "GGUF lost its embedded model spec");
     engine::test::require_eq(embedded->family, std::string("embedded_test"), "embedded spec family");
     engine::test::require_eq(embedded->json, spec_json, "embedded spec JSON");
 
     {
-        engine::assets::ScopedModelPackageSpecOverride scope(std::nullopt, gguf);
-        engine::test::require_eq(engine::assets::default_model_package_spec_path("embedded_test"),
+        engine::model_spec::ScopedSpecOverride scope(std::nullopt, gguf);
+        engine::test::require_eq(engine::model_spec::default_spec_path("embedded_test"),
                                  std::filesystem::path("@gguf") / "embedded_test.json",
                                  "embedded GGUF spec precedence");
         bool family_mismatch_rejected = false;
         try {
-            (void)engine::assets::default_model_package_spec_path("another_family");
+            (void)engine::model_spec::default_spec_path("another_family");
         } catch (const std::runtime_error &) {
             family_mismatch_rejected = true;
         }
@@ -236,9 +236,9 @@ void test_embedded_model_spec_roundtrip_and_precedence() {
     const auto uppercase_gguf = root / "RENAMED.GGUF";
     std::filesystem::copy_file(gguf, uppercase_gguf);
     {
-        engine::assets::ScopedModelPackageSpecOverride scope(std::nullopt, uppercase_gguf);
-        const auto spec_path = engine::assets::default_model_package_spec_path("embedded_test");
-        const auto resources = engine::assets::load_resource_bundle_from_package_spec(uppercase_gguf, spec_path);
+        engine::model_spec::ScopedSpecOverride scope(std::nullopt, uppercase_gguf);
+        const auto spec_path = engine::model_spec::default_spec_path("embedded_test");
+        const auto resources = engine::model_spec::load_resource_bundle(uppercase_gguf, spec_path);
         engine::test::require(resources.open_tensor_source("weights")->has_tensor("weight"),
                               "uppercase standalone GGUF did not use its embedded package spec");
     }
@@ -248,8 +248,8 @@ void test_embedded_model_spec_roundtrip_and_precedence() {
         output << spec_json;
     }
     {
-        engine::assets::ScopedModelPackageSpecOverride scope(override_spec, gguf);
-        engine::test::require_eq(engine::assets::default_model_package_spec_path("embedded_test"),
+        engine::model_spec::ScopedSpecOverride scope(override_spec, gguf);
+        engine::test::require_eq(engine::model_spec::default_spec_path("embedded_test"),
                                  std::filesystem::weakly_canonical(override_spec),
                                  "explicit package spec override precedence");
     }
@@ -281,20 +281,20 @@ void test_package_spec_errors_name_selected_spec() {
 
     bool malformed_named = false;
     try {
-        (void)engine::assets::load_resource_bundle_from_package_spec(root / "model", malformed_spec);
+        (void)engine::model_spec::load_resource_bundle(root / "model", malformed_spec);
     } catch (const std::runtime_error & error) {
         const std::string message = error.what();
-        malformed_named = message.find("failed to parse model package spec") != std::string::npos &&
+        malformed_named = message.find("failed to parse model spec") != std::string::npos &&
             message.find(malformed_spec.string()) != std::string::npos;
     }
     engine::test::require(malformed_named, "malformed package spec error did not name the selected spec");
 
     bool selected_source_named = false;
     try {
-        (void)engine::assets::load_resource_bundle_from_package_spec(root / "model", missing_file_spec);
+        (void)engine::model_spec::load_resource_bundle(root / "model", missing_file_spec);
     } catch (const std::runtime_error & error) {
         const std::string message = error.what();
-        selected_source_named = message.find("using model package spec") != std::string::npos &&
+        selected_source_named = message.find("using model spec") != std::string::npos &&
             message.find(missing_file_spec.string()) != std::string::npos &&
             message.find("source 'safetensors'") != std::string::npos &&
             message.find("missing model package file 'config'") != std::string::npos;

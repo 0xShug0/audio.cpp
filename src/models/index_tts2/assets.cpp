@@ -1,6 +1,6 @@
 #include "engine/models/index_tts2/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/io/yaml.h"
@@ -219,9 +219,9 @@ void validate_weight_anchors(const IndexTTS2Assets & assets) {
 
 std::shared_ptr<const IndexTTS2Assets> load_index_tts2_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<IndexTTS2Assets>();
-    assets->resources = assets::load_resource_bundle_from_package_spec(
+    assets->resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("index_tts2"));
+        engine::model_spec::default_spec_path("index_tts2"));
     assets->config = parse_config(assets->resources);
     validate_config(assets->config, assets->resources);
 

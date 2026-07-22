@@ -11,7 +11,7 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
@@ -203,7 +203,7 @@ modules::QwenCausalDecoderConfig make_fast_decoder_config(
 }
 
 modules::QwenDecoderLayerWeights bind_layer(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const FishLayerWeights & weights,
     bool use_qk_norm) {
     modules::QwenDecoderLayerWeights out;
@@ -224,7 +224,7 @@ modules::QwenDecoderLayerWeights bind_layer(
 }
 
 modules::QwenCausalDecoderWeights bind_slow_weights(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const FishARWeights & weights,
     const FishAudioTextConfig & config) {
     modules::QwenCausalDecoderWeights out;
@@ -238,7 +238,7 @@ modules::QwenCausalDecoderWeights bind_slow_weights(
 }
 
 modules::QwenDecoderLayerWeights bind_fast_layer(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const FishLayerWeights & weights,
     const FishAudioFastConfig & config) {
     return bind_layer(constants, weights, config.attention_qk_norm);
@@ -595,7 +595,7 @@ std::vector<float> apply_semantic_bias(
 
 core::TensorValue make_fish_causal_mask(
     core::ModuleBuildContext &,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     int64_t steps) {
     auto values = modules::qwen_causal_prefill_mask_values(1, steps);
     return constants.make_tensor(
@@ -613,7 +613,7 @@ struct FishCausalDecoderOutputs {
 
 FishCausalDecoderOutputs build_fish_causal_decoder(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const modules::QwenCausalDecoderWeights & weights,
@@ -729,12 +729,12 @@ public:
         backend_type_ = core::backend_type(backend_);
         weights_ = std::make_shared<FishARWeights>(
             load_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type));
-        slow_step_constants_ = std::make_unique<common::ConstantTensorCache>(
+        slow_step_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
             "fish_audio.ar.step.constants",
             256ull * 1024ull * 1024ull);
-        fast_constants_ = std::make_unique<common::ConstantTensorCache>(
+        fast_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
             "fish_audio.ar.fast.constants",
@@ -777,11 +777,11 @@ public:
         return backend_type_;
     }
 
-    common::ConstantTensorCache & slow_step_constants() const noexcept {
+    core::ConstantTensorCache & slow_step_constants() const noexcept {
         return *slow_step_constants_;
     }
 
-    common::ConstantTensorCache & fast_constants() const noexcept {
+    core::ConstantTensorCache & fast_constants() const noexcept {
         return *fast_constants_;
     }
 
@@ -792,8 +792,8 @@ private:
     size_t graph_arena_bytes_ = 0;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
-    std::unique_ptr<common::ConstantTensorCache> slow_step_constants_;
-    std::unique_ptr<common::ConstantTensorCache> fast_constants_;
+    std::unique_ptr<core::ConstantTensorCache> slow_step_constants_;
+    std::unique_ptr<core::ConstantTensorCache> fast_constants_;
 };
 
 class FishAudioARRuntime::Impl {
@@ -923,7 +923,7 @@ private:
             input_ = input.tensor;
             positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, steps_);
             auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({steps_}), GGML_TYPE_I32);
-            constants_ = std::make_unique<common::ConstantTensorCache>(
+            constants_ = std::make_unique<core::ConstantTensorCache>(
                 runtime_->backend(),
                 runtime_->threads(),
                 "fish_audio.ar.prefill.constants",
@@ -1028,7 +1028,7 @@ private:
         ggml_tensor * logits_ = nullptr;
         ggml_cgraph * graph_ = nullptr;
         ggml_gallocr_t gallocr_ = nullptr;
-        std::unique_ptr<common::ConstantTensorCache> constants_;
+        std::unique_ptr<core::ConstantTensorCache> constants_;
         FishPrefillCacheTarget target_cache_;
     };
 

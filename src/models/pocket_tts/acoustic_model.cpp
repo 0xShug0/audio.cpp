@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/models/pocket_tts/backend_weights.h"
 #include "engine/models/pocket_tts/assets.h"
 #include "graph_common.h"
 

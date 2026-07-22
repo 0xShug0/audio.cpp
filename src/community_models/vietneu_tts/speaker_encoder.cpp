@@ -13,7 +13,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -164,7 +164,7 @@ core::TensorValue conv1d(
     core::ModuleBuildContext & ctx,
     core::TensorValue x,
     const ConvWeights & conv,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     if (x.shape.dims[1] != conv.in_channels) {
         throw std::runtime_error("VieNeu-TTS speaker conv channel mismatch");
     }
@@ -187,7 +187,7 @@ core::TensorValue tdnn(
     core::ModuleBuildContext & ctx,
     core::TensorValue x,
     const ConvWeights & conv,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     x = conv1d(ctx, x, conv, constants);
     return modules::ReluModule{}.build(ctx, x);
 }
@@ -196,7 +196,7 @@ core::TensorValue se_res2net(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const SERes2NetWeights & block,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto y = tdnn(ctx, input, block.tdnn1, constants);
     core::TensorValue merged;
     core::TensorValue previous;
@@ -229,7 +229,7 @@ core::TensorValue attentive_statistics_pool(
     const core::TensorValue & x,
     const ConvWeights & tdnn_conv,
     const ConvWeights & attention_conv,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto mean = modules::ReduceMeanModule({2}).build(ctx, x);
     auto mean_rep = modules::RepeatModule({x.shape}).build(ctx, mean);
     auto centered = core::wrap_tensor(ggml_sub(ctx.ggml, x.tensor, mean_rep.tensor), x.shape, GGML_TYPE_F32);
@@ -428,7 +428,7 @@ private:
     std::shared_ptr<const VietneuSpeakerEncoderWeights> weights_;
     int64_t frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
-    common::ConstantTensorCache constants_;
+    core::ConstantTensorCache constants_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;

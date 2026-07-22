@@ -19,7 +19,7 @@ namespace engine::core {
 class BackendWeightStore;
 }
 
-namespace engine::models::common {
+namespace engine::core {
 class ConstantTensorCache;
 }
 
@@ -119,7 +119,7 @@ public:
     const VibeVoiceASRAssets & assets() const noexcept;
     const VibeVoiceDecoderWeights & weights() const noexcept;
     ggml_backend_t backend() const noexcept;
-    common::ConstantTensorCache & constants() const noexcept;
+    core::ConstantTensorCache & constants() const noexcept;
     int threads() const noexcept;
 
     VibeVoiceTokenEmbeddings embed_tokens(const std::vector<int32_t> & input_ids) const;
@@ -142,7 +142,7 @@ public:
 private:
     std::shared_ptr<const VibeVoiceASRAssets> assets_;
     std::shared_ptr<const VibeVoiceDecoderWeights> weights_;
-    std::unique_ptr<common::ConstantTensorCache> constants_;
+    std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<VibeVoiceDecoderEmbeddingGraph> embedding_graph_;
     mutable std::unique_ptr<VibeVoiceDecoderPrefillGraph> prefill_graph_;
     ggml_backend_t backend_ = nullptr;
@@ -162,7 +162,7 @@ VibeVoiceDecoderLayerOutputs build_vibevoice_decoder_layer(
     const core::TensorValue & positions,
     const VibeVoiceDecoderLayerWeights & weights,
     const VibeVoiceDecoderConfig & config,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const std::optional<core::TensorValue> & prefix_key = std::nullopt,
     const std::optional<core::TensorValue> & prefix_value = std::nullopt,
     const std::optional<core::TensorValue> & attention_mask = std::nullopt);

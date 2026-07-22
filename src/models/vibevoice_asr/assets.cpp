@@ -1,6 +1,6 @@
 #include "engine/models/vibevoice_asr/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/json.h"
 
@@ -254,9 +254,9 @@ void validate_weight_anchors(const VibeVoiceASRAssets & assets) {
 }  // namespace
 
 std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(const std::filesystem::path & model_path) {
-    auto resources = assets::load_resource_bundle_from_package_spec(
+    auto resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("vibevoice_asr"));
+        engine::model_spec::default_spec_path("vibevoice_asr"));
     VibeVoiceASRAssets assets;
     assets.resources = std::move(resources);
     assets.config = parse_config(assets.resources);

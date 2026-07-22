@@ -1,6 +1,6 @@
 #include "engine/models/moss/moss_tts_nano/loader.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/models/moss/moss_tts_nano/session.h"
 
 #include <stdexcept>
@@ -76,9 +76,9 @@ public:
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
-            (void) engine::assets::load_resource_bundle_from_package_spec(
+            (void) engine::model_spec::load_resource_bundle(
                 request.model_path,
-                engine::assets::default_model_package_spec_path(family()));
+                engine::model_spec::default_spec_path(family()));
             return !request.family_hint.has_value() || *request.family_hint == family();
         } catch (...) {
             return false;
@@ -92,15 +92,15 @@ public:
         inspection.metadata = metadata(*assets);
         inspection.capabilities = capabilities(*assets);
         inspection.cli = cli(*assets);
-        const auto spec_path = engine::assets::default_model_package_spec_path(family());
+        const auto spec_path = engine::model_spec::default_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             spec_path,
-            engine::assets::ModelPackageResourceKind::Files);
+            engine::model_spec::ResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             spec_path,
-            engine::assets::ModelPackageResourceKind::Tensors);
+            engine::model_spec::ResourceKind::Tensors);
         return inspection;
     }
 

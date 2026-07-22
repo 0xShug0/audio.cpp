@@ -6,7 +6,7 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/models/vibevoice/tokenizer_audio.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -76,7 +76,7 @@ public:
     VibeVoiceConnectorGraph(
         const VibeVoiceConnectorWeightsRuntime & runtime,
         const VibeVoiceConnectorWeights & weights,
-        common::ConstantTensorCache & constants,
+        core::ConstantTensorCache & constants,
         const char * graph_name,
         int64_t batch_size,
         int64_t frames,
@@ -197,7 +197,7 @@ public:
 private:
     const VibeVoiceConnectorWeightsRuntime * runtime_ = nullptr;
     const VibeVoiceConnectorWeights * weights_ = nullptr;
-    common::ConstantTensorCache * constants_ = nullptr;
+    core::ConstantTensorCache * constants_ = nullptr;
     int64_t batch_size_ = 0;
     int64_t frames_ = 0;
     std::string graph_name_;
@@ -275,12 +275,12 @@ VibeVoiceConnectorWeightsRuntime::VibeVoiceConnectorWeightsRuntime(
     engine::debug::timing_log_scalar(
         "vibevoice.runtime.connector_weights_load_ms",
         engine::debug::elapsed_ms(weights_started));
-    acoustic_constants_ = std::make_unique<common::ConstantTensorCache>(
+    acoustic_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.connector.acoustic.constants",
         constant_context_bytes);
-    semantic_constants_ = std::make_unique<common::ConstantTensorCache>(
+    semantic_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.connector.semantic.constants",
@@ -426,7 +426,7 @@ core::TensorValue build_vibevoice_connector(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & features,
     const VibeVoiceConnectorWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto hidden = modules::LinearModule(
                       binding::linear_config(weights.input_dim, weights.hidden_size, true))
                       .build(ctx, features, weights.fc1);

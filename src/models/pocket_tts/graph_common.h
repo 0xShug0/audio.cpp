@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/framework/core/backend.h"
-#include "engine/models/pocket_tts/assets.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention_modules.h"
 #include "engine/framework/modules/conditioning_modules.h"
@@ -9,7 +8,7 @@
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
-#include "engine/framework/modules/structural_modules.h"
+#include "engine/models/pocket_tts/backend_weights.h"
 
 #include <optional>
 #include <stdexcept>
@@ -60,15 +59,6 @@ inline modules::TransformerEncoderBlockWeights make_transformer_block_weights(
         weights.feed_forward,
         weights.layer_scale_2,
     };
-}
-
-inline core::TensorValue last_frame(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
-    return modules::SliceModule({1, input.shape.dims[1] - 1, 1}).build(ctx, input);
-}
-
-inline core::TensorValue squeeze_single_frame_to_matrix(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
-    core::validate_shape(input, core::TensorShape::from_dims({input.shape.dims[0], 1, input.shape.dims[2]}), "input");
-    return core::reshape_tensor(ctx, input, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[2]}));
 }
 
 template <typename BuildFn, typename InitFn, typename ReadFn>

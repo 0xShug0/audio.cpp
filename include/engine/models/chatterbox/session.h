@@ -35,7 +35,7 @@ public:
     ChatterboxSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const ChatterboxAssetPaths> assets);
+        std::shared_ptr<const ChatterboxAssets> assets);
     ~ChatterboxSession() override;
 
     std::string family() const override;
@@ -49,7 +49,7 @@ private:
     runtime::TaskResult run_voice_conversion(const runtime::TaskRequest & request);
 
     runtime::TaskSpec task_;
-    std::shared_ptr<const ChatterboxAssetPaths> assets_;
+    std::shared_ptr<const ChatterboxAssets> assets_;
     engine::assets::TensorStorageType t3_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType component_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     bool mem_saver_ = false;

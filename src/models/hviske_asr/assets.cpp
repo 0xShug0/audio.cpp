@@ -1,6 +1,6 @@
 #include "engine/models/hviske_asr/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <cmath>
@@ -78,9 +78,9 @@ void validate_config(const HviskeConfig & config) {
 
 std::shared_ptr<const HviskeASRAssets> load_hviske_asr_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<HviskeASRAssets>();
-    assets->resources = engine::assets::load_resource_bundle_from_package_spec(
+    assets->resources = engine::model_spec::load_resource_bundle(
         model_path,
-        engine::assets::default_model_package_spec_path("hviske_asr"));
+        engine::model_spec::default_spec_path("hviske_asr"));
     assets->config = parse_config(assets->resources);
     validate_config(assets->config);
     assets->tokenizer_pieces = engine::tokenizers::load_sentencepiece_model(

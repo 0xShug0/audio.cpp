@@ -1,6 +1,6 @@
 #include "engine/models/citrinet_asr/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/assets/weight_metadata.h"
 #include "engine/framework/io/filesystem.h"
@@ -223,9 +223,9 @@ std::string checkpoint_cache_key(const std::filesystem::path & checkpoint_path) 
 std::shared_ptr<const CitrinetWeights> load_citrinet_weights_cached(const std::filesystem::path & model_path) {
     static std::mutex cache_mutex;
     static std::unordered_map<std::string, std::weak_ptr<const CitrinetWeights>> cache;
-    auto resources = engine::assets::load_resource_bundle_from_package_spec(
+    auto resources = engine::model_spec::load_resource_bundle(
         model_path,
-        engine::assets::default_model_package_spec_path("citrinet_asr"));
+        engine::model_spec::default_spec_path("citrinet_asr"));
     const auto key = checkpoint_cache_key(resources.require_file("weights"));
     {
         std::lock_guard<std::mutex> lock(cache_mutex);

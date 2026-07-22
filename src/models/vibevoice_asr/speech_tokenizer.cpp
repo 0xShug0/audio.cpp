@@ -11,7 +11,7 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -669,7 +669,7 @@ core::TensorValue channel_rms_norm(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const assets::TensorDataF32 & weight,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     float eps) {
     auto btc = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input);
     btc = modules::RMSNormModule({input.shape.dims[1], eps, true, false})
@@ -681,7 +681,7 @@ core::TensorValue scale_channels(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const assets::TensorDataF32 & values,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     if (values.shape.rank != 1 || values.shape.dims[0] != input.shape.dims[1]) {
         throw std::runtime_error("VibeVoice tokenizer channel scale shape mismatch");
     }
@@ -709,7 +709,7 @@ core::TensorValue tokenizer_block(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const VibeVoiceTokenizerBlockWeights & weights,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     float eps) {
     auto residual = input;
     auto hidden = channel_rms_norm(ctx, input, weights.norm, constants, eps);
@@ -732,7 +732,7 @@ core::TensorValue tokenizer_block_streaming(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const VibeVoiceTokenizerBlockWeights & weights,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     VibeVoiceStreamingBuildState & state,
     bool is_final_chunk,
     float eps) {
@@ -758,7 +758,7 @@ core::TensorValue build_encoder(
     const core::TensorValue & input,
     const VibeVoiceTokenizerEncoderWeights & weights,
     const VibeVoiceTokenizerConfig & config,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     if (weights.downsample_layers.size() != weights.stages.size()) {
         throw std::runtime_error("VibeVoice tokenizer encoder layer/stage count mismatch");
     }
@@ -782,7 +782,7 @@ core::TensorValue build_encoder_streaming(
     const core::TensorValue & input,
     const VibeVoiceTokenizerEncoderWeights & weights,
     const VibeVoiceTokenizerConfig & config,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     VibeVoiceStreamingBuildState & state,
     bool is_final_chunk) {
     if (weights.downsample_layers.size() != weights.stages.size()) {
@@ -807,7 +807,7 @@ core::TensorValue build_decoder(
     const core::TensorValue & input,
     const VibeVoiceTokenizerDecoderWeights & weights,
     const VibeVoiceTokenizerConfig & config,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     if (weights.stages.size() != weights.upsample_layers.size() + 1) {
         throw std::runtime_error("VibeVoice tokenizer decoder layer/stage count mismatch");
     }
@@ -833,7 +833,7 @@ core::TensorValue build_decoder_streaming(
     const core::TensorValue & input,
     const VibeVoiceTokenizerDecoderWeights & weights,
     const VibeVoiceTokenizerConfig & config,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     VibeVoiceStreamingBuildState & state) {
     if (weights.stages.size() != weights.upsample_layers.size() + 1) {
         throw std::runtime_error("VibeVoice streaming tokenizer decoder layer/stage count mismatch");
@@ -869,7 +869,7 @@ public:
         ggml_backend_t backend,
         core::BackendType backend_type,
         int threads,
-        common::ConstantTensorCache & constants,
+        core::ConstantTensorCache & constants,
         size_t graph_arena_bytes)
         : weights_(std::move(weights)),
           encoder_(&encoder),
@@ -1011,7 +1011,7 @@ public:
         ggml_backend_t backend,
         core::BackendType backend_type,
         int threads,
-        common::ConstantTensorCache & constants,
+        core::ConstantTensorCache & constants,
         size_t graph_arena_bytes)
         : weights_(std::move(weights)),
           decoder_(&decoder),
@@ -1143,7 +1143,7 @@ public:
         ggml_backend_t backend,
         core::BackendType backend_type,
         int threads,
-        common::ConstantTensorCache & constants,
+        core::ConstantTensorCache & constants,
         size_t graph_arena_bytes)
         : weights_(std::move(weights)),
           encoder_(encoder),
@@ -1734,27 +1734,27 @@ VibeVoiceTokenizerWeightsRuntime::VibeVoiceTokenizerWeightsRuntime(
     engine::debug::timing_log_scalar(
         "vibevoice.runtime.tokenizer_weights_load_ms",
         engine::debug::elapsed_ms(weights_started));
-    acoustic_encoder_constants_ = std::make_unique<common::ConstantTensorCache>(
+    acoustic_encoder_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.tokenizer.acoustic_encoder.constants",
         constant_context_bytes);
-    semantic_encoder_constants_ = std::make_unique<common::ConstantTensorCache>(
+    semantic_encoder_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.tokenizer.semantic_encoder.constants",
         constant_context_bytes);
-    acoustic_decoder_constants_ = std::make_unique<common::ConstantTensorCache>(
+    acoustic_decoder_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.tokenizer.acoustic_decoder.constants",
         constant_context_bytes);
-    semantic_streaming_constants_ = std::make_unique<common::ConstantTensorCache>(
+    semantic_streaming_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.tokenizer.semantic_streaming.constants",
         constant_context_bytes);
-    acoustic_streaming_constants_ = std::make_unique<common::ConstantTensorCache>(
+    acoustic_streaming_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.tokenizer.acoustic_streaming.constants",
@@ -1800,7 +1800,7 @@ ggml_backend_t VibeVoiceTokenizerWeightsRuntime::backend() const noexcept {
     return backend_;
 }
 
-common::ConstantTensorCache & VibeVoiceTokenizerWeightsRuntime::constants() const noexcept {
+core::ConstantTensorCache & VibeVoiceTokenizerWeightsRuntime::constants() const noexcept {
     return *acoustic_encoder_constants_;
 }
 

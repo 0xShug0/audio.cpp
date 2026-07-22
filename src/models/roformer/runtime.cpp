@@ -13,7 +13,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 #include <ggml-backend.h>
 #include <ggml.h>
 #include <algorithm>
@@ -535,7 +535,7 @@ public:
         weights_ = load_mel_band_weights(*assets, execution_context.backend(), execution_context.backend_type(), weight_storage_type);
 
         init_context(256ull * 1024ull * 1024ull);
-        constants_ = std::make_unique<common::ConstantTensorCache>(
+        constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             compute_threads_,
             "mel_band_roformer.constants",
@@ -602,7 +602,7 @@ public:
 
 private:
     MelBandWeights weights_;
-    std::unique_ptr<common::ConstantTensorCache> constants_;
+    std::unique_ptr<core::ConstantTensorCache> constants_;
 };
 
 std::vector<float> build_band_features(

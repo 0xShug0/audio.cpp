@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>audio.cpp Model Spec Demo</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: Canvas;
+      color: CanvasText;
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.6rem;
+      letter-spacing: 0;
+    }
+    .meta {
+      opacity: 0.72;
+      font-size: 0.92rem;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 18px;
+    }
+    input,
+    select {
+      font: inherit;
+      padding: 8px 10px;
+      border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
+      border-radius: 6px;
+      background: Canvas;
+      color: CanvasText;
+    }
+    input {
+      min-width: 260px;
+      flex: 1;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.94rem;
+    }
+    th,
+    td {
+      text-align: left;
+      vertical-align: top;
+      padding: 10px;
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+    }
+    th {
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      opacity: 0.72;
+    }
+    .name {
+      font-weight: 650;
+    }
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .tag {
+      padding: 2px 6px;
+      border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+      border-radius: 999px;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+    .packages {
+      margin-top: 4px;
+      opacity: 0.78;
+      font-size: 0.86rem;
+    }
+    code {
+      font-size: 0.88em;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>audio.cpp Model Spec Demo</h1>
+        <div class="meta" id="count">Loading spec...</div>
+      </div>
+      <div class="meta">Toy model, production spec subsystem</div>
+    </header>
+
+    <div class="toolbar">
+      <input id="query" type="search" placeholder="Filter by family, model, task, tag, package">
+      <select id="category">
+        <option value="">All categories</option>
+      </select>
+      <select id="task">
+        <option value="">All tasks</option>
+      </select>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Tasks</th>
+          <th>Runtime</th>
+          <th>Recommended Package</th>
+          <th>Docs</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+
+  <script>
+    const state = { models: [] };
+
+    function tags(values) {
+      return `<div class="tags">${values.map((value) => `<span class="tag">${value}</span>`).join("")}</div>`;
+    }
+
+    function modelText(model) {
+      return [
+        model.id,
+        model.family,
+        model.display_name,
+        model.category,
+        model.status,
+        ...model.tasks,
+        ...model.modes,
+        ...model.runtime_tags,
+        ...model.tags,
+        ...model.packages.map((pkg) => `${pkg.id} ${pkg.display_name} ${pkg.format} ${pkg.precision}`)
+      ].join(" ").toLowerCase();
+    }
+
+    function render() {
+      const query = document.getElementById("query").value.trim().toLowerCase();
+      const category = document.getElementById("category").value;
+      const task = document.getElementById("task").value;
+      const filtered = state.models.filter((model) => {
+        if (category && model.category !== category) return false;
+        if (task && !model.tasks.includes(task)) return false;
+        if (query && !modelText(model).includes(query)) return false;
+        return true;
+      });
+      document.getElementById("count").textContent = `${filtered.length} of ${state.models.length} models`;
+      document.getElementById("rows").innerHTML = filtered.map((model) => {
+        const recommended = model.packages.find((pkg) => pkg.id === model.recommended_package);
+        return `
+          <tr>
+            <td>
+              <div class="name">${model.display_name}</div>
+              <div class="meta"><code>${model.family}</code> ${model.summary || ""}</div>
+              <div class="packages">${model.packages.length} package(s)</div>
+            </td>
+            <td>${tags(model.tasks)}</td>
+            <td>${tags(model.runtime_tags.concat(model.tags))}</td>
+            <td>
+              <div><code>${model.recommended_package}</code></div>
+              <div class="meta">${recommended ? `${recommended.format} ${recommended.precision}` : ""}</div>
+            </td>
+            <td>${model.docs.map((doc) => `<div><code>${doc}</code></div>`).join("")}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function fillSelect(id, values) {
+      const select = document.getElementById(id);
+      for (const value of values) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+      }
+    }
+
+    function modelFromSpec(spec) {
+      const packages = spec.packages || [];
+      const recommended = packages.find((pkg) => pkg.id === spec.ui.recommended_package) || packages[0];
+      return {
+        id: spec.family,
+        family: spec.family,
+        display_name: spec.display_name,
+        category: spec.category,
+        status: spec.status,
+        tasks: spec.tasks || [],
+        modes: spec.modes || [],
+        runtime_tags: spec.runtime.tags || [],
+        capabilities: spec.capabilities,
+        recommended_package: recommended ? recommended.id : "",
+        recommended_package_format: recommended ? recommended.format : "",
+        recommended_package_precision: recommended ? recommended.precision : "",
+        min_vram_gb: spec.ui.min_vram_gb,
+        tags: spec.ui.tags || [],
+        docs: spec.ui.docs || [],
+        summary: spec.ui.summary || "",
+        packages: packages.map((pkg) => ({
+          id: pkg.id,
+          display_name: pkg.display_name,
+          format: pkg.format,
+          precision: pkg.precision,
+          target_directory: pkg.target_directory
+        }))
+      };
+    }
+
+    fetch("specs/toy_qwen3_asr.json")
+      .then((response) => response.json())
+      .then((spec) => {
+        state.models = [modelFromSpec(spec)];
+        fillSelect("category", [...new Set(state.models.map((model) => model.category))].sort());
+        fillSelect("task", [...new Set(state.models.flatMap((model) => model.tasks))].sort());
+        for (const id of ["query", "category", "task"]) {
+          document.getElementById(id).addEventListener("input", render);
+        }
+        render();
+      })
+      .catch((error) => {
+        document.getElementById("count").textContent = `Failed to load toy spec: ${error}`;
+      });
+  </script>
+</body>
+</html>

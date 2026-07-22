@@ -1,25 +1,22 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
+
 #include <filesystem>
+#include <memory>
 
 namespace engine::models::chatterbox {
 
-struct ChatterboxAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path voice_encoder_weights;
-    std::filesystem::path s3tokenizer_weights;
-    std::filesystem::path t3_english_weights;
-    std::filesystem::path t3_multilingual_v2_weights;
-    std::filesystem::path t3_multilingual_v3_weights;
-    std::filesystem::path s3gen_weights;
-    std::filesystem::path english_tokenizer;
-    std::filesystem::path multilingual_tokenizer;
-    std::filesystem::path cangjie_mapping;
-    std::filesystem::path builtin_conditionals;
+struct ChatterboxAssets {
+    engine::assets::ResourceBundle resources;
+    std::shared_ptr<const engine::assets::TensorSource> voice_encoder_weights;
+    std::shared_ptr<const engine::assets::TensorSource> s3gen_weights;
+    std::shared_ptr<const engine::assets::TensorSource> t3_english_weights;
+    std::shared_ptr<const engine::assets::TensorSource> t3_multilingual_v2_weights;
+    std::shared_ptr<const engine::assets::TensorSource> t3_multilingual_v3_weights;
 };
 
-ChatterboxAssetPaths resolve_chatterbox_assets(const std::filesystem::path & model_root);
-void require_chatterbox_tts_assets(const ChatterboxAssetPaths & assets);
-void require_chatterbox_vc_assets(const ChatterboxAssetPaths & assets);
+std::shared_ptr<const ChatterboxAssets> load_chatterbox_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::chatterbox

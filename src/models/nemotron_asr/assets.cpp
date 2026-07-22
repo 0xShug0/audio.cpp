@@ -1,6 +1,6 @@
 #include "engine/models/nemotron_asr/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
@@ -124,9 +124,9 @@ NemotronConfig parse_config(const assets::ResourceBundle & resources) {
 }  // namespace
 
 std::shared_ptr<const NemotronASRAssets> load_nemotron_asr_assets(const std::filesystem::path & model_path) {
-    auto resources = engine::assets::load_resource_bundle_from_package_spec(
+    auto resources = engine::model_spec::load_resource_bundle(
         model_path,
-        engine::assets::default_model_package_spec_path("nemotron_asr"));
+        engine::model_spec::default_spec_path("nemotron_asr"));
     auto assets = std::make_shared<NemotronASRAssets>();
     assets->resources = std::move(resources);
     assets->source = assets->resources.open_tensor_source("weights");

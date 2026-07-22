@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/attention/types.h"
@@ -126,13 +127,6 @@ struct SortformerModelConfig {
     SortformerModulesConfig modules;
 };
 
-struct SortformerAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path processor_config_path;
-    std::filesystem::path model_weights_path;
-};
-
 struct SortformerDiarWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     SortformerSubsamplingWeights subsampling;
@@ -142,15 +136,15 @@ struct SortformerDiarWeights {
 };
 
 struct SortformerAssets {
-    SortformerAssetPaths paths;
+    assets::ResourceBundle resources;
     SortformerModelConfig model_config;
     SortformerFeatureExtractorConfig feature_config;
     std::shared_ptr<const assets::TensorSource> model_weights;
 };
 
 std::shared_ptr<const SortformerAssets> load_sortformer_assets(const std::filesystem::path & model_root);
-SortformerModelConfig load_sortformer_model_config(const std::filesystem::path & path);
-SortformerFeatureExtractorConfig load_sortformer_feature_config(const std::filesystem::path & path);
+SortformerModelConfig parse_sortformer_model_config(const assets::ResourceBundle & resources);
+SortformerFeatureExtractorConfig parse_sortformer_feature_config(const assets::ResourceBundle & resources);
 std::shared_ptr<SortformerDiarWeights> load_sortformer_diar_weights(
     const SortformerAssets & assets,
     ggml_backend_t backend,

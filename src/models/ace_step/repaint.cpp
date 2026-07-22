@@ -1,6 +1,6 @@
 #include "engine/models/ace_step/repaint.h"
 
-#include "audio_preprocess.h"
+#include "engine/models/ace_step/types.h"
 
 #include <algorithm>
 #include <cmath>

@@ -80,14 +80,14 @@ MarbleNet VAD is an offline speech activity detector.
 | Field | Value |
 |---|---|
 | Family | `marblenet_vad` |
-| Model directory | `models/marblenet_vad` |
+| Model directory | `assets/framework/models/marblenet_vad` |
 | Task | `vad` |
 | Modes | `offline` |
 | Output | Speech segment JSON through `--segments-out` |
 | Streaming | Not exposed |
 
 ```bash
-audiocpp_cli --task vad --family marblenet_vad --model models/marblenet_vad --backend cuda --audio speech_16k.wav --segments-out segments.json
+audiocpp_cli --task vad --family marblenet_vad --model assets/framework/models/marblenet_vad --backend cuda --audio speech_16k.wav --segments-out segments.json
 ```
 
 | Option | Values | Default | Meaning |

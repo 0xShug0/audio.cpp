@@ -86,11 +86,11 @@ SortformerDiarSession::SortformerDiarSession(
       matmul_weight_storage_type_(option_weight_type(
           RuntimeSessionBase::options(),
           "sortformer_diar.matmul_weight_type",
-          option_weight_type(RuntimeSessionBase::options(), "sortformer_diar.weight_type", engine::assets::TensorStorageType::Native))),
+          option_weight_type(RuntimeSessionBase::options(), "sortformer_diar.weight_type", engine::assets::TensorStorageType::F32))),
       conv_weight_storage_type_(option_weight_type(
           RuntimeSessionBase::options(),
           "sortformer_diar.conv_weight_type",
-          option_weight_type(RuntimeSessionBase::options(), "sortformer_diar.weight_type", engine::assets::TensorStorageType::Native))) {
+          option_weight_type(RuntimeSessionBase::options(), "sortformer_diar.weight_type", engine::assets::TensorStorageType::F32))) {
     if (!assets_) {
         throw std::runtime_error("Sortformer diar session requires assets");
     }

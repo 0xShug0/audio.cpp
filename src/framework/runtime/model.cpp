@@ -1,6 +1,6 @@
 #include "engine/framework/runtime/model.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/filesystem.h"
 
 #include <unordered_map>
@@ -48,8 +48,8 @@ std::vector<NamedAsset> discover_named_assets(
 std::vector<NamedAsset> discover_named_assets_from_package_spec(
     const std::filesystem::path & model_path,
     const std::filesystem::path & spec_path,
-    engine::assets::ModelPackageResourceKind kind) {
-    const auto resources = engine::assets::discover_resources_from_package_spec(model_path, spec_path, kind);
+    engine::model_spec::ResourceKind kind) {
+    const auto resources = engine::model_spec::discover_resources(model_path, spec_path, kind);
     std::vector<NamedAsset> assets;
     assets.reserve(resources.size());
     for (const auto & resource : resources) {

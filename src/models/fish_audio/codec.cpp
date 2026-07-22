@@ -19,7 +19,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
@@ -416,7 +416,7 @@ core::TensorValue build_transformer_layer(
 
 core::TensorValue make_positions(
     core::ModuleBuildContext &,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     int64_t frames) {
     std::vector<int32_t> values(static_cast<size_t>(frames));
     for (int64_t i = 0; i < frames; ++i) {
@@ -427,7 +427,7 @@ core::TensorValue make_positions(
 
 core::TensorValue make_causal_mask(
     core::ModuleBuildContext &,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     int64_t frames,
     int64_t window_size) {
     std::vector<ggml_fp16_t> values(static_cast<size_t>(frames * frames), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
@@ -442,7 +442,7 @@ core::TensorValue make_causal_mask(
 
 core::TensorValue build_window_transformer(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & input_bct,
     const CodecTransformerWeights & weights,
     int64_t window_size) {
@@ -495,7 +495,7 @@ core::TensorValue build_convnext(
 
 core::TensorValue build_encoder(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & input,
     const FishCodecWeights & weights) {
     auto x = causal_conv1d(ctx, input, weights.encoder_first, 1, 64, 7, 1, 1, true);
@@ -550,7 +550,7 @@ core::TensorValue build_quantizer_out(
 
 core::TensorValue build_decode_quantizer(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const std::vector<core::TensorValue> & code_inputs,
     const FishCodecWeights & weights) {
     auto latent = build_quantizer_out(ctx, code_inputs[0], weights.semantic_quantizer, 4096);
@@ -568,7 +568,7 @@ core::TensorValue build_decode_quantizer(
 
 core::TensorValue build_encode_quantizer(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & encoder_latent,
     const FishCodecWeights & weights,
     std::vector<ggml_tensor *> & code_outputs,
@@ -932,7 +932,7 @@ private:
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
-    common::ConstantTensorCache constants_;
+    core::ConstantTensorCache constants_;
 };
 
 struct EncodeGraph {
@@ -1045,7 +1045,7 @@ private:
     std::vector<std::pair<std::string, core::TensorValue>> trace_outputs_;
     ggml_cgraph * graph_ = nullptr;
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
-    common::ConstantTensorCache constants_;
+    core::ConstantTensorCache constants_;
 };
 
 }  // namespace

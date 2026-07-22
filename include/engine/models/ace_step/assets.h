@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
 #include <cstdint>
@@ -13,9 +14,6 @@ namespace engine::models::ace_step {
 
 struct AceStepModelSelection {
     std::string dit_model_path = "acestep-v15-turbo";
-    std::string lm_model_path = "acestep-5Hz-lm-1.7B";
-    std::string text_encoder_path = "Qwen3-Embedding-0.6B";
-    std::string vae_model_path = "vae";
 };
 
 struct AceStepPlannerConfig {
@@ -100,35 +98,8 @@ struct AceStepConfig {
     AceStepVAEConfig vae;
 };
 
-struct AceStepAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path dit_model_root;
-    std::filesystem::path dit_config_path;
-    std::filesystem::path dit_weights_path;
-    std::filesystem::path dit_silence_latent_path;
-    std::filesystem::path lm_model_root;
-    std::filesystem::path lm_config_path;
-    std::filesystem::path lm_weights_path;
-    std::filesystem::path lm_tokenizer_config_path;
-    std::filesystem::path lm_tokenizer_vocab_path;
-    std::filesystem::path lm_tokenizer_merges_path;
-    std::filesystem::path lm_tokenizer_json_path;
-    std::filesystem::path lm_chat_template_path;
-    std::filesystem::path text_encoder_root;
-    std::filesystem::path text_encoder_config_path;
-    std::filesystem::path text_encoder_weights_path;
-    std::filesystem::path text_encoder_tokenizer_config_path;
-    std::filesystem::path text_encoder_tokenizer_vocab_path;
-    std::filesystem::path text_encoder_tokenizer_merges_path;
-    std::filesystem::path text_encoder_tokenizer_json_path;
-    std::filesystem::path text_encoder_chat_template_path;
-    std::filesystem::path vae_model_root;
-    std::filesystem::path vae_config_path;
-    std::filesystem::path vae_weights_path;
-};
-
 struct AceStepAssets {
-    AceStepAssetPaths paths;
+    assets::ResourceBundle resources;
     AceStepModelSelection selection;
     AceStepConfig config;
     std::shared_ptr<const assets::TensorSource> dit_weights;
@@ -137,10 +108,6 @@ struct AceStepAssets {
     std::shared_ptr<const assets::TensorSource> text_encoder_weights;
     std::shared_ptr<const assets::TensorSource> vae_weights;
 };
-
-AceStepAssetPaths resolve_ace_step_assets(
-    const std::filesystem::path & model_path,
-    const AceStepModelSelection & selection = {});
 
 std::shared_ptr<const AceStepAssets> load_ace_step_assets(
     const std::filesystem::path & model_path,

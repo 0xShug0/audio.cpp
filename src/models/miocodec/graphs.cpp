@@ -8,7 +8,7 @@
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml.h>
 
@@ -128,7 +128,7 @@ public:
           content_frame_capacity_(conv1d_output_frames(weights_->conv_downsample.config, ssl_frames)) {
         backend_ = execution_context.backend();
         compute_threads_ = std::max(1, execution_context.config().threads);
-        constants_ = std::make_unique<common::ConstantTensorCache>(
+        constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             compute_threads_,
             "miocodec.content_encoder.constants",
@@ -217,7 +217,7 @@ public:
 
 private:
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
-    std::unique_ptr<common::ConstantTensorCache> constants_;
+    std::unique_ptr<core::ConstantTensorCache> constants_;
     std::shared_ptr<const MioCodecWeights> weights_;
     int64_t ssl_frame_capacity_ = 0;
     int64_t content_frame_capacity_ = 0;
@@ -251,7 +251,7 @@ public:
             upsample_stage_frame_capacities_.push_back(stage_frames);
         }
         output_frame_capacity_ = stage_frames;
-        constants_ = std::make_unique<common::ConstantTensorCache>(
+        constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             compute_threads_,
             "miocodec.wave_decoder.constants",
@@ -417,7 +417,7 @@ private:
     }
 
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
-    std::unique_ptr<common::ConstantTensorCache> constants_;
+    std::unique_ptr<core::ConstantTensorCache> constants_;
     std::shared_ptr<const MioCodecWeights> weights_;
     int64_t content_frame_capacity_ = 0;
     int64_t stft_frame_capacity_ = 0;

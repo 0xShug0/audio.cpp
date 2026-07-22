@@ -1,6 +1,6 @@
 #include "engine/models/miotts/loader.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/models/miotts/session.h"
 
 #include <stdexcept>
@@ -48,9 +48,9 @@ public:
             return false;
         }
         try {
-            (void) engine::assets::load_resource_bundle_from_package_spec(
+            (void) engine::model_spec::load_resource_bundle(
                 request.model_path,
-                engine::assets::default_model_package_spec_path(family()));
+                engine::model_spec::default_spec_path(family()));
             return true;
         } catch (...) {
             return false;
@@ -63,15 +63,15 @@ public:
         inspection.model_root = assets->resources.model_root();
         inspection.metadata = metadata(*assets);
         inspection.capabilities = capabilities(*assets);
-        const auto spec_path = engine::assets::default_model_package_spec_path(family());
+        const auto spec_path = engine::model_spec::default_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             spec_path,
-            engine::assets::ModelPackageResourceKind::Files);
+            engine::model_spec::ResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
             spec_path,
-            engine::assets::ModelPackageResourceKind::Tensors);
+            engine::model_spec::ResourceKind::Tensors);
         return inspection;
     }
 

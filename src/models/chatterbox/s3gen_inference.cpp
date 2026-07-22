@@ -7,6 +7,7 @@
 #include "engine/framework/sampling/torch_random.h"
 
 #include "ggml.h"
+#include "ggml-alloc.h"
 
 #include <chrono>
 #include <limits>
@@ -173,8 +174,14 @@ public:
 
         graph_ = ggml_new_graph_custom(ggml_, 1024, false);
         ggml_build_forward_expand(graph_, embedding_out_.tensor);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, execution_context_->backend());
-        if (buffer_ == nullptr) {
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_->backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            if (gallocr_ != nullptr) {
+                ggml_gallocr_free(gallocr_);
+                gallocr_ = nullptr;
+            }
             throw std::runtime_error("failed to allocate S3 token embedding graph tensors");
         }
     }
@@ -183,8 +190,8 @@ public:
         if (execution_context_ != nullptr && graph_ != nullptr) {
             engine::core::release_backend_graph_resources(execution_context_->backend(), graph_);
         }
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
         }
         if (ggml_ != nullptr) {
             ggml_free(ggml_);
@@ -206,7 +213,7 @@ private:
     int64_t token_count_ = 0;
     const engine::core::ExecutionContext * execution_context_ = nullptr;
     ggml_context * ggml_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     engine::core::TensorValue token_ids_;
     engine::core::TensorValue embedding_out_;
@@ -269,8 +276,14 @@ public:
         graph_ = ggml_new_graph_custom(ggml_, 4096, false);
         ggml_build_forward_expand(graph_, mu_bct_.tensor);
         ggml_build_forward_expand(graph_, speaker_out_.tensor);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, execution_context_->backend());
-        if (buffer_ == nullptr) {
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_->backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            if (gallocr_ != nullptr) {
+                ggml_gallocr_free(gallocr_);
+                gallocr_ = nullptr;
+            }
             throw std::runtime_error("failed to allocate S3 token2mel prepare graph tensors");
         }
 
@@ -280,8 +293,8 @@ public:
         if (execution_context_ != nullptr && graph_ != nullptr) {
             engine::core::release_backend_graph_resources(execution_context_->backend(), graph_);
         }
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
         }
         if (ggml_ != nullptr) {
             ggml_free(ggml_);
@@ -306,7 +319,7 @@ private:
     int64_t frames_ = 0;
     const engine::core::ExecutionContext * execution_context_ = nullptr;
     ggml_context * ggml_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     engine::core::TensorValue encoded_in_;
     engine::core::TensorValue speaker_in_;

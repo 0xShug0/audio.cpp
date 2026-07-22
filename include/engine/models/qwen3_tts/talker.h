@@ -70,7 +70,8 @@ public:
         size_t graph_arena_bytes,
         size_t talker_constant_context_bytes,
         size_t code_predictor_constant_context_bytes,
-        engine::assets::TensorStorageType weight_storage_type) const;
+        engine::assets::TensorStorageType weight_storage_type,
+        Qwen3TTSPerfMode perf_mode) const;
 
     std::shared_ptr<Qwen3TalkerStepRuntime> create_step_runtime(
         std::shared_ptr<const Qwen3TalkerWeightsRuntime> weights,

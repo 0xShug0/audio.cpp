@@ -1,6 +1,6 @@
 #include "engine/models/roformer/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/io/json.h"
 
@@ -35,9 +35,9 @@ void validate_config(const json::Value & value) {
 }
 
 assets::ResourceBundle load_resources(const runtime::ModelLoadRequest & request) {
-    return assets::load_resource_bundle_from_package_spec(
+    return engine::model_spec::load_resource_bundle(
         request.model_path,
-        assets::default_model_package_spec_path(std::string(kMelBandRoformerFamily)));
+        engine::model_spec::default_spec_path(std::string(kMelBandRoformerFamily)));
 }
 
 void fill_mel_band_layout(

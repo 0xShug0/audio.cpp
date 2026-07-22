@@ -434,6 +434,7 @@ void print_usage() {
                  "<orig|f16|bf16|q8_0|q2_k|q3_k|q4_k|q5_k|q6_k> "
                  "[--family <family>] [--model-spec <json-or-directory>] "
                  "[--root <model-dir>] [--sidecar <source>=<destination>] "
+                 "[--keep-type <tensor-prefix>*=<type>] "
                  "[--overwrite] [--no-sidecars] "
                  "[--allow-missing-model-spec]\n"
         << "       audiocpp_gguf --inspect <model.gguf>\n";
@@ -445,6 +446,7 @@ int main(int argc, char ** argv) {
     try {
         std::vector<engine::assets::TensorSourceInput> inputs;
         std::vector<engine::assets::GgufEmbeddedFile> sidecars;
+        std::vector<engine::assets::GgufTensorTypeOverride> type_overrides;
         std::filesystem::path output;
         std::filesystem::path inspect_path;
         std::filesystem::path sidecar_root;
@@ -473,7 +475,8 @@ int main(int argc, char ** argv) {
                 continue;
             }
             if ((arg == "--input" || arg == "--output" || arg == "--type" || arg == "--inspect" || arg == "--root" ||
-                 arg == "--sidecar" || arg == "--family" || arg == "--model-spec" || arg == "--model-spec-override") &&
+                 arg == "--sidecar" || arg == "--family" || arg == "--model-spec" || arg == "--model-spec-override" ||
+                 arg == "--keep-type") &&
                 i + 1 < argc) {
                 const std::string value = argv[++i];
                 if (arg == "--input") {
@@ -494,6 +497,15 @@ int main(int argc, char ** argv) {
                     family = value;
                 else if (arg == "--model-spec" || arg == "--model-spec-override") {
                     model_spec_path = std::filesystem::path(value);
+                } else if (arg == "--keep-type") {
+                    const auto separator = value.find('=');
+                    if (separator == std::string::npos || separator == 0 || separator + 1 == value.size()) {
+                        throw std::runtime_error("--keep-type requires <tensor-prefix>*=<type>");
+                    }
+                    type_overrides.push_back({
+                        value.substr(0, separator),
+                        engine::assets::parse_tensor_storage_type(value.substr(separator + 1)),
+                    });
                 } else {
                     const auto separator = value.find('=');
                     if (separator == std::string::npos || separator == 0 || separator + 1 == value.size()) {
@@ -565,10 +577,12 @@ int main(int argc, char ** argv) {
             }
         }
         engine::assets::convert_tensor_sources_to_gguf(inputs, output, storage_type, overwrite, embed_sidecars,
-                                                       resolved_sidecar_root, sidecars, embedded_model_spec);
+                                                       resolved_sidecar_root, sidecars, embedded_model_spec,
+                                                       type_overrides);
         std::cout << "gguf=" << std::filesystem::weakly_canonical(output).string() << "\n";
         std::cout << "weight_type=" << type << "\n";
         std::cout << "tensor_sources=" << inputs.size() << "\n";
+        std::cout << "type_overrides=" << type_overrides.size() << "\n";
         std::cout << "embedded_sidecars=" << (engine::assets::gguf_has_embedded_sidecars(output) ? "true" : "false")
                   << "\n";
         std::cout << "embedded_model_spec=" << (embedded_model_spec.has_value() ? "true" : "false") << "\n";

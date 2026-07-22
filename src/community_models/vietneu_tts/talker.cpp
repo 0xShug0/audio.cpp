@@ -14,7 +14,7 @@
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/sampling/torch_random.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -242,7 +242,7 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(
 }
 
 modules::QwenDecoderLayerWeights make_qwen_decoder_layer_weights(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const TalkerLayerWeights & weights,
     bool is_vieneu = false) {
     modules::QwenDecoderLayerWeights out;
@@ -265,7 +265,7 @@ modules::QwenDecoderLayerWeights make_qwen_decoder_layer_weights(
 }
 
 modules::QwenCausalDecoderWeights make_qwen_decoder_weights(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const std::vector<TalkerLayerWeights> & layers,
     const assets::TensorDataF32 & norm,
     const core::TensorValue & lm_head,
@@ -331,7 +331,7 @@ core::TensorValue project_code_predictor_input(
     const core::TensorValue & input,
     const VietneuTalkerWeights & weights,
     const VietneuTTSConfig & config,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     if (config.code_predictor.hidden_size == config.talker.hidden_size) {
         return input;
     }
@@ -1080,12 +1080,12 @@ public:
         backend_ = core::init_backend({backend_type_, device, threads_});
         weights_ = std::make_shared<VietneuTalkerWeights>(
             load_talker_weights(*assets_, backend_, backend_type_, kTalkerWeightContextBytes, weight_storage_type));
-        talker_constants_ = std::make_unique<common::ConstantTensorCache>(
+        talker_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
             "vietneu_tts.talker.constants",
             talker_constant_context_bytes);
-        code_predictor_constants_ = std::make_unique<common::ConstantTensorCache>(
+        code_predictor_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
             "vietneu_tts.talker.code_predictor.constants",
@@ -1117,11 +1117,11 @@ public:
         return backend_;
     }
 
-    common::ConstantTensorCache & talker_constants() const noexcept {
+    core::ConstantTensorCache & talker_constants() const noexcept {
         return *talker_constants_;
     }
 
-    common::ConstantTensorCache & code_predictor_constants() const noexcept {
+    core::ConstantTensorCache & code_predictor_constants() const noexcept {
         return *code_predictor_constants_;
     }
 
@@ -1141,8 +1141,8 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     engine::sampling::TorchCudaSamplingPolicy sampling_policy_;
-    std::unique_ptr<common::ConstantTensorCache> talker_constants_;
-    std::unique_ptr<common::ConstantTensorCache> code_predictor_constants_;
+    std::unique_ptr<core::ConstantTensorCache> talker_constants_;
+    std::unique_ptr<core::ConstantTensorCache> code_predictor_constants_;
 };
 
 class TalkerPrefillGraph {
@@ -1726,7 +1726,7 @@ private:
         return embeddings;
     }
 
-    void build_prefill_graph(core::ModuleBuildContext & ctx, common::ConstantTensorCache & constants) {
+    void build_prefill_graph(core::ModuleBuildContext & ctx, core::ConstantTensorCache & constants) {
         const auto & root_config = weights_->assets().config;
         const auto & config = root_config.code_predictor;
         const auto & tensor_weights = weights_->weights();
@@ -1797,7 +1797,7 @@ private:
 
     StepGraph build_step_graph(
         core::ModuleBuildContext & ctx,
-        common::ConstantTensorCache & constants,
+        core::ConstantTensorCache & constants,
         int64_t group) {
         const auto & root_config = weights_->assets().config;
         const auto & config = root_config.code_predictor;

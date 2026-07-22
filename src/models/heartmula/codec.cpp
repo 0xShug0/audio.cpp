@@ -10,6 +10,7 @@
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/heartmula/tokenizer_text.h"
 
@@ -26,6 +27,8 @@
 
 namespace engine::models::heartmula {
 namespace {
+
+namespace binding = engine::modules::binding;
 
 constexpr float kProjectLayerScale = 0.5773502691896257F;
 constexpr float kFlowTimestepScale = 1000.0F;
@@ -139,47 +142,6 @@ modules::ConvTranspose1dWeights load_weight_norm_conv_transpose1d(
     return weights;
 }
 
-modules::Conv1dWeights load_plain_conv1d(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    assets::TensorStorageType storage_type,
-    int64_t out_channels,
-    int64_t in_channels,
-    int64_t kernel_size,
-    bool use_bias = true) {
-    modules::Conv1dWeights weights;
-    weights.weight = store.load_tensor(source, prefix + ".weight", storage_type, {out_channels, in_channels, kernel_size});
-    if (use_bias) {
-        weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_channels});
-    }
-    return weights;
-}
-
-modules::LinearWeights load_linear(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    assets::TensorStorageType storage_type,
-    int64_t out_features,
-    int64_t in_features,
-    bool use_bias) {
-    modules::LinearWeights weights;
-    weights.weight = store.load_tensor(source, prefix + ".weight", storage_type, {out_features, in_features});
-    if (use_bias) {
-        weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_features});
-    }
-    return weights;
-}
-
-modules::NormWeights load_rms_norm(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    int64_t hidden_size) {
-    return {store.load_f32_tensor(source, prefix + ".weight", {hidden_size}), std::nullopt};
-}
-
 HeartCodecPreluWeights load_prelu(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
@@ -195,15 +157,16 @@ HeartCodecProjectLayerWeights load_project_layer(
     int64_t in_channels,
     int64_t out_channels) {
     HeartCodecProjectLayerWeights weights;
-    weights.ffn_1 = load_plain_conv1d(
+    weights.ffn_1 = binding::conv1d_from_source(
         store,
         source,
         prefix + ".ffn_1",
         storage_type,
         out_channels,
         in_channels,
-        3);
-    weights.ffn_2 = load_linear(
+        3,
+        true);
+    weights.ffn_2 = binding::linear_from_source(
         store,
         source,
         prefix + ".ffn_2",
@@ -221,7 +184,7 @@ HeartCodecAdaLayerNormWeights load_adaln(
     assets::TensorStorageType storage_type,
     int64_t hidden_size) {
     HeartCodecAdaLayerNormWeights weights;
-    weights.timestep_linear_1 = load_linear(
+    weights.timestep_linear_1 = binding::linear_from_source(
         store,
         source,
         prefix + ".emb.timestep_embedder.linear_1",
@@ -229,7 +192,7 @@ HeartCodecAdaLayerNormWeights load_adaln(
         hidden_size,
         512,
         true);
-    weights.timestep_linear_2 = load_linear(
+    weights.timestep_linear_2 = binding::linear_from_source(
         store,
         source,
         prefix + ".emb.timestep_embedder.linear_2",
@@ -237,7 +200,7 @@ HeartCodecAdaLayerNormWeights load_adaln(
         hidden_size,
         hidden_size,
         true);
-    weights.linear = load_linear(
+    weights.linear = binding::linear_from_source(
         store,
         source,
         prefix + ".linear",
@@ -256,15 +219,15 @@ HeartCodecTransformerBlockWeights load_transformer_block(
     int64_t hidden_size,
     int64_t mlp_hidden_size) {
     HeartCodecTransformerBlockWeights weights;
-    weights.attn_norm = load_rms_norm(store, source, prefix + ".attn_norm", hidden_size);
-    weights.q_proj = load_linear(store, source, prefix + ".attn.q_proj", storage_type, hidden_size, hidden_size, false);
-    weights.k_proj = load_linear(store, source, prefix + ".attn.k_proj", storage_type, hidden_size, hidden_size, false);
-    weights.v_proj = load_linear(store, source, prefix + ".attn.v_proj", storage_type, hidden_size, hidden_size, false);
-    weights.o_proj = load_linear(store, source, prefix + ".attn.o_proj", storage_type, hidden_size, hidden_size, false);
-    weights.mlp_norm = load_rms_norm(store, source, prefix + ".mlp_norm", hidden_size);
-    weights.mlp_gate = load_linear(store, source, prefix + ".mlp.gate", storage_type, mlp_hidden_size, hidden_size, false);
-    weights.mlp_up = load_linear(store, source, prefix + ".mlp.up", storage_type, mlp_hidden_size, hidden_size, false);
-    weights.mlp_down = load_linear(store, source, prefix + ".mlp.down", storage_type, hidden_size, mlp_hidden_size, false);
+    weights.attn_norm = binding::norm_weight_from_source(store, source, prefix + ".attn_norm", hidden_size);
+    weights.q_proj = binding::linear_from_source(store, source, prefix + ".attn.q_proj", storage_type, hidden_size, hidden_size, false);
+    weights.k_proj = binding::linear_from_source(store, source, prefix + ".attn.k_proj", storage_type, hidden_size, hidden_size, false);
+    weights.v_proj = binding::linear_from_source(store, source, prefix + ".attn.v_proj", storage_type, hidden_size, hidden_size, false);
+    weights.o_proj = binding::linear_from_source(store, source, prefix + ".attn.o_proj", storage_type, hidden_size, hidden_size, false);
+    weights.mlp_norm = binding::norm_weight_from_source(store, source, prefix + ".mlp_norm", hidden_size);
+    weights.mlp_gate = binding::linear_from_source(store, source, prefix + ".mlp.gate", storage_type, mlp_hidden_size, hidden_size, false);
+    weights.mlp_up = binding::linear_from_source(store, source, prefix + ".mlp.up", storage_type, mlp_hidden_size, hidden_size, false);
+    weights.mlp_down = binding::linear_from_source(store, source, prefix + ".mlp.down", storage_type, hidden_size, mlp_hidden_size, false);
     weights.scale_shift_table = store.load_f32_tensor(source, prefix + ".scale_shift_table", {6, hidden_size});
     return weights;
 }
@@ -299,7 +262,7 @@ HeartCodecFlowWeights load_flow_weights(
     const int64_t estimator_dim = config.num_attention_heads * config.attention_head_dim;
     const int64_t estimator_dim_2 = 2 * estimator_dim;
     HeartCodecFlowWeights weights;
-    weights.vq_project_out = load_linear(
+    weights.vq_project_out = binding::linear_from_source(
         store,
         source,
         "flow_matching.vq_embed.project_out",
@@ -317,7 +280,7 @@ HeartCodecFlowWeights load_flow_weights(
             {1, config.codebook_size, config.codebook_dim},
             core::TensorShape::from_dims({config.codebook_size, config.codebook_dim})));
     }
-    weights.cond_feature_emb = load_linear(
+    weights.cond_feature_emb = binding::linear_from_source(
         store,
         source,
         "flow_matching.cond_feature_emb",
@@ -462,14 +425,15 @@ HeartCodecScalarDecoderWeights load_scalar_decoder_weights(
         in_channels = out_channels;
     }
     const int64_t post_index = 1 + static_cast<int64_t>(config.upsample_factors.size());
-    weights.post_processor.conv = load_plain_conv1d(
+    weights.post_processor.conv = binding::conv1d_from_source(
         store,
         source,
         "scalar_model.decoder." + std::to_string(post_index) + ".conv",
         storage_type,
         config.init_channel,
         config.init_channel,
-        config.default_kernel_size);
+        config.default_kernel_size,
+        true);
     weights.post_processor.activation =
         load_prelu(store, source, "scalar_model.decoder." + std::to_string(post_index) + ".activation");
     weights.output_conv = load_weight_norm_conv1d(

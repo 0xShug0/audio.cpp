@@ -15,7 +15,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -490,7 +490,7 @@ core::TensorValue causal_conv1d(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const Conv1dWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     const int64_t kernel_extent = (weights.kernel - 1) * weights.dilation + 1;
     const int64_t left_pad = kernel_extent - weights.stride;
     const int64_t length = input.shape.dims[2];
@@ -569,7 +569,7 @@ core::TensorValue causal_conv_transpose1d(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const ConvTranspose1dWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     const int64_t right_trim = weights.kernel - weights.stride;
     auto output_bct = modules::ConvTranspose1dModule({
         weights.in_channels,
@@ -615,7 +615,7 @@ std::vector<float> snake_inv_beta_exp(const std::vector<float> & beta) {
 core::TensorValue snake_beta(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const std::vector<float> & alpha,
     const std::vector<float> & beta) {
     auto alpha_exp = constants.make_f32(
@@ -639,7 +639,7 @@ core::TensorValue codebook_decode(
     const CodebookWeights & codebook,
     int64_t dim,
     int64_t size,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto indices = core::wrap_tensor(
         codes_t_b,
         core::TensorShape::from_dims({codes_t_b->ne[1], codes_t_b->ne[0]}),
@@ -654,7 +654,7 @@ core::TensorValue quantizer_decode(
     core::ModuleBuildContext & build_ctx,
     ggml_tensor * codes_t_q_b,
     const Qwen3SpeechTokenizerDecoderWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     const auto & config = weights.config;
     const int64_t split_dim = config.codebook_dim / 2;
     core::TensorValue semantic_sum;
@@ -716,7 +716,7 @@ core::TensorValue attention(
     ggml_tensor * mask,
     const AttentionWeights & weights,
     const DecoderConfig & config,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     const int64_t kv_repeat = config.num_heads / config.num_kv_heads;
     auto q_value = modules::LinearModule(binding::linear_config(weights.q.input_dim, weights.q.output_dim, weights.q.use_bias))
                        .build(build_ctx, input, binding::linear_data(constants, weights.q.weight, weights.q.bias));
@@ -815,7 +815,7 @@ core::TensorValue mlp(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const MlpWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto gate_linear = modules::LinearModule(binding::linear_config(weights.gate.input_dim, weights.gate.output_dim, weights.gate.use_bias))
                            .build(build_ctx, input, binding::linear_data(constants, weights.gate.weight, weights.gate.bias));
     auto gate = modules::SiluModule{}.build(build_ctx, gate_linear);
@@ -829,7 +829,7 @@ core::TensorValue layer_scale(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const std::vector<float> & scale,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     return core::wrap_tensor(
         ggml_mul(
             build_ctx.ggml,
@@ -843,7 +843,7 @@ core::TensorValue convnext(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input_bct,
     const ConvNeXtWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto hidden = causal_conv1d(build_ctx, input_bct, weights.dwconv, constants);
     hidden = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(build_ctx, hidden);
     hidden = modules::LayerNormModule({static_cast<int64_t>(weights.norm.weight.size()), weights.norm.eps, true, true})
@@ -868,7 +868,7 @@ core::TensorValue residual_unit(
     core::ModuleBuildContext & build_ctx,
     const core::TensorValue & input,
     const ResidualUnitWeights & weights,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto hidden = snake_beta(
         build_ctx,
         input,
@@ -909,7 +909,7 @@ public:
         std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> weights,
         int64_t code_frames,
         core::ExecutionContext & execution_context,
-        common::ConstantTensorCache & constants,
+        core::ConstantTensorCache & constants,
         size_t graph_arena_bytes)
         : weights_(std::move(weights)),
           code_frames_(code_frames),
@@ -1122,7 +1122,7 @@ Qwen3SpeechTokenizerDecoderRuntime::Qwen3SpeechTokenizerDecoderRuntime(
         execution_context_->backend_type(),
         linear_weight_storage_type,
         conv_weight_storage_type);
-    constants_ = std::make_unique<common::ConstantTensorCache>(
+    constants_ = std::make_unique<core::ConstantTensorCache>(
         execution_context_->backend(),
         std::max(1, execution_context_->config().threads),
         "vietneu_tts.speech_tokenizer_decoder.constants",

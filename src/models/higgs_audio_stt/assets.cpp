@@ -1,6 +1,6 @@
 #include "engine/models/higgs_audio_stt/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
@@ -96,9 +96,9 @@ HiggsAudioSTTConfig parse_config(const assets::ResourceBundle & resources) {
 }  // namespace
 
 std::shared_ptr<const HiggsAudioSTTAssets> load_higgs_audio_stt_assets(const std::filesystem::path & model_path) {
-    auto resources = assets::load_resource_bundle_from_package_spec(
+    auto resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("higgs_audio_stt"));
+        engine::model_spec::default_spec_path("higgs_audio_stt"));
     auto assets = std::make_shared<HiggsAudioSTTAssets>();
     assets->config = parse_config(resources);
     assets->model_weights = resources.open_tensor_source("weights");

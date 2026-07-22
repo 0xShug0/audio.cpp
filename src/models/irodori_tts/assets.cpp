@@ -1,6 +1,6 @@
 #include "engine/models/irodori_tts/assets.h"
 
-#include "engine/framework/assets/model_package.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/json.h"
 
@@ -184,9 +184,9 @@ float IrodoriModelConfig::caption_mlp_ratio_resolved() const noexcept {
 
 std::shared_ptr<const IrodoriTTSAssets> load_irodori_tts_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<IrodoriTTSAssets>();
-    assets->resources = assets::load_resource_bundle_from_package_spec(
+    assets->resources = engine::model_spec::load_resource_bundle(
         model_path,
-        assets::default_model_package_spec_path("irodori_tts"));
+        engine::model_spec::default_spec_path("irodori_tts"));
 
     assets->config = parse_config(assets->resources);
     assets->model_weights = assets->resources.open_tensor_source("model_weights");

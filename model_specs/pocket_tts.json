@@ -1,0 +1,36 @@
+{
+  "family": "pocket_tts",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "tokenizer": "model:tokenizer.model"
+      },
+      "optional_files": {
+        "config": "model:config.yaml"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "language": "languages/english"
+      },
+      "files": {
+        "tokenizer": "language:tokenizer.model"
+      },
+      "optional_files": {
+        "config": "language:config.yaml"
+      },
+      "tensors": {
+        "weights": "language:model.safetensors"
+      }
+    }
+  ]
+}
