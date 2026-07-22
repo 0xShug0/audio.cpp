@@ -862,6 +862,16 @@ if (ENGINE_BUILD_TESTS)
         COMMAND depthwise_conv1d_lowering_test
     )
 
+    add_engine_unittest(conv_lowering_matrix_test tests/unittests/test_conv_lowering_matrix.cpp)
+    if (ENGINE_ENABLE_HIP)
+        target_compile_definitions(conv_lowering_matrix_test PRIVATE ENGINE_TEST_ENABLE_HIP=1)
+    endif()
+
+    add_test(
+        NAME conv_lowering_matrix_test
+        COMMAND conv_lowering_matrix_test
+    )
+
     add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
     target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
 
