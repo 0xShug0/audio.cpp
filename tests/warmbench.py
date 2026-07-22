@@ -94,7 +94,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "cpp_bin": "build/debug/bin/qwen3_tts_warm_bench",
         "python_script": "tests/qwen3_tts/qwen3_tts_python_warm_bench.py",
         "model": "models/Qwen3-TTS-12Hz-0.6B-Base",
-        "clone_audio": "resources/sample.wav",
+        "clone_audio": "assets/resources/sample.wav",
         "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
         "case_catalog": "tests/qwen3_tts/qwen3_tts_warm_bench_cases.txt",
         "case_overrides": {
@@ -149,7 +149,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "cpp_bin": "build/debug/bin/chatterbox_warm_bench",
         "python_script": "tests/chatterbox/chatterbox_python_warm_bench.py",
         "model": "models/chatterbox",
-        "clone_audio": "resources/sample.wav",
+        "clone_audio": "assets/resources/sample.wav",
         "case_catalog": "tests/chatterbox/chatterbox_warm_bench_cases.txt",
         "default_warmup": 0,
         "max_new_tokens": 1000,
@@ -165,7 +165,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "python_script": "tests/omnivoice/omnivoice_python_warm_bench.py",
         "model": "models/OmniVoice",
         "task": "voice_clone",
-        "clone_audio": "resources/sample.wav",
+        "clone_audio": "assets/resources/sample.wav",
         "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
         "language": "en",
         "case_catalog": "tests/omnivoice/omnivoice_warm_bench_cases.json",
@@ -223,7 +223,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "python_script": "tests/moss_tts_nano/moss_tts_nano_python_warm_bench.py",
         "model": "models/MOSS-TTS-Nano-100M",
         "audio_tokenizer_model": "models/MOSS-Audio-Tokenizer-Nano",
-        "clone_audio": "resources/sample.wav",
+        "clone_audio": "assets/resources/sample.wav",
         "case_catalog": "tests/moss_tts_nano/moss_tts_nano_warm_bench_cases.json",
         "default_case_name": "default",
         "max_new_frames": 300,
@@ -252,7 +252,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "cpp_bin": "build/debug/bin/moss_tts_local_warm_bench",
         "python_script": "tests/moss_tts_local/moss_tts_local_python_warm_bench.py",
         "model": "models/MOSS-TTS-Local-Transformer-v1.5",
-        "clone_audio": "resources/a.wav",
+        "clone_audio": "assets/resources/a.wav",
         "case_catalog": "tests/moss_tts_local/moss_tts_local_warm_bench_cases.json",
         "default_case_name": "long_lived_session",
         "max_new_frames": 4096,
@@ -647,9 +647,20 @@ def parse_args() -> argparse.Namespace:
         help="Optional shared ACE-Step DiT initial-noise file (.f32). When set, both Python and C++ use this file instead of sampling noise.",
     )
     parser.add_argument("--artifact-stamp", default="")
+    parser.add_argument(
+        "--audiocpp-cli-bin",
+        default="",
+        help="Optional path to audiocpp_cli. Used to infer the bin directory for warmbench binaries instead of build/debug/bin.",
+    )
+    parser.add_argument(
+        "--baseline-audiocpp-cli-bin",
+        default="",
+        help="Optional path to baseline audiocpp_cli to run as a C++ reference instead of the Python model.",
+    )
     parser.add_argument("--output-dir")
     parser.add_argument("--output-json")
     parser.add_argument("--keep-output-dir", action="store_true")
+    parser.add_argument("--skip-python", action="store_true", help="Skip running the Python reference model and parity checks")
     args = parser.parse_args()
     args.warmup_was_explicit = any(arg == "--warmup" or arg.startswith("--warmup=") for arg in sys.argv[1:])
     args.requests_per_session_was_explicit = any(
@@ -1115,6 +1126,22 @@ def normalize_text(text: str) -> str:
         else:
             chars.append(char)
     return " ".join("".join(chars).split())
+
+
+def parse_timing_log(path: Path) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    if not path.exists():
+        return metrics
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("[TIMING"):
+            parts = line.split("]", 1)[1].strip().split()
+            if len(parts) >= 2:
+                key = parts[0]
+                try:
+                    metrics[key] = metrics.get(key, 0.0) + float(parts[1])
+                except ValueError:
+                    pass
+    return metrics
 
 
 def normalize_whisper_text(text: str) -> str:
@@ -4687,28 +4714,55 @@ def run_scenario(
             }
         if family not in {"miocodec", "voxcpm2", "higgs_audio_stt", "hviske_asr", "nemotron_asr", "vibevoice_asr", "voxtral_realtime"}:
             python_command, cpp_command = build_audio_commands(family, scenario_config, backend, mode, args, scenario_dir, warmup_audio, audio_requests)
+
     (scenario_dir / "request_manifest.json").write_text(json.dumps(request_manifest, indent=2), encoding="utf-8")
 
-    set_command_backend(python_command, python_reference_backend(backend))
+    if args.baseline_audiocpp_cli_bin:
+        cpp_bin_name = Path(scenario_config.get("cpp_bin", "audiocpp_cli")).name
+        baseline_bin = str(Path(args.baseline_audiocpp_cli_bin).parent / cpp_bin_name)
+        python_command = []
+        for token in cpp_command:
+            token = token.replace("cpp.timing.log", "baseline.timing.log")
+            token = token.replace("cpp_audio", "baseline_audio")
+            if token.endswith(cpp_bin_name):
+                token = baseline_bin
+            python_command.append(token)
 
-    append_log(master_log, f"PYTHON START family={family} mode={mode} backend={backend} command={' '.join(python_command)}")
-    python_env = os.environ.copy()
-    python_env.pop("LD_LIBRARY_PATH", None)
-    if scenario_config["kind"] == "ace_step":
-        python_env["ACESTEP_PROJECT_ROOT"] = str(scenario_dir)
-    python_stdout, python_memory = run_command(python_command, scenario_dir / "python.log", env=python_env)
-    append_log(master_log, f"PYTHON END family={family} mode={mode} backend={backend}")
-    append_log(
-        master_log,
-        f"PYTHON MEMORY family={family} mode={mode} backend={backend} "
-        f"peak_rss_kb={python_memory['peak_rss_kb']} peak_vms_kb={python_memory['peak_vms_kb']}",
-    )
-    python_parsed = parse_summary_lines(python_stdout)
-    python_result_payload = sanitized_result_payload(scenario_config["kind"], python_parsed)
-    python_summary = python_parsed.get("summary") or {}
-    python_summary_path = scenario_dir / "python.result.json"
-    python_summary_path.write_text(json.dumps(python_result_payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    append_log(master_log, f"PYTHON RESULT family={family} mode={mode} backend={backend} path={python_summary_path}")
+
+    python_parsed = {
+        "summaries": [{} for _ in range(args.requests_per_session)],
+        "summary": {"sequence_steps": [{} for _ in range(args.requests_per_session)]},
+        "audio_outs": {},
+    } if args.skip_python else {}
+    python_summary = python_parsed.get("summary", {})
+    python_result_payload = {}
+    python_memory = {"peak_rss_kb": 0, "peak_vms_kb": 0} if args.skip_python else {}
+    ref_name = "baseline" if args.baseline_audiocpp_cli_bin else "python"
+    ref_label = ref_name.upper()
+    python_summary_path = scenario_dir / f"{ref_name}.result.json"
+    
+    if not args.skip_python:
+        if not args.baseline_audiocpp_cli_bin:
+            set_command_backend(python_command, python_reference_backend(backend))
+        append_log(master_log, f"{ref_label} START family={family} mode={mode} backend={backend} command={' '.join(python_command)}")
+        python_env = os.environ.copy()
+        python_env.pop("LD_LIBRARY_PATH", None)
+        if scenario_config["kind"] == "ace_step":
+            python_env["ACESTEP_PROJECT_ROOT"] = str(scenario_dir)
+        python_stdout, python_memory = run_command(python_command, scenario_dir / f"{ref_name}.log", env=python_env)
+        append_log(master_log, f"{ref_label} END family={family} mode={mode} backend={backend}")
+        append_log(
+            master_log,
+            f"{ref_label} MEMORY family={family} mode={mode} backend={backend} "
+            f"peak_rss_kb={python_memory['peak_rss_kb']} peak_vms_kb={python_memory['peak_vms_kb']}",
+        )
+        python_parsed = parse_summary_lines(python_stdout)
+        timing_metrics = parse_timing_log(scenario_dir / f"{ref_name}.timing.log")
+        python_parsed.setdefault("metrics", {}).update(timing_metrics)
+        python_summary = python_parsed.get("summary") or {}
+        python_result_payload = sanitized_result_payload(scenario_config["kind"], python_parsed)
+        python_summary_path.write_text(json.dumps(python_result_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        append_log(master_log, f"{ref_label} RESULT family={family} mode={mode} backend={backend} path={python_summary_path}")
 
     append_log(master_log, f"CPP START family={family} mode={mode} backend={backend} command={' '.join(cpp_command)}")
     cpp_stdout, cpp_memory = run_command(cpp_command, scenario_dir / "cpp.log")
@@ -4719,6 +4773,8 @@ def run_scenario(
         f"peak_rss_kb={cpp_memory['peak_rss_kb']} peak_vms_kb={cpp_memory['peak_vms_kb']}",
     )
     cpp_parsed = parse_summary_lines(cpp_stdout)
+    cpp_timing_metrics = parse_timing_log(scenario_dir / "cpp.timing.log")
+    cpp_parsed.setdefault("metrics", {}).update(cpp_timing_metrics)
     cpp_result_payload = sanitized_result_payload(scenario_config["kind"], cpp_parsed)
     cpp_summary = cpp_parsed.get("summary") or {}
     cpp_summary_path = scenario_dir / "cpp.result.json"
@@ -4973,7 +5029,7 @@ def run_scenario(
         "backend": backend,
         "warmup": effective_warmup(scenario_config, args),
         "request_manifest": request_manifest,
-        "python": {
+        ref_name: {
             "summary_path": str(python_summary_path),
             "parsed": python_result_payload,
             "valid": python_valid,
@@ -5008,6 +5064,13 @@ def run_scenario(
 
 def main() -> int:
     args = parse_args()
+    if args.audiocpp_cli_bin:
+        bin_dir = Path(args.audiocpp_cli_bin).parent.absolute()
+        for family, config in FAMILY_CONFIG.items():
+            if "cpp_bin" in config:
+                original_bin_name = Path(config["cpp_bin"]).name
+                config["cpp_bin"] = str(bin_dir / original_bin_name)
+    
     requested_stamp = args.artifact_stamp or timestamp_seconds_local()
     requested_output_dir = REPO_ROOT / (
         args.output_dir if args.output_dir else f"build/logs/warmbench/{requested_stamp}")
