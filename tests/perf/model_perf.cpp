@@ -121,7 +121,7 @@ engine::core::BackendType parse_backend(const std::string & value) {
     if (lowered == "cuda") {
         return engine::core::BackendType::Cuda;
     }
-    if (lowered == "hip") {
+    if (lowered == "hip" || lowered == "rocm") {
         return engine::core::BackendType::Hip;
     }
     if (lowered == "vulkan") {

@@ -134,18 +134,18 @@ case BackendType::Hip:       // <-- fall-through to CUDA path
 
 ### 4. `app/cli/args.cpp`
 
-**L99-L101** -- CLI string to BackendType mapping:
+CLI string to BackendType mapping (`rocm` accepted as an alias):
 ```cpp
-if (value == "hip") {
+if (value == "hip" || value == "rocm") {
     return engine::core::BackendType::Hip;
 }
 ```
 
 ### 5. `app/cli/main.cpp`
 
-**L48** -- Help text:
+Help text:
 ```
---backend cpu|cuda|hip|vulkan|metal|best
+--backend cpu|cuda|hip|rocm|vulkan|metal|best  (rocm is an alias for hip)
 ```
 
 ---
