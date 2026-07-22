@@ -99,6 +99,7 @@ private:
     HttpResponse handle_generic_stream(const std::string & body_text);
     HttpResponse handle_voices(const HttpRequest & request) const;
     std::string models_json() const;
+    std::string get_allowed_origin(const HttpRequest & request) const;
 
     ServerConfig config_;
     std::filesystem::path request_base_;

@@ -47,6 +47,7 @@ void print_help() {
         << "                [--device <id>] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--model-spec-override <json-or-directory>]\n"
         << "                [--log] [--log-file <path>]\n"
+        << "                [--cors-origins <origins>]\n"
         << "  --backend cpu|cuda|vulkan|metal  default cuda\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
         << "                                   busy this long; default 300000, 0 disables\n"
@@ -96,6 +97,9 @@ int main(int argc, char ** argv) {
         if (const auto port = arg_value(argc, argv, "--port")) {
             config.port = std::stoi(*port);
         }
+        if (const auto cors_origins = arg_value(argc, argv, "--cors-origins")) {
+            config.cors_origins = *cors_origins;
+        }
         if (const auto backend = arg_value(argc, argv, "--backend")) {
             config.backend = minitts::server::parse_server_backend(*backend);
         }
@@ -110,6 +114,9 @@ int main(int argc, char ** argv) {
         }
         if (const auto model_spec = arg_value(argc, argv, "--model-spec-override")) {
             config.model_spec_override = std::filesystem::path(*model_spec);
+        }
+        if (!(config.cors_origins == "*" || config.cors_origins == "")) {
+            throw std::runtime_error("--cors-origins must be '*' (allow all origins) or '' (disabled)");
         }
         if (config.threads <= 0) {
             throw std::runtime_error("--threads must be positive");

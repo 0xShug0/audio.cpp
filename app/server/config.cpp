@@ -58,6 +58,7 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
     ServerConfig config;
     config.host = engine::io::json::optional_string(root, "host", config.host);
     config.port = engine::io::json::optional_i32(root, "port", config.port);
+    config.cors_origins = engine::io::json::optional_string(root, "cors_origins", config.cors_origins);
     config.backend = parse_server_backend(engine::io::json::optional_string(root, "backend", "cuda"));
     config.device = engine::io::json::optional_i32(root, "device", config.device);
     config.threads = engine::io::json::optional_i32(root, "threads", config.threads);

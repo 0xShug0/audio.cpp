@@ -41,6 +41,7 @@ struct ServerModelConfig {
 struct ServerConfig {
     std::string host = "127.0.0.1";
     int port = 8080;
+    std::string cors_origins = "";
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
     int device = 0;
     int threads = 1;
