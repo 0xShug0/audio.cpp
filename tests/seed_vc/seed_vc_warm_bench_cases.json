@@ -71,7 +71,7 @@
     "requests": [
       {
         "path": "v1_svc",
-        "source_audio": "resources/mel_roformer_test_180s.wav",
+        "source_audio": "assets/resources/mel_roformer_test_180s.wav",
         "target_audio": "reference/SeedVC/examples/reference/s2p1.wav",
         "diffusion_steps": 4,
         "length_adjust": 1.0,

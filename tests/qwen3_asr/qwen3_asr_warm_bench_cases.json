@@ -1,12 +1,12 @@
 {
   "warmup": {
-    "audio": "resources/a.wav",
+    "audio": "assets/resources/a.wav",
     "language": "English",
     "context": "Transcribe the speech exactly."
   },
   "requests": [
     {
-      "audio": "resources/sample.wav",
+      "audio": "assets/resources/sample.wav",
       "start_sec": 10.6,
       "end_sec": 14.05,
       "language": "English",
@@ -14,13 +14,13 @@
       "expected_fragments": ["twenty-two thousand five hundred times longer"]
     },
     {
-      "audio": "resources/a.wav",
+      "audio": "assets/resources/a.wav",
       "language": "English",
       "context": "Transcribe the speech exactly. Preserve years and numbers.",
       "expected_fragments": ["year eighteen o three"]
     },
     {
-      "audio": "resources/b.wav",
+      "audio": "assets/resources/b.wav",
       "start_sec": 7.35,
       "end_sec": 9.95,
       "language": "English",

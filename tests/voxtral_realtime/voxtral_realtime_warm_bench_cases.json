@@ -15,7 +15,7 @@
       "requests": [
         {
           "id": "longform_non_greedy_1min",
-          "audio": "resources/longform.wav",
+          "audio": "assets/resources/longform.wav",
           "start_sec": 0.0,
           "end_sec": 60.0,
           "do_sample": true,
@@ -46,7 +46,7 @@
     },
     {
       "id": "nature_longer_slice",
-      "audio": "resources/sample.wav",
+      "audio": "assets/resources/sample.wav",
       "start_sec": 0.0,
       "end_sec": 11.5,
       "expected_fragments": [

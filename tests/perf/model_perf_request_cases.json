@@ -107,7 +107,7 @@
           "id": "complete_source_audio",
           "text": "complete this song with clear vocals and a fuller pop arrangement",
           "language": "en",
-          "audio": "resources/mel_roformer_test_10s.wav",
+          "audio": "assets/resources/mel_roformer_test_10s.wav",
           "task_route": "complete",
           "duration_seconds": 10,
           "options": {
@@ -142,7 +142,7 @@
           "id": "lego_guitar_from_piano",
           "text": "add a clean guitar track that follows the source piano",
           "language": "en",
-          "audio": "resources/ace_step_lego_piano_10s.wav",
+          "audio": "assets/resources/ace_step_lego_piano_10s.wav",
           "task_route": "lego",
           "track_name": "guitar",
           "duration_seconds": 10,
@@ -178,7 +178,7 @@
           "id": "extract_vocals",
           "text": "vocals",
           "language": "en",
-          "audio": "resources/mel_roformer_test_15s.wav",
+          "audio": "assets/resources/mel_roformer_test_15s.wav",
           "task_route": "extract",
           "track_name": "vocals",
           "duration_seconds": 15,
@@ -215,7 +215,7 @@
           "id": "cover_nofsq",
           "text": "make a bright pop cover with a new vocal tone",
           "language": "en",
-          "audio": "resources/mel_roformer_test_10s.wav",
+          "audio": "assets/resources/mel_roformer_test_10s.wav",
           "task_route": "cover-nofsq",
           "duration_seconds": 10,
           "options": {
@@ -250,7 +250,7 @@
           "id": "repaint_middle",
           "text": "replace the middle section with a stronger vocal phrase",
           "language": "en",
-          "audio": "resources/mel_roformer_test_15s.wav",
+          "audio": "assets/resources/mel_roformer_test_15s.wav",
           "task_route": "repaint",
           "duration_seconds": 15,
           "repaint_start": 3.0,
@@ -282,7 +282,7 @@
           "id": "long",
           "text": "The lighthouse keeper records a detailed morning report about the tide, the lantern, and the ships crossing the horizon.",
           "language": "English",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/resources/a.wav",
           "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
           "seed": 1234,
           "max_tokens": 256,
@@ -292,7 +292,7 @@
           "id": "short",
           "text": "The shorter line should keep the same speaker.",
           "language": "English",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/resources/a.wav",
           "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
           "seed": 1234,
           "max_tokens": 128,
@@ -302,7 +302,7 @@
           "id": "long_again",
           "text": "After the short request, the same voice describes the harbor again in a longer passage so graph reuse and capacity behavior stay visible.",
           "language": "English",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/resources/a.wav",
           "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
           "seed": 1234,
           "max_tokens": 256,
@@ -369,7 +369,7 @@
           "id": "en_long",
           "text": "The archivist unlocks the reading room and describes the maps, the weathered journals, and the quiet harbor outside in one steady natural voice.",
           "language": "en",
-          "voice_ref": "resources/sample.wav",
+          "voice_ref": "assets/resources/sample.wav",
           "options": {
             "s3gen_cfg_rate": 0.7
           },
@@ -394,7 +394,7 @@
           "id": "de",
           "text": "Der Leuchtturmwaerter beschreibt den ruhigen Morgen und die Schiffe am Horizont.",
           "language": "de",
-          "voice_ref": "resources/sample.wav",
+          "voice_ref": "assets/resources/sample.wav",
           "options": {
             "s3gen_cfg_rate": 0.7
           },
@@ -417,8 +417,8 @@
       "requests": [
         {
           "id": "design_to_sample",
-          "audio": "resources/design.wav",
-          "voice_ref": "resources/sample.wav"
+          "audio": "assets/resources/design.wav",
+          "voice_ref": "assets/resources/sample.wav"
         }
       ]
     },
@@ -436,7 +436,7 @@
         {
           "id": "long_clone",
           "text": "For audit, this MioTTS path test uses a passage that is longer than the default chunk size but still easy to verify. The first sentence checks that the opening words are spoken clearly. The second sentence says that green clocks measure quiet rivers while silver lanterns mark the path home. The final sentence confirms that the ending phrase is present and easy to hear.",
-          "voice_ref": "resources/sample.wav",
+          "voice_ref": "assets/resources/sample.wav",
           "seed": 1234,
           "max_tokens": 1400,
           "do_sample": true
@@ -478,7 +478,7 @@
         {
           "id": "clone",
           "text": "This VoxCPM2 path test clones the reference speaker for a short review sentence.",
-          "voice_ref": "resources/sample.wav",
+          "voice_ref": "assets/resources/sample.wav",
           "seed": 1234,
           "max_tokens": 0,
           "guidance_scale": 2.0,
@@ -499,8 +499,8 @@
       "requests": [
         {
           "id": "v2_long",
-          "audio": "resources/seed_vc/source/see_you_again_vocals_cut_28sec.wav",
-          "voice_ref": "resources/seed_vc/voice_ref/s2p1.wav",
+          "audio": "assets/resources/seed_vc/source/see_you_again_vocals_cut_28sec.wav",
+          "voice_ref": "assets/resources/seed_vc/voice_ref/s2p1.wav",
           "route": "v2_vc",
           "options": {
             "length_adjust": 1.0,
@@ -525,8 +525,8 @@
       "requests": [
         {
           "id": "v1_svc_180s",
-          "audio": "resources/mel_roformer_test_180s.wav",
-          "voice_ref": "resources/seed_vc/voice_ref/s2p1.wav",
+          "audio": "assets/resources/mel_roformer_test_180s.wav",
+          "voice_ref": "assets/resources/seed_vc/voice_ref/s2p1.wav",
           "route": "v1_svc",
           "options": {
             "length_adjust": 1.0,
@@ -554,8 +554,8 @@
       "requests": [
         {
           "id": "v1_whisper_bigvgan",
-          "audio": "resources/seed_vc/source/source_s1.wav",
-          "voice_ref": "resources/seed_vc/voice_ref/s2p1.wav",
+          "audio": "assets/resources/seed_vc/source/source_s1.wav",
+          "voice_ref": "assets/resources/seed_vc/voice_ref/s2p1.wav",
           "route": "v1_whisper_bigvgan_vc",
           "options": {
             "length_adjust": 1.0,
@@ -580,8 +580,8 @@
       "requests": [
         {
           "id": "v1_xlsr_hift",
-          "audio": "resources/seed_vc/source/source_s1.wav",
-          "voice_ref": "resources/seed_vc/voice_ref/s2p1.wav",
+          "audio": "assets/resources/seed_vc/source/source_s1.wav",
+          "voice_ref": "assets/resources/seed_vc/voice_ref/s2p1.wav",
           "route": "v1_xlsr_hift_vc",
           "options": {
             "length_adjust": 1.0,
@@ -608,9 +608,9 @@
           "id": "zero_shot_tts",
           "route": "zero_shot_tts",
           "target_text": "This is a zero shot speech request using the unified VeVo2 command line interface.",
-          "style_ref": "resources/vevo2_official_gallery/tts_ref.wav",
+          "style_ref": "assets/resources/vevo2_official_gallery/tts_ref.wav",
           "style_ref_text": "This reference describes the target speaking voice.",
-          "target_voice": "resources/vevo2_official_gallery/tts_ref.wav",
+          "target_voice": "assets/resources/vevo2_official_gallery/tts_ref.wav",
           "seed": 1234,
           "temperature": 1.0,
           "top_k": 25,
@@ -621,9 +621,9 @@
           "id": "text_to_singing",
           "route": "text_to_singing",
           "target_text": "A simple melody carries the words through the evening light.",
-          "style_ref": "resources/vevo2_official_gallery/adele_raw.wav",
+          "style_ref": "assets/resources/vevo2_official_gallery/adele_raw.wav",
           "style_ref_text": "This reference describes the target singing voice.",
-          "target_voice": "resources/vevo2_official_gallery/adele_raw.wav",
+          "target_voice": "assets/resources/vevo2_official_gallery/adele_raw.wav",
           "seed": 1234,
           "temperature": 1.0,
           "top_k": 25,
@@ -634,9 +634,9 @@
           "id": "svs",
           "route": "svs",
           "target_text": "The chorus rises softly and returns with a brighter tone.",
-          "style_ref": "resources/vevo2_official_gallery/svs_melody.wav",
+          "style_ref": "assets/resources/vevo2_official_gallery/svs_melody.wav",
           "style_ref_text": "This reference describes the target melody and singing style.",
-          "target_voice": "resources/vevo2_official_gallery/adele_raw.wav",
+          "target_voice": "assets/resources/vevo2_official_gallery/adele_raw.wav",
           "seed": 1234,
           "temperature": 1.0,
           "top_k": 25,
@@ -659,8 +659,8 @@
         {
           "id": "style_preserved_vc",
           "route": "style_preserved_vc",
-          "source_audio": "resources/vevo2_official_gallery/style_whisper2normal_input.wav",
-          "target_voice": "resources/vevo2_official_gallery/tts_ref.wav",
+          "source_audio": "assets/resources/vevo2_official_gallery/style_whisper2normal_input.wav",
+          "target_voice": "assets/resources/vevo2_official_gallery/tts_ref.wav",
           "use_pitch_shift": false,
           "seed": 1234,
           "num_inference_steps": 32
@@ -669,8 +669,8 @@
           "id": "style_converted_vc",
           "route": "style_converted_vc",
           "target_text": "The converted voice follows the source content while adopting the requested style.",
-          "source_audio": "resources/vevo2_official_gallery/style_whisper2normal_input.wav",
-          "style_ref": "resources/vevo2_official_gallery/style_whisper2normal_ref.wav",
+          "source_audio": "assets/resources/vevo2_official_gallery/style_whisper2normal_input.wav",
+          "style_ref": "assets/resources/vevo2_official_gallery/style_whisper2normal_ref.wav",
           "style_ref_text": "This reference carries the converted vocal style.",
           "use_pitch_shift": false,
           "seed": 1234,
@@ -696,7 +696,7 @@
           "id": "editing",
           "route": "editing",
           "target_text": "Please replace the spoken phrase with this edited sentence.",
-          "source_audio": "resources/vevo2_official_gallery/editing_child_gen.wav",
+          "source_audio": "assets/resources/vevo2_official_gallery/editing_child_gen.wav",
           "style_ref_text": "This reference preserves the original speaker style.",
           "use_pitch_shift": false,
           "seed": 1234,
@@ -721,8 +721,8 @@
         {
           "id": "style_preserved_svc",
           "route": "style_preserved_svc",
-          "source_audio": "resources/vevo2_official_gallery/mj.wav",
-          "target_voice": "resources/vevo2_official_gallery/adele_raw.wav",
+          "source_audio": "assets/resources/vevo2_official_gallery/mj.wav",
+          "target_voice": "assets/resources/vevo2_official_gallery/adele_raw.wav",
           "use_pitch_shift": false,
           "seed": 1234,
           "num_inference_steps": 32
@@ -731,8 +731,8 @@
           "id": "style_converted_svc",
           "route": "style_converted_svc",
           "target_text": "A steady phrase follows the converted singing style.",
-          "source_audio": "resources/vevo2_official_gallery/style_singing_input.wav",
-          "style_ref": "resources/vevo2_official_gallery/style_singing_ref.wav",
+          "source_audio": "assets/resources/vevo2_official_gallery/style_singing_input.wav",
+          "style_ref": "assets/resources/vevo2_official_gallery/style_singing_ref.wav",
           "style_ref_text": "This reference carries the target singing style.",
           "use_pitch_shift": false,
           "seed": 1234,
@@ -745,8 +745,8 @@
           "id": "singing_style_conversion",
           "route": "singing_style_conversion",
           "target_text": "The same singer changes style while keeping the melody stable.",
-          "source_audio": "resources/vevo2_official_gallery/style_singing_input.wav",
-          "style_ref": "resources/vevo2_official_gallery/style_singing_ref.wav",
+          "source_audio": "assets/resources/vevo2_official_gallery/style_singing_input.wav",
+          "style_ref": "assets/resources/vevo2_official_gallery/style_singing_ref.wav",
           "style_ref_text": "This reference carries the target singing style.",
           "use_pitch_shift": false,
           "seed": 1234,
@@ -759,10 +759,10 @@
           "id": "humming_to_singing",
           "route": "humming_to_singing",
           "target_text": "The melody becomes a sung line with clear words.",
-          "prosody_ref": "resources/vevo2_official_gallery/humming_melody_ref.wav",
-          "style_ref": "resources/vevo2_official_gallery/taiyizhenren.wav",
+          "prosody_ref": "assets/resources/vevo2_official_gallery/humming_melody_ref.wav",
+          "style_ref": "assets/resources/vevo2_official_gallery/taiyizhenren.wav",
           "style_ref_text": "This reference carries the target singing voice.",
-          "target_voice": "resources/vevo2_official_gallery/taiyizhenren.wav",
+          "target_voice": "assets/resources/vevo2_official_gallery/taiyizhenren.wav",
           "use_pitch_shift": false,
           "seed": 1234,
           "temperature": 1.0,
@@ -774,10 +774,10 @@
           "id": "instrument_to_singing",
           "route": "instrument_to_singing",
           "target_text": "The piano melody becomes a sung line with matching phrasing.",
-          "prosody_ref": "resources/vevo2_official_gallery/piano_melody_ref.wav",
-          "style_ref": "resources/vevo2_official_gallery/taiyizhenren.wav",
+          "prosody_ref": "assets/resources/vevo2_official_gallery/piano_melody_ref.wav",
+          "style_ref": "assets/resources/vevo2_official_gallery/taiyizhenren.wav",
           "style_ref_text": "This reference carries the target singing voice.",
-          "target_voice": "resources/vevo2_official_gallery/taiyizhenren.wav",
+          "target_voice": "assets/resources/vevo2_official_gallery/taiyizhenren.wav",
           "use_pitch_shift": false,
           "seed": 1234,
           "temperature": 1.0,
@@ -833,7 +833,7 @@
           "id": "clone_long",
           "text": "OmniVoice should keep its reference speaker stable while generating a longer paragraph that exercises prompt building and audio tokenizer reuse.",
           "language": "en",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/resources/a.wav",
           "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
           "options": {
             "audio_chunk_duration": 15.0
@@ -883,21 +883,21 @@
         {
           "id": "long",
           "text": "The museum guide paused at the bronze clock so the children could hear its careful chime echo through the hall while visitors moved toward the river doors.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/resources/a.wav",
           "seed": 1234,
           "max_tokens": 160
         },
         {
           "id": "short",
           "text": "Rain taps softly on the glass roof.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/resources/a.wav",
           "seed": 1234,
           "max_tokens": 96
         },
         {
           "id": "long_again",
           "text": "Another longer request checks that PocketTTS keeps its session state stable after a shorter sentence and does not rebuild more than needed.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/resources/a.wav",
           "seed": 1234,
           "max_tokens": 160
         }
@@ -917,7 +917,7 @@
         {
           "id": "long",
           "text": "The studio lights clicked on before the first phrase began, and the cloned voice should stay steady through this medium length request.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/resources/a.wav",
           "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
           "seed": 1234,
           "max_tokens": 120,
@@ -938,7 +938,7 @@
       "requests": [
         {
           "id": "sample",
-          "audio": "resources/sample.wav",
+          "audio": "assets/resources/sample.wav",
           "language": "English",
           "text": "Transcribe the speech exactly. Preserve numeric values."
         }
@@ -960,7 +960,7 @@
       "requests": [
         {
           "id": "sample",
-          "audio": "resources/sample_16k.wav"
+          "audio": "assets/resources/sample_16k.wav"
         }
       ]
     },
@@ -981,7 +981,7 @@
       "requests": [
         {
           "id": "stream",
-          "audio": "resources/sample_16k.wav"
+          "audio": "assets/resources/sample_16k.wav"
         }
       ]
     },
@@ -998,7 +998,7 @@
       "requests": [
         {
           "id": "align",
-          "audio": "resources/sample.wav",
+          "audio": "assets/resources/sample.wav",
           "language": "English",
           "text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. Twenty-two thousand five hundred times longer than you."
         }
@@ -1017,7 +1017,7 @@
       "requests": [
         {
           "id": "sample",
-          "audio": "resources/a.wav"
+          "audio": "assets/resources/a.wav"
         }
       ]
     },
@@ -1035,7 +1035,7 @@
       "requests": [
         {
           "id": "stream",
-          "audio": "resources/sample_16k.wav"
+          "audio": "assets/resources/sample_16k.wav"
         }
       ]
     },
@@ -1052,7 +1052,7 @@
       "requests": [
         {
           "id": "sample",
-          "audio": "resources/sample_16k.wav"
+          "audio": "assets/resources/sample_16k.wav"
         }
       ]
     },
@@ -1069,7 +1069,7 @@
       "requests": [
         {
           "id": "sample",
-          "audio": "resources/sample_16k.wav"
+          "audio": "assets/resources/sample_16k.wav"
         }
       ]
     },
@@ -1086,7 +1086,7 @@
       "requests": [
         {
           "id": "long_180s",
-          "audio": "resources/mel_roformer_test_180s.wav"
+          "audio": "assets/resources/mel_roformer_test_180s.wav"
         }
       ]
     },
@@ -1103,7 +1103,7 @@
       "requests": [
         {
           "id": "vocal",
-          "audio": "resources/mel_roformer_test_15s.wav"
+          "audio": "assets/resources/mel_roformer_test_15s.wav"
         }
       ]
     }

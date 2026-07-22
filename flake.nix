@@ -66,6 +66,8 @@
       getBuildInputs = { pkgs, cudaSupport ? false, vulkanSupport ? false, metalSupport ? pkgs.stdenv.isDarwin, isShell ? false }:
         with pkgs; [
           (if isShell then mkPythonShell { inherit pkgs cudaSupport vulkanSupport; } else mkPython { inherit pkgs cudaSupport vulkanSupport; })
+        ] ++ pkgs.lib.optionals isShell [
+          openai-whisper
         ] ++ pkgs.lib.optionals vulkanSupport [
           vulkan-headers
           vulkan-loader

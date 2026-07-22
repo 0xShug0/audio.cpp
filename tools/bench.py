@@ -7,12 +7,13 @@ import json
 from pathlib import Path
 
 FAMILIES = [
-    "ace_step", "chatterbox", "citrinet_asr", "heartmula", "higgs_audio_stt", "higgs_tts",
-    "htdemucs", "hviske_asr", "index_tts2", "irodori_tts", "kokoro_tts", "marblenet_vad",
-    "mel_band_roformer", "miocodec", "miotts", "moss_tts_local", "moss_tts_nano", "nemotron_asr",
-    "omnivoice", "parakeet_tdt", "pocket_tts", "qwen3_asr", "qwen3_forced_aligner", "qwen3_tts",
-    "seed_vc", "silero_vad", "sortformer_diar", "stable_audio", "supertonic", "vevo2", "vibevoice",
-    "vibevoice_asr", "voxcpm2", "voxtral_realtime"
+    "kokoro", "pocket_tts", "qwen3_tts", "qwen3_tts_voice_design", "qwen3_tts_custom_voice",
+    "chatterbox", "omnivoice_voice_clone", "omnivoice_voice_design", "omnivoice_auto_voice",
+    "mel_band_roformer", "htdemucs", "moss_tts_nano", "moss_tts_local", "qwen3_asr",
+    "higgs_audio_stt", "hviske_asr", "nemotron_asr", "vibevoice_asr", "voxtral_realtime",
+    "qwen3_forced_aligner", "ace_step", "vevo2", "seed_vc", "miocodec", "voxcpm2",
+    "supertonic", "vibevoice", "irodori_tts", "heartmula", "higgs_tts", "index_tts2",
+    "parakeet", "sortformer", "citrinet_asr", "marblenet_vad", "silero_vad"
 ]
 
 BACKENDS = ["vulkan", "cuda", "cpu", "metal"]
@@ -130,21 +131,36 @@ def run_warmbench(args):
     cli_bin = get_cli_bin(args.platform, args.backend)
     cmd = [
         "python3", "tests/warmbench.py",
-        "--family", args.family,
         "--backend", args.backend,
         "--output-dir", "out",
         "--audiocpp-cli-bin", cli_bin,
     ]
+    for fam in args.family:
+        cmd.extend(["--family", fam])
+    if args.exclude_family:
+        for ef in args.exclude_family:
+            cmd.extend(["--exclude-family", ef])
     if args.baseline_bin:
         cmd.extend(["--baseline-audiocpp-cli-bin", args.baseline_bin])
     else:
         cmd.append("--skip-python")
+    env = os.environ.copy()
+    if getattr(args, "env", None):
+        for e in args.env:
+            if "=" in e:
+                k, v = e.split("=", 1)
+                env[k] = v
+            else:
+                env[e] = "1"
+    
     print(f"🚀 Running Warmbench: {' '.join(cmd)}")
     if not Path(cli_bin).exists():
         print(f"⚠️  WARNING: {cli_bin} not found. Did you run 'tools/bench.py setup' first?")
-    subprocess.run(cmd, check=False)
+    process = subprocess.run(cmd, env=env, check=False)
     if args.baseline_bin:
         generate_markdown_report("out/summary.json")
+    if process.returncode != 0:
+        sys.exit(process.returncode)
 
 def run_report(args):
     generate_markdown_report(args.summary_json)
@@ -166,10 +182,12 @@ def main():
 
     # Warmbench command
     warm_parser = subparsers.add_parser("warmbench", help="Run Throughput Benchmarks (Warmbench)")
-    warm_parser.add_argument("--family", choices=FAMILIES, required=True, help="Specific model family to test")
+    warm_parser.add_argument("--family", action="append", choices=FAMILIES + ["all"], required=True, help="Specific model family to test")
+    warm_parser.add_argument("--exclude-family", action="append", choices=FAMILIES, required=False, help="Exclude specific model family to test")
     warm_parser.add_argument("--platform", choices=PLATFORMS, default="linux", help="Target OS platform")
     warm_parser.add_argument("--backend", choices=BACKENDS, default="vulkan", help="Backend to use")
     warm_parser.add_argument("--baseline-bin", default="", help="Optional path to a baseline audiocpp_cli binary for A/B testing")
+    warm_parser.add_argument("--env", action="append", help="Set environment variables (e.g. --env GGML_VK_FORCE_INTEGER_DOT_PRODUCT=1)")
 
     # Report command
     report_parser = subparsers.add_parser("report", help="Generate a Markdown report from a summary.json file")

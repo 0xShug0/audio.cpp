@@ -1,11 +1,11 @@
 {
   "warmup": {
-    "audio": "resources/hviske_asr/danish_unified_02.wav",
+    "audio": "assets/resources/hviske_asr/danish_unified_02.wav",
     "language": "da"
   },
   "requests": [
     {
-      "audio": "resources/hviske_asr/danish_unified_00.wav",
+      "audio": "assets/resources/hviske_asr/danish_unified_00.wav",
       "language": "da",
       "punctuation": true,
       "expected_fragments": [
@@ -14,7 +14,7 @@
       ]
     },
     {
-      "audio": "resources/hviske_asr/danish_unified_01.wav",
+      "audio": "assets/resources/hviske_asr/danish_unified_01.wav",
       "language": "da",
       "punctuation": true,
       "expected_fragments": [
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "audio": "resources/hviske_asr/danish_unified_02.wav",
+      "audio": "assets/resources/hviske_asr/danish_unified_02.wav",
       "language": "da",
       "punctuation": true,
       "expected_fragments": [
@@ -32,7 +32,7 @@
       ]
     },
     {
-      "audio": "resources/hviske_asr/danish_unified_00.wav",
+      "audio": "assets/resources/hviske_asr/danish_unified_00.wav",
       "language": "da",
       "punctuation": true,
       "num_beams": 5,
