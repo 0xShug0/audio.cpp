@@ -216,6 +216,13 @@ Multiple GPU targets (for distribution):
 -DGPU_TARGETS="gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151"
 ```
 
+**iGPU vs discrete GPU (Linux):**
+
+- **Discrete GPU (gfx1100/1101/1102, gfx1200/1201):** the defaults are fine. `ENGINE_ENABLE_CUDA_GRAPHS` is ON by default and dGPUs have the VRAM headroom for it. Optionally add `-DGGML_HIP_NO_VMM=OFF` — HIP VMM works on Linux dGPUs and improves ggml's memory-pool reuse under varying shapes.
+- **iGPU (gfx1103 780M, gfx1150, gfx1151):** add `-DENGINE_ENABLE_CUDA_GRAPHS=OFF` if you see `out of memory` during graph warmup — each cached graph reserves its own buffers out of shared system memory (see Known Limitations). Keep `GGML_HIP_NO_VMM=ON` (the default).
+- **gfx1103 note:** with the default hipBLASLt GEMM path, no `HSA_OVERRIDE_GFX_VERSION=11.0.0` is needed. That override is only required if you force the legacy rocBLAS path with `-DGGML_HIP_HIPBLASLT=OFF`.
+- **rocWMMA fattn** (`GGML_HIP_ROCWMMA_FATTN`): keep OFF on both — the default `fattn-tile` kernels are faster on RDNA3/RDNA4.
+
 ### Windows
 
 > **hipBLASLt GEMM (default):** HIP builds use hipBLASLt instead of hipBLAS (rocBLAS) for all cuBLAS-equivalent GEMM calls. hipBLASLt ships Tensile kernels for more GPU architectures than rocBLAS on Windows — notably **gfx1103 (Radeon 780M) works**, even though rocBLAS has no gfx1103 library. Disable with `-DGGML_HIP_HIPBLASLT=OFF` to fall back to hipBLAS.
@@ -256,6 +263,22 @@ cmake --build build/hip
 ```
 
 The resulting binaries need the ROCm `bin` directory on `PATH` at runtime (for `amdhip64_6.dll`, `hipblas.dll`, `hipblaslt.dll`, ...).
+
+**iGPU vs discrete GPU:**
+
+The script defaults are tuned for memory-constrained iGPUs (780M, Strix Point/Halo). On a discrete GPU (gfx1100/1101/1102, gfx1200/1201) adjust the following:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_hip.ps1 `
+  -GpuTargets gfx1100 `   # your dGPU arch; see the support matrix below
+  -Graphs `               # re-enable CUDA graphs: dGPUs have VRAM headroom, avoids per-request graph rebuild overhead
+  -WithVmm                # optional: HIP VMM improves ggml memory-pool reuse; keep OFF on iGPUs
+```
+
+- **CUDA graphs** (`-Graphs`): each cached graph reserves its own VRAM buffers. Fine on a dGPU with 8+ GB; on UMA iGPUs it can exhaust shared memory during warmup (see Known Limitations).
+- **VMM** (`-WithVmm`): with `GGML_HIP_NO_VMM=ON` (the default) ggml's memory pool reuses less, which costs performance under varying shapes. It is required on Windows iGPUs but generally works on dGPUs.
+- **hipBLASLt**: keep the default ON. Unlike gfx1103, rocBLAS does ship Tensile kernels for the dGPU arches on Windows, so `-NoHipblasLt` is viable there — but there is no performance reason to prefer it.
+- **rocWMMA fattn**: stays OFF on dGPUs too; the default `fattn-tile` kernels are the faster path on RDNA3/RDNA4.
 
 > **Legacy workaround (pre-hipBLASLt):** `-DGGML_CUDA_FORCE_MMQ=ON` bypasses BLAS for *quantized* matmul only; FP16/FP32 GEMM still required rocBLAS and failed on gfx1103. Renaming rocBLAS `gfx1100` Tensile files to `gfx1103` segfaults with ROCm 6.4 on Windows — do not use. hipBLASLt is the supported path.
 
@@ -313,7 +336,7 @@ The following locations check `BackendType::Cuda` specifically and will not appl
 
 ### CUDA graphs on iGPUs / limited VRAM
 
-`ENGINE_ENABLE_CUDA_GRAPHS` defaults to ON (inherited from the CUDA build), but every cached graph reserves its own VRAM buffers. On memory-constrained GPUs (notably UMA iGPUs like the 780M, where `GGML_HIP_NO_VMM` also reduces ggml's memory-pool reuse), a burst of new shapes (e.g. the second inference request) can exhaust VRAM with `cudaMalloc failed: out of memory` during graph warmup. `scripts/build_windows_hip.ps1` therefore builds with `-DENGINE_ENABLE_CUDA_GRAPHS=OFF` by default; pass `-Graphs` to re-enable on discrete GPUs with headroom.
+`ENGINE_ENABLE_CUDA_GRAPHS` defaults to ON (inherited from the CUDA build), but every cached graph reserves its own VRAM buffers. On memory-constrained GPUs (notably UMA iGPUs like the 780M, where `GGML_HIP_NO_VMM` also reduces ggml's memory-pool reuse), a burst of new shapes (e.g. the second inference request) can exhaust VRAM with `cudaMalloc failed: out of memory` during graph warmup. `scripts/build_windows_hip.ps1` therefore builds with `-DENGINE_ENABLE_CUDA_GRAPHS=OFF` by default; pass `-Graphs` to re-enable on discrete GPUs with headroom (recommended there — it removes per-request graph rebuild overhead).
 
 ### audio.cpp CUDA-specific `.cu` files
 
