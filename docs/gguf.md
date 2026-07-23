@@ -102,6 +102,12 @@ Q8 packaging notes:
   tensors in Q8 in addition to the default converter selection. `conditioner.embed`,
   `cond_embed`, and Mimi conv tensors are not forced to Q8 because tested outputs
   drifted or the current conv path casts quantized conv weights back to F32.
+- `qwen3_tts` Q8 should keep speaker-sensitive components in their original
+  16-bit type. The tested Base Q8 package quantizes the talker transformer and
+  projections, talker code-predictor heads, and speech-tokenizer encoder/decoder
+  projection or linear weights, while leaving the speaker encoder, lookup, and
+  codebook-sensitive tensors unquantized. Quantizing those speaker-side tensors
+  can produce long-form quality problems such as large silence.
 
 ## Build The Converter
 
@@ -303,3 +309,6 @@ Compatibility with older binaries:
 Quantized GGUF support is model- and route-specific. A model may load successfully but
 still drift in length, waveform similarity, or recognized text, so validate the exact
 route you plan to ship.
+
+For measured 16-bit vs Q8 speed and peak VRAM results, see
+[GGUF Q8 performance](reports/gguf_q8_performance.md).

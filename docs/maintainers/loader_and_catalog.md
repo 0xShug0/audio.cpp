@@ -19,7 +19,7 @@ For every **installable, standalone** `ModelPackage`:
 | `ModelPackage.family` | The loader family string advertised by the C++ loader |
 | `model_specs/<family>.json` | Present when the family uses package-spec loading |
 | `registry.cpp` entry | Uncommented `make_<family>_loader()` (or the family's actual factory name) |
-| README package table | Lists the package; use **Unavailable** when not installable |
+| `docs/model_manager.md` package table | Lists the package; use **Unavailable** when not installable |
 
 Dependency / subcomponent packages (`standalone=False`, with
 `parent_package_id`) do **not** need their own loader.
@@ -33,7 +33,7 @@ If a loader is not ready for this release tree:
 1. Keep it **commented out** in `src/framework/runtime/registry.cpp`, and
 2. Mark matching catalog packages as `UnsupportedSource(reason=...)`, **or**
    remove them from `CATALOG`, and
-3. Mark the README package row **Unavailable**.
+3. Mark the `docs/model_manager.md` package row **Unavailable**.
 
 Do **not** leave a live `SnapshotSource` for a commented-out loader.
 
@@ -97,7 +97,7 @@ builds. It:
 
 - Parses active vs commented `make_*_loader()` calls in `registry.cpp`
 - Compares them to installable standalone packages from `model_manager.py`
-- Cross-checks the README recommended package table
+- Cross-checks the `docs/model_manager.md` recommended package table
 - Does **not** require a compiled binary
 
 ```bash
