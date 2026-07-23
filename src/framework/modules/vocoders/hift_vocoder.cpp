@@ -41,6 +41,31 @@ int64_t tensor_elements(const std::vector<int64_t> & shape) {
     });
 }
 
+std::string tensor_name(const HiftVocoderConfig & config, const std::string & name) {
+    return config.tensor_prefix + name;
+}
+
+std::vector<float> fold_weight_norm(
+    const std::vector<float> & g,
+    const std::vector<float> & v,
+    int64_t leading,
+    int64_t inner_size) {
+    std::vector<float> weight(v.size(), 0.0F);
+    for (int64_t row = 0; row < leading; ++row) {
+        double norm = 0.0;
+        for (int64_t col = 0; col < inner_size; ++col) {
+            const float value = v[static_cast<size_t>(row * inner_size + col)];
+            norm += static_cast<double>(value) * static_cast<double>(value);
+        }
+        const float scale = g[static_cast<size_t>(row)] / std::sqrt(static_cast<float>(norm) + 1.0e-12F);
+        for (int64_t col = 0; col < inner_size; ++col) {
+            weight[static_cast<size_t>(row * inner_size + col)] =
+                v[static_cast<size_t>(row * inner_size + col)] * scale;
+        }
+    }
+    return weight;
+}
+
 void validate_config(const HiftVocoderConfig & config) {
     if (config.in_channels <= 0 || config.base_channels <= 0 || config.nb_harmonics < 0 ||
         config.sampling_rate <= 0 || config.istft_n_fft <= 0 || config.istft_hop <= 0 ||
@@ -67,6 +92,7 @@ void validate_config(const HiftVocoderConfig & config) {
 Conv1dWeights load_conv1d(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
+    const HiftVocoderConfig & config,
     const std::string & prefix,
     int64_t out_channels,
     int64_t in_channels,
@@ -75,8 +101,8 @@ Conv1dWeights load_conv1d(
     int64_t padding,
     int64_t dilation,
     bool use_bias,
-    assets::TensorStorageType storage_type) {
-    (void) storage_type;
+    assets::TensorStorageType storage_type,
+    bool use_weight_norm) {
     Conv1dWeights conv;
     conv.out_channels = out_channels;
     conv.in_channels = in_channels;
@@ -85,13 +111,23 @@ Conv1dWeights load_conv1d(
     conv.padding = padding;
     conv.dilation = dilation;
     conv.use_bias = use_bias;
-    conv.weight = source.require_f32(prefix + ".weight", {out_channels, in_channels, kernel});
+    if (use_weight_norm) {
+        const auto g = source.require_f32(
+            tensor_name(config, prefix + ".parametrizations.weight.original0"),
+            {out_channels, 1, 1});
+        const auto v = source.require_f32(
+            tensor_name(config, prefix + ".parametrizations.weight.original1"),
+            {out_channels, in_channels, kernel});
+        conv.weight = fold_weight_norm(g, v, out_channels, in_channels * kernel);
+    } else {
+        conv.weight = source.require_f32(tensor_name(config, prefix + ".weight"), {out_channels, in_channels, kernel});
+    }
     conv.weight_tensor = store.make_from_f32(
         core::TensorShape::from_dims({out_channels, in_channels, kernel}),
-        assets::TensorStorageType::F32,
+        storage_type,
         conv.weight);
     if (use_bias) {
-        conv.bias = source.require_f32(prefix + ".bias", {out_channels});
+        conv.bias = source.require_f32(tensor_name(config, prefix + ".bias"), {out_channels});
         conv.bias_tensor = store.make_from_f32(core::TensorShape::from_dims({out_channels}), assets::TensorStorageType::F32, conv.bias);
     }
     return conv;
@@ -100,6 +136,7 @@ Conv1dWeights load_conv1d(
 ConvTranspose1dWeights load_conv_transpose1d(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
+    const HiftVocoderConfig & config,
     const std::string & prefix,
     int64_t in_channels,
     int64_t out_channels,
@@ -107,8 +144,8 @@ ConvTranspose1dWeights load_conv_transpose1d(
     int64_t stride,
     int64_t padding,
     bool use_bias,
-    assets::TensorStorageType storage_type) {
-    (void) storage_type;
+    assets::TensorStorageType storage_type,
+    bool use_weight_norm) {
     ConvTranspose1dWeights conv;
     conv.in_channels = in_channels;
     conv.out_channels = out_channels;
@@ -116,13 +153,23 @@ ConvTranspose1dWeights load_conv_transpose1d(
     conv.stride = stride;
     conv.padding = padding;
     conv.use_bias = use_bias;
-    conv.weight = source.require_f32(prefix + ".weight", {in_channels, out_channels, kernel});
+    if (use_weight_norm) {
+        const auto g = source.require_f32(
+            tensor_name(config, prefix + ".parametrizations.weight.original0"),
+            {in_channels, 1, 1});
+        const auto v = source.require_f32(
+            tensor_name(config, prefix + ".parametrizations.weight.original1"),
+            {in_channels, out_channels, kernel});
+        conv.weight = fold_weight_norm(g, v, in_channels, out_channels * kernel);
+    } else {
+        conv.weight = source.require_f32(tensor_name(config, prefix + ".weight"), {in_channels, out_channels, kernel});
+    }
     conv.weight_tensor = store.make_from_f32(
         core::TensorShape::from_dims({in_channels, out_channels, kernel}),
-        assets::TensorStorageType::F32,
+        storage_type,
         conv.weight);
     if (use_bias) {
-        conv.bias = source.require_f32(prefix + ".bias", {out_channels});
+        conv.bias = source.require_f32(tensor_name(config, prefix + ".bias"), {out_channels});
         conv.bias_tensor = store.make_from_f32(core::TensorShape::from_dims({out_channels}), assets::TensorStorageType::F32, conv.bias);
     }
     return conv;
@@ -131,23 +178,23 @@ ConvTranspose1dWeights load_conv_transpose1d(
 LinearWeights load_linear(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
+    const HiftVocoderConfig & config,
     const std::string & prefix,
     int64_t out_features,
     int64_t in_features,
     bool use_bias,
     assets::TensorStorageType storage_type) {
-    (void) storage_type;
     LinearWeights linear;
     linear.out_features = out_features;
     linear.in_features = in_features;
     linear.use_bias = use_bias;
-    linear.weight = source.require_f32(prefix + ".weight", {out_features, in_features});
+    linear.weight = source.require_f32(tensor_name(config, prefix + ".weight"), {out_features, in_features});
     linear.weight_tensor = store.make_from_f32(
         core::TensorShape::from_dims({out_features, in_features}),
-        assets::TensorStorageType::F32,
+        storage_type,
         linear.weight);
     if (use_bias) {
-        linear.bias = source.require_f32(prefix + ".bias", {out_features});
+        linear.bias = source.require_f32(tensor_name(config, prefix + ".bias"), {out_features});
         linear.bias_tensor = store.make_from_f32(core::TensorShape::from_dims({out_features}), assets::TensorStorageType::F32, linear.bias);
     }
     return linear;
@@ -156,12 +203,13 @@ LinearWeights load_linear(
 SnakeWeights load_snake(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
+    const HiftVocoderConfig & config,
     const std::string & name,
     int64_t channels,
     assets::TensorStorageType storage_type) {
     (void) storage_type;
     SnakeWeights snake;
-    snake.alpha = source.require_f32(name, {channels});
+    snake.alpha = source.require_f32(tensor_name(config, name), {channels});
     std::vector<float> inv_alpha(snake.alpha.size(), 0.0F);
     for (size_t index = 0; index < snake.alpha.size(); ++index) {
         inv_alpha[index] = 1.0F / (snake.alpha[index] + 1.0e-9F);
@@ -175,6 +223,7 @@ SnakeWeights load_snake(
 ResBlockWeights load_resblock(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
+    const HiftVocoderConfig & config,
     const std::string & prefix,
     int64_t channels,
     int64_t kernel,
@@ -190,6 +239,7 @@ ResBlockWeights load_resblock(
         block.convs1.push_back(load_conv1d(
             store,
             source,
+            config,
             prefix + ".convs1." + std::to_string(index),
             channels,
             channels,
@@ -198,10 +248,12 @@ ResBlockWeights load_resblock(
             (kernel * dilation - dilation) / 2,
             dilation,
             true,
-            storage_type));
+            storage_type,
+            config.weight_layout == HiftVocoderWeightLayout::TorchParametrizedWeightNorm));
         block.convs2.push_back(load_conv1d(
             store,
             source,
+            config,
             prefix + ".convs2." + std::to_string(index),
             channels,
             channels,
@@ -210,16 +262,19 @@ ResBlockWeights load_resblock(
             (kernel - 1) / 2,
             1,
             true,
-            storage_type));
+            storage_type,
+            config.weight_layout == HiftVocoderWeightLayout::TorchParametrizedWeightNorm));
         block.activations1.push_back(load_snake(
             store,
             source,
+            config,
             prefix + ".activations1." + std::to_string(index) + ".alpha",
             channels,
             storage_type));
         block.activations2.push_back(load_snake(
             store,
             source,
+            config,
             prefix + ".activations2." + std::to_string(index) + ".alpha",
             channels,
             storage_type));
@@ -796,14 +851,27 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
         768ull * 1024ull * 1024ull);
 
     for (const auto & tensor : source->tensors()) {
+        if (!weights->config.tensor_prefix.empty() &&
+            tensor.name.rfind(weights->config.tensor_prefix, 0) != 0) {
+            continue;
+        }
         weights->parameter_count += tensor_elements(tensor.shape);
         ++weights->loaded_tensor_count;
     }
+
+    const bool use_weight_norm = weights->config.weight_layout == HiftVocoderWeightLayout::TorchParametrizedWeightNorm;
+    const auto conv_storage_type = use_weight_norm
+        ? weights->config.weight_storage_type
+        : assets::TensorStorageType::F32;
+    const auto linear_storage_type = use_weight_norm
+        ? weights->config.weight_storage_type
+        : assets::TensorStorageType::F32;
 
     for (int index = 0; index < 5; ++index) {
         weights->f0_predictor.condnet.push_back(load_conv1d(
             *weights->store,
             *source,
+            weights->config,
             "f0_predictor.condnet." + std::to_string(index * 2),
             weights->config.f0_cond_channels,
             index == 0 ? weights->config.f0_in_channels : weights->config.f0_cond_channels,
@@ -812,20 +880,23 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
             1,
             1,
             true,
-            weights->config.weight_storage_type));
+            conv_storage_type,
+            use_weight_norm));
     }
     weights->f0_predictor.classifier = load_linear(
         *weights->store,
         *source,
+        weights->config,
         "f0_predictor.classifier",
         weights->config.f0_num_class,
         weights->config.f0_cond_channels,
         true,
-        weights->config.weight_storage_type);
+        assets::TensorStorageType::F32);
 
     weights->conv_pre = load_conv1d(
         *weights->store,
         *source,
+        weights->config,
         "conv_pre",
         weights->config.base_channels,
         weights->config.in_channels,
@@ -834,7 +905,8 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
         3,
         1,
         true,
-        weights->config.weight_storage_type);
+        conv_storage_type,
+        use_weight_norm);
 
     const int64_t upsample_count = static_cast<int64_t>(weights->config.upsample_rates.size());
     weights->ups.reserve(static_cast<size_t>(upsample_count));
@@ -865,6 +937,7 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
         weights->ups.push_back(load_conv_transpose1d(
             *weights->store,
             *source,
+            weights->config,
             "ups." + std::to_string(up_index),
             in_channels,
             out_channels,
@@ -872,7 +945,8 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
             stride,
             (kernel - stride) / 2,
             true,
-            weights->config.weight_storage_type));
+            assets::TensorStorageType::F32,
+            use_weight_norm));
 
         const int64_t source_stride = downsample_cum[static_cast<size_t>(up_index)];
         const int64_t source_kernel = source_stride == 1 ? 1 : source_stride * 2;
@@ -880,6 +954,7 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
         weights->source_downs.push_back(load_conv1d(
             *weights->store,
             *source,
+            weights->config,
             "source_downs." + std::to_string(up_index),
             out_channels,
             kHiftStftChannels,
@@ -888,27 +963,30 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
             source_padding,
             1,
             true,
-            weights->config.weight_storage_type));
+            conv_storage_type,
+            false));
 
         weights->source_resblocks.push_back(load_resblock(
             *weights->store,
             *source,
+            weights->config,
             "source_resblocks." + std::to_string(up_index),
             out_channels,
             weights->config.source_resblock_kernel_sizes[static_cast<size_t>(up_index)],
             weights->config.source_resblock_dilation_sizes[static_cast<size_t>(up_index)],
-            weights->config.weight_storage_type));
+            conv_storage_type));
 
         for (int64_t kernel_index = 0; kernel_index < num_kernels; ++kernel_index) {
             const int64_t block_index = up_index * num_kernels + kernel_index;
             weights->resblocks.push_back(load_resblock(
                 *weights->store,
                 *source,
+                weights->config,
                 "resblocks." + std::to_string(block_index),
                 out_channels,
                 weights->config.resblock_kernel_sizes[static_cast<size_t>(kernel_index)],
                 weights->config.resblock_dilation_sizes[static_cast<size_t>(kernel_index)],
-                weights->config.weight_storage_type));
+                conv_storage_type));
         }
     }
 
@@ -916,6 +994,7 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
     weights->conv_post = load_conv1d(
         *weights->store,
         *source,
+        weights->config,
         "conv_post",
         kHiftStftChannels,
         post_channels,
@@ -924,15 +1003,17 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
         3,
         1,
         true,
-        weights->config.weight_storage_type);
+        conv_storage_type,
+        use_weight_norm);
     weights->source_linear = load_linear(
         *weights->store,
         *source,
+        weights->config,
         "m_source.l_linear",
         1,
         weights->config.nb_harmonics + 1,
         true,
-        weights->config.weight_storage_type);
+        linear_storage_type);
 
     weights->store->upload();
     source->release_storage();

@@ -177,7 +177,7 @@ private:
 class HiFTVocoderComponent {
 public:
     static HiFTVocoderComponent load_from_source(
-        const engine::assets::TensorSource & source,
+        std::shared_ptr<const engine::assets::TensorSource> source,
         const engine::core::ExecutionContext & execution_context,
         engine::assets::TensorStorageType weight_storage_type = engine::assets::TensorStorageType::Native);
 

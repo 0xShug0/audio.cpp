@@ -182,7 +182,7 @@ std::unique_ptr<ChatterboxTtsComponent> make_chatterbox_component_for_language(
         execution_context,
         component_weight_storage_type);
     auto hift = HiFTVocoderComponent::load_from_source(
-        *assets.s3gen_weights,
+        assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);
     auto campplus_encoder = CAMPPlusEncoderComponent::load_from_source(
@@ -223,7 +223,7 @@ std::unique_ptr<ChatterboxVcComponent> make_chatterbox_vc_component(
         execution_context,
         component_weight_storage_type);
     auto hift = HiFTVocoderComponent::load_from_source(
-        *assets.s3gen_weights,
+        assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);
     auto campplus_encoder = CAMPPlusEncoderComponent::load_from_source(

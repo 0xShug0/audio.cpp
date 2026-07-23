@@ -15,6 +15,11 @@
 
 namespace engine::modules {
 
+enum class HiftVocoderWeightLayout {
+    Canonical,
+    TorchParametrizedWeightNorm,
+};
+
 struct HiftVocoderConfig {
     int64_t in_channels = 0;
     int64_t base_channels = 0;
@@ -37,6 +42,8 @@ struct HiftVocoderConfig {
     int64_t f0_in_channels = 0;
     int64_t f0_cond_channels = 0;
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
+    std::string tensor_prefix;
+    HiftVocoderWeightLayout weight_layout = HiftVocoderWeightLayout::Canonical;
 };
 
 struct HiftVocoderWeights {
