@@ -4,7 +4,6 @@
 
 #include "ggml.h"
 #include "ggml-backend.h"
-#include "ggml-cpu.h"
 
 #include <cstdint>
 #include <string>
@@ -48,13 +47,18 @@ ggml_status compute_backend_graph(
     const char * label = nullptr);
 
 struct HostGraphPlan {
-    ggml_cplan plan = {};
-    std::vector<uint8_t> work_buffer;
+    ggml_backend_graph_plan_t plan = nullptr;
+    ggml_backend_t backend = nullptr;
 
-    bool active() const noexcept { return plan.n_threads > 0; }
+    ~HostGraphPlan() { reset(); }
+
+    bool active() const noexcept { return plan != nullptr; }
     void reset() {
-        plan = {};
-        work_buffer.clear();
+        if (plan != nullptr && backend != nullptr) {
+            ggml_backend_graph_plan_free(backend, plan);
+        }
+        plan = nullptr;
+        backend = nullptr;
     }
 };
 

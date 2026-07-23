@@ -17,7 +17,6 @@ ARG BASE_CUDA_RUN_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu
 FROM ${BASE_CUDA_DEV_CONTAINER} AS build
 
 ARG GCC_VERSION=14
-ARG ENGINE_ENABLE_NATIVE_CPU=ON
 
 # Install build toolchain
 RUN apt-get update && \
@@ -34,21 +33,26 @@ COPY . .
 # Configure and build
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
+        -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \
         -DENGINE_ENABLE_CUDA=ON \
         -DENGINE_ENABLE_CUDA_GRAPHS=ON \
         -DENGINE_ENABLE_VULKAN=OFF \
         -DENGINE_ENABLE_OPENMP=ON \
-        -DENGINE_ENABLE_NATIVE_CPU=$ENGINE_ENABLE_NATIVE_CPU \
         -DENGINE_BUILD_EXAMPLES=OFF \
         -DENGINE_BUILD_TESTS=OFF \
-        -DENGINE_BUILD_WARMBENCH=OFF && \
+        -DENGINE_BUILD_WARMBENCH=OFF \
+        -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined && \
     cmake --build build --parallel $(nproc) \
         --target audiocpp_cli \
         --target audiocpp_server \
         --target model_perf \
         --target miocodec_wavlm_parity
 
-# Collect all binaries + multiplexer into /app/full
+# Collect shared libraries
+RUN mkdir -p /app/lib && \
+    find build -name "*.so*" -exec cp -P {} /app/lib \;
+
+# Collect binaries + multiplexer into /app/full
 RUN mkdir -p /app/full && \
     cp build/bin/audiocpp_cli build/bin/audiocpp_server \
        build/bin/model_perf build/bin/miocodec_wavlm_parity /app/full/ && \
@@ -81,6 +85,8 @@ RUN apt-get update && \
     rm -rf /tmp/* /var/tmp/* && \
     find /var/cache/apt/archives /var/lib/apt/lists -not -name lock -type f -delete && \
     find /var/cache -type f -delete
+
+COPY --from=build /app/lib/ /app
 
 WORKDIR /app
 
