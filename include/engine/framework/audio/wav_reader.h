@@ -16,5 +16,6 @@ struct WavData {
 WavData read_wav_f32(std::istream & input);
 WavData read_wav_f32(std::string_view input);
 WavData read_wav_f32(const std::filesystem::path & path);
+inline WavData read_wav_f32(const std::string & path) { return read_wav_f32(std::filesystem::path(path)); }
 
 }  // namespace engine::audio
