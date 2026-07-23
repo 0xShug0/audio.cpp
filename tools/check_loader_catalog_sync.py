@@ -19,7 +19,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = REPO_ROOT / "src" / "framework" / "runtime" / "registry.cpp"
 MODEL_MANAGER_PATH = REPO_ROOT / "tools" / "model_manager.py"
-README_PATH = REPO_ROOT / "README.md"
+PACKAGE_TABLE_PATH = REPO_ROOT / "docs" / "model_manager.md"
 
 _LOADER_CALL_RE = re.compile(r"\bmake_([a-z0-9_]+)_loader\s*\(\s*\)")
 
@@ -30,6 +30,7 @@ PARKED_FAMILY_ALIASES: dict[str, set[str]] = {
 
 # Registered loaders that intentionally have no installable ModelPackage.
 BUNDLED_LOADERS_WITHOUT_PACKAGE: set[str] = {
+    "marblenet_vad",
     "silero_vad",
 }
 
@@ -76,11 +77,11 @@ def parked_hint(family: str, commented: set[str]) -> str:
     return ""
 
 
-def parse_readme_package_table(readme_text: str) -> dict[str, str]:
+def parse_package_table(table_text: str) -> dict[str, str]:
     """Map package id -> status cell from the recommended install table."""
     match = re.search(
         r"\| Package id \| Model \| HF ready-to-use repo \|\n\|[^\n]+\n((?:\|.*\n)+)",
-        readme_text,
+        table_text,
     )
     if not match:
         return {}
@@ -185,17 +186,17 @@ def check_catalog(
     return errors, warnings
 
 
-def check_readme(
+def check_package_table_doc(
     *,
-    readme_text: str,
+    table_text: str,
     packages: list,
     package_payload,
 ) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
-    table = parse_readme_package_table(readme_text)
+    table = parse_package_table(table_text)
     if not table:
-        errors.append("README.md: could not parse recommended package table")
+        errors.append("docs/model_manager.md: could not parse recommended package table")
         return errors, warnings
 
     catalog_by_id = {}
@@ -206,17 +207,17 @@ def check_readme(
     for package_id, status in sorted(table.items()):
         payload = catalog_by_id.get(package_id)
         if payload is None:
-            errors.append(f"README.md: package `{package_id}` not in model_manager CATALOG")
+            errors.append(f"docs/model_manager.md: package `{package_id}` not in model_manager CATALOG")
             continue
         installable = bool(payload.get("installable"))
         unavailable = "unavailable" in status.lower()
         if unavailable and installable:
             errors.append(
-                f"README.md: `{package_id}` marked Unavailable but catalog is installable"
+                f"docs/model_manager.md: `{package_id}` marked Unavailable but catalog is installable"
             )
         if not unavailable and not installable:
             errors.append(
-                f"README.md: `{package_id}` looks installable in the table but catalog "
+                f"docs/model_manager.md: `{package_id}` looks installable in the table but catalog "
                 "is UnsupportedSource — mark Unavailable or restore a source"
             )
 
@@ -225,7 +226,7 @@ def check_readme(
             continue
         if package_id not in table:
             errors.append(
-                f"README.md: installable standalone package `{package_id}` missing "
+                f"docs/model_manager.md: installable standalone package `{package_id}` missing "
                 "from recommended package table"
             )
 
@@ -282,7 +283,7 @@ def main() -> int:
     parser.add_argument(
         "--skip-readme",
         action="store_true",
-        help="Skip README package-table cross-check",
+        help="Skip package-table cross-check",
     )
     parser.add_argument(
         "--self-test",
@@ -320,16 +321,16 @@ def main() -> int:
     )
 
     if not args.skip_readme:
-        if not README_PATH.is_file():
-            errors.append(f"README.md not found: {README_PATH}")
+        if not PACKAGE_TABLE_PATH.is_file():
+            errors.append(f"package table doc not found: {PACKAGE_TABLE_PATH}")
         else:
-            readme_errors, readme_warnings = check_readme(
-                readme_text=README_PATH.read_text(encoding="utf-8"),
+            table_errors, table_warnings = check_package_table_doc(
+                table_text=PACKAGE_TABLE_PATH.read_text(encoding="utf-8"),
                 packages=list(mm.CATALOG),
                 package_payload=mm.package_payload,
             )
-            errors.extend(readme_errors)
-            warnings.extend(readme_warnings)
+            errors.extend(table_errors)
+            warnings.extend(table_warnings)
 
     print(
         f"active_loaders={len(active)} commented_loaders={len(commented)} "
@@ -343,7 +344,7 @@ def main() -> int:
             print(f"  - {error}", file=sys.stderr)
         print(
             "\nFix: register the loader in registry.cpp (with sources in-tree), "
-            "or mark the package UnsupportedSource / update README. See "
+            "or mark the package UnsupportedSource / update docs/model_manager.md. See "
             "docs/maintainers/loader_and_catalog.md",
             file=sys.stderr,
         )

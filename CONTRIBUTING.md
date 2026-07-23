@@ -39,7 +39,9 @@ Good follow-up work for existing model families includes:
 
 ## New Model PRs
 
-New model PRs should include enough evidence for maintainers and users to understand exactly what was tested. Follow the validation style shown in [PR #19](https://github.com/0xShug0/audio.cpp/pull/19).
+New standalone model ports should normally start under `community_models/`. This keeps ownership clear and lets useful model ports land with a lighter review bar than core framework models. Models can graduate into the core model tree later after they are validated, polished, and maintained as part of the main release surface.
+
+Even for community models, PRs should include enough evidence for maintainers and users to understand exactly what was tested. Follow the validation style shown in [PR #19](https://github.com/0xShug0/audio.cpp/pull/19) and [PR #63](https://github.com/0xShug0/audio.cpp/pull/63).
 
 Please include:
 
@@ -51,6 +53,8 @@ Please include:
 - Backend tested, such as CPU, CUDA, Vulkan, or Metal
 - Relevant timing, RTF, RSS, VRAM, or resident-memory notes
 - Known limitations
+
+For TTS-style community models, the most useful validation includes a long-lived session with multiple requests, a long-form request through the framework text chunker, cache/graph reuse logs when relevant, and peak VRAM under repeated requests. These measurements do not need to be perfect on the first PR, but they make review much faster and help avoid a large cleanup pass after merge.
 
 For models with Python references, include parity evidence when practical. For models without a clean reference path, include reproducible generated outputs and enough setup detail for another contributor to repeat the run.
 
@@ -80,6 +84,7 @@ audio.cpp is moving faster because people keep showing up with real fixes, caref
 - [@lapy](https://github.com/lapy) for the machine-readable loader/package catalog exports and the loader-catalog sync checks that keep package metadata honest in [#74](https://github.com/0xShug0/audio.cpp/pull/74) and [#86](https://github.com/0xShug0/audio.cpp/pull/86).
 - [@fedeizzo](https://github.com/fedeizzo) for the cross-platform Nix flake and follow-up Nix documentation polish in [#82](https://github.com/0xShug0/audio.cpp/pull/82) and [#83](https://github.com/0xShug0/audio.cpp/pull/83).
 - [@phuocnguyen90](https://github.com/phuocnguyen90) for bringing VieNeu-TTS v3 Turbo into the community model surface in [#80](https://github.com/0xShug0/audio.cpp/pull/80).
+- [@mosujiba](https://github.com/mosujiba) for adding configurable CORS handling to the server path in [#85](https://github.com/0xShug0/audio.cpp/pull/85).
 - [@adambenhassen](https://github.com/adambenhassen) for PocketTTS runtime fixes and upstream-aligned English defaults in [#76](https://github.com/0xShug0/audio.cpp/pull/76) and [#77](https://github.com/0xShug0/audio.cpp/pull/77).
 - [@vicenteliu](https://github.com/vicenteliu) for hardening the server against client disconnects by ignoring `SIGPIPE` in [#78](https://github.com/0xShug0/audio.cpp/pull/78).
 - [@Cr4xy](https://github.com/Cr4xy) for improving multipart upload handling and removing temporary-file writes from that path in [#61](https://github.com/0xShug0/audio.cpp/pull/61).
@@ -87,4 +92,4 @@ audio.cpp is moving faster because people keep showing up with real fixes, caref
 - [@xashr](https://github.com/xashr) for Dockerfiles, Docker examples, Docker documentation, and CI workflow polish in [#30](https://github.com/0xShug0/audio.cpp/pull/30), [#51](https://github.com/0xShug0/audio.cpp/pull/51), and [#81](https://github.com/0xShug0/audio.cpp/pull/81).
 - [@5uck1ess](https://github.com/5uck1ess) for improving Citrinet CTC decoding through the SentencePiece model in [#49](https://github.com/0xShug0/audio.cpp/pull/49).
 - [@dkruyt](https://github.com/dkruyt) for the first multipart transcription upload support in [#25](https://github.com/0xShug0/audio.cpp/pull/25).
-- [@CaptainArni](https://github.com/CaptainArni) for fixing PocketTTS empty output when switching cached voices in [#22](https://github.com/0xShug0/audio.cpp/pull/22).
+- [@CaptainArni](https://github.com/CaptainArni) for fixing PocketTTS empty output when switching cached voices and keeping the Windows CUDA build path healthy in [#22](https://github.com/0xShug0/audio.cpp/pull/22) and [#93](https://github.com/0xShug0/audio.cpp/pull/93).
