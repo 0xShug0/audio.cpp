@@ -11,6 +11,7 @@ namespace engine::modules {
 enum class ScaledDotProductAttentionLowering {
     Explicit,
     Flash,
+    FlashPreserveViews,
 };
 
 enum class AttentionCausality {

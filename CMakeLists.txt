@@ -247,6 +247,7 @@ add_library(engine_runtime STATIC
     src/framework/codecs/neural_audio.cpp
     src/framework/sampling/decode_modules.cpp
     src/framework/sampling/diffusion_math.cpp
+    src/framework/sampling/hf_sampler.cpp
     src/framework/sampling/noise.cpp
     src/framework/sampling/torch_random.cpp
     src/models/roformer/assets.cpp
@@ -913,6 +914,13 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME torch_random_test
         COMMAND torch_random_test
+    )
+
+    add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
+
+    add_test(
+        NAME hf_sampler_test
+        COMMAND hf_sampler_test
     )
 
     add_engine_unittest(diffusion_math_test tests/unittests/test_diffusion_math.cpp)

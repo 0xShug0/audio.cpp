@@ -102,6 +102,27 @@ core::TensorValue build_flash(
         GGML_TYPE_F32);
 }
 
+core::TensorValue build_flash_preserve_views(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & q_heads,
+    const core::TensorValue & k_heads,
+    const core::TensorValue & v_heads,
+    const std::optional<core::TensorValue> & attention_mask,
+    float scale,
+    ggml_prec precision,
+    AttentionCausality causality) {
+    if (!attention_mask.has_value() && causality == AttentionCausality::Causal) {
+        throw std::runtime_error("ScaledDotProductAttention view-preserving flash lowering requires an explicit causal mask");
+    }
+    ggml_tensor * mask = attention_mask.has_value() ? attention_mask->tensor : nullptr;
+    auto * flash = ggml_flash_attn_ext(ctx.ggml, q_heads.tensor, k_heads.tensor, v_heads.tensor, mask, scale, 0.0F, 0.0F);
+    ggml_flash_attn_ext_set_prec(flash, precision);
+    return core::wrap_tensor(
+        flash,
+        core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[2], q_heads.shape.dims[1], q_heads.shape.dims[3]}),
+        GGML_TYPE_F32);
+}
+
 }  // namespace
 
 ScaledDotProductAttentionModule::ScaledDotProductAttentionModule(ScaledDotProductAttentionConfig config)
@@ -132,6 +153,8 @@ core::TensorValue ScaledDotProductAttentionModule::build(
             return build_explicit(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.causality);
         case ScaledDotProductAttentionLowering::Flash:
             return build_flash(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
+        case ScaledDotProductAttentionLowering::FlashPreserveViews:
+            return build_flash_preserve_views(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
     }
     throw std::runtime_error("Unsupported scaled dot-product attention lowering");
 }
