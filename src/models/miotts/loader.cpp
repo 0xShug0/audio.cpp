@@ -43,6 +43,31 @@ public:
         return out;
     }
 
+    std::vector<runtime::LoaderCompanion> advertised_companions() const override {
+        return {
+            {
+                "codec",
+                "codec_model",
+                "session",
+                "miocodec",
+                false,
+                {},
+                "MioCodec",
+                "",
+            },
+            {
+                "best_of_n_asr",
+                "best_of_n_asr_model",
+                "session",
+                "qwen3_asr",
+                true,
+                {"best_of_n"},
+                "ASR for best-of-N scoring",
+                "",
+            },
+        };
+    }
+
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         if (request.family_hint.has_value() && *request.family_hint != family()) {
             return false;

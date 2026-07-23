@@ -148,12 +148,17 @@ std::vector<std::string> IVoiceModelLoader::advertised_api_endpoints() const {
     return default_api_endpoints_for_capabilities(advertised_capabilities());
 }
 
+std::vector<LoaderCompanion> IVoiceModelLoader::advertised_companions() const {
+    return {};
+}
+
 LoaderAdvertisement IVoiceModelLoader::advertise() const {
     LoaderAdvertisement row;
     row.family = family();
     row.capabilities = advertised_capabilities();
     row.instructions_policy = advertised_instructions_policy();
     row.api_endpoints = advertised_api_endpoints();
+    row.companions = advertised_companions();
     return row;
 }
 

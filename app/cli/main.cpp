@@ -584,6 +584,46 @@ int audiocpp_cli_main(int argc, char ** argv) {
                     for (const auto & endpoint : row.api_endpoints) {
                         endpoints.push_back(engine::io::json::Value::make_string(endpoint));
                     }
+                    engine::io::json::Value::Array companions;
+                    for (const auto & companion : row.companions) {
+                        engine::io::json::Value::Object companion_object;
+                        companion_object.emplace("id", engine::io::json::Value::make_string(companion.id));
+                        companion_object.emplace(
+                            "config_key",
+                            engine::io::json::Value::make_string(companion.config_key));
+                        companion_object.emplace(
+                            "scope",
+                            engine::io::json::Value::make_string(companion.scope));
+                        if (!companion.target_family.empty()) {
+                            companion_object.emplace(
+                                "target_family",
+                                engine::io::json::Value::make_string(companion.target_family));
+                        }
+                        companion_object.emplace(
+                            "optional",
+                            engine::io::json::Value::make_bool(companion.optional));
+                        if (!companion.required_for.empty()) {
+                            engine::io::json::Value::Array required_for;
+                            for (const auto & key : companion.required_for) {
+                                required_for.push_back(engine::io::json::Value::make_string(key));
+                            }
+                            companion_object.emplace(
+                                "required_for",
+                                engine::io::json::Value::make_array(std::move(required_for)));
+                        }
+                        if (!companion.label.empty()) {
+                            companion_object.emplace(
+                                "label",
+                                engine::io::json::Value::make_string(companion.label));
+                        }
+                        if (!companion.bundled_default.empty()) {
+                            companion_object.emplace(
+                                "bundled_default",
+                                engine::io::json::Value::make_string(companion.bundled_default));
+                        }
+                        companions.push_back(
+                            engine::io::json::Value::make_object(std::move(companion_object)));
+                    }
                     engine::io::json::Value::Object loader_object;
                     loader_object.emplace("tasks", engine::io::json::Value::make_object(std::move(tasks_object)));
                     loader_object.emplace(
@@ -592,6 +632,11 @@ int audiocpp_cli_main(int argc, char ** argv) {
                     loader_object.emplace(
                         "api_endpoints",
                         engine::io::json::Value::make_array(std::move(endpoints)));
+                    if (!companions.empty()) {
+                        loader_object.emplace(
+                            "companions",
+                            engine::io::json::Value::make_array(std::move(companions)));
+                    }
                     loaders_object.emplace(
                         row.family,
                         engine::io::json::Value::make_object(std::move(loader_object)));

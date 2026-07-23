@@ -43,6 +43,31 @@ public:
         return out;
     }
 
+    std::vector<runtime::LoaderCompanion> advertised_companions() const override {
+        return {
+            {
+                "forced_aligner",
+                "qwen3_asr.forced_aligner_model_path",
+                "session",
+                "qwen3_forced_aligner",
+                true,
+                {"return_timestamps"},
+                "Forced aligner",
+                "",
+            },
+            {
+                "vad",
+                "qwen3_asr.vad_model_path",
+                "session",
+                "silero_vad",
+                true,
+                {"return_timestamps"},
+                "VAD (long-audio timestamps)",
+                "assets/framework/models/silero_vad",
+            },
+        };
+    }
+
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
             const auto package_spec = engine::model_spec::default_spec_path(family());

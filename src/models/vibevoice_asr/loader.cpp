@@ -69,6 +69,21 @@ public:
         return out;
     }
 
+    std::vector<runtime::LoaderCompanion> advertised_companions() const override {
+        return {
+            {
+                "vad",
+                "vibevoice_asr.vad_model_path",
+                "session",
+                "silero_vad",
+                true,
+                {"audio_chunk_mode=vad"},
+                "VAD (vad chunking)",
+                "assets/framework/models/silero_vad",
+            },
+        };
+    }
+
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
             const auto package_spec = engine::model_spec::default_spec_path(family());

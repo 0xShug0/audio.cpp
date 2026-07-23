@@ -40,11 +40,44 @@ Do **not** leave a live `SnapshotSource` for a commented-out loader.
 Optional catalog↔registry family renames for parked stubs go in
 `PARKED_FAMILY_ALIASES` in the sync check (collapse to one id when re-enabling).
 
+## Runtime companions (peer models)
+
+Some loaders take **another model path** at load/session time (forced aligner,
+VAD, codec, ASR for best-of-N, etc.). Integrators need a machine-readable way to
+discover those peers — not by hard-coding family graphs in UIs.
+
+Advertise them from the loader via `advertised_companions()`. They appear under
+each loader in `audiocpp_cli --list-loaders --json` as an optional `companions`
+array (`schema_version` stays **1**; additive fields only).
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable integrator id (e.g. `forced_aligner`) |
+| `config_key` | Option key that receives the peer path |
+| `scope` | `session`, `load`, or `request` |
+| `target_family` | Registered loader family to install/select; omit/empty for external dirs |
+| `optional` | Whether the primary can run without the peer |
+| `required_for` | Capability/feature keys that need this peer |
+| `label` | Short UI label |
+| `bundled_default` | Optional in-tree default path (e.g. Silero under `assets/`) |
+
+Rules:
+
+1. Prefer a real `target_family` when the peer is an audio.cpp loader.
+2. Non-empty `target_family` must be an **active** registry family (or a bundled
+   loader such as `silero_vad`).
+3. Use empty `target_family` + a clear `label` only for external/non-loader peers
+   (e.g. Vevo2 Whisper directory).
+4. Do **not** invent companions for catalog `parent_package_id` install deps —
+   those stay install-time only.
+5. Keep companions in the loader that owns the path option; do not duplicate a
+   Studio-owned seed graph.
+
 ## Checklist: adding a model family
 
 1. Implement `include/engine/models/<family>/` (or `community_models/`) with a
    loader that overrides `advertised_capabilities()` so tasks/endpoints are
-   explicit.
+   explicit. Override `advertised_companions()` when the family takes peer paths.
 2. Register it in `src/framework/runtime/registry.cpp` (include +
    `available_loaders` entry). Prefer the factory name
    `make_<family>_loader()` so the id matches the advertised family.
@@ -66,7 +99,8 @@ python3 tools/model_manager.py list --json
 ```
 
 Confirm the new family appears in `--list-loaders` and that installable packages
-for that family set `"family"` to the same string.
+for that family set `"family"` to the same string. Confirm any `companions[].target_family`
+values resolve to registered loaders.
 
 ## Checklist: parking or removing a family
 
@@ -98,6 +132,8 @@ builds. It:
 - Parses active vs commented `make_*_loader()` calls in `registry.cpp`
 - Compares them to installable standalone packages from `model_manager.py`
 - Cross-checks the README recommended package table
+- Parses `advertised_companions()` initializers in `**/loader.cpp` and ensures
+  non-empty `target_family` values are active registry families
 - Does **not** require a compiled binary
 
 ```bash

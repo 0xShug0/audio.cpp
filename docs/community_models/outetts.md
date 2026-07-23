@@ -45,7 +45,7 @@ audiocpp_cli --task clon --family outetts \
   --max-tokens 1024 --out cloned.wav
 ```
 
-`--task tts` with the same `--voice-ref` and `--reference-text` options also enables speaker conditioning, which is useful for clients that expose one TTS route. Safetensors packages and older OuteTTS GGUFs do not contain the aligner. For those models, pass `outetts.aligner_model_path`; cloning fails clearly instead of using unreliable estimated word boundaries.
+`--task tts` with the same `--voice-ref` and `--reference-text` options also enables speaker conditioning, which is useful for clients that expose one TTS route. Safetensors packages and older OuteTTS GGUFs do not contain the aligner. For those models, pass `outetts.aligner_model_path`; cloning fails clearly instead of using unreliable estimated word boundaries. That peer is also advertised under `loaders.outetts.companions` in `audiocpp_cli --list-loaders --json` (see [usage.md](../usage.md#discovering-loaders-and-companions)).
 
 The installer places `DAC.speech.v1.0` and `Qwen3-ForcedAligner-0.6B` beside the OuteTTS directory. It converts the official DAC checkpoint to a safe tensor source. To do that conversion manually:
 

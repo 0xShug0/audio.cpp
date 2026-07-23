@@ -69,6 +69,53 @@ Omit these unless you need explicit control. If `--seed` is omitted, models that
 
 `--batch-text-dir` reads `.txt` and `.md` files as plain text. For `.json`, use either a JSON string root or an object with a string `input` or `text` field.
 
+## Discovering loaders and companions
+
+List registered families:
+
+```bash
+audiocpp_cli --list-loaders
+audiocpp_cli --list-loaders --json
+```
+
+`--list-loaders --json` is the machine-readable runtime contract (`schema_version` 1). Each loader entry includes:
+
+| Field | Meaning |
+|---|---|
+| `tasks` | Supported tasks and run modes |
+| `instructions_policy` | How instruction / style text is handled |
+| `api_endpoints` | Usual HTTP surfaces for those capabilities |
+| `companions` | Optional runtime peer models (omitted when empty) |
+
+Use `companions` when a family needs another model path at load or session time (for example Qwen3 ASR + forced aligner, MioTTS + MioCodec). Do not invent a separate UI graph of peer families — read this export.
+
+Example companion object:
+
+```json
+{
+  "id": "forced_aligner",
+  "config_key": "qwen3_asr.forced_aligner_model_path",
+  "scope": "session",
+  "target_family": "qwen3_forced_aligner",
+  "optional": true,
+  "required_for": ["return_timestamps"],
+  "label": "Forced aligner"
+}
+```
+
+| Companion field | Meaning |
+|---|---|
+| `id` | Stable integrator id |
+| `config_key` | Option key that receives the peer path (`--session-option` / load option) |
+| `scope` | `session`, `load`, or `request` |
+| `target_family` | Registered loader family to install or select; omitted for external dirs |
+| `optional` | Whether the primary can run without the peer |
+| `required_for` | Feature keys that need this peer |
+| `label` | Short UI label |
+| `bundled_default` | Optional in-tree default path (for example Silero under `assets/`) |
+
+Install-time package dependencies (`parent_package_id` in `model_manager`) are separate from runtime companions. Maintainer rules: [maintainers/loader_and_catalog.md](maintainers/loader_and_catalog.md).
+
 ## Model Docs
 
 | Need | Doc |

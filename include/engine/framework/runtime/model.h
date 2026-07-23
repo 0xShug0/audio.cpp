@@ -105,11 +105,32 @@ public:
         const SessionOptions & options) const = 0;
 };
 
+struct LoaderCompanion {
+    /** Stable id for integrators (e.g. forced_aligner). */
+    std::string id;
+    /** Session/load/request option key that receives the peer path. */
+    std::string config_key;
+    /** One of: session, load, request. */
+    std::string scope = "session";
+    /**
+     * Registered loader family to install/select, when the peer is an audio.cpp
+     * family. Empty when the peer is only a bundled/external directory.
+     */
+    std::string target_family;
+    bool optional = true;
+    /** Request/session capability keys that need this peer (e.g. return_timestamps). */
+    std::vector<std::string> required_for;
+    std::string label;
+    /** Optional default path for bundled assets (e.g. Silero under assets/). */
+    std::string bundled_default;
+};
+
 struct LoaderAdvertisement {
     std::string family;
     CapabilitySet capabilities;
     std::string instructions_policy;
     std::vector<std::string> api_endpoints;
+    std::vector<LoaderCompanion> companions;
 };
 
 /** Map advertised capabilities to the HTTP surfaces they normally use. */
@@ -127,10 +148,13 @@ public:
     /**
      * Path-free loader catalog for ``--list-loaders --json``.
      * Override ``advertised_capabilities`` (and policy when non-default) on each loader.
+     * Override ``advertised_companions`` when the family loads another family or
+     * bundled peer at runtime via a path option.
      */
     virtual CapabilitySet advertised_capabilities() const;
     virtual std::string advertised_instructions_policy() const;
     virtual std::vector<std::string> advertised_api_endpoints() const;
+    virtual std::vector<LoaderCompanion> advertised_companions() const;
     LoaderAdvertisement advertise() const;
 };
 
