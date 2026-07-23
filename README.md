@@ -94,7 +94,7 @@ Community model ports live under `community_models` to make the ownership bounda
 |---|---|---|---|---|---|
 | **moss_tts_local** | TTS, Clone, Ctrl | auto, optional language hint | GGUF | [@justinjohn0306](https://github.com/justinjohn0306) | MOSS-TTS-Local Transformer v1.5 support |
 | **outetts** | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | GGUF | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
-| **vietneu_tts** | TTS, Clone | vi, en | - | Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS-v3-Turbo](docs/community_models/vietneu_tts.md) TTS and voice cloning support |
+| **vietneu_tts** | TTS, Clone | vi, en | GGUF | Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS-v3-Turbo](docs/community_models/vietneu_tts.md) TTS and voice cloning support |
 
 PocketTTS language selection is a model-load option. When the model path points at the PocketTTS root, the loader uses `english` unless you pass `--load-option language=<name>`. Kyutai's normal non-English PocketTTS releases are smaller distilled language models intended for the fast PocketTTS path. The `_24l` variants are larger 24-layer, undistilled preview models that can sound better but are slower. Kyutai currently publishes French only as `french_24l`, not as a normal distilled `french` language directory, so French is not listed as a normal PocketTTS language here.
 

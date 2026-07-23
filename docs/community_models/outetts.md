@@ -18,6 +18,11 @@ Install both the language model and its DAC dependency:
 python tools/model_manager.py install outetts_1_0_1b --models-dir models
 ```
 
+The standalone Q8 GGUF package can also be downloaded directly from
+[mirek190/audio.cpp](https://huggingface.co/mirek190/audio.cpp/tree/main/Text%20to%20audio%20(TTS)).
+Use `Llama-OuteTTS-1.0-1B_Q8.gguf` as the `--model` path when running the
+GGUF examples below.
+
 Run the safetensors package:
 
 ```bash
