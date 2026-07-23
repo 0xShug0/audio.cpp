@@ -47,6 +47,18 @@ find_package(hip     REQUIRED)
 find_package(hipblas REQUIRED)
 find_package(rocblas REQUIRED)
 
+option(GGML_HIP_HIPBLASLT "ggml: use hipBLASLt instead of hipBLAS (rocBLAS) for GEMM" ON)
+
+if (GGML_HIP_HIPBLASLT)
+    find_package(hipblaslt)
+    if (hipblaslt_FOUND)
+        set(GGML_HIP_USE_HIPBLASLT ON)
+        message(STATUS "HIP: using hipBLASLt for GEMM")
+    else()
+        message(WARNING "GGML_HIP_HIPBLASLT is ON but hipblaslt was not found; falling back to hipBLAS (rocBLAS)")
+    endif()
+endif()
+
 if (GGML_HIP_RCCL)
     find_package(rccl REQUIRED)
 endif()
@@ -114,6 +126,10 @@ if (GGML_HIP_NO_VMM)
     add_compile_definitions(GGML_HIP_NO_VMM)
 endif()
 
+if (GGML_HIP_USE_HIPBLASLT)
+    add_compile_definitions(GGML_HIP_USE_HIPBLASLT)
+endif()
+
 if (GGML_HIP_ROCWMMA_FATTN)
     add_compile_definitions(GGML_HIP_ROCWMMA_FATTN)
 endif()
@@ -155,3 +171,7 @@ if (GGML_HIP_RCCL)
 endif()
 
 target_link_libraries(ggml-hip PRIVATE ggml-base hip::host roc::rocblas roc::hipblas)
+
+if (GGML_HIP_USE_HIPBLASLT)
+    target_link_libraries(ggml-hip PRIVATE roc::hipblaslt)
+endif()

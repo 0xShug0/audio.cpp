@@ -104,6 +104,17 @@ ggml_backend_t init_backend(const BackendConfig & config) {
             throw std::runtime_error("CUDA backend requested but this build does not include GGML_USE_CUDA");
 #endif
         }
+        case BackendType::Hip: {
+#ifdef GGML_USE_CUDA
+            ggml_backend_t backend = ggml_backend_cuda_init(config.device);
+            if (backend == nullptr) {
+                throw std::runtime_error("Failed to initialize HIP backend");
+            }
+            return backend;
+#else
+            throw std::runtime_error("HIP backend requested but this build does not include GGML_USE_CUDA");
+#endif
+        }
         case BackendType::Vulkan: {
 #ifdef GGML_USE_VULKAN
             if (config.device < 0) {
@@ -170,6 +181,11 @@ BackendType backend_type(ggml_backend_t backend) {
         return BackendType::Cpu;
     }
     if (is_cuda_backend_handle(backend)) {
+#ifdef GGML_USE_CUDA
+        if (backend_name_has_prefix(backend, "ROCm")) {
+            return BackendType::Hip;
+        }
+#endif
         return BackendType::Cuda;
     }
     if (is_vulkan_backend_handle(backend)) {
@@ -198,7 +214,7 @@ void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph
         return;
     }
 #ifdef GGML_USE_CUDA
-    if (backend_name_has_prefix(backend, "CUDA")) {
+    if (backend_name_has_prefix(backend, "CUDA") || backend_name_has_prefix(backend, "ROCm")) {
         ggml_backend_cuda_clear_graph(backend, graph);
     }
 #endif
@@ -209,7 +225,7 @@ void release_backend_graph_resources(BackendType backend_type, ggml_backend_t ba
         return;
     }
 #ifdef GGML_USE_CUDA
-    if (backend_type == BackendType::Cuda) {
+    if (backend_type == BackendType::Cuda || backend_type == BackendType::Hip) {
         ggml_backend_cuda_clear_graph(backend, graph);
     }
 #else
@@ -299,6 +315,7 @@ BackendMemorySnapshot query_backend_memory(const BackendConfig & config) {
     BackendMemorySnapshot snapshot;
     switch (config.type) {
         case BackendType::Cuda:
+        case BackendType::Hip:
 #ifdef GGML_USE_CUDA
         {
             size_t free_bytes = 0;

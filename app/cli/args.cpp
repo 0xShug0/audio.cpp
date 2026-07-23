@@ -96,6 +96,9 @@ engine::core::BackendType parse_backend(const std::string & value) {
     if (value == "cuda") {
         return engine::core::BackendType::Cuda;
     }
+    if (value == "hip" || value == "rocm") {
+        return engine::core::BackendType::Hip;
+    }
     if (value == "vulkan") {
         return engine::core::BackendType::Vulkan;
     }

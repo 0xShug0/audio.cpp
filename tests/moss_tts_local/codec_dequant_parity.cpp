@@ -4,6 +4,8 @@
 
 #include "engine/models/moss/shared/audio_tokenizer_quantizer.h"
 
+#include "engine/framework/assets/tensor_source.h"
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -33,7 +35,8 @@ int main(int argc, char ** argv) {
     }
 
     try {
-        engine::models::moss::MossAudioTokenizerQuantizer dequantizer(codec_dir, kNumQuantizers);
+        const auto source = engine::assets::open_tensor_source(codec_dir);
+        engine::models::moss::MossAudioTokenizerQuantizer dequantizer(*source, kNumQuantizers);
         const std::vector<float> latent = dequantizer.decode(codes);  // [code_dim, steps]
         const int64_t code_dim = dequantizer.code_dim();
 

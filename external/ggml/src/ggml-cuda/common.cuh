@@ -31,6 +31,9 @@
 
 #if defined(GGML_USE_HIP)
 #include "vendors/hip.h"
+#if defined(GGML_HIP_USE_HIPBLASLT)
+#include <hipblaslt/hipblaslt.h>
+#endif // defined(GGML_HIP_USE_HIPBLASLT)
 #elif defined(GGML_USE_MUSA)
 #include "vendors/musa.h"
 #else
@@ -187,6 +190,15 @@ void ggml_cuda_error(const char * stmt, const char * func, const char * file, in
 #endif // CUDART_VERSION >= 12000
 
 #define CUBLAS_CHECK(err) CUDA_CHECK_GEN(err, CUBLAS_STATUS_SUCCESS, cublas_get_error_str)
+
+#if defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
+    static const char * hipblaslt_get_error_str(const hipblasStatus_t err) {
+        return hipblasStatusToString(err);
+    }
+#define HIPBLASLT_CHECK(err) CUDA_CHECK_GEN(err, HIPBLAS_STATUS_SUCCESS, hipblaslt_get_error_str)
+
+#define HIPBLASLT_WORKSPACE_SIZE ((size_t) 32 * 1024 * 1024)
+#endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
 
 #ifdef GGML_USE_NCCL
 #define NCCL_CHECK(err) CUDA_CHECK_GEN(err, ncclSuccess, ncclGetErrorString)
@@ -1457,6 +1469,32 @@ struct ggml_backend_cuda_context {
     cublasHandle_t cublas_handle() {
         return cublas_handle(device);
     }
+
+#if defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
+    hipblasLtHandle_t hipblaslt_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
+    void * hipblaslt_workspaces[GGML_CUDA_MAX_DEVICES] = {nullptr};
+
+    hipblasLtHandle_t hipblaslt_handle(int device) {
+        if (hipblaslt_handles[device] == nullptr) {
+            ggml_cuda_set_device(device);
+            HIPBLASLT_CHECK(hipblasLtCreate(&hipblaslt_handles[device]));
+        }
+        return hipblaslt_handles[device];
+    }
+
+    hipblasLtHandle_t hipblaslt_handle() {
+        return hipblaslt_handle(device);
+    }
+
+    // hipBLASLt requires a user-provided workspace; allocate it once per device
+    void * hipblaslt_workspace(int device) {
+        if (hipblaslt_workspaces[device] == nullptr) {
+            ggml_cuda_set_device(device);
+            CUDA_CHECK(cudaMalloc(&hipblaslt_workspaces[device], HIPBLASLT_WORKSPACE_SIZE));
+        }
+        return hipblaslt_workspaces[device];
+    }
+#endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
 
     // pool
     std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS];

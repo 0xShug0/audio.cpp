@@ -5,6 +5,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/models/moss/shared/audio_tokenizer_decoder.h"
 
 #include <algorithm>
@@ -101,8 +102,9 @@ int main(int argc, char ** argv) {
 
         std::cout << "codec=" << codec_dir.string() << "\n";
         std::cout << "loading decoder weights...\n" << std::flush;
+        const auto source = engine::assets::open_tensor_source(codec_dir);
         engine::models::moss::MossAudioTokenizerDecoder decoder(
-            codec_dir, execution_context, num_quantizers, kWeightContextBytes, kGraphArenaBytes);
+            *source, execution_context, num_quantizers, kWeightContextBytes, kGraphArenaBytes);
 
         std::cout << "decoding " << frames << " frames...\n" << std::flush;
         const auto stereo = decoder.decode(codes);

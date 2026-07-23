@@ -79,6 +79,8 @@ const char * backend_name(engine::core::BackendType type) {
             return "cpu";
         case engine::core::BackendType::Cuda:
             return "cuda";
+        case engine::core::BackendType::Hip:
+            return "hip";
         case engine::core::BackendType::Vulkan:
             return "vulkan";
         case engine::core::BackendType::Metal:
