@@ -595,7 +595,9 @@ if (ENGINE_ENABLE_OPENMP)
         # '#pragma omp simd' directives in longformer_attention.cpp (error C7660).
         # /openmp:experimental enables the OpenMP 4.0 SIMD support; it overrides the
         # /openmp added by OpenMP::OpenMP_CXX above (harmless D9025 override notice).
-        target_compile_options(engine_runtime PRIVATE /openmp:experimental)
+        # Guard on CXX: nvcc does not forward a bare /openmp:experimental to the host
+        # compiler and instead treats it as a second input file, which is fatal.
+        target_compile_options(engine_runtime PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/openmp:experimental>)
     endif()
 endif()
 
