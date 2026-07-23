@@ -51,6 +51,8 @@ void print_help() {
         << "  --backend cpu|cuda|vulkan|metal  default cuda\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
         << "                                   busy this long; default 300000, 0 disables\n"
+        << "  --cors-origins \"*\"              experimental; disabled by default. Allows browser\n"
+        << "                                   requests from any origin for trusted local demos only\n"
         << "\n"
         << "Endpoints:\n"
         << "  GET  /health\n"
