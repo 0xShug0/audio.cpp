@@ -155,6 +155,9 @@ std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::pa
 std::shared_ptr<const TensorSource> open_tensor_source(
     const std::filesystem::path & path,
     std::string_view tensor_prefix);
+std::shared_ptr<const TensorSource> make_prefixed_tensor_source(
+    std::shared_ptr<const TensorSource> source,
+    std::string_view tensor_prefix);
 struct TensorSourceInput {
     std::filesystem::path path;
     std::string tensor_prefix;

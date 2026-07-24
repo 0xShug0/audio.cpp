@@ -60,6 +60,7 @@ private:
     std::unordered_map<std::string, std::filesystem::path> files_;
     std::unordered_map<std::string, TensorResource> tensor_resources_;
     mutable std::unordered_map<std::string, std::shared_ptr<const TensorSource>> tensor_sources_;
+    mutable std::unordered_map<std::string, std::shared_ptr<const TensorSource>> tensor_sources_by_path_;
 };
 
 }  // namespace engine::assets
