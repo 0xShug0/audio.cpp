@@ -138,6 +138,16 @@ Huge thanks to [@kigner](https://github.com/kigner) for the original [audio.cpp-
 | Windows | Visual Studio Build Tools 2022 or newer with C++ desktop workload, MSVC x64 compiler, Windows SDK, CMake, Ninja, MSVC OpenMP components; official NVIDIA CUDA Toolkit for CUDA builds |
 | macOS | Xcode or Xcode Command Line Tools with the Metal compiler available through `xcrun` |
 
+### Homebrew Install
+
+On macOS, audio.cpp can be installed from the Homebrew tap:
+
+```bash
+brew tap 0xShug0/audio-cpp
+brew trust 0xShug0/audio-cpp
+brew install audio-cpp
+```
+
 For Nix and NixOS builds, see [docs/build/nixos.md](docs/build/nixos.md).
 
 ### Linux Build
