@@ -22,12 +22,12 @@
         "target_audio": "reference/Amphion/models/tts/metis/wav/vc/prompt.wav"
       },
       {
-        "source_audio": "resources/a.wav",
+        "source_audio": "assets/resources/a.wav",
         "target_audio": "reference/Amphion/models/tts/metis/wav/vc/prompt.wav"
       },
       {
-        "source_audio": "resources/sample.wav",
-        "target_audio": "resources/design.wav"
+        "source_audio": "assets/resources/sample.wav",
+        "target_audio": "assets/resources/design.wav"
       }
     ]
   },
@@ -42,12 +42,12 @@
         "target_audio": "reference/Amphion/models/tts/metis/wav/vc/prompt.wav"
       },
       {
-        "source_audio": "resources/a.wav",
+        "source_audio": "assets/resources/a.wav",
         "target_audio": "reference/Amphion/models/tts/metis/wav/vc/prompt.wav"
       },
       {
-        "source_audio": "resources/sample.wav",
-        "target_audio": "resources/design.wav"
+        "source_audio": "assets/resources/sample.wav",
+        "target_audio": "assets/resources/design.wav"
       }
     ]
   },
@@ -58,11 +58,11 @@
     },
     "requests": [
       {
-        "source_audio": "resources/sample.wav",
-        "target_audio": "resources/design.wav"
+        "source_audio": "assets/resources/sample.wav",
+        "target_audio": "assets/resources/design.wav"
       },
       {
-        "source_audio": "resources/a.wav",
+        "source_audio": "assets/resources/a.wav",
         "target_audio": "reference/Amphion/models/tts/metis/wav/vc/prompt.wav"
       },
       {
@@ -70,8 +70,8 @@
         "target_audio": "reference/Amphion/models/tts/metis/wav/vc/prompt.wav"
       },
       {
-        "source_audio": "resources/sample.wav",
-        "target_audio": "resources/design.wav"
+        "source_audio": "assets/resources/sample.wav",
+        "target_audio": "assets/resources/design.wav"
       }
     ]
   }

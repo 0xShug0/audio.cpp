@@ -43,3 +43,5 @@ __pycache__/
 /webui/configs/ui_language.json
 # personal voice recording — stays local, repo is public
 /webui/voice/my-record.wav
+result
+.agents

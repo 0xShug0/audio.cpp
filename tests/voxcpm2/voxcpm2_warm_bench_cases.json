@@ -72,7 +72,7 @@
   "cuda_cold_voice_clone_1024char": {
     "warmup": {
       "text": "VoxCPM2 cold voice clone warmup is disabled for this baseline.",
-      "reference_wav_path": "resources/target_voice.wav",
+      "reference_wav_path": "assets/resources/target_voice.wav",
       "cfg_value": 2.0,
       "inference_timesteps": 10,
       "min_len": 2,
@@ -82,7 +82,7 @@
       {
         "id": "cold_voice_clone_1024char",
         "text": "In this cold voice cloning benchmark, the speaker describes a careful engineering review of VoxCPM2 after a clean restart. The passage is deliberately long enough to exercise tokenizer setup, reference audio conditioning, diffusion feature generation, and AudioVAE decoding without relying on a warm cache. It includes commas, short clauses, and steady narration so reviewers can listen for identity, pacing, prosody, and artifacts while also reading timing logs. The cloned voice should explain that the system loads a target voice, follows the requested text, and produces a stable waveform for a realistic user request. After the first paragraph, the speaker continues with another practical note about cold-start behavior, graph construction, reference encoding, and waveform synthesis. The goal is not a tiny smoke test; it is a repeatable baseline that stresses the same public API shape a user would choose for cloning a voice from a local recording. This final line closes the request cleanly for review today fully.",
-        "reference_wav_path": "resources/target_voice.wav",
+        "reference_wav_path": "assets/resources/target_voice.wav",
         "cfg_value": 2.0,
         "inference_timesteps": 10,
         "min_len": 31,
@@ -93,7 +93,7 @@
   "cuda_streaming_voice_clone_512char": {
     "warmup": {
       "text": "VoxCPM2 streaming warmup is disabled for this parity case.",
-      "reference_wav_path": "resources/target_voice.wav",
+      "reference_wav_path": "assets/resources/target_voice.wav",
       "cfg_value": 2.0,
       "inference_timesteps": 10,
       "min_len": 2,
@@ -104,7 +104,7 @@
       {
         "id": "streaming_voice_clone_512char",
         "text": "In this streaming voice cloning benchmark, the speaker explains that audio chunks should arrive from the public streaming generation path while preserving the requested text, voice identity, and timing behavior. The passage includes several clauses, a clear ending, and enough length for multiple generated latent patches, so reviewers can compare the concatenated streaming output with the Python streaming reference under controlled diffusion noise.",
-        "reference_wav_path": "resources/target_voice.wav",
+        "reference_wav_path": "assets/resources/target_voice.wav",
         "cfg_value": 2.0,
         "inference_timesteps": 10,
         "min_len": 15,

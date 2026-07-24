@@ -1,6 +1,6 @@
 {
   "warmup": {
-    "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+    "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
     "language": "en-US",
     "lookahead_tokens": 3,
     "streaming": false
@@ -8,7 +8,7 @@
   "cases": {
     "official_english_offline": {
       "warmup": {
-        "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+        "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
         "language": "en-US",
         "lookahead_tokens": 3,
         "streaming": false
@@ -16,7 +16,7 @@
       "requests": [
         {
           "id": "official_english_offline",
-          "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+          "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
           "language": "en-US",
           "lookahead_tokens": 3,
           "streaming": false
@@ -25,7 +25,7 @@
     },
     "offline_multi_request_session": {
       "offline_warmup": {
-        "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+        "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
         "language": "en-US",
         "lookahead_tokens": 3,
         "streaming": false
@@ -33,21 +33,21 @@
       "requests": [
         {
           "id": "english_offline",
-          "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+          "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
           "language": "en-US",
           "lookahead_tokens": 3,
           "streaming": false
         },
         {
           "id": "chinese_offline",
-          "audio": "resources/nemotron_asr/zh_man_sichuan.wav",
+          "audio": "assets/resources/nemotron_asr/zh_man_sichuan.wav",
           "language": "zh-CN",
           "lookahead_tokens": 3,
           "streaming": false
         },
         {
           "id": "english_offline_no_lookahead",
-          "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+          "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
           "language": "en-US",
           "lookahead_tokens": 0,
           "streaming": false,
@@ -57,7 +57,7 @@
     },
     "english_streaming_320ms_session": {
       "streaming_warmup": {
-        "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+        "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
         "language": "en-US",
         "lookahead_tokens": 6,
         "streaming": true
@@ -65,14 +65,14 @@
       "requests": [
         {
           "id": "english_streaming_320ms_full",
-          "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+          "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
           "language": "en-US",
           "lookahead_tokens": 6,
           "streaming": true
         },
         {
           "id": "english_streaming_320ms_crop_a",
-          "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+          "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
           "start_sec": 0.5,
           "end_sec": 8.0,
           "language": "en-US",
@@ -81,7 +81,7 @@
         },
         {
           "id": "english_streaming_320ms_crop_b",
-          "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+          "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
           "start_sec": 2.0,
           "end_sec": 10.8,
           "language": "en-US",
@@ -94,7 +94,7 @@
   "requests": [
     {
       "id": "english_auto_tags",
-      "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+      "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
       "language": "auto",
       "lookahead_tokens": 3,
       "streaming": false,
@@ -102,28 +102,28 @@
     },
     {
       "id": "english_offline",
-      "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+      "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
       "language": "en-US",
       "lookahead_tokens": 3,
       "streaming": false
     },
     {
       "id": "english_streaming_320ms",
-      "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+      "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
       "language": "en-US",
       "lookahead_tokens": 6,
       "streaming": true
     },
     {
       "id": "chinese_offline",
-      "audio": "resources/nemotron_asr/zh_man_sichuan.wav",
+      "audio": "assets/resources/nemotron_asr/zh_man_sichuan.wav",
       "language": "zh-CN",
       "lookahead_tokens": 3,
       "streaming": false
     },
     {
       "id": "english_offline_no_lookahead",
-      "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+      "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
       "language": "en-US",
       "lookahead_tokens": 0,
       "streaming": false,
@@ -131,14 +131,14 @@
     },
     {
       "id": "english_streaming_1120ms",
-      "audio": "resources/nemotron_asr/bcn_weather_16k.wav",
+      "audio": "assets/resources/nemotron_asr/bcn_weather_16k.wav",
       "language": "en-US",
       "lookahead_tokens": 13,
       "streaming": true
     },
     {
       "id": "chinese_streaming_320ms",
-      "audio": "resources/nemotron_asr/zh_man_sichuan.wav",
+      "audio": "assets/resources/nemotron_asr/zh_man_sichuan.wav",
       "language": "zh-CN",
       "lookahead_tokens": 6,
       "streaming": true

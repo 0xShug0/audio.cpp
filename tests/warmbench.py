@@ -94,7 +94,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "cpp_bin": "build/debug/bin/qwen3_tts_warm_bench",
         "python_script": "tests/qwen3_tts/qwen3_tts_python_warm_bench.py",
         "model": "models/Qwen3-TTS-12Hz-0.6B-Base",
-        "clone_audio": "resources/sample.wav",
+        "clone_audio": "assets/resources/sample.wav",
         "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
         "case_catalog": "tests/qwen3_tts/qwen3_tts_warm_bench_cases.txt",
         "case_overrides": {
@@ -149,7 +149,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "cpp_bin": "build/debug/bin/chatterbox_warm_bench",
         "python_script": "tests/chatterbox/chatterbox_python_warm_bench.py",
         "model": "models/chatterbox",
-        "clone_audio": "resources/sample.wav",
+        "clone_audio": "assets/resources/sample.wav",
         "case_catalog": "tests/chatterbox/chatterbox_warm_bench_cases.txt",
         "default_warmup": 0,
         "max_new_tokens": 1000,
@@ -165,7 +165,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "python_script": "tests/omnivoice/omnivoice_python_warm_bench.py",
         "model": "models/OmniVoice",
         "task": "voice_clone",
-        "clone_audio": "resources/sample.wav",
+        "clone_audio": "assets/resources/sample.wav",
         "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
         "language": "en",
         "case_catalog": "tests/omnivoice/omnivoice_warm_bench_cases.json",
@@ -223,7 +223,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "python_script": "tests/moss_tts_nano/moss_tts_nano_python_warm_bench.py",
         "model": "models/MOSS-TTS-Nano-100M",
         "audio_tokenizer_model": "models/MOSS-Audio-Tokenizer-Nano",
-        "clone_audio": "resources/sample.wav",
+        "clone_audio": "assets/resources/sample.wav",
         "case_catalog": "tests/moss_tts_nano/moss_tts_nano_warm_bench_cases.json",
         "default_case_name": "default",
         "max_new_frames": 300,
@@ -252,7 +252,7 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "cpp_bin": "build/debug/bin/moss_tts_local_warm_bench",
         "python_script": "tests/moss_tts_local/moss_tts_local_python_warm_bench.py",
         "model": "models/MOSS-TTS-Local-Transformer-v1.5",
-        "clone_audio": "resources/a.wav",
+        "clone_audio": "assets/resources/a.wav",
         "case_catalog": "tests/moss_tts_local/moss_tts_local_warm_bench_cases.json",
         "default_case_name": "long_lived_session",
         "max_new_frames": 4096,
@@ -647,9 +647,20 @@ def parse_args() -> argparse.Namespace:
         help="Optional shared ACE-Step DiT initial-noise file (.f32). When set, both Python and C++ use this file instead of sampling noise.",
     )
     parser.add_argument("--artifact-stamp", default="")
+    parser.add_argument(
+        "--audiocpp-cli-bin",
+        default="",
+        help="Optional path to audiocpp_cli. Used to infer the bin directory for warmbench binaries instead of build/debug/bin.",
+    )
+    parser.add_argument(
+        "--baseline-audiocpp-cli-bin",
+        default="",
+        help="Optional path to baseline audiocpp_cli to run as a C++ reference instead of the Python model.",
+    )
     parser.add_argument("--output-dir")
     parser.add_argument("--output-json")
     parser.add_argument("--keep-output-dir", action="store_true")
+    parser.add_argument("--skip-python", action="store_true", help="Skip running the Python reference model and parity checks")
     args = parser.parse_args()
     args.warmup_was_explicit = any(arg == "--warmup" or arg.startswith("--warmup=") for arg in sys.argv[1:])
     args.requests_per_session_was_explicit = any(
@@ -970,7 +981,7 @@ def resolve_miocodec_case(config: dict[str, Any], args: argparse.Namespace) -> t
     return dict(warmup), selected, {"case_name": case_name, "warmup": warmup, "requests": selected}
 
 
-def resolve_voxcpm2_case(config: dict[str, Any], args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+def resolve_voxcpm2_case(config: dict[str, Any], args: argparse.Namespace, mode: str) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     if len(args.case_names) > 1:
         raise RuntimeError("VoxCPM2 warmbench accepts at most one --case-name")
     if args.texts:
@@ -995,11 +1006,15 @@ def resolve_voxcpm2_case(config: dict[str, Any], args: argparse.Namespace) -> tu
     capped_warmup = dict(warmup)
     if "max_len" in capped_warmup:
         capped_warmup["max_len"] = min(int(capped_warmup["max_len"]), VOXCPM2_MAX_LEN_CAP)
+    if mode == "streaming":
+        capped_warmup["retry_badcase"] = False
     selected = []
     for request in requests[: args.requests_per_session]:
         capped_request = dict(request)
         if "max_len" in capped_request:
             capped_request["max_len"] = min(int(capped_request["max_len"]), VOXCPM2_MAX_LEN_CAP)
+        if mode == "streaming":
+            capped_request["retry_badcase"] = False
         selected.append(capped_request)
     if getattr(args, "seed_was_explicit", False):
         for request in selected:
@@ -1117,6 +1132,22 @@ def normalize_text(text: str) -> str:
     return " ".join("".join(chars).split())
 
 
+def parse_timing_log(path: Path) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    if not path.exists():
+        return metrics
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("[TIMING"):
+            parts = line.split("]", 1)[1].strip().split()
+            if len(parts) >= 2:
+                key = parts[0]
+                try:
+                    metrics[key] = metrics.get(key, 0.0) + float(parts[1])
+                except ValueError:
+                    pass
+    return metrics
+
+
 def normalize_whisper_text(text: str) -> str:
     return normalize_text(text)
 
@@ -1173,11 +1204,10 @@ def run_whisper(
     word_timestamps: bool = True,
 ) -> dict[str, Any]:
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    command = [
-        "conda",
-        "run",
-        "-n",
-        WHISPER_CONDA_ENV,
+    command = []
+    if shutil.which("conda"):
+        command.extend(["conda", "run", "-n", WHISPER_CONDA_ENV])
+    command.extend([
         "whisper",
         str(audio_path),
         "--model",
@@ -1196,7 +1226,7 @@ def run_whisper(
         str(threads),
         "--verbose",
         "False",
-    ]
+    ])
     if language:
         command.extend(["--language", language])
     completed = subprocess.run(
@@ -2302,7 +2332,7 @@ def build_tts_commands(
         common_warmup_args = ["--warmup-text", warmup_text]
     model_path = args.model or config["model"]
     if family == "kokoro":
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
@@ -2359,7 +2389,7 @@ def build_tts_commands(
             cpp_command.extend(["--session-option", option])
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     if family in {"qwen3_tts", "qwen3_tts_voice_design", "qwen3_tts_custom_voice"}:
         max_new_tokens = args.max_new_tokens if args.max_new_tokens > 0 else config["max_new_tokens"]
@@ -2391,7 +2421,7 @@ def build_tts_commands(
                     )
                 for speaker_name in args.request_speakers[: len(texts)]:
                     prompt_control_args.extend(["--request-speaker", speaker_name])
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
@@ -2438,9 +2468,9 @@ def build_tts_commands(
             str(timing_py),
         ] + common_warmup_args + common_text_args
         if task_name in {"voice_design", "custom_voice"}:
-            python_command.extend(prompt_control_args)
+            ref_command.extend(prompt_control_args)
         else:
-            python_command.extend(["--clone-audio", clone_audio, "--reference-text", config["reference_text"]])
+            ref_command.extend(["--clone-audio", clone_audio, "--reference-text", config["reference_text"]])
         cpp_command = [
             str(REPO_ROOT / config["cpp_bin"]),
             "--model",
@@ -2492,7 +2522,7 @@ def build_tts_commands(
             cpp_command.extend(["--clone-audio", clone_audio, "--reference-text", config["reference_text"]])
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     if family == "chatterbox":
         max_new_tokens = args.max_new_tokens if args.max_new_tokens > 0 else config["max_new_tokens"]
@@ -2518,7 +2548,7 @@ def build_tts_commands(
             "--top-p",
             "1.0",
         ]
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
@@ -2573,7 +2603,7 @@ def build_tts_commands(
         ] + chatterbox_args + common_warmup_args + common_text_args
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     if family.startswith("omnivoice_"):
         task_name = str(config.get("task", "voice_clone"))
@@ -2588,7 +2618,7 @@ def build_tts_commands(
             prompt_control_args.extend(["--instruct", default_instruct, "--warmup-instruct", warmup_instruct])
             for instruct in request_instructs:
                 prompt_control_args.extend(["--request-instruct", instruct])
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
@@ -2681,7 +2711,7 @@ def build_tts_commands(
         ] + omnivoice_warmup_args + common_text_args + prompt_control_args
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     if family == "moss_tts_local":
         clone_audio = args.clone_audio or config["clone_audio"]
@@ -2697,7 +2727,7 @@ def build_tts_commands(
         request_file = config.get("moss_tts_local_request_file")
         if request_file:
             request_file_args = ["--request-file", str(request_file)]
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
@@ -2782,7 +2812,7 @@ def build_tts_commands(
             cpp_command.extend(["--session-option", option])
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     if family == "moss_tts_nano":
         audio_tokenizer_model = Path(model_path) / "audio_tokenizer"
@@ -2804,7 +2834,7 @@ def build_tts_commands(
         voice_clone_max_memory_per_sample_gb = float(config.get("voice_clone_max_memory_per_sample_gb", 1.0))
         tts_max_batch_size = int(config.get("tts_max_batch_size", 0))
         codec_max_batch_size = int(config.get("codec_max_batch_size", 0))
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
@@ -2903,11 +2933,11 @@ def build_tts_commands(
             cpp_command.extend(["--request-option", f"{key}={value}"])
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     noise_file = scenario_dir / "shared_noise.bin"
     voice_args = ["--clone-audio", args.clone_audio] if args.clone_audio else ["--voice-id", config["voice_id"]]
-    python_command = [
+    ref_command = [
         PYTHON_EXE,
         str(REPO_ROOT / config["python_script"]),
         "--mode",
@@ -2968,7 +2998,7 @@ def build_tts_commands(
     ] + voice_args + common_warmup_args + common_text_args
     for option in args.cpp_session_option:
         cpp_command.extend(["--session-option", option])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_ace_step_commands(
@@ -2980,14 +3010,9 @@ def build_ace_step_commands(
 ) -> tuple[list[str], list[str]]:
     request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
     model_path = args.model or config["model"]
-    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    ref_env = str(config.get("python_conda_env", "qwen3-tts"))
     noise_file = args.test_noise_file or ""
-    python_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
+    ref_command = [
         "python",
         str(REPO_ROOT / config["python_script"]),
         "--checkpoint-dir",
@@ -3017,9 +3042,9 @@ def build_ace_step_commands(
     ]
     for option in args.cpp_session_option:
         if option.startswith("ace_step.dit_model_path="):
-            python_command.extend(["--config-path", option.split("=", 1)[1]])
+            ref_command.extend(["--config-path", option.split("=", 1)[1]])
         elif option.startswith("ace_step.lm_model_path="):
-            python_command.extend(["--lm-model-path", option.split("=", 1)[1]])
+            ref_command.extend(["--lm-model-path", option.split("=", 1)[1]])
     cpp_command = [
         str(REPO_ROOT / config["cpp_bin"]),
         "--model",
@@ -3061,7 +3086,7 @@ def build_ace_step_commands(
             "--session-option",
             f"ace_step.dit_tensor_compare_result={scenario_dir / 'ace_step_dit_compare.json'}",
         ])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_vevo2_commands(
@@ -3074,14 +3099,9 @@ def build_vevo2_commands(
     request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
     cpp_model_path = args.model or config["model"]
     python_model_path = args.model or config.get("python_model", config["model"])
-    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    ref_env = str(config.get("python_conda_env", "qwen3-tts"))
     noise_file = args.test_noise_file or ""
-    python_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
+    ref_command = [
         "python",
         str(REPO_ROOT / config["python_script"]),
         "--model",
@@ -3132,7 +3152,7 @@ def build_vevo2_commands(
         cpp_command.extend(["--session-option", option])
     for option in args.cpp_session_option:
         cpp_command.extend(["--session-option", option])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_audio_commands(
@@ -3185,7 +3205,7 @@ def build_audio_commands(
             "--context-sequence",
             ",".join(request_contexts),
         ]
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--timing-file",
@@ -3198,7 +3218,7 @@ def build_audio_commands(
         ] + common
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     if family == "qwen3_forced_aligner":
         request_languages = getattr(args, "qwen3_forced_aligner_request_languages", [])
@@ -3236,7 +3256,7 @@ def build_audio_commands(
             request_args.extend(["--request-language", language])
         for transcript in request_transcripts:
             request_args.extend(["--request-transcript", transcript])
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--timing-file",
@@ -3249,10 +3269,10 @@ def build_audio_commands(
         ] + common + request_args
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     if family == "parakeet":
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
@@ -3305,10 +3325,10 @@ def build_audio_commands(
             cpp_command.extend(["--encoder-variant", "long_context"])
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     if config["kind"] in {"asr", "vad", "spk"}:
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
@@ -3353,10 +3373,10 @@ def build_audio_commands(
             "--timing-file",
             str(scenario_dir / "cpp.timing.log"),
         ]
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
     if config["kind"] == "separation":
-        python_command = [
+        ref_command = [
             PYTHON_EXE,
             str(REPO_ROOT / config["python_script"]),
             "--model",
@@ -3386,13 +3406,13 @@ def build_audio_commands(
         ]
         python_config = str(config.get("python_config", ""))
         if python_config:
-            python_command.extend(["--config-path", python_config])
+            ref_command.extend(["--config-path", python_config])
         python_repo = str(config.get("python_repo", ""))
         if python_repo:
-            python_command.extend(["--repo", python_repo])
+            ref_command.extend(["--repo", python_repo])
         python_name = str(config.get("python_name", ""))
         if python_name:
-            python_command.extend(["--model-name", python_name])
+            ref_command.extend(["--model-name", python_name])
         cpp_command = [
             str(REPO_ROOT / config["cpp_bin"]),
             "--model",
@@ -3422,9 +3442,9 @@ def build_audio_commands(
         ]
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
-        return python_command, cpp_command
+        return ref_command, cpp_command
 
-    python_command = [
+    ref_command = [
         PYTHON_EXE,
         str(REPO_ROOT / config["python_script"]),
         "--model",
@@ -3469,7 +3489,7 @@ def build_audio_commands(
         "--timing-file",
         str(scenario_dir / "cpp.timing.log"),
     ]
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def catalog_case_audio(case: dict[str, Any], scenario_dir: Path, role: str, index: int) -> Path:
@@ -3672,7 +3692,7 @@ def build_catalog_asr_commands(
     else:
         raise RuntimeError(f"catalog ASR warmbench is not wired for family {family}")
 
-    python_command = [
+    ref_command = [
         PYTHON_EXE,
         str(REPO_ROOT / config["python_script"]),
         "--timing-file",
@@ -3691,7 +3711,7 @@ def build_catalog_asr_commands(
         "warmup": warmup_case,
         "requests": request_cases,
     }
-    return python_command, cpp_command, request_manifest
+    return ref_command, cpp_command, request_manifest
 
 
 def build_miocodec_commands(
@@ -3723,7 +3743,7 @@ def build_miocodec_commands(
         str(args.iterations),
         "--timing-file",
     ]
-    python_command = [
+    ref_command = [
         PYTHON_EXE,
         str(REPO_ROOT / config["python_script"]),
     ] + common + [
@@ -3740,7 +3760,7 @@ def build_miocodec_commands(
     ]
     for option in args.cpp_session_option:
         cpp_command.extend(["--session-option", option])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_voxcpm2_commands(
@@ -3777,7 +3797,7 @@ def build_voxcpm2_commands(
         str(args.iterations),
         "--timing-file",
     ]
-    python_command = [
+    ref_command = [
         PYTHON_EXE,
         str(REPO_ROOT / config["python_script"]),
     ] + common + [
@@ -3786,7 +3806,7 @@ def build_voxcpm2_commands(
         str(scenario_dir / "python_audio"),
     ]
     if args.test_noise_file:
-        python_command.extend(["--noise-file", args.test_noise_file])
+        ref_command.extend(["--noise-file", args.test_noise_file])
     cpp_command = [
         str(REPO_ROOT / config["cpp_bin"]),
     ] + common + [
@@ -3798,7 +3818,7 @@ def build_voxcpm2_commands(
         cpp_command.extend(["--noise-file", args.test_noise_file])
     for option in args.cpp_session_option:
         cpp_command.extend(["--session-option", option])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_vibevoice_commands(
@@ -3810,7 +3830,7 @@ def build_vibevoice_commands(
 ) -> tuple[list[str], list[str]]:
     request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
     model_path = args.model or config["model"]
-    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    ref_env = str(config.get("python_conda_env", "qwen3-tts"))
     model_root = Path(model_path)
     if not model_root.is_absolute():
         model_root = REPO_ROOT / model_root
@@ -3840,12 +3860,7 @@ def build_vibevoice_commands(
             values.tofile(handle)
         noise_file = str(noise_path)
     warmup_count = 0
-    python_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
+    ref_command = [
         "python",
         str(REPO_ROOT / config["python_script"]),
         "--model",
@@ -3870,13 +3885,8 @@ def build_vibevoice_commands(
         request_sequence_json,
     ]
     if any(bool(request.get("batch")) for request in requests):
-        python_command.append("--batch")
+        ref_command.append("--batch")
     cpp_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
         str(REPO_ROOT / config["cpp_bin"]),
         "--model",
         model_path,
@@ -3905,7 +3915,7 @@ def build_vibevoice_commands(
     ]
     if any(bool(request.get("batch")) for request in requests):
         cpp_command.append("--batch")
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_irodori_tts_commands(
@@ -3920,13 +3930,8 @@ def build_irodori_tts_commands(
     request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
     model_path = args.model or config["model"]
     python_model_path = args.python_model or config.get("python_model", model_path)
-    python_env = str(config.get("python_conda_env", "qwen3-tts"))
-    python_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
+    ref_env = str(config.get("python_conda_env", "qwen3-tts"))
+    ref_command = [
         "python",
         str(REPO_ROOT / config["python_script"]),
         "--model",
@@ -3956,11 +3961,6 @@ def build_irodori_tts_commands(
         "env",
         "NVIDIA_TF32_OVERRIDE=0",
         "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
         str(REPO_ROOT / config["cpp_bin"]),
         "--model",
         model_path,
@@ -3985,7 +3985,7 @@ def build_irodori_tts_commands(
         cpp_command.extend(["--session-option", option])
     for option in args.cpp_session_option:
         cpp_command.extend(["--session-option", option])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_supertonic_commands(
@@ -3998,13 +3998,8 @@ def build_supertonic_commands(
     request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
     model_path = args.model or config["model"]
     python_model_path = args.python_model or config.get("python_model", model_path)
-    python_env = str(config.get("python_conda_env", "qwen3-tts"))
-    python_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
+    ref_env = str(config.get("python_conda_env", "qwen3-tts"))
+    ref_command = [
         "python",
         str(REPO_ROOT / config["python_script"]),
         "--model",
@@ -4030,11 +4025,6 @@ def build_supertonic_commands(
         "env",
         "NVIDIA_TF32_OVERRIDE=0",
         "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
         str(REPO_ROOT / config["cpp_bin"]),
         "--model",
         model_path,
@@ -4059,7 +4049,7 @@ def build_supertonic_commands(
         cpp_command.extend(["--session-option", option])
     for option in args.cpp_session_option:
         cpp_command.extend(["--session-option", option])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_index_tts2_commands(
@@ -4072,13 +4062,8 @@ def build_index_tts2_commands(
     request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
     model_path = args.model or config["model"]
     python_model_path = args.python_model or config.get("python_model", model_path)
-    python_env = str(config.get("python_conda_env", "qwen3-tts"))
-    python_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
+    ref_env = str(config.get("python_conda_env", "qwen3-tts"))
+    ref_command = [
         "python",
         str(REPO_ROOT / config["python_script"]),
         "--model",
@@ -4106,11 +4091,6 @@ def build_index_tts2_commands(
         "env",
         "NVIDIA_TF32_OVERRIDE=0",
         "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
         str(REPO_ROOT / config["cpp_bin"]),
         "--model",
         model_path,
@@ -4135,7 +4115,7 @@ def build_index_tts2_commands(
         cpp_command.extend(["--session-option", option])
     for option in args.cpp_session_option:
         cpp_command.extend(["--session-option", option])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_heartmula_commands(
@@ -4149,13 +4129,8 @@ def build_heartmula_commands(
         raise RuntimeError("HeartMuLa warmbench is CUDA-only")
     request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
     model_path = args.model or config["model"]
-    python_env = str(config.get("python_conda_env", "qwen3-tts"))
-    python_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
+    ref_env = str(config.get("python_conda_env", "qwen3-tts"))
+    ref_command = [
         "python",
         str(REPO_ROOT / config["python_script"]),
         "--model",
@@ -4183,11 +4158,6 @@ def build_heartmula_commands(
         "--lazy-load",
     ]
     cpp_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
         str(REPO_ROOT / config["cpp_bin"]),
         "--model",
         model_path,
@@ -4212,7 +4182,7 @@ def build_heartmula_commands(
         cpp_command.extend(["--session-option", option])
     for option in args.cpp_session_option:
         cpp_command.extend(["--session-option", option])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def build_higgs_audio_tts_commands(
@@ -4226,13 +4196,8 @@ def build_higgs_audio_tts_commands(
         raise RuntimeError("Higgs TTS warmbench is CUDA-only")
     request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
     model_path = args.model or config["model"]
-    python_env = str(config.get("python_conda_env", "qwen3-tts"))
-    python_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
+    ref_env = str(config.get("python_conda_env", "qwen3-tts"))
+    ref_command = [
         "python",
         str(REPO_ROOT / config["python_script"]),
         "--model",
@@ -4255,11 +4220,6 @@ def build_higgs_audio_tts_commands(
         request_sequence_json,
     ]
     cpp_command = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        python_env,
         str(REPO_ROOT / config["cpp_bin"]),
         "--model",
         model_path,
@@ -4281,13 +4241,13 @@ def build_higgs_audio_tts_commands(
         request_sequence_json,
     ]
     if os.environ.get("HIGGS_TTS_WARMBENCH_TRACE") == "1":
-        python_command.append("--enable-trace")
+        ref_command.append("--enable-trace")
         cpp_command.extend(["--enable-trace", "--log-file", str(scenario_dir / "cpp.trace.log")])
     for option in config.get("cpp_session_options", []):
         cpp_command.extend(["--session-option", option])
     for option in args.cpp_session_option:
         cpp_command.extend(["--session-option", option])
-    return python_command, cpp_command
+    return ref_command, cpp_command
 
 
 def validate_tts_result(
@@ -4459,7 +4419,10 @@ def sanitized_result_payload(kind: str, parsed: dict[str, Any]) -> dict[str, Any
             "metrics": parsed.get("metrics", {}),
             "request_metrics": parsed.get("request_metrics", []),
         }
-    return parsed.get("summary") or {}
+    payload = parsed.get("summary") or {}
+    if "metrics" in parsed:
+        payload.setdefault("metrics", {}).update(parsed["metrics"])
+    return payload
 
 
 def missing_parity(request_index: int, request: str, reason: str) -> dict[str, Any]:
@@ -4497,34 +4460,34 @@ def run_scenario(
 
     if scenario_config["kind"] == "ace_step":
         ace_requests, request_manifest = resolve_ace_step_case(config, args)
-        python_command, cpp_command = build_ace_step_commands(scenario_config, backend, args, scenario_dir, ace_requests)
+        ref_command, cpp_command = build_ace_step_commands(scenario_config, backend, args, scenario_dir, ace_requests)
     elif scenario_config["kind"] == "vibevoice":
         vibevoice_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(vibevoice_requests)
-        python_command, cpp_command = build_vibevoice_commands(scenario_config, backend, args, scenario_dir, vibevoice_requests)
+        ref_command, cpp_command = build_vibevoice_commands(scenario_config, backend, args, scenario_dir, vibevoice_requests)
     elif scenario_config["kind"] == "heartmula":
         heartmula_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(heartmula_requests)
-        python_command, cpp_command = build_heartmula_commands(scenario_config, backend, args, scenario_dir, heartmula_requests)
+        ref_command, cpp_command = build_heartmula_commands(scenario_config, backend, args, scenario_dir, heartmula_requests)
     elif scenario_config["kind"] == "supertonic":
         supertonic_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(supertonic_requests)
-        python_command, cpp_command = build_supertonic_commands(scenario_config, backend, args, scenario_dir, supertonic_requests)
+        ref_command, cpp_command = build_supertonic_commands(scenario_config, backend, args, scenario_dir, supertonic_requests)
     elif scenario_config["kind"] == "irodori_tts":
         irodori_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(irodori_requests)
-        python_command, cpp_command = build_irodori_tts_commands(scenario_config, backend, args, scenario_dir, irodori_requests)
+        ref_command, cpp_command = build_irodori_tts_commands(scenario_config, backend, args, scenario_dir, irodori_requests)
     elif scenario_config["kind"] == "higgs_audio_tts":
         higgs_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(higgs_requests)
-        python_command, cpp_command = build_higgs_audio_tts_commands(scenario_config, backend, args, scenario_dir, higgs_requests)
+        ref_command, cpp_command = build_higgs_audio_tts_commands(scenario_config, backend, args, scenario_dir, higgs_requests)
     elif scenario_config["kind"] == "index_tts2":
         index_tts2_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(index_tts2_requests)
-        python_command, cpp_command = build_index_tts2_commands(scenario_config, backend, args, scenario_dir, index_tts2_requests)
+        ref_command, cpp_command = build_index_tts2_commands(scenario_config, backend, args, scenario_dir, index_tts2_requests)
     elif scenario_config["kind"] in {"vevo2", "seed_vc"}:
         vevo2_requests, request_manifest = resolve_vevo2_case(config, args)
-        python_command, cpp_command = build_vevo2_commands(scenario_config, backend, args, scenario_dir, vevo2_requests)
+        ref_command, cpp_command = build_vevo2_commands(scenario_config, backend, args, scenario_dir, vevo2_requests)
     elif scenario_config["kind"] == "tts":
         if family.startswith("omnivoice_"):
             texts, request_manifest, scenario_config = resolve_omnivoice_case(config, args)
@@ -4571,7 +4534,7 @@ def run_scenario(
                 encoding="utf-8",
             )
             scenario_config["moss_tts_local_request_file"] = str(request_file)
-        python_command, cpp_command = build_tts_commands(family, scenario_config, backend, args, scenario_dir, texts)
+        ref_command, cpp_command = build_tts_commands(family, scenario_config, backend, args, scenario_dir, texts)
     else:
         if family in {"mel_band_roformer", "htdemucs"}:
             if len(args.case_names) > 1:
@@ -4641,7 +4604,7 @@ def run_scenario(
                 family,
                 case_name,
             )
-            python_command, cpp_command, request_manifest = build_catalog_asr_commands(
+            ref_command, cpp_command, request_manifest = build_catalog_asr_commands(
                 family,
                 scenario_config,
                 backend,
@@ -4653,7 +4616,7 @@ def run_scenario(
             request_manifest.update(catalog_manifest)
         elif family == "miocodec":
             warmup_request, request_cases, request_manifest = resolve_miocodec_case(config, args)
-            python_command, cpp_command = build_miocodec_commands(
+            ref_command, cpp_command = build_miocodec_commands(
                 scenario_config,
                 backend,
                 args,
@@ -4662,8 +4625,8 @@ def run_scenario(
                 request_cases,
             )
         elif family == "voxcpm2":
-            warmup_request, request_cases, request_manifest = resolve_voxcpm2_case(config, args)
-            python_command, cpp_command = build_voxcpm2_commands(
+            warmup_request, request_cases, request_manifest = resolve_voxcpm2_case(config, args, mode)
+            ref_command, cpp_command = build_voxcpm2_commands(
                 scenario_config,
                 mode,
                 backend,
@@ -4686,29 +4649,62 @@ def run_scenario(
                 "audio_sequence": [str(path) for path in audio_requests],
             }
         if family not in {"miocodec", "voxcpm2", "higgs_audio_stt", "hviske_asr", "nemotron_asr", "vibevoice_asr", "voxtral_realtime"}:
-            python_command, cpp_command = build_audio_commands(family, scenario_config, backend, mode, args, scenario_dir, warmup_audio, audio_requests)
+            ref_command, cpp_command = build_audio_commands(family, scenario_config, backend, mode, args, scenario_dir, warmup_audio, audio_requests)
+
     (scenario_dir / "request_manifest.json").write_text(json.dumps(request_manifest, indent=2), encoding="utf-8")
 
-    set_command_backend(python_command, python_reference_backend(backend))
+    if args.baseline_audiocpp_cli_bin:
+        cpp_bin_name = Path(scenario_config.get("cpp_bin", "audiocpp_cli")).name
+        baseline_bin = str(Path(args.baseline_audiocpp_cli_bin).parent / cpp_bin_name)
+        ref_command = []
+        for token in cpp_command:
+            token = token.replace("cpp.timing.log", "baseline.timing.log")
+            token = token.replace("cpp_audio", "baseline_audio")
+            if token.endswith(cpp_bin_name):
+                token = baseline_bin
+            ref_command.append(token)
 
-    append_log(master_log, f"PYTHON START family={family} mode={mode} backend={backend} command={' '.join(python_command)}")
-    python_env = os.environ.copy()
-    python_env.pop("LD_LIBRARY_PATH", None)
-    if scenario_config["kind"] == "ace_step":
-        python_env["ACESTEP_PROJECT_ROOT"] = str(scenario_dir)
-    python_stdout, python_memory = run_command(python_command, scenario_dir / "python.log", env=python_env)
-    append_log(master_log, f"PYTHON END family={family} mode={mode} backend={backend}")
-    append_log(
-        master_log,
-        f"PYTHON MEMORY family={family} mode={mode} backend={backend} "
-        f"peak_rss_kb={python_memory['peak_rss_kb']} peak_vms_kb={python_memory['peak_vms_kb']}",
-    )
-    python_parsed = parse_summary_lines(python_stdout)
-    python_result_payload = sanitized_result_payload(scenario_config["kind"], python_parsed)
-    python_summary = python_parsed.get("summary") or {}
-    python_summary_path = scenario_dir / "python.result.json"
-    python_summary_path.write_text(json.dumps(python_result_payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    append_log(master_log, f"PYTHON RESULT family={family} mode={mode} backend={backend} path={python_summary_path}")
+
+    
+    if shutil.which("conda"):
+        if not args.baseline_audiocpp_cli_bin:
+            ref_command = ["conda", "run", "--no-capture-output", "-n", ref_env] + ref_command
+        cpp_command = ["conda", "run", "--no-capture-output", "-n", ref_env] + cpp_command
+
+    ref_parsed = {
+        "summaries": [{} for _ in range(args.requests_per_session)],
+        "summary": {"sequence_steps": [{} for _ in range(args.requests_per_session)]},
+        "audio_outs": {},
+    } if args.skip_python else {}
+    ref_summary = ref_parsed.get("summary", {})
+    ref_result_payload = {}
+    ref_memory = {"peak_rss_kb": 0, "peak_vms_kb": 0} if args.skip_python else {}
+    ref_name = "baseline" if args.baseline_audiocpp_cli_bin else "python"
+    ref_label = ref_name.upper()
+    ref_summary_path = scenario_dir / f"{ref_name}.result.json"
+    
+    if not args.skip_python:
+        if not args.baseline_audiocpp_cli_bin:
+            set_command_backend(ref_command, python_reference_backend(backend))
+        append_log(master_log, f"{ref_label} START family={family} mode={mode} backend={backend} command={' '.join(ref_command)}")
+        ref_env = os.environ.copy()
+        ref_env.pop("LD_LIBRARY_PATH", None)
+        if scenario_config["kind"] == "ace_step":
+            ref_env["ACESTEP_PROJECT_ROOT"] = str(scenario_dir)
+        ref_stdout, ref_memory = run_command(ref_command, scenario_dir / f"{ref_name}.log", env=ref_env)
+        append_log(master_log, f"{ref_label} END family={family} mode={mode} backend={backend}")
+        append_log(
+            master_log,
+            f"{ref_label} MEMORY family={family} mode={mode} backend={backend} "
+            f"peak_rss_kb={ref_memory['peak_rss_kb']} peak_vms_kb={ref_memory['peak_vms_kb']}",
+        )
+        ref_parsed = parse_summary_lines(ref_stdout)
+        timing_metrics = parse_timing_log(scenario_dir / f"{ref_name}.timing.log")
+        ref_parsed.setdefault("metrics", {}).update(timing_metrics)
+        ref_summary = ref_parsed.get("summary") or {}
+        ref_result_payload = sanitized_result_payload(scenario_config["kind"], ref_parsed)
+        ref_summary_path.write_text(json.dumps(ref_result_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        append_log(master_log, f"{ref_label} RESULT family={family} mode={mode} backend={backend} path={ref_summary_path}")
 
     append_log(master_log, f"CPP START family={family} mode={mode} backend={backend} command={' '.join(cpp_command)}")
     cpp_stdout, cpp_memory = run_command(cpp_command, scenario_dir / "cpp.log")
@@ -4719,6 +4715,8 @@ def run_scenario(
         f"peak_rss_kb={cpp_memory['peak_rss_kb']} peak_vms_kb={cpp_memory['peak_vms_kb']}",
     )
     cpp_parsed = parse_summary_lines(cpp_stdout)
+    cpp_timing_metrics = parse_timing_log(scenario_dir / "cpp.timing.log")
+    cpp_parsed.setdefault("metrics", {}).update(cpp_timing_metrics)
     cpp_result_payload = sanitized_result_payload(scenario_config["kind"], cpp_parsed)
     cpp_summary = cpp_parsed.get("summary") or {}
     cpp_summary_path = scenario_dir / "cpp.result.json"
@@ -4728,30 +4726,30 @@ def run_scenario(
     parity_results: list[dict[str, Any]] = []
     if scenario_config["kind"] == "tts":
         min_rms = float(scenario_config.get("min_rms", 0.0))
-        python_valid = validate_tts_result(python_parsed, args.requests_per_session, min_rms)
+        ref_valid = validate_tts_result(ref_parsed, args.requests_per_session, min_rms)
         cpp_valid = validate_tts_result(cpp_parsed, args.requests_per_session, min_rms)
         waveform_compare_fn = compare_kokoro if family == "kokoro" else compare_pocket
-        python_whisper_results: list[dict[str, Any]] = []
+        ref_whisper_results: list[dict[str, Any]] = []
         cpp_whisper_results: list[dict[str, Any]] = []
         run_asr_check = bool(scenario_config.get("run_asr_check", True))
         for request_index in range(args.requests_per_session):
-            python_output = python_valid["per_request_outputs"][request_index]
+            ref_output = ref_valid["per_request_outputs"][request_index]
             cpp_output = cpp_valid["per_request_outputs"][request_index]
-            append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_output['path']} valid={int(python_output['ok'])}")
+            append_log(master_log, f"{ref_label} OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={ref_output['path']} valid={int(ref_output['ok'])}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_output['path']} valid={int(cpp_output['ok'])}")
-            if request_index >= len(python_parsed["summaries"]):
-                parity = missing_parity(request_index, request_manifest["texts"][request_index], "missing_python_summary")
+            if request_index >= len(ref_parsed["summaries"]):
+                parity = missing_parity(request_index, request_manifest["texts"][request_index], "missing_ref_summary")
             elif request_index >= len(cpp_parsed["summaries"]):
                 parity = missing_parity(request_index, request_manifest["texts"][request_index], "missing_cpp_summary")
             else:
-                python_audio_path = resolve_repo_path(python_output["path"])
+                ref_audio_path = resolve_repo_path(ref_output["path"])
                 cpp_audio_path = resolve_repo_path(cpp_output["path"])
-                if python_audio_path is None or cpp_audio_path is None:
+                if ref_audio_path is None or cpp_audio_path is None:
                     parity = missing_parity(request_index, request_manifest["texts"][request_index], "missing_audio_path")
                 else:
                     if run_asr_check:
-                        python_whisper = run_whisper(
-                            python_audio_path,
+                        ref_whisper = run_whisper(
+                            ref_audio_path,
                             scenario_dir / "whisper" / f"python_request_{request_index:02d}",
                             args.threads,
                             scenario_config.get("whisper_model", WHISPER_MODEL),
@@ -4766,13 +4764,13 @@ def run_scenario(
                             scenario_config.get("whisper_language"),
                             bool(scenario_config.get("whisper_word_timestamps", True)),
                         )
-                        python_whisper_results.append(python_whisper)
+                        ref_whisper_results.append(ref_whisper)
                         cpp_whisper_results.append(cpp_whisper)
-                        append_log(master_log, f"PYTHON ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(python_whisper)}")
+                        append_log(master_log, f"PYTHON ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(ref_whisper)}")
                         append_log(master_log, f"CPP ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(cpp_whisper)}")
                         asr_parity = compare_whisper_outputs(
                             cpp_whisper,
-                            python_whisper,
+                            ref_whisper,
                             float(scenario_config.get("asr_compact_lcs_min", 0.0)),
                         )
                     else:
@@ -4790,9 +4788,9 @@ def run_scenario(
                     if family == "qwen3_tts":
                         waveform_parity = compare_qwen3_tts_audio(
                             cpp_parsed["summaries"][request_index],
-                            python_parsed["summaries"][request_index],
+                            ref_parsed["summaries"][request_index],
                             cpp_audio_path,
-                            python_audio_path,
+                            ref_audio_path,
                             float(scenario_config.get("wav_cosine_min", 0.95)),
                             float(scenario_config.get("log_mel_cosine_min", 0.95)),
                             float(scenario_config.get("length_ratio_min", 0.98)),
@@ -4804,9 +4802,9 @@ def run_scenario(
                     elif family in {"moss_tts_nano", "moss_tts_local"}:
                         waveform_parity = compare_moss_tts(
                             cpp_parsed["summaries"][request_index],
-                            python_parsed["summaries"][request_index],
+                            ref_parsed["summaries"][request_index],
                             cpp_audio_path,
-                            python_audio_path,
+                            ref_audio_path,
                             float(scenario_config.get("log_mel_cosine_min", 0.80)),
                             float(scenario_config.get("length_ratio_min", 0.98)),
                         )
@@ -4821,7 +4819,7 @@ def run_scenario(
                             asr_parity["reason"] if not asr_parity["ok"] else waveform_parity["reason"]
                         )
                     else:
-                        waveform_parity = waveform_compare_fn(cpp_parsed["summaries"][request_index], python_parsed["summaries"][request_index])
+                        waveform_parity = waveform_compare_fn(cpp_parsed["summaries"][request_index], ref_parsed["summaries"][request_index])
                         parity_ok = asr_parity["ok"]
                         parity_reason = asr_parity["reason"]
                     parity = {
@@ -4846,10 +4844,10 @@ def run_scenario(
                 )
             else:
                 append_log(master_log, f"PARITY family={family} mode={mode} backend={backend} request={request_index} ok={int(parity['ok'])} reason={parity['reason']}")
-        python_result_payload["whisper"] = python_whisper_results
+        ref_result_payload["whisper"] = ref_whisper_results
         cpp_result_payload["whisper"] = cpp_whisper_results
     elif scenario_config["kind"] == "ace_step":
-        python_valid = validate_sequence_result(python_summary, args.requests_per_session, "ace_step")
+        ref_valid = validate_sequence_result(ref_summary, args.requests_per_session, "ace_step")
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, "ace_step")
         hash_compare = ace_step_baseline_hash_compare(cpp_summary)
         append_log(
@@ -4858,31 +4856,31 @@ def run_scenario(
             f"match={int(hash_compare['match'])} baseline_sha256={hash_compare['baseline_sha256']} "
             f"current_sha256={hash_compare['current_sha256']}",
         )
-        python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
+        python_step_paths = write_sequence_step_artifacts(ref_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
         cpp_step_paths = write_sequence_step_artifacts(cpp_summary.get("sequence_steps", []), scenario_dir / "cpp_json", "cpp")
         for request_index in range(args.requests_per_session):
             python_step_path = python_step_paths[request_index] if request_index < len(python_step_paths) else ""
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
-            append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
+            append_log(master_log, f"{ref_label} OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
     elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "higgs_audio_tts", "index_tts2"}:
-        python_valid = validate_sequence_result(python_summary, args.requests_per_session, scenario_config["kind"])
+        ref_valid = validate_sequence_result(ref_summary, args.requests_per_session, scenario_config["kind"])
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, scenario_config["kind"])
-        python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
+        python_step_paths = write_sequence_step_artifacts(ref_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
         cpp_step_paths = write_sequence_step_artifacts(cpp_summary.get("sequence_steps", []), scenario_dir / "cpp_json", "cpp")
         for request_index in range(args.requests_per_session):
             python_step_path = python_step_paths[request_index] if request_index < len(python_step_paths) else ""
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
-            append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
+            append_log(master_log, f"{ref_label} OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
-            if request_index >= len(python_summary.get("sequence_steps", [])):
+            if request_index >= len(ref_summary.get("sequence_steps", [])):
                 parity = missing_parity(request_index, request_manifest["requests"][request_index], "missing_python_step")
             elif request_index >= len(cpp_summary.get("sequence_steps", [])):
                 parity = missing_parity(request_index, request_manifest["requests"][request_index], "missing_cpp_step")
             else:
                 parity = compare_single_audio_step(
                     cpp_summary["sequence_steps"][request_index],
-                    python_summary["sequence_steps"][request_index],
+                    ref_summary["sequence_steps"][request_index],
                     float(scenario_config.get("wav_cosine_min", 0.80)),
                     float(scenario_config["log_mel_cosine_min"]) if "log_mel_cosine_min" in scenario_config else None,
                     float(scenario_config["mrstft_spectral_convergence_max"]) if "mrstft_spectral_convergence_max" in scenario_config else None,
@@ -4900,16 +4898,16 @@ def run_scenario(
                 f"ok={int(parity['ok'])} reason={parity['reason']} metrics={json.dumps(parity.get('metrics', {}), sort_keys=True)}",
             )
     elif scenario_config["kind"] == "asr":
-        python_valid = validate_sequence_result(python_summary, args.requests_per_session, "asr")
+        ref_valid = validate_sequence_result(ref_summary, args.requests_per_session, "asr")
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, "asr")
-        python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
+        python_step_paths = write_sequence_step_artifacts(ref_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
         cpp_step_paths = write_sequence_step_artifacts(cpp_summary.get("sequence_steps", []), scenario_dir / "cpp_json", "cpp")
         for request_index in range(args.requests_per_session):
             python_step_path = python_step_paths[request_index] if request_index < len(python_step_paths) else ""
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
-            append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
+            append_log(master_log, f"{ref_label} OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
-            if request_index >= len(python_summary.get("sequence_steps", [])):
+            if request_index >= len(ref_summary.get("sequence_steps", [])):
                 parity = missing_parity(request_index, request_manifest["audio_sequence"][request_index], "missing_python_step")
             elif request_index >= len(cpp_summary.get("sequence_steps", [])):
                 parity = missing_parity(request_index, request_manifest["audio_sequence"][request_index], "missing_cpp_step")
@@ -4918,53 +4916,53 @@ def run_scenario(
                     expected_fragments = request_manifest.get("expected_fragments", [])
                     parity = compare_qwen3_asr_step(
                         cpp_summary["sequence_steps"][request_index],
-                        python_summary["sequence_steps"][request_index],
+                        ref_summary["sequence_steps"][request_index],
                         expected_fragments[request_index] if request_index < len(expected_fragments) else [],
                         bool(config.get("check_language", False)),
                     )
                 else:
-                    parity = compare_parakeet_step(cpp_summary["sequence_steps"][request_index], python_summary["sequence_steps"][request_index])
+                    parity = compare_parakeet_step(cpp_summary["sequence_steps"][request_index], ref_summary["sequence_steps"][request_index])
                 parity["request_index"] = request_index
                 parity["request"] = request_manifest["audio_sequence"][request_index]
             parity_results.append(parity)
             append_log(master_log, f"PARITY family={family} mode={mode} backend={backend} request={request_index} ok={int(parity['ok'])} reason={parity['reason']}")
     else:
         sequence_kind = scenario_config["kind"]
-        python_valid = validate_sequence_result(python_summary, args.requests_per_session, sequence_kind)
+        ref_valid = validate_sequence_result(ref_summary, args.requests_per_session, sequence_kind)
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, sequence_kind)
-        python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
+        python_step_paths = write_sequence_step_artifacts(ref_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
         cpp_step_paths = write_sequence_step_artifacts(cpp_summary.get("sequence_steps", []), scenario_dir / "cpp_json", "cpp")
         for request_index in range(args.requests_per_session):
             python_step_path = python_step_paths[request_index] if request_index < len(python_step_paths) else ""
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
-            append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
+            append_log(master_log, f"{ref_label} OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
-            if request_index >= len(python_summary.get("sequence_steps", [])):
+            if request_index >= len(ref_summary.get("sequence_steps", [])):
                 parity = missing_parity(request_index, request_manifest["audio_sequence"][request_index], "missing_python_step")
             elif request_index >= len(cpp_summary.get("sequence_steps", [])):
                 parity = missing_parity(request_index, request_manifest["audio_sequence"][request_index], "missing_cpp_step")
             else:
                 if sequence_kind == "vad":
-                    parity = compare_vad_step(cpp_summary["sequence_steps"][request_index], python_summary["sequence_steps"][request_index])
+                    parity = compare_vad_step(cpp_summary["sequence_steps"][request_index], ref_summary["sequence_steps"][request_index])
                 elif sequence_kind == "spk":
-                    parity = compare_speaker_step(cpp_summary["sequence_steps"][request_index], python_summary["sequence_steps"][request_index])
+                    parity = compare_speaker_step(cpp_summary["sequence_steps"][request_index], ref_summary["sequence_steps"][request_index])
                 elif sequence_kind == "separation":
-                    parity = compare_separation_step(cpp_summary["sequence_steps"][request_index], python_summary["sequence_steps"][request_index])
+                    parity = compare_separation_step(cpp_summary["sequence_steps"][request_index], ref_summary["sequence_steps"][request_index])
                 elif sequence_kind == "alignment":
                     expected_words = request_manifest.get("expected_words", [])
                     parity = compare_qwen3_forced_aligner_step(
                         cpp_summary["sequence_steps"][request_index],
-                        python_summary["sequence_steps"][request_index],
+                        ref_summary["sequence_steps"][request_index],
                         expected_words[request_index] if request_index < len(expected_words) else [],
                     )
                 else:
-                    parity = compare_sortformer_step(cpp_summary["sequence_steps"][request_index], python_summary["sequence_steps"][request_index])
+                    parity = compare_sortformer_step(cpp_summary["sequence_steps"][request_index], ref_summary["sequence_steps"][request_index])
                 parity["request_index"] = request_index
                 parity["request"] = request_manifest["audio_sequence"][request_index]
             parity_results.append(parity)
             append_log(master_log, f"PARITY family={family} mode={mode} backend={backend} request={request_index} ok={int(parity['ok'])} reason={parity['reason']}")
 
-    python_summary_path.write_text(json.dumps(python_result_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    ref_summary_path.write_text(json.dumps(ref_result_payload, indent=2, ensure_ascii=False), encoding="utf-8")
     cpp_summary_path.write_text(json.dumps(cpp_result_payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     scenario_summary = {
@@ -4973,11 +4971,11 @@ def run_scenario(
         "backend": backend,
         "warmup": effective_warmup(scenario_config, args),
         "request_manifest": request_manifest,
-        "python": {
-            "summary_path": str(python_summary_path),
-            "parsed": python_result_payload,
-            "valid": python_valid,
-            "memory": python_memory,
+        ref_name: {
+            "summary_path": str(ref_summary_path),
+            "parsed": ref_result_payload,
+            "valid": ref_valid,
+            "memory": ref_memory,
         },
         "cpp": {
             "summary_path": str(cpp_summary_path),
@@ -4986,7 +4984,7 @@ def run_scenario(
             "memory": cpp_memory,
         },
         "parity": parity_results,
-        "ok": python_valid["ok"] and cpp_valid["ok"] and all(item["ok"] for item in parity_results),
+        "ok": ref_valid["ok"] and cpp_valid["ok"] and all(item["ok"] for item in parity_results),
     }
     if scenario_config["kind"] == "ace_step":
         scenario_summary["hash_compare"] = hash_compare
@@ -5008,6 +5006,13 @@ def run_scenario(
 
 def main() -> int:
     args = parse_args()
+    if args.audiocpp_cli_bin:
+        bin_dir = Path(args.audiocpp_cli_bin).parent.absolute()
+        for family, config in FAMILY_CONFIG.items():
+            if "cpp_bin" in config:
+                original_bin_name = Path(config["cpp_bin"]).name
+                config["cpp_bin"] = str(bin_dir / original_bin_name)
+    
     requested_stamp = args.artifact_stamp or timestamp_seconds_local()
     requested_output_dir = REPO_ROOT / (
         args.output_dir if args.output_dir else f"build/logs/warmbench/{requested_stamp}")
