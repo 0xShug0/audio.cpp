@@ -5,6 +5,7 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/transformers/qwen_causal_decoder.h"
 #include "engine/framework/modules/lookup_modules.h"
+#include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/framework/core/constant_tensor_cache.h"
@@ -57,6 +58,40 @@ struct PrefillOutput {
     std::vector<float> logits;
     runtime::TransformerKVState state;
 };
+
+struct OutputProjection {
+    int64_t offset = 0;
+    int64_t count = 0;
+
+    bool operator==(const OutputProjection & other) const noexcept {
+        return offset == other.offset && count == other.count;
+    }
+};
+
+OutputProjection output_projection(
+    const OuteTTSConfig & config,
+    const OuteTTSGenerateOptions & options) {
+    OutputProjection out{0, config.vocab_size};
+    if (options.allowed_token_min < 0 ||
+        options.allowed_token_max < options.allowed_token_min) {
+        return out;
+    }
+    int64_t first = options.allowed_token_min;
+    int64_t last = options.allowed_token_max;
+    if (options.allowed_special_token >= 0) {
+        first = std::min<int64_t>(
+            first, options.allowed_special_token);
+        last = std::max<int64_t>(
+            last, options.allowed_special_token);
+    }
+    if (first < 0 || last >= config.vocab_size) {
+        throw std::runtime_error(
+            "generation output projection is outside the vocabulary");
+    }
+    out.offset = first;
+    out.count = last - first + 1;
+    return out;
+}
 
 std::vector<float> llama3_rope_factors(const OuteTTSConfig & config) {
     constexpr double pi = 3.14159265358979323846;
@@ -138,7 +173,9 @@ ModelWeights load_weights(
     return out;
 }
 
-modules::QwenCausalDecoderConfig decoder_config(const OuteTTSConfig & c) {
+modules::QwenCausalDecoderConfig decoder_config(
+    const OuteTTSConfig & c,
+    int64_t logits_size) {
     modules::QwenCausalDecoderConfig out;
     out.stack.hidden_size = c.hidden_size;
     out.stack.intermediate_size = c.intermediate_size;
@@ -156,13 +193,15 @@ modules::QwenCausalDecoderConfig decoder_config(const OuteTTSConfig & c) {
     out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.logits_size = c.vocab_size;
+    out.logits_size = logits_size;
     return out;
 }
 
 modules::QwenCausalDecoderWeights graph_weights(
     const ModelWeights & weights,
-    core::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants,
+    core::ModuleBuildContext & build,
+    const OutputProjection & projection) {
     modules::QwenCausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & source : weights.layers) {
@@ -177,7 +216,13 @@ modules::QwenCausalDecoderWeights graph_weights(
         out.stack.layers.push_back(std::move(layer));
     }
     out.final_norm = binding::norm_data(constants, weights.norm);
-    out.lm_head.weight = weights.lm_head;
+    out.lm_head.weight =
+        projection.offset == 0 &&
+            projection.count == weights.lm_head.shape.dims[0]
+        ? weights.lm_head
+        : modules::SliceModule(
+              {0, projection.offset, projection.count})
+              .build(build, weights.lm_head);
     return out;
 }
 
@@ -219,36 +264,98 @@ int32_t sample_token(
     const sampling::TorchCudaSamplingPolicy & sampling_policy,
     uint64_t call_index,
     SamplingScratch & scratch) {
-    if (!(o.temperature > 0.0F) || !std::isfinite(o.temperature)) {
-        return static_cast<int32_t>(std::max_element(logits.begin(), logits.end()) - logits.begin());
-    }
     auto & order = scratch.order;
-    order.resize(logits.size());
-    std::iota(order.begin(), order.end(), 0);
+    order.clear();
+    order.reserve(logits.size());
+    for (size_t token = 0; token < logits.size(); ++token) {
+        const bool unrestricted =
+            o.allowed_token_min < 0 || o.allowed_token_max < 0;
+        const bool in_range =
+            !unrestricted &&
+            static_cast<int64_t>(token) >= o.allowed_token_min &&
+            static_cast<int64_t>(token) <= o.allowed_token_max;
+        if (unrestricted || in_range ||
+            static_cast<int64_t>(token) == o.allowed_special_token) {
+            order.push_back(token);
+        }
+    }
+    if (order.empty()) {
+        throw std::runtime_error(
+            "generation token restriction removed every candidate");
+    }
+    if (!(o.temperature > 0.0F) || !std::isfinite(o.temperature)) {
+        return static_cast<int32_t>(
+            *std::max_element(
+                order.begin(),
+                order.end(),
+                [&](size_t lhs, size_t rhs) {
+                    return logits[lhs] < logits[rhs];
+                }));
+    }
+    const auto by_logit_desc = [&](size_t a, size_t b) {
+        return logits[a] > logits[b];
+    };
+    const auto by_logit_desc_stable = [&](size_t a, size_t b) {
+        if (logits[a] != logits[b]) {
+            return logits[a] > logits[b];
+        }
+        // The input candidate order is ascending token ID. Using the token ID
+        // as the secondary key makes partial_sort match stable_sort for ties.
+        return a < b;
+    };
     const size_t kept_by_top_k =
         o.top_k > 0 && static_cast<size_t>(o.top_k) < order.size()
             ? static_cast<size_t>(o.top_k)
             : order.size();
-    const auto by_logit_desc = [&](size_t a, size_t b) {
-        return logits[a] > logits[b];
-    };
-    if (kept_by_top_k < order.size()) {
+    const bool compact_top_k_fast_path =
+        o.compact_sorted_multinomial &&
+        kept_by_top_k < order.size();
+    const bool unrestricted_full_multinomial_fast_path =
+        !o.compact_sorted_multinomial &&
+        kept_by_top_k == order.size() &&
+        o.top_p >= 1.0F &&
+        o.min_p <= 0.0F;
+    if (compact_top_k_fast_path) {
         std::partial_sort(
             order.begin(),
             order.begin() + static_cast<std::ptrdiff_t>(kept_by_top_k),
             order.end(),
-            by_logit_desc);
-        order.resize(kept_by_top_k);
-    } else {
-        std::sort(order.begin(), order.end(), by_logit_desc);
+            by_logit_desc_stable);
+    } else if (o.compact_sorted_multinomial) {
+        std::stable_sort(order.begin(), order.end(), by_logit_desc);
+    } else if (!unrestricted_full_multinomial_fast_path) {
+        if (kept_by_top_k < order.size()) {
+            std::partial_sort(
+                order.begin(),
+                order.begin() + static_cast<std::ptrdiff_t>(kept_by_top_k),
+                order.end(),
+                by_logit_desc);
+            order.resize(kept_by_top_k);
+        } else {
+            std::sort(order.begin(), order.end(), by_logit_desc);
+        }
     }
-    const float max_logit = logits[order.front()];
+    const size_t max_token = unrestricted_full_multinomial_fast_path
+        ? *std::max_element(
+              order.begin(),
+              order.end(),
+              [&](size_t lhs, size_t rhs) {
+                  return logits[lhs] < logits[rhs];
+              })
+        : order.front();
+    const float max_logit = logits[max_token];
     auto & probabilities = scratch.probabilities;
-    probabilities.assign(order.size(), 0.0F);
+    const size_t probability_count =
+        compact_top_k_fast_path ? kept_by_top_k : order.size();
+    probabilities.assign(probability_count, 0.0F);
     double sum = 0.0;
     for (size_t i = 0; i < order.size(); ++i) {
-        probabilities[i] = std::exp((logits[order[i]] - max_logit) / o.temperature);
-        sum += probabilities[i];
+        const float probability =
+            std::exp((logits[order[i]] - max_logit) / o.temperature);
+        if (i < probability_count) {
+            probabilities[i] = probability;
+        }
+        sum += probability;
     }
     for (float & probability : probabilities) {
         probability = static_cast<float>(probability / sum);
@@ -256,7 +363,11 @@ int32_t sample_token(
     const float max_probability = probabilities.front();
     float cumulative = 0.0F;
     size_t kept = 0;
-    for (const float probability : probabilities) {
+    for (size_t index = 0; index < probabilities.size(); ++index) {
+        if (index >= kept_by_top_k) {
+            break;
+        }
+        const float probability = probabilities[index];
         if (probability < max_probability * o.min_p && kept > 0) {
             break;
         }
@@ -272,11 +383,19 @@ int32_t sample_token(
         double best_rank = -std::numeric_limits<double>::infinity();
         int32_t best_token = -1;
         for (size_t index = 0; index < order.size(); ++index) {
+            const uint64_t random_tensor_elements =
+                o.compact_sorted_multinomial
+                    ? static_cast<uint64_t>(order.size())
+                    : static_cast<uint64_t>(logits.size());
+            const uint64_t random_tensor_index =
+                o.compact_sorted_multinomial
+                    ? static_cast<uint64_t>(index)
+                    : static_cast<uint64_t>(order[index]);
             const float exponential =
                 sampling::torch_cuda_tensor_iterator_exponential_element(
                     o.seed,
-                    static_cast<uint64_t>(logits.size()),
-                    static_cast<uint64_t>(order[index]),
+                    random_tensor_elements,
+                    random_tensor_index,
                     call_index,
                     sampling_policy.multiprocessor_count,
                     sampling_policy.max_threads_per_multiprocessor);
@@ -306,8 +425,11 @@ public:
         core::ConstantTensorCache & constants,
         ggml_backend_t backend,
         int threads,
-        int64_t capacity)
-        : config_(config), weights_(&weights), constants_(&constants), backend_(backend), threads_(threads), capacity_(capacity) {
+        int64_t capacity,
+        OutputProjection projection)
+        : config_(config), weights_(&weights), constants_(&constants),
+          backend_(backend), threads_(threads), capacity_(capacity),
+          projection_(projection) {
         ggml_init_params params{1536ull * 1024ull * 1024ull, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (!ctx_) throw std::runtime_error("failed to create OuteTTS cached-step context");
@@ -323,8 +445,18 @@ public:
         auto mask = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, 1, capacity_}), GGML_TYPE_F16);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         constants_->begin_graph();
-        auto output = modules::QwenCausalDecoderModule(decoder_config(config_)).build_static_cache_tail(
-            build, graph_, x, position, graph_weights(*weights_, *constants_), capacity_, mask, slot);
+        auto output = modules::QwenCausalDecoderModule(
+            decoder_config(config_, projection_.count))
+            .build_static_cache_tail(
+                build,
+                graph_,
+                x,
+                position,
+                graph_weights(
+                    *weights_, *constants_, build, projection_),
+                capacity_,
+                mask,
+                slot);
         cache_ = std::move(output.cache);
         logits_ = output.logits.tensor;
         ggml_set_output(logits_);
@@ -342,6 +474,9 @@ public:
     }
 
     int64_t capacity() const noexcept { return capacity_; }
+    const OutputProjection & projection() const noexcept {
+        return projection_;
+    }
 
     void import_state(const runtime::TransformerKVState & state) { cache_.import_state(state); }
 
@@ -360,7 +495,15 @@ public:
         if (logits.size() != static_cast<size_t>(config_.vocab_size)) {
             logits.resize(static_cast<size_t>(config_.vocab_size));
         }
-        ggml_backend_tensor_get(logits_, logits.data(), 0, logits.size() * sizeof(float));
+        std::fill(
+            logits.begin(),
+            logits.end(),
+            -std::numeric_limits<float>::infinity());
+        ggml_backend_tensor_get(
+            logits_,
+            logits.data() + projection_.offset,
+            0,
+            static_cast<size_t>(projection_.count) * sizeof(float));
         cache_.advance_after_direct_append(1);
     }
 
@@ -371,6 +514,7 @@ private:
     ggml_backend_t backend_ = nullptr;
     int threads_ = 1;
     int64_t capacity_ = 0;
+    OutputProjection projection_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_id_ = nullptr;
     ggml_tensor * positions_ = nullptr;
@@ -427,7 +571,9 @@ struct OuteTTSLlamaRuntime::Impl {
         }
     }
 
-    PrefillOutput prefill(const std::vector<int32_t> & ids) const {
+    PrefillOutput prefill(
+        const std::vector<int32_t> & ids,
+        const OutputProjection & projection) const {
         using Clock = std::chrono::steady_clock;
         const auto total_start = Clock::now();
         const auto & c = assets->config;
@@ -453,8 +599,16 @@ struct OuteTTSLlamaRuntime::Impl {
         auto mask_value = core::wrap_tensor(
             mask, core::TensorShape::from_dims({1, 1, steps, steps}), GGML_TYPE_F16);
         constants->begin_graph();
-        auto output = modules::QwenCausalDecoderModule(decoder_config(c)).build(
-            build, x, position_value, graph_weights(weights, *constants), std::nullopt, mask_value);
+        auto output = modules::QwenCausalDecoderModule(
+            decoder_config(c, projection.count))
+            .build(
+                build,
+                x,
+                position_value,
+                graph_weights(
+                    weights, *constants, build, projection),
+                std::nullopt,
+                mask_value);
         std::vector<ggml_tensor *> keys;
         std::vector<ggml_tensor *> values;
         keys.reserve(output.state.layers.size());
@@ -501,8 +655,14 @@ struct OuteTTSLlamaRuntime::Impl {
             throw std::runtime_error("OuteTTS Llama graph compute failed");
         }
         PrefillOutput result;
-        result.logits.resize(static_cast<size_t>(c.vocab_size));
-        ggml_backend_tensor_get(logits, result.logits.data(), 0, result.logits.size() * sizeof(float));
+        result.logits.assign(
+            static_cast<size_t>(c.vocab_size),
+            -std::numeric_limits<float>::infinity());
+        ggml_backend_tensor_get(
+            logits,
+            result.logits.data() + projection.offset,
+            0,
+            static_cast<size_t>(projection.count) * sizeof(float));
         result.state.current_end = steps;
         result.state.layers.resize(keys.size());
         const size_t layer_elements = static_cast<size_t>(steps * c.num_key_value_heads * c.head_dim);
@@ -536,13 +696,23 @@ struct OuteTTSLlamaRuntime::Impl {
         return result;
     }
 
-    CachedStepGraph & ensure_step_graph(int64_t capacity) {
+    CachedStepGraph & ensure_step_graph(
+        int64_t capacity,
+        const OutputProjection & projection) {
         const auto build_start = std::chrono::steady_clock::now();
         const bool rebuilt =
-            step_graph == nullptr || step_graph->capacity() < capacity;
+            step_graph == nullptr ||
+            step_graph->capacity() < capacity ||
+            !(step_graph->projection() == projection);
         if (rebuilt) {
             step_graph = std::make_unique<CachedStepGraph>(
-                assets->config, weights, *constants, backend, threads, capacity);
+                assets->config,
+                weights,
+                *constants,
+                backend,
+                threads,
+                capacity,
+                projection);
         }
         debug::trace_log_scalar("outetts.llama.step.graph_rebuilt", rebuilt);
         debug::trace_log_scalar("outetts.llama.step.graph_reused", !rebuilt);
@@ -608,7 +778,13 @@ OuteTTSGenerateResult OuteTTSLlamaRuntime::generate(
     if (prompt.empty()) {
         throw std::runtime_error("OuteTTS generation requires a prompt");
     }
-    if (options.max_new_tokens <= 0 || options.repetition_window < 0 || options.repetition_penalty <= 0.0F) {
+    if (options.max_new_tokens <= 0 ||
+        options.minimum_new_tokens < 0 ||
+        options.minimum_new_tokens > options.max_new_tokens ||
+        options.repetition_window < 0 ||
+        options.repetition_penalty <= 0.0F ||
+        options.repetition_aware_window < 0 ||
+        options.repetition_aware_threshold < 0) {
         throw std::runtime_error("invalid OuteTTS generation options");
     }
     const auto total_start = std::chrono::steady_clock::now();
@@ -617,7 +793,15 @@ OuteTTSGenerateResult OuteTTSLlamaRuntime::generate(
     result.tokens.reserve(static_cast<size_t>(options.max_new_tokens));
     std::mt19937 rng(options.seed);
     OuteTTSGenerateOptions sampling_options = options;
-    auto prefill = impl_->prefill(prompt);
+    const auto projection =
+        output_projection(impl_->assets->config, options);
+    debug::trace_log_scalar(
+        "outetts.llama.output_projection.offset",
+        projection.offset);
+    debug::trace_log_scalar(
+        "outetts.llama.output_projection.rows",
+        projection.count);
+    auto prefill = impl_->prefill(prompt, projection);
     const int64_t capacity = std::min<int64_t>(
         impl_->assets->generation.max_length,
         static_cast<int64_t>(prompt.size()) + options.max_new_tokens);
@@ -627,12 +811,14 @@ OuteTTSGenerateResult OuteTTSLlamaRuntime::generate(
         ((capacity + kStepGraphCapacityQuantum - 1) /
          kStepGraphCapacityQuantum) *
             kStepGraphCapacityQuantum);
-    auto & step = impl_->ensure_step_graph(reusable_capacity);
+    auto & step =
+        impl_->ensure_step_graph(reusable_capacity, projection);
     step.import_state(prefill.state);
     std::vector<float> logits = std::move(prefill.logits);
     double sample_ms = 0.0;
     double cached_step_compute_ms = 0.0;
     SamplingScratch sampling_scratch;
+    uint64_t compact_multinomial_call_index = 0;
     for (int64_t i = 0; i < options.max_new_tokens; ++i) {
         if (static_cast<int64_t>(all.size()) >= impl_->assets->generation.max_length) {
             result.stop_reason = OuteTTSStopReason::ContextLimit;
@@ -642,17 +828,64 @@ OuteTTSGenerateResult OuteTTSLlamaRuntime::generate(
         apply_repetition_penalty(
             logits, all, options.repetition_window, options.repetition_penalty,
             sampling_scratch.repeated_ids);
+        if (i < options.minimum_new_tokens &&
+            audio_end_id >= 0 &&
+            static_cast<size_t>(audio_end_id) < logits.size()) {
+            logits[static_cast<size_t>(audio_end_id)] =
+                -std::numeric_limits<float>::infinity();
+        }
+        const uint64_t primary_call_index =
+            sampling_options.compact_sorted_multinomial
+                ? compact_multinomial_call_index++
+                : static_cast<uint64_t>(i);
         const int32_t token = sample_token(
             logits, sampling_options, rng,
-            impl_->sampling_policy, static_cast<uint64_t>(i),
+            impl_->sampling_policy, primary_call_index,
             sampling_scratch);
+        int32_t selected_token = token;
+        if (options.repetition_aware_sampling &&
+            options.repetition_aware_window > 0 &&
+            options.repetition_aware_threshold > 0) {
+            const size_t window = static_cast<size_t>(
+                options.repetition_aware_window);
+            const size_t begin =
+                result.tokens.size() > window
+                    ? result.tokens.size() - window
+                    : 0;
+            const int64_t repeated = static_cast<int64_t>(std::count(
+                result.tokens.begin() +
+                    static_cast<std::ptrdiff_t>(begin),
+                result.tokens.end(),
+                token));
+            if (repeated >= options.repetition_aware_threshold) {
+                auto fallback = sampling_options;
+                fallback.top_k = 0;
+                fallback.top_p = 1.0F;
+                fallback.min_p = 0.0F;
+                // The RAS fallback samples the original full-vocabulary
+                // probability tensor, not the compact sorted nucleus.
+                fallback.compact_sorted_multinomial = false;
+                const uint64_t fallback_call_index =
+                    sampling_options.compact_sorted_multinomial
+                        ? compact_multinomial_call_index++
+                        : static_cast<uint64_t>(
+                              options.max_new_tokens + i);
+                selected_token = sample_token(
+                    logits,
+                    fallback,
+                    rng,
+                    impl_->sampling_policy,
+                    fallback_call_index,
+                    sampling_scratch);
+            }
+        }
         sample_ms += debug::elapsed_ms(sample_start);
-        result.tokens.push_back(token);
-        if (token == eos_id) {
+        result.tokens.push_back(selected_token);
+        if (selected_token == eos_id) {
             result.stop_reason = OuteTTSStopReason::Eos;
             break;
         }
-        if (token == audio_end_id) {
+        if (selected_token == audio_end_id) {
             result.stop_reason = OuteTTSStopReason::AudioEnd;
             break;
         }
@@ -661,9 +894,9 @@ OuteTTSGenerateResult OuteTTSLlamaRuntime::generate(
         if (i + 1 >= options.max_new_tokens) {
             break;
         }
-        all.push_back(token);
+        all.push_back(selected_token);
         const auto step_start = std::chrono::steady_clock::now();
-        step.run(token, logits);
+        step.run(selected_token, logits);
         cached_step_compute_ms += debug::elapsed_ms(step_start);
     }
     debug::trace_log_scalar(

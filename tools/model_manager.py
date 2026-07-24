@@ -938,6 +938,67 @@ CATALOG: tuple[ModelPackage, ...] = (
         description="Installs Irodori-TTS VoiceDesign plus the sibling llm-jp tokenizer and DACVAE codec dependencies required by the framework runtime.",
     ),
     ModelPackage(
+        id="glm_tts",
+        display_name="GLM-TTS",
+        target_directory="GLM-TTS",
+        source=CompositeSnapshotSource(
+            placements=(
+                SnapshotPlacement(
+                    source=SnapshotSource(repo_id="zai-org/GLM-TTS"),
+                    required_files=(
+                        "flow/config.yaml",
+                        "flow/flow.pt",
+                        "hift/hift.pt",
+                        "llm/config.json",
+                        "llm/generation_config.json",
+                        "llm/model-00001-of-00002.safetensors",
+                        "llm/model-00002-of-00002.safetensors",
+                        "llm/model.safetensors.index.json",
+                        "speech_tokenizer/config.json",
+                        "speech_tokenizer/model.safetensors",
+                        "speech_tokenizer/preprocessor_config.json",
+                        "vq32k-phoneme-tokenizer/tokenizer.model",
+                        "vq32k-phoneme-tokenizer/tokenizer_config.json",
+                    ),
+                ),
+                SnapshotPlacement(
+                    source=SnapshotSource(
+                        repo_id="mlx-community/index-tts2-mlx",
+                        include_prefixes=("campplus.safetensors",),
+                    ),
+                    target_subdir="frontend",
+                    required_files=("campplus.safetensors",),
+                ),
+            ),
+        ),
+        required_files=(
+            "audio_cpp_config.json",
+            "flow/config.yaml",
+            "flow/model.safetensors",
+            "frontend/campplus.safetensors",
+            "hift/model.safetensors",
+            "llm/config.json",
+            "llm/generation_config.json",
+            "llm/model-00001-of-00002.safetensors",
+            "llm/model-00002-of-00002.safetensors",
+            "llm/model.safetensors.index.json",
+            "speech_tokenizer/config.json",
+            "speech_tokenizer/model.safetensors",
+            "speech_tokenizer/preprocessor_config.json",
+            "vq32k-phoneme-tokenizer/tokenizer_config.json",
+            "vq32k-phoneme-tokenizer/tokenizer_merges.txt",
+            "vq32k-phoneme-tokenizer/tokenizer_vocab.json",
+        ),
+        family="glm_tts",
+        tasks=("tts", "clon"),
+        modes=("offline",),
+        standalone=True,
+        description=(
+            "Installs GLM-TTS and prepares its Flow, HiFT, ChatGLM tokenizer, "
+            "and CAMPPlus assets for zero-shot Chinese and English synthesis."
+        ),
+    ),
+    ModelPackage(
         id="outetts_1_0_1b",
         display_name="OuteTTS 1.0 1B",
         target_directory="Llama-OuteTTS-1.0-1B",
@@ -1863,6 +1924,17 @@ def install_composite_snapshot(
             dacvae_root = staged_package_root.parent / "Semantic-DACVAE-Japanese-32dim"
             if dacvae_root.exists():
                 convert_irodori_dacvae_weights(dacvae_root)
+        elif package.id == "glm_tts":
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "convert_glm_tts.py"),
+                    "--model-dir",
+                    str(staged_package_root),
+                    "--overwrite",
+                ],
+                check=True,
+            )
         elif package.id == "outetts_1_0_1b":
             dac_root = staged_package_root.parent / "DAC.speech.v1.0"
             if dac_root.exists():

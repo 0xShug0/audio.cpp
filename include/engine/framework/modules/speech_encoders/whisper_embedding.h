@@ -51,6 +51,10 @@ public:
         core::ModuleBuildContext & ctx,
         const core::TensorValue & log_mel,
         const WhisperEmbeddingWeights & weights) const;
+    core::TensorValue build_pre_norm(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & log_mel,
+        const WhisperEmbeddingWeights & weights) const;
 
 private:
     WhisperEmbeddingConfig config_;

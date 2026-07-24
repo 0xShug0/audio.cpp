@@ -14,6 +14,7 @@
 | Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
 | IndexTTS2 | `index_tts2` | `tts` | [IndexTTS2](#indextts2) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
+| GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
@@ -523,6 +524,26 @@ audiocpp_cli --task clon --family outetts \
 ```
 
 See [OuteTTS community model usage](community_models/outetts.md) for cloning notes, GGUF packing, all options, and validation details.
+
+## GLM-TTS
+
+GLM-TTS is a community zero-shot Chinese and English speech-synthesis model.
+Both the `tts` and `clon` routes require a clean reference WAV and its exact
+transcript:
+
+```bash
+python tools/model_manager.py install glm_tts --models-dir models
+
+audiocpp_cli --task clon --family glm_tts \
+  --model models/GLM-TTS --backend cuda \
+  --voice-ref reference.wav \
+  --reference-text "The exact words spoken in reference.wav." \
+  --text "Hello from GLM-TTS." \
+  --seed 0 --out glm_tts.wav
+```
+
+See the [GLM-TTS community model guide](community_models/glm_tts.md) for
+standalone GGUF packaging, controls, and validation results.
 
 ## Supertonic
 

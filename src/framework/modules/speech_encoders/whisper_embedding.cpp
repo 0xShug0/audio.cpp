@@ -113,10 +113,23 @@ core::TensorValue WhisperEmbeddingModule::build(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & log_mel,
     const WhisperEmbeddingWeights & weights) const {
-    core::validate_shape(
-        log_mel,
-        core::TensorShape::from_dims({log_mel.shape.dims[0], config_.n_mels, config_.n_audio_ctx * 2}),
-        "log_mel");
+    auto x = build_pre_norm(ctx, log_mel, weights);
+    return LayerNormModule({config_.n_audio_state, config_.layer_norm_eps, true, true}).build(ctx, x, weights.final_norm);
+}
+
+core::TensorValue WhisperEmbeddingModule::build_pre_norm(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & log_mel,
+    const WhisperEmbeddingWeights & weights) const {
+    if (log_mel.shape.rank != 3 ||
+        log_mel.shape.dims[0] <= 0 ||
+        log_mel.shape.dims[1] != config_.n_mels ||
+        log_mel.shape.dims[2] <= 0 ||
+        log_mel.shape.dims[2] > config_.n_audio_ctx * 2) {
+        throw std::runtime_error(
+            "Whisper log_mel must have shape [batch, n_mels, frames] with "
+            "frames in the configured audio context");
+    }
     core::validate_shape(
         weights.positional_embedding,
         core::TensorShape::from_dims({config_.n_audio_ctx, config_.n_audio_state}),
@@ -134,12 +147,21 @@ core::TensorValue WhisperEmbeddingModule::build(
     x = permute(ctx, x, {0, 2, 1});
     x = ensure_contiguous(ctx, x);
 
+    const int64_t encoded_frames = x.shape.dims[1];
+    auto position_rows = encoded_frames == config_.n_audio_ctx
+        ? weights.positional_embedding
+        : SliceModule({0, 0, encoded_frames}).build(
+              ctx, weights.positional_embedding);
     auto pos = core::reshape_tensor(
         ctx,
-        weights.positional_embedding,
-        core::TensorShape::from_dims({1, config_.n_audio_ctx, config_.n_audio_state}));
+        position_rows,
+        core::TensorShape::from_dims(
+            {1, encoded_frames, config_.n_audio_state}));
     if (log_mel.shape.dims[0] > 1) {
-        pos = RepeatModule({core::TensorShape::from_dims({log_mel.shape.dims[0], config_.n_audio_ctx, config_.n_audio_state})})
+        pos = RepeatModule({core::TensorShape::from_dims(
+                                {log_mel.shape.dims[0],
+                                 encoded_frames,
+                                 config_.n_audio_state})})
                   .build(ctx, pos);
     }
     x = AddModule().build(ctx, x, pos);
@@ -147,7 +169,7 @@ core::TensorValue WhisperEmbeddingModule::build(
     for (const auto & layer : weights.layers) {
         x = encoder_layer(ctx, x, layer, config_);
     }
-    return LayerNormModule({config_.n_audio_state, config_.layer_norm_eps, true, true}).build(ctx, x, weights.final_norm);
+    return x;
 }
 
 }  // namespace engine::modules

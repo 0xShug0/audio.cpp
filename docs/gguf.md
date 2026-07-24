@@ -60,6 +60,7 @@ Status labels:
 | `chatterbox` | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `citrinet_asr` | Done | Pass | --- | --- | Pass |
 | `fish_audio` | Done | Pass | --- | Pass | Pass |
+| `glm_tts` | Done | Pass (TTS + clone) | --- | --- | Pass (ASR match, drift) |
 | `heartmula` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `higgs_audio_stt` | Done | Pass | --- | Pass | Pass |
 | `higgs_audio_tts` | Done | Pass | --- | Pass | Pass |

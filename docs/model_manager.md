@@ -100,6 +100,7 @@ Packages whose loaders are not registered in the current release tree are listed
 | `chatterbox` | Chatterbox | **Yes** |
 | `citrinet_asr` | Citrinet ASR converted layout | No |
 | `fish_audio_s2_pro` | Fish Audio S2 Pro GGUF Q8_0 | **Yes** |
+| `glm_tts` | GLM-TTS with converted Flow/HiFT/tokenizer and CAMPPlus assets | No |
 | `heartmula` | HeartMuLa | No |
 | `higgs_audio_stt` | Higgs Audio STT | No |
 | `higgs_audio_v3_tts_4b` | Higgs Audio v3 TTS 4B GGUF Q8_0 | **Yes** |

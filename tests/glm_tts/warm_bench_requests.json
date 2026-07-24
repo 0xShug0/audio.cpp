@@ -1,0 +1,28 @@
+{
+  "requests": [
+    {
+      "name": "short_cold",
+      "text": "Hello from G L M T T S.",
+      "seed": 0,
+      "max_tokens": 256
+    },
+    {
+      "name": "short_repeat",
+      "text": "Hello from G L M T T S.",
+      "seed": 0,
+      "max_tokens": 256
+    },
+    {
+      "name": "technical",
+      "text": "Today we are testing deterministic speech generation and exact token parity.",
+      "seed": 0,
+      "max_tokens": 384
+    },
+    {
+      "name": "longform",
+      "text": "This longer request measures repeated server performance, reference caching, autoregressive generation, flow synthesis, and final waveform decoding in one reproducible sequence.",
+      "seed": 0,
+      "max_tokens": 512
+    }
+  ]
+}

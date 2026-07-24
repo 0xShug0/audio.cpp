@@ -281,6 +281,15 @@ add_library(engine_runtime STATIC
     src/models/omnivoice/assets.cpp
     src/models/omnivoice/tokenizer_text.cpp
     src/models/omnivoice/audio_tokenizer.cpp
+    src/community_models/glm_tts/assets.cpp
+    src/community_models/glm_tts/flow.cpp
+    src/community_models/glm_tts/frontend.cpp
+    src/community_models/glm_tts/loader.cpp
+    src/community_models/glm_tts/llama.cpp
+    src/community_models/glm_tts/session.cpp
+    src/community_models/glm_tts/prompt.cpp
+    src/community_models/glm_tts/speech_tokenizer.cpp
+    src/community_models/glm_tts/tokenizer_text.cpp
     src/community_models/outetts/assets.cpp
     src/community_models/outetts/dac.cpp
     src/community_models/outetts/llama.cpp
@@ -784,6 +793,16 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)
     add_engine_warmbench(omnivoice_warm_bench tests/omnivoice/omnivoice_warm_bench.cpp)
     add_engine_warmbench(outetts_warm_bench tests/outetts/outetts_warm_bench.cpp)
+    add_engine_warmbench(glm_tts_tokenizer_probe tests/glm_tts/glm_tts_tokenizer_probe.cpp)
+    add_engine_warmbench(glm_tts_assets_probe tests/glm_tts/glm_tts_assets_probe.cpp)
+    add_engine_warmbench(glm_tts_prompt_probe tests/glm_tts/glm_tts_prompt_probe.cpp)
+    add_engine_warmbench(glm_tts_speech_tokenizer_probe tests/glm_tts/glm_tts_speech_tokenizer_probe.cpp)
+    add_engine_warmbench(glm_tts_flow_probe tests/glm_tts/glm_tts_flow_probe.cpp)
+    add_engine_warmbench(glm_tts_flow_conditioned_probe tests/glm_tts/glm_tts_flow_conditioned_probe.cpp)
+    add_engine_warmbench(glm_tts_frontend_probe tests/glm_tts/glm_tts_frontend_probe.cpp)
+    add_engine_warmbench(glm_tts_campplus_probe tests/glm_tts/glm_tts_campplus_probe.cpp)
+    add_engine_warmbench(glm_tts_llama_probe tests/glm_tts/glm_tts_llama_probe.cpp)
+    add_engine_warmbench(glm_tts_warm_bench tests/glm_tts/glm_tts_warm_bench.cpp)
     add_engine_warmbench(pocket_tts_warm_bench tests/pocket_tts/pocket_tts_warm_bench.cpp)
     add_engine_warmbench(qwen3_asr_warm_bench tests/qwen3_asr/qwen3_asr_warm_bench.cpp)
     add_engine_warmbench(qwen3_forced_aligner_warm_bench tests/qwen3_forced_aligner/qwen3_forced_aligner_warm_bench.cpp)

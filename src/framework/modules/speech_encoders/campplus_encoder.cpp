@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/deferred_tensor_writer.h"
+#include "engine/framework/modules/structural_modules.h"
 
 #include <ggml-alloc.h>
 #include <ggml.h>
@@ -291,7 +292,6 @@ public:
         core::ModuleBuildContext ctx = {};
         ctx.ggml = ggml_;
         ctx.module_instance_name = "framework.campplus";
-
         input_tensor_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, 80, frames}));
 
         const auto conv2d = [&](const core::TensorValue & input,
@@ -393,75 +393,47 @@ public:
             return core::reshape_tensor(ctx, contiguous(ctx, input4d), core::TensorShape::from_dims({1, channels, time_steps}));
         };
 
-        const auto as_bchw = [&](const core::TensorValue & input3d, int64_t channels, int64_t time_steps) {
-            return core::reshape_tensor(ctx, input3d, core::TensorShape::from_dims({1, channels, 1, time_steps}));
-        };
-
         const auto avg_pool_repeat = [&](const core::TensorValue & input,
                                          int64_t channels,
                                          int64_t time_steps,
                                          int64_t seg_len) {
-            const int64_t seg_frames = (time_steps + seg_len - 1) / seg_len;
-            const int64_t padded_time = seg_frames * seg_len;
-            auto input4d = as_bchw(input, channels, time_steps);
-            auto padded = core::wrap_tensor(
-                ggml_pad(ctx.ggml, input4d.tensor, static_cast<int>(padded_time - time_steps), 0, 0, 0),
-                core::TensorShape::from_dims({1, channels, 1, padded_time}),
-                GGML_TYPE_F32);
-            auto pooled = core::wrap_tensor(
-                ggml_pool_2d(
-                    ctx.ggml,
-                    padded.tensor,
-                    GGML_OP_POOL_AVG,
-                    static_cast<int>(seg_len),
-                    1,
-                    static_cast<int>(seg_len),
-                    1,
-                    0,
-                    0),
-                core::TensorShape::from_dims({1, channels, 1, seg_frames}),
-                GGML_TYPE_F32);
-            std::vector<float> correction_values(static_cast<size_t>(seg_frames), 1.0F);
-            for (int64_t seg = 0; seg < seg_frames; ++seg) {
-                const int64_t repeat_len = std::min<int64_t>(seg_len, time_steps - seg * seg_len);
-                correction_values[static_cast<size_t>(seg)] =
-                    static_cast<float>(seg_len) / static_cast<float>(repeat_len);
+            std::optional<core::TensorValue> expanded;
+            for (int64_t begin = 0;
+                 begin < time_steps;
+                 begin += seg_len) {
+                const int64_t length =
+                    std::min<int64_t>(seg_len, time_steps - begin);
+                const auto segment =
+                    SliceModule({2, begin, length}).build(ctx, input);
+                const auto segment_contiguous =
+                    contiguous(ctx, segment);
+                auto mean = core::wrap_tensor(
+                    ggml_mean(ctx.ggml, segment_contiguous.tensor),
+                    core::TensorShape::from_dims({1, channels, 1}),
+                    GGML_TYPE_F32);
+                if (length != seg_len) {
+                    mean = core::wrap_tensor(
+                        ggml_scale(
+                            ctx.ggml,
+                            mean.tensor,
+                            static_cast<float>(length) /
+                                static_cast<float>(seg_len)),
+                        mean.shape,
+                        GGML_TYPE_F32);
+                }
+                const auto repeated = core::wrap_tensor(
+                    ggml_repeat(
+                        ctx.ggml,
+                        mean.tensor,
+                        segment_contiguous.tensor),
+                    segment.shape,
+                    GGML_TYPE_F32);
+                expanded = expanded.has_value()
+                    ? concat_along_axis(
+                        ctx, *expanded, repeated, 2)
+                    : repeated;
             }
-            auto correction = writer_.make_f32_tensor(
-                ctx,
-                core::TensorShape::from_dims({1, 1, 1, seg_frames}),
-                correction_values);
-            auto ratio = core::wrap_tensor(ggml_mul(ctx.ggml, pooled.tensor, correction.tensor), pooled.shape, GGML_TYPE_F32);
-            auto expanded_padded = core::wrap_tensor(
-                ggml_interpolate(
-                    ctx.ggml,
-                    contiguous(ctx, ratio).tensor,
-                    padded_time,
-                    1,
-                    channels,
-                    1,
-                    GGML_SCALE_MODE_NEAREST),
-                core::TensorShape::from_dims({1, channels, 1, padded_time}),
-                GGML_TYPE_F32);
-            if (padded_time == time_steps) {
-                return as_bct(expanded_padded, channels, time_steps);
-            }
-            auto * trimmed_view = ggml_view_4d(
-                ctx.ggml,
-                expanded_padded.tensor,
-                time_steps,
-                1,
-                channels,
-                1,
-                expanded_padded.tensor->nb[1],
-                expanded_padded.tensor->nb[2],
-                expanded_padded.tensor->nb[3],
-                0);
-            auto trimmed = core::wrap_tensor(
-                trimmed_view,
-                core::TensorShape::from_dims({1, channels, 1, time_steps}),
-                GGML_TYPE_F32);
-            return as_bct(trimmed, channels, time_steps);
+            return *expanded;
         };
 
         const auto global_avg = [&](const core::TensorValue & input, int64_t channels, int64_t time_steps) {
@@ -511,14 +483,12 @@ public:
         x4 = run_res_block(x4, height, frames, weights.head_layer2[1]);
         x4 = relu(conv2d(x4, height, frames, weights.head_conv2_folded));
         height = (height + 1) / 2;
-
         int64_t channels = 32 * height;
         int64_t time_steps = frames;
         auto x = as_bct(x4, channels, time_steps);
         x = relu(conv1d(x, channels, time_steps, weights.tdnn_linear_folded));
         channels = 128;
         time_steps = (time_steps + 1) / 2;
-
         const int block_layers[3] = {12, 24, 16};
         for (int block_index = 0; block_index < 3; ++block_index) {
             for (int layer_index = 0; layer_index < block_layers[block_index]; ++layer_index) {

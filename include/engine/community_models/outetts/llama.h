@@ -21,6 +21,18 @@ struct OuteTTSGenerateOptions {
     float top_p = 0.9F;
     float min_p = 0.05F;
     uint32_t seed = 0;
+    int64_t minimum_new_tokens = 0;
+    int32_t allowed_token_min = -1;
+    int32_t allowed_token_max = -1;
+    int32_t allowed_special_token = -1;
+    bool repetition_aware_sampling = false;
+    int64_t repetition_aware_window = 10;
+    int64_t repetition_aware_threshold = 1;
+    // Some upstream samplers sort and slice the nucleus into a compact
+    // probability tensor before torch.multinomial. Keep this opt-in because
+    // Hugging Face-style generation samples a full-vocabulary tensor with
+    // filtered logits instead.
+    bool compact_sorted_multinomial = false;
 };
 
 enum class OuteTTSStopReason {

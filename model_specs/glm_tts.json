@@ -1,0 +1,69 @@
+{
+  "family": "glm_tts",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "llama_config": "model:llm/config.json",
+        "llama_generation_config": "model:llm/generation_config.json",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json",
+        "speech_tokenizer_preprocessor": "model:speech_tokenizer/preprocessor_config.json",
+        "tokenizer_config": "model:vq32k-phoneme-tokenizer/tokenizer_config.json",
+        "tokenizer_vocab": "model:vq32k-phoneme-tokenizer/tokenizer_vocab.json",
+        "tokenizer_merges": "model:vq32k-phoneme-tokenizer/tokenizer_merges.txt",
+        "flow_config": "model:flow/config.yaml",
+        "audio_cpp_config": "model:audio_cpp_config.json"
+      },
+      "tensors": {
+        "llama_weights": {
+          "source": "weights:",
+          "prefix": "llama_weights"
+        },
+        "speech_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "speech_tokenizer_weights"
+        },
+        "flow_weights": {
+          "source": "weights:",
+          "prefix": "flow_weights"
+        },
+        "hift_weights": {
+          "source": "weights:",
+          "prefix": "hift_weights"
+        },
+        "campplus_weights": {
+          "source": "weights:",
+          "prefix": "campplus_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "llama_config": "model:llm/config.json",
+        "llama_generation_config": "model:llm/generation_config.json",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json",
+        "speech_tokenizer_preprocessor": "model:speech_tokenizer/preprocessor_config.json",
+        "tokenizer_config": "model:vq32k-phoneme-tokenizer/tokenizer_config.json",
+        "tokenizer_vocab": "model:vq32k-phoneme-tokenizer/tokenizer_vocab.json",
+        "tokenizer_merges": "model:vq32k-phoneme-tokenizer/tokenizer_merges.txt",
+        "flow_config": "model:flow/config.yaml",
+        "audio_cpp_config": "model:audio_cpp_config.json"
+      },
+      "tensors": {
+        "llama_weights": "model:llm/model.safetensors.index.json",
+        "speech_tokenizer_weights": "model:speech_tokenizer/model.safetensors",
+        "flow_weights": "model:flow/model.safetensors",
+        "hift_weights": "model:hift/model.safetensors",
+        "campplus_weights": "model:frontend/campplus.safetensors"
+      }
+    }
+  ]
+}
