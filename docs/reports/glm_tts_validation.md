@@ -354,13 +354,22 @@ Memory was sampled every 200 ms with `nvidia-smi`:
 |---|---:|---:|
 | Native FP32 audio.cpp | 8,846 MiB | 887.8 ms |
 | Official Python FP32 | 8,628 to 8,787 MiB | 1,929.9 ms |
-| Mixed GGUF, resident | 5,314 MiB | 626.2 ms |
-| Mixed GGUF, `glm_tts.mem_saver=true` | 3,332 MiB | 3,686.4 ms |
+| Mixed GGUF, resident | 5,320 MiB | 608.6 ms |
+| Mixed GGUF, balanced `glm_tts.mem_saver=true` | 3,878 MiB | 622.3 ms |
+| Mixed GGUF, `glm_tts.aggressive_mem_saver=true` | 3,372 MiB | 3,761.7 ms |
 
-Mem saver is therefore not a speed option. It lowers peak GPU use by about
-1.94 GiB for the tested GGUF, but rebuilding released components makes the
-second identical request about 5.9x slower. Its two outputs remained
-byte-identical to resident mode.
+Balanced mem-saver releases the approximately 1.58 GiB reference-only
+Whisper-VQ and CAMPPlus path after its output is cached, but keeps Llama, Flow,
+and HiFT warm. Across three warm repeats it saved 1,442 MiB (27.1%) versus
+resident mode while adding 13.7 ms (2.3%) mean latency. A reference-cache miss
+releases the generation path before reconstructing the reference encoders so
+the groups do not overlap in VRAM.
+
+Aggressive mem-saver preserves the former unload-every-stage policy. It saved
+another 506 MiB, but rebuilding Llama, Flow, and HiFT made warm requests about
+6.0x slower than balanced mode. All balanced, aggressive, and resident
+outputs reduced to the same SHA-256 hash:
+`72672D49755B1B3987318EC264FBEC0DBB0AA0175461818AAC56BD1404F56E88`.
 
 Windows reported peak working set around 25.0 GiB and private bytes between
 33.8 and 44.5 GiB while loading this model. These counters include mapped GGUF

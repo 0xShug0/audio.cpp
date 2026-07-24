@@ -56,6 +56,17 @@ bool requested_mem_saver(
         : false;
 }
 
+bool requested_aggressive_mem_saver(
+    const runtime::SessionOptions & options) {
+    const auto value = runtime::find_option(
+        options.options,
+        {"glm_tts.aggressive_mem_saver", "aggressive_mem_saver"});
+    return value.has_value()
+        ? runtime::parse_bool_option(
+            *value, "glm_tts.aggressive_mem_saver")
+        : false;
+}
+
 size_t requested_reference_cache_slots(
     const runtime::SessionOptions & options) {
     const int64_t slots = runtime::parse_i64_option(
@@ -180,7 +191,6 @@ GlmTTSSession::GlmTTSSession(
           assets_->resources.require_file("tokenizer_merges"),
           assets_->resources.require_file("tokenizer_config")),
       weight_storage_type_(requested_weight_type(this->options())),
-      mem_saver_(requested_mem_saver(this->options())),
       reference_cache_(
           requested_reference_cache_slots(this->options())) {
     if (assets_ == nullptr) {
@@ -192,6 +202,11 @@ GlmTTSSession::GlmTTSSession(
         throw std::runtime_error(
             "GLM-TTS supports offline TTS and voice cloning only");
     }
+    aggressive_mem_saver_ =
+        requested_aggressive_mem_saver(this->options());
+    mem_saver_ =
+        aggressive_mem_saver_ ||
+        requested_mem_saver(this->options());
 }
 
 GlmTTSSession::~GlmTTSSession() = default;
@@ -314,6 +329,16 @@ GlmTTSSession::resolve_reference(
         return *cached;
     }
 
+    // A reference cache miss needs the large speech tokenizer and CAMPPlus
+    // weights. Balanced mem-saver keeps the generation path warm only while a
+    // cached reference can be reused; release it before preparing a new voice
+    // so the two groups do not overlap in VRAM.
+    if (mem_saver_) {
+        llama_.reset();
+        flow_.reset();
+        hift_.reset();
+    }
+
     const bool will_evict =
         reference_cache_.capacity() > 0 &&
         reference_cache_.size() >= reference_cache_.capacity();
@@ -406,7 +431,7 @@ runtime::TaskResult GlmTTSSession::run(
     auto generated = llama().generate(prompt, generation);
     debug::timing_log_scalar(
         "glm_tts.llama_ms", debug::elapsed_ms(llama_start));
-    if (mem_saver_) {
+    if (aggressive_mem_saver_) {
         llama_.reset();
     }
 
@@ -447,7 +472,7 @@ runtime::TaskResult GlmTTSSession::run(
     auto mel = flow().generate(flow_input);
     debug::timing_log_scalar(
         "glm_tts.flow_ms", debug::elapsed_ms(flow_start));
-    if (mem_saver_) {
+    if (aggressive_mem_saver_) {
         flow_.reset();
     }
 
@@ -474,7 +499,7 @@ runtime::TaskResult GlmTTSSession::run(
         hift_source_random_ptr);
     debug::timing_log_scalar(
         "glm_tts.hift_ms", debug::elapsed_ms(vocoder_start));
-    if (mem_saver_) {
+    if (aggressive_mem_saver_) {
         hift_.reset();
     }
 

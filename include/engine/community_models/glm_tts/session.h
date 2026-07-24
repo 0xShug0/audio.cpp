@@ -70,6 +70,7 @@ private:
     assets::TensorStorageType weight_storage_type_ =
         assets::TensorStorageType::Native;
     bool mem_saver_ = false;
+    bool aggressive_mem_saver_ = false;
     runtime::CacheSlots<
         ReferenceCacheKey,
         ReferenceCacheEntry,

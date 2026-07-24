@@ -71,8 +71,13 @@ runtime::ModelCliInterface cli() {
          "Requested component weight storage type."},
         {"glm_tts.mem_saver",
          "true|false",
-         "Release each large component before loading the next; "
-         "default false for resident server runtimes."},
+         "Release reference-only encoders after caching the voice while "
+         "keeping the generation path warm; default false."},
+        {"glm_tts.aggressive_mem_saver",
+         "true|false",
+         "Also release Llama, Flow, and HiFT after every stage. Minimizes "
+         "VRAM but reloads the generation path on every request; default "
+         "false."},
         {"glm_tts.reference_cache_slots",
          "n",
          "Prepared reference-audio cache slots; default 1. "
