@@ -18,8 +18,10 @@ normal sampled path was measured.
 - Keeps reusable component runtimes resident, caches prepared references,
   reuses shape-compatible graphs, and restricts the Llama output projection to
   GLM-TTS audio-token rows.
-- Extends the shared OuteTTS Llama runtime, CAMPPlus encoder, and Whisper
-  embedding surface only where GLM-TTS needs reusable framework behavior.
+- Extends the shared OuteTTS Llama runtime and Whisper embedding surface.
+  GLM-TTS's CAMPPlus partial-segment normalization is additive and explicitly
+  enabled only by the GLM-TTS session; the established shared default remains
+  unchanged for Chatterbox, IndexTTS2, and Seed-VC.
 
 ## Test environment
 
@@ -70,6 +72,7 @@ cmake -S . -B build\windows-cpu-release `
 
 cmake --build build\windows-cpu-release --parallel 8 --target `
   audiocpp_cli audiocpp_server `
+  campplus_shared_default_probe `
   glm_tts_warm_bench glm_tts_llama_probe `
   glm_tts_frontend_probe glm_tts_campplus_probe `
   glm_tts_flow_conditioned_probe
@@ -95,6 +98,7 @@ cmake -S . -B build\windows-cuda-release `
 
 cmake --build build\windows-cuda-release --parallel 8 --target `
   audiocpp_cli audiocpp_server audiocpp_gguf `
+  campplus_shared_default_probe `
   glm_tts_warm_bench glm_tts_llama_probe `
   glm_tts_frontend_probe glm_tts_campplus_probe `
   glm_tts_flow_conditioned_probe
@@ -272,7 +276,15 @@ The component probes use fixed inputs and fixed Flow noise:
 | Whisper-VQ | reference speech-token ids | 63 / 63 exact |
 | Llama greedy | generated speech-token ids | exact for 75, 139, and 305-token requests |
 | CAMPPlus | 192-value speaker embedding | cosine `0.999999999977`; max abs `2.52e-05`; RMSE `8.86e-06` |
+| CAMPPlus shared default | deterministic 250 x 80 input against unmodified main | byte-for-byte exact; max abs `0` |
 | Flow, 10 steps | 114 x 80 mel | cosine `0.999999999231`; max abs `0.001515`; RMSE `0.000279` |
+
+`CampplusEncoderConfig::normalize_partial_segment_by_full_length` defaults to
+`false`. Only GLM-TTS sets it to `true` to match the published GLM-TTS
+CAMPPlus ONNX graph. Chatterbox, IndexTTS2, Seed-VC, and other shared callers
+continue through the previous pooling graph. The regression probe
+`campplus_shared_default_probe` was compiled once against unmodified main and
+once against this branch; both emitted the same 192 serialized values.
 
 The request options `flow_noise_file`, `hift_source_random_file`, and
 `hift_prior_noise_values` expose stochastic boundaries for targeted parity

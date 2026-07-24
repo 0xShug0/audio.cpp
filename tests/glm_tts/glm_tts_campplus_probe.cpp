@@ -31,6 +31,7 @@ int main(int argc, char ** argv) try {
     config.embedding_size = 192;
     config.weight_storage_type =
         engine::assets::TensorStorageType::Native;
+    config.normalize_partial_segment_by_full_length = true;
     auto encoder =
         engine::modules::CampplusEncoderComponent::
             load_from_tensor_source(

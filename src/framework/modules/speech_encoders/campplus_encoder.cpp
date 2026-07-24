@@ -393,47 +393,118 @@ public:
             return core::reshape_tensor(ctx, contiguous(ctx, input4d), core::TensorShape::from_dims({1, channels, time_steps}));
         };
 
+        const auto as_bchw = [&](const core::TensorValue & input3d, int64_t channels, int64_t time_steps) {
+            return core::reshape_tensor(ctx, input3d, core::TensorShape::from_dims({1, channels, 1, time_steps}));
+        };
+
         const auto avg_pool_repeat = [&](const core::TensorValue & input,
                                          int64_t channels,
                                          int64_t time_steps,
                                          int64_t seg_len) {
-            std::optional<core::TensorValue> expanded;
-            for (int64_t begin = 0;
-                 begin < time_steps;
-                 begin += seg_len) {
-                const int64_t length =
-                    std::min<int64_t>(seg_len, time_steps - begin);
-                const auto segment =
-                    SliceModule({2, begin, length}).build(ctx, input);
-                const auto segment_contiguous =
-                    contiguous(ctx, segment);
-                auto mean = core::wrap_tensor(
-                    ggml_mean(ctx.ggml, segment_contiguous.tensor),
-                    core::TensorShape::from_dims({1, channels, 1}),
-                    GGML_TYPE_F32);
-                if (length != seg_len) {
-                    mean = core::wrap_tensor(
-                        ggml_scale(
+            if (weights.config.normalize_partial_segment_by_full_length) {
+                std::optional<core::TensorValue> expanded;
+                for (int64_t begin = 0;
+                     begin < time_steps;
+                     begin += seg_len) {
+                    const int64_t length =
+                        std::min<int64_t>(seg_len, time_steps - begin);
+                    const auto segment =
+                        SliceModule({2, begin, length}).build(ctx, input);
+                    const auto segment_contiguous =
+                        contiguous(ctx, segment);
+                    auto mean = core::wrap_tensor(
+                        ggml_mean(ctx.ggml, segment_contiguous.tensor),
+                        core::TensorShape::from_dims({1, channels, 1}),
+                        GGML_TYPE_F32);
+                    if (length != seg_len) {
+                        mean = core::wrap_tensor(
+                            ggml_scale(
+                                ctx.ggml,
+                                mean.tensor,
+                                static_cast<float>(length) /
+                                    static_cast<float>(seg_len)),
+                            mean.shape,
+                            GGML_TYPE_F32);
+                    }
+                    const auto repeated = core::wrap_tensor(
+                        ggml_repeat(
                             ctx.ggml,
                             mean.tensor,
-                            static_cast<float>(length) /
-                                static_cast<float>(seg_len)),
-                        mean.shape,
+                            segment_contiguous.tensor),
+                        segment.shape,
                         GGML_TYPE_F32);
+                    expanded = expanded.has_value()
+                        ? concat_along_axis(
+                            ctx, *expanded, repeated, 2)
+                        : repeated;
                 }
-                const auto repeated = core::wrap_tensor(
-                    ggml_repeat(
-                        ctx.ggml,
-                        mean.tensor,
-                        segment_contiguous.tensor),
-                    segment.shape,
-                    GGML_TYPE_F32);
-                expanded = expanded.has_value()
-                    ? concat_along_axis(
-                        ctx, *expanded, repeated, 2)
-                    : repeated;
+                return *expanded;
             }
-            return *expanded;
+
+            // Established shared behavior used by Chatterbox, IndexTTS2, and
+            // Seed-VC. Keep this graph unchanged unless a caller explicitly
+            // selects the GLM-TTS partial-segment normalization above.
+            const int64_t seg_frames = (time_steps + seg_len - 1) / seg_len;
+            const int64_t padded_time = seg_frames * seg_len;
+            auto input4d = as_bchw(input, channels, time_steps);
+            auto padded = core::wrap_tensor(
+                ggml_pad(ctx.ggml, input4d.tensor, static_cast<int>(padded_time - time_steps), 0, 0, 0),
+                core::TensorShape::from_dims({1, channels, 1, padded_time}),
+                GGML_TYPE_F32);
+            auto pooled = core::wrap_tensor(
+                ggml_pool_2d(
+                    ctx.ggml,
+                    padded.tensor,
+                    GGML_OP_POOL_AVG,
+                    static_cast<int>(seg_len),
+                    1,
+                    static_cast<int>(seg_len),
+                    1,
+                    0,
+                    0),
+                core::TensorShape::from_dims({1, channels, 1, seg_frames}),
+                GGML_TYPE_F32);
+            std::vector<float> correction_values(static_cast<size_t>(seg_frames), 1.0F);
+            for (int64_t seg = 0; seg < seg_frames; ++seg) {
+                const int64_t repeat_len = std::min<int64_t>(seg_len, time_steps - seg * seg_len);
+                correction_values[static_cast<size_t>(seg)] =
+                    static_cast<float>(seg_len) / static_cast<float>(repeat_len);
+            }
+            auto correction = writer_.make_f32_tensor(
+                ctx,
+                core::TensorShape::from_dims({1, 1, 1, seg_frames}),
+                correction_values);
+            auto ratio = core::wrap_tensor(ggml_mul(ctx.ggml, pooled.tensor, correction.tensor), pooled.shape, GGML_TYPE_F32);
+            auto expanded_padded = core::wrap_tensor(
+                ggml_interpolate(
+                    ctx.ggml,
+                    contiguous(ctx, ratio).tensor,
+                    padded_time,
+                    1,
+                    channels,
+                    1,
+                    GGML_SCALE_MODE_NEAREST),
+                core::TensorShape::from_dims({1, channels, 1, padded_time}),
+                GGML_TYPE_F32);
+            if (padded_time == time_steps) {
+                return as_bct(expanded_padded, channels, time_steps);
+            }
+            auto * trimmed_view = ggml_view_4d(
+                ctx.ggml,
+                expanded_padded.tensor,
+                time_steps,
+                1,
+                channels,
+                1,
+                expanded_padded.tensor->nb[1],
+                expanded_padded.tensor->nb[2],
+                expanded_padded.tensor->nb[3],
+                0);
+            auto trimmed = core::wrap_tensor(
+                trimmed_view,
+                core::TensorShape::from_dims({1, channels, 1, time_steps}),
+                GGML_TYPE_F32);
+            return as_bct(trimmed, channels, time_steps);
         };
 
         const auto global_avg = [&](const core::TensorValue & input, int64_t channels, int64_t time_steps) {

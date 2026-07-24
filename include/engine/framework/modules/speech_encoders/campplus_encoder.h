@@ -19,6 +19,10 @@ struct CampplusEncoderConfig {
     int64_t feat_dim = 80;
     int64_t embedding_size = 192;
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
+    // Preserve the established shared CAMPPlus pooling by default. GLM-TTS
+    // opts into normalization by the complete segment width to match its
+    // published ONNX graph for a final partial segment.
+    bool normalize_partial_segment_by_full_length = false;
 };
 
 struct CampplusEncoderOutputs {

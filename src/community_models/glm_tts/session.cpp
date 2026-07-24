@@ -270,6 +270,7 @@ modules::CampplusEncoderComponent & GlmTTSSession::campplus() {
         config.feat_dim = 80;
         config.embedding_size = 192;
         config.weight_storage_type = weight_storage_type_;
+        config.normalize_partial_segment_by_full_length = true;
         campplus_ =
             std::make_unique<modules::CampplusEncoderComponent>(
                 modules::CampplusEncoderComponent::
