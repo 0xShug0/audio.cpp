@@ -1343,8 +1343,18 @@ std::shared_ptr<const TensorSource> open_tensor_source(
     const std::filesystem::path & path,
     std::string_view tensor_prefix) {
     auto source = open_tensor_source(path);
+    return make_prefixed_tensor_source(std::move(source), tensor_prefix);
+}
+
+std::shared_ptr<const TensorSource> make_prefixed_tensor_source(
+    std::shared_ptr<const TensorSource> source,
+    std::string_view tensor_prefix) {
+    if (source == nullptr) {
+        throw std::runtime_error("prefixed tensor source requires a source");
+    }
     if (tensor_prefix.empty()) return source;
-    return std::make_shared<PrefixedTensorSourceView>(std::move(source), std::string(tensor_prefix));
+    return std::make_shared<PrefixedTensorSourceView>(
+        std::move(source), std::string(tensor_prefix));
 }
 
 namespace {

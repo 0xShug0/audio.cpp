@@ -135,9 +135,19 @@ std::shared_ptr<const TensorSource> ResourceBundle::open_tensor_source(std::stri
         return it->second;
     }
     const auto resource = tensor_resources_.find(key);
+    const auto path = resource == tensor_resources_.end()
+        ? require_file(id)
+        : resource->second.path;
+    const auto path_key = std::filesystem::weakly_canonical(path).generic_string();
+    auto base = tensor_sources_by_path_.find(path_key);
+    if (base == tensor_sources_by_path_.end()) {
+        base = tensor_sources_by_path_.emplace(
+            path_key, engine::assets::open_tensor_source(path)).first;
+    }
     auto source = resource == tensor_resources_.end()
-        ? engine::assets::open_tensor_source(require_file(id))
-        : engine::assets::open_tensor_source(resource->second.path, resource->second.prefix);
+        ? base->second
+        : engine::assets::make_prefixed_tensor_source(
+              base->second, resource->second.prefix);
     tensor_sources_.emplace(key, source);
     return source;
 }
