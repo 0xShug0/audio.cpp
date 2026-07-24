@@ -62,6 +62,16 @@ OmniVoiceGeneratorPerfMode perf_mode_from_options(const runtime::SessionOptions 
     return OmniVoiceGeneratorPerfMode::Standard;
 }
 
+std::string_view perf_mode_name(OmniVoiceGeneratorPerfMode mode) {
+    switch (mode) {
+        case OmniVoiceGeneratorPerfMode::Standard:
+            return "off";
+        case OmniVoiceGeneratorPerfMode::FlashAttention:
+            return "flash_attention";
+    }
+    return "unknown";
+}
+
 using Clock = std::chrono::steady_clock;
 
 OmniVoiceGenerationOptions generation_options_from_options(const std::unordered_map<std::string, std::string> & options_map) {
@@ -232,6 +242,7 @@ OmniVoiceSession::OmniVoiceSession(
           generator_weight_storage_type_,
           mem_saver_,
           generator_perf_mode_) {
+    engine::debug::trace_log_scalar("omnivoice.perf_mode", perf_mode_name(generator_perf_mode_));
     if (task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("OmniVoice only supports VoiceTaskKind::Tts");
     }

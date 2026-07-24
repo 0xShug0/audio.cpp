@@ -5,6 +5,7 @@
 #include "../cli/request.h"
 #include "../streaming/streaming.h"
 
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/registry.h"
 
@@ -672,6 +673,24 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
     session_options.backend.device = config_.device;
     session_options.backend.threads = config_.threads;
     session_options.options = model.config.session_options;
+
+    engine::debug::trace_log_scalar("server.model.id", model.config.id);
+    engine::debug::trace_log_scalar("server.model.family", model.config.family);
+    engine::debug::trace_log_scalar(
+        "server.model.task",
+        std::string_view(engine::runtime::to_string(model.task.task)));
+    engine::debug::trace_log_scalar(
+        "server.model.mode",
+        std::string_view(engine::runtime::to_string(model.task.mode)));
+    engine::debug::trace_log_scalar("server.model.backend", std::string_view(backend_name(session_options.backend.type)));
+    engine::debug::trace_log_scalar("server.model.device", int64_t{session_options.backend.device});
+    engine::debug::trace_log_scalar("server.model.threads", int64_t{session_options.backend.threads});
+    engine::debug::trace_log_scalar(
+        "server.model.session_option_count",
+        static_cast<int64_t>(session_options.options.size()));
+    for (const auto & [key, value] : session_options.options) {
+        engine::debug::trace_log_scalar("server.model.session_options." + key, value);
+    }
 
     auto loaded_model = registry.load(load_request);
     auto session = loaded_model->create_task_session(model.task, session_options);
