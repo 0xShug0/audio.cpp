@@ -32,52 +32,6 @@ using Clock = std::chrono::steady_clock;
 
 constexpr size_t kEncoderGraphNodes = 2097152;
 
-int64_t causal_conv_output_dim(int64_t input, int64_t kernel, int64_t stride, bool streaming) {
-    const int64_t left = streaming ? kernel - stride : kernel - 1;
-    const int64_t right = streaming ? 0 : stride - 1;
-    return (input + left + right - kernel) / stride + 1;
-}
-
-engine::core::TensorValue pad_causal_2d(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & input,
-    int64_t kernel,
-    int64_t stride,
-    bool streaming) {
-    const int64_t freq_left = kernel - 1;
-    const int64_t freq_right = stride - 1;
-    const int64_t time_left = streaming ? kernel - stride : kernel - 1;
-    const int64_t time_right = streaming ? 0 : stride - 1;
-    const auto out_shape = engine::core::TensorShape::from_dims({
-        input.shape.dims[0],
-        input.shape.dims[1],
-        input.shape.dims[2] + time_left + time_right,
-        input.shape.dims[3] + freq_left + freq_right,
-    });
-    return engine::core::wrap_tensor(
-        ggml_pad_ext(
-            ctx.ggml,
-            input.tensor,
-            static_cast<int>(freq_left),
-            static_cast<int>(freq_right),
-            static_cast<int>(time_left),
-            static_cast<int>(time_right),
-            0, 0, 0, 0),
-        out_shape,
-        GGML_TYPE_F32);
-}
-
-engine::core::TensorValue pad_causal_1d(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & input,
-    int64_t left) {
-    if (left <= 0) { return input; }
-    return engine::core::wrap_tensor(
-        ggml_pad_ext(ctx.ggml, input.tensor, static_cast<int>(left), 0, 0, 0, 0, 0, 0, 0),
-        engine::core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], input.shape.dims[2] + left}),
-        GGML_TYPE_F32);
-}
-
 // NeMo's ConformerConvolution.depthwise_conv is a CausalConv1D, but the
 // full-context (non-streaming) encoder constructs it with an explicit int
 // `padding=conv_context_size=(kernel_size-1)//2`, which CausalConv1D treats
