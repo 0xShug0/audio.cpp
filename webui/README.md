@@ -101,8 +101,10 @@ Starts the Gradio web interface (`webui.py`); open **http://127.0.0.1:7860** in 
   (one model in VRAM at a time; switching models restarts it).
 - The UI lets you upload a reference voice, download uninstalled models, enter an HF token / proxy, and so on.
 - Backend is auto-detected (as above: GPU if CUDA is present, otherwise CPU); `AUDIOCPP_BACKEND=gpu|cpu` forces it.
-  In CPU mode, the ggml thread count is set automatically to cores-1 (override with `AUDIOCPP_THREADS=N`), and the
-  VRAM warning is no longer shown.
+  In CPU mode, the ggml thread count is set automatically from the **physical** core count — SMT/Hyper-Threading
+  siblings are not counted, and one core is left free above 4 — so a long run leaves the rest of the machine
+  usable. Filling every logical CPU is faster (~1.4x in a short CPU TTS run on an 8-core/16-thread 5800H); set
+  `AUDIOCPP_THREADS=N` if you want that. The VRAM warning is not shown in CPU mode.
 
 > The web interface (7860) is for humans; to use it as an **API for other programs**, start `audiocpp_server`
 > directly, or once the WebUI is up, hit the port 8080 it manages directly.

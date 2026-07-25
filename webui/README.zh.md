@@ -92,7 +92,9 @@ python3 -m venv venv && ./venv/bin/pip install -r webui/requirements.txt
   起/切换底层的 `audiocpp_server`（一次一个模型在显存里，换模型即重启）。
 - 界面里可上传参考音色、下载未安装的模型、填 HF token / 代理等。
 - 后端自动检测（同上：有 CUDA 用 GPU，否则 CPU）；`AUDIOCPP_BACKEND=gpu|cpu` 可强制。
-  CPU 模式下 ggml 线程数自动设为核数-1（可用 `AUDIOCPP_THREADS=N` 覆盖），且不再显示显存警告。
+  CPU 模式下 ggml 线程数按**物理核数**自动设置（不计超线程的逻辑核，物理核多于 4 时再留一个核给系统），
+  这样长任务跑起来机器仍然可用。把逻辑核占满会更快（8 核 16 线程的 5800H 上，一次短文本 CPU TTS 快约 1.4 倍），
+  想要这个速度就设 `AUDIOCPP_THREADS=N`。CPU 模式下不显示显存警告。
 
 > 网页界面（7860）是给人用的；要给**其它程序**当 API，请直接启动 `audiocpp_server`，
 > 或让 WebUI 起来后直接打它管理的 8080 端口。

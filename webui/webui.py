@@ -18,7 +18,8 @@ Env overrides:
                                  (default: auto — gpu when an NVIDIA driver and the
                                  gpu server build are both present, else cpu)
     AUDIOCPP_THREADS=N           ggml compute threads (default 1; cpu backend
-                                 defaults to all cores minus one)
+                                 defaults to the physical core count, minus one
+                                 above 4 cores — SMT siblings are not counted)
     AUDIOCPP_SERVER=http://...   talk to an already-running server instead of managing one
     AUDIOCPP_LOAD_TIMEOUT=300    seconds to wait for a model to finish loading
     AUDIOCPP_NO_BROWSER=1        don't open a browser tab
@@ -1327,6 +1328,60 @@ def _msg_from_error(e):
     return getattr(e, "message", None) or str(e) or _t("未知错误", "Unknown error")
 
 
+def _physical_core_count():
+    """Physical cores, SMT siblings collapsed; None when it can't be determined."""
+    try:                                  # Linux: distinct (physical id, core id)
+        pairs, pkg, core = set(), None, None
+        with open("/proc/cpuinfo", "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                key, _, val = line.partition(":")
+                key, val = key.strip(), val.strip()
+                if key == "physical id":
+                    pkg = val
+                elif key == "core id":
+                    core = val
+                    pairs.add((pkg, core))
+        if pairs:
+            return len(pairs)
+    except OSError:
+        pass
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(["sysctl", "-n", "hw.physicalcpu"],
+                                 capture_output=True, text=True, timeout=5)
+            if out.returncode == 0 and out.stdout.strip().isdigit():
+                return int(out.stdout.strip())
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return None
+
+
+def _default_cpu_threads():
+    """ggml compute threads for the cpu backend when nothing was configured.
+
+    One thread per physical core, bounded by the CPUs we are actually allowed to
+    run on (taskset/cgroup), with one left free above 4 cores.
+
+    This is deliberately not the fastest setting: filling every SMT sibling as
+    well is measurably quicker (on a 5800H, 8 cores / 16 threads, a short CPU TTS
+    run took 163s at 15 threads vs 233s at 7). But the WebUI runs on the machine
+    someone is using, and a server that pins every logical CPU for minutes makes
+    the rest of the desktop crawl. Trade the ~40% for a usable box; anyone who
+    wants the throughput sets AUDIOCPP_THREADS.
+
+    Where the physical count is unknown (Windows) assume SMT and halve, which is
+    right on every consumer CPU that ships it."""
+    try:
+        allowed = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        allowed = os.cpu_count() or 4
+    cores = _physical_core_count()
+    if cores is None:
+        cores = max(1, allowed // 2) if allowed > 2 else allowed
+    cores = max(1, min(cores, allowed))
+    return cores - 1 if cores > 4 else cores
+
+
 # Fallback catalog if models_catalog.json is missing/unreadable.
 DEFAULT_CATALOG = {
     "host": "127.0.0.1", "port": 8080, "device": 0, "threads": 1,
@@ -1392,8 +1447,8 @@ DEVICE = int(CATALOG.get("device", 0))
 THREADS = int(os.environ.get("AUDIOCPP_THREADS") or CATALOG.get("threads", 1))
 if BACKEND == "cpu" and THREADS <= 1:
     # catalog 里的 threads=1 是按 CUDA 调的（GPU 路径不吃这个值）；CPU 后端的
-    # ggml 计算线程数就是它，单线程没法用 —— 默认全核减一，留一个核给 UI/系统。
-    THREADS = max(1, (os.cpu_count() or 4) - 1)
+    # ggml 计算线程数就是它，单线程没法用 —— 默认按物理核数（见 _default_cpu_threads）。
+    THREADS = _default_cpu_threads()
 
 # If the user points us at an existing server, keep everything consistent with it.
 _ENV_SERVER = os.environ.get("AUDIOCPP_SERVER")
