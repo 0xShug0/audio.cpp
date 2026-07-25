@@ -1085,6 +1085,23 @@ if (ENGINE_BUILD_TESTS)
         NAME server_config_test
         COMMAND server_config_test
     )
+
+    add_engine_unittest(parakeet_golden_transcription_test tests/parakeet_tdt/test_golden_transcription.cpp)
+    target_compile_definitions(parakeet_golden_transcription_test PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_test(
+        NAME parakeet_golden_transcription_test
+        COMMAND parakeet_golden_transcription_test
+    )
+    # Requires the real (multi-GB) Parakeet-TDT weights, which aren't
+    # downloaded as part of a normal checkout/CI build; the test itself
+    # detects this and exits with kExitSkip (125) rather than failing.
+    set_tests_properties(parakeet_golden_transcription_test PROPERTIES
+        SKIP_RETURN_CODE 125
+        TIMEOUT 120
+    )
 endif()
 
 if (ENGINE_BUILD_EXAMPLES)
