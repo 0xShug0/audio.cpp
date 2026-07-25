@@ -24,6 +24,7 @@
 #include "engine/models/omnivoice/loader.h"
 #include "engine/community_models/glm_tts/loader.h"
 #include "engine/community_models/outetts/loader.h"
+#include "engine/community_models/parakeet_tdt/loader.h"
 #include "engine/models/pocket_tts/loader.h"
 #include "engine/models/qwen3_asr/loader.h"
 #include "engine/models/qwen3_forced_aligner/loader.h"
@@ -247,6 +248,7 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         engine::models::omnivoice::make_omnivoice_loader(),
         engine::models::glm_tts::make_glm_tts_loader(),
         engine::models::outetts::make_outetts_loader(),
+        engine::community_models::parakeet_tdt::make_parakeet_tdt_loader(),
         engine::models::miocodec::make_miocodec_loader(),
         engine::models::miotts::make_miotts_loader(),
         engine::models::moss_tts_local::make_moss_tts_local_loader(),
