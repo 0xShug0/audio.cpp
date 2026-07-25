@@ -939,6 +939,14 @@ if (ENGINE_BUILD_TESTS)
         COMMAND torch_random_test
     )
 
+    add_engine_unittest(backend_device_resolution_test tests/unittests/test_backend_device_resolution.cpp)
+    target_include_directories(backend_device_resolution_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME backend_device_resolution_test
+        COMMAND backend_device_resolution_test
+    )
+
     add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
 
     add_test(

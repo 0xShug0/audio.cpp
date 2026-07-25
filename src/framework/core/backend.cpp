@@ -17,65 +17,158 @@ void ensure_backends_loaded() {
     }
 }
 
-static bool backend_has_reg_name(ggml_backend_t backend, const char * name) {
+// A backend is identified by the name of the ggml registry that owns it. The device type
+// (GPU/IGPU/ACCEL) deliberately plays no part in that: Metal reports GPU rather than ACCEL,
+// Vulkan reports IGPU on integrated GPUs, and those values are free to change upstream.
+//
+// The CUDA registry name depends on how ggml was built - GGML_CUDA_NAME is "ROCm" under HIP
+// and "MUSA" under MUSA - so every alias has to be accepted. The names are spelled out here
+// instead of pulled from ggml-cuda.h/ggml-vulkan.h because those headers resolve against the
+// backend's own build flags, which are not visible from this translation unit.
+struct BackendRegNames {
+    BackendType  type;
+    const char * names[3];  // unused entries are nullptr
+};
+
+constexpr BackendRegNames k_backend_reg_names[] = {
+    {BackendType::Cuda,   {"CUDA", "ROCm", "MUSA"}},
+    {BackendType::Vulkan, {"Vulkan", nullptr, nullptr}},
+    {BackendType::Metal,  {"MTL", nullptr, nullptr}},
+};
+
+bool reg_name_matches(BackendType type, const char * reg_name) {
+    if (reg_name == nullptr) {
+        return false;
+    }
+    for (const BackendRegNames & entry : k_backend_reg_names) {
+        if (entry.type != type) {
+            continue;
+        }
+        for (const char * name : entry.names) {
+            if (name != nullptr && std::strcmp(reg_name, name) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
+}
+
+bool backend_handle_matches(ggml_backend_t backend, BackendType type) {
     if (backend == nullptr) return false;
     ggml_backend_dev_t device = ggml_backend_get_device(backend);
     if (device == nullptr) return false;
     ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(device);
-    return reg != nullptr && std::strcmp(ggml_backend_reg_name(reg), name) == 0;
+    return reg != nullptr && reg_name_matches(type, ggml_backend_reg_name(reg));
 }
 
 bool is_cuda_backend_handle(ggml_backend_t backend) {
-    return backend_has_reg_name(backend, "CUDA");
+    return backend_handle_matches(backend, BackendType::Cuda);
 }
 
 bool is_vulkan_backend_handle(ggml_backend_t backend) {
-    return backend_has_reg_name(backend, "Vulkan");
+    return backend_handle_matches(backend, BackendType::Vulkan);
 }
 
 bool is_metal_backend_handle(ggml_backend_t backend) {
-    return backend_has_reg_name(backend, "MTL");
+    return backend_handle_matches(backend, BackendType::Metal);
 }
 
+ggml_backend_reg_t find_reg_by_backend_type(BackendType type) {
+    for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
+        ggml_backend_reg_t reg = ggml_backend_reg_get(i);
+        if (reg != nullptr && reg_name_matches(type, ggml_backend_reg_name(reg))) {
+            return reg;
+        }
+    }
+    return nullptr;
+}
+
+// Device indices are relative to the owning registry, matching how ggml itself numbers the
+// devices of a backend.
 ggml_backend_dev_t find_device_by_backend_type(BackendType type, int device_index) {
     if (device_index < 0) {
         return nullptr;
     }
+    ggml_backend_reg_t reg = find_reg_by_backend_type(type);
+    if (reg == nullptr) {
+        return nullptr;
+    }
+    if (static_cast<size_t>(device_index) >= ggml_backend_reg_dev_count(reg)) {
+        return nullptr;
+    }
+    return ggml_backend_reg_dev_get(reg, static_cast<size_t>(device_index));
+}
 
-    std::string reg_name;
-    enum ggml_backend_dev_type dev_type = GGML_BACKEND_DEVICE_TYPE_CPU;
+const char * backend_dev_type_label(enum ggml_backend_dev_type type) {
     switch (type) {
-        case BackendType::Cuda:
-            reg_name = "CUDA";
-            dev_type = GGML_BACKEND_DEVICE_TYPE_GPU;
-            break;
-        case BackendType::Vulkan:
-            reg_name = "Vulkan";
-            dev_type = GGML_BACKEND_DEVICE_TYPE_GPU;
-            break;
-        case BackendType::Metal:
-            reg_name = "MTL";
-            dev_type = GGML_BACKEND_DEVICE_TYPE_ACCEL;
-            break;
-        default:
-            return nullptr;
+        case GGML_BACKEND_DEVICE_TYPE_CPU:   return "CPU";
+        case GGML_BACKEND_DEVICE_TYPE_GPU:   return "GPU";
+        case GGML_BACKEND_DEVICE_TYPE_IGPU:  return "IGPU";
+        case GGML_BACKEND_DEVICE_TYPE_ACCEL: return "ACCEL";
+        case GGML_BACKEND_DEVICE_TYPE_META:  return "META";
     }
+    return "UNKNOWN";
+}
 
-    size_t found = 0;
-    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
-        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-        if (ggml_backend_dev_type(dev) != dev_type) {
+std::string describe_available_devices() {
+    std::string description;
+    for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
+        ggml_backend_reg_t reg = ggml_backend_reg_get(i);
+        if (reg == nullptr) {
             continue;
         }
-        ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
-        if (reg == nullptr || ggml_backend_reg_name(reg) != reg_name) {
-            continue;
-        }
-        if (found++ == static_cast<size_t>(device_index)) {
-            return dev;
+        const char * reg_name = ggml_backend_reg_name(reg);
+        for (size_t j = 0; j < ggml_backend_reg_dev_count(reg); ++j) {
+            ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, j);
+            if (dev == nullptr) {
+                continue;
+            }
+            if (!description.empty()) {
+                description += ", ";
+            }
+            description += (reg_name != nullptr ? reg_name : "<unnamed>");
+            description += ":" + std::to_string(j);
+            const char * dev_name = ggml_backend_dev_name(dev);
+            if (dev_name != nullptr) {
+                description += " \"" + std::string(dev_name) + "\"";
+            }
+            description += " [";
+            description += backend_dev_type_label(ggml_backend_dev_type(dev));
+            description += "]";
         }
     }
-    return nullptr;
+    return description.empty() ? "none" : description;
+}
+
+std::string describe_missing_device(BackendType type, const char * label, int device_index) {
+    ggml_backend_reg_t reg = find_reg_by_backend_type(type);
+    std::string message = std::string(label) + " backend requested but ";
+    if (reg == nullptr) {
+        message += "it is not registered in this build";
+    } else {
+        message += "registry '" + std::string(ggml_backend_reg_name(reg)) +
+            "' has no device " + std::to_string(device_index);
+    }
+    return message + " (available: " + describe_available_devices() + ")";
+}
+
+ggml_backend_t init_device_backend(BackendType type, const char * label, const BackendConfig & config) {
+    if (config.device < 0) {
+        throw std::runtime_error(
+            std::string(label) + " backend requested with negative device index");
+    }
+    ggml_backend_dev_t device = find_device_by_backend_type(type, config.device);
+    if (device == nullptr) {
+        throw std::runtime_error(describe_missing_device(type, label, config.device));
+    }
+    ggml_backend_t backend = ggml_backend_dev_init(device, nullptr);
+    if (backend == nullptr) {
+        throw std::runtime_error(
+            "Failed to initialize " + std::string(label) + " backend on device " +
+            std::to_string(config.device));
+    }
+    return backend;
 }
 
 
@@ -101,36 +194,12 @@ ggml_backend_t init_backend(const BackendConfig & config) {
             }
             return backend;
         }
-        case BackendType::Cuda: {
-            if (config.device < 0) {
-                throw std::runtime_error("CUDA backend requested with negative device index");
-            }
-            ggml_backend_dev_t device = find_device_by_backend_type(BackendType::Cuda, config.device);
-            if (device == nullptr) {
-                throw std::runtime_error("CUDA backend requested but no CUDA device found");
-            }
-            return ggml_backend_dev_init(device, nullptr);
-        }
-        case BackendType::Vulkan: {
-            if (config.device < 0) {
-                throw std::runtime_error("Vulkan backend requested with negative device index");
-            }
-            ggml_backend_dev_t device = find_device_by_backend_type(BackendType::Vulkan, config.device);
-            if (device == nullptr) {
-                throw std::runtime_error("Vulkan backend requested but no Vulkan device found");
-            }
-            return ggml_backend_dev_init(device, nullptr);
-        }
-        case BackendType::Metal: {
-            if (config.device < 0) {
-                throw std::runtime_error("Metal backend requested with negative device index");
-            }
-            ggml_backend_dev_t device = find_device_by_backend_type(BackendType::Metal, config.device);
-            if (device == nullptr) {
-                throw std::runtime_error("Metal backend requested but no Metal device found");
-            }
-            return ggml_backend_dev_init(device, nullptr);
-        }
+        case BackendType::Cuda:
+            return init_device_backend(BackendType::Cuda, "CUDA", config);
+        case BackendType::Vulkan:
+            return init_device_backend(BackendType::Vulkan, "Vulkan", config);
+        case BackendType::Metal:
+            return init_device_backend(BackendType::Metal, "Metal", config);
         case BackendType::BestAvailable: {
             ggml_backend_t backend = ggml_backend_init_best();
             if (backend == nullptr) {
