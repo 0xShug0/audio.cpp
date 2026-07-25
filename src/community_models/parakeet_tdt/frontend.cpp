@@ -127,14 +127,42 @@ ParakeetFrontendFeatures ParakeetFrontend::extract_waveform(
         throw std::runtime_error("Parakeet TDT frontend mel shape mismatch");
     }
     const int64_t valid_frames = std::clamp<int64_t>(valid_feature_frames(valid_samples, config, center), 0, frames);
-    std::vector<float> time_major(static_cast<size_t>(frames * config.feature_size), 0.0f);
+    std::vector<float> log_mel(static_cast<size_t>(frames * config.feature_size), 0.0f);
     for (int64_t t = 0; t < frames; ++t) {
         for (int64_t m = 0; m < config.feature_size; ++m) {
-            float value = std::log(mel.values[static_cast<size_t>(m * frames + t)] + config.log_zero_guard);
-            if (t >= valid_frames) {
-                value = 0.0f;
+            log_mel[static_cast<size_t>(t * config.feature_size + m)] =
+                std::log(mel.values[static_cast<size_t>(m * frames + t)] + config.log_zero_guard);
+        }
+    }
+
+    // NeMo AudioToMelSpectrogramPreprocessor "per_feature" normalization: for each mel
+    // bin, subtract the mean and divide by the (unbiased) std computed over the valid
+    // (unpadded) time frames only, matching normalize_batch() in NeMo's features.py.
+    constexpr float kNormalizeEps = 1e-5f;
+    std::vector<float> time_major(static_cast<size_t>(frames * config.feature_size), 0.0f);
+    if (valid_frames > 0) {
+        for (int64_t m = 0; m < config.feature_size; ++m) {
+            double sum = 0.0;
+            for (int64_t t = 0; t < valid_frames; ++t) {
+                sum += log_mel[static_cast<size_t>(t * config.feature_size + m)];
             }
-            time_major[static_cast<size_t>(t * config.feature_size + m)] = value;
+            const double mean = sum / static_cast<double>(valid_frames);
+            double variance_sum = 0.0;
+            for (int64_t t = 0; t < valid_frames; ++t) {
+                const double diff = log_mel[static_cast<size_t>(t * config.feature_size + m)] - mean;
+                variance_sum += diff * diff;
+            }
+            double std_dev = valid_frames > 1 ? std::sqrt(variance_sum / static_cast<double>(valid_frames - 1)) : 0.0;
+            if (std::isnan(std_dev)) {
+                std_dev = 0.0;
+            }
+            std_dev += kNormalizeEps;
+            for (int64_t t = 0; t < frames; ++t) {
+                const size_t idx = static_cast<size_t>(t * config.feature_size + m);
+                time_major[idx] = t < valid_frames
+                    ? static_cast<float>((log_mel[idx] - mean) / std_dev)
+                    : 0.0f;
+            }
         }
     }
 
