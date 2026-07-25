@@ -78,10 +78,32 @@ you're touching this code:
 
 ## Known limitations
 
-- **No streaming support yet.** NeMo's cache-aware streaming FastConformer
-  (causal conv with a cross-chunk `cache_last_time` cache, chunked-limited
-  attention with a `cache_last_channel` KV cache) is not implemented; only
-  `RunMode::Offline` is supported. This is tracked as follow-up work.
+- **No streaming support, and this checkpoint is not a good fit for it.**
+  `nvidia/parakeet-tdt-0.6b-v3` was trained and exported with
+  `att_context_style="regular"` and `att_context_size=[-1, -1]` — unlimited,
+  fully bidirectional attention context, not NeMo's `"chunked_limited"` style
+  that cache-aware streaming depends on. Calling NeMo's own
+  `encoder.setup_streaming_params()` on this checkpoint does not error, but
+  produces a degenerate configuration (~5.8 second chunks, a ~10000-frame
+  attention cache) that provides essentially none of the latency or bounded-
+  memory benefit real streaming is for. NVIDIA's own maintainers, asked
+  directly about streaming with this model on its Hugging Face discussion
+  page, pointed users at a different, dedicated cache-aware streaming
+  architecture rather than confirming this checkpoint for the purpose.
+  Implementing a genuine chunked/causal streaming path against a model whose
+  attention was trained with an unrestricted receptive field risks silently
+  degrading accuracy in ways that would be easy to miss without extensive
+  validation, for a "streaming" mode that wouldn't provide much practical
+  benefit even if it worked. Real streaming support would need a different,
+  purpose-trained checkpoint (`att_context_style="chunked_limited"`) as
+  either a variant option on this loader or a separate family — this is not
+  a matter of finishing an implementation, it needs a different model file
+  to target correctly. Only `RunMode::Offline` is supported.
+  **If you need streaming ASR, this framework already has it**: the
+  `nemotron_asr` family (`nvidia/nemotron-3.5-asr-streaming-0.6b`) is a
+  same-size-class NVIDIA checkpoint actually trained cache-aware, with
+  configurable chunk sizes down to 80ms, and already implements
+  `IStreamingVoiceTaskSession` in this codebase.
 - Validated against a single test clip end to end; the numerical parity
   harness has not been run across a broader validation set.
 - The frontend does not implement NeMo's preprocessor `dither` (small random
