@@ -84,7 +84,14 @@ ParakeetConfig parse_config(const assets::ResourceBundle & resources) {
     config.encoder.subsampling_stride = json::require_i64(encoder, "subsampling_conv_stride");
     config.encoder.max_position_embeddings = json::require_i64(encoder, "max_position_embeddings");
 
-    try {
+    // processor_config.json is genuinely optional (not every model directory
+    // layout provides it), so fall back to the ParakeetFrontendConfig
+    // defaults when it's absent. But if the file IS present, any parse or
+    // schema failure is a real problem worth failing loudly on: silently
+    // keeping the defaults could load a variant model's weights against the
+    // wrong frontend parameters (sample rate, FFT size, hop length, ...)
+    // without any indication anything went wrong.
+    if (resources.has_file("processor_config")) {
         const auto processor_root = resources.parse_json("processor_config");
         const auto & feature = processor_root.require("feature_extractor");
         config.frontend.sample_rate = json::require_i64(feature, "sampling_rate");
@@ -95,8 +102,6 @@ ParakeetConfig parse_config(const assets::ResourceBundle & resources) {
         if (const auto * p = feature.find("preemphasis"); p != nullptr) {
             config.frontend.preemphasis = json::require_f32(feature, "preemphasis");
         }
-    } catch (...) {
-        config.frontend.preemphasis = 0.97f;
     }
 
     validate_config(config);

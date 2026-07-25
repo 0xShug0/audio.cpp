@@ -242,19 +242,6 @@ ParakeetDecodedText ParakeetDecoderRuntime::decode(const ParakeetEncodedAudio& e
             int32_t tok = run_step(in_tok, f, pred_valid, &dur_id);
             pred_valid = true;
 
-            if (fi == 0) {
-                // Debug: dump first-frame logit stats
-                const auto& cfg = assets_->config;
-                float max_logit = logits_scratch_[0];
-                int max_idx = 0;
-                for (size_t i = 1; i < static_cast<size_t>(cfg.vocab_size); i++) {
-                    if (logits_scratch_[i] > max_logit) { max_logit = logits_scratch_[i]; max_idx = (int)i; }
-                }
-                fprintf(stderr, "DECODE_DIAG frame0: best_vocab=%d(logit=%.4f) blank(8192)=%.4f best_dur=%d(logit=%.4f)\n",
-                        max_idx, (double)max_logit, (double)logits_scratch_[cfg.vocab_size],
-                        (int)argmax_dur(logits_scratch_, cfg.vocab_size, cfg.durations.size()),
-                        (double)logits_scratch_[cfg.vocab_size + argmax_dur(logits_scratch_, cfg.vocab_size, cfg.durations.size())]);
-            }
             out.token_ids.push_back(tok);
             int dur_skip = (dur_id >= 0 && dur_id < static_cast<int32_t>(cfg.durations.size())) ? cfg.durations[static_cast<size_t>(dur_id)] : 0;
             out.durations.push_back(dur_skip);
