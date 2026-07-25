@@ -78,6 +78,24 @@ engine::core::TensorValue pad_causal_1d(
         GGML_TYPE_F32);
 }
 
+// NeMo's ConformerConvolution.depthwise_conv is a CausalConv1D, but the
+// full-context (non-streaming) encoder constructs it with an explicit int
+// `padding=conv_context_size=(kernel_size-1)//2`, which CausalConv1D treats
+// as SYMMETRIC left/right padding, not causal-only left padding. Using
+// causal-only padding here shifts every frame's receptive field and corrupts
+// the residual stream for the whole encoder stack.
+engine::core::TensorValue pad_symmetric_1d(
+    engine::core::ModuleBuildContext & ctx,
+    const engine::core::TensorValue & input,
+    int64_t kernel) {
+    const int64_t pad = (kernel - 1) / 2;
+    if (pad <= 0) { return input; }
+    return engine::core::wrap_tensor(
+        ggml_pad_ext(ctx.ggml, input.tensor, static_cast<int>(pad), static_cast<int>(pad), 0, 0, 0, 0, 0, 0),
+        engine::core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], input.shape.dims[2] + 2 * pad}),
+        GGML_TYPE_F32);
+}
+
 engine::core::TensorValue build_fastconformer_conv_module(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input_btc,
@@ -94,7 +112,7 @@ engine::core::TensorValue build_fastconformer_conv_module(
     x = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
 
     const int64_t d_model = x.shape.dims[1];
-    x = pad_causal_1d(ctx, x, conv_kernel - 1);
+    x = pad_symmetric_1d(ctx, x, conv_kernel);
     x = engine::modules::DepthwiseConv1dModule({d_model, conv_kernel, 1, 0, 1, false})
             .build(ctx, x, {weights.conv_dw_weight, weights.conv_dw_bias});
     x = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
