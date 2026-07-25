@@ -657,6 +657,7 @@ add_executable(audiocpp_cli
     app/cli/args.cpp
     app/cli/batch.cpp
     app/cli/request.cpp
+    app/streaming/pcm_source.cpp
     app/streaming/streaming.cpp
     app/workflow/execution.cpp
     app/workflow/file_sink.cpp
@@ -968,6 +969,19 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME backend_device_resolution_test
         COMMAND backend_device_resolution_test
+    )
+
+    add_executable(streaming_audio_input_test
+        tests/unittests/test_streaming_audio_input.cpp
+        app/streaming/pcm_source.cpp
+        app/streaming/streaming.cpp
+    )
+    target_link_libraries(streaming_audio_input_test PRIVATE engine_runtime ggml)
+    target_include_directories(streaming_audio_input_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME streaming_audio_input_test
+        COMMAND streaming_audio_input_test
     )
 
     add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)

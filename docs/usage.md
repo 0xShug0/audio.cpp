@@ -25,7 +25,10 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | Option | Used by | Meaning |
 |---|---|---|
 | `--text` | generation, TTS, ASR context, alignment transcript | Input text. |
-| `--audio` | generation/editing, ASR, VAD, diarization, separation, conversion, alignment | Input WAV. |
+| `--audio` | generation/editing, ASR, VAD, diarization, separation, conversion, alignment | Input WAV, or `-` to stream raw PCM from stdin (requires `--mode streaming`). |
+| `--input-format` | streaming ASR with `--audio -` | Raw PCM sample format, `s16le` or `f32le`. Default `s16le`. |
+| `--input-rate` | streaming ASR with `--audio -` | Raw PCM sample rate in Hz. Default `16000`. |
+| `--input-channels` | streaming ASR with `--audio -` | Raw PCM channel count. Default `1`. |
 | `--voice-ref` | voice clone / voice design / some VC paths | Reference voice WAV. |
 | `--language` | language-aware models | Language code. |
 | `--out` | audio-producing models | Output WAV path. |
