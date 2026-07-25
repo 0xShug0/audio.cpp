@@ -9,11 +9,6 @@
     "acestep-v15-turbo/silence_latent.safetensors",
     "vae/diffusion_pytorch_model.safetensors"
   ],
-  "kokoro_82m_bf16": [
-    "config.json",
-    "kokoro-v1_0.safetensors",
-    "voices/af_heart.safetensors"
-  ],
   "moss_tts_nano_100m": [
     "config.json",
     "model.safetensors",
@@ -82,12 +77,10 @@
     "tokenizer.json"
   ],
   "voxtral_realtime": [
-    "config.json",
-    "generation_config.json",
-    "model.safetensors",
-    "params.json",
-    "processor_config.json",
-    "tekken.json"
+    "voxtral-mini-4b-realtime-2602-q8_0.gguf"
+  ],
+  "fish_audio_s2_pro": [
+    "fish-audio-s2-pro-q8_0.gguf"
   ],
   "higgs_audio_stt": [
     "config.json",
@@ -130,6 +123,14 @@
     "tokenizer_config.json",
     "vocab.json",
     "merges.txt"
+  ],
+  "vietneu_tts_v3_turbo": [
+    "config.json",
+    "model.gguf",
+    "speech_tokenizer/config.json",
+    "tokenizer_config.json",
+    "tokenizer.json",
+    "special_tokens_map.json"
   ],
   "qwen3_tts_1_7b_base": [
     "config.json",
@@ -180,12 +181,6 @@
     "config.json",
     "model.safetensors",
     "processor_config.json"
-  ],
-  "parakeet_tdt_0_6b_v3": [
-    "config.json",
-    "model.safetensors",
-    "processor_config.json",
-    "tokenizer.json"
   ],
   "pocket_tts": [
     "languages/english/model.safetensors",
@@ -255,12 +250,7 @@
     "merges.txt"
   ],
   "higgs_audio_v3_tts_4b": [
-    "chat_template.jinja",
-    "config.json",
-    "model.safetensors.index.json",
-    "model.safetensors",
-    "tokenizer.json",
-    "tokenizer_config.json"
+    "higgs-audio-v3-tts-4b-q8_0.gguf"
   ],
   "heartmula": [
     "tokenizer.json",
@@ -287,6 +277,23 @@
     "model_config.json",
     "../llm-jp-3-150m/tokenizer.json",
     "../Semantic-DACVAE-Japanese-32dim/weights.safetensors"
+  ],
+  "outetts_1_0_1b": [
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "../DAC.speech.v1.0/config.json",
+    "../DAC.speech.v1.0/model.safetensors",
+    "../Qwen3-ForcedAligner-0.6B/config.json",
+    "../Qwen3-ForcedAligner-0.6B/generation_config.json",
+    "../Qwen3-ForcedAligner-0.6B/model.safetensors",
+    "../Qwen3-ForcedAligner-0.6B/preprocessor_config.json",
+    "../Qwen3-ForcedAligner-0.6B/tokenizer_config.json",
+    "../Qwen3-ForcedAligner-0.6B/vocab.json",
+    "../Qwen3-ForcedAligner-0.6B/merges.txt"
   ],
   "stable_audio_3_small_music": [
     "model_config.json",
@@ -409,11 +416,6 @@
     "citrinet_256_config.json",
     "citrinet_256_tokenizer.model",
     "citrinet_256_vocab.txt"
-  ],
-  "marblenet_vad": [
-    "marblenet_vad.safetensors",
-    "marblenet_vad_config.json",
-    "marblenet_vad_labels.txt"
   ],
   "voxcpm2": [
     "config.json",

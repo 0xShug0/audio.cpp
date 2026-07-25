@@ -338,9 +338,13 @@ LOAD_TIMEOUT = int(os.environ.get("AUDIOCPP_LOAD_TIMEOUT", "300"))
 GGUF_TYPES = ("orig", "f16", "bf16", "q8_0", "q2_k", "q3_k", "q4_k", "q5_k", "q6_k")
 
 # Only families with a model package spec can load the runtime GGUF produced by
-# audiocpp_gguf.  Keep this aligned with model_specs/*.json; a safetensors file
-# by itself is not evidence that the corresponding C++ loader supports GGUF.
-GGUF_NATIVE_FAMILIES = frozenset({
+# audiocpp_gguf; a safetensors file by itself is not evidence that the
+# corresponding C++ loader supports GGUF. model_specs/<family>.json is the
+# runtime's own list, so read it rather than tracking it by hand — the set grew
+# from 15 to 33 families between 0.3 and 0.4 and a hand-copy just goes stale,
+# telling users a supported model "does not support GGUF". The literal below is
+# the 0.3-era fallback for bundles that ship no model_specs/ directory.
+GGUF_NATIVE_FAMILIES_FALLBACK = frozenset({
     "citrinet_asr",
     "higgs_audio_stt",
     "hviske_asr",
@@ -356,6 +360,31 @@ GGUF_NATIVE_FAMILIES = frozenset({
     "supertonic",
     "vibevoice_asr",
 })
+
+
+def _spec_families():
+    """Families with a package spec on disk, or the fallback set if there is none."""
+    for root in (PROJECT_ROOT, BUNDLE_ROOT):
+        spec_dir = os.path.join(root, "model_specs")
+        if not os.path.isdir(spec_dir):
+            continue
+        families = set()
+        for name in os.listdir(spec_dir):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(spec_dir, name)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    family = json.load(f).get("family")
+            except (OSError, ValueError):
+                family = None
+            families.add(family or os.path.splitext(name)[0])
+        if families:
+            return frozenset(families)
+    return GGUF_NATIVE_FAMILIES_FALLBACK
+
+
+GGUF_NATIVE_FAMILIES = _spec_families()
 
 # These families have input layouts the WebUI can assemble without guessing.
 # Other native-GGUF composite packages remain available through the converter

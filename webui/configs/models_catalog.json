@@ -19,6 +19,18 @@
     { "id": "moss-tts-local",         "display_name": "MOSS-TTS-Local v1.5 (tts)",              "family": "moss_tts_local",       "path": "models/MOSS-TTS-Local-Transformer-v1.5", "task": "tts",   "mode": "offline", "download_id": "moss_tts_local_v1_5",     "min_vram_gb": 8 },
     { "id": "moss-tts-nano",          "display_name": "MOSS-TTS-Nano 100M (tts)",               "family": "moss_tts_nano",        "path": "models/MOSS-TTS-Nano-100M",              "task": "tts",   "mode": "offline", "download_id": "moss_tts_nano_100m",      "min_vram_gb": 2 },
     { "id": "supertonic",             "display_name": "Supertonic 3 (tts 预置音色/多语种)",        "display_name_en": "Supertonic 3 (tts, preset voices)",      "family": "supertonic", "path": "models/supertonic-3",       "task": "tts",   "mode": "offline", "download_id": "supertonic_3",            "min_vram_gb": 2 },
+    { "id": "higgs-audio-tts",        "display_name": "Higgs Audio v3 TTS 4B (tts 克隆, GGUF Q8)", "display_name_en": "Higgs Audio v3 TTS 4B (tts + clone, GGUF Q8)", "family": "higgs_audio_tts", "path": "models/Higgs-Audio-v3-TTS-4B-GGUF", "task": "tts", "mode": "offline", "download_id": "higgs_audio_v3_tts_4b", "min_vram_gb": 6,
+      "input_hint": "**Higgs Audio v3 TTS**：Q8_0 GGUF 包（权重已量化，不用再设 weight_type）；上传参考音色即声音克隆，留空用默认音色；长文本自动分段。",
+      "input_hint_en": "**Higgs Audio v3 TTS**: Q8_0 GGUF package (already quantized — no weight_type needed). Upload a reference voice to clone, or leave it empty for the default voice; long text is chunked automatically." },
+    { "id": "fish-audio-s2-pro",      "display_name": "Fish Audio S2 Pro (tts 克隆/控制标记, GGUF Q8)", "display_name_en": "Fish Audio S2 Pro (tts + clone/control tags, GGUF Q8)", "family": "fish_audio", "path": "models/Fish-Audio-S2-Pro-GGUF", "task": "tts", "mode": "offline", "download_id": "fish_audio_s2_pro", "min_vram_gb": 8,
+      "input_hint": "**Fish Audio S2 Pro**：Q8_0 GGUF 包；中英+自动语种；上传参考音色即克隆；正文里可写行内控制标记（如 (laugh)）。",
+      "input_hint_en": "**Fish Audio S2 Pro**: Q8_0 GGUF package; English/Chinese plus auto language. Upload a reference voice to clone; inline control tags such as (laugh) can be written in the text." },
+    { "id": "outetts",                "display_name": "Llama-OuteTTS 1.0 1B (tts 克隆, 社区)",     "display_name_en": "Llama-OuteTTS 1.0 1B (tts + clone, community)", "family": "outetts", "path": "models/Llama-OuteTTS-1.0-1B", "task": "tts", "mode": "offline", "download_id": "outetts_1_0_1b", "min_vram_gb": 4,
+      "input_hint": "**OuteTTS 1.0 1B**（社区模型）：23 种语言，DAC 编解码；上传参考音色即克隆。",
+      "input_hint_en": "**OuteTTS 1.0 1B** (community): 23 languages, IBM DAC codec. Upload a reference voice to clone." },
+    { "id": "vietneu-tts",            "display_name": "VieNeu-TTS v3 Turbo (tts 越南语, 社区)",    "display_name_en": "VieNeu-TTS v3 Turbo (vi tts, community)", "family": "vietneu_tts", "path": "models/VieNeu-TTS-v3-Turbo", "task": "tts", "mode": "offline", "download_id": "vietneu_tts_v3_turbo", "min_vram_gb": 4,
+      "input_hint": "**VieNeu-TTS v3 Turbo**（社区模型）：越南语 / 英语；上传参考音色即克隆。",
+      "input_hint_en": "**VieNeu-TTS v3 Turbo** (community): Vietnamese and English. Upload a reference voice to clone." },
 
     { "id": "chatterbox",             "display_name": "Chatterbox (voice clone)",              "family": "chatterbox",           "path": "models/chatterbox",                      "task": "clon",  "mode": "offline", "download_id": "chatterbox",              "min_vram_gb": 12 },
 
@@ -40,7 +52,7 @@
       "input_hint": "**Hviske ASR**：丹麦语专用；模型侧自动分段。" },
     { "id": "vibevoice-asr",          "display_name": "VibeVoice ASR (asr, 多语种+说话人分段)",   "family": "vibevoice_asr",        "path": "models/VibeVoice-ASR",                   "task": "asr",   "mode": "offline", "download_id": "vibevoice_asr",           "min_vram_gb": 20,
       "input_hint": "**VibeVoice ASR**：自动语种，可输出分段/说话人轮次；文本框可填上下文提示（如 The recording is a meeting conversation.）。权重 17.3G，8G 卡跑不动。" },
-    { "id": "voxtral-realtime",       "display_name": "Voxtral Mini 4B Realtime (asr, 自动语种+流式)", "display_name_en": "Voxtral Mini 4B Realtime (asr, auto + streaming)", "family": "voxtral_realtime", "path": "models/Voxtral-Mini-4B-Realtime-2602", "task": "asr", "mode": "offline", "download_id": "voxtral_realtime", "session_options": { "voxtral_realtime.weight_type": "q8_0" }, "min_vram_gb": 8 },
+    { "id": "voxtral-realtime",       "display_name": "Voxtral Mini 4B Realtime (asr, 自动语种+流式)", "display_name_en": "Voxtral Mini 4B Realtime (asr, auto + streaming)", "family": "voxtral_realtime", "path": "models/Voxtral-Mini-4B-Realtime-2602-GGUF", "task": "asr", "mode": "offline", "download_id": "voxtral_realtime", "min_vram_gb": 8 },
 
     { "id": "chatterbox-vc",           "display_name": "Chatterbox (vc 声音转换)",                "display_name_en": "Chatterbox (voice conversion)", "family": "chatterbox", "path": "models/chatterbox", "task": "vc", "mode": "offline", "download_id": "chatterbox", "min_vram_gb": 12,
       "input_hint": "**Chatterbox VC**：上传源语音和目标音色参考；模型保留源语音内容，将说话人音色转换为目标音色，输出 24kHz 单声道。",
@@ -59,7 +71,7 @@
     { "id": "mel-band-roformer",      "display_name": "Mel-Band RoFormer (sep 人声分离)",       "family": "mel_band_roformer",    "path": "models/mel-roformer-mlx",                "task": "sep",   "mode": "offline", "download_id": "mel_band_roformer",       "min_vram_gb": 3 },
 
     { "id": "silero-vad",             "display_name": "Silero VAD (vad, bundled)",             "family": "silero_vad",           "path": "assets/framework/models/silero_vad",     "task": "vad",   "mode": "offline", "min_vram_gb": 1 },
-    { "id": "marblenet-vad",          "display_name": "MarbleNet VAD (vad)",                   "family": "marblenet_vad",        "path": "models/marblenet_vad",                   "task": "vad",   "mode": "offline", "download_id": "marblenet_vad",           "min_vram_gb": 1 },
+    { "id": "marblenet-vad",          "display_name": "MarbleNet VAD (vad, bundled)",          "family": "marblenet_vad",        "path": "assets/framework/models/marblenet_vad",  "task": "vad",   "mode": "offline", "min_vram_gb": 1 },
     { "id": "sortformer-diar",        "display_name": "Sortformer Diarization 4spk (diar)",    "family": "sortformer_diar",      "path": "models/diar_sortformer_4spk-v1",         "task": "diar",  "mode": "offline", "download_id": "sortformer_diar_4spk_v1", "min_vram_gb": 2 },
     { "id": "qwen3-forced-aligner",   "display_name": "Qwen3 Forced Aligner (align)",          "family": "qwen3_forced_aligner", "path": "models/Qwen3-ForcedAligner-0.6B",        "task": "align", "mode": "offline", "download_id": "qwen3_forced_aligner_0_6b", "min_vram_gb": 3 },
 
