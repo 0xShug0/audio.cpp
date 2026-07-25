@@ -34,10 +34,10 @@ if (CXX_IS_HIPCC)
 else()
     # Forward (AMD)GPU_TARGETS to CMAKE_HIP_ARCHITECTURES.
     if(AMDGPU_TARGETS AND NOT GPU_TARGETS)
-        set(GPU_TARGETS ${AMDGPU_TARGETS})
+        set(GPU_TARGETS "${AMDGPU_TARGETS}" CACHE STRING "GPU targets to compile for")
     endif()
     if(GPU_TARGETS AND NOT CMAKE_HIP_ARCHITECTURES)
-        set(CMAKE_HIP_ARCHITECTURES ${GPU_TARGETS})
+        set(CMAKE_HIP_ARCHITECTURES "${GPU_TARGETS}" CACHE STRING "HIP architectures")
     endif()
     cmake_minimum_required(VERSION 3.21)
     enable_language(HIP)
@@ -92,6 +92,12 @@ else()
         ../ggml-cuda/template-instances/fattn-vec-instance-q4_0-q4_0.cu
         ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-q8_0.cu
         ../ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.cu)
+endif()
+
+if (CXX_IS_HIPCC)
+    set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES LANGUAGE CXX)
+else()
+    set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES LANGUAGE HIP)
 endif()
 
 ggml_add_backend_library(ggml-hip
@@ -151,15 +157,22 @@ if (NOT GGML_CUDA_FA)
 endif()
 
 if (CXX_IS_HIPCC)
-    set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES LANGUAGE CXX)
     if (WIN32 AND CMAKE_BUILD_TYPE STREQUAL "Debug")
         # CMake on Windows doesn't support the HIP language yet.
         # Therefore we workaround debug build's failure on HIP backend this way.
         set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES COMPILE_FLAGS "-O2 -g")
     endif()
     target_link_libraries(ggml-hip PRIVATE hip::device)
+    # Workaround for https://github.com/ROCm/ROCm/issues/5826
+    # The AMDGPU backend can emit illegal DPP instructions for GFX10+ at -O0.
+    target_compile_options(ggml-hip PRIVATE -O2)
 else()
-    set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES LANGUAGE HIP)
+    if (CMAKE_HIP_COMPILER MATCHES "clang" OR CMAKE_HIP_COMPILER_ID MATCHES "Clang")
+        target_compile_options(ggml-hip PRIVATE $<$<COMPILE_LANGUAGE:HIP>:-xhip>)
+        # Workaround for https://github.com/ROCm/ROCm/issues/5826
+        # The AMDGPU backend can emit illegal DPP instructions for GFX10+ at -O0.
+        target_compile_options(ggml-hip PRIVATE $<$<COMPILE_LANGUAGE:HIP>:-O2>)
+    endif()
 endif()
 
 if (GGML_STATIC)
