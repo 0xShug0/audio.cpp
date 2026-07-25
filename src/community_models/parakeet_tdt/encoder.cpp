@@ -113,13 +113,62 @@ engine::core::TensorValue build_fastconformer_conv_module(
 
     const int64_t d_model = x.shape.dims[1];
     x = pad_symmetric_1d(ctx, x, conv_kernel);
-    x = engine::modules::DepthwiseConv1dModule({d_model, conv_kernel, 1, 0, 1, false})
+    // use_bias=true: weights.conv_dw_bias holds the batch-norm bias term folded
+    // into the depthwise conv by fold_bn() in weights.cpp (-running_mean*scale +
+    // bn_bias) — it is not an optional/zero bias, it is load-bearing.
+    x = engine::modules::DepthwiseConv1dModule({d_model, conv_kernel, 1, 0, 1, true})
             .build(ctx, x, {weights.conv_dw_weight, weights.conv_dw_bias});
     x = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
     x = engine::modules::SiluModule().build(ctx, x);
     return engine::modules::LinearModule({d_model, d_model, false}).build(ctx, x, weights.conv_pw2);
 }
 
+std::vector<float> make_relative_positional_encoding(int64_t hidden, int64_t frames, int64_t max_frames) {
+    if (frames > max_frames) {
+        throw std::runtime_error("Parakeet TDT encoder relative position frames exceed maximum");
+    }
+    const int64_t pos_frames = 2 * frames - 1;
+    std::vector<float> values(static_cast<size_t>(pos_frames * hidden), 0.0f);
+    constexpr long double kBase = 10000.0L;
+    const int64_t half_hidden = hidden / 2;
+    std::vector<long double> inv_freq(static_cast<size_t>(half_hidden), 0.0L);
+    std::vector<long double> step_sin(static_cast<size_t>(half_hidden), 0.0L);
+    std::vector<long double> step_cos(static_cast<size_t>(half_hidden), 0.0L);
+    for (int64_t i = 0; i < half_hidden; ++i) {
+        const long double exponent = static_cast<long double>(2 * i) / static_cast<long double>(hidden);
+        inv_freq[static_cast<size_t>(i)] = 1.0L / std::pow(kBase, exponent);
+        step_sin[static_cast<size_t>(i)] = std::sin(inv_freq[static_cast<size_t>(i)]);
+        step_cos[static_cast<size_t>(i)] = std::cos(inv_freq[static_cast<size_t>(i)]);
+    }
+    std::vector<long double> sin_phase(static_cast<size_t>(half_hidden), 0.0L);
+    std::vector<long double> cos_phase(static_cast<size_t>(half_hidden), 0.0L);
+    for (int64_t i = 0; i < half_hidden; ++i) {
+        const long double phase = static_cast<long double>(frames - 1) * inv_freq[static_cast<size_t>(i)];
+        sin_phase[static_cast<size_t>(i)] = std::sin(phase);
+        cos_phase[static_cast<size_t>(i)] = std::cos(phase);
+    }
+    for (int64_t p = 0; p < pos_frames; ++p) {
+        for (int64_t i = 0; i < half_hidden; ++i) {
+            const size_t dst = static_cast<size_t>(p * hidden + 2 * i);
+            values[dst] = static_cast<float>(sin_phase[static_cast<size_t>(i)]);
+            values[dst + 1] = static_cast<float>(cos_phase[static_cast<size_t>(i)]);
+            const long double next_sin = sin_phase[i] * step_cos[i] - cos_phase[i] * step_sin[i];
+            const long double next_cos = cos_phase[i] * step_cos[i] + sin_phase[i] * step_sin[i];
+            sin_phase[i] = next_sin;
+            cos_phase[i] = next_cos;
+        }
+    }
+    return values;
+}
+
+}  // namespace
+
+// Exported (not anonymous-namespace) so test/parity harnesses can build a
+// single encoder layer in isolation against the exact same code path the
+// production encoder graph uses, instead of maintaining a separate copy that
+// could silently drift out of sync. See
+// ParakeetEncoderRuntime::ensure_graph()'s per-layer loop for the only other
+// caller, and tests/parakeet_tdt/parity/ for the isolation harness.
 engine::core::TensorValue build_encoder_layer(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input,
@@ -193,46 +242,6 @@ engine::core::TensorValue build_encoder_layer(
 
     return engine::modules::LayerNormModule({hidden_size, 1.0e-5f, true, true}).build(ctx, x, weights.norm_out);
 }
-
-std::vector<float> make_relative_positional_encoding(int64_t hidden, int64_t frames, int64_t max_frames) {
-    if (frames > max_frames) {
-        throw std::runtime_error("Parakeet TDT encoder relative position frames exceed maximum");
-    }
-    const int64_t pos_frames = 2 * frames - 1;
-    std::vector<float> values(static_cast<size_t>(pos_frames * hidden), 0.0f);
-    constexpr long double kBase = 10000.0L;
-    const int64_t half_hidden = hidden / 2;
-    std::vector<long double> inv_freq(static_cast<size_t>(half_hidden), 0.0L);
-    std::vector<long double> step_sin(static_cast<size_t>(half_hidden), 0.0L);
-    std::vector<long double> step_cos(static_cast<size_t>(half_hidden), 0.0L);
-    for (int64_t i = 0; i < half_hidden; ++i) {
-        const long double exponent = static_cast<long double>(2 * i) / static_cast<long double>(hidden);
-        inv_freq[static_cast<size_t>(i)] = 1.0L / std::pow(kBase, exponent);
-        step_sin[static_cast<size_t>(i)] = std::sin(inv_freq[static_cast<size_t>(i)]);
-        step_cos[static_cast<size_t>(i)] = std::cos(inv_freq[static_cast<size_t>(i)]);
-    }
-    std::vector<long double> sin_phase(static_cast<size_t>(half_hidden), 0.0L);
-    std::vector<long double> cos_phase(static_cast<size_t>(half_hidden), 0.0L);
-    for (int64_t i = 0; i < half_hidden; ++i) {
-        const long double phase = static_cast<long double>(frames - 1) * inv_freq[static_cast<size_t>(i)];
-        sin_phase[static_cast<size_t>(i)] = std::sin(phase);
-        cos_phase[static_cast<size_t>(i)] = std::cos(phase);
-    }
-    for (int64_t p = 0; p < pos_frames; ++p) {
-        for (int64_t i = 0; i < half_hidden; ++i) {
-            const size_t dst = static_cast<size_t>(p * hidden + 2 * i);
-            values[dst] = static_cast<float>(sin_phase[static_cast<size_t>(i)]);
-            values[dst + 1] = static_cast<float>(cos_phase[static_cast<size_t>(i)]);
-            const long double next_sin = sin_phase[i] * step_cos[i] - cos_phase[i] * step_sin[i];
-            const long double next_cos = cos_phase[i] * step_cos[i] + sin_phase[i] * step_sin[i];
-            sin_phase[i] = next_sin;
-            cos_phase[i] = next_cos;
-        }
-    }
-    return values;
-}
-
-}  // namespace
 
 struct ParakeetEncoderRuntime::Graph {
     int64_t input_frames = 0;

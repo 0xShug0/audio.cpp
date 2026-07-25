@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/module.h"
 #include "engine/community_models/parakeet_tdt/assets.h"
 #include "engine/community_models/parakeet_tdt/frontend.h"
 #include "engine/community_models/parakeet_tdt/weights.h"
@@ -27,6 +28,26 @@ struct ParakeetEncoderStreamState {
     bool backend_cache_valid = false;
     const void * backend_cache_owner = nullptr;
 };
+
+// Builds a single FastConformer encoder layer's graph ops (feed-forward 1,
+// relative-position self-attention, conv module, feed-forward 2, final
+// layer norm — matching NeMo's ConformerLayer.forward exactly). Exported so
+// test/parity harnesses can exercise the real production layer-building
+// code directly on a hand-fed input and compare against a NeMo reference
+// capture, instead of maintaining a separate duplicate implementation that
+// could silently drift out of sync with the real encoder. See
+// tests/parakeet_tdt/parity/ for the harness that uses this.
+engine::core::TensorValue build_encoder_layer(
+    engine::core::ModuleBuildContext & ctx,
+    const engine::core::TensorValue & input,
+    const engine::core::TensorValue & attention_mask,
+    const engine::core::TensorValue & keep_mask,
+    const engine::core::TensorValue & projected_pos_emb,
+    const ParakeetEncoderLayerWeights & weights,
+    int64_t hidden_size,
+    int64_t intermediate_size,
+    int64_t heads,
+    int64_t conv_kernel);
 
 class ParakeetEncoderRuntime {
 public:
