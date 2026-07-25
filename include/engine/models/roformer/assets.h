@@ -13,8 +13,10 @@
 namespace engine::models::roformer {
 
 inline constexpr std::string_view kMelBandRoformerFamily = "mel_band_roformer";
+inline constexpr std::string_view kBsRoformerFamily = "bs_roformer";
 
 struct RoformerArchitectureConfig {
+    std::string family;
     int sample_rate = 0;
     int channels = 0;
     int chunk_size = 0;
@@ -39,6 +41,8 @@ struct RoformerArchitectureConfig {
     int mlp_expansion_factor = 4;
     bool skip_connection = false;
     bool has_final_norm = false;
+    bool fused_qkv = false;
+    bool transformer_output_norm = true;
     int stft_freq_bins = 0;
     int chunk_frames = 0;
     int total_band_input_dim = 0;
@@ -59,5 +63,10 @@ struct RoformerAssets {
 void validate_roformer_weight_storage_type(assets::TensorStorageType storage_type);
 std::shared_ptr<const RoformerAssets> load_mel_band_roformer_assets(
     const runtime::ModelLoadRequest & request);
+std::shared_ptr<const RoformerAssets> load_bs_roformer_assets(
+    const runtime::ModelLoadRequest & request);
+std::shared_ptr<const RoformerAssets> load_roformer_assets(
+    const runtime::ModelLoadRequest & request,
+    std::string_view family);
 
 }  // namespace engine::models::roformer

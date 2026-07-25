@@ -72,7 +72,7 @@ RoformerSession::RoformerSession(
             : assets::TensorStorageType::Native;
     weight_storage_type_ = option_weight_type(
         RuntimeSessionBase::options(),
-        std::string(kMelBandRoformerFamily) + ".weight_type",
+        assets_->config.family + ".weight_type",
         default_weight_storage);
     runtime_ = std::make_unique<RoformerRuntime>(assets_, execution_context(), weight_storage_type_);
     const auto & config = runtime_->config();
@@ -98,7 +98,7 @@ RoformerSession::RoformerSession(
 RoformerSession::~RoformerSession() = default;
 
 std::string RoformerSession::family() const {
-    return std::string(kMelBandRoformerFamily);
+    return assets_->config.family;
 }
 
 runtime::VoiceTaskKind RoformerSession::task_kind() const {
@@ -137,17 +137,18 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
     const auto total_start = Clock::now();
 
     const auto & config = runtime_->config();
+    const std::string log_prefix = config.family + ".session.";
     const auto & request_audio = *request.audio_input;
     const bool original_mono = config.channels == 2 && request_audio.channels == 1;
     if (request_audio.sample_rate != config.sample_rate ||
         (request_audio.channels != config.channels && !original_mono)) {
         throw std::runtime_error("RoFormer run() audio_input does not match prepared audio contract");
     }
-    engine::debug::trace_log_scalar("mel_band_roformer.session.sample_rate", config.sample_rate);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.channels", config.channels);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.chunk_size", chunk_size_);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.step", step_);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.original_mono", original_mono);
+    engine::debug::trace_log_scalar(log_prefix + "sample_rate", config.sample_rate);
+    engine::debug::trace_log_scalar(log_prefix + "channels", config.channels);
+    engine::debug::trace_log_scalar(log_prefix + "chunk_size", chunk_size_);
+    engine::debug::trace_log_scalar(log_prefix + "step", step_);
+    engine::debug::trace_log_scalar(log_prefix + "original_mono", original_mono);
 
     const auto prepare_start = Clock::now();
     const auto audio = original_mono
@@ -186,9 +187,11 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
         total_length += 2 * border_;
         padded_borders = true;
     }
-    engine::debug::trace_log_scalar("mel_band_roformer.session.frames", total_length);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.padded_borders", padded_borders);
-    engine::debug::timing_log_scalar("mel_band_roformer.session.audio_prepare_ms", engine::debug::elapsed_ms(prepare_start));
+    engine::debug::trace_log_scalar(log_prefix + "frames", total_length);
+    engine::debug::trace_log_scalar(log_prefix + "padded_borders", padded_borders);
+    engine::debug::timing_log_scalar(
+        log_prefix + "audio_prepare_ms",
+        engine::debug::elapsed_ms(prepare_start));
 
     result_work_.assign(static_cast<size_t>(audio.channels * total_length), 0.0f);
     counter_work_.assign(static_cast<size_t>(audio.channels * total_length), 0.0f);
@@ -227,7 +230,9 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
             chunk_window,
             engine::audio::AudioChunkCounterMode::PerLane);
     }
-    engine::debug::timing_log_scalar("mel_band_roformer.session.chunk_loop_ms", engine::debug::elapsed_ms(chunk_loop_start));
+    engine::debug::timing_log_scalar(
+        log_prefix + "chunk_loop_ms",
+        engine::debug::elapsed_ms(chunk_loop_start));
 
     const auto assemble_start = Clock::now();
     vocals_planar_work_ = result_work_;
@@ -271,7 +276,9 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
     runtime::TaskResult result_task;
     result_task.named_audio_outputs.push_back({"vocals", std::move(vocals_audio), {}});
     result_task.named_audio_outputs.push_back({"instrumental", std::move(instrumental_audio), {{"derived", "mixture_minus_vocals"}}});
-    engine::debug::timing_log_scalar("mel_band_roformer.session.assemble_ms", engine::debug::elapsed_ms(assemble_start));
+    engine::debug::timing_log_scalar(
+        log_prefix + "assemble_ms",
+        engine::debug::elapsed_ms(assemble_start));
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(total_start));
     return result_task;
 }

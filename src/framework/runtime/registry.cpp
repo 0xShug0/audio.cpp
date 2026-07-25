@@ -244,6 +244,7 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         engine::models::ace_step::make_ace_step_loader(),
         engine::models::demucs::make_htdemucs_loader(),
         engine::models::roformer::make_mel_band_roformer_loader(),
+        engine::models::roformer::make_bs_roformer_loader(),
         engine::models::omnivoice::make_omnivoice_loader(),
         engine::models::glm_tts::make_glm_tts_loader(),
         engine::models::outetts::make_outetts_loader(),

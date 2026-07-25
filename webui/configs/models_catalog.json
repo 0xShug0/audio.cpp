@@ -71,6 +71,7 @@
     { "id": "miocodec",               "display_name": "MioCodec (vc; codec dependency)",       "family": "miocodec",             "path": "models/MioCodec-25Hz-44.1kHz-v2",        "task": "vc",    "mode": "offline", "download_id": "miocodec_25hz_44k_v2",    "min_vram_gb": 3 },
 
     { "id": "htdemucs",               "display_name": "HTDemucs (sep 音源分离)",                "family": "htdemucs",             "path": "models/htdemucs",                        "task": "sep",   "mode": "offline", "download_id": "htdemucs",                "min_vram_gb": 3 },
+    { "id": "bs-roformer",             "display_name": "BS-RoFormer (sep 人声分离)",             "family": "bs_roformer",           "path": "models/BS-RoFormer-ep368_Q8/BS-RoFormer-ep368_Q8.gguf", "task": "sep", "mode": "offline",                                      "min_vram_gb": 3 },
     { "id": "mel-band-roformer",      "display_name": "Mel-Band RoFormer (sep 人声分离)",       "family": "mel_band_roformer",    "path": "models/mel-roformer-mlx",                "task": "sep",   "mode": "offline", "download_id": "mel_band_roformer",       "min_vram_gb": 3 },
 
     { "id": "silero-vad",             "display_name": "Silero VAD (vad, bundled)",             "family": "silero_vad",           "path": "assets/framework/models/silero_vad",     "task": "vad",   "mode": "offline", "min_vram_gb": 1 },

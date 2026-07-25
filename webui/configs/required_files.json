@@ -370,6 +370,10 @@
     "config.json",
     "model.safetensors"
   ],
+  "bs_roformer": [
+    "config.json",
+    "model.safetensors"
+  ],
   "vevo2": [
     "acoustic_modeling/fm_emilia101k_singnet7k_repa/config.json",
     "acoustic_modeling/fm_emilia101k_singnet7k_repa/model.safetensors",

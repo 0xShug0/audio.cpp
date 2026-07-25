@@ -6,6 +6,7 @@
 | Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |
 | VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
 | HTDemucs | `htdemucs` | `sep` | [HTDemucs](#htdemucs) |
+| BS-RoFormer | `bs_roformer` | `sep` | [BS-RoFormer](#bs-roformer) |
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
 
 This page covers voice conversion, codec, and source-separation families. These models do not share one interface: conversion models consume source speech plus a target voice, while the separation models consume a mixture and write named stems.
@@ -89,6 +90,44 @@ audiocpp_cli --task sep --family htdemucs --model models/htdemucs --backend cuda
 | `--audio` | 44.1 kHz WAV path | required | Input music mixture. |
 | `--out-dir` | directory | required | Directory for separated stems. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
+
+## BS-RoFormer
+
+BS-RoFormer separates vocals from a 44.1 kHz music mixture using explicit,
+non-overlapping frequency bands. The native implementation accepts either the
+converted SafeTensors package or a standalone GGUF with the package spec and
+`config.json` embedded.
+
+| Field | Value |
+|---|---|
+| Family | `bs_roformer` |
+| Task | `sep` |
+| Modes | `offline` |
+| Input | 44.1 kHz mono or stereo WAV through `--audio` |
+| Output | `vocals.wav` and derived `instrumental.wav` under `--out-dir` |
+| Weight types | `native`, `f32`, `f16`, `bf16`, `q8_0` |
+
+Standalone GGUF:
+
+```bash
+audiocpp_cli --task sep --model models/BS-RoFormer-ep368_Q8/BS-RoFormer-ep368_Q8.gguf --backend cuda --audio song_44k.wav --out-dir stems
+```
+
+Converted SafeTensors package:
+
+```bash
+audiocpp_cli --task sep --family bs_roformer --model models/BS-RoFormer-ep368 --backend cuda --audio song_44k.wav --out-dir stems
+```
+
+The conversion helper preserves the checkpoint's fused QKV weights, explicit
+`freqs_per_bands` layout, global final RMSNorm, and mask-estimator depth:
+
+```bash
+python tests/bs_roformer/convert_reference_ckpt.py \
+  --ckpt model_bs_roformer.ckpt \
+  --config-path model_bs_roformer.yaml \
+  --output-dir models/BS-RoFormer
+```
 
 ## Mel-Band RoFormer
 
