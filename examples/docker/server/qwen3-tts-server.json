@@ -1,0 +1,15 @@
+{
+  "host": "0.0.0.0",
+  "port": 8080,
+  "device": 0,
+  "threads": 1,
+  "models": [
+    {
+      "id": "qwen3-tts",
+      "family": "qwen3_tts",
+      "path": "/models/Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",
+      "task": "tts",
+      "mode": "offline"
+    }
+  ]
+}

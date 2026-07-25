@@ -1,16 +1,14 @@
 services:
   audiocpp-server:
-    image: local/audiocpp:full-cpu
-    build:
-      context: ../../../
-      dockerfile: .devops/cpu.Dockerfile
+    image: ghcr.io/0xshug0/audio.cpp:full-cpu
     restart: unless-stopped
     stop_grace_period: 30s
     ports:
       - "8080:8080"
     volumes:
       - ./../models:/models:ro
-      - ./server.json:/app/server.json:ro
+      - ./../references:/references:ro
+      - ./qwen3-tts-server.json:/app/server.json:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

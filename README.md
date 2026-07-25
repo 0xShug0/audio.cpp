@@ -103,8 +103,8 @@ PocketTTS language selection is a model-load option. When the model path points 
 
 ## Docker
 
-Docker CPU and CUDA images are available for both CLI and server use. See [Docker.md](Docker.md) for build commands and working Docker examples.
-
+Docker CUDA and CPU images are available for both CLI and server use. See [docker.md](docs/docker.md) for
+available images, build commands and working Docker examples.
 
 ## Model Manager and GGUF Downloads
 
