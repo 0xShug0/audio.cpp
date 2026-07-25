@@ -1293,6 +1293,35 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
     ),
     ModelPackage(
+        id="parakeet_tdt",
+        display_name="Parakeet-TDT 0.6B v3",
+        target_directory="parakeet-tdt-0.6b-v3",
+        source=SnapshotSource(
+            repo_id="nvidia/parakeet-tdt-0.6b-v3",
+            include_prefixes=(
+                "config.json",
+                "processor_config.json",
+                "tokenizer.json",
+                "model.safetensors",
+            ),
+        ),
+        required_files=(
+            "config.json",
+            "processor_config.json",
+            "tokenizer.json",
+            "model.safetensors",
+        ),
+        family="parakeet_tdt",
+        tasks=("asr",),
+        modes=("offline",),
+        description=(
+            "NVIDIA Parakeet-TDT 0.6B v3 FastConformer-TDT ASR (25 European languages), "
+            "loaded from the repo's Transformers-compatible safetensors checkpoint. The "
+            "same repo also hosts a parakeet-tdt-0.6b-v3.nemo archive for NeMo itself; "
+            "that file is excluded here since this loader reads safetensors directly."
+        ),
+    ),
+    ModelPackage(
         id="voxcpm2",
         display_name="VoxCPM2",
         target_directory="VoxCPM2",
