@@ -209,7 +209,7 @@ def install_snapshot_into_dir(
     validate: bool = True,
 ) -> None:
     files = mm.list_hf_files(source)
-    for relative, expected_size in files:
+    for relative, _local_snapshot_path, expected_size in files:
         destination = destination_root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         download_hf_file(source, relative, destination_root, expected_size)
