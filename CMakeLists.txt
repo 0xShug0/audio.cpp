@@ -1102,6 +1102,18 @@ if (ENGINE_BUILD_TESTS)
         SKIP_RETURN_CODE 125
         TIMEOUT 120
     )
+
+    # Numerical parity dump tool (not registered as an add_test — it's a
+    # manual/pre-release check, not a CI gate). Run it against a NeMo
+    # reference dump via compare_parity.py; see tests/parakeet_tdt/parity/README.md.
+    add_executable(parakeet_parity_dump
+        tests/parakeet_tdt/parity/dump_cpp_reference.cpp
+    )
+    target_include_directories(parakeet_parity_dump PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/parakeet_tdt/parity)
+    target_link_libraries(parakeet_parity_dump PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(parakeet_parity_dump PRIVATE OpenMP::OpenMP_CXX)
+    endif()
 endif()
 
 if (ENGINE_BUILD_EXAMPLES)
