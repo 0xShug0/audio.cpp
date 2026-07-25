@@ -312,7 +312,7 @@ TorchCudaSamplingPolicy resolve_torch_cuda_sampling_policy(
         log_default_policy(log_category, "backend is not CUDA");
         return policy;
     }
-#ifdef GGML_USE_CUDA
+    // CUDA runtime probe via dynamic library (works with both static and GGML_BACKEND_DL builds)
     const engine::io::DynamicLibraryHandle driver = engine::io::open_dynamic_library(
         {"libcuda.so.1", "libcuda.so", "libcuda.dylib", "nvcuda.dll"});
     if (driver == nullptr) {
@@ -366,14 +366,6 @@ TorchCudaSamplingPolicy resolve_torch_cuda_sampling_policy(
     policy.cuda_fast_path = true;
     policy.cuda_device_index = device_index;
     return policy;
-#else
-    (void) device_index;
-    if (failure_mode == TorchCudaSamplingPolicyFailureMode::FallbackToDefault) {
-        log_default_policy(log_category, "build does not include CUDA support");
-        return policy;
-    }
-    throw std::runtime_error(std::string(model_name) + " generation requires a build with CUDA support");
-#endif
 }
 
 uint64_t torch_cuda_tensor_iterator_offset_blocks(
