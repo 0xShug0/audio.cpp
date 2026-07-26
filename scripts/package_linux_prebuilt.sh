@@ -93,7 +93,7 @@ BUILD_ARGS=(
 
 (
     cd "$REPO_ROOT"
-    scripts/build_linux.sh "${BUILD_ARGS[@]}"
+    bash scripts/build_linux.sh "${BUILD_ARGS[@]}"
 )
 
 for binary in audiocpp_cli audiocpp_server audiocpp_gguf; do
