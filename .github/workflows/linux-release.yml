@@ -1,4 +1,4 @@
-name: Linux release packages
+name: Release packages
 
 on:
   push:
@@ -11,11 +11,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: linux-release-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-linux:
     name: Linux ${{ matrix.arch }} ${{ matrix.backend }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -68,16 +68,58 @@ jobs:
             build/prebuilt/*.sha256
           if-no-files-found: error
 
+  build-windows:
+    name: Windows x86_64 CPU
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check loader/catalog sync
+        shell: pwsh
+        run: |
+          python tools/check_loader_catalog_sync.py --self-test
+          python tools/check_loader_catalog_sync.py
+
+      - name: Build package
+        shell: pwsh
+        run: |
+          .\scripts\package_windows_prebuilt.ps1 `
+            -Package cpu `
+            -Profile balance `
+            -Jobs $env:NUMBER_OF_PROCESSORS
+
+      - name: Smoke test
+        shell: pwsh
+        run: .\build\prebuilt\audiocpp-windows-cpu-balance\audiocpp_cli.exe --help
+
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $zip = Get-Item .\build\prebuilt\audiocpp-windows-cpu-balance.zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip.FullName).Hash.ToLowerInvariant()
+          "$hash *$($zip.Name)" |
+            Set-Content -Encoding ascii "$($zip.FullName).sha256"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: audiocpp-windows-x86_64-cpu
+          path: |
+            build/prebuilt/*.zip
+            build/prebuilt/*.sha256
+          if-no-files-found: error
+
   publish:
-    name: Publish Linux packages
+    name: Publish release packages
     if: github.event_name == 'push'
-    needs: build
+    needs: [build-linux, build-windows]
     runs-on: ubuntu-24.04
     steps:
       - name: Download packages
         uses: actions/download-artifact@v8
         with:
-          pattern: audiocpp-linux-*
+          pattern: audiocpp-*
           path: dist
           merge-multiple: true
 

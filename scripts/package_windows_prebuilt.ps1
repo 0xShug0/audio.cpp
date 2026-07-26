@@ -46,11 +46,39 @@ function Find-CudaRoot {
 function Find-VcRedistDir {
     param([Parameter(Mandatory = $true)][string]$Name)
 
-    $root = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Redist\MSVC"
-    $found = Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
+    $installRoots = @()
+    if ($VsInstall) {
+        $installRoots += $VsInstall
+    }
+
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path -LiteralPath $vswhere) {
+        $detected = & $vswhere `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+        if ($LASTEXITCODE -eq 0) {
+            $installRoots += @($detected)
+        }
+    }
+
+    $installRoots += @(
+        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools",
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise",
+        "C:\Program Files\Microsoft Visual Studio\2022\Professional",
+        "C:\Program Files\Microsoft Visual Studio\2022\Community",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
+    )
+
+    $found = $installRoots |
+        Where-Object { $_ } |
+        Select-Object -Unique |
+        ForEach-Object {
+            Get-ChildItem (Join-Path $_ "VC\Redist\MSVC") -Directory -ErrorAction SilentlyContinue
+        } |
         Sort-Object Name -Descending |
         ForEach-Object { Join-Path $_.FullName "x64\$Name" } |
-        Where-Object { Test-Path $_ } |
+        Where-Object { Test-Path -LiteralPath $_ } |
         Select-Object -First 1
     if (-not $found) {
         throw "Could not find MSVC redist directory '$Name'. Install Visual Studio Build Tools C++ redistributables."

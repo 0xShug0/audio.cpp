@@ -124,6 +124,12 @@ build/prebuilt/audiocpp-windows-cpu-balance.zip
 build/prebuilt/audiocpp-windows-cuda-balance.zip
 ```
 
+Pushing a tag named `v*` or `release-*` automatically builds the balanced CPU
+ZIP alongside the Linux release packages. The GitHub Release is created only
+after all platform packages succeed, and includes a SHA-256 checksum for every
+archive. A manual run of the release workflow produces downloadable Actions
+artifacts without creating a GitHub Release.
+
 ## Choosing a Release Profile
 
 For public releases, `balance` is the recommended default. It avoids native CPU selection while still using AVX2-class kernels for reasonable performance on modern Windows machines.
