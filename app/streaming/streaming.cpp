@@ -81,6 +81,11 @@ void feed_audio_stream(
 // Replays an already materialized buffer through the same path a live source takes, so the two
 // input routes cannot drift apart. `audio` must outlive the returned stream.
 AudioChunkStream buffer_audio_stream(const engine::runtime::AudioBuffer & audio) {
+    // The whole length is known here, unlike a live source, so reject a malformed buffer before
+    // the session is touched rather than partway through it on the final short chunk.
+    if (audio.channels <= 0 || audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {
+        throw std::runtime_error("streaming audio input sample count must be divisible by channels");
+    }
     AudioChunkStream stream;
     stream.format = AudioStreamFormat{audio.sample_rate, audio.channels};
     stream.read = [source = &audio, offset = size_t{0}](
@@ -119,7 +124,9 @@ engine::runtime::TaskResult run_stream(
         session.start_stream(request);
         if (policy.input == engine::runtime::StreamingInputKind::AudioChunks) {
             if (stream == nullptr) {
-                throw std::runtime_error("streaming audio input mode requires audio_input");
+                throw std::runtime_error(
+                    "streaming audio input mode requires samples in audio_input, or an "
+                    "AudioChunkStream for a live source");
             }
             feed_audio_stream(session, *stream, resolve_chunk_samples(policy, stream->format), sink);
         }
@@ -141,7 +148,10 @@ engine::runtime::TaskResult run_streaming_task(
     engine::runtime::IStreamingVoiceTaskSession & session,
     const engine::runtime::TaskRequest & request,
     const StreamEventSink & sink) {
-    if (!request.audio_input.has_value()) {
+    // A live source carries its format in audio_input but no samples, and must be supplied as an
+    // AudioChunkStream instead. Treating that as an empty buffer here would feed the session
+    // nothing and fail much later, so leave it to the null-stream check in run_stream.
+    if (!request.audio_input.has_value() || request.audio_input->samples.empty()) {
         return run_stream(session, request, sink, nullptr);
     }
     const auto stream = buffer_audio_stream(*request.audio_input);

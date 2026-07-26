@@ -236,6 +236,43 @@ void test_empty_stream_produces_no_chunks() {
     require(session.finalized(), "empty stream must still finalize");
 }
 
+// A live source declares its format in audio_input and carries no samples there. The buffer
+// overload must not mistake that for zero-length audio and feed the session nothing.
+void test_live_format_contract_is_not_mistaken_for_empty_audio() {
+    RecordingSession session(512);
+    engine::runtime::AudioBuffer contract;
+    contract.sample_rate = 16000;
+    contract.channels = 1;
+
+    bool rejected = false;
+    try {
+        minitts::app::run_streaming_task(session, audio_request(contract), nullptr);
+    } catch (const std::exception &) {
+        rejected = true;
+    }
+    require(rejected, "a format-only audio_input must be rejected, not streamed as empty audio");
+    require(session.chunks.empty(), "no chunks should have been delivered");
+}
+
+// The buffer length is known up front, so a malformed buffer must be rejected before the session
+// sees any of it rather than partway through on the final short chunk.
+void test_malformed_buffer_is_rejected_before_any_chunk() {
+    RecordingSession session(400);
+    engine::runtime::AudioBuffer audio;
+    audio.sample_rate = 16000;
+    audio.channels = 2;
+    audio.samples.assign(1001, 0.5F);  // not a whole number of stereo frames
+
+    bool rejected = false;
+    try {
+        minitts::app::run_streaming_task(session, audio_request(audio), nullptr);
+    } catch (const std::exception &) {
+        rejected = true;
+    }
+    require(rejected, "a buffer that is not divisible by channels must be rejected");
+    require(session.chunks.empty(), "no chunks should have been delivered before the rejection");
+}
+
 void test_format_parsing_and_validation() {
     require(
         minitts::app::parse_pcm_sample_format("s16le") == minitts::app::PcmSampleFormat::S16LE,
@@ -276,6 +313,8 @@ int main() {
         test_sample_format_decoding();
         test_partial_trailing_frame_is_dropped();
         test_empty_stream_produces_no_chunks();
+        test_live_format_contract_is_not_mistaken_for_empty_audio();
+        test_malformed_buffer_is_rejected_before_any_chunk();
         test_format_parsing_and_validation();
     } catch (const std::exception & error) {
         std::cerr << "streaming_audio_input_test failed: " << error.what() << '\n';
