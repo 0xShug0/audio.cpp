@@ -209,6 +209,34 @@ actually reducing scheduling/dispatch work, not FLOPs — consistent with the
 whole encoder graph being just ~1400-2800 nodes for a 93-frame clip, small
 enough that per-node overhead is a real fraction of wall time on CPU.
 
+**Why the CUDA side hasn't shown a dispatch-overhead win from any of the
+above: CUDA graph capture is already on, but architecturally disabled on this
+test GPU.** Traced with `nsys profile --trace=cuda` against `parakeet_warm_bench`:
+16,068 individual `cudaLaunchKernel` calls and 4,265 `cudaStreamSynchronize`
+calls (47% of total CUDA API time) across 6 encoder passes plus the full
+per-token TDT decode loop — real per-launch/per-sync overhead that CUDA graph
+capture-and-replay exists specifically to eliminate. `cuda_api_sum` shows
+**zero** `cudaGraphLaunch`/`cudaGraphInstantiate` calls anywhere, even though
+`GGML_CUDA_GRAPHS=ON` in this build (`ENGINE_DEFAULT_ENABLE_CUDA_GRAPHS` in
+the top-level `CMakeLists.txt`, matching `tmp/repos/parakeet.cpp`'s own
+`GGML_CUDA_GRAPHS ON`) and the encoder/decoder graphs already satisfy the
+capture prerequisite (same cached `ggml_cgraph*` reused across every call at
+a given shape — see `ensure_graph()`/`ensure_step_graph()`/`ensure_joint_graph()`,
+all check-and-return-early on cache hit, no rebuild per inference or per
+token). Root cause, in `ggml_cuda_graph_set_enabled`
+(`external/ggml/src/ggml-cuda/ggml-cuda.cu`): ggml unconditionally disables
+CUDA graph capture below `GGML_CUDA_CC_AMPERE` (compute capability 8.0).
+This test machine's GTX 1650 is Turing, compute capability 7.5 — one
+generation short. This is not a bug or a missing setting in this codebase;
+it's ggml's own hardware gate, and there is nothing to change here — the
+build already does everything right. It does, however, retroactively explain
+why flash attention and fused-QKV (both above) measured no CUDA benefit: they
+reduce exactly the per-op dispatch/launch overhead that graph replay would
+otherwise hide, so on hardware where replay is active (Ampere or newer —
+RTX 30/40/50-series, A100/H100, etc.) those two changes might show a real
+CUDA win where they showed none here. Worth re-measuring on such hardware
+rather than assuming this test machine's null result generalizes.
+
 **Why CUDA has no PyTorch comparison point.** `nemo_asr` on this GPU hits
 `torch.OutOfMemoryError` just loading the model — this 3.6GB card's VRAM
 budget is entirely consumed by PyTorch's own overhead on top of the weights.
