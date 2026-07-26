@@ -27,6 +27,8 @@ public:
     VoxtralRealtimeAudioEmbeddings encode_stream_chunk(
         const VoxtralRealtimeFeatures & features,
         VoxtralRealtimeAudioEncoderStreamState & state);
+    // Emits the summed upload/compute/readback split of every streaming chunk seen so far.
+    void log_stream_timings() const;
 
 private:
     std::unique_ptr<Impl> impl_;

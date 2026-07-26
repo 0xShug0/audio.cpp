@@ -93,10 +93,16 @@ assets::TensorStorageType normalize_weight_storage(assets::TensorStorageType sto
         case assets::TensorStorageType::F16:
         case assets::TensorStorageType::BF16:
         case assets::TensorStorageType::Q8_0:
+        // Requantized from the source GGUF at load time. Tensors whose rows are not a whole
+        // number of blocks (the 3-wide conv kernels) fall back to F32 in the weight store.
+        case assets::TensorStorageType::Q4_0:
+        case assets::TensorStorageType::Q4_K:
+        case assets::TensorStorageType::Q5_K:
+        case assets::TensorStorageType::Q6_K:
             return storage_type;
         default:
             throw std::runtime_error(
-                "VoxTral audio_encoder_weight_type supports only native, f32, f16, bf16, and q8_0");
+                "VoxTral audio_encoder_weight_type supports only native, f32, f16, bf16, q4_0, q4_k, q5_k, q6_k, and q8_0");
     }
 }
 
@@ -219,8 +225,9 @@ core::TensorValue set_audio_kv_rows(
     const core::TensorValue & row_indices) {
     core::validate_rank_between(cache, 4, 4, "cache");
     core::validate_rank_between(rows, 4, 4, "rows");
-    if (cache.type != GGML_TYPE_F32 || rows.type != GGML_TYPE_F32) {
-        throw std::runtime_error("VoxTral audio streaming cache update requires f32 tensors");
+    // ggml_set_rows converts on write, so an f16 cache still takes f32 rows straight from RoPE.
+    if ((cache.type != GGML_TYPE_F32 && cache.type != GGML_TYPE_F16) || rows.type != GGML_TYPE_F32) {
+        throw std::runtime_error("VoxTral audio streaming cache update requires f32 rows and an f32 or f16 cache");
     }
     if (row_indices.type != GGML_TYPE_I32 || row_indices.shape.rank != 1 ||
         row_indices.shape.dims[0] != rows.shape.dims[1]) {
@@ -277,17 +284,18 @@ core::TensorValue build_audio_attention_streaming_static(
     q = rope.build(ctx, q, positions);
     k = rope.build(ctx, k, positions);
     q = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
+    q = core::ensure_backend_addressable_layout(ctx, q);
     k = core::ensure_backend_addressable_layout(ctx, k);
     v = core::ensure_backend_addressable_layout(ctx, v);
     auto updated_key = set_audio_kv_rows(ctx, key_cache, k, cache_slots);
     auto updated_value = set_audio_kv_rows(ctx, value_cache, v, cache_slots);
+    // Feed the sliding-window cache to flash attention as a strided view. Materializing the
+    // transpose would copy the full 750-step K and V caches once per layer per 80 ms chunk.
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, updated_key.shape.rank}).build(ctx, updated_key);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, updated_value.shape.rank}).build(ctx, updated_value);
-    k_heads = core::wrap_tensor(ggml_cont(ctx.ggml, k_heads.tensor), k_heads.shape, k_heads.type);
-    v_heads = core::wrap_tensor(ggml_cont(ctx.ggml, v_heads.tensor), v_heads.shape, v_heads.type);
     auto context = modules::ScaledDotProductAttentionModule({
         config.head_dim,
-        modules::ScaledDotProductAttentionLowering::Flash,
+        modules::ScaledDotProductAttentionLowering::FlashPreserveViews,
         GGML_PREC_F32,
     }).build(ctx, q, k_heads, v_heads, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
@@ -502,27 +510,30 @@ public:
         conv2_cache_ = ggml_new_tensor_3d(ctx_.get(), GGML_TYPE_F32, 1, config.audio.hidden_size, 1);
         key_caches_.reserve(static_cast<size_t>(config.audio.num_hidden_layers));
         value_caches_.reserve(static_cast<size_t>(config.audio.num_hidden_layers));
+        // The sliding-window cache is read in full by flash attention on every 80 ms chunk and is
+        // never exported, so it is held in F16: half the read traffic, and the type Metal's flash
+        // attention kernels prefer.
         for (int64_t layer = 0; layer < config.audio.num_hidden_layers; ++layer) {
             key_caches_.push_back(core::wrap_tensor(
                 ggml_new_tensor_4d(
                     ctx_.get(),
-                    GGML_TYPE_F32,
+                    GGML_TYPE_F16,
                     config.audio.head_dim,
                     config.audio.num_key_value_heads,
                     cache_steps_,
                     1),
                 core::TensorShape::from_dims({1, cache_steps_, config.audio.num_key_value_heads, config.audio.head_dim}),
-                GGML_TYPE_F32));
+                GGML_TYPE_F16));
             value_caches_.push_back(core::wrap_tensor(
                 ggml_new_tensor_4d(
                     ctx_.get(),
-                    GGML_TYPE_F32,
+                    GGML_TYPE_F16,
                     config.audio.head_dim,
                     config.audio.num_key_value_heads,
                     cache_steps_,
                     1),
                 core::TensorShape::from_dims({1, cache_steps_, config.audio.num_key_value_heads, config.audio.head_dim}),
-                GGML_TYPE_F32));
+                GGML_TYPE_F16));
         }
         state_buffer_.reset(ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_));
         if (state_buffer_ == nullptr) {
@@ -695,12 +706,17 @@ public:
                 .build(ctx, x, {weights_->projector2_weight, std::nullopt});
         output_ = x.tensor;
         ggml_set_output(output_);
-        ggml_set_output(next_conv1_cache_);
-        ggml_set_output(next_conv2_cache_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
+        // Expand the encoder body first so the conv-cache writes land after every node that reads
+        // the caches: the backend runs nodes in graph order, so this ordering is what keeps the
+        // in-graph update from clobbering the current chunk's own left context.
         ggml_build_forward_expand(graph_, output_);
-        ggml_build_forward_expand(graph_, next_conv1_cache_);
-        ggml_build_forward_expand(graph_, next_conv2_cache_);
+        ggml_build_forward_expand(
+            graph_,
+            ggml_cpy(ctx_.get(), next_conv1_cache_, cache_.conv1_cache()));
+        ggml_build_forward_expand(
+            graph_,
+            ggml_cpy(ctx_.get(), next_conv2_cache_, cache_.conv2_cache()));
         gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_.get(), graph_) ||
@@ -728,6 +744,7 @@ public:
         if (features.frames != feature_frames_ || features.mel_bins != config.frontend.feature_size) {
             throw std::runtime_error("VoxTral streaming audio encoder feature shape mismatch");
         }
+        const auto upload_start = Clock::now();
         auto input_value = core::wrap_tensor(input_, core::TensorShape::from_dims({1, config.frontend.feature_size, feature_frames_}), GGML_TYPE_F32);
         core::write_tensor_f32(input_value, features.values);
         if (state.seen_encoder_steps == 0) {
@@ -736,23 +753,34 @@ public:
         write_positions(state.seen_encoder_steps);
         write_cache_slots(state.seen_encoder_steps);
         write_mask(state.seen_encoder_steps);
+        upload_ms_ += engine::debug::elapsed_ms(upload_start);
         core::set_backend_threads(backend_, threads_);
+        const auto compute_start = Clock::now();
         const ggml_status status = core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
+        compute_ms_ += engine::debug::elapsed_ms(compute_start);
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("VoxTral streaming audio encoder graph compute failed");
         }
         state.first_chunk = false;
         state.seen_encoder_steps += current_steps_;
         state.cached_encoder_steps = std::min<int64_t>(cache_steps_, state.cached_encoder_steps + current_steps_);
-        ggml_backend_tensor_copy_async(backend_, backend_, next_conv1_cache_, cache_.conv1_cache());
-        ggml_backend_tensor_copy_async(backend_, backend_, next_conv2_cache_, cache_.conv2_cache());
-        ggml_backend_synchronize(backend_);
         VoxtralRealtimeAudioEmbeddings out;
+        const auto readback_start = Clock::now();
         out.values = core::read_tensor_f32(output_);
+        readback_ms_ += engine::debug::elapsed_ms(readback_start);
         out.tokens = tokens_;
         out.hidden_size = config.hidden_size;
+        ++runs_;
         return out;
+    }
+
+    void log_timings(const char * prefix) const {
+        const std::string base = std::string("voxtral_realtime.audio_encoder.stream.") + prefix;
+        engine::debug::timing_log_scalar(base + ".runs", runs_);
+        engine::debug::timing_log_scalar(base + ".upload_ms", upload_ms_);
+        engine::debug::timing_log_scalar(base + ".compute_ms", compute_ms_);
+        engine::debug::timing_log_scalar(base + ".readback_ms", readback_ms_);
     }
 
 private:
@@ -810,6 +838,10 @@ private:
     ggml_tensor * output_ = nullptr;
     std::vector<ggml_fp16_t> mask_values_;
     ggml_cgraph * graph_ = nullptr;
+    int64_t runs_ = 0;
+    double upload_ms_ = 0.0;
+    double compute_ms_ = 0.0;
+    double readback_ms_ = 0.0;
 };
 
 }  // namespace
@@ -884,6 +916,15 @@ struct VoxtralRealtimeAudioEncoderRuntime::Impl {
         return graph_slot->run(features, state);
     }
 
+    void log_stream_timings() const {
+        if (first_stream_graph != nullptr) {
+            first_stream_graph->log_timings("first");
+        }
+        if (steady_stream_graph != nullptr) {
+            steady_stream_graph->log_timings("steady");
+        }
+    }
+
     std::shared_ptr<const VoxtralRealtimeAssets> assets;
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
@@ -923,6 +964,10 @@ VoxtralRealtimeAudioEmbeddings VoxtralRealtimeAudioEncoderRuntime::encode_stream
     const VoxtralRealtimeFeatures & features,
     VoxtralRealtimeAudioEncoderStreamState & state) {
     return impl_->encode_stream_chunk(features, state);
+}
+
+void VoxtralRealtimeAudioEncoderRuntime::log_stream_timings() const {
+    impl_->log_stream_timings();
 }
 
 }  // namespace engine::models::voxtral_realtime

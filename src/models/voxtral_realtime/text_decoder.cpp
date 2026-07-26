@@ -27,6 +27,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -82,9 +83,16 @@ assets::TensorStorageType normalize_weight_storage(assets::TensorStorageType sto
         case assets::TensorStorageType::F16:
         case assets::TensorStorageType::BF16:
         case assets::TensorStorageType::Q8_0:
+        // Requantized from the source GGUF at load time. Tensors whose rows are not a whole
+        // number of blocks (the AdaRMS 32-wide projection) fall back to F32 in the weight store.
+        case assets::TensorStorageType::Q4_0:
+        case assets::TensorStorageType::Q4_K:
+        case assets::TensorStorageType::Q5_K:
+        case assets::TensorStorageType::Q6_K:
             return storage_type;
         default:
-            throw std::runtime_error("VoxTral text_decoder_weight_type supports only native, f32, f16, bf16, and q8_0");
+            throw std::runtime_error(
+                "VoxTral text_decoder_weight_type supports only native, f32, f16, bf16, q4_0, q4_k, q5_k, q6_k, and q8_0");
     }
 }
 
@@ -305,6 +313,16 @@ struct TextAttentionOutput {
     core::TensorValue value;
 };
 
+// Summed across every streaming decode step, including the ones that ran on a graph that has
+// since been replaced by a cache-growth rebuild.
+struct DecodeStepStats {
+    int64_t steps = 0;
+    double upload_ms = 0.0;
+    double compute_ms = 0.0;
+    double readback_ms = 0.0;
+    double sample_ms = 0.0;
+};
+
 TextAttentionOutput build_text_attention(
     core::ModuleBuildContext & ctx,
     const VoxtralRealtimeTextConfig & config,
@@ -391,13 +409,13 @@ TextAttentionOutput build_text_attention_static(
     auto updated_value = set_rows.build(ctx, cache_value, v, cache_slot);
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
+    // Feed the cache to flash attention as a strided view. Materializing the transpose would copy
+    // the whole K and V cache every layer, every token, which is the dominant cost at large caches.
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, updated_key.shape.rank}).build(ctx, updated_key);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, updated_value.shape.rank}).build(ctx, updated_value);
-    k_heads = core::wrap_tensor(ggml_cont(ctx.ggml, k_heads.tensor), k_heads.shape, k_heads.type);
-    v_heads = core::wrap_tensor(ggml_cont(ctx.ggml, v_heads.tensor), v_heads.shape, v_heads.type);
     auto context = modules::GroupedQueryAttentionModule({
         config.head_dim,
-        modules::GroupedQueryAttentionLowering::FlashGrouped,
+        modules::GroupedQueryAttentionLowering::FlashGroupedViewKV,
         GGML_PREC_F32,
     }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
@@ -823,17 +841,22 @@ public:
         int32_t token,
         const VoxtralRealtimeAudioEmbeddings & audio_embeddings,
         int64_t num_delay_tokens,
-        bool single_audio_embedding,
+        // Which row of `audio_embeddings` this step consumes. Streaming passes the row explicitly
+        // because a batched encoder pass emits several rows; offline leaves it unset and indexes
+        // the embedding table by decode position.
+        std::optional<int64_t> audio_row,
         const VoxtralRealtimeGenerationOptions & options,
         uint64_t & sample_call_index,
-        TokenSampler & sampler) {
+        TokenSampler & sampler,
+        DecodeStepStats * stats = nullptr) {
         const auto & config = assets_->config.text;
+        const auto upload_start = Clock::now();
         const int64_t position = step.position;
         if (position < 0) {
             throw std::runtime_error("VoxTral text decoder audio embedding position is out of range");
         }
-        const int64_t audio_index = single_audio_embedding ? 0 : position;
-        if (audio_index >= audio_embeddings.tokens) {
+        const int64_t audio_index = audio_row.value_or(position);
+        if (audio_index < 0 || audio_index >= audio_embeddings.tokens) {
             throw std::runtime_error("VoxTral text decoder audio embedding position is out of range");
         }
         ggml_backend_tensor_set(token_id_, &token, 0, sizeof(token));
@@ -856,14 +879,24 @@ public:
         ggml_backend_tensor_set(cache_slot_, &step.cache_slot, 0, sizeof(step.cache_slot));
         write_attention_mask(step);
         core::set_backend_threads(backend_, threads_);
+        const auto compute_start = Clock::now();
         const ggml_status status = core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
+        const auto readback_start = Clock::now();
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("VoxTral text decoder step graph compute failed");
         }
         logits_values_.resize(static_cast<size_t>(config.vocab_size));
         ggml_backend_tensor_get(logits_, logits_values_.data(), 0, logits_values_.size() * sizeof(float));
+        const auto sample_start = Clock::now();
         const int32_t next_token = sampler.select(logits_values_, options, options.seed, sample_call_index);
+        if (stats != nullptr) {
+            ++stats->steps;
+            stats->upload_ms += engine::debug::elapsed_ms(upload_start, compute_start);
+            stats->compute_ms += engine::debug::elapsed_ms(compute_start, readback_start);
+            stats->readback_ms += engine::debug::elapsed_ms(readback_start, sample_start);
+            stats->sample_ms += engine::debug::elapsed_ms(sample_start);
+        }
         return next_token;
     }
 
@@ -930,20 +963,45 @@ struct VoxtralRealtimeTextDecoderRuntime::Impl {
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        int64_t stream_decode_cache_steps)
         : assets(std::move(assets)),
           backend(execution.backend()),
           backend_type(execution.backend_type()),
           threads(std::max(1, execution.config().threads)),
-          graph_arena_bytes(std::max(prefill_graph_arena_bytes, decode_graph_arena_bytes)) {
+          graph_arena_bytes(std::max(prefill_graph_arena_bytes, decode_graph_arena_bytes)),
+          stream_decode_cache_steps(stream_decode_cache_steps) {
         if (this->assets == nullptr) {
             throw std::runtime_error("VoxTral text decoder requires assets");
         }
+        if (this->stream_decode_cache_steps <= 0) {
+            throw std::runtime_error("VoxTral stream_decode_cache_steps must be positive");
+        }
+        if (this->stream_decode_cache_steps > this->assets->config.text.sliding_window) {
+            throw std::runtime_error("VoxTral stream_decode_cache_steps exceeds the model sliding window");
+        }
         weights = load_weights(*this->assets, backend, backend_type, weight_context_bytes, storage_type);
+        use_offline_decode_config();
+    }
+
+    // Growth buckets from min_cache_steps up to the sliding window: the offline path knows its
+    // token budget up front, so it can start small and grow at most a handful of times.
+    void use_offline_decode_config() {
         decode_runtime = runtime::BoundedStaticKVDecodeRuntime<DecodeStepGraph>({
-            this->assets->config.text.sliding_window,
+            assets->config.text.sliding_window,
             256,
             "VoxTral text decoder bounded KV",
+        });
+    }
+
+    // A live stream has no token budget, so pinning both bounds to the same value makes
+    // target_cache_steps constant: the graph is built once at begin_stream and never rebuilt,
+    // trading the full 8192-step window for the absence of mid-stream rebuild stalls.
+    void use_stream_decode_config() {
+        decode_runtime = runtime::BoundedStaticKVDecodeRuntime<DecodeStepGraph>({
+            stream_decode_cache_steps,
+            stream_decode_cache_steps,
+            "VoxTral text decoder streaming KV",
         });
     }
 
@@ -962,6 +1020,7 @@ struct VoxtralRealtimeTextDecoderRuntime::Impl {
             return {};
         }
         const auto total_start = Clock::now();
+        use_offline_decode_config();
         uint64_t sample_call_index = 0;
         const int64_t prompt_steps = static_cast<int64_t>(prompt.input_ids.size());
         const auto decode_graph_factory = [this](int64_t cache_steps) {
@@ -1024,7 +1083,7 @@ struct VoxtralRealtimeTextDecoderRuntime::Impl {
                     token,
                     audio_embeddings,
                     prompt.num_delay_tokens,
-                    false,
+                    std::nullopt,
                     options,
                     sample_call_index,
                     sampler);
@@ -1056,7 +1115,9 @@ struct VoxtralRealtimeTextDecoderRuntime::Impl {
             throw std::runtime_error("VoxTral streaming text decoder prompt/audio token count mismatch");
         }
         const auto total_start = Clock::now();
+        use_stream_decode_config();
         stream_sample_call_index_ = 0;
+        stream_stats_ = DecodeStepStats{};
         const auto decode_graph_factory = [this](int64_t cache_steps) {
             auto graph = std::make_unique<DecodeStepGraph>(
                 assets,
@@ -1111,13 +1172,14 @@ struct VoxtralRealtimeTextDecoderRuntime::Impl {
     int32_t stream_step(
         int32_t previous_token,
         const VoxtralRealtimeAudioEmbeddings & audio_embeddings,
+        int64_t audio_row,
         int64_t num_delay_tokens,
         const VoxtralRealtimeGenerationOptions & options) {
         if (!decode_runtime.has_graph()) {
             throw std::runtime_error("VoxTral streaming text decoder requires begin_stream before stream_step");
         }
-        if (audio_embeddings.tokens != 1) {
-            throw std::runtime_error("VoxTral streaming text decoder expects one audio token per steady chunk");
+        if (audio_row < 0 || audio_row >= audio_embeddings.tokens) {
+            throw std::runtime_error("VoxTral streaming text decoder audio row is out of range");
         }
         const auto decode_graph_factory = [this](int64_t cache_steps) {
             auto graph = std::make_unique<DecodeStepGraph>(
@@ -1138,10 +1200,11 @@ struct VoxtralRealtimeTextDecoderRuntime::Impl {
             previous_token,
             audio_embeddings,
             num_delay_tokens,
-            true,
+            audio_row,
             options,
             stream_sample_call_index_,
-            sampler);
+            sampler,
+            &stream_stats_);
         decode_runtime.advance_after_direct_append(1);
         return token;
     }
@@ -1150,16 +1213,26 @@ struct VoxtralRealtimeTextDecoderRuntime::Impl {
         return token == assets->config.text.eos_token_id;
     }
 
+    void log_stream_timings() const {
+        engine::debug::timing_log_scalar("voxtral_realtime.text_decoder.stream.steps", stream_stats_.steps);
+        engine::debug::timing_log_scalar("voxtral_realtime.text_decoder.stream.upload_ms", stream_stats_.upload_ms);
+        engine::debug::timing_log_scalar("voxtral_realtime.text_decoder.stream.compute_ms", stream_stats_.compute_ms);
+        engine::debug::timing_log_scalar("voxtral_realtime.text_decoder.stream.readback_ms", stream_stats_.readback_ms);
+        engine::debug::timing_log_scalar("voxtral_realtime.text_decoder.stream.sample_ms", stream_stats_.sample_ms);
+    }
+
     std::shared_ptr<const VoxtralRealtimeAssets> assets;
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
     int threads = 1;
     size_t graph_arena_bytes = 0;
+    int64_t stream_decode_cache_steps = 0;
     std::shared_ptr<const TextWeights> weights;
     std::unique_ptr<FullContextGraph> prefill_graph;
     runtime::BoundedStaticKVDecodeRuntime<DecodeStepGraph> decode_runtime;
     TokenSampler sampler;
     uint64_t stream_sample_call_index_ = 0;
+    DecodeStepStats stream_stats_;
 };
 
 VoxtralRealtimeTextDecoderRuntime::VoxtralRealtimeTextDecoderRuntime(
@@ -1168,14 +1241,16 @@ VoxtralRealtimeTextDecoderRuntime::VoxtralRealtimeTextDecoderRuntime(
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType weight_storage_type)
+    assets::TensorStorageType weight_storage_type,
+    int64_t stream_decode_cache_steps)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           prefill_graph_arena_bytes,
           decode_graph_arena_bytes,
           weight_context_bytes,
-          weight_storage_type)) {}
+          weight_storage_type,
+          stream_decode_cache_steps)) {}
 
 VoxtralRealtimeTextDecoderRuntime::~VoxtralRealtimeTextDecoderRuntime() = default;
 
@@ -1196,13 +1271,18 @@ int32_t VoxtralRealtimeTextDecoderRuntime::begin_stream(
 int32_t VoxtralRealtimeTextDecoderRuntime::stream_step(
     int32_t previous_token,
     const VoxtralRealtimeAudioEmbeddings & audio_embeddings,
+    int64_t audio_row,
     int64_t num_delay_tokens,
     const VoxtralRealtimeGenerationOptions & options) {
-    return impl_->stream_step(previous_token, audio_embeddings, num_delay_tokens, options);
+    return impl_->stream_step(previous_token, audio_embeddings, audio_row, num_delay_tokens, options);
 }
 
 bool VoxtralRealtimeTextDecoderRuntime::is_eos(int32_t token) const {
     return impl_->is_eos(token);
+}
+
+void VoxtralRealtimeTextDecoderRuntime::log_stream_timings() const {
+    impl_->log_stream_timings();
 }
 
 }  // namespace engine::models::voxtral_realtime

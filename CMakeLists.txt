@@ -874,6 +874,14 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(voxtral_realtime_stream_chunking_test tests/unittests/test_voxtral_realtime_stream_chunking.cpp)
+    target_include_directories(voxtral_realtime_stream_chunking_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME voxtral_realtime_stream_chunking_test
+        COMMAND voxtral_realtime_stream_chunking_test
+    )
+
     add_engine_unittest(outetts_generation_budget_test tests/unittests/test_outetts_generation_budget.cpp)
     target_include_directories(outetts_generation_budget_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
 

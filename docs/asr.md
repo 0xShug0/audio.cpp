@@ -286,6 +286,31 @@ Streaming CLI:
 audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --mode streaming --audio assets/resources/sample.wav --text-out transcript.txt
 ```
 
+> **Throughput.** A streaming step always advances 80 ms of audio, so a step has to cost under
+> 80 ms to keep up with a realtime source. Measured on an Apple M3 Air (Metal, q8_0):
+>
+> | Config | short clip, cool | sustained 7 min |
+> |---|---:|---:|
+> | default | 78 ms/step (0.98x) | 88 ms/step (1.10x) |
+> | `stream_batch_tokens=4` | 60 ms/step (0.76x) | 74 ms/step (0.92x) |
+>
+> The default splits roughly 48 ms for the text decoder and 30 ms for the audio encoder; batching
+> takes the encoder to ~13 ms. The second column is what a long session actually gets on a fanless
+> machine: a short clip run immediately after the 7-minute one still measured 88 ms/step, so the
+> gap is the machine staying warm rather than anything that resets between sessions. Budget for the
+> sustained column, and prefer `stream_batch_tokens=4` if the source is realtime.
+>
+> The decoder runs one step per 80 ms whether the audio holds speech or silence, so a session that
+> does fall behind stays behind — the lag is monotonic and does not recover during pauses. Measure
+> your own hardware before relying on a live source.
+
+Streaming session options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--session-option voxtral_realtime.stream_batch_tokens=<n>` | `1` | Audio tokens per encoder forward. The decoder still runs one step per 80 ms; batching only amortizes the encoder's fixed per-forward cost, which dominates it. `4` takes the encoder from ~30 to ~13 ms/step, at the price of delaying every partial by up to `n * 80 ms`. |
+| `--session-option voxtral_realtime.stream_decode_cache_steps=<n>` | `1024` | Decoder KV cache size in 80 ms steps (~82 s of context). Built once when the stream starts, so a long session never stalls on a cache-growth rebuild; the cache ring then wraps in place, and a 7-minute stream stays coherent across five wraparounds. Lower values trade context for memory, not for speed. |
+
 Streaming server config:
 
 ```json
@@ -328,11 +353,16 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 | `--top-k` | integer | `50` | Top-k sampling limit; `0` disables top-k. |
 | `--seed` | integer | `1234` | Sampling seed. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
-| `--session-option voxtral_realtime.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared matmul weight storage type. |
-| `--session-option voxtral_realtime.audio_encoder_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Audio encoder matmul weight storage type. |
-| `--session-option voxtral_realtime.text_decoder_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Text decoder matmul weight storage type. |
+| `--session-option voxtral_realtime.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q4_0`, `q4_k`, `q5_k`, `q6_k`, `q8_0` | `native` | Shared matmul weight storage type. |
+| `--session-option voxtral_realtime.audio_encoder_weight_type=<type>` | same as above | shared setting | Audio encoder matmul weight storage type. Leave at `native` for streaming: the encoder is not bandwidth-bound there, so quantizing it makes it slower. |
+| `--session-option voxtral_realtime.text_decoder_weight_type=<type>` | same as above | shared setting | Text decoder matmul weight storage type. `q4_k` roughly halves the streaming decoder step cost. |
 | `--session-option voxtral_realtime.audio_encoder_graph_arena_mb=<n>` | MB | `512` | Audio encoder graph arena size. |
 | `--session-option voxtral_realtime.text_decoder_prefill_graph_arena_mb=<n>` | MB | `512` | Text decoder prefill graph arena size. |
 | `--session-option voxtral_realtime.text_decoder_decode_graph_arena_mb=<n>` | MB | `512` | Text decoder cached-step graph arena size. |
+
+Weight storage types are applied when the model loads, so asking for one the GGUF does not already
+hold means requantizing on the CPU before the first token appears — around three minutes for
+`q4_k` from the shipped q8_0 package. Prefer the published `q4_k` GGUF variant, which needs no
+load-time conversion. See [GGUF](gguf.md).
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.

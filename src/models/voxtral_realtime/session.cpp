@@ -19,6 +19,12 @@ constexpr size_t kDefaultAudioEncoderWeightContextBytes = 128ull * 1024ull * 102
 constexpr size_t kDefaultTextPrefillGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultTextDecodeGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultTextWeightContextBytes = 128ull * 1024ull * 1024ull;
+// 1024 steps of 80 ms = ~82 s of decoder attention context, held in one graph for the whole
+// session so a live stream never pays a cache-growth rebuild.
+constexpr int64_t kDefaultStreamDecodeCacheSteps = 1024;
+// Audio tokens per steady encoder forward. Batching amortizes the encoder's fixed per-dispatch
+// cost across N tokens but delays every partial by N * 80 ms, so it stays opt-in.
+constexpr int64_t kDefaultStreamBatchTokens = 1;
 
 int64_t source_frames_for_target_samples(int64_t target_samples, int source_rate, int channels, int target_rate) {
     if (target_samples <= 0 || source_rate <= 0 || channels <= 0 || target_rate <= 0) {
@@ -102,15 +108,24 @@ VoxtralRealtimeSession::VoxtralRealtimeSession(
           }
           return weight_type;
       }()),
+      stream_decode_cache_steps_(
+          runtime::parse_i64_option(options.options, {"voxtral_realtime.stream_decode_cache_steps"})
+              .value_or(kDefaultStreamDecodeCacheSteps)),
+      stream_batch_tokens_(
+          runtime::parse_i64_option(options.options, {"voxtral_realtime.stream_batch_tokens"})
+              .value_or(kDefaultStreamBatchTokens)),
       tokenizer_(assets_),
       frontend_(assets_),
       audio_encoder_(assets_, execution_context(), audio_encoder_graph_arena_bytes_, audio_encoder_weight_context_bytes_, audio_encoder_weight_storage_type_),
-      text_decoder_(assets_, execution_context(), text_decoder_prefill_graph_arena_bytes_, text_decoder_decode_graph_arena_bytes_, text_decoder_weight_context_bytes_, text_decoder_weight_storage_type_) {
+      text_decoder_(assets_, execution_context(), text_decoder_prefill_graph_arena_bytes_, text_decoder_decode_graph_arena_bytes_, text_decoder_weight_context_bytes_, text_decoder_weight_storage_type_, stream_decode_cache_steps_) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("VoxTral realtime only supports ASR");
     }
     if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("VoxTral realtime supports offline and streaming ASR");
+    }
+    if (stream_batch_tokens_ <= 0) {
+        throw std::runtime_error("VoxTral realtime stream_batch_tokens must be positive");
     }
     for (const auto & [key, value] : options.options) {
         (void) value;
@@ -122,6 +137,8 @@ VoxtralRealtimeSession::VoxtralRealtimeSession(
             key != "voxtral_realtime.text_decoder_weight_context_mb" &&
             key != "voxtral_realtime.audio_encoder_weight_type" &&
             key != "voxtral_realtime.text_decoder_weight_type" &&
+            key != "voxtral_realtime.stream_decode_cache_steps" &&
+            key != "voxtral_realtime.stream_batch_tokens" &&
             key != "voxtral_realtime.weight_type") {
             throw std::runtime_error("unknown VoxTral realtime session option: " + key);
         }
@@ -224,8 +241,9 @@ runtime::StreamingPolicy VoxtralRealtimeSession::streaming_policy() const {
     runtime::StreamingPolicy policy;
     policy.input = runtime::StreamingInputKind::AudioChunks;
     policy.output = runtime::StreamingOutputKind::FinalResult;
-    policy.preferred_audio_chunk_samples = frontend_.steady_stream_chunk_samples();
-    policy.preferred_audio_chunk_seconds = static_cast<double>(frontend_.steady_stream_chunk_samples()) /
+    policy.preferred_audio_chunk_samples = frontend_.steady_stream_chunk_samples(stream_batch_tokens_);
+    policy.preferred_audio_chunk_seconds =
+        static_cast<double>(frontend_.steady_stream_chunk_samples(stream_batch_tokens_)) /
         static_cast<double>(assets_->config.frontend.sample_rate);
     return policy;
 }
@@ -251,6 +269,9 @@ void VoxtralRealtimeSession::reset() {
     streaming_audio_ = runtime::AudioBuffer{};
     streaming_audio_offset_values_ = 0;
     streaming_steps_processed_ = 0;
+    stream_frontend_ms_ = 0.0;
+    stream_encoder_ms_ = 0.0;
+    stream_decoder_ms_ = 0.0;
     streaming_generation_ = VoxtralRealtimeGenerationOptions{};
     frontend_stream_state_ = VoxtralRealtimeFrontendStreamState{};
     audio_stream_state_ = audio_encoder_.make_stream_state();
@@ -258,7 +279,6 @@ void VoxtralRealtimeSession::reset() {
     previous_stream_token_ = 0;
     first_stream_chunk_ = true;
     have_previous_stream_token_ = false;
-    stream_reached_eos_ = false;
     stream_started_ = false;
     stream_wall_start_ = {};
 }
@@ -318,6 +338,11 @@ runtime::TaskResult VoxtralRealtimeSession::finalize() {
     }
     engine::debug::timing_log_scalar("voxtral_realtime.session.stream.tokens", streaming_token_ids_.size());
     engine::debug::timing_log_scalar("voxtral_realtime.session.stream.steps_processed", streaming_steps_processed_);
+    engine::debug::timing_log_scalar("voxtral_realtime.session.stream.frontend_ms", stream_frontend_ms_);
+    engine::debug::timing_log_scalar("voxtral_realtime.session.stream.encoder_ms", stream_encoder_ms_);
+    engine::debug::timing_log_scalar("voxtral_realtime.session.stream.decoder_ms", stream_decoder_ms_);
+    audio_encoder_.log_stream_timings();
+    text_decoder_.log_stream_timings();
     engine::debug::timing_log_scalar(
         "voxtral_realtime.session.stream.finalize_ms",
         engine::debug::elapsed_ms(finalize_start));
@@ -344,10 +369,12 @@ runtime::StreamEvent VoxtralRealtimeSession::process_available_stream_chunks() {
         throw std::runtime_error("VoxTral streaming pending audio has invalid channel layout");
     }
     int64_t processed_chunks = 0;
-    while (!stream_reached_eos_) {
+    // Only the audio source running dry ends the loop: the decoder runs one step per 80 ms of
+    // audio for the whole session, so a pause in live audio never ends it.
+    while (true) {
         const int64_t target_samples = first_stream_chunk_
             ? frontend_.first_stream_chunk_samples()
-            : frontend_.steady_stream_chunk_samples();
+            : frontend_.steady_stream_chunk_samples(stream_batch_tokens_);
         const int64_t chunk_frames = source_frames_for_target_samples(
             target_samples,
             streaming_audio_.sample_rate,
@@ -355,7 +382,7 @@ runtime::StreamEvent VoxtralRealtimeSession::process_available_stream_chunks() {
             static_cast<int>(assets_->config.frontend.sample_rate));
         const int64_t advance_target_samples = first_stream_chunk_
             ? frontend_.first_stream_chunk_advance_samples()
-            : frontend_.steady_stream_chunk_advance_samples();
+            : frontend_.steady_stream_chunk_advance_samples(stream_batch_tokens_);
         const int64_t advance_frames = source_frames_for_target_samples(
             advance_target_samples,
             streaming_audio_.sample_rate,
@@ -379,11 +406,17 @@ runtime::StreamEvent VoxtralRealtimeSession::process_available_stream_chunks() {
         const auto begin = streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(streaming_audio_offset_values_);
         chunk.samples.assign(begin, begin + static_cast<std::ptrdiff_t>(take_values));
         streaming_audio_offset_values_ += advance_values;
+        const int64_t chunk_steps = first_stream_chunk_ ? 1 : stream_batch_tokens_;
         last_event = process_one_stream_chunk(chunk);
-        ++streaming_steps_processed_;
+        streaming_steps_processed_ += chunk_steps;
         ++processed_chunks;
         if (stream_event_sink_ != nullptr && last_event.partial_text.has_value()) {
+            // Several chunks can be consumed per process_audio_chunk call, so the sink is what
+            // delivers a partial per step rather than only the last one. The caller forwards
+            // whatever this function returns, so drop what the sink already delivered instead of
+            // emitting the same partial twice.
             stream_event_sink_(last_event);
+            last_event.partial_text.reset();
         }
         if (pending_frames < chunk_frames) {
             break;
@@ -407,35 +440,54 @@ runtime::StreamEvent VoxtralRealtimeSession::process_available_stream_chunks() {
 runtime::StreamEvent VoxtralRealtimeSession::process_one_stream_chunk(const runtime::AudioBuffer & audio) {
     runtime::StreamEvent event;
     event.is_final = false;
-    const auto features = frontend_.extract_stream_chunk(audio, first_stream_chunk_, frontend_stream_state_);
+    const auto frontend_start = Clock::now();
+    const auto features = frontend_.extract_stream_chunk(
+        audio,
+        first_stream_chunk_,
+        frontend_stream_state_,
+        stream_batch_tokens_);
+    stream_frontend_ms_ += engine::debug::elapsed_ms(frontend_start);
+    const auto encoder_start = Clock::now();
     const auto audio_embeddings = audio_encoder_.encode_stream_chunk(features, audio_stream_state_);
-    int32_t token = 0;
+    stream_encoder_ms_ += engine::debug::elapsed_ms(encoder_start);
+    const auto decoder_start = Clock::now();
     if (first_stream_chunk_) {
         auto prompt = tokenizer_.build_transcription_prompt(frontend_.first_stream_chunk_samples(), true);
-        token = text_decoder_.begin_stream(prompt, audio_embeddings, streaming_generation_);
+        const int32_t token = text_decoder_.begin_stream(prompt, audio_embeddings, streaming_generation_);
         first_stream_chunk_ = false;
-    } else {
-        if (!have_previous_stream_token_) {
-            throw std::runtime_error("VoxTral streaming decoder is missing previous token");
-        }
-        token = text_decoder_.stream_step(
+        stream_decoder_ms_ += engine::debug::elapsed_ms(decoder_start);
+        record_stream_token(token, event);
+        return event;
+    }
+    if (!have_previous_stream_token_) {
+        throw std::runtime_error("VoxTral streaming decoder is missing previous token");
+    }
+    // One encoder forward covers `stream_batch_tokens_` audio tokens; the decoder still runs one
+    // step per token, each consuming its own row of the batch.
+    for (int64_t row = 0; row < audio_embeddings.tokens; ++row) {
+        const int32_t token = text_decoder_.stream_step(
             previous_stream_token_,
             audio_embeddings,
+            row,
             assets_->config.default_num_delay_tokens,
             streaming_generation_);
+        record_stream_token(token, event);
     }
+    stream_decoder_ms_ += engine::debug::elapsed_ms(decoder_start);
+    return event;
+}
+
+void VoxtralRealtimeSession::record_stream_token(int32_t token, runtime::StreamEvent & event) {
     previous_stream_token_ = token;
     have_previous_stream_token_ = true;
-    if (text_decoder_.is_eos(token)) {
-        stream_reached_eos_ = true;
-        return event;
-    }
+    // The reference implementation gives EOS no special treatment: whatever token was sampled
+    // feeds back as the next text-stream input, and special ids simply emit no text. Only the
+    // audio source running dry ends the stream.
     if (!tokenizer_.is_stream_text_token(token)) {
-        return event;
+        return;
     }
     streaming_token_ids_.push_back(token);
     event.partial_text = runtime::Transcript{tokenizer_.decode(streaming_token_ids_), ""};
-    return event;
 }
 
 }  // namespace engine::models::voxtral_realtime
