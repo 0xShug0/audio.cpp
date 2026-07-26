@@ -72,6 +72,35 @@ This makes the tested Q8 output perceptually and numerically nearly identical
 to the native F32 path while reducing the weight file from about 639 MB to
 about 173 MB.
 
+## CUDA optimization validation
+
+The CUDA graph now lowers non-causal axial attention through the framework's
+view-preserving Flash Attention path with F32 accumulation. Gate values are
+broadcast directly instead of materializing a repeated gate tensor. CPU and
+other backends retain the explicit attention implementation.
+
+RTX 3090 results for the same 8-second, 44.1 kHz stereo input:
+
+| Route | `session.wall_ms` | Speed vs audio duration |
+|---|---:|---:|
+| Pre-change Q8, overlap 4 | 2,643.1 | 3.03x real time |
+| Optimized Q8, overlap 4 | 1,440.4 | 5.55x real time |
+| Optimized F32, overlap 4 | 1,874.3 | 4.27x real time |
+| Optimized Q8, overlap 2 | 734.3 | 10.89x real time |
+| Optimized Q8, overlap 1 | 384.0 | 20.84x real time |
+
+The default remains overlap 4. Lower overlap is available through
+`--session-option bs_roformer.num_overlap=2` or `=1`, but is deliberately
+opt-in because it changes boundary blending. Overlap 1 versus the default
+measured waveform cosine `0.989162147` and log-mel cosine `0.999110937`.
+
+Default optimized Q8 versus the saved pre-change Q8 output measured waveform
+cosine `0.999996424` and log-mel cosine `0.999937057`. Optimized Q8 versus the
+current F32 output measured `0.999993563` and `0.999881983`, respectively.
+The explicit CPU fallback also completed successfully; with overlap 1 its
+output versus CUDA measured `0.999995887` waveform cosine and `0.999922335`
+log-mel cosine.
+
 ## Server and WebUI validation
 
 The CUDA server was built with:
@@ -93,9 +122,11 @@ An offline `sep` model entry pointing directly at
 }
 ```
 
-The request returned `vocals` and `instrumental` named audio outputs in
-3,032.1 ms including HTTP, lazy loading, base64 response serialization, and
-file decoding. Both returned WAV files were byte-identical to the CLI outputs.
+The optimized resident server returned `vocals` and `instrumental` named audio
+outputs with internal `session.wall_ms` values of 1,731.0 ms on the first
+request and 1,401.1 / 1,422.0 ms on the next two. Corresponding end-to-end HTTP
+times were 2,235.7 / 1,496.0 / 1,520.0 ms, including JSON and base64 response
+serialization. Both returned WAV files were byte-identical to the CLI outputs.
 
 The WebUI was launched with the CUDA backend, selected `bs-roformer` beside
 HTDemucs and Mel-Band RoFormer in the Source separation tab, uploaded the same

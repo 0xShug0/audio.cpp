@@ -4,6 +4,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/runtime/options.h"
 
 #include <algorithm>
 #include <chrono>
@@ -83,7 +84,13 @@ RoformerSession::RoformerSession(
         throw std::runtime_error("RoFormer config num_overlap must be positive");
     }
     chunk_size_ = config.chunk_size;
-    const int64_t overlap = config.inference_num_overlap;
+    const int64_t overlap = runtime::parse_positive_i64_option(
+        RuntimeSessionBase::options().options,
+        {config.family + ".num_overlap"},
+        config.inference_num_overlap);
+    if (overlap > chunk_size_) {
+        throw std::runtime_error(config.family + ".num_overlap must not exceed chunk_size");
+    }
     step_ = chunk_size_ / overlap;
     fade_size_ = chunk_size_ / 10;
     border_ = chunk_size_ - step_;
@@ -91,6 +98,12 @@ RoformerSession::RoformerSession(
         throw std::runtime_error("RoFormer chunk step must be positive");
     }
     chunk_window_ = engine::audio::make_linear_fade_window(chunk_size_, fade_size_);
+    first_chunk_window_ = chunk_window_;
+    std::fill(first_chunk_window_.begin(), first_chunk_window_.begin() + fade_size_, 1.0f);
+    last_chunk_window_ = chunk_window_;
+    std::fill(last_chunk_window_.end() - fade_size_, last_chunk_window_.end(), 1.0f);
+    only_chunk_window_ = first_chunk_window_;
+    std::fill(only_chunk_window_.end() - fade_size_, only_chunk_window_.end(), 1.0f);
     chunk_planar_work_.resize(static_cast<size_t>(config.channels * chunk_size_));
     assets_->tensor_source->release_storage();
 }
@@ -204,7 +217,8 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
         chunk_size_ / 2 + 2,
     };
     const auto chunk_loop_start = Clock::now();
-    for (const auto & chunk : engine::audio::plan_audio_chunks(total_length, chunk_spec)) {
+    const auto chunk_plan = engine::audio::plan_audio_chunks(total_length, chunk_spec);
+    for (const auto & chunk : chunk_plan) {
         engine::audio::copy_planar_chunk(
             chunk_planar_work_,
             planar,
@@ -213,13 +227,13 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
             chunk,
             chunk_spec);
         const auto & vocals_planar = runtime_->separate_chunk(chunk_planar_work_);
-        std::vector<float> chunk_window = chunk_window_;
-        if (chunk.output_start_sample == 0) {
-            std::fill(chunk_window.begin(), chunk_window.begin() + fade_size_, 1.0f);
-        } else if (chunk.output_start_sample + chunk_size_ >= total_length) {
-            std::fill(chunk_window.end() - fade_size_, chunk_window.end(), 1.0f);
-        }
-
+        const bool first_chunk = chunk.output_start_sample == 0;
+        const bool last_chunk = chunk.output_start_sample + chunk_size_ >= total_length;
+        const auto & chunk_window = chunk_plan.size() == 1
+            ? only_chunk_window_
+            : (first_chunk
+                   ? first_chunk_window_
+                   : (last_chunk ? last_chunk_window_ : chunk_window_));
         engine::audio::overlap_add_planar_chunk(
             result_work_,
             counter_work_,

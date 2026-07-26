@@ -7,6 +7,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
@@ -274,6 +275,15 @@ core::TensorValue attention_from_heads(
     const core::TensorValue & k_heads,
     const core::TensorValue & v_heads,
     int64_t dim) {
+    if (ctx.backend_type == core::BackendType::Cuda) {
+        return modules::ScaledDotProductAttentionModule({
+            dim,
+            modules::ScaledDotProductAttentionLowering::FlashPreserveViews,
+            GGML_PREC_F32,
+            modules::AttentionCausality::NonCausal,
+        }).build(ctx, q_heads, k_heads, v_heads);
+    }
+
     auto scores = matmul_f32(
         ctx,
         q_heads,
@@ -284,7 +294,8 @@ core::TensorValue attention_from_heads(
         GGML_TYPE_F32);
     scores = ensure_contiguous(ctx, scores);
     auto attn = modules::SoftmaxModule{}.build(ctx, scores);
-    return matmul_f32(ctx, attn, v_heads);
+    auto context = matmul_f32(ctx, attn, v_heads);
+    return modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
 }
 
 core::TensorValue build_attention(
@@ -332,7 +343,6 @@ core::TensorValue build_attention(
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     auto attn = attention_from_heads(ctx, q_heads, k_heads, v_heads, config.dim_head);
-    attn = modules::TransposeModule({{0, 2, 1, 3}, attn.shape.rank}).build(ctx, attn);
     attn = ensure_contiguous(ctx, attn);
 
     auto gates_sigmoid = modules::SigmoidModule{}.build(ctx, gates);
@@ -340,9 +350,10 @@ core::TensorValue build_attention(
         ctx,
         ensure_contiguous(ctx, gates_sigmoid),
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads, 1}));
-    gates_sigmoid = ensure_contiguous(ctx, gates_sigmoid);
-    gates_sigmoid = modules::RepeatModule({attn.shape}).build(ctx, gates_sigmoid);
-    attn = modules::MulModule{}.build(ctx, attn, gates_sigmoid);
+    attn = core::wrap_tensor(
+        ggml_mul(ctx.ggml, attn.tensor, gates_sigmoid.tensor),
+        attn.shape,
+        GGML_TYPE_F32);
     attn = core::reshape_tensor(
         ctx,
         ensure_contiguous(ctx, attn),
