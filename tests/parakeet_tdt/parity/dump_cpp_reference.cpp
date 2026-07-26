@@ -63,7 +63,8 @@ std::vector<float> run_isolated_layer(
     const ParakeetEncoderConfig & enc_cfg,
     const std::vector<float> & pre_encode,  // [T, D], row-major, D fastest
     const std::vector<float> & pos_emb_raw,  // [P, D], row-major, D fastest (P = 2T-1)
-    int64_t frames) {
+    int64_t frames,
+    bool use_flash_attention) {
     const int64_t d = enc_cfg.hidden_size;
     const int64_t pos_len = 2 * frames - 1;
 
@@ -85,7 +86,8 @@ std::vector<float> run_isolated_layer(
 
     auto layer_out = build_encoder_layer(
         ctx, input, attention_mask, keep_mask, projected_pos_emb, layer_weights,
-        enc_cfg.hidden_size, enc_cfg.intermediate_size, enc_cfg.heads, enc_cfg.conv_kernel);
+        enc_cfg.hidden_size, enc_cfg.intermediate_size, enc_cfg.heads, enc_cfg.conv_kernel,
+        use_flash_attention);
     ggml_set_output(layer_out.tensor);
 
     ggml_cgraph * graph = ggml_new_graph_custom(gctx, 65536, false);
@@ -127,12 +129,14 @@ int main(int argc, char ** argv) {
     const std::filesystem::path output_dir = arg_value(argc, argv, "--output-dir", "");
     const auto matmul_weight_type = engine::assets::parse_tensor_storage_type(
         arg_value(argc, argv, "--matmul-weight-type", "native"));
+    const bool use_flash_attention = arg_value(argc, argv, "--flash-attention", "0") == "1";
 
     if (audio_path.empty() || nemo_dir.empty() || output_dir.empty()) {
         std::fprintf(
             stderr,
             "usage: %s --model <path> --audio <wav> --nemo-dir <dir with dump_nemo_reference.py output> "
-            "--output-dir <dir to write .npy dumps into>\n",
+            "--output-dir <dir to write .npy dumps into> [--matmul-weight-type native|f16|bf16|q8_0] "
+            "[--flash-attention 1]\n",
             argv[0]);
         return 2;
     }
@@ -169,7 +173,7 @@ int main(int argc, char ** argv) {
         std::printf("mel_features: frames=%lld feature_dim=%lld\n", (long long)feats.frames, (long long)feats.feature_dim);
 
         // --- 1b. full encoder: straight through the real entry point ---
-        ParakeetEncoderRuntime encoder(assets, weights, exec, 1024ull * 1024ull * 1024ull);
+        ParakeetEncoderRuntime encoder(assets, weights, exec, 1024ull * 1024ull * 1024ull, use_flash_attention);
         encoder.prepare_capacity(feats.frames, feats.feature_dim);
         const auto encoded = encoder.encode(feats);
         // encoded.values is time-major [frames, hidden_size].
@@ -196,7 +200,7 @@ int main(int argc, char ** argv) {
         }
 
         const auto & layer0_weights = weights->encoder.layers.at(0);
-        auto layer0_out = run_isolated_layer(exec, layer0_weights, assets->config.encoder, pre_encode, pos_emb, frames);
+        auto layer0_out = run_isolated_layer(exec, layer0_weights, assets->config.encoder, pre_encode, pos_emb, frames, use_flash_attention);
         write_npy_f32((output_dir / "layer_0.npy").string(), layer0_out, {frames, hidden});
         std::printf("layer_0: frames=%lld hidden=%lld\n", (long long)frames, (long long)hidden);
 

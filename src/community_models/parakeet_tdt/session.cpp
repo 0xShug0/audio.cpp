@@ -81,6 +81,9 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
           "parakeet_tdt.matmul_weight_type",
           option_weight_type(options, "parakeet_tdt.weight_type", engine::assets::TensorStorageType::Native))),
       conv_weight_storage_type_(option_weight_type(options, "parakeet_tdt.conv_weight_type", engine::assets::TensorStorageType::Native)),
+      encoder_flash_attention_(runtime::parse_bool_option(
+          runtime::find_option(options.options, {"parakeet_tdt.encoder_flash_attention"}).value_or("false"),
+          "parakeet_tdt.encoder_flash_attention")),
       frontend_(assets_) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Parakeet TDT only supports VoiceTaskKind::Asr");
@@ -98,7 +101,8 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
             key != "parakeet_tdt.decoder_graph_arena_mb" &&
             key != "parakeet_tdt.weight_type" &&
             key != "parakeet_tdt.matmul_weight_type" &&
-            key != "parakeet_tdt.conv_weight_type") {
+            key != "parakeet_tdt.conv_weight_type" &&
+            key != "parakeet_tdt.encoder_flash_attention") {
             throw std::runtime_error("unknown Parakeet TDT session option: " + key);
         }
     }
@@ -113,7 +117,8 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
         assets_,
         weights_,
         execution_context(),
-        encoder_graph_arena_bytes_);
+        encoder_graph_arena_bytes_,
+        encoder_flash_attention_);
     decoder_ = std::make_unique<ParakeetDecoderRuntime>(
         assets_,
         weights_,

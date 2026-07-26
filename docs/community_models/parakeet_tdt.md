@@ -93,6 +93,27 @@ wrong call. If you want the speed and can tolerate (or want to verify for
 your own audio) a small accuracy trade, turn it on explicitly with the
 session option above.
 
+**Flash attention was tried and did not help — kept as an opt-in, not a default.**
+The FastConformer encoder's relative-position self-attention (Transformer-XL
+style "AC"/"BD" score terms) can be fused into a single `ggml_flash_attn_ext_with_bias_mask`
+op instead of a separate QK^T matmul + additive bias + `ggml_soft_max_ext` +
+AV matmul — this is exactly the "dense additive attention bias" case that op
+was built for (see `common_relative_attention.cpp`'s `use_specialized_flash_attention`
+path, which already uses it, unused by any production model in this repo before
+this). It was wired in here as `parakeet_tdt.encoder_flash_attention=true` and
+validated correct via the numerical parity harness (`enc_out` cosine 0.972325
+vs. 0.972258 for the non-flash path — no measurable accuracy difference).
+But measured end to end, on this hardware, it was consistently a few percent
+*slower*, not faster, on both CPU and CUDA, on both the 7.4s reference clip and
+a synthetic 59.5s clip (ruling out "too short a sequence to matter"). Plausible
+reason: this encoder's attention sequences are short (well under 1000 frames)
+and `head_dim=128` isn't necessarily in the sweet spot of ggml's flash-attention
+kernels on a Turing-generation card (GTX 1650); the existing softmax+matmul path
+is already efficient at this scale. Left in as an opt-in for anyone testing on
+different hardware (newer GPU generations in particular) where the tradeoff
+might flip, but it is not recommended and not the default based on what was
+actually measured here.
+
 **Why CUDA has no PyTorch comparison point.** `nemo_asr` on this GPU hits
 `torch.OutOfMemoryError` just loading the model — this 3.6GB card's VRAM
 budget is entirely consumed by PyTorch's own overhead on top of the weights.

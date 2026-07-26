@@ -80,8 +80,13 @@ The first run downloads the `nvidia/parakeet-tdt-0.6b-v3` NeMo checkpoint
 # 2. C++ dump (needs the real model weights at the given --model path).
 #    --matmul-weight-type defaults to "native" (F32); pass f16/bf16/q8_0 to
 #    numerically quantify the accuracy cost of a reduced-precision weight
-#    storage type against the same NeMo reference — see the Performance
-#    section in docs/community_models/parakeet_tdt.md for measured numbers.
+#    storage type against the same NeMo reference. --flash-attention 1 swaps
+#    the encoder's relative-position self-attention onto
+#    ggml_flash_attn_ext_with_bias_mask instead of the default explicit
+#    QK^T + soft_max_ext path — see the Performance section in
+#    docs/community_models/parakeet_tdt.md for measured numbers (and why it's
+#    not the default despite being numerically validated: it measured
+#    slower, not faster, on the hardware tested).
 build/<preset>/bin/parakeet_parity_dump \
     --model models/parakeet-tdt-0.6b-v3 \
     --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \

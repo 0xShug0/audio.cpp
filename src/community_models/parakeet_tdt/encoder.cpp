@@ -133,7 +133,8 @@ engine::core::TensorValue build_encoder_layer(
     int64_t hidden_size,
     int64_t intermediate_size,
     int64_t heads,
-    int64_t conv_kernel) {
+    int64_t conv_kernel,
+    bool use_flash_attention) {
     namespace ai = engine::modules::attention::internal;
 
     auto x_norm = engine::modules::LayerNormModule({hidden_size, 1.0e-5f, true, true}).build(ctx, input, weights.norm_ff1);
@@ -165,18 +166,47 @@ engine::core::TensorValue build_encoder_layer(
     auto q_u = ai::add_attention_bias(ctx, q_heads, weights.pos_bias_u, heads, head_dim);
     auto q_v = ai::add_attention_bias(ctx, q_heads, weights.pos_bias_v, heads, head_dim);
 
-    auto matrix_ac = engine::modules::MatMulModule().build(ctx, q_u, ai::permute_tensor(ctx, k_heads, {0, 1, 3, 2}));
     auto matrix_bd = engine::modules::MatMulModule().build(ctx, q_v, ai::permute_tensor(ctx, p_heads, {0, 1, 3, 2}));
     matrix_bd = ai::relative_shift(ctx, matrix_bd);
     matrix_bd = engine::modules::SliceModule({3, 0, k_heads.shape.dims[2]}).build(ctx, matrix_bd);
 
-    auto scores = engine::core::wrap_tensor(ggml_add(ctx.ggml, matrix_ac.tensor, matrix_bd.tensor), matrix_ac.shape, GGML_TYPE_F32);
-    auto attn = engine::core::wrap_tensor(
-        ggml_soft_max_ext(ctx.ggml, ai::ensure_contiguous_layout(ctx, scores).tensor, attention_mask.tensor, scale, 0.0f),
-        scores.shape,
-        GGML_TYPE_F32);
-    auto context = engine::modules::MatMulModule().build(ctx, attn, v_heads);
-    context = ai::permute_tensor(ctx, context, {0, 2, 1, 3});
+    engine::core::TensorValue context;
+    if (use_flash_attention) {
+        // matrix_bd is the relative-position score term (Transformer-XL "BD" term);
+        // it is exactly the "dense additive attention bias" ggml_flash_attn_ext_with_bias_mask
+        // was built for — it fuses QK^T (the "AC" term via q_u), the bias add, the
+        // softmax, and the AV product into one op instead of materializing the full
+        // attention matrix, same pattern already used (and validated) by the shared
+        // relative-attention module's specialized_flash path (see
+        // common_relative_attention.cpp's use_specialized_flash_attention branch).
+        auto q_flash = ai::ensure_contiguous_layout(ctx, q_u);
+        auto k_flash = ai::ensure_contiguous_layout(ctx, k_heads);
+        auto v_flash = ai::ensure_contiguous_layout(ctx, v_heads);
+        ggml_tensor * flash = ggml_flash_attn_ext_with_bias_mask(
+            ctx.ggml,
+            q_flash.tensor,
+            k_flash.tensor,
+            v_flash.tensor,
+            ai::ensure_contiguous_layout(ctx, matrix_bd).tensor,
+            attention_mask.tensor,
+            scale,
+            0.0f,
+            0.0f);
+        ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
+        context = engine::core::wrap_tensor(
+            flash,
+            engine::core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, head_dim}),
+            GGML_TYPE_F32);
+    } else {
+        auto matrix_ac = engine::modules::MatMulModule().build(ctx, q_u, ai::permute_tensor(ctx, k_heads, {0, 1, 3, 2}));
+        auto scores = engine::core::wrap_tensor(ggml_add(ctx.ggml, matrix_ac.tensor, matrix_bd.tensor), matrix_ac.shape, GGML_TYPE_F32);
+        auto attn = engine::core::wrap_tensor(
+            ggml_soft_max_ext(ctx.ggml, ai::ensure_contiguous_layout(ctx, scores).tensor, attention_mask.tensor, scale, 0.0f),
+            scores.shape,
+            GGML_TYPE_F32);
+        context = engine::modules::MatMulModule().build(ctx, attn, v_heads);
+        context = ai::permute_tensor(ctx, context, {0, 2, 1, 3});
+    }
     context = ai::ensure_contiguous_layout(ctx, context);
     context = engine::core::reshape_tensor(ctx, context, engine::core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], hidden_size}));
     auto attn_output = engine::modules::LinearModule({hidden_size, hidden_size, false}).build(ctx, context, {weights.self_attn.out_weight, std::nullopt});
@@ -242,11 +272,13 @@ ParakeetEncoderRuntime::ParakeetEncoderRuntime(
     std::shared_ptr<const ParakeetTDTAssets> assets,
     std::shared_ptr<const ParakeetWeights> weights,
     engine::core::ExecutionContext & execution_context,
-    size_t graph_arena_bytes)
+    size_t graph_arena_bytes,
+    bool use_flash_attention)
     : assets_(std::move(assets)),
       weights_(std::move(weights)),
       execution_context_(&execution_context),
-      graph_arena_bytes_(graph_arena_bytes) {
+      graph_arena_bytes_(graph_arena_bytes),
+      use_flash_attention_(use_flash_attention) {
     if (assets_ == nullptr || weights_ == nullptr) {
         throw std::runtime_error("Parakeet TDT encoder requires assets and weights");
     }
@@ -382,7 +414,8 @@ void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
             enc.hidden_size,
             enc.intermediate_size,
             enc.heads,
-            enc.conv_kernel);
+            enc.conv_kernel,
+            use_flash_attention_);
     }
 
     // No projector here — encoder outputs raw 1024-dim. Projection to 640 happens in decoder joint_enc.

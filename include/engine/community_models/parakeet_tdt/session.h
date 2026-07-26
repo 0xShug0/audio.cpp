@@ -36,6 +36,7 @@ protected:
     size_t decoder_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType matmul_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
+    bool encoder_flash_attention_ = false;
     ParakeetFrontend frontend_;
     std::unique_ptr<ParakeetEncoderRuntime> encoder_;
     std::unique_ptr<ParakeetDecoderRuntime> decoder_;
