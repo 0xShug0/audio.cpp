@@ -128,8 +128,8 @@ std::pair<std::string, std::string> split_key_value(const std::string & value) {
 const std::vector<std::string> & ordered_keys() {
     static const std::vector<std::string> keys = {
         "parakeet.frontend_ms",
-        "parakeet.pre_encode_ms",
-        "parakeet.encoder_ms",
+        "parakeet_tdt.encoder_ms",
+        "parakeet_tdt.encoder.graph.compute_ms",
         "parakeet.longform.attention_ms",
         "parakeet.longform.non_attention_ms",
         "parakeet.decoder_ms",
@@ -236,9 +236,14 @@ int main(int argc, char ** argv) {
         const std::filesystem::path timing_path =
             arg_value(argc, argv, "--timing-file", "/tmp/parakeet_warm_bench_timing.log");
 
+        // NOTE: these env vars are not actually read by the logging subsystem
+        // (engine::debug::configure_logging() below is what wires it up);
+        // kept for parity with the timing-file convention other warm_bench
+        // tools advertise via --help / env, not because anything consumes them.
         setenv("ENGINE_TRACE_ENABLED", "0", 1);
         setenv("ENGINE_TIMING_ENABLED", "1", 1);
         setenv("ENGINE_TIMING_FILE", timing_path.c_str(), 1);
+        engine::debug::configure_logging(engine::debug::LoggingConfig{true, timing_path.string()});
 
         auto registry = engine::runtime::make_default_registry();
         auto model = registry.load(model_path);
