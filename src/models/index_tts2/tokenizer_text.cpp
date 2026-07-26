@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <regex>
 #include <stdexcept>
 #include <string>
@@ -147,6 +148,184 @@ std::string tokenize_by_cjk_char(const std::string & text) {
     return out;
 }
 
+std::string english_cardinal_under_1000(int value) {
+    static const std::string units[] = {
+        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+        "seventeen", "eighteen", "nineteen",
+    };
+    static const std::string tens[] = {
+        "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+    };
+
+    if (value < 20) {
+        return units[static_cast<size_t>(value)];
+    }
+    if (value < 100) {
+        const int ten = value / 10;
+        const int one = value % 10;
+        return one == 0 ? tens[static_cast<size_t>(ten)]
+                        : tens[static_cast<size_t>(ten)] + " " + units[static_cast<size_t>(one)];
+    }
+    const int hundred = value / 100;
+    const int rest = value % 100;
+    return rest == 0 ? units[static_cast<size_t>(hundred)] + " hundred"
+                     : units[static_cast<size_t>(hundred)] + " hundred " + english_cardinal_under_1000(rest);
+}
+
+std::string english_cardinal(int64_t value) {
+    if (value < 0) {
+        return "minus " + english_cardinal(-value);
+    }
+    if (value < 1000) {
+        return english_cardinal_under_1000(static_cast<int>(value));
+    }
+    if (value < 1000000) {
+        const int64_t thousands = value / 1000;
+        const int64_t rest = value % 1000;
+        return rest == 0 ? english_cardinal(thousands) + " thousand"
+                         : english_cardinal(thousands) + " thousand " + english_cardinal(rest);
+    }
+    return std::to_string(value);
+}
+
+std::string english_year(int value) {
+    if (value >= 1900 && value <= 1999) {
+        const int rest = value - 1900;
+        return rest == 0 ? "nineteen hundred" : "nineteen " + english_cardinal_under_1000(rest);
+    }
+    if (value >= 2000 && value <= 2099) {
+        const int rest = value - 2000;
+        if (rest == 0) {
+            return "two thousand";
+        }
+        if (rest < 10) {
+            return "two thousand " + english_cardinal_under_1000(rest);
+        }
+        return "twenty " + english_cardinal_under_1000(rest);
+    }
+    return english_cardinal(value);
+}
+
+std::string english_ordinal(int64_t value) {
+    static const std::string ordinals[] = {
+        "zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
+        "ninth", "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth",
+        "sixteenth", "seventeenth", "eighteenth", "nineteenth",
+    };
+    static const std::string tens_ordinals[] = {
+        "", "", "twentieth", "thirtieth", "fortieth", "fiftieth", "sixtieth",
+        "seventieth", "eightieth", "ninetieth",
+    };
+    if (value < 20) {
+        return ordinals[static_cast<size_t>(value)];
+    }
+    if (value < 100) {
+        const int64_t ten = value / 10;
+        const int64_t one = value % 10;
+        return one == 0 ? tens_ordinals[static_cast<size_t>(ten)]
+                        : english_cardinal_under_1000(static_cast<int>(ten * 10)) + " " + english_ordinal(one);
+    }
+    if (value % 100 == 0) {
+        return english_cardinal(value / 100) + " hundredth";
+    }
+    return english_cardinal(value - (value % 100)) + " " + english_ordinal(value % 100);
+}
+
+std::string english_fraction(int64_t numerator, int64_t denominator) {
+    if (denominator == 2) {
+        return numerator == 1 ? "one half" : english_cardinal(numerator) + " halves";
+    }
+    std::string out = english_cardinal(numerator) + " " + english_ordinal(denominator);
+    if (numerator != 1) {
+        out.push_back('s');
+    }
+    return out;
+}
+
+std::string english_digits_individually(std::string_view digits) {
+    std::string out;
+    for (size_t i = 0; i < digits.size(); ++i) {
+        if (i != 0) {
+            out.push_back(' ');
+        }
+        out += english_cardinal_under_1000(digits[i] - '0');
+    }
+    return out;
+}
+
+std::string normalize_english_regex(
+    std::string text,
+    const std::regex & pattern,
+    const std::function<std::string(const std::smatch &)> & replacement) {
+    std::string out;
+    auto begin = text.cbegin();
+    auto end = text.cend();
+    std::smatch match;
+    while (std::regex_search(begin, end, match, pattern)) {
+        out.append(begin, match[0].first);
+        out += replacement(match);
+        begin = match[0].second;
+    }
+    out.append(begin, end);
+    return out;
+}
+
+std::string normalize_english_dates(std::string text) {
+    const std::regex pattern(
+        R"(\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,\s*(\d{4}))?)",
+        std::regex_constants::icase);
+    return normalize_english_regex(std::move(text), pattern, [](const std::smatch & match) {
+        std::string out = match[1].str() + " " + english_ordinal(std::stoll(match[2].str()));
+        if (match[3].matched) {
+            out += " " + english_year(static_cast<int>(std::stoll(match[3].str())));
+        }
+        return out;
+    });
+}
+
+std::string normalize_english_numbers(std::string text) {
+    text = normalize_english_dates(std::move(text));
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\b(\d+(?:\.\d+)?)%)"),
+        [](const std::smatch & match) {
+            return normalize_english_regex(
+                match[1].str(),
+                std::regex(R"((\d+)\.(\d+))"),
+                [](const std::smatch & decimal) {
+                    return english_cardinal(std::stoll(decimal[1].str())) + " point " +
+                        english_digits_individually(decimal[2].str());
+                }) + " percent";
+        });
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\b(\d+)/(\d+)\b)"),
+        [](const std::smatch & match) {
+            return english_fraction(std::stoll(match[1].str()), std::stoll(match[2].str()));
+        });
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\b(\d+)\.(\d+)\b)"),
+        [](const std::smatch & match) {
+            return english_cardinal(std::stoll(match[1].str())) + " point " +
+                english_digits_individually(match[2].str());
+        });
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\b(\d+)(st|nd|rd|th)\b)", std::regex_constants::icase),
+        [](const std::smatch & match) {
+            return english_ordinal(std::stoll(match[1].str()));
+        });
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\b(\d+)\b)"),
+        [](const std::smatch & match) {
+            return english_cardinal(std::stoll(match[1].str()));
+        });
+    return text;
+}
+
 std::vector<std::vector<std::string>> split_segments_by_token(
     const std::vector<std::string> & tokenized,
     const std::vector<std::string> & split_tokens,
@@ -238,6 +417,7 @@ std::string IndexTTS2TextTokenizer::normalize_english(const std::string & text) 
         text,
         std::regex(R"((what|where|who|which|how|t?here|it|s?he|that|this)'s)", std::regex_constants::icase),
         "$1 is");
+    out = normalize_english_numbers(std::move(out));
     const std::vector<std::pair<std::string, std::string>> replacements = {
         {"：", ","},
         {"；", ","},

@@ -1,4 +1,1 @@
-# Download PocketTTS model files here:
-#   models/pocket-tts/languages/english/model.safetensors
-#   models/pocket-tts/languages/english/tokenizer.model
-#   models/pocket-tts/languages/english/embeddings/*.safetensors
+# Download from https://huggingface.co/audio-cpp/audio.cpp-gguf

@@ -188,6 +188,7 @@ add_library(engine_runtime STATIC
     src/framework/text/chinese_normalization.cpp
     src/framework/text/chunking.cpp
     src/framework/text/subtitle.cpp
+    src/framework/text/unicode_normalization.cpp
     src/framework/io/yaml.cpp
     src/framework/io/binary.cpp
     src/framework/io/safetensors.cpp
@@ -880,6 +881,18 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME voxtral_realtime_stream_chunking_test
         COMMAND voxtral_realtime_stream_chunking_test
+    add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
+
+    add_test(
+        NAME chinese_normalization_test
+        COMMAND chinese_normalization_test
+    )
+
+    add_engine_unittest(unicode_normalization_test tests/unittests/test_unicode_normalization.cpp)
+
+    add_test(
+        NAME unicode_normalization_test
+        COMMAND unicode_normalization_test
     )
 
     add_engine_unittest(outetts_generation_budget_test tests/unittests/test_outetts_generation_budget.cpp)

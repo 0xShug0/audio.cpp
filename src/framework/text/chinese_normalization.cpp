@@ -270,6 +270,28 @@ std::string normalize_date_separators(std::string text) {
     return std::regex_replace(text, date_pattern, "$1年$2月$3日");
 }
 
+std::string normalize_percentages(std::string text) {
+    const std::regex percent_pattern(R"((\d+(?:\.\d+)?)%)");
+    for (std::smatch match; std::regex_search(text, match, percent_pattern);) {
+        text.replace(
+            static_cast<size_t>(match.position()),
+            static_cast<size_t>(match.length()),
+            "百分之" + normalize_chinese_numbers(match[1].str()));
+    }
+    return text;
+}
+
+std::string normalize_fractions(std::string text) {
+    const std::regex fraction_pattern(R"((\d+)/(\d+))");
+    for (std::smatch match; std::regex_search(text, match, fraction_pattern);) {
+        text.replace(
+            static_cast<size_t>(match.position()),
+            static_cast<size_t>(match.length()),
+            chinese_cardinal_from_digits(match[2].str()) + "分之" + chinese_cardinal_from_digits(match[1].str()));
+    }
+    return text;
+}
+
 std::string normalize_time_zero_minutes(std::string text) {
     const std::regex time_pattern(R"((\d{1,2}):00)");
     return std::regex_replace(text, time_pattern, "$1点");
@@ -314,6 +336,8 @@ std::string normalize_index_tts_chinese_text(std::string_view text) {
     out = normalize_telephone_runs(std::move(out));
     out = normalize_date_separators(std::move(out));
     out = normalize_time_zero_minutes(std::move(out));
+    out = normalize_percentages(std::move(out));
+    out = normalize_fractions(std::move(out));
     out = normalize_chinese_numbers(out);
 
     restore_saved(out, names);

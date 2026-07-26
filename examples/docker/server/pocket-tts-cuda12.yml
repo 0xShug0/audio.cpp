@@ -1,9 +1,6 @@
 services:
   audiocpp-server:
-    image: local/audiocpp:full-cuda
-    build:
-      context: ../../../
-      dockerfile: .devops/cuda.Dockerfile
+    image: ghcr.io/0xshug0/audio.cpp:full-cuda12
     restart: unless-stopped
     stop_grace_period: 30s
     ports:
@@ -12,7 +9,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - ./../models:/models:ro
-      - ./server.json:/app/server.json:ro
+      - ./pocket-tts-server.json:/app/server.json:ro
     deploy:
       resources:
         reservations:

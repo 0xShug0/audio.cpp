@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
+set -e
 
 mkdir -p output
-curl http://localhost:8080/v1/audio/speech -H 'Content-Type: application/json' -o output/speech.wav -d '
+curl -f http://localhost:8080/v1/audio/speech -H 'Content-Type: application/json' -o output/speech.wav -d '
 {
   "model": "pocket-tts",
   "input": "You are successfully running a text-to-speech model using audio.cpp, a pure C++ inference engine for audio models.",
@@ -10,4 +11,3 @@ curl http://localhost:8080/v1/audio/speech -H 'Content-Type: application/json' -
 '
 
 echo "Saved to: output/speech.wav"
-
