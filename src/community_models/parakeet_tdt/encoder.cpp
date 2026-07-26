@@ -11,6 +11,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/runtime/graph_optimizer.h"
 
 #include "../../framework/modules/attention/attention_internal.h"
 
@@ -113,6 +114,20 @@ std::vector<float> make_relative_positional_encoding(int64_t hidden, int64_t fra
         }
     }
     return values;
+}
+
+engine::runtime::GraphOptimizationBackend graph_optimizer_backend_for(engine::core::BackendType type) {
+    switch (type) {
+        case engine::core::BackendType::Cpu:
+            return engine::runtime::GraphOptimizationBackend::Cpu;
+        case engine::core::BackendType::Cuda:
+            return engine::runtime::GraphOptimizationBackend::Gpu;
+        case engine::core::BackendType::Vulkan:
+        case engine::core::BackendType::Metal:
+        case engine::core::BackendType::BestAvailable:
+            return engine::runtime::GraphOptimizationBackend::Other;
+    }
+    return engine::runtime::GraphOptimizationBackend::Other;
 }
 
 }  // namespace
@@ -437,6 +452,18 @@ void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
     }
     graph->graph = ggml_new_graph_custom(graph->ggml, kEncoderGraphNodes, false);
     ggml_build_forward_expand(graph->graph, graph->output.tensor);
+
+    // Elides redundant nodes (broadcast repeats folded into the consuming op,
+    // reshape/view no-ops, etc.) from the graph once at build time, before
+    // allocation — the cached graph is reused across every subsequent encode()
+    // call at this input length, so this cost is amortized to ~zero and every
+    // reused call benefits from the smaller node count.
+    const auto opt_backend = graph_optimizer_backend_for(execution_context_->backend_type());
+    const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, opt_backend);
+    const auto opt_report = engine::runtime::optimize_graph(*graph->graph, opt_backend);
+    debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_before", opt_report.nodes_before);
+    debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_after", opt_report.nodes_after);
+    (void)pos_opt_report;
 
     const auto alloc_start = Clock::now();
     graph->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(graph->backend));

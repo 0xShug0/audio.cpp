@@ -53,6 +53,13 @@ produced an empty log; see the commit fixing `configure_logging` wiring).
 | audio.cpp, `matmul_weight_type=q8_0` + tuned threads | 830.9 ms (RTF 0.112, 9.0x real-time) | 132.1 ms (RTF 0.018, 56.3x real-time) |
 | audio.cpp, above + conv-pointwise reclassification fix | **~750 ms** (RTF 0.101, **9.9x** real-time) | ~138 ms (RTF 0.019, 53.9x real-time, no clear change) |
 
+This machine got noisier (shared background load) partway through this
+history, enough that later single-shot end-to-end numbers aren't reliably
+comparable table-row-to-table-row — the fused-QKV and graph-optimizer
+findings below use an interleaved A/B (alternate config every run) instead of
+separate before/after sessions specifically to cancel that out; see each
+section for the actual methodology and numbers.
+
 ```bash
 build/<preset>/bin/parakeet_warm_bench \
     --model models/parakeet-tdt-0.6b-v3 --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
@@ -173,6 +180,34 @@ ARM CPU) or under conditions this single-clip single-machine benchmark
 doesn't exercise (batched/concurrent serving, different GPU generations) —
 exactly the kind of thing that's cheap to carry once validated correct, even
 without a local win to show for it today.
+
+**Dead framework infrastructure, switched on: the ggml graph optimizer.**
+`src/framework/runtime/graph_optimizer.cpp` implements a real, unit-tested
+graph rewrite pass (`engine::runtime::optimize_graph`) — folds broadcast
+`ggml_repeat` nodes into the consuming op, elides pure metadata ops
+(reshapes/views that don't move data), elides no-op nodes — but grepping the
+whole codebase turned up **zero callers** anywhere: not `graph_executor.cpp`,
+not any of the ~40 model families, nothing. It's built, tested
+(`encoder_module_test`), and entirely unused in production. Wired into
+Parakeet's `ensure_graph()` (`encoder.cpp`), called once per distinct input
+length right after `ggml_build_forward_expand` and before `ggml_gallocr_alloc_graph`
+— free to call since the graph is cached and reused across every subsequent
+`encode()` at that length. Effect on the reference clip's encoder graph:
+**2854 nodes → 1425** (1323 metadata-only ops elided, mostly redundant
+reshape/view/cont chains from the hand-rolled attention permutes, plus 106
+broadcast repeats folded). Validated via the parity harness (`enc_out` cosine
+0.972258, bit-identical to before) and the golden-transcription test (exact
+match, both backends). Speed, measured with an interleaved A/B via the
+optimizer's existing `ENGINE_GRAPH_OPTIMIZER=0/1` env toggle (six runs each,
+alternating, to cancel out this machine's background-load drift): CPU
+q8_0 encoder time **~812ms → ~726ms, a real ~10% reduction**, ahead in 5 of 6
+paired runs; CUDA: no measurable difference, expected, since GPU options
+intentionally skip metadata-only elision (a scheduler-based backend still
+needs those reshape/view nodes) and only broadcast-repeat folding applies
+there, which touched a small fraction of this graph. The CPU win comes from
+actually reducing scheduling/dispatch work, not FLOPs — consistent with the
+whole encoder graph being just ~1400-2800 nodes for a 93-frame clip, small
+enough that per-node overhead is a real fraction of wall time on CPU.
 
 **Why CUDA has no PyTorch comparison point.** `nemo_asr` on this GPU hits
 `torch.OutOfMemoryError` just loading the model — this 3.6GB card's VRAM
