@@ -11,6 +11,7 @@ WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
+CPU_ALL_VARIANTS="OFF"
 NATIVE_CPU="ON"
 LLAMAFILE="ON"
 TARGETS=()
@@ -68,6 +69,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --deployment-build)
             AUDIOCPP_DEPLOYMENT_BUILD="ON"
+            shift
+            ;;
+        --cpu-all-variants)
+            CPU_ALL_VARIANTS="ON"
+            NATIVE_CPU="OFF"
             shift
             ;;
         --native-cpu)
@@ -204,6 +210,7 @@ echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
 echo "Building warmbench: $WITH_WARMBENCH"
 echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
+echo "CPU all variants: $CPU_ALL_VARIANTS"
 
 "${RUNNER[@]}" cmake \
     -S . \
@@ -213,6 +220,7 @@ echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
     -DENGINE_ENABLE_CUDA="$ENGINE_ENABLE_CUDA" \
     -DENGINE_ENABLE_VULKAN="$ENGINE_ENABLE_VULKAN" \
     -DENGINE_ENABLE_NATIVE_CPU="$NATIVE_CPU" \
+    -DENGINE_ENABLE_CPU_ALL_VARIANTS="$CPU_ALL_VARIANTS" \
     -DENGINE_ENABLE_LLAMAFILE="$LLAMAFILE" \
     -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES" \
     -DENGINE_BUILD_TESTS="$WITH_TESTS" \

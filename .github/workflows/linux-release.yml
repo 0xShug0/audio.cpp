@@ -1,0 +1,92 @@
+name: Linux release packages
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "release-*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Linux ${{ matrix.arch }} ${{ matrix.backend }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            backend: cpu
+          - arch: x86_64
+            runner: ubuntu-24.04
+            backend: vulkan
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            backend: cpu
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            backend: vulkan
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check loader/catalog sync
+        run: |
+          python3 tools/check_loader_catalog_sync.py --self-test
+          python3 tools/check_loader_catalog_sync.py
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ ninja-build glslc libvulkan-dev spirv-headers
+
+      - name: Build package
+        run: |
+          scripts/package_linux_prebuilt.sh \
+            --backend "${{ matrix.backend }}" \
+            --arch "${{ matrix.arch }}" \
+            --jobs "$(nproc)"
+
+      - name: Smoke test
+        run: build/prebuilt/audiocpp-linux-${{ matrix.arch }}-${{ matrix.backend }}/audiocpp_cli --help
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: audiocpp-linux-${{ matrix.arch }}-${{ matrix.backend }}
+          path: |
+            build/prebuilt/*.tar.gz
+            build/prebuilt/*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish Linux packages
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: audiocpp-linux-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create release and upload packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
+          fi
+          gh release upload "$TAG" dist/* --clobber

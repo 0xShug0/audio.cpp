@@ -89,3 +89,22 @@ If your machine is memory-constrained, use a smaller `-j` value, for example `-j
 - For single-config generators, the recommended config is `RelWithDebInfo`
 - For multi-config generators, choose the configuration at build time
 - Backend and feature options are independent from build type
+
+## Release packages
+
+Pushing a tag named `v*` or `release-*` runs the Linux release workflow. It
+builds CPU and Vulkan packages for x86-64 and ARM64, creates the GitHub Release
+when necessary, and attaches each `.tar.gz` archive and its SHA-256 checksum.
+Manual workflow runs build the same downloadable Actions artifacts without
+creating a GitHub Release.
+
+To produce the same portable deployment package locally:
+
+```bash
+scripts/package_linux_prebuilt.sh --backend cpu
+scripts/package_linux_prebuilt.sh --backend vulkan
+```
+
+Archives are written under `build/prebuilt`. They contain the CLI, server, GGUF
+converter, and the runtime-selected CPU backend libraries required by the
+executables.
