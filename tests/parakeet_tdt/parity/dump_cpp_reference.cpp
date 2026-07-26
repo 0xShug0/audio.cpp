@@ -125,6 +125,8 @@ int main(int argc, char ** argv) {
     const std::filesystem::path audio_path = arg_value(argc, argv, "--audio", "");
     const std::filesystem::path nemo_dir = arg_value(argc, argv, "--nemo-dir", "");
     const std::filesystem::path output_dir = arg_value(argc, argv, "--output-dir", "");
+    const auto matmul_weight_type = engine::assets::parse_tensor_storage_type(
+        arg_value(argc, argv, "--matmul-weight-type", "native"));
 
     if (audio_path.empty() || nemo_dir.empty() || output_dir.empty()) {
         std::fprintf(
@@ -147,7 +149,7 @@ int main(int argc, char ** argv) {
 
         auto weights = load_parakeet_weights(
             *assets, exec.backend(), exec.backend_type(),
-            engine::assets::TensorStorageType::Native,
+            matmul_weight_type,
             engine::assets::TensorStorageType::Native,
             3072ull * 1024ull * 1024ull);
 

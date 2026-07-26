@@ -37,6 +37,70 @@ Install the model with:
 python3 tools/model_manager.py install parakeet_tdt --models-root models
 ```
 
+## Performance
+
+Measured on the reference test clip (`2086-149220-0033.wav`, 7.435s), 5 timed
+iterations + 1 warmup, against the real NeMo model (`nemo_toolkit[asr]`,
+torch 2.13+cu130) on the same machine (Intel i7-9750H, 6C/12T; GTX 1650, 3.6GB
+VRAM). `parakeet_warm_bench` reports a full frontend/encoder/decoder timing
+breakdown via `--timing-file` (real timing — this previously silently
+produced an empty log; see the commit fixing `configure_logging` wiring).
+
+| | CPU | CUDA |
+|---|---|---|
+| NeMo/PyTorch (Python) | 857.7 ms (RTF 0.115, 8.7x real-time) | OOM — see note below |
+| audio.cpp, default settings | 1247.5 ms (RTF 0.168, 6.0x real-time) | 170.6 ms (RTF 0.023, 43.6x real-time) |
+| audio.cpp, `matmul_weight_type=q8_0` + tuned threads | **830.9 ms** (RTF 0.112, **9.0x** real-time) | **132.1 ms** (RTF 0.018, **56.3x** real-time) |
+
+```bash
+build/<preset>/bin/parakeet_warm_bench \
+    --model models/parakeet-tdt-0.6b-v3 --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
+    --backend cpu --threads 6 \
+    --session-option parakeet_tdt.matmul_weight_type=q8_0
+```
+
+Two things drove essentially the entire gap between the "default settings" row
+and PyTorch, both found by actually looking at the timing breakdown instead of
+just the end-to-end number (which was previously impossible — see above):
+
+- **Thread count.** This CPU is 6 physical / 12 logical cores. 8 threads (an
+  arbitrary default) oversubscribes; 6 is consistently fastest, 12 is
+  consistently worst (contention). Sweep it on your own hardware — the
+  optimum is core-count-dependent, not a fixed number.
+- **Weight precision.** `parakeet_tdt.matmul_weight_type` defaults to
+  `native` (F32, since the checkpoint ships F32 weights) and is a session
+  option, not a fixed choice — `native|f32|f16|bf16|q8_0` are all available
+  (`parakeet_tdt.conv_weight_type` separately, `native|f32|f16`). ggml's CPU
+  backend has heavily hand-tuned Q8_0 dot-product kernels (the common case
+  for llama.cpp-style inference); F16/BF16 were measured *slower* than F32
+  here, not faster — the win is specifically from Q8_0's kernels, not from
+  "less precision" in general, so don't assume the other options help without
+  measuring. Encoder graph compute alone accounts for ~93-96% of total wall
+  time in every configuration measured; that's where quantization actually
+  pays off; frontend and decoder are already a few percent of the total each.
+
+**Why this isn't the default (yet).** Quantizing matmul weights is a real,
+measured accuracy trade — small, but not zero: comparing against the NeMo
+reference via the [numerical parity harness](../../tests/parakeet_tdt/parity/README.md),
+`enc_out` cosine similarity drops from 0.972258 (native) to 0.968028 (q8_0)
+— comparable in size to the float32 accumulation noise already present
+between the isolated single-layer graph and the full 24-layer production
+graph (see that harness's README for why that gap exists at all), not a
+cliff, and transcription was still exactly correct in every configuration
+tested. But it's only been validated against this one clip; defaulting
+everyone into reduced precision without broader validation would be the
+wrong call. If you want the speed and can tolerate (or want to verify for
+your own audio) a small accuracy trade, turn it on explicitly with the
+session option above.
+
+**Why CUDA has no PyTorch comparison point.** `nemo_asr` on this GPU hits
+`torch.OutOfMemoryError` just loading the model — this 3.6GB card's VRAM
+budget is entirely consumed by PyTorch's own overhead on top of the weights.
+The C++/ggml path runs comfortably in that same budget. This isn't really a
+"we're faster" comparison so much as "the reference implementation doesn't
+run here at all" — worth knowing if you're targeting small/consumer GPUs
+rather than datacenter cards.
+
 ## Validation
 
 - **Golden-transcription regression test** (`ctest -R parakeet_golden_transcription_test`,
