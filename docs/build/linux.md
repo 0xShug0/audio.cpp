@@ -93,10 +93,11 @@ If your machine is memory-constrained, use a smaller `-j` value, for example `-j
 ## Release packages
 
 Pushing a tag named `v*` or `release-*` runs the release workflow. It builds
-Linux CPU and Vulkan packages for x86-64 and ARM64 plus the Windows CPU package.
-After every platform succeeds, it creates the GitHub Release when necessary and
-attaches each archive and its SHA-256 checksum. Manual workflow runs build the
-same downloadable Actions artifacts without creating a GitHub Release.
+Linux CPU and Vulkan packages for x86-64 and ARM64 plus Windows CPU, Vulkan, and
+CUDA 13 packages. After every platform succeeds, it creates the GitHub Release
+when necessary and attaches each archive and its SHA-256 checksum. Manual
+workflow runs build the same downloadable Actions artifacts without creating a
+GitHub Release.
 
 To produce the same portable deployment package locally:
 

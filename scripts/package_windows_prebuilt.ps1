@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "cpu", "cuda")]
+    [ValidateSet("all", "cpu", "vulkan", "cuda")]
     [string]$Package = "all",
     [ValidateSet("fast", "balance", "portable")]
     [string]$Profile = "balance",
@@ -189,6 +189,49 @@ Server:
 - Keep the DLL files next to the `.exe` files.
 - If CUDA startup fails, update the NVIDIA driver first.
 '@
+    } elseif ($Kind -eq "vulkan") {
+        $body = @'
+# audio.cpp Windows Vulkan Prebuilt
+
+This package contains:
+
+- `audiocpp_cli.exe`
+- `audiocpp_server.exe`
+- MSVC and OpenMP runtime DLLs required by this build
+
+## Requirements
+
+- 64-bit Windows
+- A Vulkan-capable GPU with a current vendor graphics driver
+- Model files downloaded separately
+
+The Vulkan SDK and Visual Studio Build Tools are not required to run this
+package. This build also includes the CPU backend.
+
+'@
+        $body += $profileText
+        $body += @'
+
+## Quick Use
+
+```powershell
+.\audiocpp_cli.exe --help
+.\audiocpp_cli.exe --backend vulkan --task tts --family <family> --model C:\path\to\model [options]
+.\audiocpp_cli.exe --backend cpu --task tts --family <family> --model C:\path\to\model [options]
+```
+
+Server:
+
+```powershell
+.\audiocpp_server.exe --config C:\path\to\server.json
+```
+
+## Notes
+
+- Models are not bundled.
+- Keep the DLL files next to the `.exe` files.
+- If Vulkan startup fails, update the GPU vendor's graphics driver first.
+'@
     } else {
         $body = @'
 # audio.cpp Windows CPU Prebuilt
@@ -266,7 +309,7 @@ function Get-ProfileSettings {
 function New-PrebuiltPackage {
     param(
         [Parameter(Mandatory = $true)][string]$Preset,
-        [Parameter(Mandatory = $true)][ValidateSet("cpu", "cuda")][string]$Kind
+        [Parameter(Mandatory = $true)][ValidateSet("cpu", "vulkan", "cuda")][string]$Kind
     )
 
     $buildArgs = @(
@@ -326,6 +369,7 @@ function New-PrebuiltPackage {
             (Join-Path $cudaRoot "bin\x64"),
             (Join-Path $cudaRoot "bin")
         )
+        Copy-RequiredDll "cudart64_13.dll" $cudaDirs $stageDir | Out-Null
         Copy-RequiredDll "cublas64_13.dll" $cudaDirs $stageDir | Out-Null
         Copy-RequiredDll "cublasLt64_13.dll" $cudaDirs $stageDir | Out-Null
         Copy-RequiredDll "cufft64_12.dll" $cudaDirs $stageDir | Out-Null
@@ -364,6 +408,9 @@ $profileSettings = Get-ProfileSettings $Profile
 $results = @()
 if ($Package -eq "all" -or $Package -eq "cpu") {
     $results += New-PrebuiltPackage "windows-cpu-release" "cpu"
+}
+if ($Package -eq "all" -or $Package -eq "vulkan") {
+    $results += New-PrebuiltPackage "windows-vulkan-release" "vulkan"
 }
 if ($Package -eq "all" -or $Package -eq "cuda") {
     $results += New-PrebuiltPackage "windows-cuda-release" "cuda"

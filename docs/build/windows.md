@@ -6,6 +6,7 @@ This document covers native Windows builds and release zip packaging.
 
 - Visual Studio Build Tools 2022 or newer with the C++ desktop workload
 - MSVC x64 compiler, Windows SDK, CMake, Ninja, and MSVC OpenMP components
+- LunarG Vulkan SDK for Vulkan builds
 - Official NVIDIA CUDA Toolkit for CUDA builds
 
 The Visual Studio IDE is not required.
@@ -25,6 +26,13 @@ CPU:
 ```powershell
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -Jobs 16
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -Jobs 16
+```
+
+Vulkan:
+
+```powershell
+.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli -Jobs 16
+.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_server -Jobs 16
 ```
 
 CUDA:
@@ -106,6 +114,7 @@ Package choices:
 
 ```powershell
 .\scripts\package_windows_prebuilt.ps1 -Package cpu -Profile balance -Jobs 16
+.\scripts\package_windows_prebuilt.ps1 -Package vulkan -Profile balance -Jobs 16
 .\scripts\package_windows_prebuilt.ps1 -Package cuda -Profile balance -Jobs 16
 ```
 
@@ -121,14 +130,15 @@ Generated zips are written under `build/prebuilt`:
 
 ```text
 build/prebuilt/audiocpp-windows-cpu-balance.zip
+build/prebuilt/audiocpp-windows-vulkan-balance.zip
 build/prebuilt/audiocpp-windows-cuda-balance.zip
 ```
 
-Pushing a tag named `v*` or `release-*` automatically builds the balanced CPU
-ZIP alongside the Linux release packages. The GitHub Release is created only
-after all platform packages succeed, and includes a SHA-256 checksum for every
-archive. A manual run of the release workflow produces downloadable Actions
-artifacts without creating a GitHub Release.
+Pushing a tag named `v*` or `release-*` automatically builds balanced CPU,
+Vulkan, and CUDA 13 ZIPs alongside the Linux release packages. The GitHub
+Release is created only after all platform packages succeed, and includes a
+SHA-256 checksum for every archive. A manual run of the release workflow
+produces downloadable Actions artifacts without creating a GitHub Release.
 
 ## Choosing a Release Profile
 
@@ -145,6 +155,12 @@ CPU package:
 - 64-bit Windows
 - Model files downloaded separately
 
+Vulkan package:
+
+- 64-bit Windows
+- Vulkan-capable GPU with a current vendor graphics driver
+- Model files downloaded separately
+
 CUDA package:
 
 - 64-bit Windows
@@ -152,6 +168,10 @@ CUDA package:
 - NVIDIA driver 580 or newer
 - Model files downloaded separately
 
-The package script copies MSVC/OpenMP runtime DLLs into both packages. The CUDA package also copies the CUDA DLLs used by this build, so users should not need to install the CUDA Toolkit or Visual Studio Build Tools.
+The package script copies MSVC/OpenMP runtime DLLs into all packages. The CUDA
+package also copies the CUDA DLLs used by this build, so users should not need
+to install the CUDA Toolkit or Visual Studio Build Tools. The Vulkan SDK is
+needed only to build the Vulkan package; users get the Vulkan loader from their
+GPU vendor's graphics driver.
 
 The CUDA package is intended for RTX 20/30/40/50 series GPUs and similar NVIDIA datacenter GPUs. Older GPUs such as GTX 10-series Pascal cards or V100-class Volta cards are not covered by the CUDA 13 package; use the CPU package or build a separate package with an older CUDA Toolkit if those GPUs must be supported.

@@ -352,6 +352,20 @@ function Get-PresetSettings {
                 Llamafile = "ON"
                 EnableCuda = "OFF"
                 EnableCudaGraphs = "OFF"
+                EnableVulkan = "OFF"
+                CFlagsDebug = ""
+                CxxFlagsDebug = ""
+            }
+        }
+        "windows-vulkan-release" {
+            return @{
+                BuildType = "Release"
+                BuildTests = "OFF"
+                Native = "ON"
+                Llamafile = "ON"
+                EnableCuda = "OFF"
+                EnableCudaGraphs = "OFF"
+                EnableVulkan = "ON"
                 CFlagsDebug = ""
                 CxxFlagsDebug = ""
             }
@@ -364,6 +378,7 @@ function Get-PresetSettings {
                 Llamafile = "ON"
                 EnableCuda = "ON"
                 EnableCudaGraphs = "ON"
+                EnableVulkan = "OFF"
                 CFlagsDebug = "/O2 /Zi"
                 CxxFlagsDebug = "/O2 /Zi"
             }
@@ -376,6 +391,7 @@ function Get-PresetSettings {
                 Llamafile = "ON"
                 EnableCuda = "ON"
                 EnableCudaGraphs = "ON"
+                EnableVulkan = "OFF"
                 CFlagsDebug = ""
                 CxxFlagsDebug = ""
             }
@@ -388,12 +404,13 @@ function Get-PresetSettings {
                 Llamafile = "ON"
                 EnableCuda = "ON"
                 EnableCudaGraphs = "ON"
+                EnableVulkan = "OFF"
                 CFlagsDebug = "/O2 /Zi"
                 CxxFlagsDebug = "/O2 /Zi"
             }
         }
         default {
-            throw "Unsupported Windows preset '$Name'. Use windows-cpu-release, windows-cuda-release, windows-cuda-debug, or windows-cuda-native-debug."
+            throw "Unsupported Windows preset '$Name'. Use windows-cpu-release, windows-vulkan-release, windows-cuda-release, windows-cuda-debug, or windows-cuda-native-debug."
         }
     }
 }
@@ -457,6 +474,7 @@ if ($arch -ne "") {
 Write-Host "CPU architecture profile: $($cpuArchSettings.Label)"
 Write-Host "Native CPU optimization: $($settings.Native)"
 Write-Host "llamafile SGEMM: $($settings.Llamafile)"
+Write-Host "Vulkan: $($settings.EnableVulkan)"
 $deploymentBuildValue = if ($DeploymentBuild) { "ON" } else { "OFF" }
 Write-Host "Deployment build: $deploymentBuildValue"
 
@@ -486,7 +504,7 @@ $configureArgs = @(
     "-DENGINE_ENABLE_CUDA=$($settings.EnableCuda)",
     "-DENGINE_ENABLE_OPENMP=ON",
     "-DENGINE_ENABLE_CUDA_GRAPHS=$($settings.EnableCudaGraphs)",
-    "-DENGINE_ENABLE_VULKAN=OFF",
+    "-DENGINE_ENABLE_VULKAN=$($settings.EnableVulkan)",
     "-DENGINE_ENABLE_METAL=OFF",
     "-DGGML_OPENMP=ON",
     "-DENGINE_ENABLE_NATIVE_CPU=$($settings.Native)",
