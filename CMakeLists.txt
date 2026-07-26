@@ -881,6 +881,8 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME voxtral_realtime_stream_chunking_test
         COMMAND voxtral_realtime_stream_chunking_test
+    )
+
     add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
 
     add_test(
