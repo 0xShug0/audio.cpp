@@ -85,8 +85,7 @@ std::pair<std::vector<float>, std::vector<float>> fold_bn(
 
 ParakeetEncoderLayerWeights load_encoder_layer(
     engine::core::BackendWeightStore & store, const engine::assets::TensorSource & source,
-    const ParakeetConfig & config, int64_t idx, engine::assets::TensorStorageType matmul_st,
-    engine::assets::TensorStorageType conv_st) {
+    const ParakeetConfig & config, int64_t idx, engine::assets::TensorStorageType matmul_st) {
     const std::string p = "encoder.layers." + std::to_string(idx);
     const auto & enc = config.encoder;
     const int64_t h = enc.hidden_size;
@@ -104,8 +103,13 @@ ParakeetEncoderLayerWeights load_encoder_layer(
     layer.pos_bias_u = store.load_f32_tensor(source, p + ".self_attn.bias_u", {enc.heads, hd});
     layer.pos_bias_v = store.load_f32_tensor(source, p + ".self_attn.bias_v", {enc.heads, hd});
     layer.norm_conv = binding::norm_from_source(store, source, p + ".norm_conv", h);
-    layer.conv_pw1 = {store.load_tensor_as_shape(source, p + ".conv.pointwise_conv1.weight", conv_st, {2*h, h, 1}, engine::core::TensorShape::from_dims({2*h, h})), std::nullopt};
-    layer.conv_pw2 = {store.load_tensor_as_shape(source, p + ".conv.pointwise_conv2.weight", conv_st, {h, h, 1}, engine::core::TensorShape::from_dims({h, h})), std::nullopt};
+    // pointwise_conv{1,2} are kernel_size=1 Conv1d — mathematically a Linear layer, and
+    // that's exactly how build_fastconformer_conv_module runs them (via LinearModule/mul_mat,
+    // not a real conv op). They belong in the matmul weight-storage bucket (which allows
+    // q8_0) rather than the conv bucket (capped at f16 for actual conv ops) — leaving them
+    // in the conv bucket silently excludes ~3*h^2 params/layer from matmul quantization.
+    layer.conv_pw1 = {store.load_tensor_as_shape(source, p + ".conv.pointwise_conv1.weight", matmul_st, {2*h, h, 1}, engine::core::TensorShape::from_dims({2*h, h})), std::nullopt};
+    layer.conv_pw2 = {store.load_tensor_as_shape(source, p + ".conv.pointwise_conv2.weight", matmul_st, {h, h, 1}, engine::core::TensorShape::from_dims({h, h})), std::nullopt};
     auto [fd_w, fd_b] = fold_bn(source, p + ".conv.depthwise_conv", p + ".conv.norm", h, enc.conv_kernel);
     layer.conv_dw_weight = store.make_from_f32(engine::core::TensorShape::from_dims({h, 1, enc.conv_kernel}), engine::assets::TensorStorageType::F32, std::move(fd_w));
     layer.conv_dw_bias = store.make_f32(engine::core::TensorShape::from_dims({h}), std::move(fd_b));
@@ -126,7 +130,7 @@ ParakeetEncoderWeights load_encoder_weights(
     w.subsampling = load_subsampling(store, source, config, matmul_st, conv_st);
     w.layers.reserve(static_cast<size_t>(config.encoder.layers));
     for (int64_t i = 0; i < config.encoder.layers; ++i)
-        w.layers.push_back(load_encoder_layer(store, source, config, i, matmul_st, conv_st));
+        w.layers.push_back(load_encoder_layer(store, source, config, i, matmul_st));
     return w;
 }
 

@@ -50,7 +50,8 @@ produced an empty log; see the commit fixing `configure_logging` wiring).
 |---|---|---|
 | NeMo/PyTorch (Python) | 857.7 ms (RTF 0.115, 8.7x real-time) | OOM — see note below |
 | audio.cpp, default settings | 1247.5 ms (RTF 0.168, 6.0x real-time) | 170.6 ms (RTF 0.023, 43.6x real-time) |
-| audio.cpp, `matmul_weight_type=q8_0` + tuned threads | **830.9 ms** (RTF 0.112, **9.0x** real-time) | **132.1 ms** (RTF 0.018, **56.3x** real-time) |
+| audio.cpp, `matmul_weight_type=q8_0` + tuned threads | 830.9 ms (RTF 0.112, 9.0x real-time) | 132.1 ms (RTF 0.018, 56.3x real-time) |
+| audio.cpp, above + conv-pointwise reclassification fix | **~750 ms** (RTF 0.101, **9.9x** real-time) | ~138 ms (RTF 0.019, 53.9x real-time, no clear change) |
 
 ```bash
 build/<preset>/bin/parakeet_warm_bench \
@@ -113,6 +114,53 @@ is already efficient at this scale. Left in as an opt-in for anyone testing on
 different hardware (newer GPU generations in particular) where the tradeoff
 might flip, but it is not recommended and not the default based on what was
 actually measured here.
+
+**Conv-pointwise weight misclassification (found by cross-referencing
+[CrispStrobe/CrispASR](https://github.com/CrispStrobe/CrispASR), a
+whisper.cpp-derived multi-model ASR project with its own FastConformer/Parakeet
+port).** Their `PERFORMANCE.md` documents a bug in their quantizer: the
+Conformer conv module's `pointwise_conv1`/`pointwise_conv2` weights are
+kernel_size=1 Conv1d — mathematically a Linear layer, and NeMo/most ports
+(including this one) run them via a matmul, not a real conv op — but their
+quantizer classified them as "conv" weights and left them at F16 even when
+targeting Q8_0, costing ~35% of encoder time on their ARM CPU target
+(~14% on x86, where OpenBLAS's F16 GEMM path was already reasonably fast).
+Checking our own loader (`weights.cpp`'s `load_encoder_layer`) found the
+identical classification bug: `conv_pw1`/`conv_pw2` were loaded under
+`conv_weight_type` (capped at f16, no q8_0) instead of `matmul_weight_type`,
+even though `build_fastconformer_conv_module` in `encoder.cpp` runs them
+through `LinearModule` (`mul_mat`), exactly like every other weight bucketed
+under `matmul_weight_type`. Reclassified to `matmul_weight_type` (they now
+quantize to Q8_0 when that option is set, same as before when it isn't —
+zero behavior change at the `native` default). Effect, on top of the
+already-applied `q8_0` + thread tuning above: **~10% additional CPU wall-time
+reduction** (830.9 ms → ~750 ms); no clear CUDA change (cuBLAS was already
+handling these small matmuls efficiently regardless of storage bucket).
+Verified via the numerical parity harness: `layer_0` cosine 0.999991,
+`enc_out` cosine 0.967974 (was 0.968028 pre-fix, i.e. unchanged within noise
+— quantizing more of the *same class* of already-quantized weights doesn't
+meaningfully add new error here) and via the golden-transcription test,
+which still matches exactly with `matmul_weight_type=q8_0` on both backends.
+
+**Identified but not yet implemented: fused QKV projection.** CrispASR's
+FastConformer notes also credit a fused Q/K/V projection (one matmul instead
+of three per layer) as part of their combined ~14-35% encoder win, and their
+CUDA default deliberately uses *manual* (non-flash) attention because
+`flash_attn_ext` rejects their per-head relative-position mask on CUDA and
+silently falls back to CPU for all layers — independent corroboration of this
+port's own flash-attention finding above. The shared attention infrastructure
+in this codebase already has a `qkv_weight`/`can_fuse_qkv` code path
+(`common_relative_attention.cpp`), but it's currently dead: no model in this
+repo (including `nemotron_asr`, which uses the same shared relative-attention
+module) actually populates a fused QKV weight at load time. Doing that
+correctly for Parakeet means concatenating three independently-loaded
+`[hidden, hidden]` weight matrices into one `[hidden, 3*hidden]` tensor at
+load time — analogous to how `fold_bn()` already synthesizes the folded
+depthwise-conv bias — and getting the row/column concat axis wrong would be a
+silent correctness bug of exactly the kind this port has hit before (see the
+two real bugs listed below). Left as a follow-up rather than implemented here
+since it would need its own dedicated parity-harness validation pass before
+shipping, not bundled in as a quick addition.
 
 **Why CUDA has no PyTorch comparison point.** `nemo_asr` on this GPU hits
 `torch.OutOfMemoryError` just loading the model — this 3.6GB card's VRAM
