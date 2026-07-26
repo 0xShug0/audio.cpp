@@ -142,25 +142,37 @@ Verified via the numerical parity harness: `layer_0` cosine 0.999991,
 meaningfully add new error here) and via the golden-transcription test,
 which still matches exactly with `matmul_weight_type=q8_0` on both backends.
 
-**Identified but not yet implemented: fused QKV projection.** CrispASR's
-FastConformer notes also credit a fused Q/K/V projection (one matmul instead
-of three per layer) as part of their combined ~14-35% encoder win, and their
-CUDA default deliberately uses *manual* (non-flash) attention because
-`flash_attn_ext` rejects their per-head relative-position mask on CUDA and
-silently falls back to CPU for all layers — independent corroboration of this
-port's own flash-attention finding above. The shared attention infrastructure
-in this codebase already has a `qkv_weight`/`can_fuse_qkv` code path
-(`common_relative_attention.cpp`), but it's currently dead: no model in this
-repo (including `nemotron_asr`, which uses the same shared relative-attention
-module) actually populates a fused QKV weight at load time. Doing that
-correctly for Parakeet means concatenating three independently-loaded
-`[hidden, hidden]` weight matrices into one `[hidden, 3*hidden]` tensor at
-load time — analogous to how `fold_bn()` already synthesizes the folded
-depthwise-conv bias — and getting the row/column concat axis wrong would be a
-silent correctness bug of exactly the kind this port has hit before (see the
-two real bugs listed below). Left as a follow-up rather than implemented here
-since it would need its own dedicated parity-harness validation pass before
-shipping, not bundled in as a quick addition.
+**Fused QKV projection.** CrispASR's FastConformer notes also credit a fused
+Q/K/V projection (one matmul instead of three per layer) as part of their
+combined encoder win, and their CUDA default deliberately uses *manual*
+(non-flash) attention because `flash_attn_ext` rejects their per-head
+relative-position mask on CUDA and silently falls back to CPU for all layers
+— independent corroboration of this port's own flash-attention finding above.
+Implemented here: `weights.cpp`'s `load_encoder_layer` now reads the raw F32
+rows for `q_proj`/`k_proj`/`v_proj` and concatenates them into a single
+`[3*hidden, hidden]` weight at load time (row-major `[out_features,
+in_features]` layout — the three already-flat `[hidden, hidden]` row-major
+buffers concatenate directly into the fused layout with no interleaving
+needed), populating the `qkv_weight` field of the shared `AttentionWeights`
+struct (previously dead — no model in this repo, including `nemotron_asr`
+which uses the same shared relative-attention module, actually populated it).
+`build_encoder_layer` in `encoder.cpp` now does one `Linear(hidden, 3*hidden)`
+matmul and slices the result into Q/K/V instead of three separate
+`Linear(hidden, hidden)` calls. This is a pure reorganization, not a
+precision trade — validated via the parity harness to be **numerically
+identical** to the pre-fusion path at both `native` (cosine 0.972258, exact
+match) and `q8_0` (cosine 0.967974, exact match) precision, and the
+golden-transcription test still matches exactly on both backends. Measured
+effect on wall time: **no clear change** on this hardware (CPU and CUDA, both
+within run-to-run noise) — dispatch/kernel-launch overhead isn't the
+bottleneck at this graph size on this machine, so the three-matmul and
+one-matmul forms cost about the same here. Kept anyway: it's free (zero
+accuracy cost, fewer graph nodes, simpler code), and CrispASR's own numbers
+suggest it matters more on other backends (their win was measured on Metal/
+ARM CPU) or under conditions this single-clip single-machine benchmark
+doesn't exercise (batched/concurrent serving, different GPU generations) —
+exactly the kind of thing that's cheap to carry once validated correct, even
+without a local win to show for it today.
 
 **Why CUDA has no PyTorch comparison point.** `nemo_asr` on this GPU hits
 `torch.OutOfMemoryError` just loading the model — this 3.6GB card's VRAM

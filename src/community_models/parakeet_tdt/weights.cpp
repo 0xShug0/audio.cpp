@@ -95,9 +95,26 @@ ParakeetEncoderLayerWeights load_encoder_layer(
     layer.ff1_linear1 = {store.load_tensor(source, p + ".feed_forward1.linear1.weight", matmul_st, {enc.intermediate_size, h}), std::nullopt};
     layer.ff1_linear2 = {store.load_tensor(source, p + ".feed_forward1.linear2.weight", matmul_st, {h, enc.intermediate_size}), std::nullopt};
     layer.norm_attn = binding::norm_from_source(store, source, p + ".norm_self_att", h);
-    layer.self_attn.q_weight = store.load_tensor(source, p + ".self_attn.q_proj.weight", matmul_st, {h, h});
-    layer.self_attn.k_weight = store.load_tensor(source, p + ".self_attn.k_proj.weight", matmul_st, {h, h});
-    layer.self_attn.v_weight = store.load_tensor(source, p + ".self_attn.v_proj.weight", matmul_st, {h, h});
+    // Fused QKV: one [3h, h] matmul instead of three separate [h, h] matmuls per
+    // layer. Read the raw F32 rows for q/k/v and concatenate along the
+    // output-feature axis: HF/PyTorch Linear weight layout is [out_features,
+    // in_features] row-major with in_features contiguous per row, so
+    // concatenating the three already-flat [h, h] row-major buffers in q/k/v
+    // order produces exactly the [3h, h] row-major layout of a single fused
+    // Linear(h, 3h) — no interleaving needed, q_weight/k_weight/v_weight are
+    // left unset (build_encoder_layer only ever reads qkv_weight).
+    {
+        auto q_f32 = source.require_f32(p + ".self_attn.q_proj.weight", {h, h});
+        auto k_f32 = source.require_f32(p + ".self_attn.k_proj.weight", {h, h});
+        auto v_f32 = source.require_f32(p + ".self_attn.v_proj.weight", {h, h});
+        std::vector<float> qkv_f32;
+        qkv_f32.reserve(q_f32.size() + k_f32.size() + v_f32.size());
+        qkv_f32.insert(qkv_f32.end(), q_f32.begin(), q_f32.end());
+        qkv_f32.insert(qkv_f32.end(), k_f32.begin(), k_f32.end());
+        qkv_f32.insert(qkv_f32.end(), v_f32.begin(), v_f32.end());
+        layer.self_attn.qkv_weight = store.make_from_f32(
+            engine::core::TensorShape::from_dims({3 * h, h}), matmul_st, std::move(qkv_f32));
+    }
     layer.self_attn.out_weight = store.load_tensor(source, p + ".self_attn.o_proj.weight", matmul_st, {h, h});
     layer.pos_weight = store.load_tensor(source, p + ".self_attn.relative_k_proj.weight", matmul_st, {h, h});
     layer.pos_bias_u = store.load_f32_tensor(source, p + ".self_attn.bias_u", {enc.heads, hd});

@@ -148,9 +148,18 @@ engine::core::TensorValue build_encoder_layer(
 
     const int64_t head_dim = hidden_size / heads;
     const float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
-    auto q = engine::modules::LinearModule({hidden_size, hidden_size, false}).build(ctx, attn_input, {weights.self_attn.q_weight, std::nullopt});
-    auto k = engine::modules::LinearModule({hidden_size, hidden_size, false}).build(ctx, attn_input, {weights.self_attn.k_weight, std::nullopt});
-    auto v = engine::modules::LinearModule({hidden_size, hidden_size, false}).build(ctx, attn_input, {weights.self_attn.v_weight, std::nullopt});
+    if (!weights.self_attn.qkv_weight.has_value()) {
+        throw std::runtime_error("Parakeet TDT encoder layer requires a fused QKV weight");
+    }
+    // One [hidden, 3*hidden] matmul instead of three separate [hidden, hidden]
+    // matmuls — see the load-time fusion comment in weights.cpp's load_encoder_layer.
+    auto qkv = engine::modules::LinearModule({hidden_size, 3 * hidden_size, false}).build(ctx, attn_input, {*weights.self_attn.qkv_weight, std::nullopt});
+    auto q = engine::modules::SliceModule({2, 0, hidden_size}).build(ctx, qkv);
+    auto k = engine::modules::SliceModule({2, hidden_size, hidden_size}).build(ctx, qkv);
+    auto v = engine::modules::SliceModule({2, 2 * hidden_size, hidden_size}).build(ctx, qkv);
+    q = ai::ensure_contiguous_layout(ctx, q);
+    k = ai::ensure_contiguous_layout(ctx, k);
+    v = ai::ensure_contiguous_layout(ctx, v);
 
     q = ai::reshape_heads(ctx, q, heads, head_dim);
     k = ai::reshape_heads(ctx, k, heads, head_dim);
