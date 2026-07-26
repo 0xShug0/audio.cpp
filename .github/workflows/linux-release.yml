@@ -126,9 +126,19 @@ jobs:
       - name: Create release and upload packages
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
+          mapfile -d '' assets < <(find dist -type f -print0)
+          if [[ "${#assets[@]}" -ne 10 ]]; then
+            printf 'Expected 10 release files, found %s:\n' "${#assets[@]}" >&2
+            printf '  %s\n' "${assets[@]}" >&2
+            exit 1
+          fi
+
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
           fi
-          gh release upload "$TAG" dist/* --clobber
+          for asset in "${assets[@]}"; do
+            gh release upload "$TAG" "$asset" --clobber
+          done
