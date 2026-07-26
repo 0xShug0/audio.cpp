@@ -501,6 +501,14 @@ add_library(engine_runtime STATIC
     src/models/seed_vc/v2_cfm.cpp
     src/models/seed_vc/session.cpp
     src/models/seed_vc/loader.cpp
+    src/models/rvc/assets.cpp
+    src/models/rvc/hubert.cpp
+    src/models/rvc/native_pipeline.cpp
+    src/models/rvc/retrieval_index.cpp
+    src/models/rvc/session.cpp
+    src/models/rvc/synthesizer.cpp
+    src/models/rvc/voice_model.cpp
+    src/models/rvc/loader.cpp
     src/models/chatterbox/assets.cpp
     src/models/chatterbox/campplus_encoder_impl.cpp
     src/models/chatterbox/audio_features.cpp

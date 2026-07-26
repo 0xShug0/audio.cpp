@@ -30,6 +30,7 @@
 #include "engine/models/qwen3_tts/loader.h"
 #include "engine/community_models/vietneu_tts/loader.h"
 #include "engine/models/roformer/loader.h"
+#include "engine/models/rvc/loader.h"
 #include "engine/models/silero_vad/session.h"
 #include "engine/models/seed_vc/loader.h"
 #include "engine/models/sortformer_diar/loader.h"
@@ -276,6 +277,7 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         engine::models::marblenet_vad::make_marblenet_vad_loader(),
         engine::models::vevo2::make_vevo2_loader(),
         engine::models::seed_vc::make_seed_vc_loader(),
+        engine::models::rvc::make_rvc_loader(),
         engine::models::chatterbox::make_chatterbox_loader(),
     };
     if (!config_path.has_value()) {

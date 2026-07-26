@@ -1,0 +1,84 @@
+{
+  "family": "rvc",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "voice_v1_chocola_index": "model:voices/v1/chocola/added_IVF732_Flat_nprobe_1.index",
+        "voice_v1_fraise_index": "model:voices/v1/fraise/added_IVF802_Flat_nprobe_1.index",
+        "voice_v2_default_index": "model:voices/v2/default/added_IVF511_Flat_nprobe_1_default_v2.index",
+        "voice_v2_manthos_index": "model:voices/v2/manthos/added_IVF2586_Flat_nprobe_1_manthos_v2.index"
+      },
+      "tensors": {
+        "support_hubert_base": {
+          "source": "weights:",
+          "prefix": "support_hubert_base"
+        },
+        "support_rmvpe": {
+          "source": "weights:",
+          "prefix": "support_rmvpe"
+        },
+        "voice_v1_chocola_checkpoint": {
+          "source": "weights:",
+          "prefix": "voice_v1_chocola_checkpoint"
+        },
+        "voice_v1_chocola_index_vectors": {
+          "source": "weights:",
+          "prefix": "voice_v1_chocola_index_vectors"
+        },
+        "voice_v1_fraise_checkpoint": {
+          "source": "weights:",
+          "prefix": "voice_v1_fraise_checkpoint"
+        },
+        "voice_v1_fraise_index_vectors": {
+          "source": "weights:",
+          "prefix": "voice_v1_fraise_index_vectors"
+        },
+        "voice_v2_default_checkpoint": {
+          "source": "weights:",
+          "prefix": "voice_v2_default_checkpoint"
+        },
+        "voice_v2_default_index_vectors": {
+          "source": "weights:",
+          "prefix": "voice_v2_default_index_vectors"
+        },
+        "voice_v2_manthos_checkpoint": {
+          "source": "weights:",
+          "prefix": "voice_v2_manthos_checkpoint"
+        },
+        "voice_v2_manthos_index_vectors": {
+          "source": "weights:",
+          "prefix": "voice_v2_manthos_index_vectors"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "safetensors": "../safetensors"
+      },
+      "files": {
+        "voice_v1_chocola_index": "safetensors:voices/v1/chocola/added_IVF732_Flat_nprobe_1.index",
+        "voice_v1_fraise_index": "safetensors:voices/v1/fraise/added_IVF802_Flat_nprobe_1.index",
+        "voice_v2_default_index": "safetensors:voices/v2/default/added_IVF511_Flat_nprobe_1_default_v2.index",
+        "voice_v2_manthos_index": "safetensors:voices/v2/manthos/added_IVF2586_Flat_nprobe_1_manthos_v2.index"
+      },
+      "tensors": {
+        "support_hubert_base": "safetensors:support/hubert_base.safetensors",
+        "support_rmvpe": "safetensors:support/rmvpe.safetensors",
+        "voice_v1_chocola_checkpoint": "safetensors:voices/v1/chocola/chocola2333333.safetensors",
+        "voice_v1_chocola_index_vectors": "safetensors:voices/v1/chocola/added_IVF732_Flat_nprobe_1.ivf.safetensors",
+        "voice_v1_fraise_checkpoint": "safetensors:voices/v1/fraise/fraise2333333.safetensors",
+        "voice_v1_fraise_index_vectors": "safetensors:voices/v1/fraise/added_IVF802_Flat_nprobe_1.ivf.safetensors",
+        "voice_v2_default_checkpoint": "safetensors:voices/v2/default/default.safetensors",
+        "voice_v2_default_index_vectors": "safetensors:voices/v2/default/added_IVF511_Flat_nprobe_1_default_v2.ivf.safetensors",
+        "voice_v2_manthos_checkpoint": "safetensors:voices/v2/manthos/manthos.safetensors",
+        "voice_v2_manthos_index_vectors": "safetensors:voices/v2/manthos/added_IVF2586_Flat_nprobe_1_manthos_v2.ivf.safetensors"
+      }
+    }
+  ]
+}

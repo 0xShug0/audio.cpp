@@ -925,6 +925,35 @@
       ]
     },
     {
+      "id": "rvc_packaged_voice_vc",
+      "coverage": "RVC native voice conversion with packaged voices, HuBERT, RMVPE, and packaged retrieval vectors",
+      "family": "rvc",
+      "model": "models/RVC/inference/safetensors",
+      "task": "vc",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "default_no_index",
+          "audio": "resources/sample_16k.wav",
+          "options": {
+            "rvc.voice": "default",
+            "rvc.index_rate": 0.0
+          }
+        },
+        {
+          "id": "default_indexed",
+          "audio": "resources/sample_16k.wav",
+          "options": {
+            "rvc.voice": "default",
+            "rvc.index_rate": 0.5
+          }
+        }
+      ]
+    },
+    {
       "id": "seed_vc_v2_vc_long_bigvgan",
       "coverage": "SeedVC V2 voice conversion, AR, CFM, CampPlus, BigVGAN chunked vocoder",
       "family": "seed_vc",
