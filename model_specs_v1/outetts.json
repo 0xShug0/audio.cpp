@@ -167,15 +167,15 @@
         "default": 1024
       },
       {
-        "name": "dac_graph_context_mb",
+        "name": "dac_graph_arena_mb",
         "type": "int",
-        "description": "DAC decoder graph context size in MiB; default 1536.",
+        "description": "DAC decoder graph arena size in MiB; default 1536.",
         "required": false,
         "min": 1,
         "default": 1536
       },
       {
-        "name": "aligner_model_path",
+        "name": "aligner_path",
         "type": "path",
         "description": "Optional Qwen3 Forced Aligner override. Cloning automatically uses the aligner embedded in a standalone OuteTTS GGUF when present.",
         "required": false
