@@ -386,6 +386,40 @@ The C++/ggml path runs comfortably in that same budget. This isn't really a
 run here at all" — worth knowing if you're targeting small/consumer GPUs
 rather than datacenter cards.
 
+## Backends and memory
+
+Both backends were re-validated after the CPU optimization pass, on the merged
+tree.
+
+| | CPU (12 threads) | CUDA (GTX 1650 Max-Q) |
+|---|---|---|
+| encoder compute, 7.4s clip | ~1140 ms | ~124 ms |
+| encoder compute, 60s clip | — | ~940 ms |
+| peak host RSS, f32 | 3843 MiB | 1818 MiB |
+| peak host RSS, q8_0 | 1078 MiB | — |
+| peak VRAM | — | 2642 MiB of 4096 |
+
+Notes:
+
+- **q8_0 cuts host RSS by 3.6x** (3843 → 1078 MiB), which is a bigger practical
+  difference than its 1.79x speed win on memory-constrained machines.
+- **VRAM fits comfortably in 4 GB**, with headroom. Worth contrasting with the
+  reference implementation: `nemo_asr` cannot load this model on this same card
+  at all — PyTorch's own overhead on top of the weights exhausts the 4 GB
+  budget before inference starts.
+- The graph right-sizing fix applies on CUDA too, and by a similar factor: a
+  7.4s clip on a 60s-capacity graph would run the full 60s cost (~940 ms) and
+  now runs at ~126 ms, about **7.5x**, with the transcription corrected in the
+  same way as on CPU.
+
+**CPU and CUDA agree numerically.** Dumping `enc_out` on each backend through
+the parity harness (`--backend cpu` / `--backend cuda`) gives cosine
+**0.99999988**, relative RMS 3.5e-06, max absolute difference 2.6e-06, with
+bit-identical mel features. That is float32 accumulation-order noise between
+different kernel implementations, and it is the check that confirms the
+view-based attention rewrite — verified bit-exact on CPU, where operands get
+materialized — is also correct under CUDA's kernels.
+
 ## Benchmark methodology
 
 Wall-clock numbers here move
