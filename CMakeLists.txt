@@ -293,6 +293,11 @@ add_library(engine_runtime STATIC
     src/community_models/glm_tts/prompt.cpp
     src/community_models/glm_tts/speech_tokenizer.cpp
     src/community_models/glm_tts/tokenizer_text.cpp
+    src/community_models/inflect_v2/assets.cpp
+    src/community_models/inflect_v2/frontend.cpp
+    src/community_models/inflect_v2/loader.cpp
+    src/community_models/inflect_v2/runtime.cpp
+    src/community_models/inflect_v2/session.cpp
     src/community_models/outetts/assets.cpp
     src/community_models/outetts/dac.cpp
     src/community_models/outetts/llama.cpp
@@ -577,6 +582,13 @@ add_library(engine_runtime STATIC
     src/models/marblenet_vad/runtime.cpp
     src/models/marblenet_vad/session.cpp
 )
+
+if (MSVC)
+    set_source_files_properties(
+        src/community_models/inflect_v2/frontend.cpp
+        PROPERTIES COMPILE_OPTIONS /utf-8
+    )
+endif()
 
 add_library(cjson_vendor STATIC
     external/cJSON/cJSON.c
@@ -905,6 +917,14 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME outetts_generation_budget_test
         COMMAND outetts_generation_budget_test
+    )
+
+    add_engine_unittest(inflect_v2_frontend_test tests/unittests/test_inflect_v2_frontend.cpp)
+    target_include_directories(inflect_v2_frontend_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME inflect_v2_frontend_test
+        COMMAND inflect_v2_frontend_test
     )
 
     add_engine_unittest(subtitle_formatter_test tests/unittests/test_subtitle_formatter.cpp)

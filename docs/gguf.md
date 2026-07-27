@@ -66,6 +66,7 @@ Status labels:
 | `higgs_audio_tts` | Done | Pass | --- | Pass | Pass |
 | `htdemucs` | Done | Pass | --- | Pass | Pass (drift) |
 | `hviske_asr` | Done | Pass | --- | --- | Pass |
+| `inflect_v2` | Done | Pass | Pass | --- | --- |
 | `index_tts2` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `irodori_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |

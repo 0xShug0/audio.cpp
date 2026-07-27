@@ -15,6 +15,7 @@
 | IndexTTS2 | `index_tts2` | `tts` | [IndexTTS2](#indextts2) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
+| Inflect Micro/Nano v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
@@ -558,6 +559,25 @@ audiocpp_cli --task clon --family glm_tts \
 
 See the [GLM-TTS community model guide](community_models/glm_tts.md) for
 standalone GGUF packaging, controls, and validation results.
+
+## Inflect v2
+
+Inflect Micro v2 and Nano v2 are compact English offline TTS models with a
+shared native GGML runtime. They require an external eSpeak-ng installation:
+
+```bash
+uv run --with onnx --with safetensors python tools/model_manager.py install inflect_micro_v2 --models-root models
+
+audiocpp_cli --task tts --family inflect_v2 \
+  --model models/Inflect-Micro-v2 --backend cpu \
+  --text "Hello from Inflect Micro version two." \
+  --request-option speaking_rate=1.0 \
+  --request-option variation=0.667 \
+  --seed 0 --out inflect.wav
+```
+
+See the [Inflect v2 community model guide](community_models/inflect_v2.md) for
+Nano installation, eSpeak-ng paths, long-form behavior, and limitations.
 
 ## Supertonic
 

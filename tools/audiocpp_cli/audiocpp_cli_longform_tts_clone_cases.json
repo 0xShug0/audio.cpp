@@ -311,6 +311,49 @@
       ]
     },
     {
+      "id": "inflect_v2_tts_longform",
+      "coverage": "Inflect v2 fixed-voice TTS with repeated requests, punctuation-aware long-form chunking, graph reuse, and RTF measurement",
+      "family": "inflect_v2",
+      "model": "models/Inflect-Micro-v2",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "tts_longform_cold",
+          "text_repeat": {
+            "text": "At dawn the harbor station opens its windows. Porters stack wooden crates, bakers cross the square, and a violinist practices under the archway. Later, the lighthouse keeper reports a calm northern channel; the station master checks every ticket before sunset. ",
+            "chars": 783
+          },
+          "language": "en",
+          "speaking_rate": 1.0,
+          "seed": 1234,
+          "text_chunk_size": 280,
+          "options": {
+            "variation": 0.667,
+            "text_chunk_mode": "word_budget"
+          }
+        },
+        {
+          "id": "tts_longform_repeat",
+          "text_repeat": {
+            "text": "At dawn the harbor station opens its windows. Porters stack wooden crates, bakers cross the square, and a violinist practices under the archway. Later, the lighthouse keeper reports a calm northern channel; the station master checks every ticket before sunset. ",
+            "chars": 783
+          },
+          "language": "en",
+          "speaking_rate": 1.0,
+          "seed": 1234,
+          "text_chunk_size": 280,
+          "options": {
+            "variation": 0.667,
+            "text_chunk_mode": "word_budget"
+          }
+        }
+      ]
+    },
+    {
       "id": "index_tts2_longform_voice_clone_6000_emotion_text",
       "coverage": "IndexTTS2 longform voice clone with 6000-character text plus long emotion-text conditioning",
       "family": "index_tts2",

@@ -95,6 +95,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | Family | Task | Lang | Runtime | Contributor | What They Added |
 |---|---|---|---|---|---|
 | **glm_tts** | TTS, Clone | zh, en | GGUF | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](docs/community_models/glm_tts.md) zero-shot synthesis and voice cloning support |
+| **inflect_v2** | TTS | en | GGUF FP32 | Jan [@JanWerder](https://github.com/JanWerder) | [Inflect Micro v2 and Nano v2](docs/community_models/inflect_v2.md) native offline synthesis |
 | **moss_tts_local** | TTS, Clone, Ctrl | auto, optional language hint | GGUF | [@justinjohn0306](https://github.com/justinjohn0306) | MOSS-TTS-Local Transformer v1.5 support |
 | **outetts** | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | GGUF | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
 | **vietneu_tts** | TTS, Clone | vi, en | GGUF | Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS-v3-Turbo](docs/community_models/vietneu_tts.md) TTS and voice cloning support |

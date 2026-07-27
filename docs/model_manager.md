@@ -106,6 +106,8 @@ Packages whose loaders are not registered in the current release tree are listed
 | `higgs_audio_v3_tts_4b` | Higgs Audio v3 TTS 4B GGUF Q8_0 | **Yes** |
 | `htdemucs` | HTDemucs | No |
 | `hviske_asr` | Hviske ASR | **Yes** |
+| `inflect_micro_v2` | Inflect Micro v2 FP32 | No |
+| `inflect_nano_v2` | Inflect Nano v2 FP32 | No |
 | `irodori_tts_500m_v3` | Irodori-TTS 500M v3 | No |
 | `irodori_tts_600m_v3_voice_design` | Irodori-TTS 600M v3 VoiceDesign | No |
 | `index_tts2` | IndexTTS-2 | **Yes** |
