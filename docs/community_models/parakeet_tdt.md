@@ -53,6 +53,13 @@ produced an empty log; see the commit fixing `configure_logging` wiring).
 | audio.cpp, `matmul_weight_type=q8_0` + tuned threads | 830.9 ms (RTF 0.112, 9.0x real-time) | 132.1 ms (RTF 0.018, 56.3x real-time) |
 | audio.cpp, above + conv-pointwise reclassification fix | **~750 ms** (RTF 0.101, **9.9x** real-time) | ~138 ms (RTF 0.019, 53.9x real-time, no clear change) |
 
+Separately from the table above (which is all same-length, matched-capacity
+work), the largest single CPU win in this model's history was not a kernel or
+a precision change at all: it was **not running the graph oversized**. A 7.4s
+clip on a session prepared with a 60s audio contract went from 10928 ms to
+1140 ms — 9.6x — and stopped dropping a sentence while it was at it. See the
+graph-capacity section below.
+
 This machine got noisier (shared background load) partway through this
 history, enough that later single-shot end-to-end numbers aren't reliably
 comparable table-row-to-table-row — the fused-QKV and graph-optimizer
@@ -71,10 +78,18 @@ Two things drove essentially the entire gap between the "default settings" row
 and PyTorch, both found by actually looking at the timing breakdown instead of
 just the end-to-end number (which was previously impossible — see above):
 
-- **Thread count.** This CPU is 6 physical / 12 logical cores. 8 threads (an
-  arbitrary default) oversubscribes; 6 is consistently fastest, 12 is
-  consistently worst (contention). Sweep it on your own hardware — the
-  optimum is core-count-dependent, not a fixed number.
+- **Thread count.** This CPU is 6 physical / 12 logical cores, and 12 threads
+  is fastest: 3.1% faster than 6 and 1.1% faster than 8, measured with the
+  drift-cancelling A/B described below. (An earlier revision of this document
+  claimed the opposite — "6 is consistently fastest, 12 is consistently worst
+  (contention)". That conclusion came from sequential before/after runs on a
+  thermally drifting machine and did not survive a controlled comparison. The
+  standalone GEMM microbenchmark agrees with the corrected result: 95.7
+  GFLOP/s at 6 threads versus 138.6 at 12.) The end-to-end gain is much
+  smaller than the GEMM gain because the non-GEMM ops are memory-bound and do
+  not benefit from hyperthreads. Sweep it on your own hardware — the optimum
+  is core-count-dependent, not a fixed number — but sweep it *interleaved*,
+  not sequentially.
 - **Weight precision.** `parakeet_tdt.matmul_weight_type` defaults to
   `native` (F32, since the checkpoint ships F32 weights) and is a session
   option, not a fixed choice — `native|f32|f16|bf16|q8_0` are all available
@@ -87,19 +102,50 @@ just the end-to-end number (which was previously impossible — see above):
   time in every configuration measured; that's where quantization actually
   pays off; frontend and decoder are already a few percent of the total each.
 
-**Why this isn't the default (yet).** Quantizing matmul weights is a real,
-measured accuracy trade — small, but not zero: comparing against the NeMo
-reference via the [numerical parity harness](../../tests/parakeet_tdt/parity/README.md),
-`enc_out` cosine similarity drops from 0.972258 (native) to 0.968028 (q8_0)
-— comparable in size to the float32 accumulation noise already present
-between the isolated single-layer graph and the full 24-layer production
-graph (see that harness's README for why that gap exists at all), not a
-cliff, and transcription was still exactly correct in every configuration
-tested. But it's only been validated against this one clip; defaulting
-everyone into reduced precision without broader validation would be the
-wrong call. If you want the speed and can tolerate (or want to verify for
-your own audio) a small accuracy trade, turn it on explicitly with the
-session option above.
+**What quantization actually costs, measured across 24 languages.** The
+earlier version of this section justified keeping `native` as the default on
+the grounds that quantization had "only been validated against this one clip".
+That has now been done properly, with the
+[multilingual harness](../../tests/parakeet_tdt/multilingual/README.md): 120
+FLEURS clips, 5 per language, across the 24 European languages the model
+supports that FLEURS covers, 21.8 minutes of audio.
+
+| weight type | encode speed | transcript identical to f32 | WER vs f32 | absolute WER |
+|---|---|---|---|---|
+| `native` (f32) | 1.00x | 100% | — | 0.1338 |
+| `f16` | ~1.00x | 99.2% | 0.0003 | 0.1336 |
+| `bf16` | **1.14x** | 99.2% | 0.0004 | 0.1334 |
+| `q8_0` | **1.79x** | 91.7% | 0.0062 | 0.1331 |
+
+The headline is that **q8_0's transcription churn is not the same thing as
+quality loss.** It changes 8.3% of transcripts, but absolute WER against the
+human reference is flat — 0.1331 vs f32's 0.1338, a difference far inside the
+noise of a 120-clip sample. Inspecting the diffs shows why: many are cosmetic
+(`T Rex` → `T-Rex`, `80 km/50 mil` → `80 km 50 mil`), and where real words
+change, q8_0 is sometimes *right* where f32 was wrong (Hungarian
+`ez a helys turista` → `ez a hely sok turista`, which is the correct reading).
+Per-language it moves both ways: Estonian gets worse (0.164 → 0.184), Hungarian
+(0.140 → 0.117) and Slovenian (0.299 → 0.284) get better. With 5 clips per
+language those per-language numbers are individually noisy; treat the aggregate
+as the real signal and the per-language column as a check that no single
+language falls off a cliff. None does.
+
+So the honest guidance is:
+
+- **`bf16` is close to free**: 1.14x faster, 99.2% of transcripts byte-identical
+  to f32. If you want a speedup without thinking about it, take this one.
+- **`q8_0` is the real speedup**: 1.79x, with no measurable aggregate quality
+  cost on this corpus, but ~8% of transcripts will differ textually from an f32
+  run. That matters if you are diffing output against a stored f32 baseline; it
+  mostly does not matter if you care about what the text says.
+- **`f16` is pointless here**: same accuracy as bf16, no speedup (it is actually
+  slower than f32 single-core — 25.5 vs 27.8 GFLOP/s). ggml's win comes from
+  specific hand-tuned kernels, not from "fewer bits" as a general principle.
+
+`native` remains the default because it is the only setting that reproduces
+exactly, and because 120 clips at 5 per language is enough to rule out a cliff
+but not enough to certify a default for every language and domain. Turn the
+others on explicitly via the session option above.
 
 **Flash attention was tried and did not help — kept as an opt-in, not a default.**
 The FastConformer encoder's relative-position self-attention (Transformer-XL
