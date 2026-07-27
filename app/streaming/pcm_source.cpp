@@ -35,6 +35,19 @@ float decode_f32le(const unsigned char * bytes) {
     return value;
 }
 
+int pcm_sample_format_bytes(PcmSampleFormat format) {
+    return format == PcmSampleFormat::S16LE ? 2 : 4;
+}
+
+// Required on Windows, where stdin's default text mode mangles PCM bytes; a no-op elsewhere.
+void set_stdin_binary_mode() {
+#ifdef _WIN32
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
+        throw std::runtime_error("failed to switch stdin to binary mode");
+    }
+#endif
+}
+
 }  // namespace
 
 PcmSampleFormat parse_pcm_sample_format(std::string_view name) {
@@ -46,10 +59,6 @@ PcmSampleFormat parse_pcm_sample_format(std::string_view name) {
 
 std::string to_string(PcmSampleFormat format) {
     return format == PcmSampleFormat::S16LE ? "s16le" : "f32le";
-}
-
-int pcm_sample_format_bytes(PcmSampleFormat format) {
-    return format == PcmSampleFormat::S16LE ? 2 : 4;
 }
 
 AudioChunkStream make_pcm_chunk_stream(
@@ -88,14 +97,6 @@ AudioChunkStream make_pcm_chunk_stream(
         return received == bytes.size();
     };
     return stream;
-}
-
-void set_stdin_binary_mode() {
-#ifdef _WIN32
-    if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
-        throw std::runtime_error("failed to switch stdin to binary mode");
-    }
-#endif
 }
 
 AudioChunkStream make_stdin_pcm_stream(AudioStreamFormat format, PcmSampleFormat sample_format) {

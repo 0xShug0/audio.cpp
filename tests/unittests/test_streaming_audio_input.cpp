@@ -280,9 +280,6 @@ void test_format_parsing_and_validation() {
     require(
         minitts::app::parse_pcm_sample_format("f32le") == minitts::app::PcmSampleFormat::F32LE,
         "f32le parse");
-    require_eq(minitts::app::pcm_sample_format_bytes(minitts::app::PcmSampleFormat::S16LE), 2, "s16le width");
-    require_eq(minitts::app::pcm_sample_format_bytes(minitts::app::PcmSampleFormat::F32LE), 4, "f32le width");
-
     bool rejected = false;
     try {
         (void)minitts::app::parse_pcm_sample_format("s24le");
