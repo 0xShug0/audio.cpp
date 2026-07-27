@@ -412,6 +412,21 @@ Notes:
   now runs at ~126 ms, about **7.5x**, with the transcription corrected in the
   same way as on CPU.
 
+**Parity against NeMo, re-verified after the optimization pass.** The
+reference dump was regenerated from scratch (torch 2.13.0+cu130, nemo 2.7.3)
+and all three stages pass on both backends:
+
+| stage | CPU | CUDA | threshold |
+|---|---|---|---|
+| `mel_features` | 1.000000 | 1.000000 | >= 0.999 |
+| `layer_0` | 1.000000 | 1.000000 | >= 0.999 |
+| `enc_out` | 0.972258 | 0.972258 | >= 0.97 |
+
+`enc_out` cosine is **identical to the value measured before any of the
+optimizations** in this report, which is the strongest available statement
+that they changed no math: correctness here is confirmed directly against
+NeMo rather than inherited from an internal baseline.
+
 **CPU and CUDA agree numerically.** Dumping `enc_out` on each backend through
 the parity harness (`--backend cpu` / `--backend cuda`) gives cosine
 **0.99999988**, relative RMS 3.5e-06, max absolute difference 2.6e-06, with

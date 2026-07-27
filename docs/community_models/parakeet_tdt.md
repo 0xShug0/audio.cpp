@@ -104,6 +104,8 @@ and rejected are in
   exact setup and run commands. This is what actually caught the encoder
   conv-module bug below — the golden-transcription test alone did not, since
   greedy decoding happened to be robust enough to it on that one clip.
+  Currently passing on both backends: `mel_features` and `layer_0` at cosine
+  1.000000, `enc_out` at 0.972258 on CPU and CUDA alike.
 - Backends tested: CPU and CUDA (GTX 1650 Max-Q), both producing the exact same
   transcription.
 
