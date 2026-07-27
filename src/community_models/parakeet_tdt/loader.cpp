@@ -68,6 +68,7 @@ public:
             {"parakeet_tdt.weight_type", "native|f32|f16|bf16|q8_0", "Shared matmul weight storage type."},
             {"parakeet_tdt.matmul_weight_type", "native|f32|f16|bf16|q8_0", "Encoder and decoder matmul weight storage type."},
             {"parakeet_tdt.conv_weight_type", "native|f32|f16", "Convolution weight storage type."},
+            {"parakeet_tdt.encoder_flash_attention", "bool", "Run encoder self-attention through the fused flash-attention op; default false (measured slower on the hardware tested)."},
             {"parakeet_tdt.weight_context_mb", "mb", "Weight context arena size."},
             {"parakeet_tdt.encoder_graph_arena_mb", "mb", "Encoder graph arena size."},
             {"parakeet_tdt.decoder_graph_arena_mb", "mb", "Decoder graph arena size."},
