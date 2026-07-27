@@ -132,20 +132,33 @@ FP32 GGUF loading.
 
 The committed `inflect_v2_tts_longform` path case runs two 783-codepoint
 requests through one loaded session. Each request produces 12 chunks and a
-48.544-second WAV. On a Ryzen 7 7800X3D and RTX 4090 with CUDA 13.3:
+48.544-second WAV. The Windows host used a Ryzen 7 7800X3D and RTX 4090 with
+CUDA 13.3. The Linux CPU run used Debian 13 under WSL2, GCC 14.2, and the
+system `libespeak-ng.so.1` without explicit session paths:
 
-| Backend | Cold request | Repeated request | RTF cold / repeat | Memory |
+| Environment | Cold request | Repeated request | RTF cold / repeat | Memory |
 |---|---:|---:|---:|---:|
-| CPU | `11952.7 ms` | `11485.5 ms` | `0.246 / 0.237` | `370.17 MiB` observed peak RSS |
-| CUDA | `672.274 ms` | `563.121 ms` | `0.0138 / 0.0116` | Per-process VRAM unavailable from NVML under Windows WDDM |
+| Windows CPU | `11952.7 ms` | `11485.5 ms` | `0.246 / 0.237` | `370.17 MiB` observed peak RSS |
+| Windows CUDA | `672.274 ms` | `563.121 ms` | `0.0138 / 0.0116` | Per-process VRAM unavailable from NVML under Windows WDDM |
+| WSL2 Debian 13 CPU | `12492 ms` | `13182.3 ms` | `0.257 / 0.272` | Not measured |
 
-Within each backend, the two generated WAVs have identical frame counts and
-SHA-256 hashes:
+For Micro v2, the two generated WAVs have identical frame counts and SHA-256
+hashes within each environment:
 `2ff1deaf7abc70b34ebf830d1afac9fd87d70261962b60ed56d8d93b334f2a27`
-on CPU and
+on Windows CPU,
 `b5ef595317439a75a17927e45561ac36120e56f0350347eaf6e068af5d4de4fa`
-on CUDA. Trace output records duration- and decoder-graph cache hits; the
+on CUDA, and
+`187ac7df2ef186a4ce9048379fffb16e7e5728b6d6464215a2c790168feffed1`
+under WSL2. Trace output records duration- and decoder-graph cache hits; the
 retained caches are bounded to four duration shapes and two decoder shapes.
+
+Nano v2 was also run through the same WSL2 path case. It produced two
+byte-identical 48.512-second WAVs with SHA-256
+`0e3182545a604c88725108962d16db896dd4a23ef6e9f4d8b9eb25336b3d5f79`.
+Across three runs, cold-request time ranged from `7378.31 ms` to `8155.06 ms`
+and repeated-request time ranged from `6762.01 ms` to `23046.2 ms`. The slowest
+observed RTF was `0.475`. These WSL2 results establish runtime coverage, not a
+controlled Nano performance benchmark.
 
 ### Reproduce the validation
 
@@ -210,13 +223,41 @@ The generated WAVs, request files, commands, logs, and summaries are under:
 - `build-inflect/validation/inflect-v2-cpu/inflect_v2_tts_longform/`
 - `build-inflect-cuda/validation/inflect-v2-cuda/inflect_v2_tts_longform/`
 
+The Linux CPU validation can be reproduced from Debian 13 under WSL2. A
+system eSpeak-ng installation is discovered automatically, so no session
+options are needed:
+
+```bash
+sudo apt install build-essential cmake python3 espeak-ng libespeak-ng1
+
+cmake -S . -B build-inflect-wsl \
+  -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_TESTS=ON
+cmake --build build-inflect-wsl --parallel "$(nproc)" \
+  --target audiocpp_cli inflect_v2_frontend_test
+
+build-inflect-wsl/bin/inflect_v2_frontend_test
+build-inflect-wsl/bin/audiocpp_cli --list-loaders --json
+
+python3 tools/audiocpp_cli/run_audiocpp_cli_path_tests.py \
+  --cases tools/audiocpp_cli/audiocpp_cli_longform_tts_clone_cases.json \
+  --only inflect_v2_tts_longform \
+  --audiocpp-cli-bin build-inflect-wsl/bin/audiocpp_cli \
+  --model-path build-inflect/models/Inflect-Micro-v2 \
+  --backend cpu --threads 8 \
+  --out-root build-inflect-wsl/validation/inflect-v2-wsl --log
+```
+
+Use `build-inflect/models/Inflect-Nano-v2` as `--model-path` to repeat the
+same path test with Nano.
+
 ## Known limitations
 
 - English, one fixed voice, and offline TTS only.
 - eSpeak-ng and its data remain external runtime dependencies.
 - Only FP32 packages are supported.
-- CPU and CUDA are runtime-validated. Vulkan and Metal are not practically
-  validated for this release.
+- Windows CPU/CUDA and Linux CPU under WSL2 are runtime-validated. Native
+  Linux CUDA, Vulkan, and Metal are not practically validated for this
+  release.
 - CUDA deliberately performs duration alignment on CPU. CPU and CUDA are
   deterministic within a backend but are not bit-identical to each other.
 - Windows WDDM did not expose per-process VRAM through NVML, so no CUDA peak
