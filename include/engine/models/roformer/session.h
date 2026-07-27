@@ -35,6 +35,9 @@ private:
     int64_t fade_size_ = 0;
     int64_t border_ = 0;
     std::vector<float> chunk_window_;
+    std::vector<float> first_chunk_window_;
+    std::vector<float> last_chunk_window_;
+    std::vector<float> only_chunk_window_;
     std::vector<float> chunk_planar_work_;
     std::vector<float> result_work_;
     std::vector<float> counter_work_;

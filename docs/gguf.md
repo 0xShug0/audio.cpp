@@ -57,6 +57,7 @@ Status labels:
 | Family | Package-spec refactor | Safetensors tested after refactor | `orig` GGUF tested | 16-bit GGUF tested | `q8_0` GGUF tested |
 |---|---|---|---|---|---|
 | `ace_step` | Done | Pass | --- | Pass (drift) | Pass (drift) |
+| `bs_roformer` | Done | Pass | --- | --- | Pass |
 | `chatterbox` | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `citrinet_asr` | Done | Pass | --- | --- | Pass |
 | `fish_audio` | Done | Pass | --- | Pass | Pass |
