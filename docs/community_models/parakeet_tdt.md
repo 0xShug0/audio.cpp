@@ -95,12 +95,15 @@ just the end-to-end number (which was previously impossible — see above):
   option, not a fixed choice — `native|f32|f16|bf16|q8_0` are all available
   (`parakeet_tdt.conv_weight_type` separately, `native|f32|f16`). ggml's CPU
   backend has heavily hand-tuned Q8_0 dot-product kernels (the common case
-  for llama.cpp-style inference); F16/BF16 were measured *slower* than F32
-  here, not faster — the win is specifically from Q8_0's kernels, not from
-  "less precision" in general, so don't assume the other options help without
-  measuring. Encoder graph compute alone accounts for ~93-96% of total wall
-  time in every configuration measured; that's where quantization actually
-  pays off; frontend and decoder are already a few percent of the total each.
+  for llama.cpp-style inference), and Q8_0 is far and away the biggest win —
+  1.79x. BF16 is a smaller but real 1.14x; F16 is not a speedup at all and is
+  actually *slower* than F32 single-core. So the gain tracks which kernels
+  happen to be well optimized, not "fewer bits" as a general principle — don't
+  assume an option helps without measuring it. Encoder graph compute alone
+  accounts for ~93-96% of total wall time in every configuration measured;
+  that's where quantization pays off, and frontend and decoder are already
+  only a few percent of the total each. See the measured accuracy cost of
+  each below before picking one.
 
 **What quantization actually costs, measured across 24 languages.** The
 earlier version of this section justified keeping `native` as the default on
