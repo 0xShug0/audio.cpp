@@ -6,6 +6,7 @@
 | Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |
 | VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
 | HTDemucs | `htdemucs` | `sep` | [HTDemucs](#htdemucs) |
+| BS-RoFormer | `bs_roformer` | `sep` | [BS-RoFormer](#bs-roformer) |
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
 
 This page covers voice conversion, codec, and source-separation families. These models do not share one interface: conversion models consume source speech plus a target voice, while the separation models consume a mixture and write named stems.
@@ -89,6 +90,59 @@ audiocpp_cli --task sep --family htdemucs --model models/htdemucs --backend cuda
 | `--audio` | 44.1 kHz WAV path | required | Input music mixture. |
 | `--out-dir` | directory | required | Directory for separated stems. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
+
+## BS-RoFormer
+
+BS-RoFormer separates vocals from a 44.1 kHz music mixture using explicit,
+non-overlapping frequency bands. The native implementation accepts either the
+converted SafeTensors package or a standalone GGUF with the package spec and
+`config.json` embedded.
+
+| Field | Value |
+|---|---|
+| Family | `bs_roformer` |
+| Task | `sep` |
+| Modes | `offline` |
+| Input | 44.1 kHz mono or stereo WAV through `--audio` |
+| Output | `vocals.wav` and derived `instrumental.wav` under `--out-dir` |
+| Weight types | `native`, `f32`, `f16`, `bf16`, `q8_0` |
+
+Standalone GGUF:
+
+```bash
+audiocpp_cli --task sep --model models/BS-RoFormer-ep368_Q8/BS-RoFormer-ep368_Q8.gguf --backend cuda --audio song_44k.wav --out-dir stems
+```
+
+Converted SafeTensors package:
+
+```bash
+audiocpp_cli --task sep --family bs_roformer --model models/BS-RoFormer-ep368 --backend cuda --audio song_44k.wav --out-dir stems
+```
+
+CUDA uses F32-accumulating Flash Attention while CPU and other backends keep
+the explicit attention path. The packaged overlap count remains the
+quality-oriented default. Lower overlap is an opt-in speed/quality tradeoff:
+
+| Session option | Default | Notes |
+|---|---:|---|
+| `bs_roformer.num_overlap` | package `num_overlap` (`4` for ep368) | Set to `2` or `1` for fewer model passes. This is faster but changes boundary blending and can reduce separation quality. |
+| `bs_roformer.weight_type` | `native` on device backends | Optional storage override such as `f16` or `f32`; measure it on the target backend because converting Q8 weights to F16 is not necessarily faster. |
+
+Fast single-pass example:
+
+```bash
+audiocpp_cli --task sep --model models/BS-RoFormer-ep368_Q8/BS-RoFormer-ep368_Q8.gguf --backend cuda --audio song_44k.wav --out-dir stems-fast --session-option bs_roformer.num_overlap=1
+```
+
+The conversion helper preserves the checkpoint's fused QKV weights, explicit
+`freqs_per_bands` layout, global final RMSNorm, and mask-estimator depth:
+
+```bash
+python tests/bs_roformer/convert_reference_ckpt.py \
+  --ckpt model_bs_roformer.ckpt \
+  --config-path model_bs_roformer.yaml \
+  --output-dir models/BS-RoFormer
+```
 
 ## Mel-Band RoFormer
 

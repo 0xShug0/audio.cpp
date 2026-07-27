@@ -4,6 +4,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/runtime/options.h"
 
 #include <algorithm>
 #include <chrono>
@@ -72,7 +73,7 @@ RoformerSession::RoformerSession(
             : assets::TensorStorageType::Native;
     weight_storage_type_ = option_weight_type(
         RuntimeSessionBase::options(),
-        std::string(kMelBandRoformerFamily) + ".weight_type",
+        assets_->config.family + ".weight_type",
         default_weight_storage);
     runtime_ = std::make_unique<RoformerRuntime>(assets_, execution_context(), weight_storage_type_);
     const auto & config = runtime_->config();
@@ -83,7 +84,13 @@ RoformerSession::RoformerSession(
         throw std::runtime_error("RoFormer config num_overlap must be positive");
     }
     chunk_size_ = config.chunk_size;
-    const int64_t overlap = config.inference_num_overlap;
+    const int64_t overlap = runtime::parse_positive_i64_option(
+        RuntimeSessionBase::options().options,
+        {config.family + ".num_overlap"},
+        config.inference_num_overlap);
+    if (overlap > chunk_size_) {
+        throw std::runtime_error(config.family + ".num_overlap must not exceed chunk_size");
+    }
     step_ = chunk_size_ / overlap;
     fade_size_ = chunk_size_ / 10;
     border_ = chunk_size_ - step_;
@@ -91,6 +98,12 @@ RoformerSession::RoformerSession(
         throw std::runtime_error("RoFormer chunk step must be positive");
     }
     chunk_window_ = engine::audio::make_linear_fade_window(chunk_size_, fade_size_);
+    first_chunk_window_ = chunk_window_;
+    std::fill(first_chunk_window_.begin(), first_chunk_window_.begin() + fade_size_, 1.0f);
+    last_chunk_window_ = chunk_window_;
+    std::fill(last_chunk_window_.end() - fade_size_, last_chunk_window_.end(), 1.0f);
+    only_chunk_window_ = first_chunk_window_;
+    std::fill(only_chunk_window_.end() - fade_size_, only_chunk_window_.end(), 1.0f);
     chunk_planar_work_.resize(static_cast<size_t>(config.channels * chunk_size_));
     assets_->tensor_source->release_storage();
 }
@@ -98,7 +111,7 @@ RoformerSession::RoformerSession(
 RoformerSession::~RoformerSession() = default;
 
 std::string RoformerSession::family() const {
-    return std::string(kMelBandRoformerFamily);
+    return assets_->config.family;
 }
 
 runtime::VoiceTaskKind RoformerSession::task_kind() const {
@@ -137,17 +150,18 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
     const auto total_start = Clock::now();
 
     const auto & config = runtime_->config();
+    const std::string log_prefix = config.family + ".session.";
     const auto & request_audio = *request.audio_input;
     const bool original_mono = config.channels == 2 && request_audio.channels == 1;
     if (request_audio.sample_rate != config.sample_rate ||
         (request_audio.channels != config.channels && !original_mono)) {
         throw std::runtime_error("RoFormer run() audio_input does not match prepared audio contract");
     }
-    engine::debug::trace_log_scalar("mel_band_roformer.session.sample_rate", config.sample_rate);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.channels", config.channels);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.chunk_size", chunk_size_);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.step", step_);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.original_mono", original_mono);
+    engine::debug::trace_log_scalar(log_prefix + "sample_rate", config.sample_rate);
+    engine::debug::trace_log_scalar(log_prefix + "channels", config.channels);
+    engine::debug::trace_log_scalar(log_prefix + "chunk_size", chunk_size_);
+    engine::debug::trace_log_scalar(log_prefix + "step", step_);
+    engine::debug::trace_log_scalar(log_prefix + "original_mono", original_mono);
 
     const auto prepare_start = Clock::now();
     const auto audio = original_mono
@@ -186,9 +200,11 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
         total_length += 2 * border_;
         padded_borders = true;
     }
-    engine::debug::trace_log_scalar("mel_band_roformer.session.frames", total_length);
-    engine::debug::trace_log_scalar("mel_band_roformer.session.padded_borders", padded_borders);
-    engine::debug::timing_log_scalar("mel_band_roformer.session.audio_prepare_ms", engine::debug::elapsed_ms(prepare_start));
+    engine::debug::trace_log_scalar(log_prefix + "frames", total_length);
+    engine::debug::trace_log_scalar(log_prefix + "padded_borders", padded_borders);
+    engine::debug::timing_log_scalar(
+        log_prefix + "audio_prepare_ms",
+        engine::debug::elapsed_ms(prepare_start));
 
     result_work_.assign(static_cast<size_t>(audio.channels * total_length), 0.0f);
     counter_work_.assign(static_cast<size_t>(audio.channels * total_length), 0.0f);
@@ -201,7 +217,8 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
         chunk_size_ / 2 + 2,
     };
     const auto chunk_loop_start = Clock::now();
-    for (const auto & chunk : engine::audio::plan_audio_chunks(total_length, chunk_spec)) {
+    const auto chunk_plan = engine::audio::plan_audio_chunks(total_length, chunk_spec);
+    for (const auto & chunk : chunk_plan) {
         engine::audio::copy_planar_chunk(
             chunk_planar_work_,
             planar,
@@ -210,13 +227,13 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
             chunk,
             chunk_spec);
         const auto & vocals_planar = runtime_->separate_chunk(chunk_planar_work_);
-        std::vector<float> chunk_window = chunk_window_;
-        if (chunk.output_start_sample == 0) {
-            std::fill(chunk_window.begin(), chunk_window.begin() + fade_size_, 1.0f);
-        } else if (chunk.output_start_sample + chunk_size_ >= total_length) {
-            std::fill(chunk_window.end() - fade_size_, chunk_window.end(), 1.0f);
-        }
-
+        const bool first_chunk = chunk.output_start_sample == 0;
+        const bool last_chunk = chunk.output_start_sample + chunk_size_ >= total_length;
+        const auto & chunk_window = chunk_plan.size() == 1
+            ? only_chunk_window_
+            : (first_chunk
+                   ? first_chunk_window_
+                   : (last_chunk ? last_chunk_window_ : chunk_window_));
         engine::audio::overlap_add_planar_chunk(
             result_work_,
             counter_work_,
@@ -227,7 +244,9 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
             chunk_window,
             engine::audio::AudioChunkCounterMode::PerLane);
     }
-    engine::debug::timing_log_scalar("mel_band_roformer.session.chunk_loop_ms", engine::debug::elapsed_ms(chunk_loop_start));
+    engine::debug::timing_log_scalar(
+        log_prefix + "chunk_loop_ms",
+        engine::debug::elapsed_ms(chunk_loop_start));
 
     const auto assemble_start = Clock::now();
     vocals_planar_work_ = result_work_;
@@ -271,7 +290,9 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
     runtime::TaskResult result_task;
     result_task.named_audio_outputs.push_back({"vocals", std::move(vocals_audio), {}});
     result_task.named_audio_outputs.push_back({"instrumental", std::move(instrumental_audio), {{"derived", "mixture_minus_vocals"}}});
-    engine::debug::timing_log_scalar("mel_band_roformer.session.assemble_ms", engine::debug::elapsed_ms(assemble_start));
+    engine::debug::timing_log_scalar(
+        log_prefix + "assemble_ms",
+        engine::debug::elapsed_ms(assemble_start));
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(total_start));
     return result_task;
 }

@@ -247,6 +247,7 @@ and a reference voice longer than ~10s is auto-truncated (an 8G VRAM limit).
 - **Audio analysis (VAD/separation/alignment):** WAV input is auto-converted to 16 kHz mono before going to the model,
   and result timelines are computed at 16 kHz. Qwen3 forced alignment caps a single audio at ~115 seconds.
 - **Source separation:** HTDemucs outputs four tracks — drums/bass/other/vocals (long audio takes a while);
+  BS-RoFormer outputs vocals + accompaniment;
   Mel-Band RoFormer outputs a vocals track + an accompaniment track (mixture − vocals).
 - **IndexTTS2** (new in 0.3): Chinese/English voice cloning; a reference voice is **required**. Emotion control is in the
   advanced parameters: `emotion_text` holds an emotion description (setting it auto-enables `use_emotion_text`) +

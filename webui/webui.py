@@ -628,6 +628,9 @@ MODEL_PROFILES = {
     "mel_band_roformer": {
         "input_hint": "**Mel-Band RoFormer**：输出人声轨 + 伴奏轨。",
     },
+    "bs_roformer": {
+        "input_hint": "**BS-RoFormer**：输出人声轨 + 伴奏轨。",
+    },
     "nemotron_asr": {
         "input_hint": ("**Nemotron ASR**：100+ 语种；支持⚡流式转写"
                        "（勾选后边转边出字，长音频不用干等）。"),
@@ -720,6 +723,7 @@ MODEL_HINTS_EN = {
     "miocodec": "**MioCodec** reconstructs source content with the reference voice.",
     "htdemucs": "**HTDemucs** outputs drums, bass, other and vocals.",
     "mel_band_roformer": "**Mel-Band RoFormer** outputs vocals and accompaniment.",
+    "bs_roformer": "**BS-RoFormer** outputs vocals and accompaniment.",
     "nemotron_asr": "**Nemotron ASR** supports 100+ languages and streaming transcription.",
     "higgs_audio_stt": "**Higgs Audio STT** supports streaming transcription.",
     "vibevoice_asr": "**VibeVoice-ASR** uses offline transcription with automatic language and speaker segmentation.",
@@ -4499,9 +4503,6 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
 
         _wire_model_manager(sep_mm, SEP_TASKS, sep_hint)
         sep_btn.click(
-            lambda: (*(gr.update(value=None, visible=False)
-                       for _ in range(MAX_SEP_STEMS)), None, ""),
-            None, [*sep_stems, sep_files, sep_msg]).then(
             do_sep, [sep_model, sep_audio], [*sep_stems, sep_files, sep_msg])
 
     # ---------------- 音频分析 (vad / diar / align) ----------------
