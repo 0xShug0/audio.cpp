@@ -43,7 +43,7 @@ ConfuciusGenerationOptions generation_options(
     defaults.num_beams = runtime::parse_int_option(options, {"num_beams"}).value_or(defaults.num_beams);
     defaults.repetition_penalty =
         runtime::parse_float_option(options, {"repetition_penalty"}).value_or(defaults.repetition_penalty);
-    defaults.max_length = runtime::parse_i64_option(options, {"max_tokens"}).value_or(defaults.max_length);
+    defaults.max_tokens = runtime::parse_i64_option(options, {"max_tokens"}).value_or(defaults.max_tokens);
     defaults.num_inference_steps =
         runtime::parse_i64_option(options, {"num_inference_steps"}).value_or(defaults.num_inference_steps);
     defaults.guidance_scale =
@@ -71,7 +71,7 @@ ConfuciusGenerationOptions generation_options(
     if (defaults.num_beams <= 0) {
         throw std::runtime_error("Confucius4-TTS num_beams must be positive");
     }
-    if (defaults.max_length <= 0 || defaults.num_inference_steps <= 0 || defaults.max_text_tokens_per_segment <= 0) {
+    if (defaults.max_tokens <= 0 || defaults.num_inference_steps <= 0 || defaults.max_text_tokens_per_segment <= 0) {
         throw std::runtime_error("Confucius4-TTS length and step options must be positive");
     }
     if (defaults.cross_fade_duration < 0.0F || defaults.edge_fade_duration < 0.0F ||

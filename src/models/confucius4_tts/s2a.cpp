@@ -1049,8 +1049,8 @@ ConfuciusS2AMel ConfuciusS2ARuntime::infer_mel(
     const ConfuciusMelOutput & reference_mel,
     const ConfuciusStyleEmbedding & style,
     int64_t target_frames,
-    int64_t diffusion_steps,
-    float cfg_rate,
+    int64_t num_inference_steps,
+    float guidance_scale,
     uint32_t seed,
     uint64_t & rng_offset_blocks) {
     if (generation.semantic_codes.empty() || generation.latent.empty() ||
@@ -1064,13 +1064,13 @@ ConfuciusS2AMel ConfuciusS2ARuntime::infer_mel(
     if (total_frames <= 0 || reference_frames <= 0 || reference_frames > total_frames) {
         throw std::runtime_error("Confucius S2Mel CFM frame counts are invalid");
     }
-    if (diffusion_steps <= 0) {
-        throw std::runtime_error("Confucius S2Mel CFM diffusion steps must be positive");
+    if (num_inference_steps <= 0) {
+        throw std::runtime_error("Confucius S2Mel CFM num_inference_steps must be positive");
     }
     if (static_cast<int64_t>(style.values.size()) != kStyleDim) {
         throw std::runtime_error("Confucius S2Mel CFM style shape mismatch");
     }
-    const bool use_cfg = cfg_rate > 0.0F;
+    const bool use_cfg = guidance_scale > 0.0F;
     auto timing_start = Clock::now();
     prepare_cfm(total_frames, use_cfg);
     debug::timing_log_scalar("confucius4_tts.s2a.cfm.prepare_ms", engine::debug::elapsed_ms(timing_start));
@@ -1125,9 +1125,9 @@ ConfuciusS2AMel ConfuciusS2ARuntime::infer_mel(
     double x_batch_ms = 0.0;
     double update_ms = 0.0;
     float t = 0.0F;
-    float dt = 1.0F / static_cast<float>(diffusion_steps);
+    float dt = 1.0F / static_cast<float>(num_inference_steps);
     std::vector<float> x_batched(static_cast<size_t>((use_cfg ? 2 : 1) * kMelChannels * total_frames), 0.0F);
-    for (int64_t step = 1; step <= diffusion_steps; ++step) {
+    for (int64_t step = 1; step <= num_inference_steps; ++step) {
         timing_start = Clock::now();
         if (use_cfg) {
             const size_t row_values = static_cast<size_t>(kMelChannels * total_frames);
@@ -1149,13 +1149,13 @@ ConfuciusS2AMel ConfuciusS2ARuntime::infer_mel(
         for (int64_t i = 0; i < row_values; ++i) {
             float dphi = velocity.values[static_cast<size_t>(i)];
             if (use_cfg) {
-                dphi = (1.0F + cfg_rate) * dphi - cfg_rate * velocity.values[static_cast<size_t>(row_values + i)];
+                dphi = (1.0F + guidance_scale) * dphi - guidance_scale * velocity.values[static_cast<size_t>(row_values + i)];
             }
             x[static_cast<size_t>(i)] += dt * dphi;
         }
         t += dt;
-        if (step < diffusion_steps) {
-            dt = (static_cast<float>(step + 1) / static_cast<float>(diffusion_steps)) - t;
+        if (step < num_inference_steps) {
+            dt = (static_cast<float>(step + 1) / static_cast<float>(num_inference_steps)) - t;
         }
         zero_prompt_region(x, kMelChannels, total_frames, reference_frames);
         update_ms += engine::debug::elapsed_ms(timing_start);

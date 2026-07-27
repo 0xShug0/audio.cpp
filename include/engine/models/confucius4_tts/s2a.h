@@ -124,8 +124,8 @@ public:
         const ConfuciusMelOutput & reference_mel,
         const ConfuciusStyleEmbedding & style,
         int64_t target_frames,
-        int64_t diffusion_steps,
-        float cfg_rate,
+        int64_t num_inference_steps,
+        float guidance_scale,
         uint32_t seed,
         uint64_t & rng_offset_blocks);
     void release_pre_cfm_graphs();

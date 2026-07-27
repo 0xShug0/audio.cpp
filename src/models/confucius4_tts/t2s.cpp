@@ -1800,7 +1800,7 @@ ConfuciusT2SSemanticGeneration ConfuciusT2SRuntime::generate(const ConfuciusT2SG
     debug::timing_log_scalar("confucius4_tts.t2s.speaker.total_ms", debug::elapsed_ms(timing_start));
     const int beam_count = std::max(1, request.options.num_beams);
     const int64_t text_tokens = static_cast<int64_t>(request.text_tokens.size());
-    const int64_t max_new = std::max<int64_t>(1, request.options.max_length - text_tokens - 2);
+    const int64_t max_new = std::max<int64_t>(1, request.options.max_tokens - text_tokens - 2);
     timing_start = Clock::now();
     prepare_generation(text_tokens, max_new, beam_count);
     debug::timing_log_scalar("confucius4_tts.t2s.prepare_generation.total_ms", debug::elapsed_ms(timing_start));

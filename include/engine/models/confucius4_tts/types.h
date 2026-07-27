@@ -31,8 +31,8 @@ struct ConfuciusS2AConfig {
     int64_t semantic_embed_dim = 1024;
     int64_t lm_latent_dim = 1280;
     float estimator_mlp_ratio = 3.0F;
-    int64_t diffusion_steps = 25;
-    float inference_cfg_rate = 0.7F;
+    int64_t num_inference_steps = 25;
+    float guidance_scale = 0.7F;
 };
 
 struct ConfuciusAudioConfig {
@@ -88,7 +88,7 @@ struct ConfuciusGenerationOptions {
     int top_k = 30;
     int num_beams = 3;
     float repetition_penalty = 10.0F;
-    int64_t max_length = 1520;
+    int64_t max_tokens = 1520;
     int64_t num_inference_steps = 25;
     float guidance_scale = 0.7F;
     int64_t max_text_tokens_per_segment = 80;
