@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -613,9 +614,31 @@ ParakeetEncodedAudio ParakeetEncoderRuntime::encode(
     engine::modules::fill_asr_keep_mask(mask_scratch_, graph.encoded_frames, valid3);
     engine::core::write_tensor_i32(graph.keep_mask, mask_scratch_);
 
-    // Full bidirectional attention: all frames see all other frames (no mask)
-    attention_mask_scratch_.resize(static_cast<size_t>(graph.encoded_frames * graph.encoded_frames));
-    std::fill(attention_mask_scratch_.begin(), attention_mask_scratch_.end(), 0.0f);
+    // Attention is fully bidirectional across the real frames, but the padded
+    // tail must be masked out of it.
+    //
+    // ensure_graph() reuses a graph whose capacity merely *exceeds* the request,
+    // and the input write above zero-pads up to that capacity. Zero input does
+    // not stay zero: every subsampling conv has a bias, so the padded tail
+    // carries nonzero garbage into the encoder stack. An all-zero attention
+    // mask lets the real frames attend to that garbage, and because softmax
+    // normalizes across keys, it silently rescales every real frame's attention
+    // — feeding a 60s-capacity graph a 7.4s clip drops a whole sentence from the
+    // transcription.
+    //
+    // Mask by key column only, never by query row: that leaves the padded query
+    // rows (whose outputs are discarded below anyway) with a full set of valid
+    // keys, so no softmax row degenerates to all -inf and produces NaN.
+    const size_t frames = static_cast<size_t>(graph.encoded_frames);
+    attention_mask_scratch_.assign(frames * frames, 0.0f);
+    if (valid3 > 0 && valid3 < graph.encoded_frames) {
+        for (size_t query = 0; query < frames; ++query) {
+            std::fill(
+                attention_mask_scratch_.begin() + static_cast<std::ptrdiff_t>(query * frames + valid3),
+                attention_mask_scratch_.begin() + static_cast<std::ptrdiff_t>((query + 1) * frames),
+                -std::numeric_limits<float>::infinity());
+        }
+    }
     engine::core::write_tensor_f32(graph.attention_mask, attention_mask_scratch_);
 
     engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
