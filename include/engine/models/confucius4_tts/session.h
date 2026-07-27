@@ -20,6 +20,8 @@
 
 namespace engine::models::confucius4_tts {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_confucius4_tts_loader();
+
 struct ConfuciusReferenceIdentity {
     std::string id;
 };

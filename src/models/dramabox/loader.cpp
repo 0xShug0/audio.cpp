@@ -39,17 +39,17 @@ runtime::CapabilitySet capabilities() {
 runtime::ModelCliInterface cli() {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"voice_ref", "wav", "Reference voice audio path."},
-        {"duration_seconds", "seconds", "Explicit target duration; zero uses prompt duration estimate."},
+        {"target_voice", "wav", "Reference voice audio path."},
+        {"duration_sec", "seconds", "Explicit target duration; zero uses prompt duration estimate."},
         {"num_inference_steps", "n", "LTX Euler diffusion steps."},
         {"guidance_scale", "float", "Classifier-free guidance scale."},
-        {"stg_scale", "float", "Spatio-temporal guidance scale."},
-        {"duration_multiplier", "float", "Prompt duration estimate multiplier."},
-        {"reference_duration_seconds", "seconds", "Reference voice crop/repeat duration."},
-        {"rescale_scale", "float", "Guidance rescale; omit for official auto mode."},
-        {"max_chunk_duration", "seconds", "Long-form chunk route threshold."},
-        {"target_chunk_duration", "seconds", "Long-form target chunk duration."},
-        {"crossfade_ms", "ms", "Long-form equal-power crossfade."},
+        {"spatio_temporal_guidance_scale", "float", "Spatio-temporal guidance scale."},
+        {"duration_scale", "float", "Prompt duration estimate scale."},
+        {"reference_duration_sec", "seconds", "Reference voice crop/repeat duration."},
+        {"guidance_rescale", "float|auto", "Guidance rescale; omit for official auto mode."},
+        {"audio_chunk_threshold_sec", "seconds", "Long-form chunk route threshold."},
+        {"audio_chunk_duration_sec", "seconds", "Long-form target chunk duration."},
+        {"cross_fade_duration_sec", "seconds", "Long-form equal-power cross-fade duration."},
         {"seed", "n", "Torch RNG seed."},
     };
     out.session_options = {

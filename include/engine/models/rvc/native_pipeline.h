@@ -12,20 +12,20 @@
 namespace engine::models::rvc {
 
 struct RvcInferenceConfig {
-    int f0_up_key = 0;
-    float index_rate = 0.0F;
-    int filter_radius = 3;
-    int resample_sr = 0;
+    int semitone_shift = 0;
+    float retrieval_blend = 0.0F;
+    int pitch_filter_radius = 3;
+    int output_sample_rate = 0;
     float rms_mix_rate = 0.25F;
-    float protect = 0.33F;
-    std::string f0_method = "rmvpe";
-    std::string f0_file;
-    std::string file_index;
+    float unvoiced_protection = 0.33F;
+    std::string pitch_extractor = "rmvpe";
+    std::string pitch_path;
+    std::string retrieval_index_path;
     int speaker_id = 0;
-    int x_pad = 1;
-    int x_query = 5;
-    int x_center = 30;
-    int x_max = 32;
+    int audio_pad_duration_sec = 1;
+    int split_query_sec = 5;
+    int split_center_sec = 30;
+    int split_threshold_sec = 32;
 };
 
 class RvcNativePipeline {

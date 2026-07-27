@@ -30,26 +30,26 @@ runtime::ModelMetadata metadata() {
 runtime::ModelCliInterface cli() {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"rvc.voice", "default|manthos|chocola|fraise", "RVC voice model id. Defaults to default."},
-        {"rvc.voice_model", "path", "Optional user RVC .pth/.pt voice checkpoint path."},
-        {"rvc.f0_method", "rmvpe", "Native pitch extractor. Defaults to rmvpe."},
-        {"rvc.f0_file", "path", "Optional CSV F0 override file with time,Hz rows."},
-        {"rvc.file_index", "path", "Optional user FAISS .index retrieval path for index_rate."},
-        {"rvc.index_rate", "0..1", "IVF retrieval blend rate. Defaults to 0."},
-        {"rvc.f0_up_key", "n", "Semitone pitch shift. Defaults to 0."},
-        {"rvc.filter_radius", "n", "Median filter radius for F0. Defaults to 3."},
-        {"rvc.resample_sr", "hz", "Output resample rate; 0 keeps model sample rate."},
-        {"rvc.rms_mix_rate", "float", "RMS mix rate. Defaults to 0.25."},
-        {"rvc.protect", "float", "Unvoiced consonant protection. Defaults to 0.33."},
-        {"rvc.speaker_id", "n", "Speaker embedding id for multi-speaker RVC checkpoints. Defaults to 0."},
-        {"rvc.x_pad", "seconds", "Long-audio chunk pad seconds. Defaults to 1."},
-        {"rvc.x_query", "seconds", "Long-audio quiet-point query window seconds. Defaults to 5."},
-        {"rvc.x_center", "seconds", "Long-audio split center stride seconds. Defaults to 30."},
-        {"rvc.x_max", "seconds", "Input seconds before quiet-point splitting. Defaults to 32."},
+        {"voice_id", "default|manthos|chocola|fraise", "Packaged RVC voice id. Defaults to default."},
+        {"voice_model_path", "path", "Optional user RVC .pth/.pt voice checkpoint path."},
+        {"pitch_extractor", "rmvpe", "Native pitch extractor. Defaults to rmvpe."},
+        {"pitch_path", "path", "Optional CSV pitch override file with time,Hz rows."},
+        {"retrieval_index_path", "path", "Optional user FAISS .index retrieval path for retrieval_blend."},
+        {"retrieval_blend", "0..1", "IVF retrieval blend rate. Defaults to 0."},
+        {"semitone_shift", "n", "Semitone pitch shift. Defaults to 0."},
+        {"pitch_filter_radius", "n", "Median filter radius for pitch. Defaults to 3."},
+        {"output_sample_rate", "hz", "Output sample rate; 0 keeps model sample rate."},
+        {"rms_mix_rate", "float", "RMS mix rate. Defaults to 0.25."},
+        {"unvoiced_protection", "float", "Unvoiced consonant protection. Defaults to 0.33."},
+        {"speaker_id", "n", "Speaker embedding id for multi-speaker RVC checkpoints. Defaults to 0."},
+        {"audio_pad_duration_sec", "seconds", "Long-audio chunk pad seconds. Defaults to 1."},
+        {"split_query_sec", "seconds", "Long-audio quiet-point query window seconds. Defaults to 5."},
+        {"split_center_sec", "seconds", "Long-audio split center stride seconds. Defaults to 30."},
+        {"split_threshold_sec", "seconds", "Input seconds before quiet-point splitting. Defaults to 32."},
     };
     out.session_options = {
         {"rvc.weight_type", "f32|native|f16|bf16|q8_0", "Tensor storage type for native RVC, HuBERT, and RMVPE weights. Defaults to f32."},
-        {"rvc.voice_model_cache_slots", "n", "User voice model cache slots; default 4, set 0 to disable."},
+        {"rvc.voice_cache_slots", "n", "User voice model cache slots; default 4, set 0 to disable."},
     };
     return out;
 }

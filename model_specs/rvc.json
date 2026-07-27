@@ -23,9 +23,9 @@
   "options": {
     "request": [
       {
-        "name": "voice",
+        "name": "voice_id",
         "type": "enum",
-        "description": "Packaged RVC voice id; default selects the v2 default voice. Ignored when voice_model is provided.",
+        "description": "Packaged RVC voice id; default selects the v2 default voice. Ignored when voice_model_path is provided.",
         "values": [
           "default",
           "manthos",
@@ -36,13 +36,13 @@
         "default": "default"
       },
       {
-        "name": "voice_model",
+        "name": "voice_model_path",
         "type": "path",
         "description": "Optional user RVC .pth or .pt voice checkpoint path. When set, this overrides the packaged voice id.",
         "required": false
       },
       {
-        "name": "f0_method",
+        "name": "pitch_extractor",
         "type": "enum",
         "description": "Pitch extraction method for F0-enabled voices; the native path currently supports rmvpe only.",
         "values": [
@@ -52,19 +52,19 @@
         "default": "rmvpe"
       },
       {
-        "name": "f0_file",
+        "name": "pitch_path",
         "type": "path",
         "description": "Optional CSV F0 override file with time,Hz rows sorted by time.",
         "required": false
       },
       {
-        "name": "file_index",
+        "name": "retrieval_index_path",
         "type": "path",
-        "description": "Optional user FAISS .index retrieval path used when index_rate is greater than 0 for a user voice model.",
+        "description": "Optional user FAISS .index retrieval path used when retrieval_blend is greater than 0 for a user voice model.",
         "required": false
       },
       {
-        "name": "index_rate",
+        "name": "retrieval_blend",
         "type": "float",
         "description": "IVF retrieval feature blend rate; default 0 disables retrieval blending.",
         "required": false,
@@ -73,14 +73,14 @@
         "default": 0.0
       },
       {
-        "name": "f0_up_key",
+        "name": "semitone_shift",
         "type": "int",
         "description": "Semitone pitch shift applied before synthesis; default 0.",
         "required": false,
         "default": 0
       },
       {
-        "name": "filter_radius",
+        "name": "pitch_filter_radius",
         "type": "int",
         "description": "Median filter radius for F0 smoothing; values greater than 2 enable filtering, default 3.",
         "required": false,
@@ -88,7 +88,7 @@
         "default": 3
       },
       {
-        "name": "resample_sr",
+        "name": "output_sample_rate",
         "type": "int",
         "description": "Output sample rate in Hz; default 0 keeps the selected voice model sample rate.",
         "required": false,
@@ -103,7 +103,7 @@
         "default": 0.25
       },
       {
-        "name": "protect",
+        "name": "unvoiced_protection",
         "type": "float",
         "description": "Unvoiced consonant protection strength; must be in [0, 1], default 0.33.",
         "required": false,
@@ -120,7 +120,7 @@
         "default": 0
       },
       {
-        "name": "x_pad",
+        "name": "audio_pad_duration_sec",
         "type": "int",
         "description": "Long-audio chunk pad duration in seconds; default 1.",
         "required": false,
@@ -128,7 +128,7 @@
         "default": 1
       },
       {
-        "name": "x_query",
+        "name": "split_query_sec",
         "type": "int",
         "description": "Quiet-point query window in seconds for long-audio splitting; default 5.",
         "required": false,
@@ -136,7 +136,7 @@
         "default": 5
       },
       {
-        "name": "x_center",
+        "name": "split_center_sec",
         "type": "int",
         "description": "Long-audio split center stride in seconds; default 30.",
         "required": false,
@@ -144,7 +144,7 @@
         "default": 30
       },
       {
-        "name": "x_max",
+        "name": "split_threshold_sec",
         "type": "int",
         "description": "Input duration in seconds before quiet-point splitting is used; default 32.",
         "required": false,
@@ -162,7 +162,7 @@
         "default": "f32"
       },
       {
-        "name": "voice_model_cache_slots",
+        "name": "voice_cache_slots",
         "type": "int",
         "description": "User voice model cache slots; default 4, set 0 to disable caching.",
         "required": false,

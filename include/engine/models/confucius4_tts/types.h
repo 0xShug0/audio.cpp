@@ -92,9 +92,9 @@ struct ConfuciusGenerationOptions {
     int64_t num_inference_steps = 25;
     float guidance_scale = 0.7F;
     int64_t max_text_tokens_per_segment = 80;
-    float cross_fade_duration = 0.3F;
-    float edge_fade_duration = 0.1F;
-    float edge_pad_duration = 0.1F;
+    float cross_fade_duration_sec = 0.3F;
+    float edge_fade_duration_sec = 0.1F;
+    float edge_pad_duration_sec = 0.1F;
     uint32_t seed = 1234;
     engine::text::TextChunkMode text_chunk_mode = engine::text::TextChunkMode::Default;
 };

@@ -94,16 +94,16 @@ public:
 
     RvcRetrievalIndex read_ivf_flat(int64_t expected_dim) {
         if (read_u32() != faiss_fourcc("IwFl")) {
-            throw std::runtime_error("RVC file_index must be a FAISS IndexIVFFlat: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path must be a FAISS IndexIVFFlat: " + path_.string());
         }
         const auto header = read_index_header();
         if (header.d != expected_dim) {
-            throw std::runtime_error("RVC file_index dimension mismatch: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path dimension mismatch: " + path_.string());
         }
         const size_t nlist = read_size();
         const size_t nprobe = read_size();
         if (nlist == 0 || nprobe == 0) {
-            throw std::runtime_error("RVC file_index has invalid IVF header: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path has invalid IVF header: " + path_.string());
         }
         const auto centroids = read_flat_l2(expected_dim, static_cast<int64_t>(nlist));
         read_direct_map();
@@ -112,10 +112,10 @@ public:
         out.nlist = static_cast<int64_t>(nlist);
         out.centroids = centroids;
         if (static_cast<int64_t>(out.vectors.size()) != header.ntotal * expected_dim) {
-            throw std::runtime_error("RVC file_index vector count mismatch: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path vector count mismatch: " + path_.string());
         }
         if (cursor_ != bytes_.size()) {
-            throw std::runtime_error("RVC file_index has trailing unsupported data: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path has trailing unsupported data: " + path_.string());
         }
         return out;
     }
@@ -128,7 +128,7 @@ private:
 
     void expect(size_t count) const {
         if (cursor_ + count > bytes_.size()) {
-            throw std::runtime_error("RVC file_index is truncated: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path is truncated: " + path_.string());
         }
     }
     uint8_t read_u8() {
@@ -155,7 +155,7 @@ private:
     size_t read_size() {
         const int64_t value = read_i64();
         if (value < 0) {
-            throw std::runtime_error("RVC file_index contains a negative size: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path contains a negative size: " + path_.string());
         }
         return static_cast<size_t>(value);
     }
@@ -179,25 +179,25 @@ private:
         const uint8_t is_trained = read_u8();
         const int32_t metric_type = read_i32();
         if (is_trained == 0 || metric_type != 1) {
-            throw std::runtime_error("RVC file_index must be a trained L2 FAISS index: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path must be a trained L2 FAISS index: " + path_.string());
         }
         if (header.d <= 0 || header.ntotal < 0) {
-            throw std::runtime_error("RVC file_index has invalid index header: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path has invalid index header: " + path_.string());
         }
         return header;
     }
     std::vector<float> read_flat_l2(int64_t expected_dim, int64_t expected_count) {
         if (read_u32() != faiss_fourcc("IxF2")) {
-            throw std::runtime_error("RVC file_index IVF quantizer must be IndexFlatL2: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path IVF quantizer must be IndexFlatL2: " + path_.string());
         }
         const auto header = read_index_header();
         if (header.d != expected_dim || header.ntotal != expected_count) {
-            throw std::runtime_error("RVC file_index quantizer shape mismatch: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path quantizer shape mismatch: " + path_.string());
         }
         const size_t vector_floats = read_size();
         const size_t expected_floats = static_cast<size_t>(expected_count * expected_dim);
         if (vector_floats != expected_floats) {
-            throw std::runtime_error("RVC file_index quantizer vector size mismatch: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path quantizer vector size mismatch: " + path_.string());
         }
         std::vector<float> values(vector_floats);
         for (float & value : values) {
@@ -213,16 +213,16 @@ private:
             const size_t hashtable_size = read_size();
             skip(hashtable_size * 2 * sizeof(int64_t));
         } else if (direct_map_type != 0 && direct_map_type != 1) {
-            throw std::runtime_error("RVC file_index has unsupported FAISS direct map type: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path has unsupported FAISS direct map type: " + path_.string());
         }
     }
     std::vector<size_t> read_full_list_sizes(size_t nlist) {
         if (read_u32() != faiss_fourcc("full")) {
-            throw std::runtime_error("RVC file_index must store full IVF list sizes: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path must store full IVF list sizes: " + path_.string());
         }
         const size_t count = read_size();
         if (count != nlist) {
-            throw std::runtime_error("RVC file_index IVF list count mismatch: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path IVF list count mismatch: " + path_.string());
         }
         std::vector<size_t> sizes(count);
         for (auto & size : sizes) {
@@ -232,12 +232,12 @@ private:
     }
     RvcRetrievalIndex read_array_inverted_lists(int64_t dim, size_t nlist) {
         if (read_u32() != faiss_fourcc("ilar")) {
-            throw std::runtime_error("RVC file_index must store ArrayInvertedLists: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path must store ArrayInvertedLists: " + path_.string());
         }
         const size_t stored_nlist = read_size();
         const size_t code_size = read_size();
         if (stored_nlist != nlist || code_size != static_cast<size_t>(dim * sizeof(float))) {
-            throw std::runtime_error("RVC file_index inverted-list header mismatch: " + path_.string());
+            throw std::runtime_error("RVC retrieval_index_path inverted-list header mismatch: " + path_.string());
         }
         const auto sizes = read_full_list_sizes(nlist);
         RvcRetrievalIndex out;

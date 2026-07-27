@@ -63,7 +63,7 @@ uint64_t inline_reference_audio_key(const runtime::AudioBuffer & audio) {
 std::optional<uint64_t> inline_reference_cache_key(
     const DramaBoxRequest & parsed,
     const runtime::TaskRequest & request) {
-    if (!parsed.voice_ref.empty() || !parsed.has_inline_voice_ref ||
+    if (!parsed.target_voice.empty() || !parsed.has_inline_target_voice ||
         !request.voice.has_value() ||
         !request.voice->speaker.has_value() ||
         !request.voice->speaker->audio.has_value()) {
@@ -93,51 +93,53 @@ DramaBoxRequest parse_dramabox_request(const runtime::TaskRequest & request, con
     if (const auto value = runtime::find_option(request.options, {"negative_prompt"})) {
         out.negative_prompt = *value;
     }
-    out.steps = runtime::parse_int_option(request.options, {"num_inference_steps", "steps"})
+    out.steps = runtime::parse_int_option(request.options, {"num_inference_steps"})
         .value_or(config.diffusion_steps);
     if (out.steps <= 0) {
         throw std::runtime_error("DramaBox num_inference_steps must be positive");
     }
-    out.cfg_scale = runtime::parse_float_option(request.options, {"guidance_scale", "cfg_scale"})
+    out.cfg_scale = runtime::parse_float_option(request.options, {"guidance_scale"})
         .value_or(config.default_cfg_scale);
-    out.stg_scale = runtime::parse_float_option(request.options, {"stg_scale"})
-        .value_or(config.default_stg_scale);
-    out.duration_multiplier = runtime::parse_float_option(request.options, {"duration_multiplier"})
-        .value_or(config.default_duration_multiplier);
-    out.gen_duration = runtime::parse_float_option(request.options, {"duration_seconds", "gen_duration"})
+    out.spatio_temporal_guidance_scale =
+        runtime::parse_float_option(request.options, {"spatio_temporal_guidance_scale"})
+            .value_or(config.default_spatio_temporal_guidance_scale);
+    out.duration_scale = runtime::parse_float_option(request.options, {"duration_scale"})
+        .value_or(config.default_duration_scale);
+    out.duration_sec = runtime::parse_float_option(request.options, {"duration_sec"})
         .value_or(0.0F);
-    out.ref_duration = runtime::parse_float_option(request.options, {"reference_duration_seconds", "ref_duration"})
-        .value_or(config.default_ref_duration);
-    out.max_chunk_duration = runtime::parse_float_option(request.options, {"max_chunk_duration"})
-        .value_or(out.max_chunk_duration);
-    out.target_chunk_duration = runtime::parse_float_option(request.options, {"target_chunk_duration"})
-        .value_or(out.target_chunk_duration);
-    out.crossfade_ms = runtime::parse_float_option(request.options, {"crossfade_ms"})
-        .value_or(out.crossfade_ms);
+    out.reference_duration_sec = runtime::parse_float_option(request.options, {"reference_duration_sec"})
+        .value_or(config.default_reference_duration_sec);
+    out.audio_chunk_threshold_sec = runtime::parse_float_option(request.options, {"audio_chunk_threshold_sec"})
+        .value_or(out.audio_chunk_threshold_sec);
+    out.audio_chunk_duration_sec = runtime::parse_float_option(request.options, {"audio_chunk_duration_sec"})
+        .value_or(out.audio_chunk_duration_sec);
+    out.cross_fade_duration_sec = runtime::parse_float_option(request.options, {"cross_fade_duration_sec"})
+        .value_or(out.cross_fade_duration_sec);
     out.seed = runtime::parse_int_option(request.options, {"seed"}).value_or(out.seed);
-    if (const auto value = runtime::find_option(request.options, {"rescale_scale"})) {
+    if (const auto value = runtime::find_option(request.options, {"guidance_rescale"})) {
         if (*value != "auto") {
-            out.rescale_scale = runtime::parse_float_option(request.options, {"rescale_scale"}).value();
+            out.guidance_rescale = runtime::parse_float_option(request.options, {"guidance_rescale"}).value();
         }
     }
     if (const auto value = runtime::find_option(request.options, {"denoise_ref"})) {
         out.denoise_ref = runtime::parse_bool_option(*value, "denoise_ref");
     }
-    if (const auto value = runtime::find_option(request.options, {"voice_ref", "speaker_wav", "reference_audio"})) {
-        out.voice_ref = *value;
+    if (const auto value = runtime::find_option(request.options, {"target_voice"})) {
+        out.target_voice = *value;
     } else if (request.voice.has_value() &&
                request.voice->speaker.has_value() &&
                request.voice->speaker->audio.has_value()) {
-        out.has_inline_voice_ref = true;
+        out.has_inline_target_voice = true;
     }
-    if (out.ref_duration <= 0.0F) {
-        throw std::runtime_error("DramaBox reference_duration_seconds must be positive");
+    if (out.reference_duration_sec <= 0.0F) {
+        throw std::runtime_error("DramaBox reference_duration_sec must be positive");
     }
-    if (out.gen_duration < 0.0F) {
-        throw std::runtime_error("DramaBox duration_seconds must be non-negative");
+    if (out.duration_sec < 0.0F) {
+        throw std::runtime_error("DramaBox duration_sec must be non-negative");
     }
-    if (out.max_chunk_duration <= 0.0F || out.target_chunk_duration <= 0.0F || out.crossfade_ms < 0.0F) {
-        throw std::runtime_error("DramaBox chunking options must be positive, with non-negative crossfade_ms");
+    if (out.audio_chunk_threshold_sec <= 0.0F || out.audio_chunk_duration_sec <= 0.0F ||
+        out.cross_fade_duration_sec < 0.0F) {
+        throw std::runtime_error("DramaBox chunking options must be positive, with non-negative cross_fade_duration_sec");
     }
     return out;
 }
@@ -151,14 +153,14 @@ const std::string & negative_prompt_for_request(const DramaBoxRequest & parsed) 
 }
 
 runtime::AudioBuffer read_reference_audio(const DramaBoxRequest & parsed, const runtime::TaskRequest & request) {
-    if (!parsed.voice_ref.empty()) {
-        const auto wav = audio::read_wav_f32(parsed.voice_ref);
+    if (!parsed.target_voice.empty()) {
+        const auto wav = audio::read_wav_f32(parsed.target_voice);
         if (wav.sample_rate <= 0 || wav.channels <= 0 || wav.samples.empty()) {
-            throw std::runtime_error("DramaBox voice_ref WAV is empty");
+            throw std::runtime_error("DramaBox target_voice WAV is empty");
         }
         return runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples};
     }
-    if (parsed.has_inline_voice_ref &&
+    if (parsed.has_inline_target_voice &&
         request.voice.has_value() &&
         request.voice->speaker.has_value() &&
         request.voice->speaker->audio.has_value()) {
@@ -170,7 +172,7 @@ runtime::AudioBuffer read_reference_audio(const DramaBoxRequest & parsed, const 
 runtime::AudioBuffer equal_power_crossfade_concat(
     const runtime::AudioBuffer & previous,
     const runtime::AudioBuffer & next,
-    float crossfade_ms) {
+    float cross_fade_duration_sec) {
     if (previous.sample_rate != next.sample_rate) {
         throw std::runtime_error("DramaBox long-form chunk sample-rate mismatch");
     }
@@ -202,7 +204,8 @@ runtime::AudioBuffer equal_power_crossfade_concat(
         }
         next_planar = std::move(expanded);
     }
-    int64_t fade_samples = static_cast<int64_t>(std::llround(static_cast<double>(crossfade_ms) * 1.0e-3 * static_cast<double>(previous.sample_rate)));
+    int64_t fade_samples = static_cast<int64_t>(
+        std::llround(static_cast<double>(cross_fade_duration_sec) * static_cast<double>(previous.sample_rate)));
     fade_samples = std::max<int64_t>(1, std::min<int64_t>(fade_samples, std::min(prev_frames, next_frames)));
     const int64_t out_frames = prev_frames + next_frames - fade_samples;
     std::vector<float> out(static_cast<size_t>(channels * out_frames), 0.0F);
@@ -311,38 +314,38 @@ void DramaBoxSession::prepare(const runtime::SessionPreparationRequest & request
     if (parsed.denoise_ref) {
         throw std::runtime_error("DramaBox denoise_ref uses RE-USE and is not part of this inference-only port");
     }
-    const double duration = parsed.gen_duration > 0.0F
-        ? static_cast<double>(parsed.gen_duration)
-        : estimate_dramabox_duration_seconds(parsed.prompt, parsed.duration_multiplier);
+    const double duration = parsed.duration_sec > 0.0F
+        ? static_cast<double>(parsed.duration_sec)
+        : estimate_dramabox_duration_seconds(parsed.prompt, parsed.duration_scale);
     int64_t target_tokens = dramabox_target_latent_shape(duration, assets_->config).token_count();
-    const bool long_form = duration > parsed.max_chunk_duration;
+    const bool long_form = duration > parsed.audio_chunk_threshold_sec;
     std::vector<DramaBoxPromptChunk> prepared_chunks;
     if (long_form) {
         prepared_chunks = chunk_prompt_for_duration(
             parsed.prompt,
-            parsed.max_chunk_duration,
-            parsed.target_chunk_duration,
-            parsed.duration_multiplier);
+            parsed.audio_chunk_threshold_sec,
+            parsed.audio_chunk_duration_sec,
+            parsed.duration_scale);
         if (prepared_chunks.empty()) {
             throw std::runtime_error("DramaBox long-form chunker produced no chunks");
         }
         target_tokens = dramabox_target_latent_shape(
-            estimate_dramabox_duration_seconds(prepared_chunks.front().text, parsed.duration_multiplier),
+            estimate_dramabox_duration_seconds(prepared_chunks.front().text, parsed.duration_scale),
             assets_->config)
                             .token_count();
     }
     int64_t ref_tokens = 0;
-    if (!parsed.voice_ref.empty() || parsed.has_inline_voice_ref) {
+    if (!parsed.target_voice.empty() || parsed.has_inline_target_voice) {
         const auto & config = assets_->config.audio_vae;
         const int64_t ref_mel_frames =
-            static_cast<int64_t>(std::llround(static_cast<double>(parsed.ref_duration) *
+            static_cast<int64_t>(std::llround(static_cast<double>(parsed.reference_duration_sec) *
                                               static_cast<double>(config.sample_rate) /
                                               static_cast<double>(config.hop_length))) + 1;
         ref_tokens = std::max<int64_t>(1, (ref_mel_frames + 3) / 4);
         audio_encoder_->prepare(1, ref_mel_frames);
     }
     const bool cfg_enabled = parsed.cfg_scale > 1.0F;
-    const bool stg_enabled = parsed.stg_scale > 0.0F;
+    const bool stg_enabled = parsed.spatio_temporal_guidance_scale > 0.0F;
     const int64_t branch_count = 1 + (cfg_enabled ? 1 : 0) + (stg_enabled ? 1 : 0);
     const int64_t prompt_batch = cfg_enabled ? 2 : 1;
     gemma_prompt_->prepare(prompt_batch);
@@ -368,18 +371,22 @@ runtime::TaskResult DramaBoxSession::run(const runtime::TaskRequest & request) {
     }
     engine::debug::timing_log_scalar("dramabox.request.steps", static_cast<double>(parsed.steps));
     engine::debug::timing_log_scalar("dramabox.request.cfg_scale", static_cast<double>(parsed.cfg_scale));
-    engine::debug::timing_log_scalar("dramabox.request.stg_scale", static_cast<double>(parsed.stg_scale));
-    const double duration = parsed.gen_duration > 0.0F
-        ? static_cast<double>(parsed.gen_duration)
-        : estimate_dramabox_duration_seconds(parsed.prompt, parsed.duration_multiplier);
-    engine::debug::timing_log_scalar("dramabox.request.long_form", duration > parsed.max_chunk_duration ? 1.0 : 0.0);
+    engine::debug::timing_log_scalar(
+        "dramabox.request.spatio_temporal_guidance_scale",
+        static_cast<double>(parsed.spatio_temporal_guidance_scale));
+    const double duration = parsed.duration_sec > 0.0F
+        ? static_cast<double>(parsed.duration_sec)
+        : estimate_dramabox_duration_seconds(parsed.prompt, parsed.duration_scale);
+    engine::debug::timing_log_scalar(
+        "dramabox.request.long_form",
+        duration > parsed.audio_chunk_threshold_sec ? 1.0 : 0.0);
     runtime::TaskResult result;
-    if (duration > parsed.max_chunk_duration) {
+    if (duration > parsed.audio_chunk_threshold_sec) {
         const auto chunks = chunk_prompt_for_duration(
             parsed.prompt,
-            parsed.max_chunk_duration,
-            parsed.target_chunk_duration,
-            parsed.duration_multiplier);
+            parsed.audio_chunk_threshold_sec,
+            parsed.audio_chunk_duration_sec,
+            parsed.duration_scale);
         if (chunks.empty()) {
             throw std::runtime_error("DramaBox long-form chunker produced no chunks");
         }
@@ -388,11 +395,12 @@ runtime::TaskResult DramaBoxSession::run(const runtime::TaskRequest & request) {
         for (size_t index = 0; index < chunks.size(); ++index) {
             auto chunk_request = parsed;
             chunk_request.prompt = chunks[index].text;
-            chunk_request.gen_duration = 0.0F;
+            chunk_request.duration_sec = 0.0F;
             engine::debug::timing_log_scalar("dramabox.long_form.chunk_est_seconds", chunks[index].estimated_duration_seconds);
             auto audio = generate_audio(chunk_request, request);
             combined = combined.has_value()
-                ? std::optional<runtime::AudioBuffer>(equal_power_crossfade_concat(*combined, audio, parsed.crossfade_ms))
+                ? std::optional<runtime::AudioBuffer>(
+                      equal_power_crossfade_concat(*combined, audio, parsed.cross_fade_duration_sec))
                 : std::optional<runtime::AudioBuffer>(std::move(audio));
         }
         result.audio_output = std::move(*combined);
@@ -472,8 +480,8 @@ DramaBoxEncodedReferenceLatents DramaBoxSession::encode_reference_latents(
     const DramaBoxRequest & parsed,
     const runtime::TaskRequest & request) {
     const auto inline_key = inline_reference_cache_key(parsed, request);
-    const ReferenceCacheKey reference_key{parsed.voice_ref, inline_key, parsed.ref_duration};
-    const bool cacheable_reference = !parsed.voice_ref.empty() || inline_key.has_value();
+    const ReferenceCacheKey reference_key{parsed.target_voice, inline_key, parsed.reference_duration_sec};
+    const bool cacheable_reference = !parsed.target_voice.empty() || inline_key.has_value();
     if (cacheable_reference) {
         if (auto * cached = reference_latents_.find(reference_key)) {
             engine::debug::timing_log_scalar("dramabox.reference.cache_hit", 1.0);
@@ -486,7 +494,7 @@ DramaBoxEncodedReferenceLatents DramaBoxSession::encode_reference_latents(
     const auto ref_mel = reference_log_mel(
         ref_audio,
         assets_->config,
-        parsed.ref_duration,
+        parsed.reference_duration_sec,
         execution_context().config().threads,
         ref_mel_frames);
     auto latents = audio_encoder_->encode(ref_mel, 1, ref_mel_frames);
@@ -497,9 +505,9 @@ DramaBoxEncodedReferenceLatents DramaBoxSession::encode_reference_latents(
 }
 
 runtime::AudioBuffer DramaBoxSession::generate_audio(const DramaBoxRequest & parsed, const runtime::TaskRequest & request) {
-    const double duration = parsed.gen_duration > 0.0F
-        ? static_cast<double>(parsed.gen_duration)
-        : estimate_dramabox_duration_seconds(parsed.prompt, parsed.duration_multiplier);
+    const double duration = parsed.duration_sec > 0.0F
+        ? static_cast<double>(parsed.duration_sec)
+        : estimate_dramabox_duration_seconds(parsed.prompt, parsed.duration_scale);
     const auto latent_shape = dramabox_target_latent_shape(duration, assets_->config);
     engine::debug::timing_log_scalar("dramabox.request.latent_tokens", static_cast<double>(latent_shape.token_count()));
     const auto state_start = Clock::now();
@@ -507,7 +515,7 @@ runtime::AudioBuffer DramaBoxSession::generate_audio(const DramaBoxRequest & par
     const int64_t target_tokens = state.tokens;
     engine::debug::timing_log_scalar("dramabox.host.initial_state_ms", engine::debug::elapsed_ms(state_start, Clock::now()));
     int64_t ref_tokens = 0;
-    if (!parsed.voice_ref.empty() || parsed.has_inline_voice_ref) {
+    if (!parsed.target_voice.empty() || parsed.has_inline_target_voice) {
         const auto reference_start = Clock::now();
         const auto ref_latent = encode_reference_latents(parsed, request);
         ref_tokens = ref_latent.tokens;
@@ -533,7 +541,7 @@ runtime::AudioBuffer DramaBoxSession::generate_audio(const DramaBoxRequest & par
     engine::debug::timing_log_scalar("dramabox.host.initial_noise_ms", engine::debug::elapsed_ms(noise_start, Clock::now()));
 
     const bool cfg_enabled = parsed.cfg_scale > 1.0F;
-    const bool stg_enabled = parsed.stg_scale > 0.0F;
+    const bool stg_enabled = parsed.spatio_temporal_guidance_scale > 0.0F;
     const int64_t branch_count = 1 + (cfg_enabled ? 1 : 0) + (stg_enabled ? 1 : 0);
     const auto prompt_start = Clock::now();
     auto conditioning = prompt_conditioning_for_guidance(parsed.prompt, negative_prompt_for_request(parsed), cfg_enabled);
@@ -577,7 +585,8 @@ runtime::AudioBuffer DramaBoxSession::generate_audio(const DramaBoxRequest & par
         branch_conditioning,
         rope_cos,
         rope_sin);
-    const float rescale_scale = parsed.rescale_scale < 0.0F ? auto_rescale_for_cfg(parsed.cfg_scale) : parsed.rescale_scale;
+    const float guidance_rescale =
+        parsed.guidance_rescale < 0.0F ? auto_rescale_for_cfg(parsed.cfg_scale) : parsed.guidance_rescale;
     double step_input_host_ms = 0.0;
     double guidance_host_ms = 0.0;
     std::vector<float> timestep_features;
@@ -613,8 +622,8 @@ runtime::AudioBuffer DramaBoxSession::generate_audio(const DramaBoxRequest & par
             branch_count,
             sigma,
             parsed.cfg_scale,
-            parsed.stg_scale,
-            rescale_scale,
+            parsed.spatio_temporal_guidance_scale,
+            guidance_rescale,
             cfg_enabled,
             stg_enabled,
             guided_cond,

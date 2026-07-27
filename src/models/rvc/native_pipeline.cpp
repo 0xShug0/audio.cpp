@@ -47,7 +47,7 @@ std::vector<RvcCustomF0Point> read_custom_f0_file(const std::string & path) {
     }
     std::ifstream input(path);
     if (!input) {
-        throw std::runtime_error("failed to open RVC f0_file: " + path);
+        throw std::runtime_error("failed to open RVC pitch_path: " + path);
     }
     std::vector<RvcCustomF0Point> points;
     std::string line;
@@ -59,14 +59,14 @@ std::vector<RvcCustomF0Point> read_custom_f0_file(const std::string & path) {
         std::istringstream row(line);
         RvcCustomF0Point point;
         if (!(row >> point.time_seconds >> point.frequency_hz)) {
-            throw std::runtime_error("invalid RVC f0_file row: " + line);
+            throw std::runtime_error("invalid RVC pitch_path row: " + line);
         }
         points.push_back(point);
     }
     if (!std::is_sorted(points.begin(), points.end(), [](const auto & lhs, const auto & rhs) {
             return lhs.time_seconds < rhs.time_seconds;
         })) {
-        throw std::runtime_error("RVC f0_file times must be sorted ascending");
+        throw std::runtime_error("RVC pitch_path times must be sorted ascending");
     }
     return points;
 }
@@ -89,7 +89,7 @@ float interpolate_custom_f0(const std::vector<RvcCustomF0Point> & points, float 
     const auto left = right - 1;
     const float span = right->time_seconds - left->time_seconds;
     if (span <= 0.0F) {
-        throw std::runtime_error("RVC f0_file contains duplicate time points");
+        throw std::runtime_error("RVC pitch_path contains duplicate time points");
     }
     const float frac = (time_index - left->time_seconds) / span;
     return left->frequency_hz * (1.0F - frac) + right->frequency_hz * frac;
@@ -98,15 +98,15 @@ float interpolate_custom_f0(const std::vector<RvcCustomF0Point> & points, float 
 void apply_custom_f0(
     std::vector<float> & f0,
     const std::vector<RvcCustomF0Point> & points,
-    int x_pad_seconds) {
+    int audio_pad_duration_sec) {
     if (points.empty()) {
         return;
     }
-    const int64_t start = static_cast<int64_t>(x_pad_seconds) * 100;
+    const int64_t start = static_cast<int64_t>(audio_pad_duration_sec) * 100;
     const int64_t count = static_cast<int64_t>(std::llround(
         static_cast<double>((points.back().time_seconds - points.front().time_seconds) * 100.0F + 1.0F)));
     if (count <= 0) {
-        throw std::runtime_error("RVC f0_file time span is invalid");
+        throw std::runtime_error("RVC pitch_path time span is invalid");
     }
     for (int64_t i = 0; i < count && start + i < static_cast<int64_t>(f0.size()); ++i) {
         f0[static_cast<size_t>(start + i)] = interpolate_custom_f0(points, static_cast<float>(i));
@@ -127,8 +127,8 @@ void apply_retrieval_blend(
     int64_t frames,
     int64_t dim,
     const RvcRetrievalIndex & index,
-    float index_rate) {
-    if (index_rate == 0.0F) {
+    float retrieval_blend) {
+    if (retrieval_blend == 0.0F) {
         return;
     }
     if (index.dim != dim || static_cast<int64_t>(features.size()) != frames * dim) {
@@ -192,7 +192,8 @@ void apply_retrieval_blend(
         }
         auto * feature = features.data() + static_cast<size_t>(frame * dim);
         for (int64_t i = 0; i < dim; ++i) {
-            feature[i] = blended[static_cast<size_t>(frame * dim + i)] * index_rate + feature[i] * (1.0F - index_rate);
+            feature[i] =
+                blended[static_cast<size_t>(frame * dim + i)] * retrieval_blend + feature[i] * (1.0F - retrieval_blend);
         }
     }
 }
@@ -363,13 +364,13 @@ void apply_rms_mix(
 
 std::vector<int64_t> quiet_split_points(
     const std::vector<float> & audio,
-    int x_query_seconds,
-    int x_center_seconds,
-    int x_max_seconds) {
+    int split_query_sec,
+    int split_center_sec,
+    int split_threshold_sec) {
     constexpr int64_t window = 160;
-    const int64_t t_query = static_cast<int64_t>(x_query_seconds) * kContentSampleRate;
-    const int64_t t_center = static_cast<int64_t>(x_center_seconds) * kContentSampleRate;
-    const int64_t t_max = static_cast<int64_t>(x_max_seconds) * kContentSampleRate;
+    const int64_t t_query = static_cast<int64_t>(split_query_sec) * kContentSampleRate;
+    const int64_t t_center = static_cast<int64_t>(split_center_sec) * kContentSampleRate;
+    const int64_t t_max = static_cast<int64_t>(split_threshold_sec) * kContentSampleRate;
     if (static_cast<int64_t>(audio.size()) <= t_max) {
         return {};
     }
@@ -410,7 +411,7 @@ RvcSynthesizerInput make_synthesizer_input(
     if (has_f0 && f0.empty()) {
         throw std::runtime_error("RVC synthesizer input requires f0");
     }
-    const float semitone = std::pow(2.0F, static_cast<float>(config.f0_up_key) / 12.0F);
+    const float semitone = std::pow(2.0F, static_cast<float>(config.semitone_shift) / 12.0F);
     const int64_t doubled_frames = content.frames * 2;
     const int64_t frames = std::min<int64_t>(
         target_frames,
@@ -421,7 +422,7 @@ RvcSynthesizerInput make_synthesizer_input(
     if (original_content != nullptr &&
         (original_content->frames != content.frames || original_content->dim != content.dim ||
          original_content->values.size() != content.values.size())) {
-        throw std::runtime_error("RVC protect feature shape mismatch");
+        throw std::runtime_error("RVC unvoiced_protection feature shape mismatch");
     }
     RvcSynthesizerInput out;
     out.frames = frames;
@@ -448,9 +449,9 @@ RvcSynthesizerInput make_synthesizer_input(
         out.pitchf[static_cast<size_t>(t)] = shifted;
         out.pitch[static_cast<size_t>(t)] = coarse_pitch_bin(shifted);
     }
-    if (original_content != nullptr && config.protect < 0.5F) {
+    if (original_content != nullptr && config.unvoiced_protection < 0.5F) {
         for (int64_t t = 0; t < frames; ++t) {
-            const float pitchff = out.pitchf[static_cast<size_t>(t)] < 1.0F ? config.protect : 1.0F;
+            const float pitchff = out.pitchf[static_cast<size_t>(t)] < 1.0F ? config.unvoiced_protection : 1.0F;
             const int64_t src_t = std::min(original_content->frames - 1, t / 2);
             const auto * original = original_content->values.data() + static_cast<size_t>(src_t * content.dim);
             auto * dst = out.features.data() + static_cast<size_t>(t * content.dim);
@@ -553,19 +554,20 @@ runtime::AudioBuffer RvcNativePipeline::infer(
     if (state_ == nullptr) {
         throw std::runtime_error("RVC native pipeline is not initialized");
     }
-    if (voice.has_f0 && config.f0_method != "rmvpe") {
-        throw std::runtime_error("RVC native inference currently supports only rmvpe f0_method");
+    if (voice.has_f0 && config.pitch_extractor != "rmvpe") {
+        throw std::runtime_error("RVC native inference currently supports only rmvpe pitch_extractor");
     }
-    if (config.index_rate < 0.0F || config.index_rate > 1.0F) {
-        throw std::runtime_error("RVC index_rate must be in [0, 1]");
+    if (config.retrieval_blend < 0.0F || config.retrieval_blend > 1.0F) {
+        throw std::runtime_error("RVC retrieval_blend must be in [0, 1]");
     }
-    if (config.protect < 0.0F || config.protect > 1.0F) {
-        throw std::runtime_error("RVC protect must be in [0, 1]");
+    if (config.unvoiced_protection < 0.0F || config.unvoiced_protection > 1.0F) {
+        throw std::runtime_error("RVC unvoiced_protection must be in [0, 1]");
     }
     if (config.speaker_id < 0 || config.speaker_id >= voice.speaker_count) {
         throw std::runtime_error("RVC speaker_id is outside the checkpoint speaker table");
     }
-    if (config.x_pad <= 0 || config.x_query <= 0 || config.x_center <= 0 || config.x_max <= 0) {
+    if (config.audio_pad_duration_sec <= 0 || config.split_query_sec <= 0 || config.split_center_sec <= 0 ||
+        config.split_threshold_sec <= 0) {
         throw std::runtime_error("RVC chunk timing options must be positive");
     }
     std::lock_guard<std::mutex> lock(state_->mutex);
@@ -576,7 +578,7 @@ runtime::AudioBuffer RvcNativePipeline::infer(
         {static_cast<int64_t>(content_audio.size())},
         content_audio);
     constexpr int64_t rvc_hop_samples = 160;
-    const int64_t content_pad_samples = kContentSampleRate * static_cast<int64_t>(config.x_pad);
+    const int64_t content_pad_samples = kContentSampleRate * static_cast<int64_t>(config.audio_pad_duration_sec);
     const auto padded_audio = engine::audio::reflect_pad_samples(
         content_audio,
         content_pad_samples,
@@ -592,17 +594,17 @@ runtime::AudioBuffer RvcNativePipeline::infer(
         if (f0.empty()) {
             throw std::runtime_error("RVC RMVPE produced no f0 frames");
         }
-        if (config.filter_radius > 2) {
+        if (config.pitch_filter_radius > 2) {
             median_filter_f0(f0, 1);
         }
-        const auto custom_f0 = read_custom_f0_file(config.f0_file);
+        const auto custom_f0 = read_custom_f0_file(config.pitch_path);
         if (!custom_f0.empty()) {
-            const float semitone = std::pow(2.0F, static_cast<float>(config.f0_up_key) / 12.0F);
+            const float semitone = std::pow(2.0F, static_cast<float>(config.semitone_shift) / 12.0F);
             for (auto & value : f0) {
                 value *= semitone;
             }
-            apply_custom_f0(f0, custom_f0, config.x_pad);
-            synth_config.f0_up_key = 0;
+            apply_custom_f0(f0, custom_f0, config.audio_pad_duration_sec);
+            synth_config.semitone_shift = 0;
         }
         engine::debug::trace_log_f32(
             "rvc.f0.pitchf",
@@ -622,12 +624,12 @@ runtime::AudioBuffer RvcNativePipeline::infer(
                 voice.has_f0)).first;
     }
     RvcRetrievalIndex * retrieval = nullptr;
-    if (config.index_rate != 0.0F) {
-        const bool packaged_index = config.file_index.empty();
+    if (config.retrieval_blend != 0.0F) {
+        const bool packaged_index = config.retrieval_index_path.empty();
         if (packaged_index && voice.index_vectors == nullptr) {
-            throw std::runtime_error("RVC index_rate requires rvc.file_index for a user voice model");
+            throw std::runtime_error("RVC retrieval_blend requires retrieval_index_path for a user voice model");
         }
-        const std::filesystem::path index_path = std::filesystem::path(config.file_index);
+        const std::filesystem::path index_path = std::filesystem::path(config.retrieval_index_path);
         const std::string index_key = packaged_index
             ? voice.id + ":packaged_index_vectors"
             : std::filesystem::absolute(index_path).lexically_normal().string();
@@ -644,8 +646,13 @@ runtime::AudioBuffer RvcNativePipeline::infer(
         retrieval = index_it->second.get();
     }
 
-    const auto splits = quiet_split_points(content_audio, config.x_query, config.x_center, config.x_max);
-    const int64_t target_pad_samples = static_cast<int64_t>(voice.sample_rate) * static_cast<int64_t>(config.x_pad);
+    const auto splits = quiet_split_points(
+        content_audio,
+        config.split_query_sec,
+        config.split_center_sec,
+        config.split_threshold_sec);
+    const int64_t target_pad_samples =
+        static_cast<int64_t>(voice.sample_rate) * static_cast<int64_t>(config.audio_pad_duration_sec);
     const int64_t t_pad2 = 2 * content_pad_samples;
     std::vector<float> converted;
     int output_sample_rate = voice.sample_rate;
@@ -686,9 +693,10 @@ runtime::AudioBuffer RvcNativePipeline::infer(
             content.values);
         auto original_content = content;
         if (retrieval != nullptr) {
-            apply_retrieval_blend(content.values, content.frames, content.dim, *retrieval, config.index_rate);
+            apply_retrieval_blend(content.values, content.frames, content.dim, *retrieval, config.retrieval_blend);
         }
-        const RvcHubertFeatures * protect_source = (voice.has_f0 && synth_config.protect < 0.5F) ? &original_content : nullptr;
+        const RvcHubertFeatures * protect_source =
+            (voice.has_f0 && synth_config.unvoiced_protection < 0.5F) ? &original_content : nullptr;
         auto synth_input = make_synthesizer_input(
             content,
             protect_source,
@@ -738,7 +746,7 @@ runtime::AudioBuffer RvcNativePipeline::infer(
     run_segment(static_cast<int64_t>(content_audio.size()), true);
 
     apply_rms_mix(content_audio, converted, output_sample_rate, config.rms_mix_rate);
-    const int target_sr = config.resample_sr > 0 ? config.resample_sr : output_sample_rate;
+    const int target_sr = config.output_sample_rate > 0 ? config.output_sample_rate : output_sample_rate;
     if (target_sr != output_sample_rate) {
         converted = engine::audio::resample_mono_linear(converted, output_sample_rate, target_sr);
     }

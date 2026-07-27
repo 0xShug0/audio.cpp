@@ -16,48 +16,6 @@
 namespace engine::models::rvc {
 namespace {
 
-std::string request_option_or_default(
-    const runtime::TaskRequest & request,
-    const std::string & prefixed_key,
-    const std::string & bare_key,
-    std::string default_value) {
-    if (const auto it = request.options.find(prefixed_key); it != request.options.end()) {
-        return it->second;
-    }
-    if (const auto it = request.options.find(bare_key); it != request.options.end()) {
-        return it->second;
-    }
-    return default_value;
-}
-
-int request_int_or_default(
-    const runtime::TaskRequest & request,
-    const std::string & prefixed_key,
-    const std::string & bare_key,
-    int default_value) {
-    const auto value = request_option_or_default(request, prefixed_key, bare_key, std::to_string(default_value));
-    size_t consumed = 0;
-    const int parsed = std::stoi(value, &consumed);
-    if (consumed != value.size()) {
-        throw std::runtime_error("invalid integer RVC option " + prefixed_key + ": " + value);
-    }
-    return parsed;
-}
-
-float request_float_or_default(
-    const runtime::TaskRequest & request,
-    const std::string & prefixed_key,
-    const std::string & bare_key,
-    float default_value) {
-    const auto value = request_option_or_default(request, prefixed_key, bare_key, std::to_string(default_value));
-    size_t consumed = 0;
-    const float parsed = std::stof(value, &consumed);
-    if (consumed != value.size()) {
-        throw std::runtime_error("invalid float RVC option " + prefixed_key + ": " + value);
-    }
-    return parsed;
-}
-
 engine::assets::TensorStorageType rvc_weight_type_from_options(const runtime::SessionOptions & options) {
     const auto it = options.options.find("rvc.weight_type");
     if (it == options.options.end()) {
@@ -78,23 +36,19 @@ std::size_t user_voice_cache_slots_from_options(const runtime::SessionOptions & 
     constexpr int64_t kDefaultCacheSlots = 4;
     const int64_t slots = runtime::parse_i64_option(
         options.options,
-        {"rvc.voice_model_cache_slots", "voice_model_cache_slots"})
+        {"rvc.voice_cache_slots"})
         .value_or(kDefaultCacheSlots);
     if (slots < 0) {
-        throw std::runtime_error("rvc.voice_model_cache_slots must be non-negative");
+        throw std::runtime_error("rvc.voice_cache_slots must be non-negative");
     }
     if (static_cast<std::uint64_t>(slots) > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-        throw std::runtime_error("rvc.voice_model_cache_slots is too large");
+        throw std::runtime_error("rvc.voice_cache_slots is too large");
     }
     return static_cast<std::size_t>(slots);
 }
 
 const RvcVoiceModel & select_packaged_voice(const RvcAssets & assets, const runtime::TaskRequest & request) {
-    std::string voice_id = "default";
-    if (const auto it = request.options.find("target_voice"); it != request.options.end()) {
-        voice_id = it->second;
-    }
-    voice_id = request_option_or_default(request, "rvc.voice", "voice", voice_id);
+    std::string voice_id = runtime::find_option(request.options, {"voice_id"}).value_or("default");
     const auto voice = assets.voices.find(voice_id);
     if (voice == assets.voices.end()) {
         throw std::runtime_error("unknown RVC voice id: " + voice_id);
@@ -104,20 +58,20 @@ const RvcVoiceModel & select_packaged_voice(const RvcAssets & assets, const runt
 
 RvcInferenceConfig request_config(const runtime::TaskRequest & request) {
     RvcInferenceConfig config;
-    config.f0_method = request_option_or_default(request, "rvc.f0_method", "f0_method", "rmvpe");
-    config.f0_file = request_option_or_default(request, "rvc.f0_file", "f0_file", "");
-    config.file_index = request_option_or_default(request, "rvc.file_index", "file_index", "");
-    config.f0_up_key = request_int_or_default(request, "rvc.f0_up_key", "f0_up_key", 0);
-    config.index_rate = request_float_or_default(request, "rvc.index_rate", "index_rate", 0.0F);
-    config.filter_radius = request_int_or_default(request, "rvc.filter_radius", "filter_radius", 3);
-    config.resample_sr = request_int_or_default(request, "rvc.resample_sr", "resample_sr", 0);
-    config.rms_mix_rate = request_float_or_default(request, "rvc.rms_mix_rate", "rms_mix_rate", 0.25F);
-    config.protect = request_float_or_default(request, "rvc.protect", "protect", 0.33F);
-    config.speaker_id = request_int_or_default(request, "rvc.speaker_id", "sid", 0);
-    config.x_pad = request_int_or_default(request, "rvc.x_pad", "x_pad", 1);
-    config.x_query = request_int_or_default(request, "rvc.x_query", "x_query", 5);
-    config.x_center = request_int_or_default(request, "rvc.x_center", "x_center", 30);
-    config.x_max = request_int_or_default(request, "rvc.x_max", "x_max", 32);
+    config.pitch_extractor = runtime::find_option(request.options, {"pitch_extractor"}).value_or("rmvpe");
+    config.pitch_path = runtime::find_option(request.options, {"pitch_path"}).value_or("");
+    config.retrieval_index_path = runtime::find_option(request.options, {"retrieval_index_path"}).value_or("");
+    config.semitone_shift = runtime::parse_int_option(request.options, {"semitone_shift"}).value_or(0);
+    config.retrieval_blend = runtime::parse_float_option(request.options, {"retrieval_blend"}).value_or(0.0F);
+    config.pitch_filter_radius = runtime::parse_int_option(request.options, {"pitch_filter_radius"}).value_or(3);
+    config.output_sample_rate = runtime::parse_int_option(request.options, {"output_sample_rate"}).value_or(0);
+    config.rms_mix_rate = runtime::parse_float_option(request.options, {"rms_mix_rate"}).value_or(0.25F);
+    config.unvoiced_protection = runtime::parse_float_option(request.options, {"unvoiced_protection"}).value_or(0.33F);
+    config.speaker_id = runtime::parse_int_option(request.options, {"speaker_id"}).value_or(0);
+    config.audio_pad_duration_sec = runtime::parse_int_option(request.options, {"audio_pad_duration_sec"}).value_or(1);
+    config.split_query_sec = runtime::parse_int_option(request.options, {"split_query_sec"}).value_or(5);
+    config.split_center_sec = runtime::parse_int_option(request.options, {"split_center_sec"}).value_or(30);
+    config.split_threshold_sec = runtime::parse_int_option(request.options, {"split_threshold_sec"}).value_or(32);
     return config;
 }
 
@@ -178,7 +132,7 @@ runtime::TaskResult RvcSession::run(const runtime::TaskRequest & request) {
 
     const RvcVoiceModel * voice = nullptr;
     std::optional<RvcVoiceModel> uncached_voice;
-    const auto voice_model_path = request_option_or_default(request, "rvc.voice_model", "voice_model", "");
+    const auto voice_model_path = runtime::find_option(request.options, {"voice_model_path"}).value_or("");
     if (voice_model_path.empty()) {
         voice = &select_packaged_voice(*assets_, request);
     } else {

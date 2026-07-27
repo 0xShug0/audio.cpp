@@ -50,12 +50,12 @@ ConfuciusGenerationOptions generation_options(
         runtime::parse_float_option(options, {"guidance_scale"}).value_or(defaults.guidance_scale);
     defaults.max_text_tokens_per_segment =
         engine::text::parse_text_chunk_size_override(options).value_or(defaults.max_text_tokens_per_segment);
-    defaults.cross_fade_duration =
-        runtime::parse_float_option(options, {"cross_fade_duration"}).value_or(defaults.cross_fade_duration);
-    defaults.edge_fade_duration =
-        runtime::parse_float_option(options, {"edge_fade_duration"}).value_or(defaults.edge_fade_duration);
-    defaults.edge_pad_duration =
-        runtime::parse_float_option(options, {"edge_pad_duration"}).value_or(defaults.edge_pad_duration);
+    defaults.cross_fade_duration_sec =
+        runtime::parse_float_option(options, {"cross_fade_duration_sec"}).value_or(defaults.cross_fade_duration_sec);
+    defaults.edge_fade_duration_sec =
+        runtime::parse_float_option(options, {"edge_fade_duration_sec"}).value_or(defaults.edge_fade_duration_sec);
+    defaults.edge_pad_duration_sec =
+        runtime::parse_float_option(options, {"edge_pad_duration_sec"}).value_or(defaults.edge_pad_duration_sec);
     defaults.seed = runtime::parse_u32_option(options, {"seed"}).value_or(defaults.seed);
     defaults.text_chunk_mode =
         engine::text::parse_text_chunk_mode_override(options).value_or(defaults.text_chunk_mode);
@@ -74,8 +74,8 @@ ConfuciusGenerationOptions generation_options(
     if (defaults.max_tokens <= 0 || defaults.num_inference_steps <= 0 || defaults.max_text_tokens_per_segment <= 0) {
         throw std::runtime_error("Confucius4-TTS length and step options must be positive");
     }
-    if (defaults.cross_fade_duration < 0.0F || defaults.edge_fade_duration < 0.0F ||
-        defaults.edge_pad_duration < 0.0F) {
+    if (defaults.cross_fade_duration_sec < 0.0F || defaults.edge_fade_duration_sec < 0.0F ||
+        defaults.edge_pad_duration_sec < 0.0F) {
         throw std::runtime_error("Confucius4-TTS fade durations must be non-negative");
     }
     return defaults;

@@ -395,7 +395,6 @@ add_library(engine_runtime STATIC
     src/models/fish_audio/tokenizer_text.cpp
     src/models/confucius4_tts/assets.cpp
     src/models/confucius4_tts/audio_features.cpp
-    src/models/confucius4_tts/loader.cpp
     src/models/confucius4_tts/request.cpp
     src/models/confucius4_tts/s2a.cpp
     src/models/confucius4_tts/semantic_encoder.cpp

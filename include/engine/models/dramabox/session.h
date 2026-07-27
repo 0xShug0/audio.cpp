@@ -45,16 +45,16 @@ private:
         const runtime::TaskRequest & request);
 
     struct ReferenceCacheKey {
-        std::string voice_ref;
+        std::string target_voice;
         std::optional<uint64_t> inline_audio_key;
-        float ref_duration = 0.0F;
+        float reference_duration_sec = 0.0F;
     };
 
     struct ReferenceCacheKeyEqual {
         bool operator()(const ReferenceCacheKey & lhs, const ReferenceCacheKey & rhs) const noexcept {
-            return lhs.voice_ref == rhs.voice_ref &&
+            return lhs.target_voice == rhs.target_voice &&
                 lhs.inline_audio_key == rhs.inline_audio_key &&
-                lhs.ref_duration == rhs.ref_duration;
+                lhs.reference_duration_sec == rhs.reference_duration_sec;
         }
     };
 

@@ -37,6 +37,8 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 
 ## News
 
+> **2026-07-27 - Panic release note:** Confucius4-TTS is being published early as the current schema-v1 model spec example. DramaBox and RVC may appear alongside it because they live on the same branch, but they have not gone through the same refactor/release pass yet. Stay tuned for release 0.5.
+
 > [!IMPORTANT]
 > **2026-07-23 - Release 0.4:** This release brings audio.cpp to **35** model families listed across the supported and community tables and adds **Higgs Audio v3 TTS 4B**, **Fish Audio S2 Pro**, and **Voxtral Realtime ASR**, with GGUF-first CUDA validation for the new paths. On warmed TTS requests, Higgs Audio Q8_0 runs about 8.8x-**10.1x** faster than real time, while Fish Audio Q8_0 runs about 3.1x-**3.4x** faster than real time. Voxtral adds offline and streaming ASR, with Q8_0 GGUF around **15.7x** faster than real time and about **171 ms** streaming TTFT.
 >

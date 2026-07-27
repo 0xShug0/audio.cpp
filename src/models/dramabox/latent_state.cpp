@@ -262,17 +262,17 @@ double estimate_dramabox_speech_duration_seconds(const std::string & prompt) {
     return std::max(3.0, round_one_decimal(duration + 2.0));
 }
 
-double estimate_dramabox_duration_seconds(const std::string & prompt, float multiplier) {
-    return std::max(3.0, round_one_decimal(estimate_dramabox_speech_duration_seconds(prompt) * multiplier));
+double estimate_dramabox_duration_seconds(const std::string & prompt, float duration_scale) {
+    return std::max(3.0, round_one_decimal(estimate_dramabox_speech_duration_seconds(prompt) * duration_scale));
 }
 
 std::vector<DramaBoxPromptChunk> chunk_prompt_for_duration(
     const std::string & prompt,
     float max_duration_seconds,
     float target_duration_seconds,
-    float duration_multiplier) {
+    float duration_scale) {
     const auto estimate = [&](const std::string & text) {
-        return estimate_dramabox_speech_duration_seconds(text) * static_cast<double>(duration_multiplier);
+        return estimate_dramabox_speech_duration_seconds(text) * static_cast<double>(duration_scale);
     };
     const double total = estimate(prompt);
     if (total <= static_cast<double>(max_duration_seconds)) {
@@ -486,8 +486,8 @@ void guided_prediction_from_velocity(
     int64_t branch_count,
     float sigma,
     float cfg_scale,
-    float stg_scale,
-    float rescale_scale,
+    float spatio_temporal_guidance_scale,
+    float guidance_rescale,
     bool cfg_enabled,
     bool stg_enabled,
     std::vector<float> & cond,
@@ -511,11 +511,11 @@ void guided_prediction_from_velocity(
             } else if (cfg_enabled && branch == 1) {
                 pred[value_index] += (cfg_scale - 1.0F) * (cond[value_index] - denoised);
             } else if (stg_enabled && branch == (cfg_enabled ? 2 : 1)) {
-                pred[value_index] += stg_scale * (cond[value_index] - denoised);
+                pred[value_index] += spatio_temporal_guidance_scale * (cond[value_index] - denoised);
             }
         }
     }
-    if (rescale_scale == 0.0F || pred.empty()) {
+    if (guidance_rescale == 0.0F || pred.empty()) {
         return;
     }
     const auto calc_std = [](const std::vector<float> & values) {
@@ -539,7 +539,7 @@ void guided_prediction_from_velocity(
     if (pred_std <= 0.0F) {
         return;
     }
-    const float factor = rescale_scale * (calc_std(cond) / pred_std) + (1.0F - rescale_scale);
+    const float factor = guidance_rescale * (calc_std(cond) / pred_std) + (1.0F - guidance_rescale);
     for (float & value : pred) {
         value *= factor;
     }

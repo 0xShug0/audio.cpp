@@ -1,6 +1,7 @@
 #include "engine/models/confucius4_tts/session.h"
 
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/utf8.h"
 
 #include <algorithm>
@@ -104,7 +105,7 @@ void validate_session_option_keys(
 
 runtime::AudioBuffer merge_confucius_audio_chunks(
     const std::vector<runtime::AudioBuffer> & chunks,
-    float cross_fade_duration) {
+    float cross_fade_duration_sec) {
     if (chunks.empty()) {
         return {};
     }
@@ -113,7 +114,7 @@ runtime::AudioBuffer merge_confucius_audio_chunks(
     }
     runtime::AudioBuffer merged = chunks.front();
     const int64_t total_frames = static_cast<int64_t>(
-        static_cast<double>(std::max(0.0F, cross_fade_duration)) *
+        static_cast<double>(std::max(0.0F, cross_fade_duration_sec)) *
         static_cast<double>(merged.sample_rate));
     const int64_t fade_frames = total_frames / 3;
     const int64_t silence_frames = fade_frames;
@@ -404,7 +405,7 @@ runtime::AudioBuffer ConfuciusSession::synthesize(
         debug::trace_log_scalar(prefix + ".token_ids", static_cast<int64_t>(segments[i].token_ids.size()));
     }
     timing_start = Clock::now();
-    auto merged = merge_confucius_audio_chunks(chunks, request.generation.cross_fade_duration);
+    auto merged = merge_confucius_audio_chunks(chunks, request.generation.cross_fade_duration_sec);
     debug::timing_log_scalar("confucius4_tts.audio.merge_chunks_ms", engine::debug::elapsed_ms(timing_start));
     return merged;
 }
@@ -511,7 +512,7 @@ runtime::TaskResult ConfuciusSession::finish_stream() {
     runtime::TaskResult result;
     result.audio_output = merge_confucius_audio_chunks(
         streaming_chunks_,
-        streaming_request_->generation.cross_fade_duration);
+        streaming_request_->generation.cross_fade_duration_sec);
     reset();
     return result;
 }
@@ -532,6 +533,25 @@ runtime::StreamEvent ConfuciusSession::process_audio_chunk(const runtime::AudioC
 
 runtime::TaskResult ConfuciusSession::finalize() {
     return finish_stream();
+}
+
+// Loading adapter: Confucius4-TTS uses the schema-v1 spec-backed loader, so the
+// loader wiring stays beside the session it constructs.
+std::shared_ptr<runtime::IVoiceModelLoader> make_confucius4_tts_loader() {
+    runtime::SpecBackedVoiceModelConfig<ConfuciusAssets> config;
+    config.family = kFamily;
+    config.load_assets = load_confucius_assets;
+    config.create_session = [](const runtime::TaskSpec & task,
+                                const runtime::SessionOptions & options,
+                                std::shared_ptr<const ConfuciusAssets> assets,
+                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<ConfuciusSession>(
+            task,
+            options,
+            std::move(assets),
+            std::move(contract));
+    };
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::confucius4_tts

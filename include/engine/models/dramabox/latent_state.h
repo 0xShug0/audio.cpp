@@ -35,12 +35,12 @@ struct DramaBoxPromptChunk {
 };
 
 double estimate_dramabox_speech_duration_seconds(const std::string & prompt);
-double estimate_dramabox_duration_seconds(const std::string & prompt, float multiplier);
+double estimate_dramabox_duration_seconds(const std::string & prompt, float duration_scale);
 std::vector<DramaBoxPromptChunk> chunk_prompt_for_duration(
     const std::string & prompt,
     float max_duration_seconds,
     float target_duration_seconds,
-    float duration_multiplier);
+    float duration_scale);
 int64_t dramabox_aligned_pixel_frames(double duration_seconds, float fps);
 DramaBoxLatentShape dramabox_target_latent_shape(double duration_seconds, const DramaBoxConfig & config);
 DramaBoxLatentState create_dramabox_initial_state(const DramaBoxLatentShape & shape, const DramaBoxConfig & config);
@@ -62,8 +62,8 @@ void guided_prediction_from_velocity(
     int64_t branch_count,
     float sigma,
     float cfg_scale,
-    float stg_scale,
-    float rescale_scale,
+    float spatio_temporal_guidance_scale,
+    float guidance_rescale,
     bool cfg_enabled,
     bool stg_enabled,
     std::vector<float> & cond,

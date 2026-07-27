@@ -136,7 +136,7 @@
         "default": "default"
       },
       {
-        "name": "cross_fade_duration",
+        "name": "cross_fade_duration_sec",
         "type": "float",
         "description": "Cross-fade duration between generated segments in seconds; default 0.3.",
         "required": false,
@@ -144,7 +144,7 @@
         "default": 0.3
       },
       {
-        "name": "edge_fade_duration",
+        "name": "edge_fade_duration_sec",
         "type": "float",
         "description": "Fade duration applied at segment edges in seconds; default 0.1.",
         "required": false,
@@ -152,7 +152,7 @@
         "default": 0.1
       },
       {
-        "name": "edge_pad_duration",
+        "name": "edge_pad_duration_sec",
         "type": "float",
         "description": "Silence padding applied at segment edges in seconds; default 0.1.",
         "required": false,

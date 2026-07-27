@@ -35,7 +35,7 @@
   "options": {
     "request": [
       {
-        "name": "voice_ref",
+        "name": "target_voice",
         "type": "audio_path",
         "description": "Reference voice WAV path for voice cloning. If omitted, DramaBox generates from text without reference-audio conditioning.",
         "required": false
@@ -47,7 +47,7 @@
         "required": false
       },
       {
-        "name": "duration_seconds",
+        "name": "duration_sec",
         "type": "float",
         "description": "Explicit target duration in seconds; default 0 uses the prompt-duration estimator.",
         "required": false,
@@ -71,7 +71,7 @@
         "default": 2.5
       },
       {
-        "name": "stg_scale",
+        "name": "spatio_temporal_guidance_scale",
         "type": "float",
         "description": "Spatio-temporal guidance scale; default comes from config.json, 1.5 in the current package. Values greater than 0 enable STG.",
         "required": false,
@@ -79,15 +79,15 @@
         "default": 1.5
       },
       {
-        "name": "duration_multiplier",
+        "name": "duration_scale",
         "type": "float",
-        "description": "Multiplier applied to the estimated prompt duration when duration_seconds is 0; default comes from config.json, 1.1 in the current package.",
+        "description": "Multiplier applied to the estimated prompt duration when duration_sec is 0; default comes from config.json, 1.1 in the current package.",
         "required": false,
         "min": 0.0,
         "default": 1.1
       },
       {
-        "name": "reference_duration_seconds",
+        "name": "reference_duration_sec",
         "type": "float",
         "description": "Reference voice crop/repeat duration in seconds; default comes from config.json, 10.0 in the current package.",
         "required": false,
@@ -95,14 +95,14 @@
         "default": 10.0
       },
       {
-        "name": "rescale_scale",
+        "name": "guidance_rescale",
         "type": "string",
         "description": "Guidance rescale value. The default auto mode derives a rescale value from guidance_scale; a numeric string requests an explicit value.",
         "required": false,
         "default": "auto"
       },
       {
-        "name": "max_chunk_duration",
+        "name": "audio_chunk_threshold_sec",
         "type": "float",
         "description": "Estimated duration threshold that switches a request to long-form chunking; default 45.0 seconds.",
         "required": false,
@@ -110,7 +110,7 @@
         "default": 45.0
       },
       {
-        "name": "target_chunk_duration",
+        "name": "audio_chunk_duration_sec",
         "type": "float",
         "description": "Target estimated duration for each long-form chunk; default 37.0 seconds.",
         "required": false,
@@ -118,12 +118,12 @@
         "default": 37.0
       },
       {
-        "name": "crossfade_ms",
+        "name": "cross_fade_duration_sec",
         "type": "float",
-        "description": "Equal-power crossfade between long-form chunks in milliseconds; default 50.0.",
+        "description": "Equal-power cross-fade between long-form chunks in seconds; default 0.05.",
         "required": false,
         "min": 0.0,
-        "default": 50.0
+        "default": 0.05
       },
       {
         "name": "seed",

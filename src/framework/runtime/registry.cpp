@@ -7,7 +7,7 @@
 #include "engine/models/ace_step/loader.h"
 #include "engine/models/chatterbox/loader.h"
 #include "engine/models/citrinet_asr/session.h"
-#include "engine/models/confucius4_tts/loader.h"
+#include "engine/models/confucius4_tts/session.h"
 #include "engine/models/demucs/loader.h"
 #include "engine/models/dramabox/loader.h"
 #include "engine/models/fish_audio/loader.h"

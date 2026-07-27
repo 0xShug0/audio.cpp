@@ -97,29 +97,29 @@ struct DramaBoxConfig {
     DramaBoxGemma3Config gemma;
     int64_t diffusion_steps = 30;
     float default_cfg_scale = 2.5F;
-    float default_stg_scale = 1.5F;
-    float default_duration_multiplier = 1.1F;
-    float default_ref_duration = 10.0F;
+    float default_spatio_temporal_guidance_scale = 1.5F;
+    float default_duration_scale = 1.1F;
+    float default_reference_duration_sec = 10.0F;
     float fps = 25.0F;
 };
 
 struct DramaBoxRequest {
     std::string prompt;
     std::string negative_prompt;
-    std::filesystem::path voice_ref;
-    bool has_inline_voice_ref = false;
+    std::filesystem::path target_voice;
+    bool has_inline_target_voice = false;
     int64_t seed = 42;
     int64_t steps = 30;
     float cfg_scale = 2.5F;
-    float stg_scale = 1.5F;
-    float duration_multiplier = 1.1F;
-    float gen_duration = 0.0F;
-    float ref_duration = 10.0F;
-    float rescale_scale = -1.0F;
+    float spatio_temporal_guidance_scale = 1.5F;
+    float duration_scale = 1.1F;
+    float duration_sec = 0.0F;
+    float reference_duration_sec = 10.0F;
+    float guidance_rescale = -1.0F;
     bool denoise_ref = false;
-    float max_chunk_duration = 45.0F;
-    float target_chunk_duration = 37.0F;
-    float crossfade_ms = 50.0F;
+    float audio_chunk_threshold_sec = 45.0F;
+    float audio_chunk_duration_sec = 37.0F;
+    float cross_fade_duration_sec = 0.05F;
 };
 
 }  // namespace engine::models::dramabox
