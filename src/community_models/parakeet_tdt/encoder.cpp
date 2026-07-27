@@ -386,9 +386,28 @@ void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
     if (input_frames <= 0 || feature_dim <= 0) {
         throw std::runtime_error("Parakeet TDT encoder graph requires positive input shape");
     }
-    if (graph_ != nullptr &&
-        graph_->backend == execution_context_->backend() &&
+    // A cached graph is only reused if it is not much bigger than the request.
+    //
+    // The graph runs at its built capacity no matter how short the real audio
+    // is — encode() zero-pads up to it — so an oversized cached graph is paid
+    // for in full on every call. Measured on this encoder: a 7.4s clip costs
+    // 1018 ms on a matched graph and 10928 ms on a 60s-capacity one, while
+    // rebuilding costs ~400 ms once (dominated by the 24 positional
+    // projections; the allocation itself is ~0.4 ms). Rebuilding therefore wins
+    // outright whenever the mismatch is more than a few percent, and it wins by
+    // more with every subsequent call at the new size.
+    //
+    // The tolerance keeps the common case — a stream of clips whose lengths
+    // wobble slightly — from rebuilding on every call, while capping the wasted
+    // compute at roughly the same fraction.
+    constexpr double kMaxGraphOversizeRatio = 1.10;
+    const bool capacity_usable =
+        graph_ != nullptr &&
         graph_->input_frames >= input_frames &&
+        static_cast<double>(graph_->input_frames) <=
+            kMaxGraphOversizeRatio * static_cast<double>(input_frames);
+    if (capacity_usable &&
+        graph_->backend == execution_context_->backend() &&
         graph_->feature_dim == feature_dim) {
         debug::timing_log_scalar("parakeet_tdt.encoder.graph_rebuild_ms", 0.0);
         debug::trace_log_scalar("parakeet_tdt.encoder.graph_cache_hit", true);
