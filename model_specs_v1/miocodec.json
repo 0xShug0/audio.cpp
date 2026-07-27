@@ -1,0 +1,168 @@
+{
+  "family": "miocodec",
+  "display_name": "MioCodec",
+  "description": "Lightweight neural audio codec that encodes 44.1 kHz audio into a low-rate 25 Hz discrete token stream and decodes tokens with speaker conditioning for efficient speech modeling.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "codec",
+    "vc",
+    "s2s"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "codec": [
+      "encode_decode"
+    ],
+    "vc": [
+      "speaker_reference"
+    ],
+    "s2s": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "MioCodec model and WavLM weight storage type; default f32.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "f32"
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Shared MioCodec weight context size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "constant_context_mb",
+        "type": "int",
+        "description": "Shared MioCodec constant tensor context size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "content_graph_arena_mb",
+        "type": "int",
+        "description": "Content encoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "global_graph_arena_mb",
+        "type": "int",
+        "description": "Global reference encoder graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "wave_graph_arena_mb",
+        "type": "int",
+        "description": "Wave decoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.yaml"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        },
+        "wavlm_weights": {
+          "source": "weights:",
+          "prefix": "wavlm_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "wavlm": "wavlm-base-plus-mlx"
+      },
+      "files": {
+        "config": "model:config.yaml"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors",
+        "wavlm_weights": "wavlm:weights.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "miocodec_q8_0",
+      "display_name": "MioCodec 25Hz 44.1kHz v2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MioCodec-25Hz-44.1kHz-v2-GGUF",
+      "files": [
+        "MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf"
+      ],
+      "strip_prefix": "MioCodec-25Hz-44.1kHz-v2-GGUF"
+    },
+    {
+      "id": "miocodec_f16",
+      "display_name": "MioCodec 25Hz 44.1kHz v2 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "MioCodec-25Hz-44.1kHz-v2-GGUF",
+      "files": [
+        "MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-f16.gguf"
+      ],
+      "strip_prefix": "MioCodec-25Hz-44.1kHz-v2-GGUF"
+    },
+    {
+      "id": "miocodec_orig",
+      "display_name": "MioCodec 25Hz 44.1kHz v2 Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "MioCodec-25Hz-44.1kHz-v2-GGUF",
+      "files": [
+        "MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-orig.gguf"
+      ],
+      "strip_prefix": "MioCodec-25Hz-44.1kHz-v2-GGUF"
+    }
+  ]
+}

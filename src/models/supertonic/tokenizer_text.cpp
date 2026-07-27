@@ -1,5 +1,7 @@
 #include "engine/models/supertonic/tokenizer_text.h"
 
+#include "engine/framework/text/unicode_normalization.h"
+
 #include <algorithm>
 #include <cctype>
 #include <regex>
@@ -143,6 +145,9 @@ std::vector<uint32_t> decompose_known_text_codepoints(const std::vector<uint32_t
     std::vector<uint32_t> out;
     out.reserve(codepoints.size() * 2);
     for (const uint32_t codepoint : codepoints) {
+        if (engine::text::append_known_unicode_decomposition(codepoint, out)) {
+            continue;
+        }
         if (append_japanese_kana_decomposition(codepoint, out)) {
             continue;
         }

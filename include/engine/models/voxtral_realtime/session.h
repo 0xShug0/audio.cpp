@@ -44,6 +44,9 @@ private:
     runtime::TaskResult run_single(const VoxtralRealtimeRequest & request, bool first_chunk);
     runtime::StreamEvent process_available_stream_chunks();
     runtime::StreamEvent process_one_stream_chunk(const runtime::AudioBuffer & audio);
+    // Feeds a freshly decoded token back as the next stream input and, when it carries text,
+    // appends it to the transcript and refreshes the event's partial.
+    void record_stream_token(int32_t token, runtime::StreamEvent & event);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const VoxtralRealtimeAssets> assets_;
@@ -54,6 +57,8 @@ private:
     size_t text_decoder_weight_context_bytes_ = 128ull * 1024ull * 1024ull;
     assets::TensorStorageType audio_encoder_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType text_decoder_weight_storage_type_ = assets::TensorStorageType::Native;
+    int64_t stream_decode_cache_steps_ = 1024;
+    int64_t stream_batch_tokens_ = 1;
     VoxtralRealtimeTokenizer tokenizer_;
     VoxtralRealtimeFrontend frontend_;
     VoxtralRealtimeAudioEncoderRuntime audio_encoder_;
@@ -62,6 +67,10 @@ private:
     runtime::AudioBuffer streaming_audio_;
     size_t streaming_audio_offset_values_ = 0;
     int64_t streaming_steps_processed_ = 0;
+    // Per-stage wall time summed over every steady step, reported by finalize().
+    double stream_frontend_ms_ = 0.0;
+    double stream_encoder_ms_ = 0.0;
+    double stream_decoder_ms_ = 0.0;
     VoxtralRealtimeGenerationOptions streaming_generation_;
     runtime::StreamEventCallback stream_event_sink_;
     VoxtralRealtimeFrontendStreamState frontend_stream_state_;
@@ -71,7 +80,6 @@ private:
     bool stream_started_ = false;
     bool first_stream_chunk_ = true;
     bool have_previous_stream_token_ = false;
-    bool stream_reached_eos_ = false;
     std::chrono::steady_clock::time_point stream_wall_start_{};
 };
 

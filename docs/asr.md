@@ -215,7 +215,7 @@ VibeVoice ASR is an offline ASR model with greedy, sampling, and beam-search dec
 | Timestamps | Segment and speaker-turn timestamps when produced |
 
 ```bash
-audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR --backend cuda --audio speech_16k.wav --text-out transcript.txt
+audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --text-out transcript.txt
 ```
 
 VibeVoice-ASR also accepts a standalone audio.cpp-native GGUF. Pass the shard
@@ -231,7 +231,13 @@ directory may contain only `model.gguf`.
 Structured output:
 
 ```bash
-audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR --backend cuda --audio meeting.wav --text "The recording is a meeting conversation." --text-out transcript.txt --segments-out segments.json --turns-out turns.json
+audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf --backend cuda --audio meeting.wav --text "The recording is a meeting conversation." --text-out transcript.txt --segments-out segments.json --turns-out turns.json
+```
+
+With VAD chunking, provide the bundled Silero VAD model:
+
+```bash
+audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --audio-chunk-mode vad --session-option vibevoice_asr.vad_model_path=assets/framework/models/silero_vad --text-out transcript.txt
 ```
 
 | Option | Values | Default | Meaning |
@@ -255,12 +261,13 @@ audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR --ba
 
 ## Voxtral Realtime
 
-Voxtral Realtime is a Mistral realtime ASR model with offline and streaming sessions. The model manager installs the Q8_0 standalone GGUF package by default; native Hugging Face directories and other standalone GGUF variants can also be used when provided directly.
+Voxtral Realtime is a Mistral realtime ASR model with offline and streaming sessions. The model manager installs the Q8_0 standalone GGUF package by default; native Hugging Face directories and other standalone GGUF variants can also be used when provided directly. A Q4_K GGUF package is also available for lower memory use and faster CUDA runs; in a quick path check its transcripts matched Q8_0 except for one capitalization-only difference.
 
 | Field | Value |
 |---|---|
 | Family | `voxtral_realtime` |
 | Model path | `models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf` when installed through the model manager |
+| GGUF variants | `bf16`, `q8_0`, `q4_k` |
 | Task | `asr` |
 | Modes | `offline`, `streaming` |
 | Output | Transcription text |
@@ -284,6 +291,53 @@ Streaming CLI:
 ```bash
 audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --mode streaming --audio assets/resources/sample.wav --text-out transcript.txt
 ```
+
+Live streaming input. `--audio -` reads raw (headerless) interleaved PCM from stdin and feeds it
+to the model chunk by chunk as it arrives, so the audio is never buffered up front and does not
+have to exist as a file. Any capture tool that can write PCM to a pipe works as the source:
+
+```bash
+# Microphone (macOS; use -f alsa on Linux or -f dshow on Windows)
+ffmpeg -f avfoundation -i ":0" -ar 16000 -ac 1 -f s16le - \
+  | audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --mode streaming --audio -
+```
+
+```bash
+# Any file or network stream, decoded to PCM on the fly
+ffmpeg -i input.mp3 -ar 16000 -ac 1 -f s16le - \
+  | audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --mode streaming --audio -
+```
+
+Stdin input requires `--mode streaming`, and the PCM format must be described up front because a
+live stream carries no header — the defaults (`s16le`, 16 kHz, mono) match what the model expects.
+The chosen interpretation is echoed back as an `audio_input=stdin` line. Each update is written as
+its own `partial_text=` line and flushed as it is produced, so a reader sees the transcript grow
+rather than waiting for the stream to end.
+
+> **Throughput.** A streaming step always advances 80 ms of audio, so a step has to cost under
+> 80 ms to keep up with a realtime source. Measured on an Apple M3 Air (Metal, q8_0):
+>
+> | Config | short clip, cool | sustained 7 min |
+> |---|---:|---:|
+> | default | 78 ms/step (0.98x) | 88 ms/step (1.10x) |
+> | `stream_batch_tokens=4` | 60 ms/step (0.76x) | 74 ms/step (0.92x) |
+>
+> The default splits roughly 48 ms for the text decoder and 30 ms for the audio encoder; batching
+> takes the encoder to ~13 ms. The second column is what a long session actually gets on a fanless
+> machine: a short clip run immediately after the 7-minute one still measured 88 ms/step, so the
+> gap is the machine staying warm rather than anything that resets between sessions. Budget for the
+> sustained column, and prefer `stream_batch_tokens=4` if the source is realtime.
+>
+> The decoder runs one step per 80 ms whether the audio holds speech or silence, so a session that
+> does fall behind stays behind — the lag is monotonic and does not recover during pauses. Measure
+> your own hardware before relying on a live source.
+
+Streaming session options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--session-option voxtral_realtime.stream_batch_tokens=<n>` | `1` | Audio tokens per encoder forward. The decoder still runs one step per 80 ms; batching only amortizes the encoder's fixed per-forward cost, which dominates it. `4` takes the encoder from ~30 to ~13 ms/step, at the price of delaying every partial by up to `n * 80 ms`. |
+| `--session-option voxtral_realtime.stream_decode_cache_steps=<n>` | `1024` | Decoder KV cache size in 80 ms steps (~82 s of context). Built once when the stream starts, so a long session never stalls on a cache-growth rebuild; the cache ring then wraps in place, and a 7-minute stream stays coherent across five wraparounds. Lower values trade context for memory, not for speed. |
 
 Streaming server config:
 
@@ -318,7 +372,10 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--audio` | WAV path | required | Speech input. |
+| `--audio` | WAV path or `-` | required | Speech input. `-` streams raw PCM from stdin and requires `--mode streaming`. |
+| `--input-format` | `s16le`, `f32le` | `s16le` | Sample format of raw PCM read from stdin. Ignored for file input. |
+| `--input-rate` | integer Hz | `16000` | Sample rate of raw PCM read from stdin. Ignored for file input. |
+| `--input-channels` | integer | `1` | Channel count of raw PCM read from stdin. Ignored for file input. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
 | `--request-option max_new_tokens=<n>` | integer | model-derived limit | Maximum generated transcript tokens. |
 | `--do-sample` | bool | `false` | Enable sampling instead of greedy decode. |
@@ -327,11 +384,16 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 | `--top-k` | integer | `50` | Top-k sampling limit; `0` disables top-k. |
 | `--seed` | integer | `1234` | Sampling seed. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
-| `--session-option voxtral_realtime.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared matmul weight storage type. |
-| `--session-option voxtral_realtime.audio_encoder_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Audio encoder matmul weight storage type. |
-| `--session-option voxtral_realtime.text_decoder_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Text decoder matmul weight storage type. |
+| `--session-option voxtral_realtime.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q4_0`, `q4_k`, `q5_k`, `q6_k`, `q8_0` | `native` | Shared matmul weight storage type. |
+| `--session-option voxtral_realtime.audio_encoder_weight_type=<type>` | same as above | shared setting | Audio encoder matmul weight storage type. Leave at `native` for streaming: the encoder is not bandwidth-bound there, so quantizing it makes it slower. |
+| `--session-option voxtral_realtime.text_decoder_weight_type=<type>` | same as above | shared setting | Text decoder matmul weight storage type. `q4_k` roughly halves the streaming decoder step cost. |
 | `--session-option voxtral_realtime.audio_encoder_graph_arena_mb=<n>` | MB | `512` | Audio encoder graph arena size. |
 | `--session-option voxtral_realtime.text_decoder_prefill_graph_arena_mb=<n>` | MB | `512` | Text decoder prefill graph arena size. |
 | `--session-option voxtral_realtime.text_decoder_decode_graph_arena_mb=<n>` | MB | `512` | Text decoder cached-step graph arena size. |
+
+Weight storage types are applied when the model loads, so asking for one the GGUF does not already
+hold means requantizing on the CPU before the first token appears — around three minutes for
+`q4_k` from the shipped q8_0 package. Prefer the published `q4_k` GGUF variant, which needs no
+load-time conversion. See [GGUF](gguf.md).
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.

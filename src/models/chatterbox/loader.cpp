@@ -43,6 +43,11 @@ runtime::ModelCliInterface cli(const ChatterboxAssets &) {
             "true|false",
             "Free non-conditional runtime graphs after each request chunk; default false.",
         },
+        {
+            "chatterbox.multilingual_t3",
+            "v2|v3",
+            "Multilingual T3 checkpoint for non-English TTS; default v2.",
+        },
     };
     return out;
 }

@@ -94,6 +94,12 @@ Status labels:
 | `voxcpm2` | Done | Pass | Pass | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `voxtral_realtime` | Done | Pass | --- | Pass | Pass |
 
+Additional lower-bit checks:
+
+| Family | Format | Tested |
+|---|---|---|
+| `voxtral_realtime` | `q4_k` | Pass (quick CUDA check; transcripts match Q8 except one capitalization-only difference) |
+
 Q8 packaging notes:
 
 - `chatterbox` Q8 is intentionally mixed type. Graph-sensitive scalar, norm,
@@ -109,6 +115,9 @@ Q8 packaging notes:
   projection or linear weights, while leaving the speaker encoder, lookup, and
   codebook-sensitive tensors unquantized. Quantizing those speaker-side tensors
   can produce long-form quality problems such as large silence.
+- `voxtral_realtime` also has a tested `q4_k` package. In a quick CUDA path
+  check it was smaller and faster than Q8_0, while transcript output matched
+  Q8_0 except for one capitalization-only difference.
 
 ## Build The Converter
 

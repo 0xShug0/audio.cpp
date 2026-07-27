@@ -1,0 +1,256 @@
+{
+  "family": "voxtral_realtime",
+  "display_name": "Voxtral Mini 4B Realtime",
+  "description": "Mistral 13-language realtime ASR model with a natively streaming causal audio encoder, configurable low-latency transcription delay, and accuracy competitive with offline open-source systems.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en",
+    "zh",
+    "hi",
+    "es",
+    "ar",
+    "fr",
+    "pt",
+    "ru",
+    "de",
+    "ja",
+    "ko",
+    "it",
+    "nl"
+  ],
+  "capabilities": {
+    "asr": [
+      "partial_results"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated transcript tokens; omitted uses the audio-length-derived limit.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable sampling instead of greedy decode; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Positive decoder sampling temperature; default 1.0.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus sampling probability in (0, 1]; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling limit; default 50, 0 disables top-k.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Decoder sampling seed; default 1234.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "audio_encoder_weight_type",
+        "type": "enum",
+        "description": "Audio encoder matmul weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "text_decoder_weight_type",
+        "type": "enum",
+        "description": "Text decoder matmul weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "audio_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Audio encoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "audio_encoder_weight_context_mb",
+        "type": "int",
+        "description": "Audio encoder weight context arena size in MiB; default 128.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "text_decoder_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Text decoder prefill graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "text_decoder_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Text decoder cached-step graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "text_decoder_weight_context_mb",
+        "type": "int",
+        "description": "Text decoder weight context arena size in MiB; default 128.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "stream_decode_cache_steps",
+        "type": "int",
+        "description": "Streaming decoder KV cache size in 80 ms audio steps; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "stream_batch_tokens",
+        "type": "int",
+        "description": "Audio tokens per steady streaming encoder forward; default 1. Higher values reduce encoder dispatch overhead but add about 80 ms of partial-result delay per token.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "tekken": "model:tekken.json"
+      },
+      "optional_files": {
+        "params": "model:params.json",
+        "readme": "model:README.md"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "tekken": "model:tekken.json"
+      },
+      "optional_files": {
+        "params": "model:params.json",
+        "readme": "model:README.md"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "voxtral_realtime_q8_0",
+      "display_name": "Voxtral Mini 4B Realtime Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Voxtral-Mini-4B-Realtime-2602-GGUF",
+      "files": [
+        "Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf"
+      ],
+      "strip_prefix": "Voxtral-Mini-4B-Realtime-2602-GGUF"
+    },
+    {
+      "id": "voxtral_realtime_q4_k",
+      "display_name": "Voxtral Mini 4B Realtime Q4_K GGUF",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "Voxtral-Mini-4B-Realtime-2602-GGUF",
+      "files": [
+        "Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q4_k.gguf"
+      ],
+      "strip_prefix": "Voxtral-Mini-4B-Realtime-2602-GGUF"
+    },
+    {
+      "id": "voxtral_realtime_bf16",
+      "display_name": "Voxtral Mini 4B Realtime BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Voxtral-Mini-4B-Realtime-2602-GGUF",
+      "files": [
+        "Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-bf16.gguf"
+      ],
+      "strip_prefix": "Voxtral-Mini-4B-Realtime-2602-GGUF"
+    }
+  ]
+}

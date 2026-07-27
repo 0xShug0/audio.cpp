@@ -6,17 +6,15 @@ mkdir -p "$OUTPUT_DIR"
 MODEL_DIR="$(cd "$(dirname "$0")/../models" && pwd)"
 
 docker run --rm \
-  --gpus all \
   --user "$(id -u):$(id -g)" \
   -v "$MODEL_DIR:/models:ro" \
   -v "$OUTPUT_DIR:/output" \
-  local/audiocpp:full-cuda \
+  ghcr.io/0xshug0/audio.cpp:full-cpu \
   cli \
   --task tts \
   --family pocket_tts \
-  --model /models/pocket-tts \
-  --backend cuda \
-  --device 0 \
+  --model /models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
+  --backend cpu \
   --text "You are successfully running a text-to-speech model using audio.cpp, a pure C++ inference engine for audio models." \
   --voice-id alba \
   --out /output/speech.wav

@@ -11,6 +11,8 @@
 
 namespace minitts::cli {
 
+// True when --audio selects raw PCM on stdin ("-") rather than a file path.
+bool is_stdin_audio_source(std::string_view audio_arg);
 engine::runtime::AudioBuffer read_audio_buffer(const std::filesystem::path & path);
 engine::runtime::AudioBuffer read_audio_buffer(std::istream & path);
 engine::runtime::AudioBuffer read_audio_buffer(std::string_view input);

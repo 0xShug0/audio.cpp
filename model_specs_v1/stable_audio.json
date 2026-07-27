@@ -1,0 +1,391 @@
+{
+  "family": "stable_audio",
+  "display_name": "Stable Audio 3",
+  "description": "Stability AI generative audio model family for text-to-music, sound effects, audio-to-audio editing, inpainting, continuation, variable-length generation, and LoRA personalization.",
+  "category": "audio_generation",
+  "status": "supported",
+  "tasks": [
+    "music",
+    "sfx",
+    "edit"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {
+    "music": [
+      "lyrics"
+    ],
+    "sfx": [
+      "prompt_generation"
+    ],
+    "edit": [
+      "prompt_editing"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float_list",
+        "description": "Target duration per prompt in seconds; must be positive, default 120 seconds for each prompt when omitted and capped by model length.",
+        "required": false,
+        "min": 0.0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "RF diffusion steps; default 8.",
+        "required": false,
+        "min": 1,
+        "default": 8
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "sampler",
+        "type": "enum",
+        "description": "Diffusion sampler used for denoising; Stable Audio 3 supports pingpong/euler, Foundation/Open also supports DPM++ samplers.",
+        "values": [
+          "pingpong",
+          "euler",
+          "dpmpp-2m",
+          "dpmpp-3m-sde"
+        ],
+        "required": false
+      },
+      {
+        "name": "sigma_min",
+        "type": "float",
+        "description": "Foundation/Open DPM++ sigma schedule minimum; must be positive and below sigma_max, default 0.01.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.01
+      },
+      {
+        "name": "sigma_max",
+        "type": "float",
+        "description": "Foundation/Open DPM++ sigma schedule maximum; must be greater than sigma_min, default 100.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 100.0
+      },
+      {
+        "name": "rho",
+        "type": "float",
+        "description": "Foundation/Open DPM++ polyexponential sigma schedule rho; must be positive, default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "apg_scale",
+        "type": "float",
+        "description": "Adaptive projected guidance scale; default 1.0.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "negative_prompt",
+        "type": "string",
+        "description": "Negative prompt text.",
+        "required": false
+      },
+      {
+        "name": "batch_size",
+        "type": "int",
+        "description": "Prompt batch size; default 1.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "duration_padding_sec",
+        "type": "float",
+        "description": "Extra generated padding before truncation in seconds; default 6.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 6.0
+      },
+      {
+        "name": "truncate_output_to_duration",
+        "type": "bool",
+        "description": "Trim decoded audio to requested duration; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "chunked_decode",
+        "type": "bool",
+        "description": "Decode the vocoder in chunks; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "init_noise_level",
+        "type": "float",
+        "description": "Strength for audio-conditioned generation; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "audio_input_kind",
+        "type": "enum",
+        "description": "How to use request audio input; default init_audio when audio is supplied.",
+        "values": [
+          "init_audio",
+          "inpaint_audio"
+        ],
+        "required": false
+      },
+      {
+        "name": "inpaint_mask_start_sec",
+        "type": "float_list",
+        "description": "Inpaint region start times, in seconds.",
+        "required": false
+      },
+      {
+        "name": "inpaint_mask_end_sec",
+        "type": "float_list",
+        "description": "Inpaint region end times, in seconds.",
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed for reproducible output; omitted uses a random seed.",
+        "required": false,
+        "min": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "max_batch",
+        "type": "int",
+        "description": "Maximum prompt batch size; default 1.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Stable Audio weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release staged runtime graphs after each request; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "model:t5gemma-b-b-ul2/config.json",
+        "t5_tokenizer_json": "model:t5gemma-b-b-ul2/tokenizer.json",
+        "t5_tokenizer_model": "model:t5gemma-b-b-ul2/tokenizer.model",
+        "t5_tokenizer_config": "model:t5gemma-b-b-ul2/tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "t5_weights": {
+          "source": "weights:",
+          "prefix": "t5_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "t5": "t5gemma-b-b-ul2"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "t5:config.json",
+        "t5_tokenizer_json": "t5:tokenizer.json",
+        "t5_tokenizer_model": "t5:tokenizer.model",
+        "t5_tokenizer_config": "t5:tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "t5_weights": "t5:model.safetensors"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "t5": "../t5-base"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "t5:config.json",
+        "t5_tokenizer_json": "t5:tokenizer.json",
+        "t5_tokenizer_model": "t5:spiece.model",
+        "t5_tokenizer_config": "t5:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:Foundation_1.safetensors",
+        "t5_weights": "t5:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "stable_audio_3_medium_q8_0",
+      "display_name": "Stable Audio 3 Medium Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Stable-Audio-3-Medium-GGUF",
+      "files": [
+        "Stable-Audio-3-Medium-GGUF/stable-audio-3-medium-q8_0.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Medium-GGUF"
+    },
+    {
+      "id": "stable_audio_3_medium_f16",
+      "display_name": "Stable Audio 3 Medium F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Stable-Audio-3-Medium-GGUF",
+      "files": [
+        "Stable-Audio-3-Medium-GGUF/stable-audio-3-medium-f16.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Medium-GGUF"
+    },
+    {
+      "id": "stable_audio_3_small_music_q8_0",
+      "display_name": "Stable Audio 3 Small Music Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Stable-Audio-3-Small-Music-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-Music-GGUF/stable-audio-3-small-music-q8_0.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-Music-GGUF"
+    },
+    {
+      "id": "stable_audio_3_small_music_f16",
+      "display_name": "Stable Audio 3 Small Music F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Stable-Audio-3-Small-Music-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-Music-GGUF/stable-audio-3-small-music-f16.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-Music-GGUF"
+    },
+    {
+      "id": "stable_audio_3_small_sfx_q8_0",
+      "display_name": "Stable Audio 3 Small SFX Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Stable-Audio-3-Small-SFX-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-SFX-GGUF/stable-audio-3-small-sfx-q8_0.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-SFX-GGUF"
+    },
+    {
+      "id": "stable_audio_3_small_sfx_f16",
+      "display_name": "Stable Audio 3 Small SFX F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Stable-Audio-3-Small-SFX-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-SFX-GGUF/stable-audio-3-small-sfx-f16.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-SFX-GGUF"
+    },
+    {
+      "id": "stable_audio_3_medium_safetensors",
+      "display_name": "Stable Audio 3 Medium Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "stable-audio-3-medium",
+      "files": [
+        "model_config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "stabilityai/stable-audio-3-medium",
+        "gated": true
+      }
+    },
+    {
+      "id": "stable_audio_3_small_music_safetensors",
+      "display_name": "Stable Audio 3 Small Music Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "stable-audio-3-small-music",
+      "files": [
+        "model_config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "stabilityai/stable-audio-3-small-music",
+        "gated": true
+      }
+    },
+    {
+      "id": "stable_audio_3_small_sfx_safetensors",
+      "display_name": "Stable Audio 3 Small SFX Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "stable-audio-3-small-sfx",
+      "files": [
+        "model_config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "stabilityai/stable-audio-3-small-sfx",
+        "gated": true
+      }
+    }
+  ]
+}

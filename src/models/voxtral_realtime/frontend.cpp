@@ -250,7 +250,8 @@ VoxtralRealtimeFeatures VoxtralRealtimeFrontend::extract(const runtime::AudioBuf
 VoxtralRealtimeFeatures VoxtralRealtimeFrontend::extract_stream_chunk(
     const runtime::AudioBuffer & audio,
     bool first_chunk,
-    VoxtralRealtimeFrontendStreamState & state) const {
+    VoxtralRealtimeFrontendStreamState & state,
+    int64_t steady_tokens) const {
     const auto & config = assets_->config.frontend;
     if (audio.sample_rate <= 0 || audio.channels <= 0) {
         throw std::runtime_error("VoxTral audio input requires positive sample_rate and channels");
@@ -267,10 +268,10 @@ VoxtralRealtimeFeatures VoxtralRealtimeFrontend::extract_stream_chunk(
         mono.resize(static_cast<size_t>(first_stream_chunk_samples()), 0.0F);
         mono = padded_first_stream_audio(assets_->config, std::move(mono));
     } else {
-        if (steady_stream_chunk_samples() <= 0) {
+        if (steady_stream_chunk_samples(steady_tokens) <= 0) {
             throw std::runtime_error("VoxTral streaming frontend requires positive steady chunk samples");
         }
-        mono.resize(static_cast<size_t>(steady_stream_chunk_samples()), 0.0F);
+        mono.resize(static_cast<size_t>(steady_stream_chunk_samples(steady_tokens)), 0.0F);
     }
     const bool reuse_cached_prefix = !first_chunk && state.cached_frame_ready;
     return extract_features_from_mono(config, mono, first_chunk, mel_filterbank_, &state, reuse_cached_prefix, false);
@@ -282,9 +283,12 @@ int64_t VoxtralRealtimeFrontend::first_stream_chunk_samples() const {
         config.frontend.hop_length + config.frontend.win_length / 2;
 }
 
-int64_t VoxtralRealtimeFrontend::steady_stream_chunk_samples() const {
+int64_t VoxtralRealtimeFrontend::steady_stream_chunk_samples(int64_t steady_tokens) const {
     const auto & config = assets_->config;
-    return config.audio_length_per_tok * config.frontend.hop_length + config.frontend.win_length;
+    if (steady_tokens <= 0) {
+        throw std::runtime_error("VoxTral streaming frontend requires a positive steady token count");
+    }
+    return steady_tokens * config.audio_length_per_tok * config.frontend.hop_length + config.frontend.win_length;
 }
 
 int64_t VoxtralRealtimeFrontend::first_stream_chunk_advance_samples() const {
@@ -293,9 +297,12 @@ int64_t VoxtralRealtimeFrontend::first_stream_chunk_advance_samples() const {
     return frames * config.frontend.hop_length - config.frontend.n_fft / 2;
 }
 
-int64_t VoxtralRealtimeFrontend::steady_stream_chunk_advance_samples() const {
+int64_t VoxtralRealtimeFrontend::steady_stream_chunk_advance_samples(int64_t steady_tokens) const {
     const auto & config = assets_->config;
-    return config.audio_length_per_tok * config.frontend.hop_length;
+    if (steady_tokens <= 0) {
+        throw std::runtime_error("VoxTral streaming frontend requires a positive steady token count");
+    }
+    return steady_tokens * config.audio_length_per_tok * config.frontend.hop_length;
 }
 
 }  // namespace engine::models::voxtral_realtime

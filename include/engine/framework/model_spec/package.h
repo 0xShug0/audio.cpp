@@ -35,6 +35,9 @@ private:
 
 [[nodiscard]] assets::ResourceBundle load_resource_bundle(const std::filesystem::path & model_path,
     const std::filesystem::path & spec_path);
+[[nodiscard]] assets::ResourceBundle load_resource_bundle_for_family(
+    const std::filesystem::path & model_path,
+    std::string_view family);
 
 [[nodiscard]] std::vector<assets::ResourceFile> discover_resources(const std::filesystem::path & model_path,
     const std::filesystem::path & spec_path,

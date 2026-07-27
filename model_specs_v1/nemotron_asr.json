@@ -1,0 +1,235 @@
+{
+  "family": "nemotron_asr",
+  "display_name": "Nemotron 3.5 ASR",
+  "description": "NVIDIA 600M streaming ASR model for low-latency and batch transcription across 40 language-locales, with native punctuation, capitalization, automatic language detection, and configurable chunk sizes.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "ar-AR",
+    "bg-BG",
+    "cs-CZ",
+    "da-DK",
+    "de-DE",
+    "el-GR",
+    "en-GB",
+    "en-US",
+    "es-ES",
+    "es-US",
+    "et-EE",
+    "fi-FI",
+    "fr-CA",
+    "fr-FR",
+    "he-IL",
+    "hi-IN",
+    "hr-HR",
+    "hu-HU",
+    "it-IT",
+    "ja-JP",
+    "ko-KR",
+    "lt-LT",
+    "lv-LV",
+    "mt-MT",
+    "nb-NO",
+    "nl-NL",
+    "nn-NO",
+    "pl-PL",
+    "pt-BR",
+    "pt-PT",
+    "ro-RO",
+    "ru-RU",
+    "sk-SK",
+    "sl-SI",
+    "sv-SE",
+    "th-TH",
+    "tr-TR",
+    "uk-UA",
+    "vi-VN",
+    "zh-CN"
+  ],
+  "capabilities": {},
+  "options": {
+    "request": [
+      {
+      "name": "language",
+      "type": "string",
+      "description": "ASR prompt language locale such as en-US or da-DK, or auto for automatic language detection; default en-US.",
+      "required": false,
+      "default": "en-US"
+    },
+      {
+      "name": "lookahead_tokens",
+      "type": "int",
+      "description": "Chunk-limited encoder right context; default 3. Supported values come from processor_config.",
+      "required": false,
+      "min": 0,
+      "default": 3
+    },
+      {
+      "name": "max_tokens",
+      "type": "int",
+      "description": "Maximum RNNT generated tokens; 0 or omitted uses the model-derived limit.",
+      "required": false,
+      "min": 0,
+      "default": 0
+    },
+      {
+        "name": "keep_language_tags",
+        "type": "bool",
+        "description": "Keep language tag tokens in decoded text.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "session": [
+      {
+      "name": "weight_type",
+      "type": "enum",
+      "description": "Shared matmul weight storage type; default native.",
+      "preset": "weight_type_full",
+      "required": false,
+      "default": "native"
+    },
+    {
+      "name": "matmul_weight_type",
+      "type": "enum",
+      "description": "Encoder and decoder matmul weight storage type; defaults to weight_type, which defaults to native.",
+      "preset": "weight_type_full",
+      "required": false
+    },
+    {
+      "name": "conv_weight_type",
+      "type": "enum",
+      "description": "Convolution weight storage type; default native.",
+      "preset": "weight_type_conv",
+      "required": false,
+      "default": "native"
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight context arena size in MiB; default 3072.",
+        "required": false,
+        "min": 0,
+        "default": 3072
+      },
+      {
+        "name": "encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Encoder graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 0,
+        "default": 1024
+      },
+      {
+        "name": "decoder_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 0,
+        "default": 256
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release the offline encoder graph after each offline request; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "nemotron_asr_q8_0",
+      "display_name": "Nemotron 3.5 ASR Streaming 0.6B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Nemotron-3.5-ASR-Streaming-0.6B-GGUF",
+      "files": [
+        "Nemotron-3.5-ASR-Streaming-0.6B-GGUF/nemotron-3.5-asr-streaming-0.6b-q8_0.gguf"
+      ],
+      "strip_prefix": "Nemotron-3.5-ASR-Streaming-0.6B-GGUF"
+    },
+    {
+      "id": "nemotron_asr_f16",
+      "display_name": "Nemotron 3.5 ASR Streaming 0.6B F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Nemotron-3.5-ASR-Streaming-0.6B-GGUF",
+      "files": [
+        "Nemotron-3.5-ASR-Streaming-0.6B-GGUF/nemotron-3.5-asr-streaming-0.6b-f16.gguf"
+      ],
+      "strip_prefix": "Nemotron-3.5-ASR-Streaming-0.6B-GGUF"
+    },
+    {
+      "id": "nemotron_asr_safetensors",
+      "display_name": "Nemotron 3.5 ASR Streaming 0.6B Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "nemotron-3.5-asr-streaming-0.6b",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "processor_config.json",
+        "tokenizer.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "nvidia/nemotron-3.5-asr-streaming-0.6b"
+      }
+    }
+  ]
+}

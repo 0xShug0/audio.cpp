@@ -22,6 +22,21 @@ Q8 gives the clearest end-to-end wins on the larger AR-style models:
 
 Smaller or already memory-light models still load and run with Q8, but the speed gain can be modest. Treat Q8 as a measured route choice, not a guaranteed win for every model.
 
+## Voxtral Q4_K Quick Check
+
+Voxtral also has a `q4_k` GGUF package. In this quick CUDA path-test check,
+Q4_K was smaller and faster than Q8_0 while producing effectively the same
+transcripts. Four requests matched exactly; one differed only by capitalization
+(`Mother Nature` vs `mother nature`).
+
+| Route | Q8 RTF | Q4_K RTF | Q4_K vs Q8 |
+|---|---:|---:|---:|
+| Offline short | 0.0862 | 0.0629 | 1.37x |
+| Offline medium | 0.0643 | 0.0476 | 1.35x |
+| Offline longer | 0.0576 | 0.0439 | 1.31x |
+| Offline sampled | 0.0630 | 0.0500 | 1.26x |
+| Streaming path | 0.1036 | 0.0904 | 1.15x |
+
 ## TTS Offline Long-Lived Session
 
 | Model | 16-bit speed vs real time | Q8 speed vs real time | Q8 vs 16-bit | 16-bit peak VRAM | Q8 peak VRAM |

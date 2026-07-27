@@ -1,0 +1,105 @@
+{
+  "family": "htdemucs",
+  "display_name": "HTDemucs",
+  "description": "Hybrid Transformer Demucs music source-separation model that combines waveform and spectrogram processing with Transformer layers to split mixtures into vocals, drums, bass, and accompaniment.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "sep"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "sep": [
+      "stems"
+    ]
+  },
+  "options": {
+    "request": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "HTDemucs weight storage type; default is f32 for host graph planning, f16 on CUDA, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "manifest": "model:manifest.json",
+        "submodel_config": "model:955717e8/config.json"
+      },
+      "tensors": {
+        "submodel_weights": {
+          "source": "weights:",
+          "prefix": "submodel_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "submodel": "955717e8"
+      },
+      "files": {
+        "manifest": "model:manifest.json",
+        "submodel_config": "submodel:config.json"
+      },
+      "tensors": {
+        "submodel_weights": "submodel:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "htdemucs_q8_0",
+      "display_name": "HTDemucs Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "HTDemucs-GGUF",
+      "files": [
+        "HTDemucs-GGUF/htdemucs-q8_0.gguf"
+      ],
+      "strip_prefix": "HTDemucs-GGUF"
+    },
+    {
+      "id": "htdemucs_f16",
+      "display_name": "HTDemucs F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "HTDemucs-GGUF",
+      "files": [
+        "HTDemucs-GGUF/htdemucs-f16.gguf"
+      ],
+      "strip_prefix": "HTDemucs-GGUF"
+    }
+  ]
+}

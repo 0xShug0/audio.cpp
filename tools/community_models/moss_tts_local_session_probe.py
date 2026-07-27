@@ -21,14 +21,17 @@ from __future__ import annotations
 import argparse
 import re
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 from typing import Optional
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "tools" / "audiocpp_cli"))
+
 import run_audiocpp_cli_path_tests as runner
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 TIMING_RE = re.compile(r"^\[TIMING[^\]]*\]\s+(\S+)\s+([-+0-9.eE]+)\s*$")
 
 

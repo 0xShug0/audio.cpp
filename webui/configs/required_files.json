@@ -348,6 +348,24 @@
     "qwen0.6bemo4-merge/merges.txt",
     "qwen0.6bemo4-merge/model.safetensors"
   ],
+  "glm_tts": [
+    "audio_cpp_config.json",
+    "flow/config.yaml",
+    "flow/model.safetensors",
+    "frontend/campplus.safetensors",
+    "hift/model.safetensors",
+    "llm/config.json",
+    "llm/generation_config.json",
+    "llm/model-00001-of-00002.safetensors",
+    "llm/model-00002-of-00002.safetensors",
+    "llm/model.safetensors.index.json",
+    "speech_tokenizer/config.json",
+    "speech_tokenizer/model.safetensors",
+    "speech_tokenizer/preprocessor_config.json",
+    "vq32k-phoneme-tokenizer/tokenizer_config.json",
+    "vq32k-phoneme-tokenizer/tokenizer_merges.txt",
+    "vq32k-phoneme-tokenizer/tokenizer_vocab.json"
+  ],
   "mel_band_roformer": [
     "config.json",
     "model.safetensors"

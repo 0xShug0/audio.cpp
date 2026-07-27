@@ -3,11 +3,40 @@
 #include "engine/framework/runtime/model.h"
 
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace engine::model_spec {
 
+enum class ModelSpecValueType {
+    Bool,
+    Number,
+    String,
+};
+
+struct ModelDependencyCondition {
+    std::string scope;
+    std::string option_key;
+    ModelSpecValueType equals_type = ModelSpecValueType::String;
+    bool equals_bool = false;
+    double equals_number = 0.0;
+    std::string equals_string;
+};
+
+struct ModelDependency {
+    std::string kind;
+    std::string family;
+    std::string scope;
+    std::string option;
+    std::string option_key;
+    bool required = false;
+    std::vector<ModelDependencyCondition> required_when;
+    std::optional<std::string> path;
+};
+
 [[nodiscard]] std::optional<runtime::CapabilitySet> advertised_capabilities(std::string_view family);
 [[nodiscard]] std::optional<runtime::ModelCliInterface> cli_interface(std::string_view family);
+[[nodiscard]] std::vector<ModelDependency> dependencies(std::string_view family);
 
 }  // namespace engine::model_spec

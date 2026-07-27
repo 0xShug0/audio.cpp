@@ -88,12 +88,14 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 
 ## MioTTS
 
-MioTTS is a 1.7B voice-clone TTS path that uses MioCodec for acoustic decoding. It requires a reference voice.
+MioTTS is a 1.7B voice-clone TTS path that uses MioCodec for acoustic decoding. It requires a reference voice and a MioCodec model.
+Best-of-N candidate scoring can optionally use Qwen3-ASR.
 
 | Field | Value |
 |---|---|
 | Family | `miotts` |
-| Model directory | `models/MioTTS-1.7B` |
+| GGUF model | `models/MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf` |
+| Required dependency | MioCodec through `--session-option miotts.codec_model_path=<dir>` |
 | Task | `tts` |
 | Modes | `offline` |
 | Languages | Model auto-handles supported text languages; no explicit language selector is exposed |
@@ -101,7 +103,13 @@ MioTTS is a 1.7B voice-clone TTS path that uses MioCodec for acoustic decoding. 
 | Built-in voices | Not exposed |
 
 ```bash
-audiocpp_cli --task tts --family miotts --model models/MioTTS-1.7B --backend cuda --text "Hello from MioTTS." --voice-ref assets/resources/b.wav --out out.wav
+audiocpp_cli --task tts --family miotts --model models/MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf --backend cuda --session-option miotts.codec_model_path=models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --text "Hello from MioTTS." --voice-ref assets/resources/b.wav --out out.wav
+```
+
+With best-of-N scoring, also provide a Qwen3-ASR model:
+
+```bash
+audiocpp_cli --task tts --family miotts --model models/MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf --backend cuda --session-option miotts.codec_model_path=models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --session-option miotts.best_of_n_asr_model_path=models/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf --request-option miotts.best_of_n_enabled=true --request-option miotts.best_of_n=2 --text "Hello from MioTTS." --voice-ref assets/resources/b.wav --out out.wav
 ```
 
 | Option | Values | Default | Meaning |
@@ -114,7 +122,13 @@ audiocpp_cli --task tts --family miotts --model models/MioTTS-1.7B --backend cud
 | `--top-p` | float | `1.0` | LM nucleus sampling limit. |
 | `--repetition-penalty` | float | `1.0` | LM repetition penalty. |
 | `--do-sample` | `true`, `false` | `true` | Enable stochastic LM sampling. |
-| `--request-option best_of_n_enabled=true|false` | bool | `false` | Run best-of-N candidate selection. |
+| `--session-option miotts.codec_model_path=<dir>` | directory | sibling MioCodec directory | MioCodec model used for acoustic decoding. |
+| `--request-option miotts.best_of_n_enabled=true|false` | bool | `false` | Run best-of-N candidate selection. |
+| `--request-option miotts.best_of_n=<n>` | integer | session default | Generate n candidates and select by ASR scoring. |
+| `--session-option miotts.best_of_n_default=<n>` | integer | `1` | Default best-of-N candidate count. |
+| `--session-option miotts.best_of_n_max=<n>` | integer | `8` | Maximum best-of-N candidate count. |
+| `--session-option miotts.best_of_n_language=auto|en|ja` | enum | `auto` | Default language used when scoring candidates. |
+| `--session-option miotts.best_of_n_asr_model_path=<dir>` | directory | sibling Qwen3-ASR directory | Qwen3-ASR model used for best-of-N scoring. |
 
 ## MOSS-TTS-Local
 

@@ -1047,9 +1047,7 @@ public:
         int64_t code_frames,
         ggml_backend_t backend,
         int threads) const {
-        const bool frame_match = perf_mode_ == Qwen3TTSPerfMode::FlashAttention
-            ? code_frames_ == code_frames
-            : code_frames_ >= code_frames;
+        const bool frame_match = code_frames_ == code_frames;
         return weights_.get() == &weights && frame_match && backend_ == backend &&
             compute_threads_ == std::max(1, threads);
     }
@@ -1156,7 +1154,6 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
     }
     std::vector<float> samples;
     samples.reserve(static_cast<size_t>(codec_codes.frames * kDecodeSamplesPerCode));
-    const int64_t graph_capacity_frames = std::min<int64_t>(codec_codes.frames, kChunkCodes + kLeftContextCodes);
     double graph_build_ms = 0.0;
     double input_upload_ms = 0.0;
     double graph_compute_ms = 0.0;
@@ -1183,7 +1180,7 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
             graph_.reset();
             graph_ = std::make_unique<Qwen3SpeechTokenizerDecoderGraph>(
                 weights_,
-                std::max(chunk_frames, graph_capacity_frames),
+                chunk_frames,
                 *execution_context_,
                 *constants_,
                 graph_arena_bytes_,

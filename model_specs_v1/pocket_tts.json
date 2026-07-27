@@ -1,0 +1,470 @@
+{
+  "family": "pocket_tts",
+  "display_name": "PocketTTS",
+  "description": "Kyutai 100M-parameter CPU-friendly TTS package set for real-time local synthesis and small-footprint voice cloning in English, German, Italian, Portuguese, and Spanish.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "de",
+    "it",
+    "pt",
+    "es"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_steps",
+        "type": "int",
+        "description": "Maximum acoustic generation frames per text chunk; default 0 estimates the cap from text length.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Text-conditioning token budget accepted by the PocketTTS generation path; default 50.",
+        "required": false,
+        "min": 1,
+        "default": 50
+      },
+      {
+        "name": "frames_after_eos",
+        "type": "int",
+        "description": "Acoustic frames to continue after the EOS head fires; default -1 uses the model recommendation or the text-length heuristic.",
+        "required": false,
+        "min": -1,
+        "default": -1
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Positive acoustic sampling temperature. When omitted, PocketTTS uses the model config default: 0.3 for English built-in defaults and 0.7 for other built-in defaults.",
+        "required": false,
+        "min": 0.0
+      },
+      {
+        "name": "noise_clamp",
+        "type": "float",
+        "description": "Clamp sampled latent noise to this positive magnitude; default -1 disables clamping.",
+        "required": false,
+        "default": -1.0
+      },
+      {
+        "name": "eos_threshold",
+        "type": "float",
+        "description": "EOS logit threshold used to stop acoustic generation; default -4.0.",
+        "required": false,
+        "default": -4.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Acoustic noise seed; omitted requests choose a random seed during session preparation.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "noise_path",
+        "type": "path",
+        "description": "Optional binary float latent-noise schedule. The schedule must provide at least max_steps latent vectors.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum UTF-8 codepoints per long-form text chunk; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "voice_state_path",
+        "type": "path",
+        "description": "Optional prepared PocketTTS voice-state file to use instead of a named preset or reference audio.",
+        "required": false
+      },
+      {
+        "name": "truncate_clone_audio",
+        "type": "bool",
+        "description": "Limit reference audio used for voice cloning to the first 30 seconds; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "session": [
+      {
+        "name": "voice_state_cache_slots",
+        "type": "int",
+        "description": "Prepared voice-state cache slots; default 4, set 0 to disable.",
+        "required": false,
+        "min": 0,
+        "default": 4
+      },
+      {
+        "name": "voice_state_export_path",
+        "type": "path",
+        "description": "Optional path where session preparation exports the prepared voice state for later reuse.",
+        "required": false
+      },
+      {
+        "name": "graph_capacity_mode",
+        "type": "enum",
+        "description": "Graph capacity allocation strategy; default tiered on CPU host-graph backends and double otherwise.",
+        "values": [
+          "fixed",
+          "tiered",
+          "grow",
+          "double"
+        ],
+        "required": false
+      },
+      {
+        "name": "prompt_graph_capacity",
+        "type": "int",
+        "description": "Fixed prompt graph capacity in acoustic prompt steps; default 0 lets the graph-capacity mode choose.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "generation_graph_capacity",
+        "type": "int",
+        "description": "Fixed acoustic generation graph capacity in generated frames; default 0 lets the graph-capacity mode choose.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Default weight context size in MiB for FlowLM and Mimi weights; default 64.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "flow_weight_context_mb",
+        "type": "int",
+        "description": "FlowLM weight context size in MiB; default inherits weight_context_mb.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "mimi_encoder_weight_context_mb",
+        "type": "int",
+        "description": "Mimi encoder weight context size in MiB; default inherits weight_context_mb.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "mimi_decoder_weight_context_mb",
+        "type": "int",
+        "description": "Mimi decoder weight context size in MiB; default inherits weight_context_mb.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "flow_weight_view_context_mb",
+        "type": "int",
+        "description": "FlowLM temporary weight-view context size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "flow_step_graph_arena_mb",
+        "type": "int",
+        "description": "FlowLM step graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "mimi_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Mimi encoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "mimi_conv_graph_arena_mb",
+        "type": "int",
+        "description": "Mimi decoder convolution graph arena size in MiB; default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "mimi_transformer_graph_arena_mb",
+        "type": "int",
+        "description": "Mimi decoder transformer graph arena size in MiB; default 96.",
+        "required": false,
+        "min": 1,
+        "default": 96
+      },
+      {
+        "name": "mimi_tail_graph_arena_mb",
+        "type": "int",
+        "description": "Mimi decoder tail graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "mimi_full_chunk_frames",
+        "type": "int",
+        "description": "Mimi full-sequence decoder chunk size in codec frames; default 90.",
+        "required": false,
+        "min": 1,
+        "default": 90
+      },
+      {
+        "name": "mimi_stage2_chunk_frames",
+        "type": "int",
+        "description": "Mimi stage-2 decoder chunk size in codec frames; default 900.",
+        "required": false,
+        "min": 1,
+        "default": 900
+      },
+      {
+        "name": "use_full_mimi",
+        "type": "bool",
+        "description": "Use the full-sequence Mimi decoder path instead of the streaming chunked path; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "matmul_weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type; default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "tokenizer": "model:tokenizer.model"
+      },
+      "optional_files": {
+        "config": "model:config.yaml"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "language": "languages/english"
+      },
+      "files": {
+        "tokenizer": "language:tokenizer.model"
+      },
+      "optional_files": {
+        "config": "language:config.yaml"
+      },
+      "tensors": {
+        "weights": "language:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "pocket_tts_english_q8_0",
+      "display_name": "PocketTTS English Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "PocketTTS-GGUF/english",
+      "files": [
+        "PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/english"
+    },
+    {
+      "id": "pocket_tts_english_bf16",
+      "display_name": "PocketTTS English BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "PocketTTS-GGUF/english",
+      "files": [
+        "PocketTTS-GGUF/english/pocket-tts-english-bf16.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/english"
+    },
+    {
+      "id": "pocket_tts_german_q8_0",
+      "display_name": "PocketTTS German Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "PocketTTS-GGUF/german",
+      "files": [
+        "PocketTTS-GGUF/german/pocket-tts-german-q8_0.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/german"
+    },
+    {
+      "id": "pocket_tts_german_bf16",
+      "display_name": "PocketTTS German BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "PocketTTS-GGUF/german",
+      "files": [
+        "PocketTTS-GGUF/german/pocket-tts-german-bf16.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/german"
+    },
+    {
+      "id": "pocket_tts_italian_q8_0",
+      "display_name": "PocketTTS Italian Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "PocketTTS-GGUF/italian",
+      "files": [
+        "PocketTTS-GGUF/italian/pocket-tts-italian-q8_0.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/italian"
+    },
+    {
+      "id": "pocket_tts_italian_bf16",
+      "display_name": "PocketTTS Italian BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "PocketTTS-GGUF/italian",
+      "files": [
+        "PocketTTS-GGUF/italian/pocket-tts-italian-bf16.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/italian"
+    },
+    {
+      "id": "pocket_tts_portuguese_q8_0",
+      "display_name": "PocketTTS Portuguese Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "PocketTTS-GGUF/portuguese",
+      "files": [
+        "PocketTTS-GGUF/portuguese/pocket-tts-portuguese-q8_0.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/portuguese"
+    },
+    {
+      "id": "pocket_tts_portuguese_bf16",
+      "display_name": "PocketTTS Portuguese BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "PocketTTS-GGUF/portuguese",
+      "files": [
+        "PocketTTS-GGUF/portuguese/pocket-tts-portuguese-bf16.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/portuguese"
+    },
+    {
+      "id": "pocket_tts_spanish_q8_0",
+      "display_name": "PocketTTS Spanish Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "PocketTTS-GGUF/spanish",
+      "files": [
+        "PocketTTS-GGUF/spanish/pocket-tts-spanish-q8_0.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/spanish"
+    },
+    {
+      "id": "pocket_tts_spanish_bf16",
+      "display_name": "PocketTTS Spanish BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "PocketTTS-GGUF/spanish",
+      "files": [
+        "PocketTTS-GGUF/spanish/pocket-tts-spanish-bf16.gguf"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/spanish"
+    },
+    {
+      "id": "pocket_tts_english_safetensors",
+      "display_name": "PocketTTS English Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "pocket-tts",
+      "files": [
+        "languages/english/embeddings/alba.safetensors",
+        "languages/english/embeddings/anna.safetensors",
+        "languages/english/embeddings/azelma.safetensors",
+        "languages/english/embeddings/bill_boerst.safetensors",
+        "languages/english/embeddings/caro_davy.safetensors",
+        "languages/english/embeddings/charles.safetensors",
+        "languages/english/embeddings/cosette.safetensors",
+        "languages/english/embeddings/eponine.safetensors",
+        "languages/english/embeddings/estelle.safetensors",
+        "languages/english/embeddings/eve.safetensors",
+        "languages/english/embeddings/fantine.safetensors",
+        "languages/english/embeddings/george.safetensors",
+        "languages/english/embeddings/giovanni.safetensors",
+        "languages/english/embeddings/jane.safetensors",
+        "languages/english/embeddings/javert.safetensors",
+        "languages/english/embeddings/jean.safetensors",
+        "languages/english/embeddings/juergen.safetensors",
+        "languages/english/embeddings/lola.safetensors",
+        "languages/english/embeddings/marius.safetensors",
+        "languages/english/embeddings/mary.safetensors",
+        "languages/english/embeddings/michael.safetensors",
+        "languages/english/embeddings/paul.safetensors",
+        "languages/english/embeddings/peter_yearsley.safetensors",
+        "languages/english/embeddings/rafael.safetensors",
+        "languages/english/embeddings/stuart_bell.safetensors",
+        "languages/english/embeddings/vera.safetensors",
+        "languages/english/model.safetensors",
+        "languages/english/tokenizer.model"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "kyutai/pocket-tts"
+      }
+    }
+  ]
+}

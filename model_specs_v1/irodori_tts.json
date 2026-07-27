@@ -1,0 +1,339 @@
+{
+  "family": "irodori_tts",
+  "display_name": "Irodori-TTS",
+  "description": "Japanese TTS model based on RF-DiT continuous audio latents, supporting zero-shot voice cloning, automatic duration prediction, multimodal voice design, and emoji-style control.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone",
+    "design"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ja"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ],
+    "design": [
+      "voice_design"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "caption",
+        "type": "string",
+        "description": "VoiceDesign caption describing target voice identity, style, or emotion; supported only by caption-conditioned checkpoints.",
+        "required": false
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "RF diffusion steps; default 40.",
+        "required": false,
+        "min": 1,
+        "default": 40
+      },
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Explicit output duration in seconds; must be positive when set, otherwise predicted duration is used.",
+        "required": false,
+        "min": 0.0
+      },
+      {
+        "name": "duration_scale",
+        "type": "float",
+        "description": "Predicted-duration multiplier; must be positive when set; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Text chunking mode; default endline.",
+        "values": [
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "endline"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per text chunk; default uses the model text-token window, usually 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "min_duration_sec",
+        "type": "float",
+        "description": "Minimum generated duration in seconds; must be positive and no greater than max_duration_sec; default 0.5.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.5
+      },
+      {
+        "name": "max_duration_sec",
+        "type": "float",
+        "description": "Maximum generated duration in seconds; must be at least min_duration_sec; default 30.",
+        "required": false,
+        "min": 0.0,
+        "default": 30.0
+      },
+      {
+        "name": "text_guidance_scale",
+        "type": "float",
+        "description": "Text classifier-free guidance scale; default 3.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 3.0
+      },
+      {
+        "name": "speaker_guidance_scale",
+        "type": "float",
+        "description": "Speaker classifier-free guidance scale; default 5.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 5.0
+      },
+      {
+        "name": "caption_guidance_scale",
+        "type": "float",
+        "description": "Caption classifier-free guidance scale; default 3.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 3.0
+      },
+      {
+        "name": "guidance_mode",
+        "type": "enum",
+        "description": "Classifier-free guidance combination mode; default independent.",
+        "values": [
+          "independent"
+        ],
+        "required": false,
+        "default": "independent"
+      },
+      {
+        "name": "guidance_min_t",
+        "type": "float",
+        "description": "Minimum diffusion timestep value where guidance is active; default 0.5.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.5
+      },
+      {
+        "name": "guidance_max_t",
+        "type": "float",
+        "description": "Maximum diffusion timestep value where guidance is active; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed for reproducible output; omitted uses a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "trim_tail",
+        "type": "bool",
+        "description": "Trim trailing silence-like samples; default true.",
+        "required": false,
+        "default": true
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Model weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "codec_weight_type",
+        "type": "enum",
+        "description": "DACVAE codec weight storage type; default native.",
+        "preset": "weight_type_codec_q8",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "condition_graph_arena_mb",
+        "type": "int",
+        "description": "Condition encoder graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 0,
+        "default": 256
+      },
+      {
+        "name": "rf_graph_arena_mb",
+        "type": "int",
+        "description": "RF sampler graph arena size in MiB; default 768.",
+        "required": false,
+        "min": 0,
+        "default": 768
+      },
+      {
+        "name": "codec_graph_arena_mb",
+        "type": "int",
+        "description": "DACVAE codec graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "condition_weight_context_mb",
+        "type": "int",
+        "description": "Condition encoder weight context size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "rf_weight_context_mb",
+        "type": "int",
+        "description": "RF sampler weight context size in MiB; default 768.",
+        "required": false,
+        "min": 0,
+        "default": 768
+      },
+      {
+        "name": "codec_weight_context_mb",
+        "type": "int",
+        "description": "DACVAE codec weight context size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release staged runtime graphs after request phases; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-speaker cache slots; default 1.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "codec_weights": {
+          "source": "weights:",
+          "prefix": "codec_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "tokenizer": "../llm-jp-3-150m",
+        "codec": "../Semantic-DACVAE-Japanese-32dim"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "tokenizer_json": "tokenizer:tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "codec_weights": "codec:weights.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "irodori_tts_600m_v3_voicedesign_q8_0",
+      "display_name": "Irodori-TTS 600M v3 VoiceDesign Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Irodori-TTS-600M-v3-VoiceDesign-GGUF",
+      "files": [
+        "Irodori-TTS-600M-v3-VoiceDesign-GGUF/irodori-tts-600m-v3-voicedesign-q8_0.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-600M-v3-VoiceDesign-GGUF"
+    },
+    {
+      "id": "irodori_tts_600m_v3_voicedesign_f16",
+      "display_name": "Irodori-TTS 600M v3 VoiceDesign F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Irodori-TTS-600M-v3-VoiceDesign-GGUF",
+      "files": [
+        "Irodori-TTS-600M-v3-VoiceDesign-GGUF/irodori-tts-600m-v3-voicedesign-f16.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-600M-v3-VoiceDesign-GGUF"
+    },
+    {
+      "id": "irodori_tts_500m_v3_q8_0",
+      "display_name": "Irodori-TTS 500M v3 Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Irodori-TTS-500M-v3-GGUF",
+      "files": [
+        "Irodori-TTS-500M-v3-GGUF/irodori-tts-500m-v3-q8_0.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-500M-v3-GGUF"
+    },
+    {
+      "id": "irodori_tts_500m_v3_f16",
+      "display_name": "Irodori-TTS 500M v3 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Irodori-TTS-500M-v3-GGUF",
+      "files": [
+        "Irodori-TTS-500M-v3-GGUF/irodori-tts-500m-v3-f16.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-500M-v3-GGUF"
+    }
+  ]
+}

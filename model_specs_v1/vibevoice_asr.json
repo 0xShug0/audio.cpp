@@ -1,0 +1,268 @@
+{
+  "family": "vibevoice_asr",
+  "display_name": "VibeVoice ASR",
+  "description": "Microsoft long-form speech-to-text model that processes up to 60 minutes of audio in one pass and produces structured transcripts with speakers, timestamps, content, hotwords, and 50+ language support.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto",
+    "51 languages"
+  ],
+  "capabilities": {
+    "asr": [
+      "segments",
+      "speaker_turns",
+      "vad_chunking"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Optional transcript language label; VibeVoice-ASR can auto-detect language and handle code-switching without an explicit language setting.",
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated text tokens; default 32768.",
+        "required": false,
+        "min": 1,
+        "default": 32768
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature; default 0 uses deterministic decoding.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.0
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus sampling probability; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling limit; default 50, 0 disables top-k filtering.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "num_beams",
+        "type": "int",
+        "description": "Beam count for deterministic beam search; default 1.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Generation repetition penalty; must be positive, default 1.0.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Acoustic latent sampling seed for reproducible output; default 1234.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode; default auto uses fixed chunks.",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Audio chunk duration in seconds for fixed and VAD chunking; must be positive, default 1200.",
+        "required": false,
+        "default": 1200.0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Tokenizer, connector, and decoder weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "tokenizer_weight_type",
+        "type": "enum",
+        "description": "Speech tokenizer weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "connector_weight_type",
+        "type": "enum",
+        "description": "Acoustic and semantic connector weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "decoder_weight_type",
+        "type": "enum",
+        "description": "Text decoder weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "tokenizer_weight_context_mb",
+        "type": "int",
+        "description": "Speech tokenizer weight context arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "connector_weight_context_mb",
+        "type": "int",
+        "description": "Acoustic and semantic connector weight context arena size in MiB; default 128.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "decoder_weight_context_mb",
+        "type": "int",
+        "description": "Text decoder weight context arena size in MiB; default 4096.",
+        "required": false,
+        "min": 1,
+        "default": 4096
+      },
+      {
+        "name": "vad_path",
+        "type": "path",
+        "description": "Silero VAD model path used by audio_chunk_mode=vad.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "model_weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors.index.json"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "vibevoice_asr_q8_0",
+      "display_name": "VibeVoice ASR Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-ASR-GGUF",
+      "files": [
+        "VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf"
+      ],
+      "strip_prefix": "VibeVoice-ASR-GGUF"
+    },
+    {
+      "id": "vibevoice_asr_f16",
+      "display_name": "VibeVoice ASR F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "VibeVoice-ASR-GGUF",
+      "files": [
+        "VibeVoice-ASR-GGUF/vibevoice-asr-f16.gguf"
+      ],
+      "strip_prefix": "VibeVoice-ASR-GGUF"
+    }
+  ],
+  "dependencies": [
+    {
+      "kind": "bundled_model",
+      "family": "silero_vad",
+      "path": "assets/framework/models/silero_vad",
+      "scope": "session",
+      "option": "vad_path",
+      "required": false,
+      "required_when": [
+        {
+          "scope": "request",
+          "option_key": "audio_chunk_mode",
+          "equals": "vad"
+        }
+      ]
+    }
+  ]
+}

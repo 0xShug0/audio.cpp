@@ -159,6 +159,7 @@ add_compile_options(
 add_library(engine_runtime STATIC
     src/framework/assets/resource_bundle.cpp
     src/framework/model_spec/package.cpp
+    src/framework/model_spec/options.cpp
     src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
     src/framework/assets/torch_bin.cpp
@@ -188,6 +189,7 @@ add_library(engine_runtime STATIC
     src/framework/text/chinese_normalization.cpp
     src/framework/text/chunking.cpp
     src/framework/text/subtitle.cpp
+    src/framework/text/unicode_normalization.cpp
     src/framework/io/yaml.cpp
     src/framework/io/binary.cpp
     src/framework/io/safetensors.cpp
@@ -663,6 +665,7 @@ add_executable(audiocpp_cli
     app/cli/args.cpp
     app/cli/batch.cpp
     app/cli/request.cpp
+    app/streaming/pcm_source.cpp
     app/streaming/streaming.cpp
     app/workflow/execution.cpp
     app/workflow/file_sink.cpp
@@ -882,6 +885,28 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(voxtral_realtime_stream_chunking_test tests/unittests/test_voxtral_realtime_stream_chunking.cpp)
+    target_include_directories(voxtral_realtime_stream_chunking_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME voxtral_realtime_stream_chunking_test
+        COMMAND voxtral_realtime_stream_chunking_test
+    )
+
+    add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
+
+    add_test(
+        NAME chinese_normalization_test
+        COMMAND chinese_normalization_test
+    )
+
+    add_engine_unittest(unicode_normalization_test tests/unittests/test_unicode_normalization.cpp)
+
+    add_test(
+        NAME unicode_normalization_test
+        COMMAND unicode_normalization_test
+    )
+
     add_engine_unittest(outetts_generation_budget_test tests/unittests/test_outetts_generation_budget.cpp)
     target_include_directories(outetts_generation_budget_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
 
@@ -955,6 +980,19 @@ if (ENGINE_BUILD_TESTS)
         COMMAND backend_device_resolution_test
     )
 
+    add_executable(streaming_audio_input_test
+        tests/unittests/test_streaming_audio_input.cpp
+        app/streaming/pcm_source.cpp
+        app/streaming/streaming.cpp
+    )
+    target_link_libraries(streaming_audio_input_test PRIVATE engine_runtime ggml)
+    target_include_directories(streaming_audio_input_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME streaming_audio_input_test
+        COMMAND streaming_audio_input_test
+    )
+
     add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
 
     add_test(
@@ -1023,6 +1061,14 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME gguf_tensor_source_test
         COMMAND gguf_tensor_source_test
+    )
+
+    add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
+    target_include_directories(model_spec_system_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME model_spec_system_test
+        COMMAND model_spec_system_test
     )
 
     add_engine_unittest(scaled_dot_product_attention_test tests/unittests/test_scaled_dot_product_attention.cpp)

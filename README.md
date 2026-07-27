@@ -50,7 +50,7 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 
 Task tags: `TTS` text to speech, `Clone` voice cloning, `VC` voice conversion, `ASR` speech recognition, `Align` forced alignment, `VAD` voice activity detection, `Diar` speaker diarization, `Codec` audio codec, `Sep` source separation, `Music` music/song generation, `SFX` sound effects, `Edit` audio/music editing, `Design` voice design, `Dialogue` multi-speaker dialogue TTS, `Ctrl` TTS/clone voice control such as emotion, style, instruction, caption, or non-verbal tag control.
 
-Runtime tags: safetensors is the default model loading path. `GGUF 16/Q8` means both 16-bit and `q8_0` GGUF paths are tested; `GGUF Q8` means only `q8_0` is tested; `GGUF F32` means the original-F32 GGUF path is tested. See [docs/gguf.md](docs/gguf.md) for precision/status details. `Bundled` means the tiny runtime asset ships under `assets/framework/models` and needs no separate model download. `Stream` means the family exposes a streaming server/session path.
+Runtime tags: safetensors is the default model loading path. `GGUF 16/Q8/Q4` means those GGUF precision or quantization paths are tested; `GGUF Q8` means only `q8_0` is tested; `GGUF F32` means the original-F32 GGUF path is tested. See [docs/gguf.md](docs/gguf.md) for precision/status details. `Bundled` means the tiny runtime asset ships under `assets/framework/models` and needs no separate model download. `Stream` means the family exposes a streaming server/session path.
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
@@ -80,7 +80,7 @@ Runtime tags: safetensors is the default model loading path. `GGUF 16/Q8` means 
 | **vevo2** | TTS, Music, VC, Edit | en, zh | Vevo2 with Qwen2.5-0.5B AR model | GGUF 16 |
 | **vibevoice** | TTS, Dialogue | en, zh | VibeVoice-1.5B, VibeVoice-7B | GGUF 16/Q8 |
 | **vibevoice_asr** | ASR | auto | VibeVoice ASR | GGUF 16/Q8 |
-| **voxtral_realtime** | ASR | auto | Voxtral-Mini-4B-Realtime-2602 | GGUF 16/Q8, Stream |
+| **voxtral_realtime** | ASR | auto | Voxtral-Mini-4B-Realtime-2602 | GGUF 16/Q8/Q4, Stream |
 | **voxcpm2** | TTS, Clone, Design, Ctrl | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | VoxCPM2-2B, 48 kHz | GGUF 16/Q8, Stream |
 | **index_tts2** | TTS, Clone, Ctrl | zh, en | IndexTTS-2 | GGUF 16/Q8 |
 | **irodori_tts** | TTS, Clone, Design, Ctrl | ja | Irodori-TTS-500M-v3, Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
@@ -104,8 +104,8 @@ PocketTTS language selection is a model-load option. When the model path points 
 
 ## Docker
 
-Docker CPU and CUDA images are available for both CLI and server use. See [Docker.md](Docker.md) for build commands and working Docker examples.
-
+Docker CUDA and CPU images are available for both CLI and server use. See [docker.md](docs/docker.md) for
+available images, build commands and working Docker examples.
 
 ## Model Manager and GGUF Downloads
 
