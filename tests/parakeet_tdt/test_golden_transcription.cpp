@@ -12,7 +12,7 @@
 //
 // This is *not* a substitute for the numerical layer-by-layer parity
 // comparison against NeMo used to diagnose those bugs (see
-// tmp/todo-03-add-parity-regression-test.md's "Tier 2" for that). It only
+// the numerical parity harness in tests/parakeet_tdt/parity/ for that). It only
 // catches regressions that are large enough to flip the final decoded text
 // for this one clip; a subtle per-layer numerical drift that doesn't change
 // the greedy-decoded token sequence would slip through. It is deliberately
