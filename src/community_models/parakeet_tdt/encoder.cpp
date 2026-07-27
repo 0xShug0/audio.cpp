@@ -57,10 +57,12 @@ engine::core::TensorValue build_fastconformer_conv_module(
     const ParakeetEncoderLayerWeights & weights,
     const engine::core::TensorValue & keep_mask,
     int64_t conv_kernel) {
-    auto x = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input_btc);
-    x = engine::modules::LinearModule({input_btc.shape.dims[2], 2 * input_btc.shape.dims[2], false}).build(
+    // pointwise_conv1 runs as a Linear over the feature axis, so it wants plain
+    // BTC. The BTC->BCT->BTC transpose pair this used to go through cancelled
+    // out exactly; only the depthwise conv below actually needs BCT.
+    auto x = engine::modules::LinearModule({input_btc.shape.dims[2], 2 * input_btc.shape.dims[2], false}).build(
         ctx,
-        engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x),
+        input_btc,
         weights.conv_pw1);
     x = engine::modules::GLUModule().build(ctx, x);
     x = engine::modules::MaskingModule().build(ctx, x, keep_mask);
@@ -116,6 +118,50 @@ std::vector<float> make_relative_positional_encoding(int64_t hidden, int64_t fra
     return values;
 }
 
+// Transformer-XL relative shift, as a pure view.
+//
+// The generic helper (attention::internal::relative_shift) implements the shift
+// the textbook way: append a zero column, reinterpret the buffer one row
+// narrower, drop the first row, then slice. Each of those steps has to
+// materialize — a concat, a cont for the reshape, a cont for the slice — which
+// is ~1.1 MB of copying per layer here, and the slice throws most of it away
+// immediately afterwards.
+//
+// But the whole point of that dance is that the shift is just a change of row
+// stride, so it can be expressed directly. Writing out the composition of
+// pad/reshape/slice for the columns we actually keep gives
+//
+//     out[h][i][j] = raw[h][i][(seq_len - 1) - i + j]
+//
+// and since raw is contiguous with row stride pos_len = 2*seq_len - 1, element
+// (i, j) sits at flat offset i*(pos_len - 1) + (seq_len - 1) + j. That is a
+// plain strided view: start (seq_len - 1) elements in, step (pos_len - 1)
+// between rows, keep seq_len columns. Zero copies, bit-identical values, and it
+// folds the trailing SliceModule({3, 0, seq_len}) in for free.
+engine::core::TensorValue relative_shift_view(
+    engine::core::ModuleBuildContext & ctx,
+    const engine::core::TensorValue & raw,
+    int64_t seq_len) {
+    engine::core::validate_rank_between(raw, 4, 4, "relative_shift_view.input");
+    const int64_t heads = raw.shape.dims[1];
+    const int64_t pos_len = raw.shape.dims[3];
+    if (raw.shape.dims[2] != seq_len || pos_len != 2 * seq_len - 1) {
+        throw std::runtime_error("Parakeet TDT relative shift expects a [heads, seq, 2*seq-1] score matrix");
+    }
+    ggml_tensor * base = raw.tensor;  // ggml ne = (pos_len, seq_len, heads, 1), contiguous
+    return engine::core::wrap_tensor(
+        ggml_view_4d(
+            ctx.ggml,
+            base,
+            seq_len, seq_len, heads, 1,
+            static_cast<size_t>(pos_len - 1) * base->nb[0],
+            base->nb[2],
+            base->nb[3],
+            static_cast<size_t>(seq_len - 1) * base->nb[0]),
+        engine::core::TensorShape::from_dims({1, heads, seq_len, seq_len}),
+        GGML_TYPE_F32);
+}
+
 engine::runtime::GraphOptimizationBackend graph_optimizer_backend_for(engine::core::BackendType type) {
     switch (type) {
         case engine::core::BackendType::Cpu:
@@ -162,6 +208,7 @@ engine::core::TensorValue build_encoder_layer(
     auto attn_input = engine::modules::LayerNormModule({hidden_size, 1.0e-5f, true, true}).build(ctx, x, weights.norm_attn);
 
     const int64_t head_dim = hidden_size / heads;
+    const int64_t seq_len = input.shape.dims[1];
     const float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
     if (!weights.self_attn.qkv_weight.has_value()) {
         throw std::runtime_error("Parakeet TDT encoder layer requires a fused QKV weight");
@@ -169,20 +216,34 @@ engine::core::TensorValue build_encoder_layer(
     // One [hidden, 3*hidden] matmul instead of three separate [hidden, hidden]
     // matmuls — see the load-time fusion comment in weights.cpp's load_encoder_layer.
     auto qkv = engine::modules::LinearModule({hidden_size, 3 * hidden_size, false}).build(ctx, attn_input, {*weights.self_attn.qkv_weight, std::nullopt});
-    auto q = engine::modules::SliceModule({2, 0, hidden_size}).build(ctx, qkv);
-    auto k = engine::modules::SliceModule({2, hidden_size, hidden_size}).build(ctx, qkv);
-    auto v = engine::modules::SliceModule({2, 2 * hidden_size, hidden_size}).build(ctx, qkv);
-    q = ai::ensure_contiguous_layout(ctx, q);
-    k = ai::ensure_contiguous_layout(ctx, k);
-    v = ai::ensure_contiguous_layout(ctx, v);
 
-    q = ai::reshape_heads(ctx, q, heads, head_dim);
-    k = ai::reshape_heads(ctx, k, heads, head_dim);
-    v = ai::reshape_heads(ctx, v, heads, head_dim);
-
-    auto q_heads = ai::permute_tensor(ctx, q, {0, 2, 1, 3});
-    auto k_heads = ai::permute_tensor(ctx, k, {0, 2, 1, 3});
-    auto v_heads = ai::permute_tensor(ctx, v, {0, 2, 1, 3});
+    // Read q/k/v out of the fused [seq, 3*hidden] result as strided views that
+    // are already in per-head [heads, seq, head_dim] order, instead of slicing
+    // the feature axis and calling ensure_contiguous_layout on each slice.
+    // Those conts are not optional once you slice: reshape_heads goes through
+    // ggml_reshape, which asserts contiguity. So the slice path copies all
+    // three projections in full (3 * seq * hidden floats per layer) purely to
+    // satisfy the reshape — and then MatMulModule re-materializes its own
+    // operands for k and v anyway, so those two get copied twice. A view costs
+    // nothing, and leaves exactly one copy of k and one of v (inside
+    // MatMulModule) for the whole attention block. Same values, same order.
+    auto qkv_head_view = [&](int64_t feature_offset) {
+        ggml_tensor * base = qkv.tensor;  // ggml ne = (3*hidden, seq), contiguous
+        return engine::core::wrap_tensor(
+            ggml_view_4d(
+                ctx.ggml,
+                base,
+                head_dim, seq_len, heads, 1,
+                base->nb[1],                                 // stride to the next time step
+                static_cast<size_t>(head_dim) * base->nb[0],  // stride to the next head
+                base->nb[2],
+                static_cast<size_t>(feature_offset) * base->nb[0]),
+            engine::core::TensorShape::from_dims({1, heads, seq_len, head_dim}),
+            GGML_TYPE_F32);
+    };
+    auto q_heads = qkv_head_view(0);
+    auto k_heads = qkv_head_view(hidden_size);
+    auto v_heads = qkv_head_view(2 * hidden_size);
 
     auto p = ai::reshape_heads(ctx, projected_pos_emb, heads, head_dim);
     auto p_heads = ai::permute_tensor(ctx, p, {0, 2, 1, 3});
@@ -190,9 +251,8 @@ engine::core::TensorValue build_encoder_layer(
     auto q_u = ai::add_attention_bias(ctx, q_heads, weights.pos_bias_u, heads, head_dim);
     auto q_v = ai::add_attention_bias(ctx, q_heads, weights.pos_bias_v, heads, head_dim);
 
-    auto matrix_bd = engine::modules::MatMulModule().build(ctx, q_v, ai::permute_tensor(ctx, p_heads, {0, 1, 3, 2}));
-    matrix_bd = ai::relative_shift(ctx, matrix_bd);
-    matrix_bd = engine::modules::SliceModule({3, 0, k_heads.shape.dims[2]}).build(ctx, matrix_bd);
+    auto matrix_bd_raw = engine::modules::MatMulModule().build(ctx, q_v, ai::permute_tensor(ctx, p_heads, {0, 1, 3, 2}));
+    auto matrix_bd = relative_shift_view(ctx, matrix_bd_raw, seq_len);
 
     engine::core::TensorValue context;
     if (use_flash_attention) {
