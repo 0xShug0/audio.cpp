@@ -298,12 +298,31 @@ looked obvious beforehand:
   reachable from this model's own files. Shrinking the weights helps only
   insofar as a *different, faster kernel* gets selected (which is exactly why
   q8_0 wins and f16 does not).
-- **Padding the token axis to a friendlier multiple is a net loss.** The
-  attention GEMMs fall off tinyBLAS's fast path at `T=93` (it bails when
-  `k % 8 != 0` or `m % 4 != 0`), and padding `T` to 96 does speed them up a
-  lot — QK^T 14.0 → 26.7 GFLOP/s, AV 6.1 → 26.0, BD 14.0 → 25.6 at 1 thread.
-  But the same padding makes every *weight* GEMM ~6% slower, and those
-  dominate: measured end to end it costs ~233 ms to save ~91 ms. Not done.
+- **Padding the sequence to clear tinyBLAS's fast-path guards does not pay
+  for itself.** All three attention matmuls miss the fast path at `T=93`,
+  because tinyBLAS bails when `k % 8 != 0` or `m % 4 != 0`: AC has `m=93`,
+  BD has `m=185`, AV has `k=93`. That is exactly the ~10% of cycles sitting
+  in the `ggml_vec_dot_f32` fallback. Padding does fix it — with keys padded
+  to 96 and the position axis to 192, per layer:
+
+  | | 1 thread | 6 threads |
+  |---|---|---|
+  | AC `q·kᵀ` | 1.240 → 0.699 ms (1.8x) | 0.253 → 0.206 ms (1.2x) |
+  | BD `q·pᵀ` | 2.354 → 1.340 ms (1.8x) | 0.499 → 0.399 ms (1.2x) |
+  | AV `a·v` | 3.002 → 0.627 ms (4.8x) | 0.603 → 0.202 ms (3.0x) |
+  | total ×24 layers | 158 → 64 ms | 32.5 → 19.4 ms |
+
+  but the saving is only ~94 ms of ~4800 ms at 1 thread and ~13 ms of
+  ~1020 ms at 6, and it has to be paid for. Padding the *token* axis makes
+  every weight GEMM ~6% slower (~233 ms spent to save ~91 ms — a clear loss).
+  Padding only the *key* axis avoids that, but still widens the QKV
+  projection to `n=96`, which costs ~6% of that GEMM (~7.6 ms at 6 threads,
+  ~40 ms at 1). Net: roughly +0.5% at 6 threads and +1% at 1. Not worth
+  reworking the relative-position attention path for, particularly since
+  changing AV's `k` changes its accumulation blocking and so gives up the
+  bit-exactness every other change here maintains. Revisit if the fallback
+  ever grows (longer sequences, or a machine where the fast/slow kernel gap
+  is wider than the ~1.7x measured here).
 
 **Benchmark methodology (this machine drifts).** Wall-clock numbers here move
 by 20–30% between a cold and a thermally saturated run — the same binary
