@@ -41,11 +41,19 @@ python3 tools/model_manager.py install parakeet_tdt --models-root models
 Reference clip (`2086-149220-0033.wav`, 7.435s) on an Intel i7-9750H (6C/12T)
 and a GTX 1650 Max-Q, against the real NeMo model on the same machine:
 
-| | CPU | CUDA |
-|---|---|---|
-| NeMo/PyTorch (Python) | 857.7 ms (8.7x real-time) | OOM on this 4GB card |
-| audio.cpp, default settings | ~1245 ms (6.0x real-time) | ~169 ms (44.0x real-time) |
-| audio.cpp, `matmul_weight_type=q8_0` + tuned threads | **~715 ms** (**10.4x** real-time) | ~131 ms (56.8x real-time) |
+| implementation | settings | CPU | CUDA |
+|---|---|---|---|
+| **NeMo / PyTorch** (the Python reference) | as shipped | 857.7 ms (8.7x real-time) | **OOM** — won't load on this 4GB card |
+| **audio.cpp** (this port) | untuned: 8 threads, f32 | ~1245 ms (6.0x real-time) | ~169 ms (44.0x real-time) |
+| **audio.cpp** (this port) | tuned: 12 threads, `q8_0` | **~715 ms** (**10.4x** real-time) | **~131 ms** (56.8x real-time) |
+
+Read down the CPU column: **untuned, this port loses to PyTorch** (~1245 ms vs
+857.7 ms). Tuned, it wins by ~1.2x — and on this GPU the comparison doesn't
+exist at all, because the PyTorch reference cannot load the model in 4 GB
+while the native path runs it in 2642 MiB. "Untuned" here means the two
+defaults, not a deliberately handicapped configuration: `--threads` defaults
+to 8, and `parakeet_tdt.matmul_weight_type` defaults to `native`, which for
+this checkpoint means f32 (`config.json` declares `dtype: float32`).
 
 Re-measured on the current tree with the drift-cancelling harness (ABBA, 4
 passes, median of 5 iterations per run): tuned is **1.72x** default on CPU and
