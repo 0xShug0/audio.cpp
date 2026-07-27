@@ -92,13 +92,26 @@ build/<preset>/bin/parakeet_parity_dump \
     --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
     --nemo-dir /tmp/parakeet_nemo_dump \
     --output-dir /tmp/parakeet_cpp_dump \
-    --matmul-weight-type native
+    --matmul-weight-type native \
+    --backend cpu   # or: --backend cuda / vulkan
 
 # 3. Compare (numpy only, no NeMo/torch needed — can run anywhere the two
 #    dump directories are available, e.g. copied off a NeMo-enabled machine)
 python3 tests/parakeet_tdt/parity/compare_parity.py \
     --nemo-dir /tmp/parakeet_nemo_dump --cpp-dir /tmp/parakeet_cpp_dump
 ```
+
+### Cross-backend comparison (no NeMo needed)
+
+`--backend` also makes this harness answer a second question the NeMo
+comparison cannot: does an accelerator still agree with the CPU? Dump twice
+and diff the two `enc_out.npy` files directly. This is the check that catches
+a change which is correct on CPU but silently wrong on a GPU — a strided view
+that a CPU op materializes and a GPU kernel reads differently, for example.
+
+Expect agreement to float32 accumulation noise, not bit-exactness: different
+kernels sum in different orders. Currently CPU vs CUDA is cosine 0.99999988,
+relative RMS 3.5e-06, with bit-identical mel features.
 
 Expected output on a healthy build:
 
