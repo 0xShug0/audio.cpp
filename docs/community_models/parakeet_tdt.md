@@ -41,10 +41,25 @@ python3 tools/model_manager.py install parakeet_tdt --models-root models
 
 Measured on the reference test clip (`2086-149220-0033.wav`, 7.435s), 5 timed
 iterations + 1 warmup, against the real NeMo model (`nemo_toolkit[asr]`,
-torch 2.13+cu130) on the same machine (Intel i7-9750H, 6C/12T; GTX 1650, 3.6GB
-VRAM). `parakeet_warm_bench` reports a full frontend/encoder/decoder timing
-breakdown via `--timing-file` (real timing — this previously silently
-produced an empty log; see the commit fixing `configure_logging` wiring).
+torch 2.13+cu130) on the same machine. `parakeet_warm_bench` reports a full
+frontend/encoder/decoder timing breakdown via `--timing-file` (real timing —
+this previously silently produced an empty log; see the commit fixing
+`configure_logging` wiring).
+
+**Test hardware, and how far each half generalizes.** The CPU is an Intel
+i7-9750H (6C/12T, Coffee Lake, AVX2) — an ordinary 6-core, so the CPU results
+below should carry over reasonably to comparable AVX2 machines.
+
+The GPU does **not** generalize and every CUDA number here should be read with
+that in mind: it is a **GTX 1650 with Max-Q Design** — Turing, compute
+capability 7.5, 4 GB, and a **35 W** power limit. That is a thermally- and
+power-constrained mobile part, roughly the weakest CUDA device this model
+realistically runs on, and its compute capability sits below the 8.0 (Ampere)
+threshold at which ggml turns on CUDA graph capture at all (see the CUDA
+graph section below). Several optimizations here measured as *no change* on
+CUDA; that is a statement about this card, not about the optimization. They
+are worth re-measuring on anything Ampere or newer before concluding
+anything.
 
 | | CPU | CUDA |
 |---|---|---|
@@ -111,7 +126,11 @@ the grounds that quantization had "only been validated against this one clip".
 That has now been done properly, with the
 [multilingual harness](../../tests/parakeet_tdt/multilingual/README.md): 120
 FLEURS clips, 5 per language, across the 24 European languages the model
-supports that FLEURS covers, 21.8 minutes of audio.
+supports that FLEURS covers, 21.8 minutes of audio. Every transcript from that
+run — reference plus all four weight types, per clip — is checked in under
+[`multilingual/results/`](../../tests/parakeet_tdt/multilingual/results/README.md),
+so these numbers can be re-derived (or re-scored with a different WER
+normalization) without re-running anything.
 
 | weight type | encode speed | transcript identical to f32 | WER vs f32 | absolute WER |
 |---|---|---|---|---|
@@ -165,7 +184,7 @@ But measured end to end, on this hardware, it was consistently a few percent
 a synthetic 59.5s clip (ruling out "too short a sequence to matter"). Plausible
 reason: this encoder's attention sequences are short (well under 1000 frames)
 and `head_dim=128` isn't necessarily in the sweet spot of ggml's flash-attention
-kernels on a Turing-generation card (GTX 1650); the existing softmax+matmul path
+kernels on a 35 W Turing-generation mobile card (GTX 1650 Max-Q); the existing softmax+matmul path
 is already efficient at this scale. Left in as an opt-in for anyone testing on
 different hardware (newer GPU generations in particular) where the tradeoff
 might flip, but it is not recommended and not the default based on what was
@@ -275,7 +294,7 @@ all check-and-return-early on cache hit, no rebuild per inference or per
 token). Root cause, in `ggml_cuda_graph_set_enabled`
 (`external/ggml/src/ggml-cuda/ggml-cuda.cu`): ggml unconditionally disables
 CUDA graph capture below `GGML_CUDA_CC_AMPERE` (compute capability 8.0).
-This test machine's GTX 1650 is Turing, compute capability 7.5 — one
+This test machine's GTX 1650 Max-Q is Turing, compute capability 7.5 — one
 generation short. This is not a bug or a missing setting in this codebase;
 it's ggml's own hardware gate, and there is nothing to change here — the
 build already does everything right. It does, however, retroactively explain
@@ -389,7 +408,7 @@ are a good cross-check, but they are insensitive to memory-movement changes
 and so cannot be the only metric.
 
 **Why CUDA has no PyTorch comparison point.** `nemo_asr` on this GPU hits
-`torch.OutOfMemoryError` just loading the model — this 3.6GB card's VRAM
+`torch.OutOfMemoryError` just loading the model — this 4GB card's VRAM
 budget is entirely consumed by PyTorch's own overhead on top of the weights.
 The C++/ggml path runs comfortably in that same budget. This isn't really a
 "we're faster" comparison so much as "the reference implementation doesn't
@@ -412,7 +431,7 @@ rather than datacenter cards.
   exact setup and run commands. This is what actually caught the encoder
   conv-module bug below — the golden-transcription test alone did not, since
   greedy decoding happened to be robust enough to it on that one clip.
-- Backends tested: CPU and CUDA (GTX 1650), both producing the exact same
+- Backends tested: CPU and CUDA (GTX 1650 Max-Q), both producing the exact same
   transcription.
 
 Two real bugs were found and fixed getting to this state, worth knowing about if
