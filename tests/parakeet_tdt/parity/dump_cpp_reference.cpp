@@ -130,13 +130,18 @@ int main(int argc, char ** argv) {
     const auto matmul_weight_type = engine::assets::parse_tensor_storage_type(
         arg_value(argc, argv, "--matmul-weight-type", "native"));
     const bool use_flash_attention = arg_value(argc, argv, "--flash-attention", "0") == "1";
+    // Dumping on a non-CPU backend lets the same activations be compared across
+    // backends, not just against NeMo — which is how you catch a change that is
+    // correct on CPU but silently wrong on an accelerator (a strided view a CPU
+    // op materializes and a GPU kernel reads differently, say).
+    const std::string backend_name = arg_value(argc, argv, "--backend", "cpu");
 
     if (audio_path.empty() || nemo_dir.empty() || output_dir.empty()) {
         std::fprintf(
             stderr,
             "usage: %s --model <path> --audio <wav> --nemo-dir <dir with dump_nemo_reference.py output> "
             "--output-dir <dir to write .npy dumps into> [--matmul-weight-type native|f16|bf16|q8_0] "
-            "[--flash-attention 1]\n",
+            "[--flash-attention 1] [--backend cpu|cuda|vulkan]\n",
             argv[0]);
         return 2;
     }
@@ -147,7 +152,18 @@ int main(int argc, char ** argv) {
         auto assets = load_parakeet_assets(model_path);
 
         engine::core::BackendConfig backend_config;
-        backend_config.type = engine::core::BackendType::Cpu;
+        if (backend_name == "cpu") {
+            backend_config.type = engine::core::BackendType::Cpu;
+        } else if (backend_name == "cuda") {
+            backend_config.type = engine::core::BackendType::Cuda;
+        } else if (backend_name == "vulkan") {
+            backend_config.type = engine::core::BackendType::Vulkan;
+        } else {
+            throw std::runtime_error("unsupported --backend: " + backend_name);
+        }
+        // Single-threaded on CPU so the dump is reproducible run to run; on an
+        // accelerator this is the host-side thread count and does not affect
+        // the result.
         backend_config.threads = 1;
         engine::core::ExecutionContext exec(backend_config);
 
