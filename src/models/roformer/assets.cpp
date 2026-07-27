@@ -181,6 +181,12 @@ RoformerArchitectureConfig parse_config(
         throw std::runtime_error(
             std::string(family) + " mask_estimator_depth must be positive");
     }
+    // The two upstream implementations use the same config field with
+    // different semantics. BS-RoFormer counts every linear layer, including
+    // its output projection. Mel-Band RoFormer counts only the hidden
+    // Linear+Tanh blocks and appends a separate output projection.
+    config.mask_estimator_linear_layers =
+        config.mask_estimator_depth + (family == kMelBandRoformerFamily ? 1 : 0);
     config.mlp_expansion_factor = json::optional_i32(parsed, "mlp_expansion_factor", 4);
     config.skip_connection = json::optional_bool(parsed, "skip_connection", false);
     if (config.skip_connection) {

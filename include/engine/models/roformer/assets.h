@@ -38,6 +38,7 @@ struct RoformerArchitectureConfig {
     int win_length = 0;
     bool stft_normalized = false;
     int mask_estimator_depth = 0;
+    int mask_estimator_linear_layers = 0;
     int mlp_expansion_factor = 4;
     bool skip_connection = false;
     bool has_final_norm = false;

@@ -192,10 +192,10 @@ MelBandWeights load_mel_band_weights(
     for (size_t band = 0; band < config.band_input_dims.size(); ++band) {
         const std::string prefix = "mask_estimators.0.to_freqs." + std::to_string(band) + ".0";
         MaskBandWeights band_weights;
-        band_weights.layers.reserve(static_cast<size_t>(config.mask_estimator_depth));
-        for (int layer = 0; layer < config.mask_estimator_depth; ++layer) {
+        band_weights.layers.reserve(static_cast<size_t>(config.mask_estimator_linear_layers));
+        for (int layer = 0; layer < config.mask_estimator_linear_layers; ++layer) {
             const int64_t in_dim = layer == 0 ? config.dim : hidden_dim;
-            const int64_t out_dim = layer + 1 == config.mask_estimator_depth
+            const int64_t out_dim = layer + 1 == config.mask_estimator_linear_layers
                 ? config.band_input_dims[band] * 2
                 : hidden_dim;
             band_weights.layers.push_back(binding::linear_from_source(
