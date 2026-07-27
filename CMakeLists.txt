@@ -393,6 +393,27 @@ add_library(engine_runtime STATIC
     src/models/fish_audio/prompt_builder.cpp
     src/models/fish_audio/session.cpp
     src/models/fish_audio/tokenizer_text.cpp
+    src/models/confucius4_tts/assets.cpp
+    src/models/confucius4_tts/audio_features.cpp
+    src/models/confucius4_tts/loader.cpp
+    src/models/confucius4_tts/request.cpp
+    src/models/confucius4_tts/s2a.cpp
+    src/models/confucius4_tts/semantic_encoder.cpp
+    src/models/confucius4_tts/session.cpp
+    src/models/confucius4_tts/style_encoder.cpp
+    src/models/confucius4_tts/t2s.cpp
+    src/models/confucius4_tts/tokenizer_text.cpp
+    src/models/confucius4_tts/vocoder.cpp
+    src/models/dramabox/assets.cpp
+    src/models/dramabox/audio_vae.cpp
+    src/models/dramabox/dit.cpp
+    src/models/dramabox/gemma_tokenizer.cpp
+    src/models/dramabox/gemma3_encoder.cpp
+    src/models/dramabox/latent_state.cpp
+    src/models/dramabox/loader.cpp
+    src/models/dramabox/prompt_connector.cpp
+    src/models/dramabox/session.cpp
+    src/models/dramabox/vocoder.cpp
     src/models/heartmula/assets.cpp
     src/models/heartmula/codec.cpp
     src/models/heartmula/generator.cpp

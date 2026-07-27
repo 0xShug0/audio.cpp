@@ -1,0 +1,38 @@
+{
+  "family": "dramabox",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "audio_components_config": "model:audio_components_config.json",
+        "gemma_config": "model:gemma-3-12b-it-bnb-4bit/config.json",
+        "gemma_tokenizer_model": "model:gemma-3-12b-it-bnb-4bit/tokenizer.model",
+        "gemma_tokenizer_json": "model:gemma-3-12b-it-bnb-4bit/tokenizer.json",
+        "gemma_tokenizer_config": "model:gemma-3-12b-it-bnb-4bit/tokenizer_config.json"
+      },
+      "tensors": {
+        "dit_weights": {
+          "source": "weights:",
+          "prefix": "dit"
+        },
+        "audio_weights": {
+          "source": "weights:",
+          "prefix": "audio"
+        },
+        "gemma_weights": {
+          "source": "weights:",
+          "prefix": "gemma"
+        },
+        "silence_latent": {
+          "source": "weights:",
+          "prefix": "silence"
+        }
+      }
+    }
+  ]
+}

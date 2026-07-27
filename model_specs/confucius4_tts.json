@@ -1,0 +1,75 @@
+{
+  "family": "confucius4_tts",
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:inference_config.yaml",
+        "tokenizer_model": "model:tokenizer.model",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "w2v_preprocessor_config": "model:w2v_preprocessor_config.json",
+        "bigvgan_config": "model:bigvgan_config.json"
+      },
+      "tensors": {
+        "t2s": {
+          "source": "weights:",
+          "prefix": "t2s"
+        },
+        "s2a": {
+          "source": "weights:",
+          "prefix": "s2a"
+        },
+        "semantic_encoder": {
+          "source": "weights:",
+          "prefix": "semantic_encoder"
+        },
+        "semantic_encoder_shaw": {
+          "source": "weights:",
+          "prefix": "semantic_encoder_shaw"
+        },
+        "semantic_stats": {
+          "source": "weights:",
+          "prefix": "semantic_stats"
+        },
+        "style_encoder": {
+          "source": "weights:",
+          "prefix": "style_encoder"
+        },
+        "vocoder": {
+          "source": "weights:",
+          "prefix": "vocoder"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:inference_config.yaml",
+        "tokenizer_model": "model:tokenizer.model",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "w2v_preprocessor_config": "model:w2v_preprocessor_config.json",
+        "bigvgan_config": "model:bigvgan_config.json"
+      },
+      "tensors": {
+        "t2s": "model:t2s.safetensors",
+        "s2a": "model:s2a.safetensors",
+        "semantic_encoder": "model:semantic_encoder.safetensors",
+        "semantic_encoder_shaw": "model:semantic_encoder_shaw.safetensors",
+        "semantic_stats": "model:semantic_stats.safetensors",
+        "style_encoder": "model:style_encoder.safetensors",
+        "vocoder": "model:vocoder.safetensors"
+      }
+    }
+  ]
+}
