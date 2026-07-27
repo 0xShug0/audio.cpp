@@ -225,6 +225,14 @@ Multiple GPU targets (for distribution):
 
 ### Windows
 
+> **MSVC 14.51 (Visual Studio 2026) incompatibility:** ROCm's HIP clang headers conflict with the `cmath` shipped in MSVC 14.51 — every `.cu` compile fails with `__device__ function 'isless'/'isgreater' cannot overload __host__ __device__ function` in `__clang_cuda_math_forward_declares.h`. This affects at least ROCm 6.4 and 7.1 and can be intermittent (see [llama.cpp#22570](https://github.com/ggml-org/llama.cpp/issues/22570)). Until AMD ships a fix, configure and build from a prompt that selects an older MSVC toolset (14.44 or earlier):
+>
+> ```cmd
+> "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvarsall.bat" x64 -vcvars_ver=14.44
+> ```
+>
+> Install an older v143 toolset via the VS Installer if it is missing, then run the build script or the manual cmake commands below from that same prompt — the HIP clang picks up the MSVC headers selected by vcvars. (Verified on ROCm 6.4 / gfx1103: `.cu` compilation succeeds under 14.44, fails under 14.51.)
+
 > **hipBLASLt GEMM (default):** HIP builds use hipBLASLt instead of hipBLAS (rocBLAS) for all cuBLAS-equivalent GEMM calls. hipBLASLt ships Tensile kernels for more GPU architectures than rocBLAS on Windows — notably **gfx1103 (Radeon 780M) works**, even though rocBLAS has no gfx1103 library. Disable with `-DGGML_HIP_HIPBLASLT=OFF` to fall back to hipBLAS.
 
 **Build script (recommended):**
