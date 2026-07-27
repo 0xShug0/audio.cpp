@@ -43,6 +43,25 @@ this previously silently produced an empty log; see the commit fixing
 | audio.cpp, `matmul_weight_type=q8_0` + tuned threads | 830.9 ms (RTF 0.112, 9.0x real-time) | 132.1 ms (RTF 0.018, 56.3x real-time) |
 | audio.cpp, above + conv-pointwise reclassification fix | **~750 ms** (RTF 0.101, **9.9x** real-time) | ~138 ms (RTF 0.019, 53.9x real-time, no clear change) |
 
+That table is a **historical progression**, each row measured in the session
+that produced it — which on this machine means each row carries its own
+thermal state. Treat it as the story of how the numbers moved, not as figures
+comparable row to row.
+
+Re-measured end to end on the current tree with the drift-cancelling harness
+(ABBA, 4 passes, median of 5 iterations per run, machine idle):
+
+| config | CPU | CUDA |
+|---|---|---|
+| default (8 threads, f32) | ~1245 ms (6.0x real-time) | ~169 ms (44.0x) |
+| tuned (12 threads, q8_0) | **~715 ms** (**10.4x**) | ~131 ms (56.8x) |
+| ratio | **1.72x** | **1.31x** |
+
+The default rows reproduce the historical figures closely (1247.5 / 170.6),
+which is a useful check that the table above is still meaningful. The CPU
+tuned row was previously quoted as ~750 ms from a pre-optimization session;
+~715 ms is the current measurement.
+
 Separately from the table above (which is all same-length, matched-capacity
 work), the largest single CPU win in this model's history was not a kernel or
 a precision change at all: it was **not running the graph oversized**. A 7.4s

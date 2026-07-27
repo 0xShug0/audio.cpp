@@ -44,8 +44,14 @@ and a GTX 1650 Max-Q, against the real NeMo model on the same machine:
 | | CPU | CUDA |
 |---|---|---|
 | NeMo/PyTorch (Python) | 857.7 ms (8.7x real-time) | OOM on this 4GB card |
-| audio.cpp, default settings | 1247.5 ms (6.0x real-time) | 170.6 ms (43.6x real-time) |
-| audio.cpp, `matmul_weight_type=q8_0` + tuned threads | **~750 ms** (**9.9x** real-time) | ~132 ms (56.3x real-time) |
+| audio.cpp, default settings | ~1245 ms (6.0x real-time) | ~169 ms (44.0x real-time) |
+| audio.cpp, `matmul_weight_type=q8_0` + tuned threads | **~715 ms** (**10.4x** real-time) | ~131 ms (56.8x real-time) |
+
+Re-measured on the current tree with the drift-cancelling harness (ABBA, 4
+passes, median of 5 iterations per run): tuned is **1.72x** default on CPU and
+**1.31x** on CUDA. Both defaults reproduce earlier figures closely; the CPU
+tuned row previously read ~750 ms, which was measured before the optimization
+pass and is now slightly conservative.
 
 ```bash
 build/<preset>/bin/parakeet_warm_bench \
