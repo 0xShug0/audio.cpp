@@ -214,7 +214,7 @@ build\windows-cuda-release\bin\audiocpp_cli.exe `
   --model ..\models\Kroko-ASR\Kroko-EN-Community-128-L-Native `
   --backend cpu --threads 8 --audio ..\SAMPLES\EN_3.wav --language en `
   --request-option decoding_method=modified_beam_search `
-  --request-option max_active_paths=4 `
+  --request-option num_beams=4 `
   --text-out ..\outputs\kroko_native_en3_beam.txt
 ```
 
@@ -227,7 +227,7 @@ If you actually care about yourself, you could test numbers one by one until you
 With `blank_penalty=1.0`, the reference retained that text and native execution
 selected the adjacent punctuation-bearing path ending in `sleep.`. This is one
 token-boundary decision under the measured encoder floating-point drift, not a
-decoder-control failure. `max_active_paths=1` remains identical to greedy
+decoder-control failure. `num_beams=1` remains identical to greedy
 search.
 
 Natural-text hotword bias was tested with 32 paths and score 15 to make its
@@ -406,7 +406,7 @@ long-lived-server requests both returned the exact reference transcript:
 | 2 | 138.293 | 125.561 |
 
 An additional JSON transcription request forwarded
-`decoding_method=modified_beam_search`, `max_active_paths=4`,
+`decoding_method=modified_beam_search`, `num_beams=4`,
 `blank_penalty=0.5`, and `enable_endpoint=true`. The Q8/CUDA server returned
 the expected Swedish transcript in 300.322 ms wall time (291.590 ms session
 time), and trace output confirmed all four request options reached the model.

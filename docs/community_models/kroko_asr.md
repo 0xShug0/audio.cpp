@@ -124,7 +124,7 @@ Modified beam search with a blank penalty and natural-text hotwords:
   --model .\models\Kroko-ASR\Kroko-EN-Community-128-L-Native `
   --backend cpu --threads 8 --audio .\SAMPLES\EN_3.wav --language en `
   --request-option decoding_method=modified_beam_search `
-  --request-option max_active_paths=8 `
+  --request-option num_beams=8 `
   --request-option blank_penalty=0.5 `
   --request-option "hotwords=security/tomorrow" `
   --request-option hotwords_score=1.5
@@ -149,7 +149,7 @@ rules as sherpa-onnx:
 | Request option | Default | Meaning |
 |---|---:|---|
 | `decoding_method` | `greedy_search` | `greedy_search` or `modified_beam_search` |
-| `max_active_paths` | `4` | Beam hypotheses, from 1 through 64 |
+| `num_beams` | `4` | Beam hypotheses, from 1 through 64 |
 | `blank_penalty` | `0` | Non-negative score subtracted from the blank logit |
 | `hotwords` | empty | Slash- or newline-separated natural-text phrases |
 | `hotwords_score` | `1.5` | Non-negative context boost per hotword token |
@@ -158,7 +158,8 @@ rules as sherpa-onnx:
 | `rule2_min_trailing_silence` | `1.2` | Endpoint silence after decoded speech |
 | `rule3_min_utterance_length` | `20` | Maximum utterance duration before an endpoint |
 
-Namespaced aliases such as `kroko_asr.decoding_method` are also accepted.
+Legacy `max_active_paths` and namespaced aliases such as
+`kroko_asr.decoding_method` are also accepted.
 Hotwords require modified beam search. Greedy remains the backward-compatible
 default.
 
@@ -222,7 +223,7 @@ $body = @{
   language = "sv"
   options = @{
     decoding_method = "modified_beam_search"
-    max_active_paths = 4
+    num_beams = 4
     blank_penalty = 0.5
     enable_endpoint = $true
   }

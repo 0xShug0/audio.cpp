@@ -52,7 +52,7 @@
         "default": "greedy_search"
       },
       {
-        "name": "max_active_paths",
+        "name": "num_beams",
         "type": "int",
         "description": "Maximum active hypotheses retained by modified beam search.",
         "required": false,

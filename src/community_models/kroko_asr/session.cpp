@@ -297,13 +297,15 @@ void KrokoASRSession::configure_request(
     const int64_t max_active_paths =
         runtime::parse_i64_option(
             request.options,
-            {"max_active_paths",
+            {"num_beams",
+             "max_active_paths",
+             "kroko_asr.num_beams",
              "kroko_asr.max_active_paths"})
             .value_or(4);
     if (max_active_paths < 1 ||
         max_active_paths > 64) {
         throw std::runtime_error(
-            "Kroko max_active_paths must be between 1 and 64");
+            "Kroko num_beams must be between 1 and 64");
     }
     decoder_options.max_active_paths =
         static_cast<int32_t>(max_active_paths);

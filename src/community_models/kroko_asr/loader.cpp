@@ -61,7 +61,7 @@ runtime::ModelCliInterface cli() {
          "RNN-T decoder; greedy_search preserves the parity-tested default.",
          false,
          std::string("greedy_search")},
-        {"max_active_paths",
+        {"num_beams",
          "n",
          "Maximum hypotheses retained by modified beam search.",
          false,
