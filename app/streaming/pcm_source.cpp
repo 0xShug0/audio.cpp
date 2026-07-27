@@ -71,10 +71,11 @@ AudioChunkStream make_pcm_chunk_stream(
 
     const int sample_bytes = pcm_sample_format_bytes(sample_format);
     const size_t frame_bytes = static_cast<size_t>(sample_bytes) * static_cast<size_t>(format.channels);
+    const auto decode = sample_format == PcmSampleFormat::S16LE ? &decode_s16le : &decode_f32le;
 
     AudioChunkStream stream;
     stream.format = format;
-    stream.read = [source = &input, sample_format, sample_bytes, frame_bytes, bytes = std::vector<char>{}](
+    stream.read = [source = &input, decode, sample_bytes, frame_bytes, bytes = std::vector<char>{}](
         int64_t max_samples, std::vector<float> & samples) mutable {
         if (max_samples <= 0) {
             throw std::runtime_error("raw PCM read requires a positive sample count");
@@ -90,9 +91,7 @@ AudioChunkStream make_pcm_chunk_stream(
         samples.resize(count);
         const auto * raw = reinterpret_cast<const unsigned char *>(bytes.data());
         for (size_t i = 0; i < count; ++i) {
-            samples[i] = sample_format == PcmSampleFormat::S16LE
-                ? decode_s16le(raw + i * static_cast<size_t>(sample_bytes))
-                : decode_f32le(raw + i * static_cast<size_t>(sample_bytes));
+            samples[i] = decode(raw + i * static_cast<size_t>(sample_bytes));
         }
         return received == bytes.size();
     };

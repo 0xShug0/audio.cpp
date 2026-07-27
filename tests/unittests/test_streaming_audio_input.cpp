@@ -89,6 +89,22 @@ engine::runtime::TaskRequest audio_request(engine::runtime::AudioBuffer audio) {
     return request;
 }
 
+// Every case here runs at 16 kHz; only the channel count and sample encoding vary.
+engine::runtime::AudioBuffer audio_format(int channels = 1) {
+    engine::runtime::AudioBuffer buffer;
+    buffer.sample_rate = 16000;
+    buffer.channels = channels;
+    return buffer;
+}
+
+minitts::app::AudioChunkStream pcm_stream(
+    std::istream & input,
+    int channels = 1,
+    minitts::app::PcmSampleFormat format = minitts::app::PcmSampleFormat::S16LE) {
+    return minitts::app::make_pcm_chunk_stream(
+        input, minitts::app::AudioStreamFormat{16000, channels}, format);
+}
+
 std::vector<float> flatten(const std::vector<RecordingSession::Chunk> & chunks) {
     std::vector<float> all;
     for (const auto & chunk : chunks) {
@@ -105,9 +121,7 @@ void test_stdin_source_matches_buffer_source() {
         pcm[i] = static_cast<int16_t>((i * 37) % 30000 - 15000);
     }
 
-    engine::runtime::AudioBuffer buffer;
-    buffer.sample_rate = 16000;
-    buffer.channels = 1;
+    auto buffer = audio_format();
     buffer.samples.reserve(pcm.size());
     for (const int16_t value : pcm) {
         buffer.samples.push_back(static_cast<float>(value) / 32768.0F);
@@ -118,10 +132,7 @@ void test_stdin_source_matches_buffer_source() {
 
     RecordingSession streamed(512);
     std::istringstream input(s16le_bytes(pcm));
-    const auto stream = minitts::app::make_pcm_chunk_stream(
-        input,
-        minitts::app::AudioStreamFormat{16000, 1},
-        minitts::app::PcmSampleFormat::S16LE);
+    const auto stream = pcm_stream(input);
     minitts::app::run_streaming_task(streamed, audio_request(buffer), nullptr, stream);
 
     require_eq(streamed.chunks.size(), buffered.chunks.size(), "chunk count");
@@ -154,15 +165,8 @@ void test_chunk_sizing_and_drain() {
 
     RecordingSession session(chunk_samples);
     std::istringstream input(s16le_bytes(pcm));
-    const auto stream = minitts::app::make_pcm_chunk_stream(
-        input,
-        minitts::app::AudioStreamFormat{16000, 1},
-        minitts::app::PcmSampleFormat::S16LE);
-
-    engine::runtime::AudioBuffer contract;
-    contract.sample_rate = 16000;
-    contract.channels = 1;
-    minitts::app::run_streaming_task(session, audio_request(contract), nullptr, stream);
+    const auto stream = pcm_stream(input);
+    minitts::app::run_streaming_task(session, audio_request(audio_format()), nullptr, stream);
 
     require_eq(session.chunks.size(), size_t{3}, "chunk count");
     require_eq(session.chunks[0].samples.size(), size_t{400}, "first chunk size");
@@ -180,10 +184,7 @@ void test_sample_format_decoding() {
     const std::string s16 = s16le_bytes({0, 32767, -32768, 1234});
     std::istringstream s16_input(s16);
     std::vector<float> decoded;
-    auto s16_stream = minitts::app::make_pcm_chunk_stream(
-        s16_input,
-        minitts::app::AudioStreamFormat{16000, 1},
-        minitts::app::PcmSampleFormat::S16LE);
+    auto s16_stream = pcm_stream(s16_input);
     s16_stream.read(4, decoded);
     require_eq(decoded.size(), size_t{4}, "s16le sample count");
     require(decoded[0] == 0.0F, "s16le zero");
@@ -194,10 +195,7 @@ void test_sample_format_decoding() {
     // 1.0f and -2.0f little-endian.
     const std::string f32("\x00\x00\x80\x3F\x00\x00\x00\xC0", 8);
     std::istringstream f32_input(f32);
-    auto f32_stream = minitts::app::make_pcm_chunk_stream(
-        f32_input,
-        minitts::app::AudioStreamFormat{16000, 1},
-        minitts::app::PcmSampleFormat::F32LE);
+    auto f32_stream = pcm_stream(f32_input, 1, minitts::app::PcmSampleFormat::F32LE);
     f32_stream.read(2, decoded);
     require_eq(decoded.size(), size_t{2}, "f32le sample count");
     require(decoded[0] == 1.0F, "f32le 1.0");
@@ -209,10 +207,7 @@ void test_sample_format_decoding() {
 void test_partial_trailing_frame_is_dropped() {
     const std::string bytes = s16le_bytes({1, 2, 3});  // 1.5 stereo frames
     std::istringstream input(bytes);
-    auto stream = minitts::app::make_pcm_chunk_stream(
-        input,
-        minitts::app::AudioStreamFormat{16000, 2},
-        minitts::app::PcmSampleFormat::S16LE);
+    auto stream = pcm_stream(input, 2);
     std::vector<float> samples;
     const bool more = stream.read(8, samples);
     require(!more, "short read should report end of stream");
@@ -222,15 +217,8 @@ void test_partial_trailing_frame_is_dropped() {
 void test_empty_stream_produces_no_chunks() {
     RecordingSession session(256);
     std::istringstream input("");
-    const auto stream = minitts::app::make_pcm_chunk_stream(
-        input,
-        minitts::app::AudioStreamFormat{16000, 1},
-        minitts::app::PcmSampleFormat::S16LE);
-
-    engine::runtime::AudioBuffer contract;
-    contract.sample_rate = 16000;
-    contract.channels = 1;
-    minitts::app::run_streaming_task(session, audio_request(contract), nullptr, stream);
+    const auto stream = pcm_stream(input);
+    minitts::app::run_streaming_task(session, audio_request(audio_format()), nullptr, stream);
 
     require(session.chunks.empty(), "empty stream must not produce chunks");
     require(session.finalized(), "empty stream must still finalize");
@@ -240,13 +228,9 @@ void test_empty_stream_produces_no_chunks() {
 // overload must not mistake that for zero-length audio and feed the session nothing.
 void test_live_format_contract_is_not_mistaken_for_empty_audio() {
     RecordingSession session(512);
-    engine::runtime::AudioBuffer contract;
-    contract.sample_rate = 16000;
-    contract.channels = 1;
-
     bool rejected = false;
     try {
-        minitts::app::run_streaming_task(session, audio_request(contract), nullptr);
+        minitts::app::run_streaming_task(session, audio_request(audio_format()), nullptr);
     } catch (const std::exception &) {
         rejected = true;
     }
@@ -258,9 +242,7 @@ void test_live_format_contract_is_not_mistaken_for_empty_audio() {
 // sees any of it rather than partway through on the final short chunk.
 void test_malformed_buffer_is_rejected_before_any_chunk() {
     RecordingSession session(400);
-    engine::runtime::AudioBuffer audio;
-    audio.sample_rate = 16000;
-    audio.channels = 2;
+    auto audio = audio_format(2);
     audio.samples.assign(1001, 0.5F);  // not a whole number of stereo frames
 
     bool rejected = false;
