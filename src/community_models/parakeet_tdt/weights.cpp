@@ -25,6 +25,21 @@ engine::modules::LinearWeights load_linear(
     return w;
 }
 
+// Loads a weight with a constant activation-side scale folded in, so the graph
+// does not need a separate ggml_scale pass over the activations at run time.
+//
+// Folding is exact whenever `scale` is a power of two — which is the only way
+// it is used here (0.5 for the feed-forward half-step, sqrt(d_model)=32 for the
+// subsampling xscaling). Multiplying a float by a power of two only adjusts the
+// exponent, and since every product term is scaled identically the sum scales
+// identically too: sum(0.5*w_i*x_i) == 0.5*sum(w_i*x_i) bit for bit. It also
+// survives quantisation: q8_0 derives its block scale from max|w|, so halving
+// every weight halves the block scale and leaves the stored integers unchanged.
+std::vector<float> scaled_f32(std::vector<float> values, float scale) {
+    for (auto & value : values) { value *= scale; }
+    return values;
+}
+
 engine::modules::Conv2dWeights load_conv2d(
     engine::core::BackendWeightStore & store, const engine::assets::TensorSource & source,
     const std::string & prefix, engine::assets::TensorStorageType st,
@@ -52,7 +67,19 @@ ParakeetSubsamplingWeights load_subsampling(
     w.layers[1].depthwise_bias = store.load_f32_tensor(source, sub + ".layers.5.bias", {C});
     w.layers[1].pointwise = load_conv2d(store, source, sub + ".layers.6", conv_st, C, C, 1, 1, true);
     const int64_t ff = config.frontend.feature_size / enc.subsampling_factor;
-    w.linear = load_linear(store, source, sub + ".linear", matmul_st, enc.hidden_size, C * ff, true);
+    // RelPositionalEncoding's xscaling (multiply by sqrt(d_model)) folded into
+    // the subsampling projection instead of running as its own ggml_scale over
+    // the encoder input. sqrt(1024) = 32 exactly, so this is bit-exact; see
+    // scaled_f32. Both weight and bias must be scaled, since the scale was
+    // applied after the linear.
+    const float xscale = std::sqrt(static_cast<float>(enc.hidden_size));
+    w.linear.weight = store.make_from_f32(
+        engine::core::TensorShape::from_dims({enc.hidden_size, C * ff}),
+        matmul_st,
+        scaled_f32(source.require_f32(sub + ".linear.weight", {enc.hidden_size, C * ff}), xscale));
+    w.linear.bias = store.make_f32(
+        engine::core::TensorShape::from_dims({enc.hidden_size}),
+        scaled_f32(source.require_f32(sub + ".linear.bias", {enc.hidden_size}), xscale));
     return w;
 }
 
@@ -93,7 +120,13 @@ ParakeetEncoderLayerWeights load_encoder_layer(
     ParakeetEncoderLayerWeights layer;
     layer.norm_ff1 = binding::norm_from_source(store, source, p + ".norm_feed_forward1", h);
     layer.ff1_linear1 = {store.load_tensor(source, p + ".feed_forward1.linear1.weight", matmul_st, {enc.intermediate_size, h}), std::nullopt};
-    layer.ff1_linear2 = {store.load_tensor(source, p + ".feed_forward1.linear2.weight", matmul_st, {h, enc.intermediate_size}), std::nullopt};
+    // The 0.5 half-step each feed-forward branch contributes to the residual is
+    // folded into linear2 rather than run as a ggml_scale over [seq, hidden]
+    // after every one of the 48 feed-forward blocks. Exact — see scaled_f32.
+    layer.ff1_linear2 = {store.make_from_f32(
+        engine::core::TensorShape::from_dims({h, enc.intermediate_size}),
+        matmul_st,
+        scaled_f32(source.require_f32(p + ".feed_forward1.linear2.weight", {h, enc.intermediate_size}), 0.5f)), std::nullopt};
     layer.norm_attn = binding::norm_from_source(store, source, p + ".norm_self_att", h);
     // Fused QKV: one [3h, h] matmul instead of three separate [h, h] matmuls per
     // layer. Read the raw F32 rows for q/k/v and concatenate along the
@@ -132,7 +165,10 @@ ParakeetEncoderLayerWeights load_encoder_layer(
     layer.conv_dw_bias = store.make_f32(engine::core::TensorShape::from_dims({h}), std::move(fd_b));
     layer.norm_ff2 = binding::norm_from_source(store, source, p + ".norm_feed_forward2", h);
     layer.ff2_linear1 = {store.load_tensor(source, p + ".feed_forward2.linear1.weight", matmul_st, {enc.intermediate_size, h}), std::nullopt};
-    layer.ff2_linear2 = {store.load_tensor(source, p + ".feed_forward2.linear2.weight", matmul_st, {h, enc.intermediate_size}), std::nullopt};
+    layer.ff2_linear2 = {store.make_from_f32(
+        engine::core::TensorShape::from_dims({h, enc.intermediate_size}),
+        matmul_st,
+        scaled_f32(source.require_f32(p + ".feed_forward2.linear2.weight", {h, enc.intermediate_size}), 0.5f)), std::nullopt};
     layer.norm_out = binding::norm_from_source(store, source, p + ".norm_out", h);
     return layer;
 }

@@ -201,8 +201,9 @@ engine::core::TensorValue build_encoder_layer(
     auto x_norm = engine::modules::LayerNormModule({hidden_size, 1.0e-5f, true, true}).build(ctx, input, weights.norm_ff1);
     auto ff1 = engine::modules::LinearModule({hidden_size, intermediate_size, false}).build(ctx, x_norm, weights.ff1_linear1);
     ff1 = engine::modules::SiluModule().build(ctx, ff1);
+    // The 0.5 residual half-step is folded into ff1_linear2's weights at load
+    // time (see scaled_f32 in weights.cpp), so no ggml_scale pass here.
     ff1 = engine::modules::LinearModule({intermediate_size, hidden_size, false}).build(ctx, ff1, weights.ff1_linear2);
-    ff1 = engine::core::wrap_tensor(ggml_scale(ctx.ggml, ff1.tensor, 0.5f), ff1.shape, GGML_TYPE_F32);
     auto x = engine::core::wrap_tensor(ggml_add(ctx.ggml, input.tensor, ff1.tensor), input.shape, GGML_TYPE_F32);
 
     auto attn_input = engine::modules::LayerNormModule({hidden_size, 1.0e-5f, true, true}).build(ctx, x, weights.norm_attn);
@@ -305,7 +306,6 @@ engine::core::TensorValue build_encoder_layer(
     auto ff2 = engine::modules::LinearModule({hidden_size, intermediate_size, false}).build(ctx, ff2_input, weights.ff2_linear1);
     ff2 = engine::modules::SiluModule().build(ctx, ff2);
     ff2 = engine::modules::LinearModule({intermediate_size, hidden_size, false}).build(ctx, ff2, weights.ff2_linear2);
-    ff2 = engine::core::wrap_tensor(ggml_scale(ctx.ggml, ff2.tensor, 0.5f), ff2.shape, GGML_TYPE_F32);
     x = engine::core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, ff2.tensor), x.shape, GGML_TYPE_F32);
 
     return engine::modules::LayerNormModule({hidden_size, 1.0e-5f, true, true}).build(ctx, x, weights.norm_out);
@@ -464,11 +464,10 @@ void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
     x = engine::modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
     x = engine::core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
     x = engine::core::reshape_tensor(ctx, x, engine::core::TensorShape::from_dims({1, stage3_frames, enc.subsampling_channels * stage3_features}));
+    // xscaling (multiply by sqrt(d_model), which Parakeet's RelPositionalEncoding
+    // does) is folded into this projection's weight and bias at load time — see
+    // load_subsampling in weights.cpp.
     x = engine::modules::LinearModule({enc.subsampling_channels * stage3_features, enc.hidden_size, true}).build(ctx, x, enc_weights.subsampling.linear);
-
-    // xscaling: multiply by sqrt(d_model) — Parakeet's RelPositionalEncoding does this
-    const float xscale_value = std::sqrt(static_cast<float>(enc.hidden_size));
-    x = engine::core::wrap_tensor(ggml_scale(ctx.ggml, x.tensor, xscale_value), x.shape, GGML_TYPE_F32);
 
     graph->projected_pos_emb.reserve(static_cast<size_t>(enc.layers));
     graph->projected_pos_emb_computed.reserve(static_cast<size_t>(enc.layers));
