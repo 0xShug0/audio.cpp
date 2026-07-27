@@ -4360,8 +4360,9 @@ def build_dramabox_commands(
     request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
     model_path = args.model or config["model"]
     python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_model_path = args.python_model or config.get("python_model", model_path)
     gemma_model_path = config.get("gemma_model", "models/gemma-3-12b-it-bnb-4bit")
-    model_root = Path(model_path)
+    model_root = Path(python_model_path)
     if model_root.is_absolute():
         sibling_gemma = model_root.parent / "gemma-3-12b-it-bnb-4bit"
         if sibling_gemma.exists():
@@ -4375,7 +4376,7 @@ def build_dramabox_commands(
         "python",
         str(REPO_ROOT / config["python_script"]),
         "--model",
-        model_path,
+        python_model_path,
         "--gemma-root",
         str(gemma_model_path),
         "--backend",

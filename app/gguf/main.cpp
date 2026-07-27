@@ -434,6 +434,7 @@ void print_usage() {
                  "<orig|f16|bf16|q8_0|q2_k|q3_k|q4_k|q5_k|q6_k> "
                  "[--family <family>] [--model-spec <json-or-directory>] "
                  "[--root <model-dir>] [--sidecar <source>=<destination>] "
+                 "[--bnb-nf4-type q8_0] [--exclude-prefix <logical-prefix>] "
                  "[--keep-type <tensor-prefix>*=<type>] "
                  "[--overwrite] [--no-sidecars] "
                  "[--allow-missing-model-spec]\n"
@@ -446,13 +447,13 @@ int main(int argc, char ** argv) {
     try {
         std::vector<engine::assets::TensorSourceInput> inputs;
         std::vector<engine::assets::GgufEmbeddedFile> sidecars;
-        std::vector<engine::assets::GgufTensorTypeOverride> type_overrides;
         std::filesystem::path output;
         std::filesystem::path inspect_path;
         std::filesystem::path sidecar_root;
         std::optional<std::filesystem::path> model_spec_path;
         std::optional<std::string> family;
         std::string type;
+        engine::assets::GgufConversionOptions conversion_options;
         bool overwrite = false;
         bool embed_sidecars = true;
         bool allow_missing_model_spec = false;
@@ -476,7 +477,7 @@ int main(int argc, char ** argv) {
             }
             if ((arg == "--input" || arg == "--output" || arg == "--type" || arg == "--inspect" || arg == "--root" ||
                  arg == "--sidecar" || arg == "--family" || arg == "--model-spec" || arg == "--model-spec-override" ||
-                 arg == "--keep-type") &&
+                 arg == "--bnb-nf4-type" || arg == "--exclude-prefix" || arg == "--keep-type") &&
                 i + 1 < argc) {
                 const std::string value = argv[++i];
                 if (arg == "--input") {
@@ -489,6 +490,10 @@ int main(int argc, char ** argv) {
                     output = value;
                 else if (arg == "--type")
                     type = value;
+                else if (arg == "--bnb-nf4-type")
+                    conversion_options.bnb_nf4_type = engine::assets::parse_tensor_storage_type(value);
+                else if (arg == "--exclude-prefix")
+                    conversion_options.excluded_tensor_prefixes.push_back(value);
                 else if (arg == "--inspect")
                     inspect_path = value;
                 else if (arg == "--root")
@@ -502,7 +507,7 @@ int main(int argc, char ** argv) {
                     if (separator == std::string::npos || separator == 0 || separator + 1 == value.size()) {
                         throw std::runtime_error("--keep-type requires <tensor-prefix>*=<type>");
                     }
-                    type_overrides.push_back({
+                    conversion_options.type_overrides.push_back({
                         value.substr(0, separator),
                         engine::assets::parse_tensor_storage_type(value.substr(separator + 1)),
                     });
@@ -576,13 +581,21 @@ int main(int argc, char ** argv) {
                 std::cerr << "warning: creating GGUF without model package spec: " << warning.what() << "\n";
             }
         }
+        if (conversion_options.bnb_nf4_type.has_value() &&
+            *conversion_options.bnb_nf4_type != engine::assets::TensorStorageType::Q8_0) {
+            throw std::runtime_error("--bnb-nf4-type currently supports q8_0");
+        }
         engine::assets::convert_tensor_sources_to_gguf(inputs, output, storage_type, overwrite, embed_sidecars,
                                                        resolved_sidecar_root, sidecars, embedded_model_spec,
-                                                       type_overrides);
+                                                       conversion_options);
         std::cout << "gguf=" << std::filesystem::weakly_canonical(output).string() << "\n";
         std::cout << "weight_type=" << type << "\n";
         std::cout << "tensor_sources=" << inputs.size() << "\n";
-        std::cout << "type_overrides=" << type_overrides.size() << "\n";
+        if (conversion_options.bnb_nf4_type.has_value())
+            std::cout << "bnb_nf4_type=q8_0\n";
+        for (const auto & prefix : conversion_options.excluded_tensor_prefixes)
+            std::cout << "excluded_prefix=" << prefix << "\n";
+        std::cout << "type_overrides=" << conversion_options.type_overrides.size() << "\n";
         std::cout << "embedded_sidecars=" << (engine::assets::gguf_has_embedded_sidecars(output) ? "true" : "false")
                   << "\n";
         std::cout << "embedded_model_spec=" << (embedded_model_spec.has_value() ? "true" : "false") << "\n";
