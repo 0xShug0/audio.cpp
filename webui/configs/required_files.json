@@ -442,6 +442,11 @@
     "citrinet_256_tokenizer.model",
     "citrinet_256_vocab.txt"
   ],
+  "kroko_asr_community_converted": [
+    "config.json",
+    "model.safetensors",
+    "tokens.txt"
+  ],
   "voxcpm2": [
     "config.json",
     "model.safetensors",

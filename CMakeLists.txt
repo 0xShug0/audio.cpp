@@ -420,6 +420,22 @@ audiocpp_add_model(glm_tts
         outetts
 )
 
+audiocpp_add_model(kroko_asr
+    SOURCES
+        src/community_models/kroko_asr/assets.cpp
+        src/community_models/kroko_asr/decoder.cpp
+        src/community_models/kroko_asr/encoder.cpp
+        src/community_models/kroko_asr/frontend.cpp
+        src/community_models/kroko_asr/loader.cpp
+        src/community_models/kroko_asr/session.cpp
+        src/community_models/kroko_asr/tokenizer.cpp
+        src/community_models/kroko_asr/zipformer.cpp
+    INCLUDES
+        engine/community_models/kroko_asr/loader.h
+    LOADERS
+        engine::models::kroko_asr::make_kroko_asr_loader
+)
+
 audiocpp_add_model(outetts
     SOURCES
         src/community_models/outetts/assets.cpp
@@ -1337,6 +1353,10 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(glm_tts_campplus_probe tests/glm_tts/glm_tts_campplus_probe.cpp)
     add_engine_warmbench(glm_tts_llama_probe tests/glm_tts/glm_tts_llama_probe.cpp)
     add_engine_warmbench(glm_tts_warm_bench tests/glm_tts/glm_tts_warm_bench.cpp)
+    add_engine_warmbench(kroko_asr_encoder_probe tests/kroko_asr/kroko_asr_encoder_probe.cpp)
+    add_engine_warmbench(kroko_asr_frontend_probe tests/kroko_asr/kroko_asr_frontend_probe.cpp)
+    add_engine_warmbench(kroko_asr_streaming_probe tests/kroko_asr/kroko_asr_streaming_probe.cpp)
+    add_engine_warmbench(kroko_asr_zipformer_probe tests/kroko_asr/kroko_asr_zipformer_probe.cpp)
     add_engine_warmbench(pocket_tts_warm_bench tests/pocket_tts/pocket_tts_warm_bench.cpp)
     add_engine_warmbench(qwen3_asr_warm_bench tests/qwen3_asr/qwen3_asr_warm_bench.cpp)
     add_engine_warmbench(qwen3_forced_aligner_warm_bench tests/qwen3_forced_aligner/qwen3_forced_aligner_warm_bench.cpp)

@@ -4,6 +4,7 @@
 |---|---|---|---|
 | Qwen3 ASR | `qwen3_asr` | offline | [Qwen3 ASR](#qwen3-asr) |
 | Citrinet ASR | `citrinet_asr` | offline | [Citrinet ASR](#citrinet-asr) |
+| Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](#higgs-audio-stt) |
 | Hviske ASR | `hviske_asr` | offline | [Hviske ASR](#hviske-asr) |
 | Nemotron ASR | `nemotron_asr` | offline, streaming | [Nemotron ASR](#nemotron-asr) |
@@ -58,6 +59,35 @@ completed `model.gguf` can be moved, renamed, and passed directly to `--model`.
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. Use 16 kHz WAV for the example path. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
+
+## Kroko Community ASR
+
+Kroko Community ASR is a Zipformer2/RNN-T model port maintained in
+`community_models`. audio.cpp runs its feature frontend, encoder, predictor,
+joiner, and greedy decoder natively without ONNX Runtime. Public free packages
+are available for German, English, Spanish, French, Italian, Hebrew, Dutch,
+Portuguese, Swedish, and Turkish. Download the matching free Kroko Community
+`.data` package and convert it before use:
+
+```powershell
+python .\tools\community_models\convert_kroko_onnx.py `
+  .\models\Kroko-ASR\Kroko-EN-Community-128-L-Streaming-001.data `
+  .\models\Kroko-ASR\Kroko-EN-Community-128-L-Native `
+  --overwrite
+```
+
+```powershell
+.\build\windows-cuda-release\bin\audiocpp_cli.exe `
+  --task asr --mode streaming --family kroko_asr `
+  --model .\models\Kroko-ASR\Kroko-EN-Community-128-L-Native `
+  --backend cuda --audio .\speech.wav --language en `
+  --text-out .\transcript.txt --words-out .\words.json
+```
+
+Converted safetensors and standalone Q8 GGUF are supported in offline and
+stateful streaming modes. Partial transcripts and word timestamps are exposed.
+See [Kroko Community ASR](community_models/kroko_asr.md) for package selection,
+conversion, GGUF, parity, performance, and limitation details.
 
 ## Higgs Audio STT
 

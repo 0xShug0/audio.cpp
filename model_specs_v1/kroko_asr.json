@@ -1,0 +1,100 @@
+{
+  "family": "kroko_asr",
+  "display_name": "Kroko Community ASR",
+  "description": "Native Zipformer2 RNN-T transcription for the public free Kroko Community single-language packages, with offline and stateful streaming inference, partial results, and word timestamps.",
+  "category": "asr",
+  "status": "community",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "de",
+    "en",
+    "es",
+    "fr",
+    "it",
+    "he",
+    "nl",
+    "pt",
+    "sv",
+    "tr"
+  ],
+  "capabilities": {
+    "asr": [
+      "word_timestamps",
+      "partial_results"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Language code matching the selected single-language Kroko package; default auto uses the package language.",
+        "required": false,
+        "default": "auto"
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokens": "model:tokens.txt"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokens": "model:tokens.txt"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "packages": [
+    {
+      "id": "kroko_asr_community_converted",
+      "display_name": "Kroko Community ASR converted layout",
+      "default": true,
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Kroko-ASR-Community",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokens.txt"
+      ],
+      "download": {
+        "kind": "converter",
+        "converter": "tools/community_models/convert_kroko_onnx.py",
+        "description": "Convert a downloaded public free Kroko Community .data package into the native audio.cpp safetensors layout."
+      }
+    }
+  ]
+}

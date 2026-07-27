@@ -35,7 +35,12 @@ _LOADER_CALL_RE = re.compile(r"\bmake_([a-z0-9_]+)_loader\s*\(\s*\)")
 
 # Families the server registers but the WebUI deliberately does not surface,
 # with the reason. Keep this empty unless there is one.
-UNLISTED_FAMILIES: dict[str, str] = {}
+UNLISTED_FAMILIES: dict[str, str] = {
+    "kroko_asr": (
+        "Kroko Community packages require a user-supplied free .data file; "
+        "the WebUI installer cannot provide that local converter input."
+    ),
+}
 
 
 def _packages():

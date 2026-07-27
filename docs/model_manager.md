@@ -81,6 +81,18 @@ python3 tools/model_manager.py info voxcpm2_audiovae
 python3 tools/model_manager.py install voxcpm2_audiovae --source-file models/VoxCPM2/audiovae.pth --models-root models --overwrite
 ```
 
+Kroko Community packages use the same converter-style flow. For example:
+
+```bash
+python3 tools/model_manager.py install kroko_asr_community_converted \
+  --source-file models/Kroko-ASR/Kroko-DE-Community-64-L-Streaming-001.data \
+  --models-root models/Kroko-ASR --overwrite
+```
+
+Unless `--variant` is supplied, the manager derives a language/size-specific
+directory such as `Kroko-DE-Community-64-L-Native` from the source filename.
+This keeps separately installed Kroko languages from overwriting one another.
+
 ## Package Notes
 
 For shared audio.cpp GGUF packages, the model manager installs the default `q8_0`
@@ -111,6 +123,7 @@ Packages whose loaders are not registered in the current release tree are listed
 | `irodori_tts_500m_v3` | Irodori-TTS 500M v3 | No |
 | `irodori_tts_600m_v3_voice_design` | Irodori-TTS 600M v3 VoiceDesign | No |
 | `index_tts2` | IndexTTS-2 | **Yes** |
+| `kroko_asr_community_converted` | Kroko Community ASR converted layout | No |
 | `mel_band_roformer` | Mel-Band RoFormer MLX | **Yes** |
 | `miocodec_25hz_44k_v2` | MioCodec 25Hz 44.1kHz v2 | No |
 | `miotts_1_7b` | MioTTS 1.7B | No |
