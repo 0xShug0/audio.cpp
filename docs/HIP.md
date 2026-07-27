@@ -14,13 +14,14 @@ audio.cpp ENGINE_ENABLE_HIP=ON
     -> external/ggml/src/ggml-hip/CMakeLists.txt
       -> compiles ../ggml-cuda/*.cu with GGML_USE_HIP
       -> vendor header maps cudaMalloc->hipMalloc, cublasCreate->hipblasCreate, etc.
-      -> sets GGML_USE_CUDA on ggml target (same register path as native CUDA)
-        -> audio.cpp backend.cpp sees #ifdef GGML_USE_CUDA == true
-        -> ggml_backend_cuda_init() / ggml_backend_cuda_reg() work for HIP
-        -> device name "ROCm0" distinguishes HIP from "CUDA0"
+      -> the ggml CUDA backend registers itself under the name "ROCm" (GGML_CUDA_NAME under HIP)
+        -> audio.cpp backend.cpp maps registry name "ROCm" to BackendType::Hip
+        -> init_backend() uses the generic dynamic-loading path
+           (ggml_backend_load_all + init_device_backend), no #ifdef guards
+        -> registry name "ROCm" vs "CUDA"/"MUSA" distinguishes HIP from CUDA
 ```
 
-Key insight: HIP and CUDA share **the same GGML backend code**. The `ggml-hip/` directory contains only a `CMakeLists.txt` -- zero lines of unique kernel code. The runtime distinction is made via device name prefix (`"ROCm"` vs `"CUDA"`).
+Key insight: HIP and CUDA share **the same GGML backend code**. The `ggml-hip/` directory contains only a `CMakeLists.txt` -- zero lines of unique kernel code. The runtime distinction is made via the ggml backend **registry name** (`"ROCm"` vs `"CUDA"`), which is how backends are identified when they are loaded dynamically (`ggml_backend_load_all`).
 
 ---
 
@@ -28,36 +29,41 @@ Key insight: HIP and CUDA share **the same GGML backend code**. The `ggml-hip/` 
 
 ### 1. `CMakeLists.txt` (root)
 
-**L24** -- New option default:
+**L53** -- New option default:
 ```cmake
 set(ENGINE_DEFAULT_ENABLE_HIP OFF)
 ```
 
-**L36-L38** -- Forward pre-existing GGML_HIP variable (allows `-DGGML_HIP=ON` to auto-enable):
+**L65-L66** -- Forward pre-existing GGML_HIP variable (allows `-DGGML_HIP=ON` to auto-enable):
 ```cmake
 if (DEFINED GGML_HIP)
     set(ENGINE_DEFAULT_ENABLE_HIP ${GGML_HIP})
 endif()
 ```
 
-**L53** -- New CMake option:
+**L82** -- New CMake option:
 ```cmake
 option(ENGINE_ENABLE_HIP "Build ggml with HIP/ROCm backend support" ${ENGINE_DEFAULT_ENABLE_HIP})
 ```
 
-**L64** -- Guard CUDA language/Toolkit to CUDA-only builds:
+**L99** -- Guard CUDA language/Toolkit to CUDA-only builds:
 ```cmake
 if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
 ```
 
-**L81** -- Forward to vendored GGML:
+**L140** -- Forward to vendored GGML:
 ```cmake
 set(GGML_HIP ${ENGINE_ENABLE_HIP} CACHE BOOL "Build ggml with HIP backend support" FORCE)
 ```
 
-**L497** -- Guard audio.cpp's own `.cu` files to CUDA-only builds:
+**L147** -- Keep ggml's separate HIP graphs option in sync with the CUDA graphs toggle, so `ENGINE_ENABLE_CUDA_GRAPHS=OFF` also disables graphs on HIP builds:
+```cmake
+set(GGML_HIP_GRAPHS ${ENGINE_ENABLE_CUDA_GRAPHS} CACHE BOOL "Enable ggml HIP graphs support" FORCE)
+```
+
+**L648** -- Guard audio.cpp's own `.cu` files to CUDA-only builds:
 ```cmake
 if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     target_sources(engine_runtime PRIVATE
@@ -88,47 +94,46 @@ enum class BackendType {
 
 ### 3. `src/framework/core/backend.cpp`
 
-All HIP code paths reuse `#ifdef GGML_USE_CUDA` because `ggml-hip/CMakeLists.txt` defines `GGML_USE_CUDA` on the `ggml` target for static builds (line 92 of `external/ggml/src/ggml-hip/CMakeLists.txt`).
+HIP support is expressed through the dynamic backend-registry architecture shared with the other GPU backends: `ensure_backends_loaded()` calls `ggml_backend_load_all()`, and each backend is identified by the name of the ggml registry that owns it. There are no `#ifdef GGML_USE_CUDA` guards or direct `ggml_backend_cuda_*` calls in this file -- those headers resolve against the backend's own build flags, which are not visible from this translation unit.
 
-**L107-L117** -- `init_backend()` Hip case:
+**L34-L39** -- Registry name table. HIP builds share the ggml CUDA backend but register as `"ROCm"`, so they get their own entry (upstream maps `"ROCm"` to Cuda; here it is moved to the dedicated Hip type):
 ```cpp
-case BackendType::Hip: {
-#ifdef GGML_USE_CUDA
-    ggml_backend_t backend = ggml_backend_cuda_init(config.device);
+constexpr BackendRegNames k_backend_reg_names[] = {
+    {BackendType::Cuda,   {"CUDA", "MUSA", nullptr}},
+    {BackendType::Hip,    {"ROCm", nullptr, nullptr}},
     // ...
-#endif
+};
+```
+
+**L71-L73** -- `is_hip_backend_handle()` helper, matching the owning registry's name through the shared `backend_handle_matches()`:
+```cpp
+bool is_hip_backend_handle(ggml_backend_t backend) {
+    return backend_handle_matches(backend, BackendType::Hip);
 }
 ```
 
-**L183-L190** -- `backend_type()` CUDA/HIP distinction:
+**L203-L204** -- `init_backend()` Hip case, using the generic device init path:
 ```cpp
-if (is_cuda_backend_handle(backend)) {
-#ifdef GGML_USE_CUDA
-    if (backend_name_has_prefix(backend, "ROCm")) {
-        return BackendType::Hip;
-    }
-#endif
-    return BackendType::Cuda;
+case BackendType::Hip:
+    return init_device_backend(BackendType::Hip, "HIP", config);
+```
+
+**L251-L253** -- `backend_type()` HIP/CUDA distinction (HIP is checked first, since both match the ggml CUDA backend family):
+```cpp
+if (is_hip_backend_handle(backend)) {
+    return BackendType::Hip;
 }
 ```
 
-`is_cuda_backend_handle()` compares device registration against `ggml_backend_cuda_reg()`, which returns the same registry for both CUDA and HIP. We disambiguate by checking the backend name prefix: HIP devices are named `"ROCm0"`, `"ROCm1"`, etc.
-
-**L217** -- `release_backend_graph_resources()` by backend handle:
+**L290, L294** -- `release_backend_graph_resources()` includes HIP in both overloads:
 ```cpp
-if (backend_name_has_prefix(backend, "CUDA") || backend_name_has_prefix(backend, "ROCm")) {
+if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_clear_graph(backend, graph);
+// and
+if (backend_type == BackendType::Cuda || backend_type == BackendType::Hip) cuda_clear_graph(backend, graph);
 ```
+`cuda_clear_graph()` resolves `ggml_backend_cuda_clear_graph` by proc-address lookup, which works on HIP builds because HIP shares the ggml CUDA backend and is compatible with `GGML_BACKEND_DL`.
 
-**L228** -- `release_backend_graph_resources()` by BackendType:
-```cpp
-if (backend_type == BackendType::Cuda || backend_type == BackendType::Hip) {
-```
-
-**L318** -- `query_backend_memory()` by BackendConfig:
-```cpp
-case BackendType::Cuda:
-case BackendType::Hip:       // <-- fall-through to CUDA path
-```
+**`query_backend_memory()`** -- no Hip-specific case needed: GPU backend types fall through the `switch` to the generic `find_device_by_backend_type()` path, which covers HIP automatically.
 
 ---
 
@@ -150,20 +155,7 @@ Help text:
 
 ---
 
-### 6. `external/sentencepiece/src/CMakeLists.txt` (build compatibility fix)
-**L266** -- Disable `-fPIC` on Windows (clang Windows target does not support it):
-```cmake
-# Original:
-if (NOT MSVC)
-# Fixed:
-if (NOT MSVC AND NOT WIN32)
-```
-
-> This is not HIP-specific, but is required when compiling with clang (the HIP compiler) on Windows.
-
----
-
-### 7. `external/ggml` -- hipBLASLt GEMM path
+### 6. `external/ggml` -- hipBLASLt GEMM path
 
 rocBLAS does not ship Tensile kernels for every AMD GPU arch (e.g. gfx1103 on Windows), while hipBLASLt covers more arches. HIP builds therefore route every cuBLAS-equivalent GEMM through hipBLASLt by default.
 
@@ -178,7 +170,7 @@ rocBLAS does not ship Tensile kernels for every AMD GPU arch (e.g. gfx1103 on Wi
 
 All Lt GEMMs use `HIPBLAS_COMPUTE_32F` with FP32 scale for accuracy. The algorithm heuristic is queried per call -- caching heuristics per shape is future work.
 
-### 8. `scripts/build_windows_hip.ps1`
+### 7. `scripts/build_windows_hip.ps1`
 
 Dedicated Windows HIP build script. Auto-detects ROCm (`HIP_PATH` or `C:\Program Files\AMD\ROCm\*`), GPU targets (`amdgpu-arch`), cmake, and ninja (PATH or the VS-bundled copy), then configures and builds with `ENGINE_ENABLE_HIP=ON`. See the Windows build section below for options.
 
