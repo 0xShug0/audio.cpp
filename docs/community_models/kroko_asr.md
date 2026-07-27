@@ -3,7 +3,7 @@
 `kroko_asr` is a native audio.cpp port of the free Kroko Community
 Zipformer2/RNN-T models. The Kaldi-compatible filterbank, streaming
 Conv2dSubsampling/ConvNeXt encoder, 19-layer Zipformer2, stateless predictor,
-joiner, and greedy decoder run without ONNX Runtime.
+joiner, greedy decoder, and modified beam decoder run without ONNX Runtime.
 
 ## Capabilities
 
@@ -14,6 +14,8 @@ joiner, and greedy decoder run without ONNX Runtime.
 | Public free languages | German (`de`), English (`en`), Spanish (`es`), French (`fr`), Italian (`it`), Hebrew (`he`; package code `IW`), Dutch (`nl`), Portuguese (`pt`), Swedish (`sv`), Turkish (`tr`) |
 | Input | WAV; audio.cpp converts to 16 kHz mono |
 | Output | Transcript and word timestamps |
+| Decoding | Greedy search; modified beam search; blank penalty; inline hotwords |
+| Endpointing | Optional three-rule automatic segmentation |
 | Package variants | 64-L and 128-L streaming packages |
 | Native layouts | Converted safetensors and standalone GGUF |
 
@@ -22,11 +24,12 @@ matches `--language`; `auto` uses the package language. The loader normalizes
 the legacy Hebrew code `iw` to `he`.
 
 Streaming keeps the subsampling cache, Zipformer layer states, RNN-T predictor
-context, emitted tokens, and emission frames across chunks. For 16 kHz input,
-already consumed waveform is compacted while retaining the filterbank boundary
-overlap, so the streaming audio buffer remains bounded. Finalization adds the
-same 660 ms zero tail as the original Kroko/sherpa runner to flush final
-punctuation and tokens.
+context, emitted tokens, and emission frames across chunks. Already consumed
+waveform is compacted while retaining the filterbank boundary overlap.
+Non-16-kHz input is incrementally resampled while retaining only the two
+source samples needed across chunk boundaries, so both buffers remain bounded.
+Finalization adds the same 660 ms zero tail as the original Kroko/sherpa runner
+to flush final punctuation and tokens.
 
 Word starts come from the RNN-T encoder frame where the first token of the word
 is emitted. One encoder frame is 40 ms (`160` filterbank-hop samples times
@@ -113,6 +116,52 @@ Native streaming:
   --words-out .\outputs\kroko_sv_words.json --log
 ```
 
+Modified beam search with a blank penalty and natural-text hotwords:
+
+```powershell
+.\build\windows-cuda-release\bin\audiocpp_cli.exe `
+  --task asr --family kroko_asr `
+  --model .\models\Kroko-ASR\Kroko-EN-Community-128-L-Native `
+  --backend cpu --threads 8 --audio .\SAMPLES\EN_3.wav --language en `
+  --request-option decoding_method=modified_beam_search `
+  --request-option max_active_paths=8 `
+  --request-option blank_penalty=0.5 `
+  --request-option "hotwords=security/tomorrow" `
+  --request-option hotwords_score=1.5
+```
+
+Hotword phrases are separated with `/` or newlines. audio.cpp tokenizes the
+natural text directly from the package vocabulary; no SentencePiece model is
+required.
+
+Automatic endpoint segmentation is opt-in and uses the same three default
+rules as sherpa-onnx:
+
+```powershell
+.\build\windows-cuda-release\bin\audiocpp_cli.exe `
+  --task asr --mode streaming --family kroko_asr `
+  --model .\models\Kroko-ASR\Kroko-EN-Community-128-L-Native `
+  --backend cpu --audio .\speech.wav --language en `
+  --request-option enable_endpoint=true `
+  --segments-out .\outputs\kroko_segments.json
+```
+
+| Request option | Default | Meaning |
+|---|---:|---|
+| `decoding_method` | `greedy_search` | `greedy_search` or `modified_beam_search` |
+| `max_active_paths` | `4` | Beam hypotheses, from 1 through 64 |
+| `blank_penalty` | `0` | Non-negative score subtracted from the blank logit |
+| `hotwords` | empty | Slash- or newline-separated natural-text phrases |
+| `hotwords_score` | `1.5` | Non-negative context boost per hotword token |
+| `enable_endpoint` | `false` | Enable automatic speech-segment boundaries |
+| `rule1_min_trailing_silence` | `2.4` | Endpoint timeout even without decoded speech |
+| `rule2_min_trailing_silence` | `1.2` | Endpoint silence after decoded speech |
+| `rule3_min_utterance_length` | `20` | Maximum utterance duration before an endpoint |
+
+Namespaced aliases such as `kroko_asr.decoding_method` are also accepted.
+Hotwords require modified beam search. Greedy remains the backward-compatible
+default.
+
 ## Standalone GGUF
 
 ```powershell
@@ -164,6 +213,26 @@ curl.exe -N http://127.0.0.1:8080/v1/audio/transcriptions `
   -F "language=sv" -F "stream=true" -F "response_format=json"
 ```
 
+Request options are also forwarded by the JSON route:
+
+```powershell
+$body = @{
+  model = "kroko-sv-stream"
+  audio_path = (Resolve-Path .\speech_sv.wav).Path
+  language = "sv"
+  options = @{
+    decoding_method = "modified_beam_search"
+    max_active_paths = 4
+    blank_penalty = 0.5
+    enable_endpoint = $true
+  }
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8080/v1/audio/transcriptions `
+  -ContentType application/json -Body $body
+```
+
 The generic `/v1/tasks/run` and `/v1/tasks/stream` result schemas carry the
 model's `word_timestamps`. The OpenAI-compatible transcription route currently
 returns its normal text/delta schema.
@@ -181,14 +250,9 @@ GGUF path test, server results, timings, and memory notes are in
   packages require Kroko's license and runtime.
 - Each package is single-language; audio.cpp does not implement Kroko's
   multi-model language router.
-- Greedy RNN-T decoding is implemented. Upstream modified beam search,
-  hotwords, blank penalty, and automatic endpoint segmentation are not yet
-  exposed.
-- The 16 kHz streaming path compacts consumed waveform. Other input sample
-  rates remain correct but retain the accumulated source waveform until
-  finalization.
 - The current CPU runtime is parity-focused and slower than the optimized
   ONNX Runtime reference; see the validation report.
+- Vulkan and Metal require contributor testing.
 
 Source references:
 

@@ -56,10 +56,24 @@ def main() -> None:
         default="greedy_search",
     )
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--max-active-paths", type=int, default=4)
+    parser.add_argument("--blank-penalty", type=float, default=0.0)
+    parser.add_argument("--hotwords", default="")
+    parser.add_argument("--bpe-vocab", type=Path)
+    parser.add_argument("--hotwords-score", type=float, default=1.5)
+    parser.add_argument("--enable-endpoint", action="store_true")
+    parser.add_argument("--rule1-min-trailing-silence", type=float, default=2.4)
+    parser.add_argument("--rule2-min-trailing-silence", type=float, default=1.2)
+    parser.add_argument("--rule3-min-utterance-length", type=float, default=20.0)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
     samples, sample_rate = read_wave(args.audio)
+    if args.hotwords and args.bpe_vocab is None:
+        raise ValueError(
+            "--hotwords requires --bpe-vocab for sherpa-onnx; "
+            "public Kroko packages do not include that SentencePiece model"
+        )
     with tempfile.TemporaryDirectory(prefix="kroko-reference-") as temporary:
         model = (
             unpack_free_package(args.model, Path(temporary))
@@ -79,11 +93,21 @@ def main() -> None:
             dither=0.0,
             normalize_samples=True,
             snip_edges=False,
+            enable_endpoint_detection=args.enable_endpoint,
+            rule1_min_trailing_silence=args.rule1_min_trailing_silence,
+            rule2_min_trailing_silence=args.rule2_min_trailing_silence,
+            rule3_min_utterance_length=args.rule3_min_utterance_length,
             decoding_method=args.decoding_method,
-            max_active_paths=4,
+            max_active_paths=args.max_active_paths,
+            blank_penalty=args.blank_penalty,
+            hotwords_score=args.hotwords_score,
+            modeling_unit="bpe" if args.bpe_vocab else "cjkchar",
+            bpe_vocab=str(args.bpe_vocab) if args.bpe_vocab else "",
             provider="cpu",
         )
-        stream = recognizer.create_stream()
+        stream = recognizer.create_stream(
+            args.hotwords if args.hotwords else None
+        )
         start = time.perf_counter()
         stream.accept_waveform(sample_rate, samples)
         stream.accept_waveform(
@@ -91,16 +115,35 @@ def main() -> None:
         )
         stream.input_finished()
         partials: list[str] = []
+        endpoint_texts: list[str] = []
         while recognizer.is_ready(stream):
             recognizer.decode_stream(stream)
             partials.append(recognizer.get_result(stream))
+            if args.enable_endpoint and recognizer.is_endpoint(stream):
+                endpoint_texts.append(
+                    recognizer.get_result_all(stream).text.strip()
+                )
+                recognizer.reset(stream)
         result = recognizer.get_result_all(stream)
+        if result.text.strip():
+            endpoint_texts.append(result.text.strip())
         elapsed_ms = (time.perf_counter() - start) * 1000.0
+    combined_text = (
+        " ".join(text for text in endpoint_texts if text)
+        if args.enable_endpoint
+        else result.text.strip()
+    )
     report = {
         "audio": str(args.audio),
         "duration_seconds": len(samples) / sample_rate,
         "decoding_method": args.decoding_method,
-        "text": result.text.strip(),
+        "max_active_paths": args.max_active_paths,
+        "blank_penalty": args.blank_penalty,
+        "hotwords": args.hotwords,
+        "hotwords_score": args.hotwords_score,
+        "endpoint_enabled": args.enable_endpoint,
+        "endpoint_texts": endpoint_texts,
+        "text": combined_text,
         "tokens": result.tokens,
         "timestamps_seconds": result.timestamps,
         "partials": partials,

@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -1490,7 +1492,13 @@ KrokoZipformerRuntime::encode_chunk(
         throw std::runtime_error(
             "Kroko Zipformer is not initialized");
     }
-    return impl_->graph->run(subsampled_features);
+    const auto start = std::chrono::steady_clock::now();
+    auto result =
+        impl_->graph->run(subsampled_features);
+    engine::debug::timing_log_scalar(
+        "kroko_asr.zipformer_ms",
+        engine::debug::elapsed_ms(start));
+    return result;
 }
 
 void KrokoZipformerRuntime::reset() const {

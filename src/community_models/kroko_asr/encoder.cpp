@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -11,6 +12,7 @@
 #include <ggml.h>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <stdexcept>
@@ -526,7 +528,12 @@ KrokoEncoderRuntime::encode_subsampled_chunk(
         throw std::runtime_error(
             "Kroko encoder is not initialized");
     }
-    return impl_->graph->run(features);
+    const auto start = std::chrono::steady_clock::now();
+    auto result = impl_->graph->run(features);
+    engine::debug::timing_log_scalar(
+        "kroko_asr.subsampling_ms",
+        engine::debug::elapsed_ms(start));
+    return result;
 }
 
 void KrokoEncoderRuntime::reset() {

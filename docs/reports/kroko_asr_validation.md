@@ -8,9 +8,11 @@ sherpa-onnx execution path is used as the reference.
 ## Implementation scope
 
 - Native Kaldi-compatible filterbank, Conv2dSubsampling/ConvNeXt frontend,
-  19-layer Zipformer2, stateless RNN-T predictor, joiner, and greedy decoder.
+  19-layer Zipformer2, stateless RNN-T predictor, joiner, greedy search, and
+  modified beam search.
 - Offline and stateful streaming sessions with partial transcripts.
 - Word timestamps derived from RNN-T emission frames.
+- Blank penalty, natural-text hotwords, and three-rule endpoint segmentation.
 - Public free German, English, Spanish, French, Italian, Hebrew, Dutch,
   Portuguese, Swedish, and Turkish packages.
 - Dynamic support for both public chunk layouts: 64-L (`141/128`) and
@@ -189,6 +191,77 @@ device-resident state experiment was rejected because it shifted several token
 emissions by one 40 ms frame. The retained implementation keeps the host-state
 round trip so that transcript and timestamp parity remain exact.
 
+A focused five-run EN_3 measurement with the best native thread count found on
+this machine (`--threads 8`) measured 203.664 ms mean native session time and
+88.704 ms mean sherpa-onnx time, a 2.296x ratio. Two further shortcuts were
+rejected during this pass: keeping recurrent states resident changed the
+transcript, while retaining allocator-managed graph constants changed the
+selected final tokens. Both therefore remain explicitly transferred at graph
+boundaries.
+
+## Modified beam, hotwords, blank penalty, and endpoints
+
+The reference runner exposes the relevant sherpa-onnx controls:
+
+```powershell
+.\venv\Scripts\python.exe tests\kroko_asr\kroko_reference_transcribe.py `
+  ..\models\Kroko-ASR\extracted-en-128 ..\SAMPLES\EN_3.wav `
+  --decoding-method modified_beam_search --max-active-paths 4 `
+  --output ..\outputs\kroko_reference_en3_beam.json
+
+build\windows-cuda-release\bin\audiocpp_cli.exe `
+  --task asr --family kroko_asr `
+  --model ..\models\Kroko-ASR\Kroko-EN-Community-128-L-Native `
+  --backend cpu --threads 8 --audio ..\SAMPLES\EN_3.wav --language en `
+  --request-option decoding_method=modified_beam_search `
+  --request-option max_active_paths=4 `
+  --text-out ..\outputs\kroko_native_en3_beam.txt
+```
+
+Both requests produced:
+
+```text
+If you actually care about yourself, you could test numbers one by one until you sleep
+```
+
+With `blank_penalty=1.0`, the reference retained that text and native execution
+selected the adjacent punctuation-bearing path ending in `sleep.`. This is one
+token-boundary decision under the measured encoder floating-point drift, not a
+decoder-control failure. `max_active_paths=1` remains identical to greedy
+search.
+
+Natural-text hotword bias was tested with 32 paths and score 15 to make its
+effect visible. For example, `hotwords=tomorrow` changed the acoustically
+competing phrase from `test numbers` to `tomorrow numbers`; `security` and
+`instruments` likewise changed selected paths. The production default score
+remains 1.5. The implementation uses the package token table directly, because
+the public Kroko bundles do not include the SentencePiece model sherpa-onnx
+would otherwise require for natural-text hotword encoding.
+
+Endpoint behavior was tested with `EN_2.wav`, three seconds of silence, and
+`EN_3.wav` concatenated into one 16 kHz stream:
+
+```powershell
+build\windows-cuda-release\bin\audiocpp_cli.exe `
+  --task asr --mode streaming --family kroko_asr `
+  --model ..\models\Kroko-ASR\Kroko-EN-Community-128-L-Native `
+  --backend cpu --threads 8 `
+  --audio ..\outputs\kroko_endpoint_two_utterances.wav --language en `
+  --request-option enable_endpoint=true `
+  --request-option rule2_min_trailing_silence=1.2 `
+  --text-out ..\outputs\kroko_endpoint_native.txt `
+  --segments-out ..\outputs\kroko_endpoint_native_segments.json
+```
+
+The transcript preserved both utterances and the result contained two
+contiguous segments, `[0,81920]` and `[81920,165974]`. At the endpoint the
+decoder starts a new output segment and resets hotword state, while preserving
+the encoder states and each hypothesis's last two predictor tokens like
+sherpa-onnx. Emitted tokens and absolute word frames remain continuous in the
+final result. The sherpa-onnx reference produced the same words and endpoint
+split; its per-segment string join rendered `security , If`, while audio.cpp
+normalizes that boundary to `security, If`.
+
 ## Encoder boundary parity
 
 The probes feed two deterministic feature chunks through the native model and
@@ -255,6 +328,13 @@ stream accepted 794,880 samples but retained only 38,560 values at peak,
 demonstrating bounded 16 kHz waveform buffering. Relative to the original
 3981.768 ms streaming and 3936.170 ms offline measurements, these paths are
 1.940x and 1.983x faster.
+
+The bounded resampler was separately tested with a 48 kHz stereo rendering of
+the 4.992-second English sample. Streaming and offline transcript/word JSON
+were byte-identical. The stream accepted the equivalent of 79,872 normalized
+16 kHz samples while peaking at 48,000 normalized waveform values and 48,000
+source values (one one-second stereo-mixdown input chunk), rather than retaining
+the full source waveform until finalization.
 
 ## Standalone Q8 GGUF and CUDA
 
@@ -325,6 +405,12 @@ long-lived-server requests both returned the exact reference transcript:
 | 1 | 306.420 | 293.179 |
 | 2 | 138.293 | 125.561 |
 
+An additional JSON transcription request forwarded
+`decoding_method=modified_beam_search`, `max_active_paths=4`,
+`blank_penalty=0.5`, and `enable_endpoint=true`. The Q8/CUDA server returned
+the expected Swedish transcript in 300.322 ms wall time (291.590 ms session
+time), and trace output confirmed all four request options reached the model.
+
 After request 2 the server used 619.5 MiB RSS and 1478.1 MiB private memory.
 Reliable per-process CUDA VRAM is not available through Windows WDDM, so only
 the physical device capacity is reported. Artifacts are:
@@ -345,8 +431,8 @@ array.
 
 | Backend | Coverage |
 |---|---|
-| CPU | All ten languages; original parity; timestamps; 64-L/128-L probes; offline/streaming long-audio equality |
-| CUDA | Standalone Q8 CLI streaming and two-request server session |
+| CPU | All ten languages; original parity; timestamps; beam/blank/hotwords/endpoints; 64-L/128-L probes; bounded offline/streaming equality |
+| CUDA | Standalone Q8 CLI streaming; beam/blank/endpoints; two-request server session |
 | Vulkan | Not tested |
 | Metal | Not tested |
 
@@ -356,10 +442,6 @@ array.
   Commercial/encrypted models require Kroko's licensed runtime.
 - Each package recognizes one language. Automatic routing across packages is
   not implemented.
-- The decoder implements greedy RNN-T search. Modified beam search, hotwords,
-  blank penalty, and automatic endpoint segmentation are not exposed.
-- The 16 kHz streaming path has bounded waveform buffering. Resampled input is
-  correct but retains the accumulated source waveform until finalization.
 - Native CPU execution currently prioritizes parity and is slower than the
   optimized ONNX Runtime reference.
 - Vulkan and Metal still require contributor testing.

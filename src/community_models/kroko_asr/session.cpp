@@ -1,13 +1,18 @@
 #include "engine/community_models/kroko_asr/session.h"
 
 #include "engine/community_models/kroko_asr/frontend.h"
+#include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/runtime/options.h"
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -157,6 +162,59 @@ std::vector<runtime::WordTimestamp> build_word_timestamps(
     return result;
 }
 
+std::vector<std::string> split_hotwords(
+    const std::string & value) {
+    std::vector<std::string> result;
+    size_t start = 0;
+    while (start <= value.size()) {
+        const size_t end = value.find_first_of("/\r\n", start);
+        std::string phrase = value.substr(
+            start,
+            end == std::string::npos
+                ? std::string::npos
+                : end - start);
+        while (!phrase.empty() &&
+               std::isspace(
+                   static_cast<unsigned char>(phrase.front())) != 0) {
+            phrase.erase(phrase.begin());
+        }
+        while (!phrase.empty() &&
+               std::isspace(
+                   static_cast<unsigned char>(phrase.back())) != 0) {
+            phrase.pop_back();
+        }
+        if (!phrase.empty()) {
+            result.push_back(std::move(phrase));
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+        while (start < value.size() &&
+               (value[start] == '\r' || value[start] == '\n')) {
+            ++start;
+        }
+    }
+    return result;
+}
+
+float non_negative_finite_option(
+    const std::unordered_map<std::string, std::string> & options,
+    std::initializer_list<std::string_view> keys,
+    float fallback) {
+    const float value =
+        runtime::parse_finite_float_option(options, keys)
+            .value_or(fallback);
+    if (value < 0.0F) {
+        const auto match =
+            runtime::find_option_match(options, keys);
+        throw std::runtime_error(
+            (match.has_value() ? match->key : "Kroko option") +
+            " must be non-negative");
+    }
+    return value;
+}
+
 }  // namespace
 
 KrokoASRSession::KrokoASRSession(
@@ -216,6 +274,110 @@ void KrokoASRSession::prepare(
     mark_prepared();
 }
 
+void KrokoASRSession::configure_request(
+    const runtime::TaskRequest & request) {
+    KrokoDecoderOptions decoder_options;
+    const std::string method = runtime::find_option(
+        request.options,
+        {"decoding_method", "kroko_asr.decoding_method"})
+        .value_or("greedy_search");
+    if (method == "greedy_search" || method == "greedy") {
+        decoder_options.method =
+            KrokoDecodingMethod::GreedySearch;
+    } else if (
+        method == "modified_beam_search" ||
+        method == "modified_beam" ||
+        method == "beam") {
+        decoder_options.method =
+            KrokoDecodingMethod::ModifiedBeamSearch;
+    } else {
+        throw std::runtime_error(
+            "Kroko decoding_method must be greedy_search or modified_beam_search");
+    }
+    const int64_t max_active_paths =
+        runtime::parse_i64_option(
+            request.options,
+            {"max_active_paths",
+             "kroko_asr.max_active_paths"})
+            .value_or(4);
+    if (max_active_paths < 1 ||
+        max_active_paths > 64) {
+        throw std::runtime_error(
+            "Kroko max_active_paths must be between 1 and 64");
+    }
+    decoder_options.max_active_paths =
+        static_cast<int32_t>(max_active_paths);
+    decoder_options.blank_penalty =
+        non_negative_finite_option(
+            request.options,
+            {"blank_penalty", "kroko_asr.blank_penalty"},
+            0.0F);
+    decoder_options.hotwords_score =
+        non_negative_finite_option(
+            request.options,
+            {"hotwords_score", "kroko_asr.hotwords_score"},
+            1.5F);
+    if (const auto hotwords = runtime::find_option(
+            request.options,
+            {"hotwords", "kroko_asr.hotwords"})) {
+        for (const auto & phrase :
+             split_hotwords(*hotwords)) {
+            decoder_options.hotwords.push_back(
+                tokenizer_.encode_hotword(phrase));
+        }
+    }
+    engine::debug::trace_log_scalar(
+        "kroko_asr.decoding_method",
+        std::string_view(
+            decoder_options.method ==
+                KrokoDecodingMethod::GreedySearch
+            ? "greedy_search"
+            : "modified_beam_search"));
+    engine::debug::trace_log_scalar(
+        "kroko_asr.max_active_paths",
+        decoder_options.max_active_paths);
+    engine::debug::trace_log_scalar(
+        "kroko_asr.blank_penalty",
+        static_cast<double>(decoder_options.blank_penalty));
+    engine::debug::trace_log_scalar(
+        "kroko_asr.hotword_phrases",
+        decoder_options.hotwords.size());
+    decoder_.configure(std::move(decoder_options));
+
+    endpoint_enabled_ = false;
+    if (const auto enabled = runtime::find_option_match(
+            request.options,
+            {"enable_endpoint", "kroko_asr.enable_endpoint"})) {
+        endpoint_enabled_ = runtime::parse_bool_option(
+            enabled->value, enabled->key);
+    }
+    endpoint_rule1_silence_ =
+        non_negative_finite_option(
+            request.options,
+            {"rule1_min_trailing_silence",
+             "kroko_asr.rule1_min_trailing_silence"},
+            2.4F);
+    endpoint_rule2_silence_ =
+        non_negative_finite_option(
+            request.options,
+            {"rule2_min_trailing_silence",
+             "kroko_asr.rule2_min_trailing_silence"},
+            1.2F);
+    endpoint_rule3_utterance_ =
+        non_negative_finite_option(
+            request.options,
+            {"rule3_min_utterance_length",
+             "kroko_asr.rule3_min_utterance_length"},
+            20.0F);
+    engine::debug::trace_log_scalar(
+        "kroko_asr.endpoint_enabled",
+        endpoint_enabled_);
+    completed_decoded_ = KrokoDecodedTokens{};
+    endpoint_segments_.clear();
+    endpoint_frame_offset_ = 0;
+    endpoint_segment_start_sample_ = 0;
+}
+
 std::string KrokoASRSession::request_language(
     const runtime::TaskRequest & request) const {
     std::string requested;
@@ -243,6 +405,98 @@ std::string KrokoASRSession::request_language(
     return package;
 }
 
+KrokoDecodedTokens KrokoASRSession::combined_decoded()
+    const {
+    KrokoDecodedTokens result = completed_decoded_;
+    const auto & current = decoder_.decoded();
+    result.ids.insert(
+        result.ids.end(),
+        current.ids.begin(),
+        current.ids.end());
+    result.frame_indices.insert(
+        result.frame_indices.end(),
+        current.frame_indices.begin(),
+        current.frame_indices.end());
+    return result;
+}
+
+bool KrokoASRSession::endpoint_detected() const {
+    if (!endpoint_enabled_) {
+        return false;
+    }
+    constexpr float kFrameSeconds = 0.04F;
+    const int64_t segment_frames = std::max<int64_t>(
+        0,
+        decoder_.decoded_frames() -
+            endpoint_frame_offset_);
+    const int64_t trailing_frames = std::min(
+        segment_frames,
+        decoder_.trailing_blank_frames());
+    const float utterance =
+        static_cast<float>(segment_frames) *
+        kFrameSeconds;
+    const float trailing =
+        static_cast<float>(trailing_frames) *
+        kFrameSeconds;
+    const bool contains_non_silence =
+        utterance > trailing;
+    const bool rule1 =
+        trailing >= endpoint_rule1_silence_;
+    const bool rule2 =
+        contains_non_silence &&
+        trailing >= endpoint_rule2_silence_;
+    const bool rule3 =
+        utterance >= endpoint_rule3_utterance_;
+    return rule1 || rule2 || rule3;
+}
+
+std::optional<runtime::SpeechSegment>
+KrokoASRSession::close_endpoint_segment(
+    int64_t audio_samples,
+    bool final) {
+    if (!endpoint_enabled_) {
+        return std::nullopt;
+    }
+    constexpr int64_t kSamplesPerEncoderFrame = 640;
+    const int64_t frame_boundary =
+        decoder_.decoded_frames() *
+        kSamplesPerEncoderFrame;
+    const int64_t end = final
+        ? audio_samples
+        : std::min(audio_samples, frame_boundary);
+    if (end <= endpoint_segment_start_sample_) {
+        return std::nullopt;
+    }
+    const bool contains_speech =
+        !decoder_.decoded().ids.empty();
+    const int64_t start =
+        endpoint_segment_start_sample_;
+    endpoint_segment_start_sample_ = end;
+    if (!contains_speech) {
+        return std::nullopt;
+    }
+    runtime::SpeechSegment segment;
+    segment.span.start_sample = start;
+    segment.span.end_sample = end;
+    endpoint_segments_.push_back(segment);
+    return segment;
+}
+
+void KrokoASRSession::archive_decoder_and_reset(
+    int64_t frame_offset) {
+    const auto & current = decoder_.decoded();
+    completed_decoded_.ids.insert(
+        completed_decoded_.ids.end(),
+        current.ids.begin(),
+        current.ids.end());
+    completed_decoded_.frame_indices.insert(
+        completed_decoded_.frame_indices.end(),
+        current.frame_indices.begin(),
+        current.frame_indices.end());
+    decoder_.reset_segment(frame_offset);
+    endpoint_frame_offset_ = frame_offset;
+}
+
 runtime::TaskResult KrokoASRSession::make_result(
     const KrokoDecodedTokens & decoded,
     int64_t audio_samples,
@@ -253,6 +507,7 @@ runtime::TaskResult KrokoASRSession::make_result(
         language};
     result.word_timestamps = build_word_timestamps(
         tokenizer_, decoded, audio_samples);
+    result.speech_segments = endpoint_segments_;
     return result;
 }
 
@@ -267,9 +522,10 @@ runtime::TaskResult KrokoASRSession::run(
         throw std::runtime_error(
             "Kroko ASR requires --audio");
     }
+    const std::string language = request_language(request);
+    configure_request(request);
     subsampling_.reset();
     zipformer_.reset();
-    decoder_.reset();
     const auto start = Clock::now();
     const auto padded_audio =
         with_tail_padding(*request.audio_input);
@@ -307,11 +563,23 @@ runtime::TaskResult KrokoASRSession::run(
         decoder_.append(
             encoded.values, valid_frames, encoded.channels);
         encoder_frames += valid_frames;
+        if (endpoint_detected()) {
+            (void)close_endpoint_segment(
+                normalized_audio_samples(
+                    *request.audio_input),
+                false);
+            archive_decoder_and_reset(
+                decoder_.decoded_frames());
+        }
     }
-    const auto result = make_result(
-        decoder_.decoded(),
+    (void)close_endpoint_segment(
         normalized_audio_samples(*request.audio_input),
-        request_language(request));
+        true);
+    const auto decoded = combined_decoded();
+    const auto result = make_result(
+        decoded,
+        normalized_audio_samples(*request.audio_input),
+        language);
     engine::debug::trace_log_scalar(
         "kroko_asr.frontend_frames", features.frames);
     engine::debug::trace_log_scalar(
@@ -335,6 +603,7 @@ void KrokoASRSession::start_stream(
     const runtime::TaskRequest & request) {
     reset();
     streaming_language_ = request_language(request);
+    configure_request(request);
     stream_start_ = Clock::now();
     stream_started_ = true;
 }
@@ -350,16 +619,189 @@ void KrokoASRSession::reset() {
         throw std::runtime_error(
             "Kroko ASR reset() requires a streaming session");
     }
-    streaming_audio_ = runtime::AudioBuffer{};
+    streaming_audio_ = runtime::AudioBuffer{
+        16000, 1, {}};
     streaming_language_.clear();
+    streaming_resampler_source_.clear();
+    completed_decoded_ = KrokoDecodedTokens{};
+    endpoint_segments_.clear();
     processed_feature_offset_ = 0;
     streaming_total_samples_ = 0;
+    streaming_source_offset_ = 0;
+    streaming_source_frames_ = 0;
+    streaming_next_output_sample_ = 0;
     streaming_encoder_chunks_ = 0;
+    endpoint_frame_offset_ = 0;
+    endpoint_segment_start_sample_ = 0;
     streaming_peak_buffer_values_ = 0;
+    streaming_peak_source_values_ = 0;
+    streaming_source_sample_rate_ = 0;
+    streaming_source_channels_ = 0;
+    streaming_received_audio_ = false;
     stream_started_ = false;
     subsampling_.reset();
     zipformer_.reset();
     decoder_.reset();
+}
+
+void KrokoASRSession::append_streaming_chunk(
+    const runtime::AudioChunk & chunk) {
+    if (chunk.sample_rate <= 0 || chunk.channels <= 0 ||
+        chunk.samples.empty() ||
+        chunk.samples.size() %
+                static_cast<size_t>(chunk.channels) !=
+            0) {
+        throw std::runtime_error(
+            "Kroko streaming audio chunk has an invalid format");
+    }
+    if (streaming_source_sample_rate_ == 0) {
+        streaming_source_sample_rate_ = chunk.sample_rate;
+        streaming_source_channels_ = chunk.channels;
+    } else if (
+        streaming_source_sample_rate_ != chunk.sample_rate ||
+        streaming_source_channels_ != chunk.channels) {
+        throw std::runtime_error(
+            "Kroko streaming audio format cannot change within a stream");
+    }
+
+    const auto mono =
+        engine::audio::mixdown_interleaved_to_mono_average(
+            chunk.samples,
+            chunk.channels);
+    streaming_received_audio_ = true;
+    streaming_source_frames_ +=
+        static_cast<int64_t>(mono.size());
+    if (chunk.sample_rate == 16000) {
+        streaming_audio_.samples.insert(
+            streaming_audio_.samples.end(),
+            mono.begin(),
+            mono.end());
+        streaming_next_output_sample_ +=
+            static_cast<int64_t>(mono.size());
+        streaming_total_samples_ =
+            streaming_next_output_sample_;
+        return;
+    }
+
+    streaming_resampler_source_.insert(
+        streaming_resampler_source_.end(),
+        mono.begin(),
+        mono.end());
+    streaming_peak_source_values_ = std::max(
+        streaming_peak_source_values_,
+        streaming_resampler_source_.size());
+    const double scale =
+        16000.0 /
+        static_cast<double>(streaming_source_sample_rate_);
+    const int64_t available_end =
+        streaming_source_offset_ +
+        static_cast<int64_t>(
+            streaming_resampler_source_.size());
+    while (true) {
+        const double source_position =
+            static_cast<double>(
+                streaming_next_output_sample_) /
+            scale;
+        const int64_t left = static_cast<int64_t>(
+            std::floor(source_position));
+        const int64_t right = left + 1;
+        if (right >= available_end) {
+            break;
+        }
+        if (left < streaming_source_offset_) {
+            throw std::runtime_error(
+                "Kroko streaming resampler lost source history");
+        }
+        const size_t local = static_cast<size_t>(
+            left - streaming_source_offset_);
+        const float fraction = static_cast<float>(
+            source_position -
+            static_cast<double>(left));
+        streaming_audio_.samples.push_back(
+            streaming_resampler_source_[local] *
+                    (1.0F - fraction) +
+                streaming_resampler_source_[local + 1] *
+                    fraction);
+        ++streaming_next_output_sample_;
+    }
+    streaming_total_samples_ =
+        streaming_next_output_sample_;
+
+    const int64_t next_left = static_cast<int64_t>(
+        std::floor(
+            static_cast<double>(
+                streaming_next_output_sample_) /
+            scale));
+    const int64_t discard = std::clamp(
+        next_left - streaming_source_offset_,
+        int64_t{0},
+        static_cast<int64_t>(
+            streaming_resampler_source_.size()));
+    if (discard > 0) {
+        streaming_resampler_source_.erase(
+            streaming_resampler_source_.begin(),
+            streaming_resampler_source_.begin() +
+                static_cast<std::ptrdiff_t>(discard));
+        streaming_source_offset_ += discard;
+    }
+}
+
+void KrokoASRSession::flush_streaming_resampler() {
+    if (streaming_source_sample_rate_ <= 0 ||
+        streaming_source_sample_rate_ == 16000) {
+        return;
+    }
+    const double scale =
+        16000.0 /
+        static_cast<double>(streaming_source_sample_rate_);
+    const int64_t target_samples =
+        static_cast<int64_t>(std::llround(
+            static_cast<double>(
+                streaming_source_frames_) *
+            scale));
+    if (streaming_next_output_sample_ >= target_samples) {
+        streaming_total_samples_ = target_samples;
+        return;
+    }
+    if (streaming_resampler_source_.empty()) {
+        throw std::runtime_error(
+            "Kroko streaming resampler has no final source sample");
+    }
+    const int64_t available_end =
+        streaming_source_offset_ +
+        static_cast<int64_t>(
+            streaming_resampler_source_.size());
+    while (streaming_next_output_sample_ <
+           target_samples) {
+        const double source_position =
+            static_cast<double>(
+                streaming_next_output_sample_) /
+            scale;
+        const int64_t left = static_cast<int64_t>(
+            std::floor(source_position));
+        const int64_t right = std::min(
+            left + 1,
+            streaming_source_frames_ - 1);
+        if (left < streaming_source_offset_ ||
+            right >= available_end) {
+            throw std::runtime_error(
+                "Kroko streaming resampler final history is invalid");
+        }
+        const size_t local_left = static_cast<size_t>(
+            left - streaming_source_offset_);
+        const size_t local_right = static_cast<size_t>(
+            right - streaming_source_offset_);
+        const float fraction = static_cast<float>(
+            source_position -
+            static_cast<double>(left));
+        streaming_audio_.samples.push_back(
+            streaming_resampler_source_[local_left] *
+                    (1.0F - fraction) +
+                streaming_resampler_source_[local_right] *
+                    fraction);
+        ++streaming_next_output_sample_;
+    }
+    streaming_total_samples_ = target_samples;
 }
 
 runtime::StreamEvent KrokoASRSession::process_streaming_audio(
@@ -408,9 +850,26 @@ runtime::StreamEvent KrokoASRSession::process_streaming_audio(
         processed_feature_offset_ += chunk_shift;
         ++streaming_encoder_chunks_;
         processed = true;
+        if (endpoint_detected()) {
+            if (const auto segment =
+                    close_endpoint_segment(
+                        streaming_total_samples_,
+                        false)) {
+                runtime::VoiceActivityEvent activity;
+                activity.kind =
+                    runtime::VoiceActivityEvent::Kind::
+                        SpeechSegment;
+                activity.sample =
+                    segment->span.end_sample;
+                activity.segment = *segment;
+                event.voice_activity.push_back(
+                    std::move(activity));
+            }
+            archive_decoder_and_reset(
+                decoder_.decoded_frames());
+        }
     }
     if (!final && processed &&
-        streaming_audio_.sample_rate == 16000 &&
         processed_feature_offset_ > 1) {
         const size_t discard = static_cast<size_t>(
             (processed_feature_offset_ - 1) *
@@ -423,9 +882,25 @@ runtime::StreamEvent KrokoASRSession::process_streaming_audio(
             processed_feature_offset_ = 1;
         }
     }
+    if (final) {
+        if (const auto segment =
+                close_endpoint_segment(
+                    streaming_total_samples_,
+                    true)) {
+            runtime::VoiceActivityEvent activity;
+            activity.kind =
+                runtime::VoiceActivityEvent::Kind::
+                    SpeechSegment;
+            activity.sample = segment->span.end_sample;
+            activity.segment = *segment;
+            event.voice_activity.push_back(
+                std::move(activity));
+        }
+    }
     if (processed || final) {
+        const auto decoded = combined_decoded();
         const auto result = make_result(
-            decoder_.decoded(),
+            decoded,
             streaming_total_samples_,
             streaming_language_);
         event.partial_text = result.text_output;
@@ -442,12 +917,7 @@ runtime::StreamEvent KrokoASRSession::process_audio_chunk(
         throw std::runtime_error(
             "Kroko ASR streaming has not been started");
     }
-    runtime::AudioBuffer audio;
-    audio.sample_rate = chunk.sample_rate;
-    audio.channels = chunk.channels;
-    audio.samples = chunk.samples;
-    runtime::append_audio_buffer(streaming_audio_, audio);
-    streaming_total_samples_ += normalized_audio_samples(audio);
+    append_streaming_chunk(chunk);
     streaming_peak_buffer_values_ = std::max(
         streaming_peak_buffer_values_,
         streaming_audio_.samples.size());
@@ -461,16 +931,18 @@ runtime::TaskResult KrokoASRSession::finalize() {
         throw std::runtime_error(
             "Kroko ASR streaming has not been started");
     }
-    if (streaming_audio_.samples.empty()) {
+    if (!streaming_received_audio_) {
         throw std::runtime_error(
             "Kroko ASR finalize() requires streamed audio");
     }
+    flush_streaming_resampler();
     auto event = process_streaming_audio(true);
     if (stream_event_sink_) {
         stream_event_sink_(event);
     }
     runtime::TaskResult result;
     result.text_output = event.partial_text;
+    result.speech_segments = endpoint_segments_;
     result.word_timestamps = std::move(event.word_timestamps);
     engine::debug::timing_log_scalar(
         "kroko_asr.session_ms",
@@ -481,6 +953,9 @@ runtime::TaskResult KrokoASRSession::finalize() {
     engine::debug::trace_log_scalar(
         "kroko_asr.streaming.peak_buffer_values",
         streaming_peak_buffer_values_);
+    engine::debug::trace_log_scalar(
+        "kroko_asr.streaming.peak_resampler_source_values",
+        streaming_peak_source_values_);
     engine::debug::trace_log_scalar(
         "kroko_asr.streaming.total_samples",
         streaming_total_samples_);

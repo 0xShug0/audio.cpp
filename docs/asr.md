@@ -64,7 +64,9 @@ completed `model.gguf` can be moved, renamed, and passed directly to `--model`.
 
 Kroko Community ASR is a Zipformer2/RNN-T model port maintained in
 `community_models`. audio.cpp runs its feature frontend, encoder, predictor,
-joiner, and greedy decoder natively without ONNX Runtime. Public free packages
+joiner, greedy search, and modified beam search natively without ONNX Runtime.
+Blank penalty, natural-text hotwords, and opt-in endpoint segmentation are
+available as request options. Public free packages
 are available for German, English, Spanish, French, Italian, Hebrew, Dutch,
 Portuguese, Swedish, and Turkish. Download the matching free Kroko Community
 `.data` package and convert it before use:
@@ -87,7 +89,7 @@ python .\tools\community_models\convert_kroko_onnx.py `
 Converted safetensors and standalone Q8 GGUF are supported in offline and
 stateful streaming modes. Partial transcripts and word timestamps are exposed.
 See [Kroko Community ASR](community_models/kroko_asr.md) for package selection,
-conversion, GGUF, parity, performance, and limitation details.
+conversion, GGUF, decoding options, parity, performance, and limitation details.
 
 ## Higgs Audio STT
 
