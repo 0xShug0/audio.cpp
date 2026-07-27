@@ -1,7 +1,7 @@
 {
   "family": "glm_tts",
   "display_name": "GLM-TTS",
-  "description": "Bilingual Chinese-English LLM-based TTS system with zero-shot voice cloning, streaming inference, reinforcement-learning-enhanced emotion and prosody control, and phoneme-level pronunciation control.",
+  "description": "Community Chinese-English zero-shot speech synthesis and voice cloning with native Llama, Whisper-VQ, Flow/DiT, CAMPPlus, and HiFT execution.",
   "category": "tts",
   "status": "community",
   "tasks": [
@@ -140,7 +140,7 @@
         "type": "int",
         "description": "Llama weight metadata context in MiB; default 8192.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 8192
       },
       {
@@ -148,7 +148,7 @@
         "type": "int",
         "description": "Llama constant tensor context in MiB; default 256.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 256
       }
     ],
@@ -228,15 +228,16 @@
   "packages": [
     {
       "id": "glm_tts_q8_0",
-      "display_name": "GLM-TTS Q8_0 GGUF",
+      "display_name": "GLM-TTS mixed Q8_0/F16 GGUF",
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
-      "target_directory": "GLM-TTS-GGUF",
+      "target_directory": "GLM-TTS-Q8",
       "files": [
         "Text to audio (TTS)/GLM-TTS_Q8.gguf"
       ],
       "strip_prefix": "Text to audio (TTS)",
+      "description": "Standalone GGUF with the autoregressive Llama tensors retained in F16 and the speech tokenizer, Flow, HiFT, and CAMPPlus tensors stored as Q8_0.",
       "download": {
         "kind": "huggingface_snapshot",
         "repo": "mirek190/audio.cpp"

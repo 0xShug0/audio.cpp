@@ -75,9 +75,9 @@ runtime::ModelCliInterface cli(const OuteTTSAssets &) {
        "Language-model constant tensor context size in MiB."},
       {"outetts.dac_weight_context_mb", "n",
        "DAC decoder weight context size in MiB."},
-      {"outetts.dac_graph_context_mb", "n",
-       "DAC decoder graph context size in MiB."},
-      {"outetts.aligner_model_path", "path",
+      {"outetts.dac_graph_arena_mb", "n",
+       "DAC decoder graph arena size in MiB."},
+      {"outetts.aligner_path", "path",
        "Optional Qwen3 Forced Aligner override. Cloning automatically uses "
        "the aligner embedded in a standalone OuteTTS GGUF when present."},
       {"outetts.reference_cache_slots", "n",

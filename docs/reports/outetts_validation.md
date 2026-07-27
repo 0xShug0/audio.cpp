@@ -216,7 +216,7 @@ build\windows-cuda-release\bin\outetts_warm_bench.exe `
   --backend cuda --threads 8 `
   --request-file tests\outetts\warm_bench_requests.json `
   --session-option outetts.weight_type=f32 `
-  --session-option outetts.aligner_model_path=..\models\Qwen3-ForcedAligner-0.6B `
+  --session-option outetts.aligner_path=..\models\Qwen3-ForcedAligner-0.6B `
   --audio-out-dir build\reference\cpp_f32_final_explicit `
   --log-file build\reference\cpp_f32_final_explicit.log
 ```
