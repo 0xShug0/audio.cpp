@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/models/confucius4_tts/assets.h"
 
@@ -11,8 +12,7 @@ namespace engine::models::confucius4_tts {
 class ConfuciusLoadedModel final : public runtime::ILoadedVoiceModel {
 public:
     ConfuciusLoadedModel(
-        runtime::ModelMetadata metadata,
-        runtime::CapabilitySet capabilities,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract,
         std::shared_ptr<const ConfuciusAssets> assets);
 
     const runtime::ModelMetadata & metadata() const noexcept override;
@@ -22,6 +22,7 @@ public:
         const runtime::SessionOptions & options) const override;
 
 private:
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     runtime::ModelMetadata metadata_;
     runtime::CapabilitySet capabilities_;
     std::shared_ptr<const ConfuciusAssets> assets_;

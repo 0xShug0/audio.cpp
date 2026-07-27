@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace engine::model_spec {
@@ -35,7 +36,18 @@ struct ModelDependency {
     std::optional<std::string> path;
 };
 
+struct ModelContract {
+    runtime::ModelMetadata metadata;
+    runtime::CapabilitySet capabilities;
+    runtime::ModelCliInterface cli;
+    std::unordered_set<std::string> request_option_keys;
+    std::unordered_set<std::string> session_option_keys;
+    std::unordered_set<std::string> load_option_keys;
+};
+
+[[nodiscard]] std::optional<ModelContract> model_contract(std::string_view family);
 [[nodiscard]] std::optional<runtime::CapabilitySet> advertised_capabilities(std::string_view family);
+[[nodiscard]] std::optional<runtime::ModelMetadata> model_metadata(std::string_view family);
 [[nodiscard]] std::optional<runtime::ModelCliInterface> cli_interface(std::string_view family);
 [[nodiscard]] std::vector<ModelDependency> dependencies(std::string_view family);
 

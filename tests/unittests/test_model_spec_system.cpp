@@ -14,6 +14,24 @@ namespace {
 
 namespace json = engine::io::json;
 
+class ScopedCurrentPath {
+public:
+    explicit ScopedCurrentPath(const std::filesystem::path & path)
+        : previous_(std::filesystem::current_path()) {
+        std::filesystem::current_path(path);
+    }
+
+    ~ScopedCurrentPath() {
+        std::filesystem::current_path(previous_);
+    }
+
+    ScopedCurrentPath(const ScopedCurrentPath &) = delete;
+    ScopedCurrentPath & operator=(const ScopedCurrentPath &) = delete;
+
+private:
+    std::filesystem::path previous_;
+};
+
 std::filesystem::path make_temp_root() {
     const auto root = std::filesystem::temp_directory_path() / "audiocpp_model_spec_system_test";
     std::error_code ec;
@@ -65,6 +83,7 @@ std::string schema_v1_spec_text(const std::string & dependencies) {
   "schema_version": 1,
   "family": "toy_model",
   "display_name": "Toy Model",
+  "description": "Toy model schema v1 fixture.",
   "category": "tts",
   "status": "experimental",
   "tasks": ["tts"],
@@ -129,6 +148,7 @@ std::string schema_v1_spec_with_options(const std::string & options) {
   "schema_version": 1,
   "family": "toy_model",
   "display_name": "Toy Model",
+  "description": "Toy model schema v1 fixture.",
   "category": "tts",
   "status": "experimental",
   "tasks": ["tts"],
@@ -1031,6 +1051,119 @@ void test_option_name_mapping_from_production_spec() {
     engine::test::require(!vibevoice_cli.has_value(), "legacy vibevoice spec should not expose CLI metadata");
 }
 
+void test_schema_v1_metadata_projection() {
+    const auto root = make_temp_root();
+    write_text(root, "toy_model.json", schema_v1_spec_with_options(R"JSON({
+      "request": [
+        {
+          "name": "language",
+          "type": "string",
+          "required": false,
+          "default": "en",
+          "description": "Target language."
+        }
+      ],
+      "session": [
+        {
+          "name": "weight_type",
+          "type": "enum",
+          "preset": "weight_type_full",
+          "required": false,
+          "default": "native",
+          "description": "Updated weight storage type."
+        },
+        {
+          "name": "future_session_option",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "description": "New code-supported session option."
+        }
+      ],
+      "load": []
+    })JSON"));
+
+    const engine::model_spec::ScopedSpecOverride spec_override(root);
+    const auto metadata = engine::model_spec::model_metadata("toy_model");
+    engine::test::require(metadata.has_value(), "schema v1 metadata should be projected");
+    engine::test::require_eq(metadata->family, std::string("toy_model"), "metadata family");
+    engine::test::require_eq(metadata->variant, std::string("Toy Model"), "metadata display name");
+    engine::test::require_eq(
+        metadata->description,
+        std::string("Toy model schema v1 fixture."),
+        "metadata description");
+    engine::test::require(!metadata->config_candidates.empty(), "metadata config candidates");
+    engine::test::require(!metadata->weight_candidates.empty(), "metadata weight candidates");
+
+    const auto capabilities = engine::model_spec::advertised_capabilities("toy_model");
+    engine::test::require(capabilities.has_value(), "schema v1 capabilities should be projected");
+    engine::test::require_eq(capabilities->languages.size(), size_t{1}, "capability language count");
+    engine::test::require_eq(capabilities->languages.front(), std::string("en"), "capability language");
+    engine::test::require_eq(capabilities->supported_tasks.size(), size_t{1}, "capability task count");
+    engine::test::require(
+        capabilities->supported_tasks.front().task == engine::runtime::VoiceTaskKind::Tts,
+        "capability task should come from v1 tasks");
+    engine::test::require(
+        capabilities->supported_tasks.front().modes.front() == engine::runtime::RunMode::Offline,
+        "capability mode should come from v1 modes");
+
+    const auto cli = engine::model_spec::cli_interface("toy_model");
+    engine::test::require(cli.has_value(), "schema v1 CLI should be projected");
+    engine::test::require_eq(cli->request_options.front().name, std::string("language"), "request option name");
+    engine::test::require_eq(
+        cli->session_options.front().name,
+        std::string("toy_model.weight_type"),
+        "session option public name");
+    engine::test::require_eq(
+        cli->session_options.front().description,
+        std::string("Updated weight storage type."),
+        "modified session option description");
+    engine::test::require_eq(
+        cli->session_options[1].name,
+        std::string("toy_model.future_session_option"),
+        "new session option public name");
+
+    const auto contract = engine::model_spec::model_contract("toy_model");
+    engine::test::require(contract.has_value(), "schema v1 contract should be projected");
+    engine::test::require(
+        contract->session_option_keys.find("toy_model.future_session_option") !=
+            contract->session_option_keys.end(),
+        "contract should include new session option");
+
+    std::filesystem::remove_all(root);
+}
+
+void test_contract_spec_prefers_workspace_over_package_local_spec() {
+    const auto root = make_temp_root();
+    const auto workspace = root / "workspace";
+    const auto model_root = root / "model";
+    std::filesystem::create_directories(workspace);
+    std::filesystem::create_directories(model_root);
+    const auto workspace_spec = write_text(
+        workspace,
+        "model_specs/toy_model.json",
+        schema_v1_spec_with_options(R"JSON({"request": [], "session": [], "load": []})JSON"));
+    const auto package_spec = write_text(
+        model_root,
+        "model_specs/toy_model.json",
+        schema_v1_spec_with_options(R"JSON({"request": [], "session": [], "load": []})JSON"));
+
+    {
+        ScopedCurrentPath cwd(workspace);
+        const engine::model_spec::ScopedSpecOverride model_scope(std::nullopt, model_root);
+        engine::test::require_eq(
+            engine::model_spec::default_contract_spec_path("toy_model").string(),
+            std::filesystem::weakly_canonical(workspace_spec).string(),
+            "contract spec path");
+        engine::test::require_eq(
+            engine::model_spec::default_package_spec_path("toy_model").string(),
+            std::filesystem::weakly_canonical(package_spec).string(),
+            "package spec path");
+    }
+
+    std::filesystem::remove_all(root);
+}
+
 void test_loading_and_resource_bundle() {
     // Resource bundles resolve required files, tensor source files, and missing optional files.
     const auto root = make_temp_root();
@@ -1065,6 +1198,8 @@ int main() {
         test_dependency_option_mapping_from_production_spec();
         test_options_schema();
         test_option_name_mapping_from_production_spec();
+        test_schema_v1_metadata_projection();
+        test_contract_spec_prefers_workspace_over_package_local_spec();
         test_loading_and_resource_bundle();
     } catch (const std::exception & error) {
         std::cerr << "model_spec_system_test failed: " << error.what() << "\n";

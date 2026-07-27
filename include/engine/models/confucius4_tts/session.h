@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/confucius4_tts/assets.h"
@@ -37,7 +38,8 @@ public:
     ConfuciusSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const ConfuciusAssets> assets);
+        std::shared_ptr<const ConfuciusAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~ConfuciusSession() override;
 
     std::string family() const override;
@@ -69,6 +71,7 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const ConfuciusAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     ConfuciusTextTokenizer tokenizer_;
     std::unique_ptr<ConfuciusWav2Vec2BertRuntime> semantic_encoder_;
     std::unique_ptr<ConfuciusStyleEncoder> style_encoder_;

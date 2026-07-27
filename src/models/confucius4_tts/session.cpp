@@ -16,6 +16,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+constexpr const char * kFamily = "confucius4_tts";
+
 std::shared_ptr<const ConfuciusAssets> require_assets(std::shared_ptr<const ConfuciusAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("Confucius4-TTS session requires assets");
@@ -23,24 +25,12 @@ std::shared_ptr<const ConfuciusAssets> require_assets(std::shared_ptr<const Conf
     return assets;
 }
 
-void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
-    if (storage_type == engine::assets::TensorStorageType::Native ||
-        storage_type == engine::assets::TensorStorageType::F32 ||
-        storage_type == engine::assets::TensorStorageType::F16 ||
-        storage_type == engine::assets::TensorStorageType::BF16 ||
-        storage_type == engine::assets::TensorStorageType::Q8_0) {
-        return;
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("Confucius4-TTS session requires a model contract");
     }
-    throw std::runtime_error(std::string(option_name) + " supports only native, f32, f16, bf16, and q8_0");
-}
-
-void validate_conv_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
-    if (storage_type == engine::assets::TensorStorageType::Native ||
-        storage_type == engine::assets::TensorStorageType::F32 ||
-        storage_type == engine::assets::TensorStorageType::F16) {
-        return;
-    }
-    throw std::runtime_error(std::string(option_name) + " supports only native, f32, and f16");
+    return contract;
 }
 
 uint64_t fnv1a_mix(uint64_t hash, const void * data, size_t size) {
@@ -100,6 +90,18 @@ bool mem_saver_from_options(const runtime::SessionOptions & options) {
     return false;
 }
 
+void validate_session_option_keys(
+    const runtime::SessionOptions & options,
+    const engine::model_spec::ModelContract & contract) {
+    const std::string family_prefix = std::string(kFamily) + ".";
+    for (const auto & [key, _] : options.options) {
+        if (key.rfind(family_prefix, 0) == 0 &&
+            contract.session_option_keys.find(key) == contract.session_option_keys.end()) {
+            throw std::runtime_error("unknown Confucius4-TTS session option: " + key);
+        }
+    }
+}
+
 runtime::AudioBuffer merge_confucius_audio_chunks(
     const std::vector<runtime::AudioBuffer> & chunks,
     float cross_fade_duration) {
@@ -150,12 +152,15 @@ runtime::AudioBuffer merge_confucius_audio_chunks(
 ConfuciusSession::ConfuciusSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const ConfuciusAssets> assets)
+    std::shared_ptr<const ConfuciusAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))),
       tokenizer_(assets_),
       reference_cache_(reference_cache_slots_from_options(options)) {
+    validate_session_option_keys(options, *contract_);
     graph_arena_bytes_ = runtime::parse_size_mb_option(
         options.options,
         {"confucius4_tts.graph_arena_mb"},
@@ -164,28 +169,18 @@ ConfuciusSession::ConfuciusSession(
         options.options,
         {"confucius4_tts.weight_context_mb"},
         weight_context_bytes_);
-    if (const auto value = runtime::find_option(options.options, {"confucius4_tts.weight_type"})) {
-        matmul_weight_storage_type_ = engine::assets::parse_tensor_storage_type(*value);
-        validate_matmul_weight_storage(matmul_weight_storage_type_, "confucius4_tts.weight_type");
-    }
-    if (const auto value = runtime::find_option(options.options, {"confucius4_tts.conv_weight_type"})) {
-        conv_weight_storage_type_ = engine::assets::parse_tensor_storage_type(*value);
-        validate_conv_weight_storage(conv_weight_storage_type_, "confucius4_tts.conv_weight_type");
-    }
+    using T = engine::assets::TensorStorageType;
+    matmul_weight_storage_type_ = runtime::parse_tensor_storage_option(
+        options.options,
+        "confucius4_tts.weight_type",
+        matmul_weight_storage_type_,
+        {T::Native, T::F32, T::F16, T::BF16, T::Q8_0});
+    conv_weight_storage_type_ = runtime::parse_tensor_storage_option(
+        options.options,
+        "confucius4_tts.conv_weight_type",
+        conv_weight_storage_type_,
+        {T::Native, T::F32, T::F16});
     mem_saver_ = mem_saver_from_options(options);
-    for (const auto & [key, _] : options.options) {
-        if (key.rfind("confucius4_tts.", 0) == 0 &&
-            key != "confucius4_tts.graph_arena_mb" &&
-            key != "confucius4_tts.weight_context_mb" &&
-            key != "confucius4_tts.weight_type" &&
-            key != "confucius4_tts.conv_weight_type" &&
-            key != "confucius4_tts.reference_cache_slots" &&
-            key != "confucius4_tts.mem_saver" &&
-            key != "confucius4_tts.t2s.cuda_sampling_policy" &&
-            key != "confucius4_tts.s2a.cuda_sampling_policy") {
-            throw std::runtime_error("unknown Confucius4-TTS session option: " + key);
-        }
-    }
     if (task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("Confucius4-TTS supports the VoiceCloning task");
     }
