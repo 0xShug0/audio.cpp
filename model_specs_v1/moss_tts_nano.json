@@ -1,0 +1,319 @@
+{
+  "family": "moss_tts_nano",
+  "display_name": "MOSS-TTS-Nano",
+  "description": "Compact deployment-first MOSS-TTS model for real-time multilingual speech generation, lightweight integration, and zero-shot voice cloning.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ar",
+    "cs",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "fa",
+    "fr",
+    "hu",
+    "it",
+    "ja",
+    "ko",
+    "pl",
+    "pt",
+    "ru",
+    "sv",
+    "tr",
+    "zh"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated audio frames; default 300.",
+        "required": false,
+        "min": 0,
+        "default": 300
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable stochastic audio-token sampling; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Audio-token sampling temperature; default 1.7.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.7
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Audio-token nucleus sampling limit; default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Audio-token top-k sampling limit; default 25.",
+        "required": false,
+        "min": 0,
+        "default": 25
+      },
+      {
+      "name": "repetition_penalty",
+      "type": "float",
+      "description": "Audio-token repetition penalty; default 1.0.",
+      "required": false,
+      "min": 0.0,
+      "default": 1.0
+    },
+    {
+      "name": "seed",
+      "type": "int",
+      "description": "Sampling seed; omitted value uses a random seed.",
+      "required": false,
+      "min": 0
+    },
+    {
+      "name": "active_codebooks",
+      "type": "int",
+      "description": "Number of audio tokenizer RVQ codebooks to generate/decode; default is the model-configured codebook count, normally 16.",
+      "required": false,
+      "min": 1,
+      "default": 16
+    },
+    {
+      "name": "reference_text",
+      "type": "string",
+      "description": "Transcript for reference audio used in voice cloning; requires speaker reference audio.",
+      "required": false
+    },
+    {
+      "name": "text_chunk_size",
+      "type": "int",
+      "description": "Long-form text chunk size in Unicode codepoints; default 256.",
+      "required": false,
+      "min": 1,
+      "default": 256
+    },
+    {
+      "name": "text_temperature",
+        "type": "float",
+        "description": "Text-gate sampling temperature; default 1.5.",
+        "required": false,
+        "default": 1.5
+      },
+      {
+        "name": "text_top_p",
+        "type": "float",
+        "description": "Text-gate nucleus sampling limit; default 1.0.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "text_top_k",
+        "type": "int",
+        "description": "Text-gate top-k sampling limit; default 50.",
+        "required": false,
+        "default": 50
+      },
+      {
+      "name": "text_chunk_mode",
+      "type": "enum",
+      "description": "Long-form text chunking mode; default word_budget. Text chunk size defaults to 256 Unicode codepoints.",
+      "preset": "text_chunk_mode_full",
+      "required": false,
+        "default": "word_budget"
+      }
+    ],
+    "session": [
+      {
+      "name": "weight_type",
+      "type": "enum",
+      "description": "Global and local-frame weight storage type; default native.",
+      "preset": "weight_type_full",
+      "required": false,
+      "default": "native"
+    },
+    {
+      "name": "global_weight_type",
+      "type": "enum",
+      "description": "Global transformer weight storage type; defaults to weight_type, which defaults to native.",
+      "preset": "weight_type_full",
+      "required": false
+    },
+    {
+      "name": "local_frame_weight_type",
+      "type": "enum",
+      "description": "Local frame decoder weight storage type; defaults to weight_type, which defaults to native.",
+      "preset": "weight_type_full",
+      "required": false
+      },
+      {
+        "name": "global_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Global transformer prefill graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 0,
+        "default": 256
+      },
+      {
+        "name": "global_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Global transformer decode graph arena size in MiB; default 128.",
+        "required": false,
+        "min": 0,
+        "default": 128
+      },
+      {
+        "name": "global_weight_context_mb",
+        "type": "int",
+        "description": "Global transformer weight context size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "local_frame_graph_arena_mb",
+        "type": "int",
+        "description": "Local frame decoder graph arena size in MiB; default 64.",
+        "required": false,
+        "min": 0,
+        "default": 64
+      },
+      {
+        "name": "local_frame_weight_context_mb",
+        "type": "int",
+        "description": "Local frame decoder weight context size in MiB; default 128.",
+        "required": false,
+        "min": 0,
+        "default": 128
+      },
+      {
+        "name": "audio_tokenizer_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Audio tokenizer encoder graph arena size in MiB; default 64.",
+        "required": false,
+        "min": 0,
+        "default": 64
+      },
+      {
+        "name": "audio_tokenizer_decoder_graph_arena_mb",
+        "type": "int",
+        "description": "Audio tokenizer decoder graph arena size in MiB; default 64.",
+        "required": false,
+        "min": 0,
+        "default": 64
+      },
+      {
+        "name": "audio_tokenizer_weight_context_mb",
+        "type": "int",
+        "description": "Audio tokenizer weight context size in MiB; default 128.",
+        "required": false,
+        "min": 0,
+        "default": 128
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_model": "model:tokenizer.model",
+        "audio_tokenizer_config": "model:audio_tokenizer/config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "audio_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "audio_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "audio_tokenizer": "audio_tokenizer"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_model": "model:tokenizer.model",
+        "audio_tokenizer_config": "audio_tokenizer:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "audio_tokenizer_weights": "audio_tokenizer:model.safetensors.index.json"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "moss_tts_nano_100m_q8_0",
+      "display_name": "MOSS-TTS-Nano 100M Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-TTS-Nano-100M-GGUF",
+      "files": [
+        "MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Nano-100M-GGUF"
+    },
+    {
+      "id": "moss_tts_nano_100m_bf16",
+      "display_name": "MOSS-TTS-Nano 100M BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MOSS-TTS-Nano-100M-GGUF",
+      "files": [
+        "MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-bf16.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Nano-100M-GGUF"
+    }
+  ]
+}

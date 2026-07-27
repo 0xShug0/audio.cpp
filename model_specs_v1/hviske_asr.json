@@ -1,0 +1,254 @@
+{
+  "family": "hviske_asr",
+  "display_name": "Hviske ASR",
+  "description": "Danish-optimized Conformer encoder-decoder ASR model fine-tuned from the Hviske v5 family, with selectable Cohere ASR language prompts.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ar",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "fr",
+    "it",
+    "ja",
+    "ko",
+    "nl",
+    "pl",
+    "pt",
+    "vi",
+    "zh"
+  ],
+  "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "ASR language code; default da.",
+        "required": false
+      },
+      {
+        "name": "punctuation",
+        "type": "bool",
+        "description": "Enable or disable punctuation tokens in the decoder prompt; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated transcript tokens; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "num_beams",
+        "type": "int",
+        "description": "Beam-search beam count; default 1 uses greedy or sampling decode.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "length_penalty",
+        "type": "float",
+        "description": "Beam-search length penalty; must be positive when set; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable sampling instead of greedy decode when num_beams is 1; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Decoder sampling temperature; must be positive when set; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling limit; default 50, 0 disables top-k.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus sampling limit in (0, 1]; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Decoder sampling seed; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode; default auto uses quiet-energy splitting only when audio exceeds the model clip window.",
+        "values": [
+          "auto",
+          "fixed",
+          "quiet_energy",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum audio chunk duration in seconds; must be positive when set; default 35.",
+        "required": false,
+        "min": 0.0,
+        "default": 35.0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_conv",
+        "required": false
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight context arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Encoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "decoder_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder prefill graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "decoder_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder cached-step graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.model"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.model"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "packages": [
+    {
+      "id": "hviske_asr_q8_0",
+      "display_name": "Hviske v5.3 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Hviske-v5.3-GGUF",
+      "files": [
+        "Audio to text (ASR)/hviske-v5.3_Q8.gguf"
+      ],
+      "strip_prefix": "Audio to text (ASR)",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mirek190/audio.cpp"
+      }
+    },
+    {
+      "id": "hviske_asr_safetensors",
+      "display_name": "Hviske v5.3 Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "hviske-v5.3",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "tokenizer.model"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "syvai/hviske-v5.3"
+      }
+    }
+  ]
+}

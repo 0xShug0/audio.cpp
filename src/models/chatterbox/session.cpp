@@ -156,11 +156,17 @@ std::unique_ptr<ChatterboxTtsComponent> make_chatterbox_component_for_language(
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType t3_weight_storage_type,
     engine::assets::TensorStorageType component_weight_storage_type,
+    ChatterboxMultilingualT3Version multilingual_t3_version,
     bool mem_saver,
     const std::string & language) {
     const bool use_multilingual = chatterbox_language_uses_multilingual_t3(language);
+    const auto & t3_source = use_multilingual
+        ? (multilingual_t3_version == ChatterboxMultilingualT3Version::V3
+               ? *assets.t3_multilingual_v3_weights
+               : *assets.t3_multilingual_v2_weights)
+        : *assets.t3_english_weights;
     auto t3_weights = load_t3_inference_weights(
-        use_multilingual ? *assets.t3_multilingual_v2_weights : *assets.t3_english_weights,
+        t3_source,
         execution_context,
         t3_weight_storage_type,
         false);
@@ -276,6 +282,7 @@ void validate_chatterbox_options(const runtime::SessionOptions & options) {
         if (key.rfind("chatterbox.", 0) == 0 &&
             key != "chatterbox.weight_type" &&
             key != "chatterbox.t3_weight_type" &&
+            key != "chatterbox.multilingual_t3" &&
             key != "chatterbox.conditionals_cache_slots" &&
             key != "chatterbox.mem_saver" &&
             key != "chatterbox.encoder_condition_samples" &&
@@ -303,6 +310,18 @@ engine::assets::TensorStorageType resolve_component_weight_storage_type(const ru
         engine::assets::TensorStorageType::Native);
     validate_chatterbox_weight_storage(storage_type, "chatterbox.weight_type");
     return storage_type;
+}
+
+ChatterboxMultilingualT3Version resolve_multilingual_t3_version(const runtime::SessionOptions & options) {
+    const auto value = runtime::find_option(options.options, {"chatterbox.multilingual_t3", "multilingual_t3"})
+                           .value_or("v2");
+    if (value == "v2") {
+        return ChatterboxMultilingualT3Version::V2;
+    }
+    if (value == "v3") {
+        return ChatterboxMultilingualT3Version::V3;
+    }
+    throw std::runtime_error("chatterbox.multilingual_t3 must be v2 or v3");
 }
 
 std::size_t resolve_conditionals_cache_slots(const runtime::SessionOptions & options) {
@@ -346,6 +365,7 @@ ChatterboxSession::ChatterboxSession(
       assets_(require_assets(std::move(assets))),
       t3_weight_storage_type_(resolve_t3_weight_storage_type(this->options())),
       component_weight_storage_type_(resolve_component_weight_storage_type(this->options())),
+      multilingual_t3_version_(resolve_multilingual_t3_version(this->options())),
       mem_saver_(resolve_mem_saver(this->options())),
       conditionals_cache_(resolve_conditionals_cache_slots(this->options())) {
     if (task_.task != runtime::VoiceTaskKind::VoiceCloning &&
@@ -401,6 +421,7 @@ void ChatterboxSession::prepare(const runtime::SessionPreparationRequest & reque
             execution_context(),
             t3_weight_storage_type_,
             component_weight_storage_type_,
+            multilingual_t3_version_,
             mem_saver_,
             session_config.language);
         component_language_ = session_config.language;

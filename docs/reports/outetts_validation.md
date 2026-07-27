@@ -73,7 +73,7 @@ Run the committed official-reference driver after creating the alignment JSON:
 
 ```powershell
 build\reference\venv\Scripts\python.exe `
-  tools\audiocpp_cli\outetts_reference.py `
+  tools\community_models\outetts_reference.py `
   --model ..\models\Llama-OuteTTS-1.0-1B `
   --dac ..\models\DAC.speech.v1.0\weights_24khz_1.5kbps_v1.0.pth `
   --alignment-json build\reference\b_words.json `

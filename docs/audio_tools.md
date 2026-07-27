@@ -23,7 +23,7 @@ MioCodec is a speech codec and voice-conversion path. In the CLI it is exposed a
 | Field | Value |
 |---|---|
 | Family | `miocodec` |
-| Model directory | `models/MioCodec-25Hz-44.1kHz-v2` |
+| GGUF model | `models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf` |
 | Tasks | `vc`, `s2s` |
 | Modes | `offline` |
 | Input | Source speech WAV through `--audio` |
@@ -33,13 +33,13 @@ MioCodec is a speech codec and voice-conversion path. In the CLI it is exposed a
 Voice conversion:
 
 ```bash
-audiocpp_cli --task vc --family miocodec --model models/MioCodec-25Hz-44.1kHz-v2 --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
+audiocpp_cli --task vc --family miocodec --model models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --backend cuda --audio assets/resources/a.wav --voice-ref assets/resources/b.wav --out converted.wav
 ```
 
 Speech-to-speech:
 
 ```bash
-audiocpp_cli --task s2s --family miocodec --model models/MioCodec-25Hz-44.1kHz-v2 --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
+audiocpp_cli --task s2s --family miocodec --model models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --backend cuda --audio assets/resources/a.wav --voice-ref assets/resources/b.wav --out converted.wav
 ```
 
 | Option | Values | Default | Meaning |

@@ -218,6 +218,7 @@
         docs: spec.ui.docs || [],
         summary: spec.ui.summary || "",
         packages: packages.map((pkg) => {
+          const defaultDownload = (spec.package_defaults && spec.package_defaults.download) || {};
           const download = pkg.download || {};
           return {
           id: pkg.id,
@@ -225,8 +226,8 @@
           format: pkg.format,
           precision: pkg.precision,
           target_directory: pkg.target_directory,
-          download_kind: download.kind || "",
-          download_target: download.repo || download.path || download.converter || download.reason || ""
+          download_kind: download.kind || defaultDownload.kind || "",
+          download_target: download.repo || defaultDownload.repo || download.path || download.converter || download.reason || ""
           };
         })
       };

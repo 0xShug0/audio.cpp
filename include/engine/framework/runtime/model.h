@@ -45,6 +45,10 @@ struct CliOptionInfo {
     std::string name;
     std::string value_name;
     std::string description;
+    bool required = false;
+    std::optional<std::string> default_value = std::nullopt;
+    std::optional<std::string> min_value = std::nullopt;
+    std::optional<std::string> max_value = std::nullopt;
 };
 
 struct ModelCliInterface {

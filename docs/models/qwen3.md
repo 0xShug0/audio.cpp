@@ -186,7 +186,7 @@ those projects use architecture-specific tensor names and metadata.
 With word timestamps:
 
 ```bash
-audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B --backend cuda --audio speech_16k.wav --text "" --text-out transcript.txt --words-out words.json --session-option qwen3_asr.forced_aligner_model_path=models/Qwen3-ForcedAligner-0.6B
+audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --language English --text "" --text-out transcript.txt --words-out words.json --session-option qwen3_asr.forced_aligner_model_path=models/Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf --session-option qwen3_asr.vad_model_path=assets/framework/models/silero_vad
 ```
 
 | Option | Values | Default | Meaning |
@@ -214,14 +214,14 @@ each recognized transcript to its matching audio chunk.
 | Field | Value |
 |---|---|
 | Family | `qwen3_forced_aligner` |
-| Model directory | `models/Qwen3-ForcedAligner-0.6B` |
+| GGUF model | `models/Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf` |
 | Task | `align` |
 | Modes | `offline` |
 | Input | Speech WAV plus exact transcript |
 | Output | Word timestamp JSON through `--words-out` |
 
 ```bash
-audiocpp_cli --task align --family qwen3_forced_aligner --model models/Qwen3-ForcedAligner-0.6B --backend cuda --audio speech_16k.wav --text "The exact transcript." --language en --words-out words.json
+audiocpp_cli --task align --family qwen3_forced_aligner --model models/Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --text "Some call me nature, others call me Mother Nature." --language English --words-out words.json
 ```
 
 | Option | Values | Default | Meaning |

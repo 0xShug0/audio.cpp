@@ -1,0 +1,240 @@
+{
+  "family": "higgs_audio_tts",
+  "display_name": "Higgs Audio v3 TTS",
+  "description": "Boson AI conversational TTS model for expressive speech across 100+ languages, zero-shot voice cloning, and inline control over emotion, style, prosody, pauses, and sound effects.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "100+ languages"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated AR tokens; default 2048, and 0 also uses the default.",
+        "required": false,
+        "min": 0,
+        "default": 2048
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "AR sampling temperature; must be positive when set; default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "AR top-k sampling limit; default 30.",
+        "required": false,
+        "min": 0,
+        "default": 30
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "AR nucleus sampling probability in (0, 1]; default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.8
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Accepted for API compatibility and validated as positive; current Higgs audio sampling does not consume it; default 1.1.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.1
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed for reproducible output; omitted uses a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript or prompt text paired with reference audio for zero-shot voice cloning.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per generated text chunk; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode; default word_budget.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "word_budget"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "AR and codec weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "ar_weight_type",
+        "type": "enum",
+        "description": "Autoregressive decoder weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "codec_weight_type",
+        "type": "enum",
+        "description": "Codec weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "ar_weight_context_mb",
+        "type": "int",
+        "description": "AR weight context size in MiB; default 4096.",
+        "required": false,
+        "min": 0,
+        "default": 4096
+      },
+      {
+        "name": "codec_weight_context_mb",
+        "type": "int",
+        "description": "Codec weight context size in MiB; default 1536.",
+        "required": false,
+        "min": 0,
+        "default": 1536
+      },
+      {
+        "name": "ar_decode_graph_arena_mb",
+        "type": "int",
+        "description": "AR decode graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "codec_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Codec decode graph arena size in MiB; default 128.",
+        "required": false,
+        "min": 0,
+        "default": 128
+      },
+      {
+        "name": "codec_encode_graph_arena_mb",
+        "type": "int",
+        "description": "Codec encode graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 0,
+        "default": 256
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Encoded reference-audio cache slots; default 1.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors.index.json"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "higgs_audio_tts_4b_q8_0",
+      "display_name": "Higgs Audio v3 TTS 4B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Higgs-Audio-v3-TTS-4B-GGUF",
+      "files": [
+        "Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf"
+      ],
+      "strip_prefix": "Higgs-Audio-v3-TTS-4B-GGUF"
+    },
+    {
+      "id": "higgs_audio_tts_4b_bf16",
+      "display_name": "Higgs Audio v3 TTS 4B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Higgs-Audio-v3-TTS-4B-GGUF",
+      "files": [
+        "Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-bf16.gguf"
+      ],
+      "strip_prefix": "Higgs-Audio-v3-TTS-4B-GGUF"
+    }
+  ]
+}

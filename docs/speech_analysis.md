@@ -32,7 +32,7 @@ Silero VAD is bundled as a small framework asset and detects speech segments. It
 Offline:
 
 ```bash
-audiocpp_cli --task vad --family silero_vad --model assets/framework/models/silero_vad --backend cuda --audio speech_16k.wav --segments-out segments.json
+audiocpp_cli --task vad --family silero_vad --model assets/framework/models/silero_vad --backend cuda --audio assets/resources/sample_16k.wav --segments-out segments.json
 ```
 
 Offline VAD chunk planning:
@@ -43,7 +43,7 @@ audiocpp_cli \
   --family silero_vad \
   --model assets/framework/models/silero_vad \
   --backend cuda \
-  --audio speech_16k.wav \
+  --audio assets/resources/sample_16k.wav \
   --segments-out segments.json \
   --vad-chunks-out vad_chunks.json \
   --vad-chunk-max-seconds 45 \
@@ -54,7 +54,7 @@ audiocpp_cli \
 Streaming:
 
 ```bash
-audiocpp_cli --task vad --family silero_vad --model assets/framework/models/silero_vad --backend cuda --mode streaming --audio speech_16k.wav --segments-out segments.json
+audiocpp_cli --task vad --family silero_vad --model assets/framework/models/silero_vad --backend cuda --mode streaming --audio <512-sample-16k-wav> --segments-out segments.json
 ```
 
 | Option | Values | Default | Meaning |

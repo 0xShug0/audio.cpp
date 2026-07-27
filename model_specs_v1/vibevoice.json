@@ -1,0 +1,242 @@
+{
+  "family": "vibevoice",
+  "display_name": "VibeVoice",
+  "description": "Microsoft long-form multi-speaker TTS model for expressive conversational audio such as podcasts, supporting up to 90 minutes of speech with as many as four speakers.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "zh"
+  ],
+  "capabilities": {
+    "tts": [
+      "multi_speaker",
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "voice_samples",
+        "type": "audio_path_list",
+        "description": "Comma-separated speaker reference WAV paths for up to four multi-speaker prompts; reference audio is trimmed to 10 seconds on CPU/Vulkan/Metal and 30 seconds on CUDA.",
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum decoder generation tokens; default 0 leaves generation capped by model context and max_length_times.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Diffusion inference steps; defaults to model config, usually 10.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale; default 1.3.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.3
+      },
+      {
+        "name": "max_length_times",
+        "type": "float",
+        "description": "Maximum decoder generation steps as a positive multiplier of prompt token steps; default 2.0.",
+        "required": false,
+        "default": 2.0
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Sample constrained speech-control tokens instead of greedy selection; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Constrained-token sampling temperature; must be positive when sampling, default 1.0.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k filter for constrained-token sampling; 0 disables top-k filtering, default 50.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus filter for constrained-token sampling; must be in (0, 1], default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Random seed for prompt acoustic sampling, diffusion noise, and optional constrained-token sampling; default 1234.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      },
+      {
+        "name": "prompt_noise_path",
+        "type": "path",
+        "description": "F32 prompt acoustic noise file for deterministic reference-voice acoustic latent replay.",
+        "required": false
+      },
+      {
+        "name": "diffusion_noise_path",
+        "type": "path",
+        "description": "F32 initial diffusion noise file for deterministic generated-speech diffusion replay.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Tokenizer, connector, decoder, and diffusion-head weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "tokenizer_weight_type",
+        "type": "enum",
+        "description": "Audio tokenizer weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "connector_weight_type",
+        "type": "enum",
+        "description": "Acoustic and semantic connector weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "decoder_weight_type",
+        "type": "enum",
+        "description": "Language decoder weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "diffusion_head_weight_type",
+        "type": "enum",
+        "description": "Diffusion prediction head weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      }
+    ],
+    "load": [
+      {
+        "name": "lora_path",
+        "type": "path",
+        "description": "Fine-tune adapter dir (LM LoRA + diffusion head + acoustic/semantic connectors) merged at load time.",
+        "required": false
+      },
+      {
+        "name": "lora_scale",
+        "type": "float",
+        "description": "LoRA merge scale override; defaults to lora_alpha / r.",
+        "required": false,
+        "min": 0.0
+      }
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "tensors": {
+        "model_weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors.index.json"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "vibevoice_1_5b_q8_0",
+      "display_name": "VibeVoice 1.5B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-1.5B-GGUF",
+      "files": [
+        "VibeVoice-1.5B-GGUF/vibevoice-1.5b-q8_0.gguf"
+      ],
+      "strip_prefix": "VibeVoice-1.5B-GGUF"
+    },
+    {
+      "id": "vibevoice_1_5b_bf16",
+      "display_name": "VibeVoice 1.5B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "VibeVoice-1.5B-GGUF",
+      "files": [
+        "VibeVoice-1.5B-GGUF/vibevoice-1.5b-bf16.gguf"
+      ],
+      "strip_prefix": "VibeVoice-1.5B-GGUF"
+    }
+  ]
+}

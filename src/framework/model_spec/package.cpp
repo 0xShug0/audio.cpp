@@ -442,6 +442,13 @@ assets::ResourceBundle load_resource_bundle(
     }
 }
 
+assets::ResourceBundle load_resource_bundle_for_family(
+    const std::filesystem::path & model_path,
+    std::string_view family) {
+    ScopedSpecOverride scoped(active_model_spec_override, model_path);
+    return load_resource_bundle(model_path, default_spec_path(family));
+}
+
 engine::io::json::Value load_spec(const std::filesystem::path & spec_path) {
     return parse_model_spec(spec_path);
 }

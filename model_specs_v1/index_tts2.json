@@ -1,0 +1,426 @@
+{
+  "family": "index_tts2",
+  "display_name": "IndexTTS2",
+  "description": "Zero-shot TTS system for Chinese and English speech synthesis with voice cloning, emotion-speaker decoupling, text or audio emotion control, and explicit duration control.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en"
+  ],
+  "capabilities": {
+    "tts": [
+      "emotion_control"
+    ],
+    "clone": [
+      "speaker_reference",
+      "emotion_control"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "emotion_alpha",
+        "type": "float",
+        "description": "Blend strength for explicit emotion conditioning; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "emotion_vector",
+        "type": "float_list",
+        "description": "Eight-value explicit emotion vector.",
+        "required": false
+      },
+      {
+        "name": "use_emotion_text",
+        "type": "bool",
+        "description": "Infer emotion from text instead of reference audio.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "emotion_text",
+        "type": "string",
+        "description": "Text used when emotion-text conditioning is enabled.",
+        "required": false
+      },
+      {
+        "name": "use_random_emotion",
+        "type": "bool",
+        "description": "Use random emotion weights in the emotion mixer.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "interval_silence_ms",
+        "type": "int",
+        "description": "Silence inserted between generated text chunks in milliseconds; default 200.",
+        "required": false,
+        "min": 0,
+        "default": 200
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode used for long-form text; default word_budget.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "word_budget"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per framework text chunk; omitted lets the tokenizer segment by its 120-token budget.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated mel tokens; default 1500.",
+        "required": false,
+        "min": 1,
+        "default": 1500
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable GPT sampling; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "GPT sampling temperature; must be positive when set; default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "GPT top-k sampling limit; default 30.",
+        "required": false,
+        "min": 1,
+        "default": 30
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "GPT nucleus sampling limit in (0, 1]; default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.8
+      },
+      {
+        "name": "length_penalty",
+        "type": "float",
+        "description": "GPT beam-search length penalty; default 0.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.0
+      },
+      {
+        "name": "num_beams",
+        "type": "int",
+        "description": "GPT beam count; default 3.",
+        "required": false,
+        "min": 1,
+        "default": 3
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "GPT repetition penalty; must be positive when set; default 10.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 10.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed for reproducible output; omitted uses a random seed.",
+        "required": false,
+        "min": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type; default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "gpt_graph_arena_mb",
+        "type": "int",
+        "description": "GPT graph arena size in MiB; default 2048.",
+        "required": false,
+        "min": 0,
+        "default": 2048
+      },
+      {
+        "name": "s2mel_graph_arena_mb",
+        "type": "int",
+        "description": "S2Mel graph arena size in MiB; default 2048.",
+        "required": false,
+        "min": 0,
+        "default": 2048
+      },
+      {
+        "name": "reference_graph_arena_mb",
+        "type": "int",
+        "description": "Reference encoder and codec graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "emotion_text_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Emotion-text prefill graph arena size in MiB; default 2048.",
+        "required": false,
+        "min": 0,
+        "default": 2048
+      },
+      {
+        "name": "emotion_text_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Emotion-text cached-step graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "emotion_text_max_tokens",
+        "type": "int",
+        "description": "Maximum generated tokens for emotion-text classification; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Shared weight context size in MiB; default 4096.",
+        "required": false,
+        "min": 0,
+        "default": 4096
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release staged reference and conditioning graphs after request phases; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "speaker_cache_slots",
+        "type": "int",
+        "description": "Prepared speaker-reference cache slots; default 1.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "emotion_cache_slots",
+        "type": "int",
+        "description": "Prepared emotion-reference cache slots; default 1.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "emotion_text_cache_slots",
+        "type": "int",
+        "description": "Emotion-text weight cache slots; default 1.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.yaml",
+        "bpe": "model:bpe.model",
+        "wav2vec2bert_config": "model:w2v-bert-2.0/config.json",
+        "wav2vec2bert_preprocessor_config": "model:w2v-bert-2.0/preprocessor_config.json",
+        "bigvgan_config": "model:bigvgan/config.json",
+        "qwen_emotion_config": "model:qwen0.6bemo4-merge/config.json",
+        "qwen_emotion_generation_config": "model:qwen0.6bemo4-merge/generation_config.json",
+        "qwen_emotion_tokenizer": "model:qwen0.6bemo4-merge/tokenizer.json",
+        "qwen_emotion_tokenizer_config": "model:qwen0.6bemo4-merge/tokenizer_config.json",
+        "qwen_emotion_vocab": "model:qwen0.6bemo4-merge/vocab.json",
+        "qwen_emotion_merges": "model:qwen0.6bemo4-merge/merges.txt"
+      },
+      "tensors": {
+        "gpt": {
+          "source": "weights:",
+          "prefix": "gpt"
+        },
+        "s2mel": {
+          "source": "weights:",
+          "prefix": "s2mel"
+        },
+        "speaker_matrix": {
+          "source": "weights:",
+          "prefix": "speaker_matrix"
+        },
+        "emotion_matrix": {
+          "source": "weights:",
+          "prefix": "emotion_matrix"
+        },
+        "wav2vec2bert_stats": {
+          "source": "weights:",
+          "prefix": "wav2vec2bert_stats"
+        },
+        "wav2vec2bert": {
+          "source": "weights:",
+          "prefix": "wav2vec2bert"
+        },
+        "semantic_codec": {
+          "source": "weights:",
+          "prefix": "semantic_codec"
+        },
+        "campplus": {
+          "source": "weights:",
+          "prefix": "campplus"
+        },
+        "bigvgan": {
+          "source": "weights:",
+          "prefix": "bigvgan"
+        },
+        "qwen_emotion": {
+          "source": "weights:",
+          "prefix": "qwen_emotion"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.yaml",
+        "bpe": "model:bpe.model",
+        "wav2vec2bert_config": "model:w2v-bert-2.0/config.json",
+        "wav2vec2bert_preprocessor_config": "model:w2v-bert-2.0/preprocessor_config.json",
+        "bigvgan_config": "model:bigvgan/config.json",
+        "qwen_emotion_config": "model:qwen0.6bemo4-merge/config.json",
+        "qwen_emotion_generation_config": "model:qwen0.6bemo4-merge/generation_config.json",
+        "qwen_emotion_tokenizer": "model:qwen0.6bemo4-merge/tokenizer.json",
+        "qwen_emotion_tokenizer_config": "model:qwen0.6bemo4-merge/tokenizer_config.json",
+        "qwen_emotion_vocab": "model:qwen0.6bemo4-merge/vocab.json",
+        "qwen_emotion_merges": "model:qwen0.6bemo4-merge/merges.txt"
+      },
+      "tensors": {
+        "gpt": "model:gpt.safetensors",
+        "s2mel": "model:s2mel.safetensors",
+        "speaker_matrix": "model:feat1.safetensors",
+        "emotion_matrix": "model:feat2.safetensors",
+        "wav2vec2bert_stats": "model:wav2vec2bert_stats.safetensors",
+        "wav2vec2bert": "model:w2v-bert-2.0/model.safetensors",
+        "semantic_codec": "model:semantic_codec_model.safetensors",
+        "campplus": "model:campplus.safetensors",
+        "bigvgan": "model:bigvgan/model.safetensors",
+        "qwen_emotion": "model:qwen0.6bemo4-merge/model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "index_tts2_q8_0",
+      "display_name": "IndexTTS2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "IndexTTS2-GGUF",
+      "files": [
+        "IndexTTS2-GGUF/index-tts2-q8_0.gguf"
+      ],
+      "strip_prefix": "IndexTTS2-GGUF"
+    },
+    {
+      "id": "index_tts2_f16",
+      "display_name": "IndexTTS2 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "IndexTTS2-GGUF",
+      "files": [
+        "IndexTTS2-GGUF/index-tts2-f16.gguf"
+      ],
+      "strip_prefix": "IndexTTS2-GGUF"
+    },
+    {
+      "id": "index_tts2_orig",
+      "display_name": "IndexTTS2 Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "IndexTTS2-GGUF",
+      "files": [
+        "IndexTTS2-GGUF/index-tts2-orig.gguf"
+      ],
+      "strip_prefix": "IndexTTS2-GGUF"
+    },
+    {
+      "id": "index_tts2_safetensors",
+      "display_name": "IndexTTS2 Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "IndexTTS-2",
+      "files": [
+        "config.yaml",
+        "bpe.model",
+        "gpt.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mlx-community/index-tts2-mlx"
+      }
+    }
+  ]
+}

@@ -215,7 +215,7 @@ VibeVoice ASR is an offline ASR model with greedy, sampling, and beam-search dec
 | Timestamps | Segment and speaker-turn timestamps when produced |
 
 ```bash
-audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR --backend cuda --audio speech_16k.wav --text-out transcript.txt
+audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --text-out transcript.txt
 ```
 
 VibeVoice-ASR also accepts a standalone audio.cpp-native GGUF. Pass the shard
@@ -231,7 +231,13 @@ directory may contain only `model.gguf`.
 Structured output:
 
 ```bash
-audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR --backend cuda --audio meeting.wav --text "The recording is a meeting conversation." --text-out transcript.txt --segments-out segments.json --turns-out turns.json
+audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf --backend cuda --audio meeting.wav --text "The recording is a meeting conversation." --text-out transcript.txt --segments-out segments.json --turns-out turns.json
+```
+
+With VAD chunking, provide the bundled Silero VAD model:
+
+```bash
+audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --audio-chunk-mode vad --session-option vibevoice_asr.vad_model_path=assets/framework/models/silero_vad --text-out transcript.txt
 ```
 
 | Option | Values | Default | Meaning |
@@ -285,6 +291,28 @@ Streaming CLI:
 ```bash
 audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --mode streaming --audio assets/resources/sample.wav --text-out transcript.txt
 ```
+
+Live streaming input. `--audio -` reads raw (headerless) interleaved PCM from stdin and feeds it
+to the model chunk by chunk as it arrives, so the audio is never buffered up front and does not
+have to exist as a file. Any capture tool that can write PCM to a pipe works as the source:
+
+```bash
+# Microphone (macOS; use -f alsa on Linux or -f dshow on Windows)
+ffmpeg -f avfoundation -i ":0" -ar 16000 -ac 1 -f s16le - \
+  | audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --mode streaming --audio -
+```
+
+```bash
+# Any file or network stream, decoded to PCM on the fly
+ffmpeg -i input.mp3 -ar 16000 -ac 1 -f s16le - \
+  | audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --threads 8 --mode streaming --audio -
+```
+
+Stdin input requires `--mode streaming`, and the PCM format must be described up front because a
+live stream carries no header — the defaults (`s16le`, 16 kHz, mono) match what the model expects.
+The chosen interpretation is echoed back as an `audio_input=stdin` line. Each update is written as
+its own `partial_text=` line and flushed as it is produced, so a reader sees the transcript grow
+rather than waiting for the stream to end.
 
 > **Throughput.** A streaming step always advances 80 ms of audio, so a step has to cost under
 > 80 ms to keep up with a realtime source. Measured on an Apple M3 Air (Metal, q8_0):
@@ -344,7 +372,10 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--audio` | WAV path | required | Speech input. |
+| `--audio` | WAV path or `-` | required | Speech input. `-` streams raw PCM from stdin and requires `--mode streaming`. |
+| `--input-format` | `s16le`, `f32le` | `s16le` | Sample format of raw PCM read from stdin. Ignored for file input. |
+| `--input-rate` | integer Hz | `16000` | Sample rate of raw PCM read from stdin. Ignored for file input. |
+| `--input-channels` | integer | `1` | Channel count of raw PCM read from stdin. Ignored for file input. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
 | `--request-option max_new_tokens=<n>` | integer | model-derived limit | Maximum generated transcript tokens. |
 | `--do-sample` | bool | `false` | Enable sampling instead of greedy decode. |

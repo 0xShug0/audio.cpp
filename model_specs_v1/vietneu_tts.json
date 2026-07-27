@@ -1,0 +1,345 @@
+{
+  "family": "vietneu_tts",
+  "display_name": "VieNeu-TTS v3 Turbo",
+  "description": "On-device Vietnamese TTS model with instant voice cloning from 3-5 seconds of reference audio, English-Vietnamese code-switching, streaming playback, batched generation, and conversation mode.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "vi",
+    "en"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript matching the reference speaker WAV for ICL voice cloning.",
+        "required": false
+      },
+      {
+        "name": "speaker_embedding_path",
+        "type": "path",
+        "description": "Path to a speaker embedding .emb.txt file containing 192 comma-separated float values.",
+        "required": false
+      },
+      {
+        "name": "speaker_embedding",
+        "type": "float_list",
+        "description": "Comma-separated list of 192 speaker embedding float values.",
+        "required": false
+      },
+      {
+        "name": "speaker_embedding_only",
+        "type": "bool",
+        "description": "Use only the speaker embedding for voice cloning instead of ICL reference codec prompting; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated codec frames; default comes from generation_config.json, 2048 when absent.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Sample the main codec stream instead of greedy decoding; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Main codec sampling temperature; default 0.9.",
+        "required": false,
+        "default": 0.9
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Main codec top-k sampling limit; default 50, 0 disables top-k filtering.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Main codec nucleus sampling limit; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Positive repetition penalty for the main codec stream; default 1.05.",
+        "required": false,
+        "default": 1.05
+      },
+      {
+        "name": "subtalker_temperature",
+        "type": "float",
+        "description": "Acoustic decoder sampling temperature; default 0.9.",
+        "required": false,
+        "default": 0.9
+      },
+      {
+        "name": "subtalker_do_sample",
+        "type": "bool",
+        "description": "Enable sampling in the acoustic decoder; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "subtalker_top_k",
+        "type": "int",
+        "description": "Acoustic decoder top-k sampling limit; default 50, 0 disables top-k filtering.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "subtalker_top_p",
+        "type": "float",
+        "description": "Acoustic decoder nucleus sampling limit; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Codec sampling seed; omitted requests choose a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum UTF-8 codepoints per generated text chunk; default 200.",
+        "required": false,
+        "min": 1,
+        "default": 200
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode; default word_budget.",
+        "values": [
+          "word_budget",
+          "endline",
+          "tag_aware"
+        ],
+        "required": false,
+        "default": "word_budget"
+      }
+    ],
+    "session": [
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release the talker cached-step graph after each request; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "voice_prompt_cache_slots",
+        "type": "int",
+        "description": "Voice prompt cache slots; default 1.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared talker and voice-prompt matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "talker_weight_type",
+        "type": "enum",
+        "description": "Talker weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "speech_encoder_weight_type",
+        "type": "enum",
+        "description": "Reference speech encoder matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "speech_decoder_weight_type",
+        "type": "enum",
+        "description": "Speech decoder matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Speech tokenizer and speaker-encoder convolution weight storage type; default f32.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "f32"
+      },
+      {
+        "name": "talker_graph_arena_mb",
+        "type": "int",
+        "description": "Talker graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "speech_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Reference speech encoder graph arena size in MiB; default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "speech_decoder_graph_arena_mb",
+        "type": "int",
+        "description": "Speech decoder graph arena size in MiB; default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "speaker_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Speaker encoder graph arena size in MiB; default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "talker_constant_context_mb",
+        "type": "int",
+        "description": "Talker constant tensor context size in MiB; default 4096.",
+        "required": false,
+        "min": 1,
+        "default": 4096
+      },
+      {
+        "name": "code_predictor_constant_context_mb",
+        "type": "int",
+        "description": "Code predictor constant tensor context size in MiB; default 1536.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      },
+      {
+        "name": "speech_decoder_constant_context_mb",
+        "type": "int",
+        "description": "Speech decoder constant tensor context size in MiB; default 1536.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json"
+      },
+      "optional_files": {
+        "generation_config": "model:generation_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "speech_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "speech_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json"
+      },
+      "optional_files": {
+        "generation_config": "model:generation_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "speech_tokenizer_weights": "model:speech_tokenizer/model.safetensors"
+      }
+    }
+  ],
+  "packages": [
+    {
+      "id": "vietneu_tts_v3_turbo_q8_0",
+      "display_name": "VieNeu-TTS v3 Turbo GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VieNeu-TTS-v3-Turbo-GGUF",
+      "files": [
+        "model.gguf"
+      ],
+      "strip_prefix": ".",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "phuocnguyen90/VieNeu-TTS-v3-Turbo-GGUF"
+      }
+    }
+  ]
+}

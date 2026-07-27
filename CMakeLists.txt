@@ -159,6 +159,7 @@ add_compile_options(
 add_library(engine_runtime STATIC
     src/framework/assets/resource_bundle.cpp
     src/framework/model_spec/package.cpp
+    src/framework/model_spec/options.cpp
     src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
     src/framework/assets/torch_bin.cpp
@@ -665,6 +666,7 @@ add_executable(audiocpp_cli
     app/cli/args.cpp
     app/cli/batch.cpp
     app/cli/request.cpp
+    app/streaming/pcm_source.cpp
     app/streaming/streaming.cpp
     app/workflow/execution.cpp
     app/workflow/file_sink.cpp
@@ -978,6 +980,19 @@ if (ENGINE_BUILD_TESTS)
         COMMAND backend_device_resolution_test
     )
 
+    add_executable(streaming_audio_input_test
+        tests/unittests/test_streaming_audio_input.cpp
+        app/streaming/pcm_source.cpp
+        app/streaming/streaming.cpp
+    )
+    target_link_libraries(streaming_audio_input_test PRIVATE engine_runtime ggml)
+    target_include_directories(streaming_audio_input_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME streaming_audio_input_test
+        COMMAND streaming_audio_input_test
+    )
+
     add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
 
     add_test(
@@ -1046,6 +1061,14 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME gguf_tensor_source_test
         COMMAND gguf_tensor_source_test
+    )
+
+    add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
+    target_include_directories(model_spec_system_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME model_spec_system_test
+        COMMAND model_spec_system_test
     )
 
     add_engine_unittest(scaled_dot_product_attention_test tests/unittests/test_scaled_dot_product_attention.cpp)

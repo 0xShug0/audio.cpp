@@ -1,0 +1,463 @@
+{
+  "family": "qwen3_tts",
+  "display_name": "Qwen3-TTS",
+  "description": "Qwen TTS family for controllable 10-language speech synthesis, including 3-second voice cloning, CustomVoice instruction control over preset timbres, and VoiceDesign from natural-language descriptions.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone",
+    "design"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en",
+    "ja",
+    "ko",
+    "de",
+    "fr",
+    "ru",
+    "pt",
+    "es",
+    "it"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ],
+    "design": [
+      "voice_design"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Target synthesis language code or label; default auto lets the model infer from text and voice settings.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated codec frames; default comes from generation_config.json, 2048 when absent.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Sample the main codec stream instead of greedy decoding; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Main codec sampling temperature; must be positive when sampling, default 0.9.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.9
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Main codec top-k sampling limit; default 50, 0 disables top-k filtering.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Main codec nucleus sampling limit; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Positive repetition penalty for the main codec stream; default 1.05.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.05
+      },
+      {
+        "name": "codec_do_sample",
+        "type": "bool",
+        "description": "Sample auxiliary codec codebooks instead of greedy decoding; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "codec_temperature",
+        "type": "float",
+        "description": "Auxiliary codec sampling temperature; must be positive when sampling, default 0.9.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.9
+      },
+      {
+        "name": "codec_top_k",
+        "type": "int",
+        "description": "Auxiliary codec top-k sampling limit; default 50, 0 disables top-k filtering.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "codec_top_p",
+        "type": "float",
+        "description": "Auxiliary codec nucleus sampling limit; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Codec sampling seed; omitted requests choose a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript matching the reference audio for Base voice cloning.",
+        "required": false
+      },
+      {
+        "name": "speaker_embedding_only",
+        "type": "bool",
+        "description": "Use only the speaker embedding for Base voice cloning instead of ICL reference codec prompting; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Natural-language voice or style instruction for VoiceDesign and CustomVoice variants.",
+        "required": false
+      },
+      {
+        "name": "speaker",
+        "type": "string",
+        "description": "Named preset speaker for CustomVoice variants.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum UTF-8 codepoints per long-form text chunk; default 8192.",
+        "required": false,
+        "min": 1,
+        "default": 8192
+      }
+    ],
+    "session": [
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release the talker cached-step graph after each request; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "perf_mode",
+        "type": "enum",
+        "description": "Q8_0-only attention performance mode; default off keeps the exact-safe path.",
+        "preset": "perf_mode_flash_attention",
+        "required": false,
+        "default": "off"
+      },
+      {
+        "name": "voice_prompt_cache_slots",
+        "type": "int",
+        "description": "Voice prompt cache slots; default 1.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared talker matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "talker_weight_type",
+        "type": "enum",
+        "description": "Talker weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "speech_encoder_weight_type",
+        "type": "enum",
+        "description": "Reference speech encoder matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "speech_decoder_weight_type",
+        "type": "enum",
+        "description": "Speech decoder matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Speech tokenizer and speaker-encoder convolution weight storage type; default f32.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "f32"
+      },
+      {
+        "name": "talker_graph_arena_mb",
+        "type": "int",
+        "description": "Talker graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "speech_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Reference speech encoder graph arena size in MiB; default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "speech_decoder_graph_arena_mb",
+        "type": "int",
+        "description": "Speech decoder graph arena size in MiB; default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "speaker_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Speaker encoder graph arena size in MiB; default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "talker_constant_context_mb",
+        "type": "int",
+        "description": "Talker constant tensor context size in MiB; default 4096.",
+        "required": false,
+        "min": 1,
+        "default": 4096
+      },
+      {
+        "name": "code_predictor_constant_context_mb",
+        "type": "int",
+        "description": "Code predictor constant tensor context size in MiB; default 1536.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      },
+      {
+        "name": "speech_decoder_constant_context_mb",
+        "type": "int",
+        "description": "Speech decoder constant tensor context size in MiB; default 1536.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "speech_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "speech_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "speech_tokenizer_weights": "model:speech_tokenizer/model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "qwen3_tts_1_7b_base_q8_0",
+      "display_name": "Qwen3 TTS 12Hz 1.7B Base Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-Base-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_base_bf16",
+      "display_name": "Qwen3 TTS 12Hz 1.7B Base BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-bf16.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-Base-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_base_orig",
+      "display_name": "Qwen3 TTS 12Hz 1.7B Base Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-orig.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-Base-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_customvoice_q8_0",
+      "display_name": "Qwen3 TTS 12Hz 1.7B CustomVoice Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_customvoice_bf16",
+      "display_name": "Qwen3 TTS 12Hz 1.7B CustomVoice BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-bf16.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_voicedesign_q8_0",
+      "display_name": "Qwen3 TTS 12Hz 1.7B VoiceDesign Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_voicedesign_bf16",
+      "display_name": "Qwen3 TTS 12Hz 1.7B VoiceDesign BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-bf16.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_base_safetensors",
+      "display_name": "Qwen3 TTS 12Hz 1.7B Base Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-Base",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "speech_tokenizer/config.json",
+        "speech_tokenizer/model.safetensors",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+      }
+    },
+    {
+      "id": "qwen3_tts_0_6b_base_safetensors",
+      "display_name": "Qwen3 TTS 12Hz 0.6B Base Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Qwen3-TTS-12Hz-0.6B-Base",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "speech_tokenizer/config.json",
+        "speech_tokenizer/model.safetensors",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+      }
+    }
+  ]
+}

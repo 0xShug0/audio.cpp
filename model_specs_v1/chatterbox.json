@@ -1,0 +1,349 @@
+{
+  "family": "chatterbox",
+  "display_name": "Chatterbox",
+  "description": "Open-source Chatterbox family for expressive TTS and voice conversion, with emotion exaggeration control, fast generation, zero-shot voice cloning, and an integrated multilingual TTS path.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone",
+    "vc"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ar",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "fi",
+    "fr",
+    "hi",
+    "it",
+    "ko",
+    "ms",
+    "nl",
+    "no",
+    "pl",
+    "pt",
+    "sv",
+    "sw",
+    "tr"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ],
+    "vc": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "source_audio",
+        "type": "audio_path",
+        "description": "Source speech path for voice conversion; required for VC when no request audio input is supplied.",
+        "required": false
+      },
+      {
+        "name": "target_voice",
+        "type": "audio_path",
+        "description": "Target speaker reference path for voice conversion; required for VC when no request speaker audio is supplied.",
+        "required": false
+      },
+      {
+        "name": "exaggeration",
+        "type": "float",
+        "description": "Emotion and style exaggeration strength; default 0.5. Higher values produce more expressive speech and can speed up delivery.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.5
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "T3 classifier-free guidance scale; default 0.5. Lower values can improve pacing for fast reference speakers.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.5
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "T3 speech-token sampling temperature; default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.8
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "T3 repetition penalty applied during speech-token sampling; default 1.2.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.2
+      },
+      {
+        "name": "min_p",
+        "type": "float",
+        "description": "T3 min-p sampling cutoff; default 0.05.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.05
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "T3 nucleus sampling probability; default 1.0 disables top-p truncation.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "s3gen_guidance_scale",
+        "type": "float",
+        "description": "S3Gen token-to-mel flow guidance scale; default 0.7 for TTS and VC.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.7
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum T3 speech tokens for TTS/clone generation; default 384.",
+        "required": false,
+        "min": 1,
+        "default": 384
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable stochastic T3 speech-token sampling; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "stop_on_eos",
+        "type": "bool",
+        "description": "Stop T3 speech-token generation on EOS; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "S3Gen flow inference steps for voice conversion; default 10.",
+        "required": false,
+        "min": 1,
+        "default": 10
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed for reproducible T3, S3Gen, and vocoder sampling; omitted uses a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per generated text chunk; default 128.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode for long-form TTS; default word_budget.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "word_budget"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared Chatterbox component weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "t3_weight_type",
+        "type": "enum",
+        "description": "T3 weight storage type; defaults to weight_type.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "multilingual_t3",
+        "type": "enum",
+        "description": "Multilingual T3 checkpoint used for non-English TTS; default v2.",
+        "values": [
+          "v2",
+          "v3"
+        ],
+        "required": false,
+        "default": "v2"
+      },
+      {
+        "name": "conditionals_cache_slots",
+        "type": "int",
+        "description": "Prepared voice-condition cache slots; default 1, set 0 to disable.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Free non-conditional runtime graphs after each request chunk; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "encoder_condition_samples",
+        "type": "int",
+        "description": "Reference audio samples used by the voice encoder at 16 kHz; default 96000, equal to 6 seconds.",
+        "required": false,
+        "min": 1,
+        "default": 96000
+      },
+      {
+        "name": "decoder_condition_samples",
+        "type": "int",
+        "description": "Reference audio samples used by the S3Gen decoder at 24 kHz; default 240000, equal to 10 seconds.",
+        "required": false,
+        "min": 1,
+        "default": 240000
+      },
+      {
+        "name": "t3_speech_cond_prompt_len",
+        "type": "int",
+        "description": "Maximum T3 speech-token prompt length kept from reference conditioning; default 150.",
+        "required": false,
+        "min": 0,
+        "default": 150
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "english_tokenizer": "model:tokenizer.json",
+        "multilingual_tokenizer": "model:grapheme_mtl_merged_expanded_v1.json",
+        "cangjie_mapping": "model:Cangjie5_TC.json",
+        "builtin_conditionals": "model:conds.pt"
+      },
+      "tensors": {
+        "voice_encoder_weights": {
+          "source": "weights:",
+          "prefix": "voice_encoder"
+        },
+        "s3gen_weights": {
+          "source": "weights:",
+          "prefix": "s3gen"
+        },
+        "t3_english_weights": {
+          "source": "weights:",
+          "prefix": "t3_english"
+        },
+        "t3_multilingual_v2_weights": {
+          "source": "weights:",
+          "prefix": "t3_multilingual_v2"
+        },
+        "t3_multilingual_v3_weights": {
+          "source": "weights:",
+          "prefix": "t3_multilingual_v3"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "english_tokenizer": "model:tokenizer.json",
+        "multilingual_tokenizer": "model:grapheme_mtl_merged_expanded_v1.json",
+        "cangjie_mapping": "model:Cangjie5_TC.json",
+        "builtin_conditionals": "model:conds.pt"
+      },
+      "tensors": {
+        "voice_encoder_weights": "model:ve.safetensors",
+        "s3gen_weights": "model:s3gen.safetensors",
+        "t3_english_weights": "model:t3_cfg.safetensors",
+        "t3_multilingual_v2_weights": "model:t3_mtl23ls_v2.safetensors",
+        "t3_multilingual_v3_weights": "model:t3_mtl23ls_v3.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "chatterbox_q8_0",
+      "display_name": "Chatterbox Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Chatterbox-GGUF",
+      "files": [
+        "Chatterbox-GGUF/chatterbox-q8_0.gguf"
+      ],
+      "strip_prefix": "Chatterbox-GGUF"
+    },
+    {
+      "id": "chatterbox_f16",
+      "display_name": "Chatterbox F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Chatterbox-GGUF",
+      "files": [
+        "Chatterbox-GGUF/chatterbox-f16.gguf"
+      ],
+      "strip_prefix": "Chatterbox-GGUF"
+    },
+    {
+      "id": "chatterbox_safetensors",
+      "display_name": "Chatterbox Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "chatterbox",
+      "files": [
+        "ve.safetensors",
+        "t3_cfg.safetensors",
+        "s3gen.safetensors",
+        "tokenizer.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "ResembleAI/chatterbox"
+      }
+    }
+  ]
+}

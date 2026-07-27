@@ -1,0 +1,367 @@
+{
+  "family": "miotts",
+  "display_name": "MioTTS",
+  "description": "Lightweight LLM-based English and Japanese TTS family built on MioCodec, supporting low-latency speech generation and zero-shot voice cloning from short reference audio.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "ja"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated MioCodec tokens; default 700.",
+        "required": false,
+        "min": 1,
+        "default": 700
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable stochastic token sampling; default comes from model generation config, falling back to true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Token sampling temperature in [0, 2]; default comes from model generation config, falling back to 0.8.",
+        "required": false,
+        "min": 0.0,
+        "max": 2.0,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Token top-k sampling limit; default comes from model generation config, falling back to 50.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Token nucleus sampling limit in [0, 1]; default comes from model generation config, falling back to 1.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Token repetition penalty in [1, 1.5]; default comes from model generation config, falling back to 1.0.",
+        "required": false,
+        "min": 1.0,
+        "max": 1.5,
+        "default": 1.0
+      },
+      {
+        "name": "presence_penalty",
+        "type": "float",
+        "description": "Token presence penalty in [0, 1]; default 0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.0
+      },
+      {
+        "name": "frequency_penalty",
+        "type": "float",
+        "description": "Token frequency penalty in [0, 1]; default 0.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted value uses a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Per-request long-form text chunk size in Unicode codepoints; overrides session text_chunk_size. Default session value is 180.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "best_of_n",
+        "type": "int",
+        "description": "Generate n candidates for this request; overrides session best_of_n_default and is capped by session best_of_n_max.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "best_of_n_enabled",
+        "type": "bool",
+        "description": "Enable or disable best-of-N candidate selection for this request; overrides session best_of_n_enabled.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "best_of_n_language",
+        "type": "enum",
+        "description": "Language used when scoring best-of-N candidates for this request; overrides session best_of_n_language.",
+        "preset": "best_of_n_language",
+        "required": false,
+        "default": "auto"
+      }
+    ],
+    "session": [
+      {
+        "name": "codec_path",
+        "type": "path",
+        "description": "MioCodec model directory used by MioTTS acoustic decoding; default is the sibling MioCodec package path when present.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Default long-form text chunk size in Unicode codepoints; default 180.",
+        "required": false,
+        "min": 1,
+        "default": 180
+      },
+      {
+        "name": "best_of_n_enabled",
+        "type": "bool",
+        "description": "Enable best-of-N candidate selection by default.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "best_of_n_default",
+        "type": "int",
+        "description": "Default best-of-N candidate count; default 1.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "best_of_n_max",
+        "type": "int",
+        "description": "Maximum best-of-N candidate count; default 8.",
+        "required": false,
+        "min": 1,
+        "default": 8
+      },
+      {
+        "name": "best_of_n_language",
+        "type": "enum",
+        "description": "Default language used when scoring best-of-N candidates.",
+        "preset": "best_of_n_language",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "best_of_n_asr_path",
+        "type": "path",
+        "description": "Qwen3-ASR model directory used by best-of-N scoring; default is sibling Qwen3-ASR-0.6B when present.",
+        "required": false
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "MioTTS language-model matmul and WavLM weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "MioTTS language-model weight context size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "prefill_graph_arena_mb",
+        "type": "int",
+        "description": "MioTTS language-model prefill graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "decode_graph_arena_mb",
+        "type": "int",
+        "description": "MioTTS language-model decode graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "codec_weight_context_mb",
+        "type": "int",
+        "description": "MioCodec decoder weight context size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "codec_constant_context_mb",
+        "type": "int",
+        "description": "MioCodec decoder constant tensor context size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "global_graph_arena_mb",
+        "type": "int",
+        "description": "MioCodec global reference encoder graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "wave_graph_arena_mb",
+        "type": "int",
+        "description": "MioCodec wave decoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "miotts_1_7b_q8_0",
+      "display_name": "MioTTS 1.7B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MioTTS-1.7B-GGUF",
+      "files": [
+        "MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf"
+      ],
+      "strip_prefix": "MioTTS-1.7B-GGUF"
+    },
+    {
+      "id": "miotts_1_7b_bf16",
+      "display_name": "MioTTS 1.7B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MioTTS-1.7B-GGUF",
+      "files": [
+        "MioTTS-1.7B-GGUF/miotts-1.7b-bf16.gguf"
+      ],
+      "strip_prefix": "MioTTS-1.7B-GGUF"
+    },
+    {
+      "id": "miotts_1_7b_orig",
+      "display_name": "MioTTS 1.7B Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "MioTTS-1.7B-GGUF",
+      "files": [
+        "MioTTS-1.7B-GGUF/miotts-1.7b-orig.gguf"
+      ],
+      "strip_prefix": "MioTTS-1.7B-GGUF"
+    }
+  ],
+  "dependencies": [
+    {
+      "kind": "model",
+      "family": "miocodec",
+      "scope": "session",
+      "option": "codec_path",
+      "required": true
+    },
+    {
+      "kind": "model",
+      "family": "qwen3_asr",
+      "scope": "session",
+      "option": "best_of_n_asr_path",
+      "required": false,
+      "required_when": [
+        {
+          "scope": "session",
+          "option_key": "miotts.best_of_n_enabled",
+          "equals": true
+        },
+        {
+          "scope": "request",
+          "option_key": "best_of_n_enabled",
+          "equals": true
+        }
+      ]
+    }
+  ]
+}

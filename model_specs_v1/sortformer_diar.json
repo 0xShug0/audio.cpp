@@ -1,0 +1,219 @@
+{
+  "family": "sortformer_diar",
+  "display_name": "Sortformer Diarization",
+  "description": "NVIDIA Transformer-based end-to-end speaker diarization model trained primarily on English speech, predicting speaker labels directly from audio and resolving speaker ordering by arrival time for up to four speakers.",
+  "category": "speech_analysis",
+  "status": "supported",
+  "tasks": [
+    "diar"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {
+    "diar": [
+      "speaker_turns"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "speaker_threshold",
+        "type": "float",
+        "description": "Speaker activity probability threshold used when decoding speaker turns; default 0.5.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "speaker_min_frames",
+        "type": "int",
+        "description": "Minimum decoded segment length in model output frames; default 0 disables short-segment filtering.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "speaker_pad_frames",
+        "type": "int",
+        "description": "Pad each decoded speaker segment by this many model output frames before filtering and merging; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Inference graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight context size in MiB; default 128.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "session_len_sec",
+        "type": "float",
+        "description": "Base offline graph context length in seconds; must be positive, default 20.",
+        "required": false,
+        "min": 0.0,
+        "default": 20.0
+      },
+      {
+        "name": "graph_capacity_mode",
+        "type": "enum",
+        "description": "Offline graph capacity policy; defaults to tiered on host-graph backends and fixed otherwise.",
+        "values": [
+          "fixed",
+          "tiered",
+          "grow",
+          "double"
+        ],
+        "required": false
+      },
+      {
+        "name": "speaker_threshold",
+        "type": "float",
+        "description": "Default speaker activity probability threshold for decoded speaker turns; default 0.5.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "speaker_min_frames",
+        "type": "int",
+        "description": "Default minimum decoded segment length in model output frames; default 0 disables short-segment filtering.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "speaker_pad_frames",
+        "type": "int",
+        "description": "Default decoded segment padding in model output frames; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "All weight storage type; default f32.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "f32"
+      },
+      {
+        "name": "matmul_weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage type; defaults to weight_type when set, otherwise f32.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type; defaults to weight_type when set, otherwise f32.",
+        "preset": "weight_type_full",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor": "model:processor_config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor": "model:processor_config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "sortformer_diar_4spk_v1_q8_0",
+      "display_name": "Sortformer Diar 4spk v1 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Sortformer-Diar-4spk-v1-GGUF",
+      "files": [
+        "Sortformer-Diar-4spk-v1-GGUF/sortformer-diar-4spk-v1-q8_0.gguf"
+      ],
+      "strip_prefix": "Sortformer-Diar-4spk-v1-GGUF"
+    },
+    {
+      "id": "sortformer_diar_4spk_v1_f16",
+      "display_name": "Sortformer Diar 4spk v1 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Sortformer-Diar-4spk-v1-GGUF",
+      "files": [
+        "Sortformer-Diar-4spk-v1-GGUF/sortformer-diar-4spk-v1-f16.gguf"
+      ],
+      "strip_prefix": "Sortformer-Diar-4spk-v1-GGUF"
+    },
+    {
+      "id": "sortformer_diar_4spk_v1_safetensors",
+      "display_name": "Sortformer Diar 4spk v1 Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "diar_sortformer_4spk-v1",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "processor_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "nvidia/diar_sortformer_4spk-v1"
+      }
+    }
+  ]
+}

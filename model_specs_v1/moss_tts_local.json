@@ -1,0 +1,258 @@
+{
+  "family": "moss_tts_local",
+  "display_name": "MOSS-TTS-Local",
+  "description": "Flagship MOSS-TTS model for high-fidelity 31-language and code-switched speech, zero-shot voice cloning, long-form generation, and fine-grained Pinyin, phoneme, and duration control.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ar",
+    "cs",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "fa",
+    "fi",
+    "fr",
+    "he",
+    "hi",
+    "hu",
+    "it",
+    "ja",
+    "ko",
+    "mk",
+    "ms",
+    "nl",
+    "pl",
+    "pt",
+    "ro",
+    "ru",
+    "sv",
+    "sw",
+    "th",
+    "tl",
+    "tr",
+    "vi",
+    "yue",
+    "zh"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated audio frames; default 4096.",
+        "required": false,
+        "min": 0,
+        "default": 4096
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable stochastic audio-token sampling; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Audio-token sampling temperature; default 1.7.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.7
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Audio-token nucleus sampling limit; default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Audio-token top-k sampling limit; default 25.",
+        "required": false,
+        "min": 0,
+        "default": 25
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Audio-token repetition penalty; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted value uses a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Long-form text chunk size in Unicode codepoints; default 2048.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "text_temperature",
+        "type": "float",
+        "description": "Text-gate sampling temperature; default 1.0 for Local and 1.5 for Nano.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "text_top_p",
+        "type": "float",
+        "description": "Text-gate nucleus sampling limit; default 1.0.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "text_top_k",
+        "type": "int",
+        "description": "Text-gate top-k sampling limit; default 50.",
+        "required": false,
+        "default": 50
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Long-form text chunking mode; default word_budget. Text chunk size defaults to 2048 Unicode codepoints.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "word_budget"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Backbone weight storage type.",
+        "values": [
+          "auto",
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-voice cache slots; default 1, set 0 to disable.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt",
+        "audio_tokenizer_config": "model:audio_tokenizer/config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "audio_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "audio_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "audio_tokenizer": "audio_tokenizer"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt",
+        "audio_tokenizer_config": "audio_tokenizer:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "audio_tokenizer_weights": "audio_tokenizer:model.safetensors.index.json"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "moss_tts_local_v1_5_q8_0",
+      "display_name": "MOSS-TTS-Local v1.5 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-TTS-Local-v1.5-GGUF",
+      "files": [
+        "MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-q8_0.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Local-v1.5-GGUF"
+    },
+    {
+      "id": "moss_tts_local_v1_5_bf16",
+      "display_name": "MOSS-TTS-Local v1.5 BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MOSS-TTS-Local-v1.5-GGUF",
+      "files": [
+        "MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-bf16.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Local-v1.5-GGUF"
+    }
+  ]
+}

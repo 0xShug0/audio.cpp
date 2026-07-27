@@ -1,0 +1,381 @@
+{
+  "family": "voxcpm2",
+  "display_name": "VoxCPM2",
+  "description": "OpenBMB tokenizer-free TTS model supporting 30 languages and 9 Chinese dialects, with 48 kHz output, natural-language voice design, controllable short-reference voice cloning, and expressive style guidance.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone",
+    "design"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "ar",
+    "my",
+    "zh",
+    "zh dialects",
+    "da",
+    "nl",
+    "en",
+    "fi",
+    "fr",
+    "de",
+    "el",
+    "he",
+    "hi",
+    "id",
+    "it",
+    "ja",
+    "km",
+    "ko",
+    "lo",
+    "ms",
+    "no",
+    "pl",
+    "pt",
+    "ru",
+    "es",
+    "sw",
+    "sv",
+    "tl",
+    "th",
+    "tr",
+    "vi"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ],
+    "design": [
+      "voice_design"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript for prompt/reference audio in ultimate-cloning and continuation-style prompts.",
+        "required": false
+      },
+      {
+        "name": "min_tokens",
+        "type": "int",
+        "description": "Minimum generated acoustic patches before EOS can stop generation; default 2.",
+        "required": false,
+        "min": 0,
+        "default": 2
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated acoustic patches; default 4096, and 0 requests the model config max_length.",
+        "required": false,
+        "min": 0,
+        "default": 4096
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Local DiT/CFM inference steps per generated patch; default 10.",
+        "required": false,
+        "min": 1,
+        "default": 10
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale for local DiT/CFM generation; default 2.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 2.0
+      },
+      {
+        "name": "retry_badcase",
+        "type": "bool",
+        "description": "Retry over-long offline generations detected by the patch/text ratio; default true, but streaming requests must set false.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "retry_badcase_max_times",
+        "type": "int",
+        "description": "Maximum retry attempts for bad-case detection; default 3.",
+        "required": false,
+        "min": 1,
+        "default": 3
+      },
+      {
+        "name": "retry_badcase_ratio_threshold",
+        "type": "float",
+        "description": "Generated-patch to target-text-token ratio threshold for bad-case detection; must be positive, default 6.0.",
+        "required": false,
+        "default": 6.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "CFM noise seed; default 1234.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      },
+      {
+        "name": "noise_path",
+        "type": "path",
+        "description": "F32 CFM noise file for deterministic acoustic patch replay.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum UTF-8 codepoints per offline text chunk; default 2048.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Text chunking mode; default tag_aware.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "tag_aware"
+      }
+    ],
+    "session": [
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Use tighter graph workspaces and release request runtime graphs; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "prompt_cache_slots",
+        "type": "int",
+        "description": "Prompt and prompt-audio embedding cache slots; default 1.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "MiniCPM, local encoder, projection, and DiT weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "audiovae_weight_type",
+        "type": "enum",
+        "description": "AudioVAE weight storage type; default f32.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "f32"
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Shared generator weight context size in MiB; default 3072.",
+        "required": false,
+        "min": 1,
+        "default": 3072
+      },
+      {
+        "name": "text_embedding_graph_arena_mb",
+        "type": "int",
+        "description": "Text embedding graph arena size in MiB; default 64.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "lm_step_graph_arena_mb",
+        "type": "int",
+        "description": "MiniCPM LM step graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "projection_graph_arena_mb",
+        "type": "int",
+        "description": "Step projection graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "local_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Local encoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "dit_graph_arena_mb",
+        "type": "int",
+        "description": "DiT estimator graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "audiovae_weight_context_mb",
+        "type": "int",
+        "description": "AudioVAE weight context size in MiB; default 768.",
+        "required": false,
+        "min": 1,
+        "default": 768
+      },
+      {
+        "name": "audiovae_graph_arena_mb",
+        "type": "int",
+        "description": "AudioVAE decoder graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "audiovae_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "AudioVAE prompt encoder graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "audiovae_latent_capacity",
+        "type": "int",
+        "description": "AudioVAE decoder latent-frame graph capacity; default 0 fits each request.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "audiovae_encoder_sample_capacity",
+        "type": "int",
+        "description": "AudioVAE prompt encoder sample capacity; must be positive and divisible by the encoder stride, default 240000.",
+        "required": false,
+        "min": 1,
+        "default": 240000
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        },
+        "audiovae_weights": {
+          "source": "weights:",
+          "prefix": "audiovae_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors",
+        "audiovae_weights": "model:audiovae.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "voxcpm2_q8_0",
+      "display_name": "VoxCPM2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/voxcpm2-q8_0.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_bf16",
+      "display_name": "VoxCPM2 BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/voxcpm2-bf16.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_orig",
+      "display_name": "VoxCPM2 Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/voxcpm2-orig.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_safetensors",
+      "display_name": "VoxCPM2 Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "VoxCPM2",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "OpenBMB/VoxCPM2"
+      }
+    }
+  ]
+}

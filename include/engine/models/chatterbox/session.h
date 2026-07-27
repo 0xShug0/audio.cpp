@@ -16,6 +16,11 @@
 
 namespace engine::models::chatterbox {
 
+enum class ChatterboxMultilingualT3Version {
+    V2,
+    V3,
+};
+
 struct ChatterboxConditionalsCacheKey {
     runtime::AudioBuffer reference_audio;
     float exaggeration = 0.0f;
@@ -52,6 +57,7 @@ private:
     std::shared_ptr<const ChatterboxAssets> assets_;
     engine::assets::TensorStorageType t3_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType component_weight_storage_type_ = engine::assets::TensorStorageType::Native;
+    ChatterboxMultilingualT3Version multilingual_t3_version_ = ChatterboxMultilingualT3Version::V2;
     bool mem_saver_ = false;
     std::unique_ptr<ChatterboxTtsComponent> component_;
     std::unique_ptr<ChatterboxVcComponent> vc_component_;

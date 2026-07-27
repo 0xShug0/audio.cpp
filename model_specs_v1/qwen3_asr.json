@@ -1,0 +1,351 @@
+{
+  "family": "qwen3_asr",
+  "display_name": "Qwen3-ASR",
+  "description": "Qwen ASR model family for language identification and speech recognition across 30 languages, 22 Chinese dialects, and multiple English accents, with robustness for noisy, long-form, and singing audio.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en",
+    "yue",
+    "ar",
+    "de",
+    "fr",
+    "es",
+    "pt",
+    "id",
+    "it",
+    "ko",
+    "ru",
+    "th",
+    "vi",
+    "ja",
+    "tr",
+    "hi",
+    "ms",
+    "nl",
+    "sv",
+    "da",
+    "fi",
+    "pl",
+    "cs",
+    "fil",
+    "fa",
+    "el",
+    "hu",
+    "mk",
+    "ro",
+    "zh dialects"
+  ],
+  "capabilities": {
+    "asr": [
+      "word_timestamps",
+      "vad_chunking"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "ASR language code or label. Default auto-detects the language from speech; setting a language forces the decoder prompt.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated transcript tokens; default comes from generation_config.json, 512 in the shipped Qwen3-ASR configs.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "description": "Return word-level timestamps by running Qwen3 ForcedAligner after ASR; default false and requires forced_aligner_path when enabled.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode; default auto uses fixed chunks normally and VAD chunks when timestamps are requested.",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum audio chunk duration in seconds; default 30 for transcription and 15 when timestamps or VAD chunking are used.",
+        "required": false,
+        "min": 0.0
+      }
+    ],
+    "session": [
+      {
+        "name": "forced_aligner_path",
+        "type": "path",
+        "description": "Optional Qwen3 ForcedAligner model path required for return_timestamps.",
+        "required": false
+      },
+      {
+        "name": "vad_path",
+        "type": "path",
+        "description": "Optional Silero VAD model path for VAD chunking; default assets/framework/models/silero_vad.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared text decoder weight storage fallback; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "audio_encoder_weight_type",
+        "type": "enum",
+        "description": "Audio encoder weight storage type; default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "text_decoder_weight_type",
+        "type": "enum",
+        "description": "Text decoder matmul weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "audio_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Audio encoder graph arena size in MiB; default 128.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "text_decoder_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Text decoder prefill graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "text_decoder_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Text decoder cached-step graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "text_decoder_weight_context_mb",
+        "type": "int",
+        "description": "Text decoder weight context size in MiB; default 64.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "chat_template": "model:chat_template.json",
+        "chat_template_jinja": "model:chat_template.jinja",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "chat_template": "model:chat_template.json",
+        "chat_template_jinja": "model:chat_template.jinja",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "qwen3_asr_1_7b_q8_0",
+      "display_name": "Qwen3-ASR 1.7B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-ASR-1.7B-GGUF",
+      "files": [
+        "Qwen3-ASR-1.7B-GGUF/qwen3-asr-1.7b-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-ASR-1.7B-GGUF"
+    },
+    {
+      "id": "qwen3_asr_1_7b_f16",
+      "display_name": "Qwen3-ASR 1.7B F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Qwen3-ASR-1.7B-GGUF",
+      "files": [
+        "Qwen3-ASR-1.7B-GGUF/qwen3-asr-1.7b-f16.gguf"
+      ],
+      "strip_prefix": "Qwen3-ASR-1.7B-GGUF"
+    },
+    {
+      "id": "qwen3_asr_0_6b_q8_0",
+      "display_name": "Qwen3-ASR 0.6B Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-ASR-0.6B-GGUF",
+      "files": [
+        "Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-ASR-0.6B-GGUF"
+    },
+    {
+      "id": "qwen3_asr_0_6b_f16",
+      "display_name": "Qwen3-ASR 0.6B F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Qwen3-ASR-0.6B-GGUF",
+      "files": [
+        "Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-f16.gguf"
+      ],
+      "strip_prefix": "Qwen3-ASR-0.6B-GGUF"
+    },
+    {
+      "id": "qwen3_asr_1_7b_safetensors",
+      "display_name": "Qwen3-ASR 1.7B HF Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Qwen3-ASR-1.7B-hf",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "processor_config.json",
+        "tokenizer_config.json",
+        "tokenizer.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Qwen/Qwen3-ASR-1.7B-hf"
+      }
+    },
+    {
+      "id": "qwen3_asr_0_6b_safetensors",
+      "display_name": "Qwen3-ASR 0.6B Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Qwen3-ASR-0.6B",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Qwen/Qwen3-ASR-0.6B"
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "kind": "model",
+      "family": "qwen3_forced_aligner",
+      "scope": "session",
+      "option": "forced_aligner_path",
+      "required": false,
+      "required_when": [
+        {
+          "scope": "request",
+          "option_key": "return_timestamps",
+          "equals": true
+        }
+      ]
+    },
+    {
+      "kind": "bundled_model",
+      "family": "silero_vad",
+      "path": "assets/framework/models/silero_vad",
+      "scope": "session",
+      "option": "vad_path",
+      "required": false,
+      "required_when": [
+        {
+          "scope": "request",
+          "option_key": "audio_chunk_mode",
+          "equals": "vad"
+        },
+        {
+          "scope": "request",
+          "option_key": "return_timestamps",
+          "equals": true
+        }
+      ]
+    }
+  ]
+}
