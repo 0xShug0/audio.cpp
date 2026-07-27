@@ -460,6 +460,23 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "log_mel_cosine_min": 0.90,
         "cpp_session_options": ["heartmula.weight_type=f32"],
     },
+    "confucius4_tts": {
+        "kind": "confucius4_tts",
+        "display_name": "Confucius4-TTS",
+        "modes": ["offline", "streaming"],
+        "cpp_bin": "build/debug/bin/confucius4_tts_warm_bench",
+        "python_script": "tests/confucius4_tts/confucius4_tts_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "models/Confucius4-TTS/audio_cpp/manifest.json",
+        "python_model": "models/Confucius4-TTS",
+        "case_catalog": "tests/confucius4_tts/confucius4_tts_warm_bench_cases.json",
+        "default_case_name": "multi_request_logic_paths",
+        "default_requests_per_session": 3,
+        "default_warmup": 0,
+        "wav_cosine_min": 0.98,
+        "log_mel_cosine_min": 0.98,
+        "length_ratio_min": 0.98,
+    },
     "higgs_audio_tts": {
         "kind": "higgs_audio_tts",
         "modes": ["offline"],
@@ -489,6 +506,22 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "default_requests_per_session": 1,
         "default_warmup": 0,
         "cpp_session_options": ["index_tts2.weight_type=f32", "index_tts2.conv_weight_type=f32"],
+        "wav_cosine_min": 0.98,
+        "log_mel_cosine_min": 0.98,
+        "similarity_vote_required": 1,
+    },
+    "dramabox": {
+        "kind": "dramabox",
+        "display_name": "DramaBox",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/dramabox_warm_bench",
+        "python_script": "tools/dramabox/dramabox_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "models/Dramabox",
+        "case_catalog": "tools/dramabox/dramabox_warm_bench_cases.json",
+        "default_case_name": "voice_ref_scene",
+        "default_requests_per_session": 1,
+        "default_warmup": 0,
         "wav_cosine_min": 0.98,
         "log_mel_cosine_min": 0.98,
         "similarity_vote_required": 1,
@@ -4215,6 +4248,188 @@ def build_heartmula_commands(
     return python_command, cpp_command
 
 
+def build_confucius4_tts_commands(
+    config: dict[str, Any],
+    backend: str,
+    mode: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("Confucius4-TTS warmbench is CUDA-only")
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_model_root = Path(python_model_path)
+    model_parent = python_model_root.parent if python_model_root.is_absolute() else Path()
+    w2v_bert_path = config.get("w2v_bert_model", "models/facebook-w2v-bert-2.0")
+    bigvgan_path = config.get("bigvgan_model", "models/bigvgan_v2_22khz_80band_256x")
+    campplus_path = config.get("campplus_model", "models/funasr-campplus/campplus_cn_common.bin")
+    if python_model_root.is_absolute():
+        sibling_w2v = model_parent / "facebook-w2v-bert-2.0"
+        sibling_bigvgan = model_parent / "bigvgan_v2_22khz_80band_256x"
+        sibling_campplus = model_parent / "funasr-campplus" / "campplus_cn_common.bin"
+        if sibling_w2v.exists():
+            w2v_bert_path = str(sibling_w2v)
+        if sibling_bigvgan.exists():
+            bigvgan_path = str(sibling_bigvgan)
+        if sibling_campplus.exists():
+            campplus_path = str(sibling_campplus)
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--w2v-bert",
+        str(w2v_bert_path),
+        "--bigvgan",
+        str(bigvgan_path),
+        "--campplus",
+        str(campplus_path),
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--summary-file",
+        str(scenario_dir / "python.summary.json"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "env",
+        "NVIDIA_TF32_OVERRIDE=0",
+        "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+        "--run-mode",
+        mode,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def build_dramabox_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    gemma_model_path = config.get("gemma_model", "models/gemma-3-12b-it-bnb-4bit")
+    model_root = Path(model_path)
+    if model_root.is_absolute():
+        sibling_gemma = model_root.parent / "gemma-3-12b-it-bnb-4bit"
+        if sibling_gemma.exists():
+            gemma_model_path = str(sibling_gemma)
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        model_path,
+        "--gemma-root",
+        str(gemma_model_path),
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--summary-file",
+        str(scenario_dir / "python.summary.json"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
 def build_higgs_audio_tts_commands(
     config: dict[str, Any],
     backend: str,
@@ -4370,7 +4585,7 @@ def validate_sequence_result(summary: dict[str, Any], request_count: int, kind: 
             and len(step.get("stems", [])) > 0
             and isinstance(step.get("metrics", {}), dict)
             for step in steps)
-    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "higgs_audio_tts", "index_tts2"}:
+    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox"}:
         payload_valid = all(
             isinstance(step.get("stems", []), list)
             and len(step.get("stems", [])) > 0
@@ -4506,6 +4721,10 @@ def run_scenario(
         heartmula_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(heartmula_requests)
         python_command, cpp_command = build_heartmula_commands(scenario_config, backend, args, scenario_dir, heartmula_requests)
+    elif scenario_config["kind"] == "confucius4_tts":
+        confucius_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(confucius_requests)
+        python_command, cpp_command = build_confucius4_tts_commands(scenario_config, backend, mode, args, scenario_dir, confucius_requests)
     elif scenario_config["kind"] == "supertonic":
         supertonic_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(supertonic_requests)
@@ -4522,6 +4741,10 @@ def run_scenario(
         index_tts2_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(index_tts2_requests)
         python_command, cpp_command = build_index_tts2_commands(scenario_config, backend, args, scenario_dir, index_tts2_requests)
+    elif scenario_config["kind"] == "dramabox":
+        dramabox_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(dramabox_requests)
+        python_command, cpp_command = build_dramabox_commands(scenario_config, backend, args, scenario_dir, dramabox_requests)
     elif scenario_config["kind"] in {"vevo2", "seed_vc"}:
         vevo2_requests, request_manifest = resolve_vevo2_case(config, args)
         python_command, cpp_command = build_vevo2_commands(scenario_config, backend, args, scenario_dir, vevo2_requests)
@@ -4865,7 +5088,7 @@ def run_scenario(
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
             append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
-    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "higgs_audio_tts", "index_tts2"}:
+    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox"}:
         python_valid = validate_sequence_result(python_summary, args.requests_per_session, scenario_config["kind"])
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, scenario_config["kind"])
         python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
