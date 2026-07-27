@@ -237,6 +237,89 @@ RTX 30/40/50-series, A100/H100, etc.) those two changes might show a real
 CUDA win where they showed none here. Worth re-measuring on such hardware
 rather than assuming this test machine's null result generalizes.
 
+**Graph capacity is load-bearing: an oversized graph is both slow and wrong.**
+`ensure_graph()` used to reuse any cached graph whose capacity merely *exceeded*
+the request, and `encode()` zero-pads the input up to that capacity — so the
+graph always runs at its built size regardless of how short the real audio is.
+A session prepared with a long audio contract therefore paid the long price on
+every short clip that followed:
+
+| 7.4s clip, graph built for | encoder compute |
+|---|---|
+| 7.4s (matched) | 1018 ms |
+| 60s (oversized) | 10928 ms — **10.7x** |
+| 60s contract, after the fix | 1140 ms |
+
+Worse, it was also an *accuracy* bug. Zero input does not stay zero: every
+subsampling conv carries a bias, so the padded tail arrives at the encoder
+stack as nonzero garbage. The attention mask was unconditionally all-zeros, so
+real frames attended to that garbage, and because softmax normalizes across
+keys it rescaled every real frame's attention. On the reference clip fed to a
+60s-capacity graph this silently dropped an entire sentence:
+
+```
+matched    "...turning away her eyes. It is certainly very like the old portrait."
+oversized  "...turning away her eyes."
+```
+
+Both are fixed: attention now masks padded key columns (by column only, never
+by query row, so no softmax row degenerates to all `-inf` and yields NaN), and
+`ensure_graph()` rebuilds rather than reusing a graph more than 10% oversized.
+Rebuilding costs ~400 ms — dominated by recomputing the 24 per-layer positional
+projections, the allocation itself is ~0.4 ms — so it wins outright on the
+first call and by more on every call after. Note this means `prepare()`'s
+capacity is a *memory* reservation, not a promise that no rebuild happens.
+
+**Where the CPU time actually goes.** Profiling (`perf record`) the encoder on
+this machine attributes ~74% of cycles to a single symbol: llamafile's
+`tinyBLAS::gemm_bloc` f32 kernel, plus ~10% to `ggml_vec_dot_f32` and ~6% to
+OpenMP barriers. It is overwhelmingly GEMM-bound, which bounds what any
+graph-level change can win — the view/scale/copy eliminations documented above
+are individually bit-exact and jointly worth only ~0.5% at 6 threads (~2% at 1
+thread, where there is no parallelism to hide the memory work).
+
+A standalone GEMM microbenchmark over the exact shapes this encoder issues
+gives the ceiling:
+
+| | 1 thread | 6 threads |
+|---|---|---|
+| f32 (`k=1024, m=4096, n=93`) | 27.8 GFLOP/s | 128.4 GFLOP/s |
+| f16 | 25.5 | 128.6 |
+| bf16 | 29.5 | 145.1 |
+| q8_0 | 50.1 | 278.3 |
+
+Two conclusions worth recording, both of which killed an optimization that
+looked obvious beforehand:
+
+- **The single-core GEMM is not memory-bound.** Sweeping the weight-matrix
+  footprint from 0.25 MB (fits L2) to 32 MB (far past the 12 MB L3) leaves
+  throughput flat at 28–31 GFLOP/s. So it is kernel-bound at roughly 22% of
+  this core's AVX2 FMA peak, inside vendored llamafile code — not something
+  reachable from this model's own files. Shrinking the weights helps only
+  insofar as a *different, faster kernel* gets selected (which is exactly why
+  q8_0 wins and f16 does not).
+- **Padding the token axis to a friendlier multiple is a net loss.** The
+  attention GEMMs fall off tinyBLAS's fast path at `T=93` (it bails when
+  `k % 8 != 0` or `m % 4 != 0`), and padding `T` to 96 does speed them up a
+  lot — QK^T 14.0 → 26.7 GFLOP/s, AV 6.1 → 26.0, BD 14.0 → 25.6 at 1 thread.
+  But the same padding makes every *weight* GEMM ~6% slower, and those
+  dominate: measured end to end it costs ~233 ms to save ~91 ms. Not done.
+
+**Benchmark methodology (this machine drifts).** Wall-clock numbers here move
+by 20–30% between a cold and a thermally saturated run — the same binary
+measured 979 ms cold and 1264 ms at steady state within a single session, and
+background load moves it further. Any A/B run as "config A for a while, then
+config B" is therefore meaningless at the few-percent scale. The comparisons
+above use `tmp/bench/ab.sh`: a discarded burn-in run to reach steady state,
+then ABBA ordering per pass scored by the *mean* of each side's two slots, so
+linear drift cancels exactly (slots 1&4 vs 2&3 share a midpoint). Scoring by
+`min()` instead — which an earlier iteration of this harness did — silently
+hands the win to whichever binary occupied the coldest slot, and produced a
+confident 5–8% "regression" that reversed under the corrected estimator.
+Retired instruction counts (`perf stat`) are reproducible to ~0.01% here and
+are a good cross-check, but they are insensitive to memory-movement changes
+and so cannot be the only metric.
+
 **Why CUDA has no PyTorch comparison point.** `nemo_asr` on this GPU hits
 `torch.OutOfMemoryError` just loading the model — this 3.6GB card's VRAM
 budget is entirely consumed by PyTorch's own overhead on top of the weights.
