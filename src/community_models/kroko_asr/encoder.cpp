@@ -372,16 +372,19 @@ public:
             throw std::runtime_error(
                 "Kroko subsampling feature shape does not match the package chunk size");
         }
-        ggml_backend_tensor_set(
+        ggml_backend_tensor_set_async(
+            backend_,
             input_,
             features.data(),
             0,
             features.size() * sizeof(float));
-        ggml_backend_tensor_set(
+        ggml_backend_tensor_set_async(
+            backend_,
             cache_,
             cache_values_.data(),
             0,
             cache_values_.size() * sizeof(float));
+        ggml_backend_synchronize(backend_);
         const auto status = core::compute_backend_graph(
             backend_,
             graph_,
@@ -398,16 +401,19 @@ public:
         result.values.resize(
             static_cast<size_t>(
                 subsampled_frames_ * kSubsampledDim));
-        ggml_backend_tensor_get(
+        ggml_backend_tensor_get_async(
+            backend_,
             output_,
             result.values.data(),
             0,
             result.values.size() * sizeof(float));
-        ggml_backend_tensor_get(
+        ggml_backend_tensor_get_async(
+            backend_,
             new_cache_,
             cache_values_.data(),
             0,
             cache_values_.size() * sizeof(float));
+        ggml_backend_synchronize(backend_);
         return result;
     }
 

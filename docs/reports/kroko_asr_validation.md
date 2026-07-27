@@ -140,16 +140,16 @@ Per-request results:
 
 | Lang | Audio s | Reference ms / RTF | audio.cpp ms / RTF | Exact | Reference WER | Ground-truth WER | Timestamp max delta | Peak RSS MiB |
 |---|---:|---:|---:|---|---:|---:|---:|---:|
-| de | 5.544 | 103.878 / 0.0187 | 491.524 / 0.0887 | Yes | 0 | 0 | 0.200 us | 1344.1 |
-| en | 4.992 | 105.852 / 0.0212 | 463.043 / 0.0928 | Yes | 0 | 0 | 0.162 us | 1343.8 |
-| es | 4.800 | 106.780 / 0.0222 | 455.371 / 0.0949 | Yes | 0 | 0 | 0.172 us | 1343.7 |
-| fr | 5.688 | 103.348 / 0.0182 | 497.482 / 0.0875 | Yes | 0 | 0 | 0.229 us | 1344.4 |
-| it | 4.680 | 103.907 / 0.0222 | 455.115 / 0.0972 | Yes | 0 | 0 | 0.191 us | 1343.7 |
-| he | 5.040 | 111.102 / 0.0220 | 469.215 / 0.0931 | Yes | 0 | 0 | 0.162 us | 1343.9 |
-| nl | 5.400 | 102.360 / 0.0190 | 477.863 / 0.0885 | Yes | 0 | 0 | 0.153 us | 1343.9 |
-| pt | 5.136 | 112.117 / 0.0218 | 480.211 / 0.0935 | Yes | 0 | 0 | 0.305 us | 1343.7 |
-| sv | 4.968 | 107.267 / 0.0216 | 455.093 / 0.0916 | Yes | 0 | 0.1667 | 0.181 us | 1336.8 |
-| tr | 5.472 | 108.245 / 0.0198 | 488.966 / 0.0894 | Yes | 0 | 0 | 0.200 us | 1344.0 |
+| de | 5.544 | 112.447 / 0.0203 | 251.224 / 0.0453 | Yes | 0 | 0 | 0.200 us | 1345.3 |
+| en | 4.992 | 114.649 / 0.0230 | 251.630 / 0.0504 | Yes | 0 | 0 | 0.162 us | 1345.2 |
+| es | 4.800 | 103.344 / 0.0215 | 252.364 / 0.0526 | Yes | 0 | 0 | 0.172 us | 1345.0 |
+| fr | 5.688 | 112.706 / 0.0198 | 254.749 / 0.0448 | Yes | 0 | 0 | 0.229 us | 1345.2 |
+| it | 4.680 | 102.171 / 0.0218 | 248.670 / 0.0531 | Yes | 0 | 0 | 0.191 us | 1345.0 |
+| he | 5.040 | 112.469 / 0.0223 | 256.904 / 0.0510 | Yes | 0 | 0 | 0.162 us | 1345.1 |
+| nl | 5.400 | 115.656 / 0.0214 | 250.902 / 0.0465 | Yes | 0 | 0 | 0.153 us | 1345.5 |
+| pt | 5.136 | 102.669 / 0.0200 | 254.222 / 0.0495 | Yes | 0 | 0 | 0.305 us | 1345.0 |
+| sv | 4.968 | 111.764 / 0.0225 | 243.224 / 0.0490 | Yes | 0 | 0.1667 | 0.181 us | 1337.8 |
+| tr | 5.472 | 103.432 / 0.0189 | 252.660 / 0.0462 | Yes | 0 | 0 | 0.200 us | 1345.3 |
 
 `Reference WER` compares audio.cpp with the original decoder. All ten requests
 are exact string matches and have zero reference WER. Swedish ground-truth WER
@@ -167,9 +167,27 @@ The complete machine-readable result and per-language artifacts are:
 ..\outputs\kroko_multilingual_results\<language>_audiocpp_words.json
 ```
 
-The optimized ONNX Runtime CPU reference is roughly 4.3-4.7 times faster in
-this short-request matrix. The native port is still about 10-11 times faster
-than real time on CPU.
+The optimized ONNX Runtime CPU reference is roughly 2.17-2.48 times faster in
+this short-request matrix. The native port runs about 19-22 times faster than
+real time on CPU.
+
+The performance pass preserves the accumulation order used for every vocabulary
+score while:
+
+- evaluating the 512-element joiner `tanh` activation once per encoder frame
+  instead of once for each of 650 vocabulary rows;
+- evaluating independent vocabulary rows in parallel and retaining the serial
+  argmax order;
+- batching recurrent-state and constant transfers asynchronously, with one
+  synchronization at each graph boundary;
+- reusing the padded feature-chunk buffer and decoding directly from the valid
+  prefix of the encoder output.
+
+Against the pre-optimization matrix recorded before this pass, the ten CPU
+requests improve by 1.804-1.957x, with a 1.881x arithmetic-mean speedup. A
+device-resident state experiment was rejected because it shifted several token
+emissions by one 40 ms frame. The retained implementation keeps the host-state
+round trip so that transcript and timestamp parity remain exact.
 
 ## Encoder boundary parity
 
@@ -229,12 +247,14 @@ build\windows-cuda-release\bin\audiocpp_cli.exe `
 
 | Mode | Session ms | RTF | Encoder chunks | Peak retained audio values |
 |---|---:|---:|---:|---:|
-| Streaming | 3981.768 | 0.0801 | 40 | 38,560 |
-| Offline | 3936.170 | 0.0792 | 40 | n/a |
+| Streaming | 2051.994 | 0.0413 | 40 | 38,560 |
+| Offline | 1984.566 | 0.0399 | 40 | n/a |
 
 The transcript files and word-timestamp JSON files are byte-identical. The
 stream accepted 794,880 samples but retained only 38,560 values at peak,
-demonstrating bounded 16 kHz waveform buffering.
+demonstrating bounded 16 kHz waveform buffering. Relative to the original
+3981.768 ms streaming and 3936.170 ms offline measurements, these paths are
+1.940x and 1.983x faster.
 
 ## Standalone Q8 GGUF and CUDA
 
@@ -262,9 +282,11 @@ build\windows-cuda-release\bin\audiocpp_cli.exe `
 The 167,754,176-byte GGUF has SHA-256
 `2CBC4B2C69217D44FEDCD3B890AD563BA0E4FD9DDF78C105AFCC003D245EBB4F`.
 It embeds the config, tokens, and package spec and runs from the file path with
-no external sidecars. On CUDA it completed the 4.968-second sample in
-462.556 ms (RTF 0.0931). Its transcript and word JSON are byte-identical to
-the native safetensors CPU result.
+no external sidecars. Seven clean CUDA CLI process runs completed the
+4.968-second sample in 223.328-244.833 ms, with a 232.341 ms median
+(RTF 0.0468). The pre-optimization validation run took 462.556 ms, so the
+median is 1.991x faster. Every run's transcript and word JSON are
+byte-identical to the native safetensors CPU result.
 
 ## Server validation
 
@@ -298,10 +320,10 @@ curl.exe -N http://127.0.0.1:18080/v1/audio/transcriptions `
 `GET /health` returned `status=ok`, `backend=cuda`, and one model. Two
 long-lived-server requests both returned the exact reference transcript:
 
-| Request | Wall ms | TTFT ms |
+| Request | Wall ms | Session ms |
 |---|---:|---:|
-| 1 | 579.880 | 189.824 |
-| 2 | 491.622 | 111.753 |
+| 1 | 306.420 | 293.179 |
+| 2 | 138.293 | 125.561 |
 
 After request 2 the server used 619.5 MiB RSS and 1478.1 MiB private memory.
 Reliable per-process CUDA VRAM is not available through Windows WDDM, so only

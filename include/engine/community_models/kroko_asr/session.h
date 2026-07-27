@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace engine::models::kroko_asr {
 
@@ -56,6 +57,7 @@ private:
     KrokoGreedyDecoder decoder_;
     KrokoEncoderRuntime subsampling_;
     KrokoZipformerRuntime zipformer_;
+    std::vector<float> chunk_scratch_;
     runtime::AudioBuffer streaming_audio_;
     runtime::StreamEventCallback stream_event_sink_;
     std::string streaming_language_;

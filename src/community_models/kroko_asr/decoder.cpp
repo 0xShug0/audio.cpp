@@ -45,6 +45,7 @@ KrokoGreedyDecoder::KrokoGreedyDecoder(
     joiner_bias_ = source.require_f32(
         "joiner.output_linear.bias",
         {vocab});
+    joiner_scores_.resize(static_cast<size_t>(vocab));
     reset();
 }
 
@@ -100,21 +101,32 @@ int32_t KrokoGreedyDecoder::join(
     const float * encoder_frame,
     const std::array<float, 512> & decoder_output) const {
     const int64_t vocab = assets_->config.vocab_size;
-    int32_t best_id = 0;
-    float best_value = -std::numeric_limits<float>::infinity();
+    std::array<float, kHidden> activated{};
+    for (int64_t hidden = 0; hidden < kHidden; ++hidden) {
+        activated[static_cast<size_t>(hidden)] = std::tanh(
+            encoder_frame[hidden] +
+            decoder_output[static_cast<size_t>(hidden)]);
+    }
+#pragma omp parallel for schedule(static) if (vocab >= 256)
     for (int64_t token = 0; token < vocab; ++token) {
         double value = joiner_bias_[static_cast<size_t>(token)];
         const float * weight =
             joiner_projection_.data() + token * kHidden;
         for (int64_t hidden = 0; hidden < kHidden; ++hidden) {
-            const float activated = std::tanh(
-                encoder_frame[hidden] +
-                decoder_output[static_cast<size_t>(hidden)]);
             value += static_cast<double>(weight[hidden]) *
-                static_cast<double>(activated);
+                static_cast<double>(
+                    activated[static_cast<size_t>(hidden)]);
         }
-        if (static_cast<float>(value) > best_value) {
-            best_value = static_cast<float>(value);
+        joiner_scores_[static_cast<size_t>(token)] =
+            static_cast<float>(value);
+    }
+    int32_t best_id = 0;
+    float best_value = -std::numeric_limits<float>::infinity();
+    for (int64_t token = 0; token < vocab; ++token) {
+        const float value =
+            joiner_scores_[static_cast<size_t>(token)];
+        if (value > best_value) {
+            best_value = value;
             best_id = static_cast<int32_t>(token);
         }
     }
@@ -136,7 +148,7 @@ const KrokoDecodedTokens & KrokoGreedyDecoder::append(
     int64_t frames,
     int64_t hidden_size) {
     if (frames <= 0 || hidden_size != kHidden ||
-        static_cast<int64_t>(encoder_output.size()) != frames * hidden_size) {
+        static_cast<int64_t>(encoder_output.size()) < frames * hidden_size) {
         throw std::runtime_error("Kroko greedy decoder received invalid encoder output");
     }
     const auto start = std::chrono::steady_clock::now();

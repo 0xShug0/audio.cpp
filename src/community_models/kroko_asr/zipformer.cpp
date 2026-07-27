@@ -1265,13 +1265,15 @@ public:
             throw std::runtime_error(
                 "Kroko Zipformer input shape does not match the package chunk size");
         }
-        ggml_backend_tensor_set(
+        ggml_backend_tensor_set_async(
+            backend_,
             input_,
             input.data(),
             0,
             input.size() * sizeof(float));
-        const auto set_state = [](StateTensor & state) {
-            ggml_backend_tensor_set(
+        const auto set_state = [&](StateTensor & state) {
+            ggml_backend_tensor_set_async(
+                backend_,
                 state.input,
                 state.host.data(),
                 0,
@@ -1303,19 +1305,22 @@ public:
                         source)] = -1000.0F;
                 }
             }
-            ggml_backend_tensor_set(
+            ggml_backend_tensor_set_async(
+                backend_,
                 mask.input,
                 mask.host.data(),
                 0,
                 mask.host.size() * sizeof(float));
         }
         for (const auto & constant : constants_) {
-            ggml_backend_tensor_set(
+            ggml_backend_tensor_set_async(
+                backend_,
                 constant.tensor,
                 constant.values.data(),
                 0,
                 constant.values.size() * sizeof(float));
         }
+        ggml_backend_synchronize(backend_);
         const auto status = core::compute_backend_graph(
             backend_,
             graph_,
@@ -1331,13 +1336,15 @@ public:
         result.channels = output_dim_;
         result.values.resize(
             static_cast<size_t>(output_frames_ * output_dim_));
-        ggml_backend_tensor_get(
+        ggml_backend_tensor_get_async(
+            backend_,
             output_,
             result.values.data(),
             0,
             result.values.size() * sizeof(float));
-        const auto get_state = [](StateTensor & state) {
-            ggml_backend_tensor_get(
+        const auto get_state = [&](StateTensor & state) {
+            ggml_backend_tensor_get_async(
+                backend_,
                 state.output,
                 state.host.data(),
                 0,
@@ -1351,6 +1358,7 @@ public:
             get_state(state.conv1);
             get_state(state.conv2);
         }
+        ggml_backend_synchronize(backend_);
         processed_frames_ += input_frames_;
         return result;
     }

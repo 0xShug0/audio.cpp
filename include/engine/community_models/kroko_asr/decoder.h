@@ -42,6 +42,7 @@ private:
     std::vector<float> decoder_bias_;
     std::vector<float> joiner_projection_;
     std::vector<float> joiner_bias_;
+    mutable std::vector<float> joiner_scores_;
     std::array<int32_t, 2> context_{};
     std::array<float, 512> decoder_output_{};
     KrokoDecodedTokens decoded_;

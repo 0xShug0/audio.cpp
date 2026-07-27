@@ -172,7 +172,12 @@ KrokoASRSession::KrokoASRSession(
           static_cast<int32_t>(assets_->config.unk_id)),
       decoder_(assets_),
       subsampling_(assets_, execution_context()),
-      zipformer_(assets_, execution_context()) {
+      zipformer_(assets_, execution_context()),
+      chunk_scratch_(
+          static_cast<size_t>(
+              assets_->config.chunk_size *
+              assets_->config.feature_dim),
+          0.0F) {
     if (task_.task != runtime::VoiceTaskKind::Asr ||
         (task_.mode != runtime::RunMode::Offline &&
          task_.mode != runtime::RunMode::Streaming)) {
@@ -281,28 +286,26 @@ runtime::TaskResult KrokoASRSession::run(
     for (int64_t offset = 0;
          offset < features.frames;
          offset += chunk_shift) {
-        std::vector<float> chunk(
-            static_cast<size_t>(chunk_size * dimension), 0.0F);
+        std::fill(
+            chunk_scratch_.begin(),
+            chunk_scratch_.end(),
+            0.0F);
         const int64_t available = std::min(
             chunk_size, features.frames - offset);
         std::copy_n(
             features.values.data() + offset * dimension,
             available * dimension,
-            chunk.data());
+            chunk_scratch_.data());
         const auto embedded =
-            subsampling_.encode_subsampled_chunk(chunk);
+            subsampling_.encode_subsampled_chunk(chunk_scratch_);
         const auto encoded =
             zipformer_.encode_chunk(embedded.values);
         const int64_t consumed = std::min(
             chunk_shift, features.frames - offset);
         const int64_t valid_frames = std::min<int64_t>(
             encoded.frames, (consumed + 3) / 4);
-        std::vector<float> valid_values(
-            encoded.values.begin(),
-            encoded.values.begin() +
-                valid_frames * encoded.channels);
         decoder_.append(
-            valid_values, valid_frames, encoded.channels);
+            encoded.values, valid_frames, encoded.channels);
         encoder_frames += valid_frames;
     }
     const auto result = make_result(
@@ -379,8 +382,10 @@ runtime::StreamEvent KrokoASRSession::process_streaming_audio(
                 features.frames) {
             break;
         }
-        std::vector<float> chunk(
-            static_cast<size_t>(chunk_size * dimension), 0.0F);
+        std::fill(
+            chunk_scratch_.begin(),
+            chunk_scratch_.end(),
+            0.0F);
         const int64_t available = std::min(
             chunk_size,
             features.frames - processed_feature_offset_);
@@ -388,9 +393,9 @@ runtime::StreamEvent KrokoASRSession::process_streaming_audio(
             features.values.data() +
                 processed_feature_offset_ * dimension,
             available * dimension,
-            chunk.data());
+            chunk_scratch_.data());
         const auto embedded =
-            subsampling_.encode_subsampled_chunk(chunk);
+            subsampling_.encode_subsampled_chunk(chunk_scratch_);
         const auto encoded =
             zipformer_.encode_chunk(embedded.values);
         const int64_t consumed = std::min(
@@ -398,12 +403,8 @@ runtime::StreamEvent KrokoASRSession::process_streaming_audio(
             features.frames - processed_feature_offset_);
         const int64_t valid_frames = std::min<int64_t>(
             encoded.frames, (consumed + 3) / 4);
-        std::vector<float> valid_values(
-            encoded.values.begin(),
-            encoded.values.begin() +
-                valid_frames * encoded.channels);
         decoder_.append(
-            valid_values, valid_frames, encoded.channels);
+            encoded.values, valid_frames, encoded.channels);
         processed_feature_offset_ += chunk_shift;
         ++streaming_encoder_chunks_;
         processed = true;
