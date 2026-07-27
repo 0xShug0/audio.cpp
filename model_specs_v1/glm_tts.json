@@ -70,33 +70,33 @@
         "default": 0
       },
       {
-        "name": "flow_steps",
+        "name": "num_inference_steps",
         "type": "int",
         "description": "Flow Euler steps; defaults to model config, usually official default 10.",
         "required": false,
         "min": 1
       },
       {
-        "name": "cfg_rate",
+        "name": "flow_guidance_scale",
         "type": "float",
         "description": "Flow classifier-free guidance rate; defaults to model config, usually official default 0.7.",
         "required": false,
         "min": 0.0
       },
       {
-        "name": "flow_noise_file",
+        "name": "flow_noise_path",
         "type": "path",
         "description": "Optional raw float32 initial Flow noise for parity tests.",
         "required": false
       },
       {
-        "name": "hift_source_random_file",
+        "name": "hift_source_random_path",
         "type": "path",
         "description": "Optional raw float32 HiFT phase-uniform and Gaussian values for parity tests.",
         "required": false
       },
       {
-        "name": "hift_prior_noise_values",
+        "name": "hift_prior_noise_count",
         "type": "int",
         "description": "Torch RNG value offset used before HiFT source generation; default 0.",
         "required": false,
