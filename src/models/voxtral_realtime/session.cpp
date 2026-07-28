@@ -330,9 +330,10 @@ runtime::TaskResult VoxtralRealtimeSession::finalize() {
     streaming_result_ = runtime::TaskResult{};
     streaming_result_.text_output = runtime::Transcript{tokenizer_.decode(streaming_token_ids_), ""};
     stream_started_ = false;
-    if (stream_event_sink_ != nullptr && streaming_result_.text_output.has_value()) {
+    if (stream_event_sink_ != nullptr) {
+        // Every token has already been delivered as a partial, so the final event only marks the
+        // end of the stream. The whole transcript remains available as result.text_output.
         runtime::StreamEvent event;
-        event.partial_text = streaming_result_.text_output;
         event.is_final = true;
         stream_event_sink_(event);
     }
@@ -487,7 +488,10 @@ void VoxtralRealtimeSession::record_stream_token(int32_t token, runtime::StreamE
         return;
     }
     streaming_token_ids_.push_back(token);
-    event.partial_text = runtime::Transcript{tokenizer_.decode(streaming_token_ids_), ""};
+    // Emit only the newly decoded text, as the other streaming ASR sessions already do. Restating
+    // the whole transcript on every token is quadratic in its length, and leaves a consumer of
+    // transcript.text.delta concatenating text it was already given.
+    event.partial_text = runtime::Transcript{tokenizer_.decode({token}), ""};
 }
 
 }  // namespace engine::models::voxtral_realtime

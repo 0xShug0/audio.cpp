@@ -342,9 +342,33 @@ ffmpeg -i input.mp3 -ar 16000 -ac 1 -f s16le - \
 
 Stdin input requires `--mode streaming`, and the PCM format must be described up front because a
 live stream carries no header — the defaults (`s16le`, 16 kHz, mono) match what the model expects.
-The chosen interpretation is echoed back as an `audio_input=stdin` line. Each update is written as
-its own `partial_text=` line and flushed as it is produced, so a reader sees the transcript grow
-rather than waiting for the stream to end.
+The chosen interpretation is echoed back as an `audio_input=stdin` line.
+
+Each update carries only the text decoded since the last one, matching the other streaming ASR
+models, so the updates concatenate into the transcript. On a terminal they are appended unlabelled
+and the transcript scrolls like ordinary output. When stdout is redirected, each update is written
+as its own `partial_text=` line and flushed as it is produced, so pipes and logs stay parseable.
+The complete transcript is also printed once at the end as `text_output=`.
+
+Emitting deltas rather than restating the transcript matters for long runs, where the restated form
+is quadratic in the transcript length: a one-hour session writes roughly 364 MB restated against
+about 54 KB as deltas.
+
+To capture the transcript itself rather than the update stream, use `--text-out`, which writes the
+complete transcript and nothing else:
+
+```bash
+ffmpeg -f avfoundation -i ":0" -ar 16000 -ac 1 -f s16le - \
+  | audiocpp_cli --task asr --family voxtral_realtime --model models/Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf --backend cuda --mode streaming --audio - --text-out transcript.txt
+```
+
+`--text-out` and the `text_output=` line are both written when the stream ends, so a session that is
+interrupted leaves neither. The `partial_text=` lines are flushed as they are produced, so a log of
+them survives an interrupted run and concatenates back into the transcript:
+
+```bash
+grep '^partial_text=' session.log | sed 's/^partial_text=//' | tr -d '\n' > transcript.txt
+```
 
 ### Live PCM over HTTP
 

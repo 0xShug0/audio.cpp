@@ -1581,6 +1581,13 @@ if (ENGINE_BUILD_TESTS)
     # block forever rather than fail. Bound it so CI reports a failure instead.
     set_tests_properties(http_live_body_test PROPERTIES TIMEOUT 120)
 
+    add_engine_unittest(partial_text_render_test tests/unittests/test_partial_text_render.cpp)
+
+    add_test(
+        NAME partial_text_render_test
+        COMMAND partial_text_render_test
+    )
+
     add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
 
     add_test(

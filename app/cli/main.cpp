@@ -1,5 +1,6 @@
 #include "args.h"
 #include "batch.h"
+#include "partial_render.h"
 #include "request.h"
 #include "../streaming/pcm_source.h"
 #include "../streaming/streaming.h"
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
@@ -32,7 +34,10 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <io.h>
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 #ifdef _OPENMP
@@ -461,6 +466,16 @@ bool stream_audio_from_stdin(int argc, char ** argv) {
     return audio.has_value() && minitts::cli::is_stdin_audio_source(*audio);
 }
 
+// Only a terminal can take partials as running text; a redirected stream has to keep the
+// line-per-update format so pipes and logs stay parseable.
+bool stdout_is_terminal() {
+#ifdef _WIN32
+    return _isatty(_fileno(stdout)) != 0;
+#else
+    return isatty(fileno(stdout)) != 0;
+#endif
+}
+
 // Feeds raw PCM from stdin into the session chunk by chunk, so nothing has to be buffered up
 // front and transcription tracks the input as it arrives.
 engine::runtime::TaskResult run_streaming_from_stdin(
@@ -496,12 +511,13 @@ void run_streaming(
     engine::runtime::IVoiceTaskSession & session,
     engine::runtime::TaskRequest & request) {
     const auto out_dir = minitts::cli::optional_path_arg(argc, argv, "--out-dir");
+    minitts::cli::PartialTextRenderer partial_renderer(stdout_is_terminal());
     const minitts::app::StreamEventSink sink =
         [&](const engine::runtime::StreamEvent & event) {
             if (event.partial_text.has_value()) {
                 // Flushed so a live source's partials appear as they are produced rather than
                 // when the stdio buffer happens to fill.
-                std::cout << "partial_text=" << event.partial_text->text << "\n" << std::flush;
+                std::cout << partial_renderer.render(event.partial_text->text) << std::flush;
             }
             engine::runtime::TaskResult event_result;
             event_result.audio_output = event.audio_output;
@@ -537,6 +553,8 @@ void run_streaming(
     const auto result = stream_audio_from_stdin(argc, argv)
         ? run_streaming_from_stdin(argc, argv, streaming, request, sink)
         : minitts::app::run_streaming_task(streaming, request, sink);
+    // Close the transcript line so the summary below starts on a fresh row.
+    std::cout << partial_renderer.finish();
     std::cout << "family=" << session.family() << "\n";
     std::cout << "task=" << engine::runtime::to_string(session.task_kind()) << "\n";
     std::cout << "mode=" << engine::runtime::to_string(session.run_mode()) << "\n";
