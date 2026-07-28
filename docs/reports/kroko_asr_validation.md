@@ -248,7 +248,7 @@ build\windows-cuda-release\bin\audiocpp_cli.exe `
   --backend cpu --threads 8 `
   --audio ..\outputs\kroko_endpoint_two_utterances.wav --language en `
   --request-option enable_endpoint=true `
-  --request-option rule2_min_trailing_silence=1.2 `
+  --request-option rule2_min_trailing_silence_sec=1.2 `
   --text-out ..\outputs\kroko_endpoint_native.txt `
   --segments-out ..\outputs\kroko_endpoint_native_segments.json
 ```

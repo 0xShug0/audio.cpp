@@ -79,12 +79,10 @@ Kroko-SV-Community-64-L-Native/
 `-- tokens.txt
 ```
 
-The package metadata follows the current split catalog:
-
-- `model_specs/kroko_asr.json` contains only the runtime GGUF/safetensors
-  resource layout used by loaders and embedded standalone GGUF metadata.
-- `model_specs_v1/kroko_asr.json` contains the family catalog metadata,
-  languages, capabilities, options, and converter-package description.
+Kroko is v1-native. `model_specs/kroko_asr.json` is the single source of truth
+for metadata, capabilities, normalized options, package installation, and the
+GGUF/safetensors resource layout. The generic spec-backed loader derives model
+inspection and CLI/help metadata from that contract.
 
 The converter supports both public chunk layouts (`141/128` feature frames for
 64-L and `269/256` for 128-L). It dequantizes `MatMulInteger` tensors, recovers
@@ -154,14 +152,12 @@ rules as sherpa-onnx:
 | `hotwords` | empty | Slash- or newline-separated natural-text phrases |
 | `hotwords_score` | `1.5` | Non-negative context boost per hotword token |
 | `enable_endpoint` | `false` | Enable automatic speech-segment boundaries |
-| `rule1_min_trailing_silence` | `2.4` | Endpoint timeout even without decoded speech |
-| `rule2_min_trailing_silence` | `1.2` | Endpoint silence after decoded speech |
-| `rule3_min_utterance_length` | `20` | Maximum utterance duration before an endpoint |
+| `rule1_min_trailing_silence_sec` | `2.4` | Endpoint timeout even without decoded speech |
+| `rule2_min_trailing_silence_sec` | `1.2` | Endpoint silence after decoded speech |
+| `rule3_min_utterance_length_sec` | `20` | Maximum utterance duration before an endpoint |
 
-Legacy `max_active_paths` and namespaced aliases such as
-`kroko_asr.decoding_method` are also accepted.
-Hotwords require modified beam search. Greedy remains the backward-compatible
-default.
+Request keys use the normalized v1 names directly. Hotwords require modified
+beam search. Greedy remains the default.
 
 ## Standalone GGUF
 

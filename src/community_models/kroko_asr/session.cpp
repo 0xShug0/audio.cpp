@@ -4,6 +4,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <cctype>
@@ -20,6 +21,7 @@ namespace engine::models::kroko_asr {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr std::string_view kFamily = "kroko_asr";
 
 std::shared_ptr<const KrokoASRAssets> require_assets(
     std::shared_ptr<const KrokoASRAssets> assets) {
@@ -28,6 +30,15 @@ std::shared_ptr<const KrokoASRAssets> require_assets(
             "Kroko ASR session requires assets");
     }
     return assets;
+}
+
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error(
+            "Kroko ASR session requires a model contract");
+    }
+    return contract;
 }
 
 std::string normalized_language(std::string value) {
@@ -220,10 +231,12 @@ float non_negative_finite_option(
 KrokoASRSession::KrokoASRSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const KrokoASRAssets> assets)
+    std::shared_ptr<const KrokoASRAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))),
       tokenizer_(
           assets_->tokens,
           static_cast<int32_t>(assets_->config.blank_id),
@@ -244,7 +257,9 @@ KrokoASRSession::KrokoASRSession(
     }
     for (const auto & [key, value] : options.options) {
         (void)value;
-        if (key.rfind("kroko_asr.", 0) == 0) {
+        if (key.rfind("kroko_asr.", 0) == 0 &&
+            contract_->session_option_keys.find(key) ==
+                contract_->session_option_keys.end()) {
             throw std::runtime_error(
                 "unknown Kroko ASR session option: " + key);
         }
@@ -254,7 +269,7 @@ KrokoASRSession::KrokoASRSession(
 KrokoASRSession::~KrokoASRSession() = default;
 
 std::string KrokoASRSession::family() const {
-    return "kroko_asr";
+    return std::string(kFamily);
 }
 
 runtime::VoiceTaskKind KrokoASRSession::task_kind() const {
@@ -278,16 +293,12 @@ void KrokoASRSession::configure_request(
     const runtime::TaskRequest & request) {
     KrokoDecoderOptions decoder_options;
     const std::string method = runtime::find_option(
-        request.options,
-        {"decoding_method", "kroko_asr.decoding_method"})
+        request.options, {"decoding_method"})
         .value_or("greedy_search");
-    if (method == "greedy_search" || method == "greedy") {
+    if (method == "greedy_search") {
         decoder_options.method =
             KrokoDecodingMethod::GreedySearch;
-    } else if (
-        method == "modified_beam_search" ||
-        method == "modified_beam" ||
-        method == "beam") {
+    } else if (method == "modified_beam_search") {
         decoder_options.method =
             KrokoDecodingMethod::ModifiedBeamSearch;
     } else {
@@ -296,11 +307,7 @@ void KrokoASRSession::configure_request(
     }
     const int64_t max_active_paths =
         runtime::parse_i64_option(
-            request.options,
-            {"num_beams",
-             "max_active_paths",
-             "kroko_asr.num_beams",
-             "kroko_asr.max_active_paths"})
+            request.options, {"num_beams"})
             .value_or(4);
     if (max_active_paths < 1 ||
         max_active_paths > 64) {
@@ -311,17 +318,12 @@ void KrokoASRSession::configure_request(
         static_cast<int32_t>(max_active_paths);
     decoder_options.blank_penalty =
         non_negative_finite_option(
-            request.options,
-            {"blank_penalty", "kroko_asr.blank_penalty"},
-            0.0F);
+            request.options, {"blank_penalty"}, 0.0F);
     decoder_options.hotwords_score =
         non_negative_finite_option(
-            request.options,
-            {"hotwords_score", "kroko_asr.hotwords_score"},
-            1.5F);
+            request.options, {"hotwords_score"}, 1.5F);
     if (const auto hotwords = runtime::find_option(
-            request.options,
-            {"hotwords", "kroko_asr.hotwords"})) {
+            request.options, {"hotwords"})) {
         for (const auto & phrase :
              split_hotwords(*hotwords)) {
             decoder_options.hotwords.push_back(
@@ -348,28 +350,24 @@ void KrokoASRSession::configure_request(
 
     endpoint_enabled_ = false;
     if (const auto enabled = runtime::find_option_match(
-            request.options,
-            {"enable_endpoint", "kroko_asr.enable_endpoint"})) {
+            request.options, {"enable_endpoint"})) {
         endpoint_enabled_ = runtime::parse_bool_option(
             enabled->value, enabled->key);
     }
     endpoint_rule1_silence_ =
         non_negative_finite_option(
             request.options,
-            {"rule1_min_trailing_silence",
-             "kroko_asr.rule1_min_trailing_silence"},
+            {"rule1_min_trailing_silence_sec"},
             2.4F);
     endpoint_rule2_silence_ =
         non_negative_finite_option(
             request.options,
-            {"rule2_min_trailing_silence",
-             "kroko_asr.rule2_min_trailing_silence"},
+            {"rule2_min_trailing_silence_sec"},
             1.2F);
     endpoint_rule3_utterance_ =
         non_negative_finite_option(
             request.options,
-            {"rule3_min_utterance_length",
-             "kroko_asr.rule3_min_utterance_length"},
+            {"rule3_min_utterance_length_sec"},
             20.0F);
     engine::debug::trace_log_scalar(
         "kroko_asr.endpoint_enabled",
@@ -967,6 +965,24 @@ runtime::TaskResult KrokoASRSession::finalize() {
 
 runtime::TaskResult KrokoASRSession::finish_stream() {
     return finalize();
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_kroko_asr_loader() {
+    runtime::SpecBackedVoiceModelConfig<KrokoASRAssets> config;
+    config.family = std::string(kFamily);
+    config.load_assets = load_kroko_asr_assets;
+    config.create_session = [](
+                                const runtime::TaskSpec & task,
+                                const runtime::SessionOptions & options,
+                                std::shared_ptr<const KrokoASRAssets> assets,
+                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<KrokoASRSession>(
+            task,
+            options,
+            std::move(assets),
+            std::move(contract));
+    };
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::kroko_asr

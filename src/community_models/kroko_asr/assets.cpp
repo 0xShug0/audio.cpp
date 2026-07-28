@@ -118,9 +118,8 @@ std::vector<std::string> load_tokens(const std::filesystem::path & path, int64_t
 
 std::shared_ptr<const KrokoASRAssets> load_kroko_asr_assets(
     const std::filesystem::path & model_path) {
-    auto resources = engine::model_spec::load_resource_bundle(
-        model_path,
-        engine::model_spec::default_spec_path("kroko_asr"));
+    auto resources = engine::model_spec::load_resource_bundle_for_family(
+        model_path, "kroko_asr");
     auto result = std::make_shared<KrokoASRAssets>();
     result->config = parse_config(resources);
     validate_config(result->config);

@@ -5,6 +5,7 @@
 #include "engine/community_models/kroko_asr/encoder.h"
 #include "engine/community_models/kroko_asr/tokenizer.h"
 #include "engine/community_models/kroko_asr/zipformer.h"
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
 
 #include <chrono>
@@ -16,6 +17,8 @@
 
 namespace engine::models::kroko_asr {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_kroko_asr_loader();
+
 class KrokoASRSession final
     : public runtime::RuntimeSessionBase,
       public runtime::IOfflineVoiceTaskSession,
@@ -24,7 +27,8 @@ public:
     KrokoASRSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const KrokoASRAssets> assets);
+        std::shared_ptr<const KrokoASRAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~KrokoASRSession() override;
 
     std::string family() const override;
@@ -65,6 +69,7 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const KrokoASRAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     KrokoTokenizer tokenizer_;
     KrokoTransducerDecoder decoder_;
     KrokoEncoderRuntime subsampling_;

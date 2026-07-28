@@ -426,12 +426,11 @@ audiocpp_add_model(kroko_asr
         src/community_models/kroko_asr/decoder.cpp
         src/community_models/kroko_asr/encoder.cpp
         src/community_models/kroko_asr/frontend.cpp
-        src/community_models/kroko_asr/loader.cpp
         src/community_models/kroko_asr/session.cpp
         src/community_models/kroko_asr/tokenizer.cpp
         src/community_models/kroko_asr/zipformer.cpp
     INCLUDES
-        engine/community_models/kroko_asr/loader.h
+        engine/community_models/kroko_asr/session.h
     LOADERS
         engine::models::kroko_asr::make_kroko_asr_loader
 )
