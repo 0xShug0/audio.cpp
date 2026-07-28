@@ -286,8 +286,8 @@ continue through the previous pooling graph. The regression probe
 `campplus_shared_default_probe` was compiled once against unmodified main and
 once against this branch; both emitted the same 192 serialized values.
 
-The request options `flow_noise_file`, `hift_source_random_file`, and
-`hift_prior_noise_values` expose stochastic boundaries for targeted parity
+The request options `flow_noise_path`, `hift_source_random_path`, and
+`hift_prior_noise_count` expose stochastic boundaries for targeted parity
 tests without adding normal-request log spam.
 
 ## Normal sampled-path parity

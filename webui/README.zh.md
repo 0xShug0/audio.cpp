@@ -214,7 +214,7 @@ singing 路线默认开，style_converted_vc / editing 默认关。
 - **音频分析（VAD/分离/对齐）**：WAV 输入自动转 16 kHz 单声道后送模型，结果时间轴按 16 kHz 换算。
   Qwen3 强制对齐单次音频上限约 115 秒。
 - **音源分离**：HTDemucs 输出 drums/bass/other/vocals 四轨（长音频耗时较长）；
-  Mel-Band RoFormer 输出人声轨 + 伴奏轨（mixture − vocals）。
+  BS-RoFormer 和 Mel-Band RoFormer 输出人声轨 + 伴奏轨（mixture − vocals）。
 - **IndexTTS2**（0.3 新增）：中/英声音克隆，**必须**提供参考音色。情感控制在高级参数：
   `emotion_text` 填情感描述（填了会自动开启 `use_emotion_text`）+ `emotion_alpha` 调强度；
   或勾 `use_emotion_text` 从朗读文本自动推断；`emotion_vector`（8 个浮点）走 JSON 兜底框。

@@ -272,11 +272,12 @@
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
-      "target_directory": "Llama-OuteTTS-1.0-1B-GGUF",
+      "target_directory": "Llama-OuteTTS-1.0-1B_Q8",
       "files": [
         "Text to audio (TTS)/Llama-OuteTTS-1.0-1B_Q8.gguf"
       ],
       "strip_prefix": "Text to audio (TTS)",
+      "description": "Standalone Q8_0 GGUF with the IBM DAC codec and Qwen3 Forced Aligner weights, tokenizers, configs, and sidecars embedded for one-file TTS and voice cloning.",
       "download": {
         "kind": "huggingface_snapshot",
         "repo": "mirek190/audio.cpp"

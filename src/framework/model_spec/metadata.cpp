@@ -4,9 +4,11 @@
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -89,7 +91,83 @@ std::vector<runtime::TaskCapability> parse_tasks(const json::Value & tasks_value
 }
 
 json::Value load_spec_for_family(std::string_view family) {
-    return engine::model_spec::load_spec(engine::model_spec::default_spec_path(family));
+    return engine::model_spec::load_spec(engine::model_spec::default_contract_spec_path(family));
+}
+
+std::string ref_candidate_path(const std::string & ref) {
+    const auto split = ref.find(':');
+    if (split == std::string::npos) {
+        return ref;
+    }
+    return ref.substr(split + 1);
+}
+
+std::string resource_candidate_path(const json::Value & ref) {
+    if (ref.is_string()) {
+        return ref_candidate_path(ref.as_string());
+    }
+    if (const auto * source = ref.find("source")) {
+        return ref_candidate_path(source->as_string());
+    }
+    return {};
+}
+
+void push_unique_candidate(std::vector<std::string> & out, const std::string & candidate) {
+    if (candidate.empty()) {
+        return;
+    }
+    if (std::find(out.begin(), out.end(), candidate) == out.end()) {
+        out.push_back(candidate);
+    }
+}
+
+void append_resource_candidates(
+    std::vector<std::string> & out,
+    const json::Value * map_value) {
+    if (map_value == nullptr || map_value->is_null()) {
+        return;
+    }
+    std::vector<std::string> candidates;
+    candidates.reserve(map_value->as_object().size());
+    for (const auto & [_, ref] : map_value->as_object()) {
+        candidates.push_back(resource_candidate_path(ref));
+    }
+    std::sort(candidates.begin(), candidates.end());
+    for (const auto & candidate : candidates) {
+        push_unique_candidate(out, candidate);
+    }
+}
+
+void append_source_candidates(
+    std::vector<std::string> & config_candidates,
+    std::vector<std::string> & weight_candidates,
+    const json::Value & source) {
+    append_resource_candidates(config_candidates, source.find("files"));
+    append_resource_candidates(config_candidates, source.find("optional_files"));
+    append_resource_candidates(weight_candidates, source.find("tensors"));
+}
+
+void append_package_candidates(std::vector<std::string> & weight_candidates, const json::Value * packages) {
+    if (packages == nullptr || packages->is_null()) {
+        return;
+    }
+    for (const auto & package : packages->as_array()) {
+        for (const auto & file : package.require("files").as_array()) {
+            push_unique_candidate(weight_candidates, file.as_string());
+        }
+    }
+}
+
+bool has_capability(const json::Value & capabilities, std::string_view capability) {
+    const std::string capability_string(capability);
+    for (const auto & [_, task_capabilities] : capabilities.as_object()) {
+        for (const auto & item : task_capabilities.as_array()) {
+            if (item.as_string() == capability_string) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 std::string join_values(const std::vector<std::string> & values) {
@@ -165,35 +243,101 @@ std::vector<ModelDependencyCondition> parse_dependency_conditions(const json::Va
     return out;
 }
 
+runtime::CapabilitySet capabilities_from_spec(const json::Value & spec) {
+    runtime::CapabilitySet out;
+    const auto * capabilities = spec.find("capabilities");
+    if (capabilities == nullptr || capabilities->is_null()) {
+        throw std::runtime_error("model spec has no capabilities contract");
+    }
+    out.supported_tasks = parse_tasks(spec.require("tasks"), spec.require("modes"));
+    out.languages = json::optional_string_array(spec, "languages");
+    out.supports_speaker_reference = has_capability(*capabilities, "speaker_reference");
+    out.supports_style_condition =
+        has_capability(*capabilities, "style_control") || has_capability(*capabilities, "emotion_control");
+    out.supports_timestamps =
+        has_capability(*capabilities, "word_timestamps") || has_capability(*capabilities, "segments");
+    return out;
+}
+
+runtime::ModelMetadata metadata_from_spec(const json::Value & spec) {
+    runtime::ModelMetadata out;
+    out.family = json::require_string(spec, "family");
+    out.variant = json::require_string(spec, "display_name");
+    out.description = json::require_string(spec, "description");
+    append_package_candidates(out.weight_candidates, spec.find("packages"));
+    if (const auto * sources = spec.find("sources")) {
+        for (const auto & source : sources->as_array()) {
+            append_source_candidates(out.config_candidates, out.weight_candidates, source);
+        }
+    }
+    return out;
+}
+
+runtime::ModelCliInterface cli_from_spec(const json::Value & spec) {
+    const auto * options = spec.find("options");
+    if (options == nullptr || options->is_null()) {
+        throw std::runtime_error("model spec has no options contract");
+    }
+    runtime::ModelCliInterface out;
+    const auto family = json::require_string(spec, "family");
+    out.request_options = parse_cli_options(options->find("request"));
+    out.session_options = parse_cli_options(options->find("session"), family);
+    out.load_options = parse_cli_options(options->find("load"), family);
+    return out;
+}
+
+std::unordered_set<std::string> option_keys(const std::vector<runtime::CliOptionInfo> & options) {
+    std::unordered_set<std::string> keys;
+    keys.reserve(options.size());
+    for (const auto & option : options) {
+        keys.insert(option.name);
+    }
+    return keys;
+}
+
+ModelContract contract_from_spec(const json::Value & spec) {
+    ModelContract out;
+    out.metadata = metadata_from_spec(spec);
+    out.capabilities = capabilities_from_spec(spec);
+    out.cli = cli_from_spec(spec);
+    out.request_option_keys = option_keys(out.cli.request_options);
+    out.session_option_keys = option_keys(out.cli.session_options);
+    out.load_option_keys = option_keys(out.cli.load_options);
+    return out;
+}
+
 }  // namespace
+
+std::optional<ModelContract> model_contract(std::string_view family) {
+    const auto spec = load_spec_for_family(family);
+    if (spec.find("schema_version") == nullptr) {
+        return std::nullopt;
+    }
+    return contract_from_spec(spec);
+}
 
 std::optional<runtime::CapabilitySet> advertised_capabilities(std::string_view family) {
     const auto spec = load_spec_for_family(family);
-    const auto * capabilities = spec.find("capabilities");
-    if (capabilities == nullptr || capabilities->is_null()) {
+    if (spec.find("schema_version") == nullptr || spec.find("capabilities") == nullptr) {
         return std::nullopt;
     }
-    runtime::CapabilitySet out;
-    out.supported_tasks = parse_tasks(spec.require("tasks"), spec.require("modes"));
-    out.languages = json::optional_string_array(*capabilities, "languages");
-    out.supports_speaker_reference = json::optional_bool(*capabilities, "speaker_reference", false);
-    out.supports_style_condition = json::optional_bool(*capabilities, "style_condition", false);
-    out.supports_timestamps = json::optional_bool(*capabilities, "timestamps", false);
-    return out;
+    return capabilities_from_spec(spec);
+}
+
+std::optional<runtime::ModelMetadata> model_metadata(std::string_view family) {
+    const auto spec = load_spec_for_family(family);
+    if (spec.find("schema_version") == nullptr) {
+        return std::nullopt;
+    }
+    return metadata_from_spec(spec);
 }
 
 std::optional<runtime::ModelCliInterface> cli_interface(std::string_view family) {
     const auto spec = load_spec_for_family(family);
-    const auto * options = spec.find("options");
-    if (options == nullptr || options->is_null()) {
+    if (spec.find("schema_version") == nullptr || spec.find("options") == nullptr) {
         return std::nullopt;
     }
-    runtime::ModelCliInterface out;
-    const auto family_string = std::string(family);
-    out.request_options = parse_cli_options(options->find("request"));
-    out.session_options = parse_cli_options(options->find("session"), family_string);
-    out.load_options = parse_cli_options(options->find("load"), family_string);
-    return out;
+    return cli_from_spec(spec);
 }
 
 std::vector<ModelDependency> dependencies(std::string_view family) {

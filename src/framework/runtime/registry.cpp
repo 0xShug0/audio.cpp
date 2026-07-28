@@ -7,7 +7,9 @@
 #include "engine/models/ace_step/loader.h"
 #include "engine/models/chatterbox/loader.h"
 #include "engine/models/citrinet_asr/session.h"
+#include "engine/models/confucius4_tts/session.h"
 #include "engine/models/demucs/loader.h"
+#include "engine/models/dramabox/loader.h"
 #include "engine/models/fish_audio/loader.h"
 #include "engine/models/heartmula/loader.h"
 #include "engine/models/higgs_audio_stt/loader.h"
@@ -31,6 +33,7 @@
 #include "engine/models/qwen3_tts/loader.h"
 #include "engine/community_models/vietneu_tts/loader.h"
 #include "engine/models/roformer/loader.h"
+#include "engine/models/rvc/loader.h"
 #include "engine/models/silero_vad/session.h"
 #include "engine/models/seed_vc/loader.h"
 #include "engine/models/sortformer_diar/loader.h"
@@ -245,6 +248,7 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         engine::models::ace_step::make_ace_step_loader(),
         engine::models::demucs::make_htdemucs_loader(),
         engine::models::roformer::make_mel_band_roformer_loader(),
+        engine::models::roformer::make_bs_roformer_loader(),
         engine::models::omnivoice::make_omnivoice_loader(),
         engine::models::glm_tts::make_glm_tts_loader(),
         engine::models::outetts::make_outetts_loader(),
@@ -258,6 +262,8 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         engine::models::vibevoice_asr::make_vibevoice_asr_loader(),
         engine::models::voxtral_realtime::make_voxtral_realtime_loader(),
         engine::models::fish_audio::make_fish_audio_loader(),
+        engine::models::confucius4_tts::make_confucius4_tts_loader(),
+        engine::models::dramabox::make_dramabox_loader(),
         engine::models::heartmula::make_heartmula_loader(),
         engine::models::higgs_audio_stt::make_higgs_audio_stt_loader(),
         engine::models::higgs_audio_tts::make_higgs_audio_tts_loader(),
@@ -278,6 +284,7 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         engine::models::marblenet_vad::make_marblenet_vad_loader(),
         engine::models::vevo2::make_vevo2_loader(),
         engine::models::seed_vc::make_seed_vc_loader(),
+        engine::models::rvc::make_rvc_loader(),
         engine::models::chatterbox::make_chatterbox_loader(),
     };
     if (!config_path.has_value()) {

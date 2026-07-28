@@ -11,9 +11,11 @@ namespace {
 
 runtime::ModelMetadata metadata(const RoformerAssets & assets) {
     runtime::ModelMetadata out;
-    out.family = std::string(kMelBandRoformerFamily);
+    out.family = assets.config.family;
     out.variant = assets.resources.model_root().filename().string();
-    out.description = "Mel-band RoFormer music source separation model.";
+    out.description = assets.config.family == kBsRoformerFamily
+        ? "Band-Split RoFormer music source separation model."
+        : "Mel-band RoFormer music source separation model.";
     return out;
 }
 
@@ -25,21 +27,33 @@ runtime::CapabilitySet capabilities(const RoformerAssets &) {
     return out;
 }
 
-runtime::ModelCliInterface cli(const RoformerAssets &) {
+runtime::ModelCliInterface cli(const RoformerAssets & assets) {
     runtime::ModelCliInterface out;
     out.session_options = {
         {
-            std::string(kMelBandRoformerFamily) + ".weight_type",
+            assets.config.family + ".weight_type",
             "native|f32|f16|bf16|q8_0",
             "RoFormer weight storage type.",
         },
     };
+    if (assets.config.family == kBsRoformerFamily) {
+        out.session_options.push_back({
+            assets.config.family + ".num_overlap",
+            "n",
+            "Number of overlapping inference windows; defaults to the package "
+            "configuration. Lower values improve throughput but can reduce "
+            "boundary quality.",
+        });
+    }
     return out;
 }
 
-runtime::ModelInspection inspect_model(const runtime::ModelLoadRequest & request) {
-    const auto assets = load_mel_band_roformer_assets(request);
-    const auto package_spec = engine::model_spec::default_spec_path(std::string(kMelBandRoformerFamily));
+runtime::ModelInspection inspect_model(
+    const runtime::ModelLoadRequest & request,
+    std::string_view family) {
+    const auto assets = load_roformer_assets(request, family);
+    const auto package_spec =
+        engine::model_spec::default_spec_path(std::string(family));
     runtime::ModelInspection inspection;
     inspection.model_root = assets->resources.model_root();
     inspection.metadata = metadata(*assets);
@@ -58,8 +72,11 @@ runtime::ModelInspection inspect_model(const runtime::ModelLoadRequest & request
 
 class RoformerLoader final : public runtime::IVoiceModelLoader {
 public:
+    explicit RoformerLoader(std::string family)
+        : family_(std::move(family)) {}
+
     std::string family() const override {
-        return std::string(kMelBandRoformerFamily);
+        return family_;
     }
 
     runtime::CapabilitySet advertised_capabilities() const override {
@@ -75,7 +92,7 @@ public:
             return false;
         }
         try {
-            (void) load_mel_band_roformer_assets(request);
+            (void) load_roformer_assets(request, family_);
             return true;
         } catch (...) {
             if (request.family_hint.has_value() && *request.family_hint == family()) {
@@ -86,12 +103,15 @@ public:
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        return inspect_model(request);
+        return inspect_model(request, family_);
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_roformer_model(request);
+        return load_roformer_model(request, family_);
     }
+
+private:
+    std::string family_;
 };
 
 }  // namespace
@@ -123,8 +143,9 @@ std::unique_ptr<runtime::IVoiceTaskSession> RoformerLoadedModel::create_task_ses
 }
 
 std::unique_ptr<runtime::ILoadedVoiceModel> load_roformer_model(
-    const runtime::ModelLoadRequest & request) {
-    auto assets = load_mel_band_roformer_assets(request);
+    const runtime::ModelLoadRequest & request,
+    std::string_view family) {
+    auto assets = load_roformer_assets(request, family);
     return std::make_unique<RoformerLoadedModel>(
         metadata(*assets),
         capabilities(*assets),
@@ -132,7 +153,13 @@ std::unique_ptr<runtime::ILoadedVoiceModel> load_roformer_model(
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_mel_band_roformer_loader() {
-    return std::make_shared<RoformerLoader>();
+    return std::make_shared<RoformerLoader>(
+        std::string(kMelBandRoformerFamily));
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_bs_roformer_loader() {
+    return std::make_shared<RoformerLoader>(
+        std::string(kBsRoformerFamily));
 }
 
 }  // namespace engine::models::roformer

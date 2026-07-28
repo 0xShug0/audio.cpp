@@ -89,11 +89,15 @@ audiocpp_cli --task clon --family glm_tts \
 | `--top-k` | integer | `25` | Speech-token top-k limit. |
 | `--top-p` | float | `0.8` | Speech-token nucleus threshold. |
 | `--seed` | integer | `0` | Seed used by token sampling, Flow noise, and HiFT. |
-| `--request-option flow_steps=<n>` | integer | `10` | Flow Euler integration steps. |
-| `--request-option cfg_rate=<float>` | float | `0.7` | Flow classifier-free guidance rate. |
-| `--request-option flow_noise_file=<path>` | raw F32 path | none | Optional exact initial Flow noise for parity tests. |
-| `--request-option hift_source_random_file=<path>` | raw F32 path | none | Optional exact HiFT phase-uniform and Gaussian values for parity tests. |
-| `--request-option hift_prior_noise_values=<n>` | integer | `0` | Torch RNG offset before normal HiFT source generation. |
+| `--request-option num_inference_steps=<n>` | integer | `10` | Flow Euler integration steps. |
+| `--request-option flow_guidance_scale=<float>` | float | `0.7` | Flow classifier-free guidance rate. |
+| `--request-option flow_noise_path=<path>` | raw F32 path | none | Optional exact initial Flow noise for parity tests. |
+| `--request-option hift_source_random_path=<path>` | raw F32 path | none | Optional exact HiFT phase-uniform and Gaussian values for parity tests. |
+| `--request-option hift_prior_noise_count=<n>` | integer | `0` | Torch RNG offset before normal HiFT source generation. |
+
+The legacy GLM-TTS request keys `flow_steps`, `cfg_rate`, `flow_noise_file`,
+`hift_source_random_file`, and `hift_prior_noise_values` remain accepted for
+backward compatibility.
 | `--session-option glm_tts.weight_type=native|f32|f16|bf16|q8_0` | enum | `native` | Requested component weight storage type. |
 | `--session-option glm_tts.mem_saver=true|false` | bool | `false` | Release the reference-only Whisper-VQ and CAMPPlus runtimes after caching the voice, while keeping Llama, Flow, and HiFT warm. |
 | `--session-option glm_tts.aggressive_mem_saver=true|false` | bool | `false` | Also release Llama, Flow, and HiFT after each stage. This minimizes VRAM but reloads the generation path on every request. |

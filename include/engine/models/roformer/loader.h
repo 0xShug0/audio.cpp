@@ -27,7 +27,9 @@ private:
 };
 
 std::unique_ptr<runtime::ILoadedVoiceModel> load_roformer_model(
-    const runtime::ModelLoadRequest & request);
+    const runtime::ModelLoadRequest & request,
+    std::string_view family);
 std::shared_ptr<runtime::IVoiceModelLoader> make_mel_band_roformer_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_bs_roformer_loader();
 
 }  // namespace engine::models::roformer

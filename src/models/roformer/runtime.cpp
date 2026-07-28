@@ -7,6 +7,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
@@ -48,6 +49,7 @@ struct FeedForwardWeights {
 
 struct AttentionWeights {
     core::TensorValue norm;
+    LinearWeights qkv;
     LinearWeights q;
     LinearWeights k;
     LinearWeights v;
@@ -76,9 +78,7 @@ struct BandSplitWeights {
 };
 
 struct MaskBandWeights {
-    LinearWeights fc0;
-    LinearWeights fc1;
-    LinearWeights fc2;
+    std::vector<LinearWeights> layers;
 };
 
 struct MelBandWeights {
@@ -86,6 +86,7 @@ struct MelBandWeights {
     std::vector<BandSplitWeights> band_split;
     std::vector<AxialTransformerWeights> layers;
     std::vector<MaskBandWeights> mask_bands;
+    core::TensorValue final_norm;
 };
 
 MelBandWeights load_mel_band_weights(
@@ -96,7 +97,8 @@ MelBandWeights load_mel_band_weights(
     validate_roformer_weight_storage_type(storage_type);
     const auto & config = assets.config;
     if (config.num_stems != 1) {
-        throw std::runtime_error("mel_band_roformer native runtime currently supports only single-stem checkpoints");
+        throw std::runtime_error(
+            config.family + " native runtime currently supports only single-stem checkpoints");
     }
     const auto & source = *assets.tensor_source;
 
@@ -104,7 +106,7 @@ MelBandWeights load_mel_band_weights(
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "mel_band_roformer.weights",
+        config.family + ".weights",
         768ull * 1024ull * 1024ull);
 
     weights.band_split.reserve(static_cast<size_t>(config.band_input_dims.size()));
@@ -139,9 +141,20 @@ MelBandWeights load_mel_band_weights(
 
                 TransformerLayerWeights block;
                 block.attention.norm = weights.store->load_f32_tensor(source, attn_prefix + ".norm.gamma", {config.dim});
-                block.attention.q = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_q", storage_type, config.heads * config.dim_head, config.dim, false);
-                block.attention.k = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_k", storage_type, config.heads * config.dim_head, config.dim, false);
-                block.attention.v = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_v", storage_type, config.heads * config.dim_head, config.dim, false);
+                if (config.fused_qkv) {
+                    block.attention.qkv = binding::linear_from_source(
+                        *weights.store,
+                        source,
+                        attn_prefix + ".to_qkv",
+                        storage_type,
+                        3 * config.heads * config.dim_head,
+                        config.dim,
+                        false);
+                } else {
+                    block.attention.q = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_q", storage_type, config.heads * config.dim_head, config.dim, false);
+                    block.attention.k = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_k", storage_type, config.heads * config.dim_head, config.dim, false);
+                    block.attention.v = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_v", storage_type, config.heads * config.dim_head, config.dim, false);
+                }
                 block.attention.gates = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_gates", storage_type, config.heads, config.dim, true);
                 block.attention.out = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_out.0", storage_type, config.dim, config.heads * config.dim_head, false);
 
@@ -164,10 +177,12 @@ MelBandWeights load_mel_band_weights(
                     true);
                 branch_weights.layers.push_back(std::move(block));
             }
-            branch_weights.norm = weights.store->load_f32_tensor(
-                source,
-                "layers." + std::to_string(layer) + "." + std::to_string(branch) + ".norm.gamma",
-                {config.dim});
+            if (config.transformer_output_norm) {
+                branch_weights.norm = weights.store->load_f32_tensor(
+                    source,
+                    "layers." + std::to_string(layer) + "." + std::to_string(branch) + ".norm.gamma",
+                    {config.dim});
+            }
         }
         weights.layers.push_back(std::move(axial));
     }
@@ -177,12 +192,28 @@ MelBandWeights load_mel_band_weights(
     for (size_t band = 0; band < config.band_input_dims.size(); ++band) {
         const std::string prefix = "mask_estimators.0.to_freqs." + std::to_string(band) + ".0";
         MaskBandWeights band_weights;
-        band_weights.fc0 = binding::linear_from_source(*weights.store, source, prefix + ".0", storage_type, hidden_dim, config.dim, true);
-        band_weights.fc1 = binding::linear_from_source(*weights.store, source, prefix + ".2", storage_type, hidden_dim, hidden_dim, true);
-        band_weights.fc2 = binding::linear_from_source(*weights.store, source, prefix + ".4", storage_type, config.band_input_dims[band] * 2, hidden_dim, true);
+        band_weights.layers.reserve(static_cast<size_t>(config.mask_estimator_linear_layers));
+        for (int layer = 0; layer < config.mask_estimator_linear_layers; ++layer) {
+            const int64_t in_dim = layer == 0 ? config.dim : hidden_dim;
+            const int64_t out_dim = layer + 1 == config.mask_estimator_linear_layers
+                ? config.band_input_dims[band] * 2
+                : hidden_dim;
+            band_weights.layers.push_back(binding::linear_from_source(
+                *weights.store,
+                source,
+                prefix + "." + std::to_string(2 * layer),
+                storage_type,
+                out_dim,
+                in_dim,
+                true));
+        }
         weights.mask_bands.push_back(std::move(band_weights));
     }
 
+    if (config.has_final_norm) {
+        weights.final_norm =
+            weights.store->load_f32_tensor(source, "final_norm.gamma", {config.dim});
+    }
     weights.store->upload();
     return weights;
 }
@@ -244,6 +275,15 @@ core::TensorValue attention_from_heads(
     const core::TensorValue & k_heads,
     const core::TensorValue & v_heads,
     int64_t dim) {
+    if (ctx.backend_type == core::BackendType::Cuda) {
+        return modules::ScaledDotProductAttentionModule({
+            dim,
+            modules::ScaledDotProductAttentionLowering::FlashPreserveViews,
+            GGML_PREC_F32,
+            modules::AttentionCausality::NonCausal,
+        }).build(ctx, q_heads, k_heads, v_heads);
+    }
+
     auto scores = matmul_f32(
         ctx,
         q_heads,
@@ -254,7 +294,8 @@ core::TensorValue attention_from_heads(
         GGML_TYPE_F32);
     scores = ensure_contiguous(ctx, scores);
     auto attn = modules::SoftmaxModule{}.build(ctx, scores);
-    return matmul_f32(ctx, attn, v_heads);
+    auto context = matmul_f32(ctx, attn, v_heads);
+    return modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
 }
 
 core::TensorValue build_attention(
@@ -270,9 +311,26 @@ core::TensorValue build_attention(
     const modules::LinearModule out_proj(binding::linear_config(config.heads * config.dim_head, config.dim, false));
 
     auto x = build_reference_rms_norm(ctx, input, config.dim, weights.norm);
-    auto q = q_proj.build(ctx, x, binding::linear_data(ctx, weights.q.weight, weights.q.bias));
-    auto k = k_proj.build(ctx, x, binding::linear_data(ctx, weights.k.weight, weights.k.bias));
-    auto v = v_proj.build(ctx, x, binding::linear_data(ctx, weights.v.weight, weights.v.bias));
+    core::TensorValue q;
+    core::TensorValue k;
+    core::TensorValue v;
+    if (config.fused_qkv) {
+        const int64_t inner = config.heads * config.dim_head;
+        const modules::LinearModule qkv_proj(
+            binding::linear_config(config.dim, 3 * inner, false));
+        auto qkv = qkv_proj.build(
+            ctx,
+            x,
+            binding::linear_data(
+                ctx, weights.qkv.weight, weights.qkv.bias));
+        q = modules::SliceModule({2, 0, inner}).build(ctx, qkv);
+        k = modules::SliceModule({2, inner, inner}).build(ctx, qkv);
+        v = modules::SliceModule({2, 2 * inner, inner}).build(ctx, qkv);
+    } else {
+        q = q_proj.build(ctx, x, binding::linear_data(ctx, weights.q.weight, weights.q.bias));
+        k = k_proj.build(ctx, x, binding::linear_data(ctx, weights.k.weight, weights.k.bias));
+        v = v_proj.build(ctx, x, binding::linear_data(ctx, weights.v.weight, weights.v.bias));
+    }
     auto gates = gate_proj.build(ctx, x, binding::linear_data(ctx, weights.gates.weight, weights.gates.bias));
 
     q = reshape_heads(ctx, q, config.heads, config.dim_head);
@@ -285,7 +343,6 @@ core::TensorValue build_attention(
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     auto attn = attention_from_heads(ctx, q_heads, k_heads, v_heads, config.dim_head);
-    attn = modules::TransposeModule({{0, 2, 1, 3}, attn.shape.rank}).build(ctx, attn);
     attn = ensure_contiguous(ctx, attn);
 
     auto gates_sigmoid = modules::SigmoidModule{}.build(ctx, gates);
@@ -293,9 +350,10 @@ core::TensorValue build_attention(
         ctx,
         ensure_contiguous(ctx, gates_sigmoid),
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads, 1}));
-    gates_sigmoid = ensure_contiguous(ctx, gates_sigmoid);
-    gates_sigmoid = modules::RepeatModule({attn.shape}).build(ctx, gates_sigmoid);
-    attn = modules::MulModule{}.build(ctx, attn, gates_sigmoid);
+    attn = core::wrap_tensor(
+        ggml_mul(ctx.ggml, attn.tensor, gates_sigmoid.tensor),
+        attn.shape,
+        GGML_TYPE_F32);
     attn = core::reshape_tensor(
         ctx,
         ensure_contiguous(ctx, attn),
@@ -330,7 +388,10 @@ core::TensorValue build_transformer_branch(
         x = modules::AddModule{}.build(ctx, x, build_attention(ctx, x, positions, layer.attention, config));
         x = modules::AddModule{}.build(ctx, x, build_feed_forward(ctx, x, layer.feed_forward, config));
     }
-    return build_reference_rms_norm(ctx, x, config.dim, weights.norm);
+    if (config.transformer_output_norm) {
+        return build_reference_rms_norm(ctx, x, config.dim, weights.norm);
+    }
+    return x;
 }
 
 core::TensorValue build_band_split(
@@ -384,20 +445,27 @@ core::TensorValue build_mask_output(
             ensure_contiguous(ctx, band_input),
             core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.dim}));
         const auto & band_weights = weights.mask_bands[band];
-        auto hidden = modules::LinearModule(binding::linear_config(config.dim, config.dim * config.mlp_expansion_factor, true))
-                          .build(ctx, band_input, binding::linear_data(ctx, band_weights.fc0.weight, band_weights.fc0.bias));
-        hidden = modules::TanhModule{}.build(ctx, hidden);
-        hidden = modules::LinearModule(binding::linear_config(
-                                           config.dim * config.mlp_expansion_factor,
-                                           config.dim * config.mlp_expansion_factor,
-                                           true))
-                     .build(ctx, hidden, binding::linear_data(ctx, band_weights.fc1.weight, band_weights.fc1.bias));
-        hidden = modules::TanhModule{}.build(ctx, hidden);
-        hidden = modules::LinearModule(binding::linear_config(
-                                           config.dim * config.mlp_expansion_factor,
-                                           config.band_input_dims[band] * 2,
-                                           true))
-                     .build(ctx, hidden, binding::linear_data(ctx, band_weights.fc2.weight, band_weights.fc2.bias));
+        auto hidden = band_input;
+        int64_t in_dim = config.dim;
+        for (size_t layer = 0; layer < band_weights.layers.size(); ++layer) {
+            const bool last = layer + 1 == band_weights.layers.size();
+            const int64_t out_dim = last
+                ? config.band_input_dims[band] * 2
+                : config.dim * config.mlp_expansion_factor;
+            hidden = modules::LinearModule(
+                         binding::linear_config(in_dim, out_dim, true))
+                         .build(
+                             ctx,
+                             hidden,
+                             binding::linear_data(
+                                 ctx,
+                                 band_weights.layers[layer].weight,
+                                 band_weights.layers[layer].bias));
+            if (!last) {
+                hidden = modules::TanhModule{}.build(ctx, hidden);
+            }
+            in_dim = out_dim;
+        }
         hidden = modules::GLUModule{}.build(ctx, hidden);
         outputs.push_back(hidden);
     }
@@ -446,9 +514,13 @@ struct GgmlContextDeleter {
 
 class FixedShapeGraph {
 public:
-    FixedShapeGraph(ggml_backend_t backend, int compute_threads)
+    FixedShapeGraph(
+        ggml_backend_t backend,
+        int compute_threads,
+        std::string log_prefix)
         : backend_(backend),
-          compute_threads_(compute_threads) {
+          compute_threads_(compute_threads),
+          log_prefix_(std::move(log_prefix)) {
     }
 
     virtual ~FixedShapeGraph() {
@@ -466,19 +538,25 @@ public:
         }
         const auto upload_start = Clock::now();
         ggml_backend_tensor_set(input_, input_values.data(), 0, input_values.size() * sizeof(float));
-        engine::debug::timing_log_scalar("mel_band_roformer.graph.input_upload_ms", engine::debug::elapsed_ms(upload_start));
+        engine::debug::timing_log_scalar(
+            log_prefix_ + ".graph.input_upload_ms",
+            engine::debug::elapsed_ms(upload_start));
         core::set_backend_threads(backend_, compute_threads_);
         const auto compute_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
-        engine::debug::timing_log_scalar("mel_band_roformer.graph.compute_ms", engine::debug::elapsed_ms(compute_start));
+        engine::debug::timing_log_scalar(
+            log_prefix_ + ".graph.compute_ms",
+            engine::debug::elapsed_ms(compute_start));
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("roformer graph compute failed");
         }
         const auto read_start = Clock::now();
         output_host_.resize(static_cast<size_t>(output_shape_.num_elements()));
         ggml_backend_tensor_get(output_, output_host_.data(), 0, output_host_.size() * sizeof(float));
-        engine::debug::timing_log_scalar("mel_band_roformer.graph.output_read_ms", engine::debug::elapsed_ms(read_start));
+        engine::debug::timing_log_scalar(
+            log_prefix_ + ".graph.output_read_ms",
+            engine::debug::elapsed_ms(read_start));
         return output_host_;
     }
 
@@ -518,6 +596,7 @@ protected:
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     std::vector<float> output_host_;
+    std::string log_prefix_;
 };
 
 class MelBandGraph final : public FixedShapeGraph {
@@ -526,9 +605,12 @@ public:
         std::shared_ptr<const RoformerAssets> assets,
         core::ExecutionContext & execution_context,
         assets_ns::TensorStorageType weight_storage_type)
-        : FixedShapeGraph(execution_context.backend(), std::max(1, execution_context.config().threads)) {
+        : FixedShapeGraph(
+              execution_context.backend(),
+              std::max(1, execution_context.config().threads),
+              assets != nullptr ? assets->config.family : std::string("roformer")) {
         if (assets == nullptr) {
-            throw std::runtime_error("mel_band_roformer graph requires assets");
+            throw std::runtime_error("RoFormer graph requires assets");
         }
         const auto build_start = Clock::now();
         const auto & config = assets->config;
@@ -538,9 +620,9 @@ public:
         constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             compute_threads_,
-            "mel_band_roformer.constants",
+            config.family + ".constants",
             4ull * 1024ull * 1024ull);
-        auto build_ctx = make_build_context(execution_context, "mel_band_roformer");
+        auto build_ctx = make_build_context(execution_context, config.family.c_str());
         constants_->begin_graph();
         input_shape_ = core::TensorShape::from_dims({1, config.chunk_frames, config.total_band_input_dim});
         output_shape_ = core::TensorShape::from_dims({1, config.chunk_frames, config.total_band_input_dim});
@@ -589,6 +671,10 @@ public:
             x = ensure_contiguous(build_ctx, x);
         }
 
+        if (config.has_final_norm) {
+            x = build_reference_rms_norm(
+                build_ctx, x, config.dim, weights_.final_norm);
+        }
         auto output = build_mask_output(build_ctx, x, weights_, config);
         output = ensure_contiguous(build_ctx, output);
         output_ = output.tensor;
@@ -596,8 +682,12 @@ public:
         constants_->finish_graph();
         constants_->ensure_uploaded();
         finalize_graph(131072);
-        engine::debug::timing_log_scalar("mel_band_roformer.graph.build_ms", engine::debug::elapsed_ms(build_start));
-        engine::debug::timing_log_scalar("mel_band_roformer.graph.rebuilt", true);
+        engine::debug::timing_log_scalar(
+            config.family + ".graph.build_ms",
+            engine::debug::elapsed_ms(build_start));
+        engine::debug::timing_log_scalar(
+            config.family + ".graph.rebuilt",
+            true);
     }
 
 private:
@@ -892,6 +982,7 @@ void separate_runtime_chunk(
     const RoformerArchitectureConfig & config,
     size_t fft_threads,
     std::vector<float> & output_planar) {
+    const std::string log_prefix = config.family + ".";
     const engine::audio::STFTConfig stft_config{
         config.n_fft,
         config.hop_length,
@@ -909,16 +1000,24 @@ void separate_runtime_chunk(
         config.chunk_size,
         stft_config,
         fft_threads);
-    engine::debug::timing_log_scalar("mel_band_roformer.stft_ms", engine::debug::elapsed_ms(stft_start));
+    engine::debug::timing_log_scalar(
+        log_prefix + "stft_ms",
+        engine::debug::elapsed_ms(stft_start));
     const auto feature_start = Clock::now();
     auto features = build_band_features(stft, config);
-    engine::debug::timing_log_scalar("mel_band_roformer.feature_build_ms", engine::debug::elapsed_ms(feature_start));
+    engine::debug::timing_log_scalar(
+        log_prefix + "feature_build_ms",
+        engine::debug::elapsed_ms(feature_start));
     const auto graph_start = Clock::now();
     const auto & raw_masks = graph.run(features);
-    engine::debug::timing_log_scalar("mel_band_roformer.graph.total_ms", engine::debug::elapsed_ms(graph_start));
+    engine::debug::timing_log_scalar(
+        log_prefix + "graph.total_ms",
+        engine::debug::elapsed_ms(graph_start));
     const auto mask_start = Clock::now();
     auto masked = apply_masks_to_stft(raw_masks, stft, config);
-    engine::debug::timing_log_scalar("mel_band_roformer.mask_apply_ms", engine::debug::elapsed_ms(mask_start));
+    engine::debug::timing_log_scalar(
+        log_prefix + "mask_apply_ms",
+        engine::debug::elapsed_ms(mask_start));
     const auto istft_start = Clock::now();
     auto vocals = compute_roformer_istft(
         masked,
@@ -929,7 +1028,9 @@ void separate_runtime_chunk(
         config.chunk_size,
         stft_config,
         fft_threads);
-    engine::debug::timing_log_scalar("mel_band_roformer.istft_ms", engine::debug::elapsed_ms(istft_start));
+    engine::debug::timing_log_scalar(
+        log_prefix + "istft_ms",
+        engine::debug::elapsed_ms(istft_start));
     if (vocals.shape.size() != 2 || vocals.shape[0] != config.channels || vocals.shape[1] != config.chunk_size) {
         throw std::runtime_error("RoFormer ISTFT returned an unexpected waveform shape");
     }

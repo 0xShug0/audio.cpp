@@ -400,6 +400,26 @@ add_library(engine_runtime STATIC
     src/models/fish_audio/prompt_builder.cpp
     src/models/fish_audio/session.cpp
     src/models/fish_audio/tokenizer_text.cpp
+    src/models/confucius4_tts/assets.cpp
+    src/models/confucius4_tts/audio_features.cpp
+    src/models/confucius4_tts/request.cpp
+    src/models/confucius4_tts/s2a.cpp
+    src/models/confucius4_tts/semantic_encoder.cpp
+    src/models/confucius4_tts/session.cpp
+    src/models/confucius4_tts/style_encoder.cpp
+    src/models/confucius4_tts/t2s.cpp
+    src/models/confucius4_tts/tokenizer_text.cpp
+    src/models/confucius4_tts/vocoder.cpp
+    src/models/dramabox/assets.cpp
+    src/models/dramabox/audio_vae.cpp
+    src/models/dramabox/dit.cpp
+    src/models/dramabox/gemma_tokenizer.cpp
+    src/models/dramabox/gemma3_encoder.cpp
+    src/models/dramabox/latent_state.cpp
+    src/models/dramabox/loader.cpp
+    src/models/dramabox/prompt_connector.cpp
+    src/models/dramabox/session.cpp
+    src/models/dramabox/vocoder.cpp
     src/models/heartmula/assets.cpp
     src/models/heartmula/codec.cpp
     src/models/heartmula/generator.cpp
@@ -509,6 +529,14 @@ add_library(engine_runtime STATIC
     src/models/seed_vc/v2_cfm.cpp
     src/models/seed_vc/session.cpp
     src/models/seed_vc/loader.cpp
+    src/models/rvc/assets.cpp
+    src/models/rvc/hubert.cpp
+    src/models/rvc/native_pipeline.cpp
+    src/models/rvc/retrieval_index.cpp
+    src/models/rvc/session.cpp
+    src/models/rvc/synthesizer.cpp
+    src/models/rvc/voice_model.cpp
+    src/models/rvc/loader.cpp
     src/models/chatterbox/assets.cpp
     src/models/chatterbox/campplus_encoder_impl.cpp
     src/models/chatterbox/audio_features.cpp
@@ -793,6 +821,8 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(campplus_shared_default_probe tests/glm_tts/campplus_shared_default_probe.cpp)
     add_engine_warmbench(chatterbox_warm_bench tests/chatterbox/chatterbox_warm_bench.cpp)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
+    add_engine_warmbench(confucius4_tts_warm_bench tests/confucius4_tts/confucius4_tts_warm_bench.cpp)
+    add_engine_warmbench(dramabox_warm_bench tools/dramabox/dramabox_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_tts_warm_bench tests/higgs_audio_tts/higgs_audio_tts_warm_bench.cpp)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)

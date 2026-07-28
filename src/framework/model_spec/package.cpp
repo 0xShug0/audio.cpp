@@ -153,6 +153,24 @@ std::optional<std::filesystem::path> discover_external_model_spec(std::string_vi
     return std::nullopt;
 }
 
+std::optional<std::filesystem::path> discover_workspace_model_spec(std::string_view family) {
+    std::vector<std::filesystem::path> candidates;
+    auto cursor = std::filesystem::current_path();
+    while (true) {
+        candidates.push_back(cursor / "model_specs" / (std::string(family) + ".json"));
+        const auto parent = cursor.parent_path();
+        if (parent == cursor || parent.empty())
+            break;
+        cursor = parent;
+    }
+    for (const auto & candidate : candidates) {
+        if (external_spec_matches_family(candidate, family)) {
+            return std::filesystem::weakly_canonical(candidate);
+        }
+    }
+    return std::nullopt;
+}
+
 engine::io::json::Value parse_model_spec(const std::filesystem::path & spec_path) {
     engine::io::json::Value root;
     if (spec_path.parent_path() == "@gguf") {
@@ -397,7 +415,7 @@ ScopedSpecOverride::~ScopedSpecOverride() {
     active_embedded_spec.reset();
 }
 
-std::filesystem::path default_spec_path(std::string_view family) {
+std::filesystem::path default_package_spec_path(std::string_view family) {
     if (active_model_spec_override.has_value()) {
         auto path = *active_model_spec_override;
         if (engine::io::is_existing_directory(path)) {
@@ -428,6 +446,42 @@ std::filesystem::path default_spec_path(std::string_view family) {
                              "' (provide --model-spec-override, embed it in the GGUF, enable "
                              "AUDIOCPP_DEPLOYMENT_BUILD, or install model_specs/" +
                              std::string(family) + ".json)");
+}
+
+std::filesystem::path default_contract_spec_path(std::string_view family) {
+    if (active_model_spec_override.has_value()) {
+        auto path = *active_model_spec_override;
+        if (engine::io::is_existing_directory(path)) {
+            path /= std::string(family) + ".json";
+        }
+        if (!engine::io::is_existing_file(path)) {
+            throw std::runtime_error("model spec override not found: " + path.string());
+        }
+        return std::filesystem::weakly_canonical(path);
+    }
+    if (const auto external = discover_workspace_model_spec(family)) {
+        return *external;
+    }
+    if (builtin_model_specs().find(std::string(family)) != builtin_model_specs().end()) {
+        return std::filesystem::path("@builtin") / (std::string(family) + ".json");
+    }
+    if (const auto & embedded = embedded_model_spec(); embedded.has_value()) {
+        if (embedded->family != family) {
+            throw std::runtime_error("GGUF embeds model spec for family '" + embedded->family + "', not '" +
+                                     std::string(family) + "'");
+        }
+        return std::filesystem::path("@gguf") / (std::string(family) + ".json");
+    }
+    if (const auto hint = directory_gguf_hint(family); !hint.empty()) {
+        throw std::runtime_error(hint);
+    }
+    throw std::runtime_error("model contract spec not found for family '" + std::string(family) +
+                             "' (provide --model-spec-override, install model_specs/" +
+                             std::string(family) + ".json, enable AUDIOCPP_DEPLOYMENT_BUILD, or embed it in the GGUF)");
+}
+
+std::filesystem::path default_spec_path(std::string_view family) {
+    return default_package_spec_path(family);
 }
 
 assets::ResourceBundle load_resource_bundle(

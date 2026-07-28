@@ -14,6 +14,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <numeric>
 #include <set>
 #include <sstream>
@@ -346,6 +347,160 @@ std::vector<std::byte> encode_f32_tensor_data(
         return bf16_bytes(values);
     }
     return quantize_f32_rows(name, values, shape, type);
+}
+
+bool dtype_equals(std::string_view actual, std::string_view expected) {
+    return lower_ascii(actual) == lower_ascii(expected);
+}
+
+int64_t checked_element_count(std::string_view name, const std::vector<int64_t> & shape) {
+    int64_t count = 1;
+    for (const int64_t dim : shape) {
+        if (dim <= 0) {
+            throw std::runtime_error("tensor shape contains a non-positive dimension: " + std::string(name));
+        }
+        if (count > std::numeric_limits<int64_t>::max() / dim) {
+            throw std::runtime_error("tensor element count overflow: " + std::string(name));
+        }
+        count *= dim;
+    }
+    return count;
+}
+
+std::vector<uint8_t> raw_u8_values(const RawTensorData & data) {
+    if (!dtype_equals(data.metadata.dtype, "U8")) {
+        throw std::runtime_error("BNB NF4 tensor dtype mismatch for " + data.metadata.name);
+    }
+    std::vector<uint8_t> values(data.bytes.size());
+    std::memcpy(values.data(), data.bytes.data(), data.bytes.size());
+    return values;
+}
+
+std::vector<float> raw_f32_values(const RawTensorData & data) {
+    if (!dtype_equals(data.metadata.dtype, "F32")) {
+        throw std::runtime_error("BNB NF4 tensor dtype mismatch for " + data.metadata.name);
+    }
+    if (data.bytes.size() % sizeof(float) != 0) {
+        throw std::runtime_error("BNB NF4 F32 tensor byte size mismatch: " + data.metadata.name);
+    }
+    std::vector<float> values(data.bytes.size() / sizeof(float));
+    std::memcpy(values.data(), data.bytes.data(), data.bytes.size());
+    return values;
+}
+
+struct BnbNf4QuantState {
+    std::vector<int64_t> shape;
+    int64_t blocksize = 0;
+    int64_t nested_blocksize = 0;
+    float nested_offset = 0.0F;
+};
+
+BnbNf4QuantState parse_bnb_nf4_quant_state(const RawTensorData & data) {
+    const auto bytes = raw_u8_values(data);
+    const auto root = engine::io::json::parse(std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+    BnbNf4QuantState state;
+    const auto quant_type = engine::io::json::require_string(root, "quant_type");
+    const auto dtype = engine::io::json::require_string(root, "dtype");
+    state.shape = engine::io::json::require_i64_array(root, "shape");
+    state.blocksize = engine::io::json::require_i64(root, "blocksize");
+    state.nested_blocksize = engine::io::json::require_i64(root, "nested_blocksize");
+    state.nested_offset = engine::io::json::require_f32(root, "nested_offset");
+    if (quant_type != "nf4") {
+        throw std::runtime_error("BNB quant_state is not NF4: " + data.metadata.name);
+    }
+    if (state.blocksize <= 0 || state.nested_blocksize <= 0) {
+        throw std::runtime_error("BNB NF4 quant_state contains invalid block sizes: " + data.metadata.name);
+    }
+    if (dtype != "bfloat16" && dtype != "float16" && dtype != "float32") {
+        throw std::runtime_error("BNB NF4 quant_state contains unsupported dequant dtype: " + dtype);
+    }
+    return state;
+}
+
+std::string bnb_nf4_quant_state_name(std::string_view name) {
+    return std::string(name) + ".quant_state.bitsandbytes__nf4";
+}
+
+std::optional<std::string> bnb_nf4_helper_base_name(const TensorSource & source, std::string_view name) {
+    static constexpr std::string_view suffixes[] = {
+        ".absmax",
+        ".nested_absmax",
+        ".nested_quant_map",
+        ".quant_map",
+        ".quant_state.bitsandbytes__nf4",
+    };
+    const std::string value(name);
+    for (const auto suffix : suffixes) {
+        if (value.size() <= suffix.size() ||
+            value.compare(value.size() - suffix.size(), suffix.size(), suffix) != 0) {
+            continue;
+        }
+        const std::string base = value.substr(0, value.size() - suffix.size());
+        if (source.has_tensor(base) && source.has_tensor(bnb_nf4_quant_state_name(base))) {
+            return base;
+        }
+    }
+    return std::nullopt;
+}
+
+bool is_bnb_nf4_weight(const TensorSource & source, const TensorMetadata & metadata) {
+    return dtype_equals(metadata.dtype, "U8") && source.has_tensor(bnb_nf4_quant_state_name(metadata.name));
+}
+
+RawTensorData convert_bnb_nf4_weight(
+    const TensorSource & source,
+    const TensorMetadata & metadata,
+    TensorStorageType storage_type) {
+    const ggml_type output_type = ggml_type_for_tensor_storage(storage_type);
+    const auto packed = source.require_tensor_data(metadata.name);
+    const auto state = parse_bnb_nf4_quant_state(source.require_tensor_data(bnb_nf4_quant_state_name(metadata.name)));
+    const int64_t elements = checked_element_count(metadata.name, state.shape);
+    if (packed.metadata.shape != std::vector<int64_t>{(elements + 1) / 2, 1}) {
+        throw std::runtime_error("BNB NF4 packed tensor shape mismatch: " + metadata.name);
+    }
+    const auto absmax = raw_u8_values(source.require_tensor_data(std::string(metadata.name) + ".absmax"));
+    const auto nested_absmax = raw_f32_values(source.require_tensor_data(std::string(metadata.name) + ".nested_absmax"));
+    const auto nested_quant_map =
+        raw_f32_values(source.require_tensor_data(std::string(metadata.name) + ".nested_quant_map"));
+    const auto quant_map = raw_f32_values(source.require_tensor_data(std::string(metadata.name) + ".quant_map"));
+    if (nested_quant_map.size() != 256 || quant_map.size() != 16) {
+        throw std::runtime_error("BNB NF4 quant maps have unexpected size: " + metadata.name);
+    }
+    const int64_t expected_nested =
+        (static_cast<int64_t>(absmax.size()) + state.nested_blocksize - 1) / state.nested_blocksize;
+    if (static_cast<int64_t>(nested_absmax.size()) != expected_nested) {
+        throw std::runtime_error("BNB NF4 nested absmax length mismatch: " + metadata.name);
+    }
+    std::vector<float> scales(absmax.size());
+    for (size_t i = 0; i < absmax.size(); ++i) {
+        scales[i] = nested_quant_map[absmax[i]] *
+            nested_absmax[static_cast<size_t>(static_cast<int64_t>(i) / state.nested_blocksize)] +
+            state.nested_offset;
+    }
+    const auto packed_values = raw_u8_values(packed);
+    if (static_cast<int64_t>(packed_values.size()) != (elements + 1) / 2) {
+        throw std::runtime_error("BNB NF4 packed byte count mismatch: " + metadata.name);
+    }
+    const int64_t block_count = (elements + state.blocksize - 1) / state.blocksize;
+    if (static_cast<int64_t>(scales.size()) != block_count) {
+        throw std::runtime_error("BNB NF4 absmax block count mismatch: " + metadata.name);
+    }
+    std::vector<float> values(static_cast<size_t>(elements));
+    int64_t out = 0;
+    for (const uint8_t byte : packed_values) {
+        values[static_cast<size_t>(out)] =
+            quant_map[(byte >> 4U) & 0x0FU] * scales[static_cast<size_t>(out / state.blocksize)];
+        ++out;
+        if (out < elements) {
+            values[static_cast<size_t>(out)] =
+                quant_map[byte & 0x0FU] * scales[static_cast<size_t>(out / state.blocksize)];
+            ++out;
+        }
+    }
+    RawTensorData out_data;
+    out_data.metadata = {metadata.name, dtype_for_ggml_type(output_type), state.shape};
+    out_data.bytes = encode_f32_tensor_data(metadata.name, values, shape_from_dims(state.shape), output_type);
+    return out_data;
 }
 
 class SafeTensorSource final : public TensorSource {
@@ -1544,10 +1699,10 @@ PreparedModelDirectory prepare_model_directory(const std::filesystem::path & mod
 void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & inputs,
                                     const std::filesystem::path & output_path, TensorStorageType weight_type,
                                     bool overwrite, bool embed_sidecars,
-    const std::filesystem::path & requested_sidecar_root,
+                                    const std::filesystem::path & requested_sidecar_root,
                                     const std::vector<GgufEmbeddedFile> & extra_sidecars,
                                     const std::optional<GgufEmbeddedModelSpec> & model_spec,
-                                    const std::vector<GgufTensorTypeOverride> & type_overrides) {
+                                    GgufConversionOptions options) {
     if (inputs.empty()) {
         throw std::runtime_error("GGUF conversion requires at least one tensor source");
     }
@@ -1576,12 +1731,20 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
     if (metadata.empty()) {
         throw std::runtime_error("cannot convert an empty tensor source to GGUF");
     }
+    auto is_excluded = [&options](std::string_view name) {
+        for (const auto & prefix : options.excluded_tensor_prefixes) {
+            if (!prefix.empty() && name.rfind(prefix, 0) == 0) {
+                return true;
+            }
+        }
+        return false;
+    };
     std::vector<TensorMetadata> convertible_metadata;
     convertible_metadata.reserve(metadata.size());
     for (const auto & item : metadata) {
         const bool zero_element_tensor =
             std::any_of(item.shape.begin(), item.shape.end(), [](int64_t dim) { return dim == 0; });
-        if (zero_element_tensor) {
+        if (zero_element_tensor || is_excluded(item.name)) {
             continue;
         }
         convertible_metadata.push_back(item);
@@ -1592,8 +1755,38 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
 
     const bool preserve_source_dtype = weight_type == TensorStorageType::Native;
     const ggml_type requested_type = preserve_source_dtype ? GGML_TYPE_COUNT : ggml_type_for_tensor_storage(weight_type);
+    const bool convert_bnb_nf4 = options.bnb_nf4_type.has_value();
+    const ggml_type requested_bnb_nf4_type =
+        convert_bnb_nf4 ? ggml_type_for_tensor_storage(*options.bnb_nf4_type) : GGML_TYPE_COUNT;
     if (!preserve_source_dtype && ggml_is_quantized(requested_type) && ggml_quantize_requires_imatrix(requested_type)) {
         throw std::runtime_error("requested GGUF quantization requires an importance matrix");
+    }
+    if (convert_bnb_nf4 &&
+        (!ggml_is_quantized(requested_bnb_nf4_type) || ggml_quantize_requires_imatrix(requested_bnb_nf4_type))) {
+        throw std::runtime_error("BNB NF4 GGUF conversion currently requires a row-wise quantized target type");
+    }
+    if (convert_bnb_nf4) {
+        convertible_metadata.clear();
+        convertible_metadata.reserve(metadata.size());
+        for (const auto & item : metadata) {
+            const bool zero_element_tensor =
+                std::any_of(item.shape.begin(), item.shape.end(), [](int64_t dim) { return dim == 0; });
+            if (zero_element_tensor || is_excluded(item.name) ||
+                bnb_nf4_helper_base_name(*source, item.name).has_value()) {
+                continue;
+            }
+            if (is_bnb_nf4_weight(*source, item)) {
+                const auto state =
+                    parse_bnb_nf4_quant_state(source->require_tensor_data(bnb_nf4_quant_state_name(item.name)));
+                convertible_metadata.push_back(
+                    {item.name, dtype_for_ggml_type(requested_bnb_nf4_type), state.shape});
+            } else {
+                convertible_metadata.push_back(item);
+            }
+        }
+        if (convertible_metadata.empty()) {
+            throw std::runtime_error("cannot convert a tensor source with no storable tensors to GGUF");
+        }
     }
 
     const size_t context_bytes = std::max<size_t>(
@@ -1630,6 +1823,9 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
         const std::string output_weight_type =
             preserve_source_dtype ? "orig" : lower_ascii(ggml_type_name(requested_type));
         gguf_set_val_str(gguf, "audiocpp.weight_type", output_weight_type.c_str());
+        if (convert_bnb_nf4) {
+            gguf_set_val_str(gguf, "audiocpp.bnb_nf4_type", ggml_type_name(requested_bnb_nf4_type));
+        }
         if (model_spec.has_value()) {
             gguf_set_val_u32(gguf, "audiocpp.model_spec.version", 1);
             gguf_set_val_str(gguf, "audiocpp.model_spec.family", model_spec->family.c_str());
@@ -1737,7 +1933,10 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             if (item.shape.size() > core::kMaxTensorRank) {
                 throw std::runtime_error("GGUF supports tensor ranks from 0 to 4: " + item.name);
             }
-            const ggml_type source_type = ggml_type_for_tensor_dtype(item.dtype);
+            const bool bnb_nf4_weight = convert_bnb_nf4 && source->has_tensor(bnb_nf4_quant_state_name(item.name));
+            const ggml_type source_type = bnb_nf4_weight
+                ? requested_bnb_nf4_type
+                : ggml_type_for_tensor_dtype(item.dtype);
             const bool source_is_float = source_type == GGML_TYPE_F32 || source_type == GGML_TYPE_F16 ||
                 source_type == GGML_TYPE_BF16 || ggml_is_quantized(source_type);
             const std::string normalized_name = lower_ascii(item.name);
@@ -1751,7 +1950,7 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 (!ggml_is_quantized(requested_type) ? source_is_float && !item.shape.empty() : can_quantize);
             const bool use_f16_lookup = !preserve_source_dtype && ggml_is_quantized(requested_type) &&
                 source_is_float && is_lookup_table;
-            const auto type_override = find_tensor_type_override(item.name, type_overrides);
+            const auto type_override = find_tensor_type_override(item.name, options.type_overrides);
             const bool use_override = type_override.has_value() && *type_override != TensorStorageType::Native;
             const ggml_type override_type = use_override ? ggml_type_for_tensor_storage(*type_override) : source_type;
             if (use_override && ggml_is_quantized(override_type)) {
@@ -1761,16 +1960,20 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                     throw std::runtime_error("GGUF tensor type override cannot quantize tensor: " + item.name);
                 }
             }
-            const ggml_type output_type = type_override.has_value()
+            const ggml_type output_type = bnb_nf4_weight
+                ? requested_bnb_nf4_type
+                : (type_override.has_value()
                 ? override_type
                 : (use_requested
                 ? requested_type
-                : (use_f16_lookup ? GGML_TYPE_F16 : source_type));
-            const TensorStorageType output_storage = type_override.has_value()
+                : (use_f16_lookup ? GGML_TYPE_F16 : source_type)));
+            const TensorStorageType output_storage = bnb_nf4_weight
+                ? *options.bnb_nf4_type
+                : (type_override.has_value()
                 ? *type_override
                 : (use_requested
                 ? weight_type
-                : (use_f16_lookup ? TensorStorageType::F16 : TensorStorageType::Native));
+                : (use_f16_lookup ? TensorStorageType::F16 : TensorStorageType::Native)));
 
             std::string physical_name = item.name;
             if (physical_name.size() >= GGML_MAX_NAME || !physical_names.insert(physical_name).second) {
@@ -1840,7 +2043,9 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 if (!padding.empty()) output.write(padding.data(), static_cast<std::streamsize>(padding.size()));
 
                 RawTensorData raw;
-                if (item.storage_type == TensorStorageType::Native) {
+                if (convert_bnb_nf4 && source->has_tensor(bnb_nf4_quant_state_name(item.metadata.name))) {
+                    raw = convert_bnb_nf4_weight(*source, item.metadata, item.storage_type);
+                } else if (item.storage_type == TensorStorageType::Native) {
                     raw = source->require_tensor_data(item.metadata.name);
                 } else {
                     const auto tensor = source->require_tensor(
