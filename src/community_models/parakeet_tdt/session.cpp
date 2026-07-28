@@ -140,6 +140,33 @@ void validate_duration_contract_options(const runtime::SessionOptions& options) 
         kMinimumPositiveDurationSec);
 }
 
+std::string offline_mode_option(const runtime::SessionOptions& options) {
+    const auto value =
+        runtime::find_option(options.options, {"parakeet_tdt.offline_mode"})
+            .value_or("full_context");
+    if (value != "full_context" && value != "long_form" && value != "auto") {
+        throw std::runtime_error(
+            "parakeet_tdt.offline_mode must be 'full_context', 'long_form', or 'auto'");
+    }
+    return value;
+}
+
+std::string streaming_attention_mode_option(const runtime::SessionOptions& options) {
+    const auto value =
+        runtime::find_option(options.options, {"parakeet_tdt.streaming_attention_mode"})
+            .value_or("full_context");
+    if (value != "full_context") {
+        throw std::runtime_error(
+            "parakeet_tdt.streaming_attention_mode currently supports only 'full_context'");
+    }
+    return value;
+}
+
+void validate_enum_contract_options(const runtime::SessionOptions& options) {
+    (void)offline_mode_option(options);
+    (void)streaming_attention_mode_option(options);
+}
+
 int64_t seconds_to_samples(float seconds, int sample_rate) {
     return static_cast<int64_t>(std::llround(
         static_cast<double>(seconds) * static_cast<double>(sample_rate)));
@@ -177,6 +204,7 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
     validate_conv_weight_storage(conv_weight_storage_type_, "parakeet_tdt.conv_weight_type");
     validate_session_option_keys(options, *contract_);
     validate_duration_contract_options(options);
+    validate_enum_contract_options(options);
     weights_ = load_parakeet_weights(
         *assets_,
         execution_context().backend(),
@@ -225,15 +253,7 @@ ParakeetTDTOfflineSession::ParakeetTDTOfflineSession(
           std::move(options),
           std::move(assets),
           std::move(contract)) {
-    offline_mode_ =
-        runtime::find_option(this->options().options, {"parakeet_tdt.offline_mode"})
-            .value_or("full_context");
-    if (offline_mode_ != "full_context" &&
-        offline_mode_ != "long_form" &&
-        offline_mode_ != "auto") {
-        throw std::runtime_error(
-            "parakeet_tdt.offline_mode must be 'full_context', 'long_form', or 'auto'");
-    }
+    offline_mode_ = offline_mode_option(this->options());
     const int sample_rate = assets_->config.frontend.sample_rate;
     center_samples_ = seconds_to_samples(
         duration_option(
@@ -451,13 +471,6 @@ ParakeetTDTStreamingSession::ParakeetTDTStreamingSession(
           std::move(options),
           std::move(assets),
           std::move(contract)) {
-    const auto attention_mode =
-        runtime::find_option(this->options().options, {"parakeet_tdt.streaming_attention_mode"})
-            .value_or("full_context");
-    if (attention_mode != "full_context") {
-        throw std::runtime_error(
-            "parakeet_tdt.streaming_attention_mode currently supports only 'full_context'");
-    }
     const int sample_rate = assets_->config.frontend.sample_rate;
     center_samples_ = seconds_to_samples(
         duration_option(

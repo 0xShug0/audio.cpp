@@ -79,12 +79,15 @@ int main() {
         options.options["parakeet_tdt.left_context_sec"] = "2";
         options.options["parakeet_tdt.right_context_sec"] = "1";
 
-        auto require_rejected_session_option = [&](const std::string& key, const std::string& value) {
+        auto require_rejected_session_option = [&](
+                                                   const engine::runtime::TaskSpec& invalid_task,
+                                                   const std::string& key,
+                                                   const std::string& value) {
             auto invalid_options = options;
             invalid_options.options[key] = value;
             bool rejected = false;
             try {
-                (void)model->create_task_session(task, invalid_options);
+                (void)model->create_task_session(invalid_task, invalid_options);
             } catch (const std::exception&) {
                 rejected = true;
             }
@@ -94,14 +97,28 @@ int main() {
             }
         };
         require_rejected_session_option(
+            task,
             "parakeet_tdt.full_context_max_duration_sec",
             "30");
         require_rejected_session_option(
+            task,
             "parakeet_tdt.audio_chunk_duration_sec",
             "0.0001");
         require_rejected_session_option(
+            task,
             "parakeet_tdt.audio_chunk_threshold_sec",
             "0.0001");
+        require_rejected_session_option(
+            task,
+            "parakeet_tdt.offline_mode",
+            "typo");
+        require_rejected_session_option(
+            {
+                engine::runtime::VoiceTaskKind::Asr,
+                engine::runtime::RunMode::Offline,
+            },
+            "parakeet_tdt.streaming_attention_mode",
+            "typo");
 
         auto base = model->create_task_session(task, options);
         auto* session =
