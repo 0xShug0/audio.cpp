@@ -6,16 +6,20 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <cerrno>
 #include <iostream>
+#include <istream>
 #include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <streambuf>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -28,6 +32,7 @@ constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -152,7 +157,356 @@ void send_all(SocketHandle socket, const std::string & data) {
     }
 }
 
-HttpRequest read_http_request(SocketHandle socket, uint64_t max_request_body_bytes) {
+// An SSE body is written while a model lock is held, so an unbounded blocking
+// send() lets a client that uploads but never reads fill the kernel send buffer
+// and pin that model indefinitely. A send timeout turns it into a failed write.
+void set_send_timeout(SocketHandle socket, int timeout_ms) {
+#ifdef _WIN32
+    const DWORD timeout = static_cast<DWORD>(timeout_ms);
+    setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&timeout), sizeof(timeout));
+#else
+    timeval timeout{};
+    timeout.tv_sec = timeout_ms / 1000;
+    timeout.tv_usec = (timeout_ms % 1000) * 1000;
+    setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+#endif
+}
+
+// The one endpoint that consumes its body incrementally. Gating on the path as
+// well as the encoding keeps every other endpoint's request handling bit-for-bit
+// unchanged, instead of silently altering how any chunked request is read.
+constexpr std::string_view kLiveIngestPath = "/v1/audio/transcriptions/live";
+
+// True only when the header names exactly one transfer-coding and that coding is
+// "chunked". A substring test would accept "notchunked" as well as chains like
+// "gzip, chunked" — and for the latter, stripping the chunk framing would hand the
+// PCM decoder compressed bytes, which it would happily interpret as audio.
+bool is_chunked_only(std::string_view value) {
+    bool saw_coding = false;
+    size_t start = 0;
+    while (start <= value.size()) {
+        const size_t comma = value.find(',', start);
+        const auto end = comma == std::string_view::npos ? value.size() : comma;
+        const std::string coding = trim(std::string(value.substr(start, end - start)));
+        if (!coding.empty()) {
+            if (saw_coding || lower_ascii(coding) != "chunked") {
+                return false;
+            }
+            saw_coding = true;
+        }
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    return saw_coding;
+}
+
+bool wants_incremental_body(const HttpRequest & request) {
+    if (request.path != kLiveIngestPath) {
+        return false;
+    }
+    const auto it = request.headers.find("transfer-encoding");
+    if (it == request.headers.end()) {
+        return false;
+    }
+    return is_chunked_only(it->second);
+}
+
+// De-frames an HTTP/1.1 chunked request body off a live socket into a byte
+// stream. `underflow()` blocks in recv() waiting for the next chunk, which is
+// precisely the contract `AudioChunkReader` documents for a live source — so a
+// streaming task can pull capture-time audio straight through it without the
+// body ever being fully materialized.
+//
+// Bounded on four axes, because this stream is read while a model lock is held:
+// an idle timeout between reads, an absolute deadline for the whole body, a cap on
+// total bytes, and a cap on any single chunk. A client that opens a body and then
+// stalls, never stops, or names an enormous chunk therefore cannot pin the model
+// indefinitely or exhaust the host.
+class ChunkedSocketStreambuf final : public std::streambuf {
+public:
+    struct Limits {
+        int idle_timeout_ms = 30'000;
+        int total_timeout_ms = 600'000;
+        size_t max_bytes = 512u * 1024u * 1024u;
+        // Bounds one chunk, independently of the total. A chunk is held in memory
+        // twice while being de-framed, so without this a single legal chunk could
+        // name a size large enough to exhaust the host — while holding a model lock.
+        size_t max_chunk_bytes = 8u * 1024u * 1024u;
+    };
+
+    ChunkedSocketStreambuf(SocketHandle socket, std::string prefetched, Limits limits)
+        : socket_(socket),
+          pending_(std::move(prefetched)),
+          limits_(limits),
+          started_(std::chrono::steady_clock::now()),
+          // Bytes that arrived alongside the headers still count toward the total,
+          // or the cap could be overshot by one receive before it is ever consulted.
+          received_bytes_(pending_.size()) {}
+
+protected:
+    int_type underflow() override {
+        if (gptr() < egptr()) {
+            return traits_type::to_int_type(*gptr());
+        }
+        // A chunk is handed out in windows rather than all at once. Reads that stay
+        // inside the published get area never re-enter underflow(), so publishing a
+        // whole 8 MiB chunk would let the body keep advancing across many model
+        // iterations without the deadline ever being consulted again. Windowing puts
+        // a bound on how far past the deadline consumption can get.
+        if (publish_window()) {
+            return traits_type::to_int_type(*gptr());
+        }
+        if (!next_chunk()) {
+            return traits_type::eof();
+        }
+        return traits_type::to_int_type(*gptr());
+    }
+
+private:
+    // poll() rather than select(): an accepted descriptor can be >= FD_SETSIZE
+    // once enough connections are open, and FD_SET on such a descriptor is
+    // undefined behaviour that corrupts the stack.
+    bool wait_readable() const {
+        int wait_ms = limits_.idle_timeout_ms;
+        // Clamp to whatever is left of the total deadline, so a read starting just
+        // before it expires cannot overshoot by a further idle period.
+        if (limits_.total_timeout_ms > 0) {
+            const auto remaining = limits_.total_timeout_ms -
+                static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - started_)
+                                     .count());
+            if (remaining <= 0) {
+                return false;
+            }
+            wait_ms = (wait_ms <= 0) ? remaining : std::min(wait_ms, remaining);
+        }
+        if (wait_ms <= 0) {
+            return true;
+        }
+        pollfd descriptor{};
+        descriptor.fd = socket_;
+        descriptor.events = POLLIN;
+#ifdef _WIN32
+        return WSAPoll(&descriptor, 1, wait_ms) > 0;
+#else
+        return poll(&descriptor, 1, wait_ms) > 0;
+#endif
+    }
+
+    // Enforced at every point where the body advances, not only before a receive:
+    // checking it in receive_more() alone lets an already-buffered tail — the rest
+    // of a large chunk, trailers, the terminating chunk — be consumed after the
+    // deadline has passed, which is not what "deadline" means to a caller reasoning
+    // about how long the model can be held.
+    void require_within_deadline() const {
+        if (limits_.total_timeout_ms <= 0) {
+            return;
+        }
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - started_)
+                                 .count();
+        if (elapsed >= limits_.total_timeout_ms) {
+            throw std::runtime_error("live request body exceeded its total deadline");
+        }
+    }
+
+    // Returns false on a clean half-close; throws when a bound is exceeded, so a
+    // stalled client surfaces as a stream error rather than a silent truncation
+    // that would look like a legitimate end of audio.
+    bool receive_more() {
+        require_within_deadline();
+        if (!wait_readable()) {
+            // The wait is clamped to whatever is left of the total deadline, so it can
+            // end because that expired rather than because the peer went quiet. Report
+            // which one it was instead of always blaming the idle timeout.
+            require_within_deadline();
+            throw std::runtime_error("live request body stalled: no data within the idle timeout");
+        }
+        std::array<char, 8192> buffer{};
+#ifdef _WIN32
+        const int received = recv(socket_, buffer.data(), static_cast<int>(buffer.size()), 0);
+#else
+        const ssize_t received = recv(socket_, buffer.data(), buffer.size(), 0);
+#endif
+        // Re-checked after the wait: poll() can return readable just before the
+        // deadline, so without this a final receive would be processed past it.
+        require_within_deadline();
+        if (received <= 0) {
+            return false;
+        }
+        received_bytes_ += static_cast<size_t>(received);
+        if (limits_.max_bytes > 0 && received_bytes_ > limits_.max_bytes) {
+            throw std::runtime_error("live request body exceeded its maximum size");
+        }
+        pending_.append(buffer.data(), static_cast<size_t>(received));
+        return true;
+    }
+
+    bool ensure_available(size_t count) {
+        while (pending_.size() - pending_pos_ < count) {
+            if (!receive_more()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static constexpr size_t kMaxLineBytes = 8192;
+
+    bool read_line(std::string & line) {
+        for (;;) {
+            const auto eol = pending_.find("\r\n", pending_pos_);
+            if (eol != std::string::npos) {
+                // Checked on the found line too, not only while still searching: a
+                // receive can deliver the terminator along with enough bytes to put
+                // the line well past the cap, which would otherwise be accepted and
+                // make the stated bound roughly double what it claims.
+                if (eol - pending_pos_ > kMaxLineBytes) {
+                    throw std::runtime_error("chunked request body: oversized chunk header");
+                }
+                line = pending_.substr(pending_pos_, eol - pending_pos_);
+                pending_pos_ = eol + 2;
+                return true;
+            }
+            if (pending_.size() - pending_pos_ > kMaxLineBytes) {
+                throw std::runtime_error("chunked request body: oversized chunk header");
+            }
+            if (!receive_more()) {
+                return false;
+            }
+        }
+    }
+
+    bool next_chunk() {
+        if (finished_) {
+            return false;
+        }
+        // Bounds consumption of already-buffered framing as well as waiting for more,
+        // so the deadline holds even for a body that arrives faster than it is read.
+        require_within_deadline();
+        std::string header;
+        if (!read_line(header)) {
+            // The peer closed without the mandatory terminating 0-chunk. Treating
+            // that as a clean end would hand the caller a truncated body that looks
+            // byte-for-byte like a complete one — for audio, a cut-off sentence
+            // indistinguishable from the speaker stopping. Fail instead.
+            throw std::runtime_error(
+                "chunked request body: connection closed before the terminating chunk");
+        }
+        if (const auto extension = header.find(';'); extension != std::string::npos) {
+            header.resize(extension);  // chunk extensions are unused here
+        }
+        header = trim(header);
+        // Parsed by hand rather than with stoull: the size is attacker-controlled, and
+        // "ffffffffffffffff" would otherwise yield SIZE_MAX, whose `size + 2` wraps to
+        // 1 and slips past the availability check into invalid iterator arithmetic.
+        if (header.empty()) {
+            throw std::runtime_error("chunked request body: empty chunk size");
+        }
+        size_t size = 0;
+        for (const char digit : header) {
+            int value = 0;
+            if (digit >= '0' && digit <= '9') {
+                value = digit - '0';
+            } else if (digit >= 'a' && digit <= 'f') {
+                value = digit - 'a' + 10;
+            } else if (digit >= 'A' && digit <= 'F') {
+                value = digit - 'A' + 10;
+            } else {
+                throw std::runtime_error(
+                    "chunked request body: invalid chunk size \"" + header + "\"");
+            }
+            if (size > (limits_.max_chunk_bytes - static_cast<size_t>(value)) / 16) {
+                throw std::runtime_error("chunked request body: chunk size exceeds the maximum");
+            }
+            size = size * 16 + static_cast<size_t>(value);
+        }
+        if (size == 0) {
+            finished_ = true;
+            // Trailers are bounded: they arrive after the terminating chunk, so
+            // without a cap a peer could stream them indefinitely into pending_,
+            // which is never compacted on this path.
+            size_t trailer_bytes = 0;
+            std::string trailer;
+            for (;;) {
+                if (!read_line(trailer)) {
+                    throw std::runtime_error(
+                        "chunked request body: connection closed inside the trailer");
+                }
+                if (trailer.empty()) {
+                    break;
+                }
+                trailer_bytes += trailer.size();
+                if (trailer_bytes > 8192) {
+                    throw std::runtime_error("chunked request body: trailer section too large");
+                }
+            }
+            return false;
+        }
+        if (!ensure_available(size + 2)) {
+            throw std::runtime_error("chunked request body: connection closed mid-chunk");
+        }
+        // The two bytes after chunk data must be CRLF; accepting anything else lets a
+        // desynchronised sender's payload be silently reinterpreted as framing.
+        if (pending_.compare(pending_pos_ + size, 2, "\r\n") != 0) {
+            throw std::runtime_error("chunked request body: chunk data not terminated by CRLF");
+        }
+        // Dropped before the assign, which may reallocate and free what the get area
+        // still points at. publish_window() can throw on the deadline before it calls
+        // setg(), and leaving stale pointers across that throw would hand anyone who
+        // caught the exception and read again a dangling comparison.
+        setg(nullptr, nullptr, nullptr);
+        chunk_.assign(
+            pending_.begin() + static_cast<std::ptrdiff_t>(pending_pos_),
+            pending_.begin() + static_cast<std::ptrdiff_t>(pending_pos_ + size));
+        pending_pos_ += size + 2;  // also skip the chunk's trailing CRLF
+        if (pending_pos_ > 64 * 1024) {
+            pending_.erase(0, pending_pos_);
+            pending_pos_ = 0;
+        }
+        chunk_pos_ = 0;
+        publish_window();
+        return true;
+    }
+
+    // Exposes the next slice of the current chunk, re-checking the deadline each
+    // time. Returns false once the chunk is spent, which is the caller's signal to
+    // read the next one off the socket.
+    bool publish_window() {
+        if (chunk_pos_ >= chunk_.size()) {
+            return false;
+        }
+        require_within_deadline();
+        const size_t window = std::min(kWindowBytes, chunk_.size() - chunk_pos_);
+        setg(chunk_.data() + chunk_pos_,
+             chunk_.data() + chunk_pos_,
+             chunk_.data() + chunk_pos_ + window);
+        chunk_pos_ += window;
+        return true;
+    }
+
+    static constexpr size_t kWindowBytes = 64 * 1024;
+
+    SocketHandle socket_;
+    std::string pending_;   // received but not yet de-framed
+    size_t pending_pos_ = 0;
+    std::vector<char> chunk_;  // the de-framed chunk currently being served
+    size_t chunk_pos_ = 0;     // how much of chunk_ has been published so far
+    Limits limits_;
+    std::chrono::steady_clock::time_point started_;
+    size_t received_bytes_;
+    bool finished_ = false;
+};
+
+// `leftover` receives any body bytes that arrived alongside the headers, but only
+// for a chunked body — that case returns with the socket deliberately undrained
+// so the handler can consume the rest as it is sent.
+HttpRequest read_http_request(
+    SocketHandle socket,
+    uint64_t max_request_body_bytes,
+    std::string & leftover) {
     std::string data;
     std::array<char, 8192> buffer{};
     size_t header_end = std::string::npos;
@@ -200,7 +554,31 @@ HttpRequest read_http_request(SocketHandle socket, uint64_t max_request_body_byt
         if (pos == std::string::npos) {
             continue;
         }
-        request.headers[lower_ascii(trim(line.substr(0, pos)))] = trim(line.substr(pos + 1));
+        const std::string name = lower_ascii(trim(line.substr(0, pos)));
+        const std::string value = trim(line.substr(pos + 1));
+        // Repeated field lines are equivalent to one comma-separated list (RFC 9110
+        // 5.2), and for Transfer-Encoding that equivalence is load-bearing: splitting
+        // "gzip, chunked" across two lines would otherwise overwrite the first with
+        // the second and leave a bare "chunked" that passes the coding check. Only
+        // this header is combined, so no other endpoint's parsing changes.
+        if (name == "transfer-encoding") {
+            auto & slot = request.headers[name];
+            // Appended in place rather than rebuilt: `slot = slot + ", " + value`
+            // recopies everything accumulated so far on each line, so a header block
+            // packed with repeated fields costs quadratic time — and this runs before
+            // dispatch, on every endpoint, on attacker-supplied input.
+            if (!slot.empty()) {
+                slot.append(", ");
+            }
+            slot.append(value);
+            continue;
+        }
+        request.headers[name] = value;
+    }
+
+    if (wants_incremental_body(request)) {
+        leftover = data.substr(header_end + 4);
+        return request;
     }
 
     size_t content_length = 0;
@@ -327,7 +705,27 @@ UniqueSocket bind_listen_socket(const std::string & host, int port) {
 void handle_client(SocketHandle client, IHttpHandler & handler, uint64_t max_request_body_bytes) {
     UniqueSocket socket(client);
     try {
-        const auto request = read_http_request(socket.get(), max_request_body_bytes);
+        std::string leftover;
+        auto request = read_http_request(socket.get(), max_request_body_bytes, leftover);
+        if (wants_incremental_body(request)) {
+            // Scoped to this endpoint: it is the only one whose response is written
+            // while a model lock is held, so it is the only one where a client that
+            // stops reading can pin a model. Applying it server-wide would risk
+            // truncating a large ordinary response to a merely slow client.
+            set_send_timeout(socket.get(), 30'000);
+        }
+        // Constructed unconditionally so it outlives the handler call, but only
+        // published on `request` when the client actually declared a chunked body.
+        ChunkedSocketStreambuf body_buffer(socket.get(), std::move(leftover), ChunkedSocketStreambuf::Limits{});
+        std::istream body_stream(&body_buffer);
+        // Without this, a throw from underflow() is caught by istream and turned into
+        // badbit. A reader that checks gcount() then sees a short read and reports a
+        // clean end of input, so a stall, an oversize chunk or a mid-body disconnect
+        // would all be delivered as a successful, silently truncated body.
+        body_stream.exceptions(std::ios::badbit);
+        if (wants_incremental_body(request)) {
+            request.body_stream = &body_stream;
+        }
         const auto response = handler.handle(request);
         if (response.stream_body) {
             send_all(socket.get(), serialize_stream_headers(response));

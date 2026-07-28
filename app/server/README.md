@@ -286,6 +286,60 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 
 The stream emits `transcript.text.delta` events, one final `transcript.text.done` event containing the full transcript, then `data: [DONE]`.
 
+Note that `stream=true` streams the *output* of an already-uploaded file: the whole recording is sent first, and the deltas describe decoding it. It shortens time-to-first-token on long audio, but nothing can appear while the speaker is still talking. For that, use the live endpoint below.
+
+### `POST /v1/audio/transcriptions/live`
+
+Streams raw PCM **as it is captured** and returns transcript deltas on the same connection, so partial text can appear while the user is still speaking.
+
+The request body is raw interleaved PCM sent with `Transfer-Encoding: chunked`; the response is the same SSE event shape as `stream=true` above, so a client can share one reader. There is no multipart form and no file — the audio never has to exist on disk, and the transport hands each chunk to the model as it arrives rather than assembling the recording first. Whether the *model* then keeps the whole utterance in memory is its own business: `nemotron_asr`, for instance, accumulates internally regardless of how the audio reaches it.
+
+Because the body carries audio rather than JSON, parameters are query parameters:
+
+| parameter | default | meaning |
+| --- | --- | --- |
+| `model` | required | id of a model configured with `mode: "streaming"` |
+| `sample_rate` | `16000` | samples per second of the PCM being sent |
+| `channels` | `1` | interleaved channel count |
+| `sample_format` | `s16le` | `s16le` or `f32le` |
+| `language` | unset | passed through to the model |
+
+```bash
+# Microphone straight into transcription (macOS; -f alsa on Linux, -f dshow on Windows)
+ffmpeg -f avfoundation -i ":0" -ar 16000 -ac 1 -f s16le - \
+  | curl -N -X POST -H 'Expect:' -T - \
+      'http://127.0.0.1:8080/v1/audio/transcriptions/live?model=voxtral-realtime&sample_rate=16000&channels=1&sample_format=s16le'
+```
+
+`-T -` is what makes this live, and it is not interchangeable with `--data-binary @-`: the latter drains stdin to completion before opening the connection, which turns a live capture back into a file upload and defeats the endpoint. `-H 'Expect:'` suppresses curl's `Expect: 100-continue`, which the server does not answer — without it curl waits out its one-second continue timeout before sending any audio. (`-T .` reads stdin non-blocking; measured against this endpoint it behaves the same, so either works.)
+
+A headerless stream carries no format, so the parameters above are a contract the server cannot verify — sending 48 kHz audio while declaring 16 kHz produces a confident, wrong transcript rather than an error.
+
+Whether partial text actually appears *during* capture is a property of the model, not of this endpoint. A model that decodes incrementally (`voxtral_realtime`) emits deltas throughout the utterance; one whose encoder consumes the whole utterance before decoding (`nemotron_asr`) will stream its deltas only after the audio ends. Both work here; only the first feels live.
+
+The request ends when the client sends the terminating chunk. Closing the connection without one is an error, not an end of speech — a truncated transcript that arrives as a normal `transcript.text.done` would be indistinguishable from the speaker stopping, so the endpoint refuses to produce one. The same applies to a stall past the idle timeout, an oversized chunk, or a malformed frame: each surfaces as an SSE `error` event.
+
+Because the model is held for the length of the request, the body is bounded on four axes, all compile-time constants today:
+
+| bound | value | meaning |
+| --- | --- | --- |
+| idle | 30 s | longest wait for more data once the reader asks for it |
+| total | 600 s | checked at every point the body advances, so it caps the whole request |
+| size | 512 MiB | received body bytes, framing included |
+| chunk | 8 MiB | largest single declared chunk |
+
+The 600 s figure is an upper bound on one dictation; continuous captioning would need it raised. `sample_rate` and `channels` are range-checked too (1000–384000 and 1–16): they size the model's per-chunk buffer, so an absurd value would otherwise be an allocation request made while the model lock is held.
+
+**Deployment.** This endpoint streams the request body and the response on one connection at the same time. That is legal HTTP/1.1, but it needs a direct connection or a proxy that does not buffer requests. Behind nginx both of these are required, because `proxy_request_buffering off` still buffers a chunked body unless the upstream connection is HTTP/1.1:
+
+```nginx
+proxy_http_version 1.1;
+proxy_request_buffering off;
+proxy_buffering off;
+```
+
+A browser cannot drive it: `fetch()` request streaming requires HTTP/2 and is half-duplex by specification — the whole request is sent before the response is processed. It is intended for native clients — `curl`, an `ffmpeg` pipe, or a backend service. A WebSocket transport would suit browsers and intermediaries better and could be added alongside this without changing it.
+
 ### `GET /v1/audio/voices?model=<id>`
 
 Lists the cached voice ids and configured server voice preset names available for a TTS model, so a client can populate a voice picker instead of guessing generic names. For families that keep voice presets under `model_root/embeddings/*.safetensors` (`pocket_tts` today), this returns those ids too. If `model` is omitted and the server has exactly one configured model, that model is used; if multiple models are configured, omit `model` only when an empty list is acceptable.

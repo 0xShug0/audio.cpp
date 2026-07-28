@@ -1220,6 +1220,7 @@ add_executable(audiocpp_server
     app/server/runtime.cpp
     app/cli/args.cpp
     app/cli/request.cpp
+    app/streaming/pcm_source.cpp
     app/streaming/streaming.cpp
 )
 
@@ -1561,6 +1562,24 @@ if (ENGINE_BUILD_TESTS)
         NAME streaming_audio_input_test
         COMMAND streaming_audio_input_test
     )
+
+    add_executable(http_live_body_test
+        tests/unittests/test_http_live_body.cpp
+        app/server/http.cpp
+    )
+    target_link_libraries(http_live_body_test PRIVATE engine_runtime ggml)
+    if(WIN32)
+        target_link_libraries(http_live_body_test PRIVATE ws2_32)
+    endif()
+    target_include_directories(http_live_body_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME http_live_body_test
+        COMMAND http_live_body_test
+    )
+    # This test talks to a real loopback socket, so a framing regression could
+    # block forever rather than fail. Bound it so CI reports a failure instead.
+    set_tests_properties(http_live_body_test PROPERTIES TIMEOUT 120)
 
     add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
 

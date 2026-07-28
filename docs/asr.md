@@ -346,6 +346,29 @@ The chosen interpretation is echoed back as an `audio_input=stdin` line. Each up
 its own `partial_text=` line and flushed as it is produced, so a reader sees the transcript grow
 rather than waiting for the stream to end.
 
+### Live PCM over HTTP
+
+The same live source is available to an HTTP client through
+`POST /v1/audio/transcriptions/live`: raw PCM goes up in a chunked request body while transcript
+deltas come back as SSE on the same connection. This is the server equivalent of `--audio -`, and
+the only way to get capture-time partials without the CLI. See
+[the server README](../app/server/README.md) for parameters and examples.
+
+```bash
+ffmpeg -f alsa -i default -ar 16000 -ac 1 -f s16le - \
+  | curl -N -X POST -H 'Expect:' -T - \
+      'http://127.0.0.1:8080/v1/audio/transcriptions/live?model=voxtral-realtime'
+```
+
+Use `-T -`, not `--data-binary @-` — the latter reads stdin to EOF before it connects, so a live
+capture would be uploaded as a finished file and no partial could arrive early.
+
+Whether text appears while the speaker is still talking depends on the model's streaming policy
+rather than on the transport. `voxtral_realtime` decodes as audio arrives and emits throughout the
+utterance; `nemotron_asr` consumes the full utterance in its encoder first, so its deltas arrive
+only once the audio ends. Both are supported here — the difference is what the transcript looks
+like mid-sentence.
+
 > **Throughput.** A streaming step always advances 80 ms of audio, so a step has to cost under
 > 80 ms to keep up with a realtime source. Measured on an Apple M3 Air (Metal, q8_0):
 >
