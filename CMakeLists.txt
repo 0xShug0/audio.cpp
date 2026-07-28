@@ -1144,6 +1144,14 @@ add_executable(audiocpp_cli
 )
 
 target_link_libraries(audiocpp_cli PRIVATE engine_runtime ggml)
+# MinGW selects the wmain() entry point only when linked with -municode;
+# without it the CLI fails to link (undefined reference / ld error 5).
+# MSVC detects wmain natively, so this is MinGW-only. Link option only:
+# -municode also defines UNICODE at compile time, so passing it link-only
+# keeps the source compiled with no macro side effects.
+if (MINGW)
+    target_link_options(audiocpp_cli PRIVATE -municode)
+endif()
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_cli PRIVATE OpenMP::OpenMP_CXX)
 endif()
