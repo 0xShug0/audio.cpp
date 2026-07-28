@@ -23,7 +23,8 @@ constexpr const char * kFamily = "parakeet_tdt";
 constexpr float kDefaultCenterDurationSec = 2.0f;
 constexpr float kDefaultLeftContextSec = 10.0f;
 constexpr float kDefaultRightContextSec = 2.0f;
-constexpr float kDefaultFullContextMaxDurationSec = 30.0f;
+constexpr float kDefaultAudioChunkThresholdSec = 30.0f;
+constexpr float kMinimumPositiveDurationSec = 0.001f;
 
 std::shared_ptr<const ParakeetTDTAssets> require_assets(std::shared_ptr<const ParakeetTDTAssets> assets) {
     if (assets == nullptr) {
@@ -107,13 +108,36 @@ float duration_option(
     const runtime::SessionOptions& options,
     const char* key,
     float fallback,
-    bool allow_zero) {
+    float minimum) {
     const float value = runtime::parse_finite_float_option(options.options, {key}).value_or(fallback);
-    if (value < 0.f || (!allow_zero && value == 0.f)) {
+    if (value < minimum) {
         throw std::runtime_error(
-            std::string(key) + (allow_zero ? " must be non-negative" : " must be positive"));
+            std::string(key) + " must be at least " + std::to_string(minimum));
     }
     return value;
+}
+
+void validate_duration_contract_options(const runtime::SessionOptions& options) {
+    (void)duration_option(
+        options,
+        "parakeet_tdt.audio_chunk_duration_sec",
+        kDefaultCenterDurationSec,
+        kMinimumPositiveDurationSec);
+    (void)duration_option(
+        options,
+        "parakeet_tdt.left_context_sec",
+        kDefaultLeftContextSec,
+        0.f);
+    (void)duration_option(
+        options,
+        "parakeet_tdt.right_context_sec",
+        kDefaultRightContextSec,
+        0.f);
+    (void)duration_option(
+        options,
+        "parakeet_tdt.audio_chunk_threshold_sec",
+        kDefaultAudioChunkThresholdSec,
+        kMinimumPositiveDurationSec);
 }
 
 int64_t seconds_to_samples(float seconds, int sample_rate) {
@@ -152,6 +176,7 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
     validate_matmul_weight_storage(matmul_weight_storage_type_, "parakeet_tdt.weight_type");
     validate_conv_weight_storage(conv_weight_storage_type_, "parakeet_tdt.conv_weight_type");
     validate_session_option_keys(options, *contract_);
+    validate_duration_contract_options(options);
     weights_ = load_parakeet_weights(
         *assets_,
         execution_context().backend(),
@@ -215,28 +240,28 @@ ParakeetTDTOfflineSession::ParakeetTDTOfflineSession(
             this->options(),
             "parakeet_tdt.audio_chunk_duration_sec",
             kDefaultCenterDurationSec,
-            false),
+            kMinimumPositiveDurationSec),
         sample_rate);
     left_context_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
             "parakeet_tdt.left_context_sec",
             kDefaultLeftContextSec,
-            true),
+            0.f),
         sample_rate);
     right_context_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
             "parakeet_tdt.right_context_sec",
             kDefaultRightContextSec,
-            true),
+            0.f),
         sample_rate);
     auto_full_context_max_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
-            "parakeet_tdt.full_context_max_duration_sec",
-            kDefaultFullContextMaxDurationSec,
-            false),
+            "parakeet_tdt.audio_chunk_threshold_sec",
+            kDefaultAudioChunkThresholdSec,
+            kMinimumPositiveDurationSec),
         sample_rate);
 }
 
@@ -439,21 +464,21 @@ ParakeetTDTStreamingSession::ParakeetTDTStreamingSession(
             this->options(),
             "parakeet_tdt.audio_chunk_duration_sec",
             kDefaultCenterDurationSec,
-            false),
+            kMinimumPositiveDurationSec),
         sample_rate);
     left_context_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
             "parakeet_tdt.left_context_sec",
             kDefaultLeftContextSec,
-            true),
+            0.f),
         sample_rate);
     right_context_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
             "parakeet_tdt.right_context_sec",
             kDefaultRightContextSec,
-            true),
+            0.f),
         sample_rate);
 }
 

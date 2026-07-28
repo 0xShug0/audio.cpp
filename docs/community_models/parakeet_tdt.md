@@ -98,7 +98,7 @@ flushes a short tail; `reset()` retains the loaded weights and reusable graphs.
 Offline mode remains full-context by default. Set
 `parakeet_tdt.offline_mode=long_form` to process arbitrarily long mono 16 kHz
 audio with the same bounded overlapping-window scheduler, or use `auto` to
-switch after `parakeet_tdt.full_context_max_duration_sec` (30 seconds by
+switch after `parakeet_tdt.audio_chunk_threshold_sec` (30 seconds by
 default). Long-form mode preserves global timestamps and predictor state while
 decoding every center region exactly once. Because each region sees bounded
 rather than utterance-wide context, its transcript can differ from the default

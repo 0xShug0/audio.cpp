@@ -79,6 +79,30 @@ int main() {
         options.options["parakeet_tdt.left_context_sec"] = "2";
         options.options["parakeet_tdt.right_context_sec"] = "1";
 
+        auto require_rejected_session_option = [&](const std::string& key, const std::string& value) {
+            auto invalid_options = options;
+            invalid_options.options[key] = value;
+            bool rejected = false;
+            try {
+                (void)model->create_task_session(task, invalid_options);
+            } catch (const std::exception&) {
+                rejected = true;
+            }
+            if (!rejected) {
+                throw std::runtime_error(
+                    "invalid session option was accepted: " + key + "=" + value);
+            }
+        };
+        require_rejected_session_option(
+            "parakeet_tdt.full_context_max_duration_sec",
+            "30");
+        require_rejected_session_option(
+            "parakeet_tdt.audio_chunk_duration_sec",
+            "0.0001");
+        require_rejected_session_option(
+            "parakeet_tdt.audio_chunk_threshold_sec",
+            "0.0001");
+
         auto base = model->create_task_session(task, options);
         auto* session =
             dynamic_cast<engine::runtime::IStreamingVoiceTaskSession*>(base.get());

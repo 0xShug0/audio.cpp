@@ -162,7 +162,7 @@
       {
         "name": "offline_mode",
         "type": "enum",
-        "description": "Offline encoder scheduling. full_context encodes the whole utterance, long_form uses bounded overlapping windows, and auto selects long_form beyond full_context_max_duration_sec.",
+        "description": "Offline encoder scheduling. full_context encodes the whole utterance, long_form uses bounded overlapping windows, and auto selects long_form beyond audio_chunk_threshold_sec.",
         "values": [
           "full_context",
           "long_form",
@@ -172,7 +172,7 @@
         "default": "full_context"
       },
       {
-        "name": "full_context_max_duration_sec",
+        "name": "audio_chunk_threshold_sec",
         "type": "float",
         "description": "Duration threshold used by offline_mode=auto before switching to bounded-window long-form execution; default 30 seconds.",
         "required": false,
