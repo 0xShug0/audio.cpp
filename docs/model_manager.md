@@ -120,7 +120,6 @@ Packages whose loaders are not registered in the current release tree are listed
 | `nemotron_asr` | Nemotron ASR | **Yes** |
 | `omnivoice` | OmniVoice | **Yes** |
 | `outetts_1_0_1b` | OuteTTS 1.0 1B with IBM DAC codec and Qwen3-aligned voice cloning | No |
-| `parakeet_tdt` | Parakeet-TDT 0.6B v3 | **Yes** |
 | `pocket_tts` | PocketTTS | **Yes** |
 | `qwen3_asr_0_6b` | Qwen3 ASR 0.6B | **Yes** |
 | `qwen3_asr_1_7b_hf` | Qwen3 ASR 1.7B HF | **Yes** |

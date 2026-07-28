@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <chrono>
@@ -18,12 +19,46 @@ using Clock = std::chrono::steady_clock;
 constexpr size_t kDefaultWeightContextBytes = 3072ull * 1024ull * 1024ull;
 constexpr size_t kDefaultEncoderGraphArenaBytes = 1024ull * 1024ull * 1024ull;
 constexpr size_t kDefaultDecoderGraphArenaBytes = 256ull * 1024ull * 1024ull;
+constexpr const char * kFamily = "parakeet_tdt";
 
 std::shared_ptr<const ParakeetTDTAssets> require_assets(std::shared_ptr<const ParakeetTDTAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("Parakeet TDT session requires assets");
     }
     return assets;
+}
+
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("Parakeet TDT session requires a model contract");
+    }
+    return contract;
+}
+
+void validate_session_option_keys(
+    const runtime::SessionOptions & options,
+    const engine::model_spec::ModelContract & contract) {
+    const std::string family_prefix = std::string(kFamily) + ".";
+    for (const auto & [key, _] : options.options) {
+        if (key.rfind(family_prefix, 0) == 0 &&
+            contract.session_option_keys.find(key) == contract.session_option_keys.end()) {
+            throw std::runtime_error("unknown Parakeet TDT session option: " + key);
+        }
+    }
+}
+
+bool use_flash_attention(const runtime::SessionOptions & options) {
+    const auto value =
+        runtime::find_option(options.options, {"parakeet_tdt.perf_mode"}).value_or("off");
+    if (value == "off") {
+        return false;
+    }
+    if (value == "flash_attention") {
+        return true;
+    }
+    throw std::runtime_error(
+        "parakeet_tdt.perf_mode must be 'off' or 'flash_attention'");
 }
 
 engine::assets::TensorStorageType option_weight_type(
@@ -69,10 +104,12 @@ int64_t frontend_frames_for_samples(
 ParakeetTDTSessionBase::ParakeetTDTSessionBase(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const ParakeetTDTAssets> assets)
+    std::shared_ptr<const ParakeetTDTAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))),
       weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"parakeet_tdt.weight_context_mb"}, kDefaultWeightContextBytes)),
       encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"parakeet_tdt.encoder_graph_arena_mb"}, kDefaultEncoderGraphArenaBytes)),
       decoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"parakeet_tdt.decoder_graph_arena_mb"}, kDefaultDecoderGraphArenaBytes)),
@@ -81,9 +118,7 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
           "parakeet_tdt.matmul_weight_type",
           option_weight_type(options, "parakeet_tdt.weight_type", engine::assets::TensorStorageType::Native))),
       conv_weight_storage_type_(option_weight_type(options, "parakeet_tdt.conv_weight_type", engine::assets::TensorStorageType::Native)),
-      encoder_flash_attention_(runtime::parse_bool_option(
-          runtime::find_option(options.options, {"parakeet_tdt.encoder_flash_attention"}).value_or("false"),
-          "parakeet_tdt.encoder_flash_attention")),
+      encoder_flash_attention_(use_flash_attention(options)),
       frontend_(assets_) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Parakeet TDT only supports VoiceTaskKind::Asr");
@@ -93,19 +128,7 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
     }
     validate_matmul_weight_storage(matmul_weight_storage_type_, "parakeet_tdt.weight_type");
     validate_conv_weight_storage(conv_weight_storage_type_, "parakeet_tdt.conv_weight_type");
-    for (const auto & [key, value] : options.options) {
-        (void)value;
-        if (key.rfind("parakeet_tdt.", 0) == 0 &&
-            key != "parakeet_tdt.weight_context_mb" &&
-            key != "parakeet_tdt.encoder_graph_arena_mb" &&
-            key != "parakeet_tdt.decoder_graph_arena_mb" &&
-            key != "parakeet_tdt.weight_type" &&
-            key != "parakeet_tdt.matmul_weight_type" &&
-            key != "parakeet_tdt.conv_weight_type" &&
-            key != "parakeet_tdt.encoder_flash_attention") {
-            throw std::runtime_error("unknown Parakeet TDT session option: " + key);
-        }
-    }
+    validate_session_option_keys(options, *contract_);
     weights_ = load_parakeet_weights(
         *assets_,
         execution_context().backend(),
@@ -147,8 +170,13 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
 ParakeetTDTOfflineSession::ParakeetTDTOfflineSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const ParakeetTDTAssets> assets)
-    : ParakeetTDTSessionBase(task, std::move(options), std::move(assets)) {}
+    std::shared_ptr<const ParakeetTDTAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : ParakeetTDTSessionBase(
+          task,
+          std::move(options),
+          std::move(assets),
+          std::move(contract)) {}
 
 std::string ParakeetTDTOfflineSession::family() const { return family_impl(); }
 runtime::VoiceTaskKind ParakeetTDTOfflineSession::task_kind() const { return task_kind_impl(); }
@@ -189,6 +217,24 @@ runtime::TaskResult ParakeetTDTOfflineSession::run(const runtime::TaskRequest & 
     result.word_timestamps = std::move(decoded.token_timestamps);
     debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
     return result;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
+    runtime::SpecBackedVoiceModelConfig<ParakeetTDTAssets> config;
+    config.family = kFamily;
+    config.load_assets = load_parakeet_assets;
+    config.create_session = [](
+                                const runtime::TaskSpec & task,
+                                const runtime::SessionOptions & options,
+                                std::shared_ptr<const ParakeetTDTAssets> assets,
+                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<ParakeetTDTOfflineSession>(
+            task,
+            options,
+            std::move(assets),
+            std::move(contract));
+    };
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::community_models::parakeet_tdt

@@ -1,5 +1,191 @@
 {
+  "schema_version": 1,
   "family": "parakeet_tdt",
+  "display_name": "Parakeet-TDT 0.6B v3",
+  "description": "NVIDIA Parakeet-TDT 0.6B v3 FastConformer-TDT ASR covering 25 European languages with automatic language detection, loaded from the repository's Transformers-compatible safetensors checkpoint. Offline full-context transcription only; the checkpoint is trained with unlimited bidirectional attention and is not a cache-aware streaming model.",
+  "category": "asr",
+  "status": "community",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "bg",
+    "cs",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "et",
+    "fi",
+    "fr",
+    "hr",
+    "hu",
+    "it",
+    "lt",
+    "lv",
+    "mt",
+    "nl",
+    "pl",
+    "pt",
+    "ro",
+    "ru",
+    "sk",
+    "sl",
+    "sv",
+    "uk"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum TDT generated tokens; 0 or omitted uses the model-derived limit.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "keep_language_tags",
+        "type": "bool",
+        "description": "Keep language tag tokens in decoded text; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "matmul_weight_type",
+        "type": "enum",
+        "description": "Encoder and decoder matmul weight storage type; defaults to weight_type, which defaults to native. Q8_0 measured 1.79x faster on the tested CPU and changed roughly 8 percent of transcripts without moving aggregate word error rate.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type; default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "perf_mode",
+        "type": "enum",
+        "description": "Encoder attention implementation. Default off uses the validated relative-attention path; flash_attention enables the fused implementation, which was numerically validated but slower on the tested hardware.",
+        "preset": "perf_mode_flash_attention",
+        "required": false,
+        "default": "off"
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight context arena size in MiB; default 3072.",
+        "required": false,
+        "min": 1,
+        "default": 3072
+      },
+      {
+        "name": "encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Encoder graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "decoder_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "nvidia/parakeet-tdt-0.6b-v3",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "parakeet_tdt",
+      "display_name": "Parakeet-TDT 0.6B v3 Safetensors",
+      "default": true,
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "parakeet-tdt-0.6b-v3",
+      "files": [
+        "config.json",
+        "processor_config.json",
+        "tokenizer.json",
+        "model.safetensors"
+      ]
+    }
+  ],
+  "layouts": {
+    "gguf": {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    "safetensors": {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  },
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "parakeet_tdt",
+    "tags": [
+      "ASR"
+    ],
+    "docs": [
+      "docs/community_models/parakeet_tdt.md"
+    ]
+  },
   "sources": [
     {
       "format": "gguf",

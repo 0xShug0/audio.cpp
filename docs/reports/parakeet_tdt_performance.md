@@ -355,7 +355,7 @@ op instead of a separate QK^T matmul + additive bias + `ggml_soft_max_ext` +
 AV matmul — this is exactly the "dense additive attention bias" case that op
 was built for (see `common_relative_attention.cpp`'s `use_specialized_flash_attention`
 path, which already uses it, unused by any production model in this repo before
-this). It was wired in here as `parakeet_tdt.encoder_flash_attention=true` and
+this). It was wired in here as `parakeet_tdt.perf_mode=flash_attention` and
 validated correct via the numerical parity harness (`enc_out` cosine 0.972325
 vs. 0.972258 for the non-flash path — no measurable accuracy difference).
 But measured end to end, on this hardware, it was consistently a few percent

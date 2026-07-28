@@ -300,7 +300,6 @@ add_library(engine_runtime STATIC
     src/community_models/outetts/session.cpp
     src/community_models/outetts/tokenizer.cpp
     src/community_models/parakeet_tdt/assets.cpp
-    src/community_models/parakeet_tdt/loader.cpp
     src/community_models/parakeet_tdt/session.cpp
     src/community_models/parakeet_tdt/encoder.cpp
     src/community_models/parakeet_tdt/decoder.cpp

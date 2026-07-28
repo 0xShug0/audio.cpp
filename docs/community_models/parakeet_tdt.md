@@ -34,7 +34,7 @@ build/<preset>/bin/parakeet_warm_bench \
 Install the model with:
 
 ```bash
-python3 tools/model_manager.py install parakeet_tdt --models-root models
+python3 tools/model_manager_v2.py install parakeet_tdt --models-root models
 ```
 ## Performance
 

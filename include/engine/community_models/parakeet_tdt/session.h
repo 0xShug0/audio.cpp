@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/community_models/parakeet_tdt/assets.h"
 #include "engine/community_models/parakeet_tdt/decoder.h"
@@ -14,12 +15,15 @@
 
 namespace engine::community_models::parakeet_tdt {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader();
+
 class ParakeetTDTSessionBase : public runtime::RuntimeSessionBase {
 public:
     ParakeetTDTSessionBase(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const ParakeetTDTAssets> assets);
+        std::shared_ptr<const ParakeetTDTAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~ParakeetTDTSessionBase() override;
 
 protected:
@@ -30,6 +34,7 @@ protected:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const ParakeetTDTAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::shared_ptr<const ParakeetWeights> weights_;
     size_t weight_context_bytes_ = 3072ull * 1024ull * 1024ull;
     size_t encoder_graph_arena_bytes_ = 1024ull * 1024ull * 1024ull;
@@ -49,7 +54,8 @@ public:
     ParakeetTDTOfflineSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const ParakeetTDTAssets> assets);
+        std::shared_ptr<const ParakeetTDTAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;

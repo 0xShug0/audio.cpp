@@ -26,7 +26,7 @@
 #include "engine/models/omnivoice/loader.h"
 #include "engine/community_models/glm_tts/loader.h"
 #include "engine/community_models/outetts/loader.h"
-#include "engine/community_models/parakeet_tdt/loader.h"
+#include "engine/community_models/parakeet_tdt/session.h"
 #include "engine/models/pocket_tts/loader.h"
 #include "engine/models/qwen3_asr/loader.h"
 #include "engine/models/qwen3_forced_aligner/loader.h"
