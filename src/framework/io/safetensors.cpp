@@ -325,6 +325,22 @@ SafeTensorIndex load_safetensors_index(const std::filesystem::path & path) {
                 if (offsets.size() != 2) {
                     throw std::runtime_error("safetensors data_offsets must contain 2 entries");
                 }
+                // Validate here, at the single point every consumer routes through.
+                //
+                // These come straight from the file header. A negative value cast to
+                // size_t becomes ~SIZE_MAX, and data_end < data_begin makes the
+                // (data_end - data_begin) that callers compute underflow to the same.
+                // Either then wraps the caller's `offset + size > blob.size()` bounds
+                // check back under the limit, producing an enormous in-bounds-looking
+                // span over out-of-bounds memory.
+                if (offsets[0] < 0 || offsets[1] < 0) {
+                    throw std::runtime_error(
+                        "safetensors data_offsets must be non-negative: " + tensor_name);
+                }
+                if (offsets[1] < offsets[0]) {
+                    throw std::runtime_error(
+                        "safetensors data_offsets must be ordered begin <= end: " + tensor_name);
+                }
                 info.data_begin = static_cast<size_t>(offsets[0]);
                 info.data_end = static_cast<size_t>(offsets[1]);
             } else {

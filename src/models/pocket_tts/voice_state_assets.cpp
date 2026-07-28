@@ -42,11 +42,16 @@ std::pair<const std::byte *, size_t> require_safetensor_data(
     const io::SafeTensorIndex & index,
     const io::BinaryBlob & bytes,
     const io::SafeTensorInfo & info) {
-    const size_t data_offset = index.header_bytes + info.data_begin;
     const size_t byte_size = info.data_end - info.data_begin;
-    if (data_offset + byte_size > bytes.size()) {
+    // Subtractions against the total, so no term can overflow the comparison
+    // and let an out-of-range span through. See the matching check in
+    // framework/assets/tensor_source.cpp.
+    const size_t total = bytes.size();
+    if (index.header_bytes > total || byte_size > total - index.header_bytes ||
+        info.data_begin > total - index.header_bytes - byte_size) {
         throw std::runtime_error("tensor data range is out of bounds: " + info.name);
     }
+    const size_t data_offset = index.header_bytes + info.data_begin;
     return {bytes.data() + static_cast<std::ptrdiff_t>(data_offset), byte_size};
 }
 

@@ -638,11 +638,19 @@ private:
         if (bytes_.empty()) {
             bytes_ = engine::io::read_binary_blob(index_.source_path);
         }
-        const size_t data_offset = index_.header_bytes + info.data_begin;
         const size_t byte_size = info.data_end - info.data_begin;
-        if (data_offset + byte_size > bytes_.size()) {
+        // Written as subtractions against the total so nothing can overflow.
+        // `header_bytes + data_begin + byte_size > total` wraps if any term is
+        // large, and a wrapped comparison passes -- handing back a span over
+        // memory past the end of the blob. Parse-time validation now rejects the
+        // inputs that made that reachable; this is the last gate before a raw
+        // pointer escapes, so it checks anyway.
+        const size_t total = bytes_.size();
+        if (index_.header_bytes > total || byte_size > total - index_.header_bytes ||
+            info.data_begin > total - index_.header_bytes - byte_size) {
             throw std::runtime_error("tensor data range is out of bounds: " + info.name);
         }
+        const size_t data_offset = index_.header_bytes + info.data_begin;
         return {bytes_.data() + static_cast<std::ptrdiff_t>(data_offset), byte_size};
     }
 
