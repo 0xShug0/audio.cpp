@@ -595,11 +595,6 @@ void ParakeetEncoderRuntime::release_offline_graph() {
     graph_.reset();
 }
 
-ParakeetEncoderStreamState ParakeetEncoderRuntime::make_stream_state() const {
-    ParakeetEncoderStreamState state;
-    return state;
-}
-
 ParakeetEncodedAudio ParakeetEncoderRuntime::encode(
     const ParakeetFrontendFeatures & features) {
     if (features.frames <= 0 || features.feature_dim <= 0) {

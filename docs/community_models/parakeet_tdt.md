@@ -7,10 +7,18 @@ from the repo's Transformers-compatible `model.safetensors` checkpoint (not the
 
 ## Status
 
-Offline (full-context) transcription only — see [Known limitations](#known-limitations)
-for streaming. Verified correct end to end on CPU and CUDA against the real NeMo
-reference model, both by final transcription and by numerical (per-layer
-activation) comparison; see [Validation](#validation).
+Offline full-context, bounded-window long-form, and buffered-streaming sessions
+are implemented. The full-context path is verified end to end on CPU and CUDA
+against the real NeMo reference model, both by final transcription and by
+numerical (per-layer activation) comparison; see [Validation](#validation).
+Buffered modes deliberately re-encode fixed bidirectional windows and are not
+native cache-aware streaming.
+
+| Mode | Context and memory | Result timing |
+|---|---|---|
+| Offline `full_context` | Whole utterance; quadratic attention grows with duration | One final result |
+| Offline `long_form` | Bounded overlapping windows; center regions decoded once | One final result |
+| Streaming | Same bounded windows with retained predictor state | Partial snapshots after right-context lookahead, then a final result |
 
 ## Architecture
 
@@ -29,6 +37,31 @@ build/<preset>/bin/parakeet_warm_bench \
     --model models/parakeet-tdt-0.6b-v3 \
     --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
     --backend cpu   # or: --backend cuda
+```
+
+Equivalent CLI commands:
+
+```bash
+# Offline full-context
+build/<preset>/bin/audiocpp_cli \
+    --task asr --family parakeet_tdt \
+    --model models/parakeet-tdt-0.6b-v3 --backend cpu \
+    --audio tests/parakeet_tdt/assets/2086-149220-0033.wav
+
+# Offline bounded-window long-form
+build/<preset>/bin/audiocpp_cli \
+    --task asr --family parakeet_tdt \
+    --model models/parakeet-tdt-0.6b-v3 --backend cpu \
+    --session-option parakeet_tdt.offline_mode=long_form \
+    --audio tests/parakeet_tdt/assets/2086-149220-0033.wav
+
+# Buffered streaming from raw mono 16 kHz PCM
+ffmpeg -loglevel error -i input.wav -f f32le -ac 1 -ar 16000 - \
+  | build/<preset>/bin/audiocpp_cli \
+      --task asr --family parakeet_tdt \
+      --model models/parakeet-tdt-0.6b-v3 --backend cpu \
+      --mode streaming --audio - --input-format f32le \
+      --input-rate 16000 --input-channels 1
 ```
 
 Install the model with:
@@ -180,7 +213,7 @@ you're touching this code:
 
 ## Known limitations
 
-- **No streaming support, and this checkpoint is not a good fit for it.**
+- **Buffered streaming is not native cache-aware streaming.**
   `nvidia/parakeet-tdt-0.6b-v3` was trained and exported with
   `att_context_style="regular"` and `att_context_size=[-1, -1]` — unlimited,
   fully bidirectional attention context, not NeMo's `"chunked_limited"` style
@@ -192,15 +225,13 @@ you're touching this code:
   directly about streaming with this model on its Hugging Face discussion
   page, pointed users at a different, dedicated cache-aware streaming
   architecture rather than confirming this checkpoint for the purpose.
-  Implementing a genuine chunked/causal streaming path against a model whose
-  attention was trained with an unrestricted receptive field risks silently
-  degrading accuracy in ways that would be easy to miss without extensive
-  validation, for a "streaming" mode that wouldn't provide much practical
-  benefit even if it worked. Real streaming support would need a different,
-  purpose-trained checkpoint (`att_context_style="chunked_limited"`) as
-  either a variant option on this loader or a separate family — this is not
-  a matter of finishing an implementation, it needs a different model file
-  to target correctly. Only `RunMode::Offline` is supported.
+  The implemented `RunMode::Streaming` therefore uses bounded, overlapping
+  full-attention windows and retains only the TDT predictor state between
+  center regions. It bounds graph and live-buffer size and produces partial
+  results, but re-encodes context, incurs configured right-lookahead latency,
+  and can differ from utterance-wide offline output. Genuine causal streaming
+  would need a purpose-trained `att_context_style="chunked_limited"`
+  checkpoint.
   **If you need streaming ASR, this framework already has it**: the
   `nemotron_asr` family (`nvidia/nemotron-3.5-asr-streaming-0.6b`) is a
   same-size-class NVIDIA checkpoint actually trained cache-aware, with

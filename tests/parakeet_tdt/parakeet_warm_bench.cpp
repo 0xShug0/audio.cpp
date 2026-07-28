@@ -34,6 +34,15 @@ int int_arg(int argc, char ** argv, const std::string & name, int fallback) {
     return std::stoi(arg_value(argc, argv, name, std::to_string(fallback)));
 }
 
+bool has_arg(int argc, char** argv, const std::string& name) {
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
 engine::core::BackendType parse_backend(const std::string & value) {
     if (value == "cpu") {
         return engine::core::BackendType::Cpu;
@@ -225,17 +234,33 @@ int main(int argc, char ** argv) {
         const std::string run_mode = arg_value(argc, argv, "--run-mode", "offline");
         const std::string offline_mode = arg_value(argc, argv, "--offline-mode", "");
         const std::string encoder_variant = arg_value(argc, argv, "--encoder-variant", "full_context");
-        const std::string graph_capacity_mode =
-            arg_value(argc, argv, "--graph-capacity-mode", run_mode == "streaming" ? "fixed" : "tiered");
         const std::string decoder_algorithm = arg_value(argc, argv, "--decoder-algorithm", "greedy_duration_loop");
-        const std::string full_context_capacity_frames = arg_value(argc, argv, "--full-context-capacity-frames", "");
-        const std::string long_context_capacity_frames = arg_value(argc, argv, "--long-context-capacity-frames", "");
         const std::string streaming_chunk_secs = arg_value(argc, argv, "--streaming-chunk-secs", "");
         const std::string streaming_left_context_secs = arg_value(argc, argv, "--streaming-left-context-secs", "");
         const std::string streaming_right_context_secs = arg_value(argc, argv, "--streaming-right-context-secs", "");
         const int chunk_size = int_arg(argc, argv, "--chunk-size", 32000);
         const std::filesystem::path timing_path =
             arg_value(argc, argv, "--timing-file", "/tmp/parakeet_warm_bench_timing.log");
+
+        if (encoder_variant != "full_context") {
+            throw std::runtime_error(
+                "--encoder-variant only supports full_context; use "
+                "--offline-mode long_form for bounded-window offline ASR");
+        }
+        if (decoder_algorithm != "greedy_duration_loop") {
+            throw std::runtime_error(
+                "--decoder-algorithm only supports greedy_duration_loop");
+        }
+        for (const std::string obsolete : {
+                 "--graph-capacity-mode",
+                 "--full-context-capacity-frames",
+                 "--long-context-capacity-frames"}) {
+            if (has_arg(argc, argv, obsolete)) {
+                throw std::runtime_error(
+                    obsolete + " is obsolete; graph capacity is derived from "
+                    "the selected full-context or bounded-window mode");
+            }
+        }
 
         // NOTE: these env vars are not actually read by the logging subsystem
         // (engine::debug::configure_logging() below is what wires it up);
@@ -253,8 +278,6 @@ int main(int argc, char ** argv) {
         session_options.backend.type = parse_backend(backend_name);
         session_options.backend.device = device;
         session_options.backend.threads = threads;
-        session_options.options["decoder_algorithm"] = decoder_algorithm;
-        session_options.options["encoder_variant"] = encoder_variant;
         if (run_mode == "streaming") {
             if (!streaming_chunk_secs.empty()) {
                 session_options.options["parakeet_tdt.audio_chunk_duration_sec"] = streaming_chunk_secs;
@@ -266,15 +289,8 @@ int main(int argc, char ** argv) {
                 session_options.options["parakeet_tdt.right_context_sec"] = streaming_right_context_secs;
             }
         } else {
-            session_options.options["offline_graph_capacity_mode"] = graph_capacity_mode;
             if (!offline_mode.empty()) {
                 session_options.options["parakeet_tdt.offline_mode"] = offline_mode;
-            }
-            if (!full_context_capacity_frames.empty()) {
-                session_options.options["full_context_capacity_frames"] = full_context_capacity_frames;
-            }
-            if (!long_context_capacity_frames.empty()) {
-                session_options.options["long_context_capacity_frames"] = long_context_capacity_frames;
             }
         }
         for (const auto & option : repeated_arg_values(argc, argv, "--session-option")) {

@@ -21,14 +21,6 @@ struct ParakeetEncodedAudio {
     int64_t hidden_size = 0;
 };
 
-struct ParakeetEncoderStreamState {
-    int64_t attention_seen_frames = 0;
-    int64_t attention_cached_frames = 0;
-    bool first_chunk = true;
-    bool backend_cache_valid = false;
-    const void * backend_cache_owner = nullptr;
-};
-
 // Builds a single FastConformer encoder layer's graph ops (feed-forward 1,
 // relative-position self-attention, conv module, feed-forward 2, final
 // layer norm — matching NeMo's ConformerLayer.forward exactly). Exported so
@@ -65,8 +57,6 @@ public:
 
     ParakeetEncodedAudio encode(
         const ParakeetFrontendFeatures & features);
-
-    ParakeetEncoderStreamState make_stream_state() const;
 
 private:
     struct Graph;

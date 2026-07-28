@@ -491,7 +491,7 @@ void ParakeetTDTStreamingSession::prepare(
 runtime::StreamingPolicy ParakeetTDTStreamingSession::streaming_policy() const {
     runtime::StreamingPolicy policy;
     policy.input = runtime::StreamingInputKind::AudioChunks;
-    policy.output = runtime::StreamingOutputKind::PullEvents;
+    policy.output = runtime::StreamingOutputKind::FinalResult;
     policy.preferred_audio_chunk_samples = center_samples_;
     policy.preferred_audio_chunk_seconds =
         static_cast<double>(center_samples_) /
@@ -659,6 +659,7 @@ runtime::StreamEvent ParakeetTDTStreamingSession::process_ready_windows(bool flu
         }
         if (stream_event_sink_) {
             stream_event_sink_(event);
+            return {};
         }
     }
     return event;
@@ -706,13 +707,6 @@ runtime::TaskResult ParakeetTDTStreamingSession::finalize() {
     result.word_timestamps = std::move(decoded.word_timestamps);
     finalized_ = true;
     stream_started_ = false;
-    if (stream_event_sink_) {
-        runtime::StreamEvent final_event;
-        final_event.partial_text = result.text_output;
-        final_event.word_timestamps = result.word_timestamps;
-        final_event.is_final = true;
-        stream_event_sink_(final_event);
-    }
     return result;
 }
 
