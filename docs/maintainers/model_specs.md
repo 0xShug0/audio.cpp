@@ -27,10 +27,9 @@ Top-level fields:
 | `options` | Typed request/session/load options. |
 | `package_defaults` | Optional shared package metadata, such as a common download source. |
 | `packages` | Installable model packages and download metadata. |
-| `layouts` | Typed resource/tensor layouts for future runtime package loading. |
 | `dependencies` | Runtime peer models or bundled model assets needed for optional features. |
 | `ui` | UI/catalog hints. |
-| `sources` | Temporary runtime bridge for current package-spec loading. |
+| `sources` | Canonical runtime resource/tensor mappings. |
 
 Shared request options must use canonical names such as `seed`, `language`,
 `voice_ref`, `text_chunk_mode`, `text_chunk_size`, `max_tokens`,
@@ -114,10 +113,11 @@ capability beyond the task itself. Keep capabilities typed and concrete:
 }
 ```
 
-Packages are install targets, not runtime layouts. Each package owns its display
-name, precision, target directory, and exact remote files. If several packages
-come from the same repo, put the shared source in `package_defaults.download`
-and keep package-level `download` only for overrides.
+Packages are install targets, not runtime resource maps. Each package owns its
+display name, precision, target directory, and exact remote files. If several
+packages come from the same repo, put the shared source in
+`package_defaults.download` and keep package-level `download` only for
+overrides.
 
 ```json
 {

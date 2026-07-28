@@ -30,6 +30,8 @@ private:
 };
 
 [[nodiscard]] std::filesystem::path default_spec_path(std::string_view family);
+[[nodiscard]] std::filesystem::path default_package_spec_path(std::string_view family);
+[[nodiscard]] std::filesystem::path default_contract_spec_path(std::string_view family);
 
 [[nodiscard]] engine::io::json::Value load_spec(const std::filesystem::path & spec_path);
 

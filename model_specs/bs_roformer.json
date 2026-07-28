@@ -1,5 +1,27 @@
 {
   "family": "bs_roformer",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "mirek190/audio.cpp",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "bs_roformer_q8_0",
+      "display_name": "BS-RoFormer ep368 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "BS-RoFormer-ep368_Q8",
+      "files": [
+        "vocal separation models/BS-RoFormer-ep368_Q8.gguf"
+      ],
+      "strip_prefix": "vocal separation models"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

@@ -1,5 +1,7 @@
 #include "engine/framework/runtime/options.h"
 
+#include "engine/framework/assets/tensor_source.h"
+
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -76,6 +78,64 @@ size_t checked_mib_to_bytes(int64_t mb, std::string_view key) {
         throw std::runtime_error(std::string(key) + " is too large");
     }
     return static_cast<size_t>(mb) * static_cast<size_t>(kMiB);
+}
+
+std::string tensor_storage_type_name(assets::TensorStorageType storage_type) {
+    switch (storage_type) {
+    case assets::TensorStorageType::Native:
+        return "native";
+    case assets::TensorStorageType::F32:
+        return "f32";
+    case assets::TensorStorageType::F16:
+        return "f16";
+    case assets::TensorStorageType::BF16:
+        return "bf16";
+    case assets::TensorStorageType::Q4_0:
+        return "q4_0";
+    case assets::TensorStorageType::Q4_1:
+        return "q4_1";
+    case assets::TensorStorageType::Q5_0:
+        return "q5_0";
+    case assets::TensorStorageType::Q5_1:
+        return "q5_1";
+    case assets::TensorStorageType::Q2_K:
+        return "q2_k";
+    case assets::TensorStorageType::Q3_K:
+        return "q3_k";
+    case assets::TensorStorageType::Q4_K:
+        return "q4_k";
+    case assets::TensorStorageType::Q5_K:
+        return "q5_k";
+    case assets::TensorStorageType::Q6_K:
+        return "q6_k";
+    case assets::TensorStorageType::Q8_0:
+        return "q8_0";
+    }
+    throw std::runtime_error("unknown tensor storage type");
+}
+
+std::string join_tensor_storage_types(std::initializer_list<assets::TensorStorageType> values) {
+    std::string out;
+    size_t index = 0;
+    for (const auto value : values) {
+        if (index != 0) {
+            out += index + 1 == values.size() ? ", and " : ", ";
+        }
+        out += tensor_storage_type_name(value);
+        ++index;
+    }
+    return out;
+}
+
+bool contains_tensor_storage_type(
+    std::initializer_list<assets::TensorStorageType> values,
+    assets::TensorStorageType needle) {
+    for (const auto value : values) {
+        if (value == needle) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -201,6 +261,25 @@ size_t parse_size_mb_option(
         return checked_mib_to_bytes(mb, match->key);
     }
     return fallback_bytes;
+}
+
+assets::TensorStorageType parse_tensor_storage_option(
+    const std::unordered_map<std::string, std::string> & options,
+    std::string_view key,
+    assets::TensorStorageType fallback,
+    std::initializer_list<assets::TensorStorageType> allowed) {
+    if (allowed.size() == 0) {
+        throw std::runtime_error("tensor storage option allowlist must not be empty");
+    }
+    const auto match = find_option_match(options, {key});
+    if (!match.has_value()) {
+        return fallback;
+    }
+    const auto storage_type = assets::parse_tensor_storage_type(match->value);
+    if (contains_tensor_storage_type(allowed, storage_type)) {
+        return storage_type;
+    }
+    throw std::runtime_error(match->key + " supports only " + join_tensor_storage_types(allowed));
 }
 
 uint64_t random_u64_seed() {

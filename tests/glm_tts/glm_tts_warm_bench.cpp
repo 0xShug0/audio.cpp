@@ -135,8 +135,8 @@ std::vector<RequestCase> load_requests(
                  "top_k",
                  "top_p",
                  "seed",
-                 "flow_steps",
-                 "cfg_rate"}) {
+                 "num_inference_steps",
+                 "flow_guidance_scale"}) {
             if (const auto * value = item.find(name);
                 value != nullptr && !value->is_null()) {
                 request.options[name] = scalar_option(*value);

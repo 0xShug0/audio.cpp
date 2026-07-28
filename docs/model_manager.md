@@ -4,7 +4,7 @@
 framework's expected `models/` layout.
 
 This tool is still useful for safetensors-based packages and a few composite model
-layouts, but it is gradually becoming a legacy path as audio.cpp moves toward
+packages, but it is gradually becoming a legacy path as audio.cpp moves toward
 standalone GGUF packages.
 
 If a model has a ready-to-use GGUF package, prefer that route first.
@@ -137,6 +137,7 @@ Packages whose loaders are not registered in the current release tree are listed
 | `stable_audio_3_small_sfx` | Stable Audio 3 Small SFX | **Yes** |
 | `supertonic_3` | Supertonic 3 | **Yes** |
 | `vevo2` | VeVo2 | No |
+| `vevo2_gguf` | VeVo2 GGUF Q8_0 (self-contained; no sibling whisper-medium) | **Yes** |
 | `vietneu_tts_v3_turbo` | VieNeu-TTS v3 Turbo | **Yes** |
 | `vibevoice_1_5b` | VibeVoice 1.5B | **Yes** |
 | `vibevoice_7b` | VibeVoice 7B | **Yes** |

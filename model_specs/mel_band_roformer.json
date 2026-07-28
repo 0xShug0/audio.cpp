@@ -1,5 +1,53 @@
 {
   "family": "mel_band_roformer",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "mel_band_roformer_q8_0",
+      "display_name": "Mel-Band RoFormer Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Mel-Band-RoFormer-GGUF",
+      "files": [
+        "Mel-Band-RoFormer-GGUF/mel-band-roformer-q8_0.gguf"
+      ],
+      "strip_prefix": "Mel-Band-RoFormer-GGUF"
+    },
+    {
+      "id": "mel_band_roformer_f16",
+      "display_name": "Mel-Band RoFormer F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Mel-Band-RoFormer-GGUF",
+      "files": [
+        "Mel-Band-RoFormer-GGUF/mel-band-roformer-f16.gguf"
+      ],
+      "strip_prefix": "Mel-Band-RoFormer-GGUF"
+    },
+    {
+      "id": "mel_band_roformer_safetensors",
+      "display_name": "Mel RoFormer Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "mel-roformer-mlx",
+      "files": [
+        "config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mlx-community/mel-roformer-mlx"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

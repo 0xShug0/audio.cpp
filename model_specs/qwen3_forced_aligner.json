@@ -1,5 +1,56 @@
 {
   "family": "qwen3_forced_aligner",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "qwen3_forced_aligner_0_6b_q8_0",
+      "display_name": "Qwen3 Forced Aligner 0.6B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-ForcedAligner-0.6B-GGUF",
+      "files": [
+        "Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-ForcedAligner-0.6B-GGUF"
+    },
+    {
+      "id": "qwen3_forced_aligner_0_6b_f16",
+      "display_name": "Qwen3 Forced Aligner 0.6B F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Qwen3-ForcedAligner-0.6B-GGUF",
+      "files": [
+        "Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-f16.gguf"
+      ],
+      "strip_prefix": "Qwen3-ForcedAligner-0.6B-GGUF"
+    },
+    {
+      "id": "qwen3_forced_aligner_0_6b_safetensors",
+      "display_name": "Qwen3 Forced Aligner 0.6B Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Qwen3-ForcedAligner-0.6B",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Qwen/Qwen3-ForcedAligner-0.6B"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

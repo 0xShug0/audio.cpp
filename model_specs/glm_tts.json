@@ -1,5 +1,23 @@
 {
   "family": "glm_tts",
+  "packages": [
+    {
+      "id": "glm_tts_q8_0",
+      "display_name": "GLM-TTS mixed Q8_0/F16 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "GLM-TTS-Q8",
+      "files": [
+        "Text to audio (TTS)/GLM-TTS_Q8.gguf"
+      ],
+      "strip_prefix": "Text to audio (TTS)",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mirek190/audio.cpp"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

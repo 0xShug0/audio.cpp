@@ -1,5 +1,65 @@
 {
   "family": "index_tts2",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "index_tts2_q8_0",
+      "display_name": "IndexTTS2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "IndexTTS2-GGUF",
+      "files": [
+        "IndexTTS2-GGUF/index-tts2-q8_0.gguf"
+      ],
+      "strip_prefix": "IndexTTS2-GGUF"
+    },
+    {
+      "id": "index_tts2_f16",
+      "display_name": "IndexTTS2 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "IndexTTS2-GGUF",
+      "files": [
+        "IndexTTS2-GGUF/index-tts2-f16.gguf"
+      ],
+      "strip_prefix": "IndexTTS2-GGUF"
+    },
+    {
+      "id": "index_tts2_orig",
+      "display_name": "IndexTTS2 Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "IndexTTS2-GGUF",
+      "files": [
+        "IndexTTS2-GGUF/index-tts2-orig.gguf"
+      ],
+      "strip_prefix": "IndexTTS2-GGUF"
+    },
+    {
+      "id": "index_tts2_safetensors",
+      "display_name": "IndexTTS2 Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "IndexTTS-2",
+      "files": [
+        "config.yaml",
+        "bpe.model",
+        "gpt.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mlx-community/index-tts2-mlx"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

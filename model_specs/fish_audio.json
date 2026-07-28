@@ -1,5 +1,38 @@
 {
   "family": "fish_audio",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "fish_audio_s2_pro_q8_0",
+      "display_name": "Fish Audio S2 Pro Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Fish-Audio-S2-Pro-GGUF",
+      "files": [
+        "Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf"
+      ],
+      "strip_prefix": "Fish-Audio-S2-Pro-GGUF"
+    },
+    {
+      "id": "fish_audio_s2_pro_bf16",
+      "display_name": "Fish Audio S2 Pro BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Fish-Audio-S2-Pro-GGUF",
+      "files": [
+        "Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-bf16.gguf"
+      ],
+      "strip_prefix": "Fish-Audio-S2-Pro-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

@@ -37,6 +37,8 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 
 ## News
 
+> **2026-07-27 - Panic release note:** Confucius4-TTS is being published early as the current schema-v1 model spec example. DramaBox and RVC may appear alongside it because they live on the same branch, but they have not gone through the same refactor/release pass yet. Stay tuned for release 0.5.
+
 > [!IMPORTANT]
 > **2026-07-23 - Release 0.4:** This release brings audio.cpp to **35** model families listed across the supported and community tables and adds **Higgs Audio v3 TTS 4B**, **Fish Audio S2 Pro**, and **Voxtral Realtime ASR**, with GGUF-first CUDA validation for the new paths. On warmed TTS requests, Higgs Audio Q8_0 runs about 8.8x-**10.1x** faster than real time, while Fish Audio Q8_0 runs about 3.1x-**3.4x** faster than real time. Voxtral adds offline and streaming ASR, with Q8_0 GGUF around **15.7x** faster than real time and about **171 ms** streaming TTFT.
 >
@@ -99,6 +101,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **inflect_v2** | TTS | en | GGUF FP32 | Jan [@JanWerder](https://github.com/JanWerder) | [Inflect Micro v2 and Nano v2](docs/community_models/inflect_v2.md) native offline synthesis |
 | **moss_tts_local** | TTS, Clone, Ctrl | auto, optional language hint | GGUF | [@justinjohn0306](https://github.com/justinjohn0306) | MOSS-TTS-Local Transformer v1.5 support |
 | **outetts** | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | GGUF | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
+| **parakeet_tdt** | ASR | 25 European languages, auto-detect | safetensors | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](docs/community_models/parakeet_tdt.md) FastConformer-TDT ASR, offline only |
 | **vietneu_tts** | TTS, Clone | vi, en | GGUF | Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS-v3-Turbo](docs/community_models/vietneu_tts.md) TTS and voice cloning support |
 
 PocketTTS language selection is a model-load option. When the model path points at the PocketTTS root, the loader uses `english` unless you pass `--load-option language=<name>`. Kyutai's normal non-English PocketTTS releases are smaller distilled language models intended for the fast PocketTTS path. The `_24l` variants are larger 24-layer, undistilled preview models that can sound better but are slower. Kyutai currently publishes French only as `french_24l`, not as a normal distilled `french` language directory, so French is not listed as a normal PocketTTS language here.
@@ -153,6 +156,23 @@ brew install audio-cpp
 
 For Nix and NixOS builds, see [docs/build/nixos.md](docs/build/nixos.md).
 
+### Composite Builds
+
+Composite builds let you compile only the model families you need. `full` is the default and is what release/Docker builds should use. `custom` registers only the requested loaders while still linking required internal dependencies; `core` builds the runtime without the optional model-family set.
+
+The helper scripts expose this as `--model-set` and `--models` on Linux/macOS, and `-ModelSet` and `-Models` on Windows:
+
+```bash
+scripts/build_linux.sh --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
+```
+
+Direct CMake builds use the same underlying variables:
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=qwen3_tts,pocket_tts,qwen3_asr
+cmake --build build/debug --target audiocpp_cli -j 8
+```
+
 ### Linux Build
 
 Use the Linux helper script for CPU, CUDA, or Vulkan builds:
@@ -164,6 +184,14 @@ scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_ser
 ```
 
 The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-vulkan-release`, and `build/linux-cpu-release`.
+
+Composite examples:
+
+```bash
+scripts/build_linux.sh --backend cuda --model-set full --target audiocpp_cli
+scripts/build_linux.sh --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
+scripts/build_linux.sh --backend cpu --model-set core --target audiocpp_cli
+```
 
 For portable CPU kernels on machines where native ISA flags are not suitable:
 
@@ -193,6 +221,7 @@ Common presets:
 .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
+.\scripts\build_windows.ps1 -Preset windows-cuda-release -ModelSet custom -Models "qwen3_tts,pocket_tts,qwen3_asr" -Target audiocpp_cli
 ```
 
 From `cmd.exe`, use the wrapper:
@@ -224,6 +253,7 @@ Useful variants:
 ```bash
 scripts/build_metal.sh --target audiocpp_server
 scripts/build_metal.sh --build-type Release --archs arm64 --target audiocpp_cli
+scripts/build_metal.sh --model-set custom --models qwen3_tts,pocket_tts --target audiocpp_cli
 scripts/build_metal.sh --with-tests --target audio_dsp_test
 scripts/build_metal.sh --openmp auto --target audiocpp_cli
 scripts/build_metal.sh --native-cpu OFF --target audiocpp_cli
@@ -251,6 +281,8 @@ build/macos-metal-release/bin/audiocpp_cli
 | `ENGINE_BUILD_TESTS` | Build framework unit tests. | `OFF` |
 | `ENGINE_BUILD_WARMBENCH` | Build warmbench helper binaries. | `OFF` |
 | `AUDIOCPP_DEPLOYMENT_BUILD` | Compile package specs into CLI/server binaries for standalone GGUF and package-spec fallback loading. Script builds expose this as `--deployment-build` on Linux/macOS and `-DeploymentBuild` on Windows. | `OFF` |
+| `AUDIOCPP_MODEL_SET` | Model composite to build: `full`, `core`, or `custom`. Script builds expose this as `--model-set` on Linux/macOS and `-ModelSet` on Windows. | `full` |
+| `AUDIOCPP_MODELS` | Comma or semicolon separated model target names when `AUDIOCPP_MODEL_SET=custom`, such as `qwen3_tts,pocket_tts,qwen3_asr`. Script builds expose this as `--models` on Linux/macOS and `-Models` on Windows. | empty |
 
 ## Usage
 

@@ -1,5 +1,38 @@
 {
   "family": "vibevoice_asr",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "vibevoice_asr_q8_0",
+      "display_name": "VibeVoice ASR Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-ASR-GGUF",
+      "files": [
+        "VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf"
+      ],
+      "strip_prefix": "VibeVoice-ASR-GGUF"
+    },
+    {
+      "id": "vibevoice_asr_f16",
+      "display_name": "VibeVoice ASR F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "VibeVoice-ASR-GGUF",
+      "files": [
+        "VibeVoice-ASR-GGUF/vibevoice-asr-f16.gguf"
+      ],
+      "strip_prefix": "VibeVoice-ASR-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

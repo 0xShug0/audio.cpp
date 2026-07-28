@@ -1,5 +1,40 @@
 {
   "family": "hviske_asr",
+  "packages": [
+    {
+      "id": "hviske_asr_q8_0",
+      "display_name": "Hviske v5.3 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Hviske-v5.3-GGUF",
+      "files": [
+        "Audio to text (ASR)/hviske-v5.3_Q8.gguf"
+      ],
+      "strip_prefix": "Audio to text (ASR)",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mirek190/audio.cpp"
+      }
+    },
+    {
+      "id": "hviske_asr_safetensors",
+      "display_name": "Hviske v5.3 Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "hviske-v5.3",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "tokenizer.model"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "syvai/hviske-v5.3"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

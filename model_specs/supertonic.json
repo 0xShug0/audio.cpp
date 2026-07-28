@@ -1,5 +1,65 @@
 {
   "family": "supertonic",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "supertonic_3_q8_0",
+      "display_name": "Supertonic 3 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Supertonic-3-GGUF",
+      "files": [
+        "Supertonic-3-GGUF/supertonic-3-q8_0.gguf"
+      ],
+      "strip_prefix": "Supertonic-3-GGUF"
+    },
+    {
+      "id": "supertonic_3_f16",
+      "display_name": "Supertonic 3 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Supertonic-3-GGUF",
+      "files": [
+        "Supertonic-3-GGUF/supertonic-3-f16.gguf"
+      ],
+      "strip_prefix": "Supertonic-3-GGUF"
+    },
+    {
+      "id": "supertonic_3_orig",
+      "display_name": "Supertonic 3 Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Supertonic-3-GGUF",
+      "files": [
+        "Supertonic-3-GGUF/supertonic-3-orig.gguf"
+      ],
+      "strip_prefix": "Supertonic-3-GGUF"
+    },
+    {
+      "id": "supertonic_3_safetensors",
+      "display_name": "Supertonic 3 Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "supertonic-3",
+      "files": [
+        "config/tts.json",
+        "config/unicode_indexer.json",
+        "ggml/supertonic.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mlx-community/supertonic-3-mlx"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

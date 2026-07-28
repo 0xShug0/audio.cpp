@@ -38,6 +38,7 @@ RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
 # Configure and build
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
+        -DAUDIOCPP_MODEL_SET=full \
         -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \
         -DENGINE_ENABLE_CUDA=OFF \
         -DENGINE_ENABLE_VULKAN=OFF \

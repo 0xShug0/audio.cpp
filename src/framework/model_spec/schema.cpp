@@ -637,19 +637,6 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
     validate_capabilities(require_spec_field(spec, "capabilities", source_name), task_ids, std::string(source_name) + ".capabilities");
     validate_options(require_spec_field(spec, "options", source_name), family, std::string(source_name) + ".options");
 
-    const auto layouts_path = std::string(source_name) + ".layouts";
-    const auto & layouts_field = require_spec_field(spec, "layouts", source_name);
-    const auto & layouts = require_spec_object(layouts_field, layouts_path);
-    if (layouts.empty()) {
-        fail(std::string(source_name) + ".layouts", "layouts must not be empty");
-    }
-    for (const auto & [layout_id, layout] : layouts) {
-        if (layout_id.empty()) {
-            fail(std::string(source_name) + ".layouts", "layout id must not be empty");
-        }
-        validate_layout(layout, std::string(source_name) + ".layouts." + layout_id);
-    }
-
     const bool has_default_download =
         has_spec_field(spec, "package_defaults") && has_spec_field(*spec.find("package_defaults"), "download");
     if (const auto * package_defaults = spec.find("package_defaults")) {

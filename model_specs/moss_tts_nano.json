@@ -1,5 +1,38 @@
 {
   "family": "moss_tts_nano",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "moss_tts_nano_100m_q8_0",
+      "display_name": "MOSS-TTS-Nano 100M Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-TTS-Nano-100M-GGUF",
+      "files": [
+        "MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Nano-100M-GGUF"
+    },
+    {
+      "id": "moss_tts_nano_100m_bf16",
+      "display_name": "MOSS-TTS-Nano 100M BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MOSS-TTS-Nano-100M-GGUF",
+      "files": [
+        "MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-bf16.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Nano-100M-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

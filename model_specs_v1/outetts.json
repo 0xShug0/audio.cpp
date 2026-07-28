@@ -272,7 +272,7 @@
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
-      "target_directory": "Llama-OuteTTS-1.0-1B-GGUF",
+      "target_directory": "Llama-OuteTTS-1.0-1B_Q8",
       "files": [
         "Text to audio (TTS)/Llama-OuteTTS-1.0-1B_Q8.gguf"
       ],

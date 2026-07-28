@@ -1,5 +1,60 @@
 {
   "family": "ace_step",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "ace_step_turbo_q8_0",
+      "display_name": "ACE-Step 1.5 Turbo Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/turbo/ace-step-1.5-turbo-q8_0.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF"
+    },
+    {
+      "id": "ace_step_turbo_bf16",
+      "display_name": "ACE-Step 1.5 Turbo BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/turbo/ace-step-1.5-turbo-bf16.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF"
+    },
+    {
+      "id": "ace_step_base_q8_0",
+      "display_name": "ACE-Step 1.5 Base Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/base/ace-step-1.5-base-q8_0.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF"
+    },
+    {
+      "id": "ace_step_base_bf16",
+      "display_name": "ACE-Step 1.5 Base BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/base/ace-step-1.5-base-bf16.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

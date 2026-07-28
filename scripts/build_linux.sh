@@ -11,6 +11,8 @@ WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
+AUDIOCPP_MODEL_SET="full"
+AUDIOCPP_MODELS=""
 NATIVE_CPU="ON"
 LLAMAFILE="ON"
 TARGETS=()
@@ -69,6 +71,22 @@ while [[ $# -gt 0 ]]; do
         --deployment-build)
             AUDIOCPP_DEPLOYMENT_BUILD="ON"
             shift
+            ;;
+        --model-set)
+            case "$2" in
+                full|core|custom)
+                    AUDIOCPP_MODEL_SET="$2"
+                    ;;
+                *)
+                    echo "--model-set must be full, core, or custom" >&2
+                    exit 1
+                    ;;
+            esac
+            shift 2
+            ;;
+        --models)
+            AUDIOCPP_MODELS="$2"
+            shift 2
             ;;
         --native-cpu)
             case "$2" in
@@ -204,6 +222,10 @@ echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
 echo "Building warmbench: $WITH_WARMBENCH"
 echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
+echo "Model composite: $AUDIOCPP_MODEL_SET"
+if [[ -n "$AUDIOCPP_MODELS" ]]; then
+    echo "Selected models: $AUDIOCPP_MODELS"
+fi
 
 "${RUNNER[@]}" cmake \
     -S . \
@@ -217,7 +239,9 @@ echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
     -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES" \
     -DENGINE_BUILD_TESTS="$WITH_TESTS" \
     -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH" \
-    -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
+    -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD" \
+    -DAUDIOCPP_MODEL_SET="$AUDIOCPP_MODEL_SET" \
+    -DAUDIOCPP_MODELS="$AUDIOCPP_MODELS"
 
 BUILD_CMD=("${RUNNER[@]}" cmake --build "$BUILD_DIR" --parallel "$JOBS")
 for target in "${TARGETS[@]}"; do

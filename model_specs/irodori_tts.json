@@ -1,5 +1,60 @@
 {
   "family": "irodori_tts",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "irodori_tts_600m_v3_voicedesign_q8_0",
+      "display_name": "Irodori-TTS 600M v3 VoiceDesign Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Irodori-TTS-600M-v3-VoiceDesign-GGUF",
+      "files": [
+        "Irodori-TTS-600M-v3-VoiceDesign-GGUF/irodori-tts-600m-v3-voicedesign-q8_0.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-600M-v3-VoiceDesign-GGUF"
+    },
+    {
+      "id": "irodori_tts_600m_v3_voicedesign_f16",
+      "display_name": "Irodori-TTS 600M v3 VoiceDesign F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Irodori-TTS-600M-v3-VoiceDesign-GGUF",
+      "files": [
+        "Irodori-TTS-600M-v3-VoiceDesign-GGUF/irodori-tts-600m-v3-voicedesign-f16.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-600M-v3-VoiceDesign-GGUF"
+    },
+    {
+      "id": "irodori_tts_500m_v3_q8_0",
+      "display_name": "Irodori-TTS 500M v3 Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Irodori-TTS-500M-v3-GGUF",
+      "files": [
+        "Irodori-TTS-500M-v3-GGUF/irodori-tts-500m-v3-q8_0.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-500M-v3-GGUF"
+    },
+    {
+      "id": "irodori_tts_500m_v3_f16",
+      "display_name": "Irodori-TTS 500M v3 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Irodori-TTS-500M-v3-GGUF",
+      "files": [
+        "Irodori-TTS-500M-v3-GGUF/irodori-tts-500m-v3-f16.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-500M-v3-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

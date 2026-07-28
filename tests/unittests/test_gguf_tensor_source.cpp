@@ -256,6 +256,77 @@ void test_embedded_model_spec_roundtrip_and_precedence() {
     std::filesystem::remove_all(root);
 }
 
+// Published GGUF packages install under their release name (vevo2-q8_0.gguf, not model.gguf)
+// into a directory that the WebUI and the server config hand over as the model path. That
+// directory has to resolve to its GGUF, or the spec falls back to the safetensors source and
+// fails on config files the GGUF package never ships (issue #113).
+void test_release_named_gguf_directory_selects_the_gguf_source() {
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_named_gguf_directory_test";
+    std::filesystem::remove_all(root);
+    const auto model_dir = root / "Vevo2-GGUF";
+    std::filesystem::create_directories(model_dir);
+    const auto safetensors = root / "weights.safetensors";
+    const auto gguf = model_dir / "vevo2-q8_0.gguf";
+    engine::io::write_safetensors_file(safetensors, {
+                                                        {"weight", "F32", {1}, bytes_for(std::vector<float>{1.0F})},
+                                                    });
+    const std::string spec_json = R"json({
+        "family":"named_gguf_test",
+        "sources":[{
+            "format":"gguf",
+            "roots":{"weights":"$gguf"},
+            "tensors":{"weights":"weights:"}
+        },{
+            "format":"safetensors",
+            "roots":{"model":"."},
+            "files":{"config":"model:config.json"},
+            "tensors":{"weights":"model:model.safetensors"}
+        }]
+    })json";
+    engine::assets::convert_tensor_sources_to_gguf({{safetensors, ""}}, gguf, engine::assets::TensorStorageType::F16,
+                                                   false, false, {}, {},
+                                                   engine::assets::GgufEmbeddedModelSpec{"named_gguf_test", spec_json});
+
+    engine::test::require_eq(engine::assets::find_directory_gguf(model_dir).value_or(""), gguf,
+                             "sole release-named GGUF in a model directory");
+    {
+        engine::model_spec::ScopedSpecOverride scope(std::nullopt, model_dir);
+        engine::test::require_eq(engine::model_spec::default_spec_path("named_gguf_test"),
+                                 std::filesystem::path("@gguf") / "named_gguf_test.json",
+                                 "embedded spec of a release-named GGUF in a model directory");
+        const auto resources = engine::model_spec::load_resource_bundle(
+            model_dir, engine::model_spec::default_spec_path("named_gguf_test"));
+        engine::test::require(resources.open_tensor_source("weights")->has_tensor("weight"),
+                              "release-named GGUF directory did not select the GGUF source");
+    }
+
+    // model.gguf keeps winning, so a directory carrying both stays on its documented entry point.
+    const auto default_named = model_dir / "model.gguf";
+    std::filesystem::copy_file(gguf, default_named);
+    engine::test::require_eq(engine::assets::find_directory_gguf(model_dir).value_or(""), default_named,
+                             "model.gguf precedence over a release-named sibling");
+    std::filesystem::remove(default_named);
+
+    // Two release-named GGUFs cannot be narrowed down to one; that must be said plainly rather
+    // than silently falling back to the safetensors source.
+    std::filesystem::copy_file(gguf, model_dir / "vevo2-f16.gguf");
+    engine::test::require(!engine::assets::find_directory_gguf(model_dir).has_value(),
+                          "ambiguous GGUF directory resolved to a single file");
+    bool ambiguity_reported = false;
+    try {
+        engine::model_spec::ScopedSpecOverride scope(std::nullopt, model_dir);
+        (void)engine::model_spec::load_resource_bundle_for_family(model_dir, "named_gguf_test");
+    } catch (const std::runtime_error & error) {
+        const std::string message = error.what();
+        ambiguity_reported = message.find("contains 2 GGUF files") != std::string::npos &&
+            message.find("vevo2-f16.gguf") != std::string::npos &&
+            message.find("vevo2-q8_0.gguf") != std::string::npos;
+    }
+    engine::test::require(ambiguity_reported, "ambiguous GGUF directory did not report its candidates");
+
+    std::filesystem::remove_all(root);
+}
+
 void test_package_spec_errors_name_selected_spec() {
     const auto root = std::filesystem::temp_directory_path() / "audiocpp_package_spec_error_test";
     std::filesystem::remove_all(root);
@@ -312,6 +383,7 @@ int main() {
         test_packed_multi_source_gguf();
         test_all_rank0_gguf();
         test_embedded_model_spec_roundtrip_and_precedence();
+        test_release_named_gguf_directory_selects_the_gguf_source();
         test_package_spec_errors_name_selected_spec();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';

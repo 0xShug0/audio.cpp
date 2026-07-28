@@ -451,15 +451,15 @@ runtime::TaskResult GlmTTSSession::run(
     flow_input.speaker_embedding = reference.speaker_embedding;
     flow_input.inference_steps = static_cast<int>(
         runtime::parse_i64_option(
-            request.options, {"flow_steps"})
+            request.options, {"num_inference_steps", "flow_steps"})
             .value_or(assets_->config.flow.inference_steps));
     flow_input.cfg_rate = runtime::parse_finite_float_option(
-        request.options, {"cfg_rate"})
+        request.options, {"flow_guidance_scale", "cfg_rate"})
         .value_or(assets_->config.flow.inference_cfg_rate);
     const size_t flow_noise_count = static_cast<size_t>(
         flow_frames * assets_->config.flow.mel_dim);
     flow_input.initial_noise = optional_f32_values(
-        request, {"flow_noise_file"}, "Flow noise");
+        request, {"flow_noise_path", "flow_noise_file"}, "Flow noise");
     if (flow_input.initial_noise.empty()) {
         flow_input.initial_noise =
             normal_noise(flow_noise_count, seed + 1);
@@ -480,7 +480,7 @@ runtime::TaskResult GlmTTSSession::run(
         mel.mel, mel.frames, assets_->config.flow.mel_dim);
     const auto hift_source_random = optional_f32_values(
         request,
-        {"hift_source_random_file"},
+        {"hift_source_random_path", "hift_source_random_file"},
         "HiFT source-random");
     const auto * hift_source_random_ptr =
         hift_source_random.empty()
@@ -488,7 +488,8 @@ runtime::TaskResult GlmTTSSession::run(
             : &hift_source_random;
     const uint64_t hift_prior_noise_values =
         runtime::parse_u64_option(
-            request.options, {"hift_prior_noise_values"})
+            request.options,
+            {"hift_prior_noise_count", "hift_prior_noise_values"})
             .value_or(0);
     const auto vocoder_start = Clock::now();
     auto waveform = hift().synthesize(

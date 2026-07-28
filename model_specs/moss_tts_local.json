@@ -1,5 +1,38 @@
 {
   "family": "moss_tts_local",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "moss_tts_local_v1_5_q8_0",
+      "display_name": "MOSS-TTS-Local v1.5 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-TTS-Local-v1.5-GGUF",
+      "files": [
+        "MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-q8_0.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Local-v1.5-GGUF"
+    },
+    {
+      "id": "moss_tts_local_v1_5_bf16",
+      "display_name": "MOSS-TTS-Local v1.5 BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MOSS-TTS-Local-v1.5-GGUF",
+      "files": [
+        "MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-bf16.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Local-v1.5-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

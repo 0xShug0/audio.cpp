@@ -156,6 +156,9 @@ audiocpp_gguf --input [namespace=]<weights> [--input namespace=<weights> ...] \
   [--model-spec <json-or-directory>] \
   [--root <model-dir>] \
   [--sidecar <source>=<destination>] \
+  [--bnb-nf4-type q8_0] \
+  [--exclude-prefix <logical-prefix>] \
+  [--keep-type <tensor-prefix>*=<type>] \
   [--overwrite] \
   [--no-sidecars] \
   [--allow-missing-model-spec]
@@ -204,6 +207,35 @@ audiocpp_gguf \
   --root /path/to/model \
   --output /path/to/model-gguf/model.gguf \
   --type f16 \
+  --overwrite
+```
+
+## Convert BitsAndBytes NF4 Sources
+
+Some upstream packages store tensors as BitsAndBytes NF4 data in U8 safetensors plus
+helper tensors. Use `--bnb-nf4-type q8_0` for these sources. The converter decodes the
+NF4 payload, uses the quant-state shape for GGUF metadata, re-quantizes the decoded
+weights to GGML Q8_0, and skips the BNB helper tensors from the output.
+
+`--keep-type` only overrides the GGUF output type for normal tensors. It does not decode
+raw BNB NF4 U8 tensors by itself.
+
+Use `--exclude-prefix <logical-prefix>` to omit a tensor subtree that the audio.cpp model
+does not load, for example an unused vision tower in a shared language-model checkpoint.
+
+```bash
+audiocpp_gguf \
+  --input audio=models/Dramabox/dramabox-audio-components.safetensors \
+  --input dit=models/Dramabox/dramabox-dit-v1.safetensors \
+  --input gemma=models/gemma-3-12b-it-bnb-4bit/model.safetensors.index.json \
+  --input silence=models/Dramabox/assets/silence_latent_frame.safetensors \
+  --root build/debug/dramabox_gguf_sidecars_spec \
+  --output models/Dramabox-GGUF/dramabox-q8_0.gguf \
+  --type q8_0 \
+  --bnb-nf4-type q8_0 \
+  --exclude-prefix gemma/vision_tower \
+  --family dramabox \
+  --model-spec model_specs/dramabox.json \
   --overwrite
 ```
 
@@ -276,11 +308,17 @@ If the GGUF embeds all required sidecars, it can be passed directly as `--model`
 audiocpp_cli --task asr --family qwen3_asr --model /path/to/model-gguf/model.gguf --backend cuda --audio speech.wav
 ```
 
-A directory containing `model.gguf` is also accepted by supported package specs:
+A directory is also accepted by supported package specs. It resolves to `model.gguf` when that
+name is present, otherwise to the single `*.gguf` inside it — so a downloaded package directory
+works under its release name without renaming anything:
 
 ```bash
 audiocpp_cli --task tts --family qwen3_tts --model /path/to/model-gguf --backend cuda --text "Hello." --out out.wav
+audiocpp_cli --task vc --family vevo2 --model models/Vevo2-GGUF --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
 ```
+
+A directory holding several GGUFs and no `model.gguf` is ambiguous and is rejected with the
+candidates listed; pass one of them directly as `--model`, or keep a single GGUF per directory.
 
 Compatibility summary:
 

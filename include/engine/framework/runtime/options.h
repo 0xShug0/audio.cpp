@@ -8,6 +8,10 @@
 #include <string_view>
 #include <unordered_map>
 
+namespace engine::assets {
+enum class TensorStorageType;
+}
+
 namespace engine::runtime {
 
 struct OptionMatch {
@@ -58,6 +62,12 @@ size_t parse_size_mb_option(
     const std::unordered_map<std::string, std::string> & options,
     std::initializer_list<std::string_view> keys,
     size_t fallback_bytes);
+
+assets::TensorStorageType parse_tensor_storage_option(
+    const std::unordered_map<std::string, std::string> & options,
+    std::string_view key,
+    assets::TensorStorageType fallback,
+    std::initializer_list<assets::TensorStorageType> allowed);
 
 uint32_t random_u32_seed();
 uint64_t random_u64_seed();

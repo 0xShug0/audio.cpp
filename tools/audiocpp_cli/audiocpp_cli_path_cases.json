@@ -71,7 +71,7 @@
           "text": "energetic chiptune J-pop with a bright female vocal",
           "language": "ja",
           "task_route": "text2music",
-          "lyrics": "[verse]\n森の奥で光る声\n[chorus]\n月夜に響く君の歌",
+          "lyrics": "[verse]\n\u68ee\u306e\u5965\u3067\u5149\u308b\u58f0\n[chorus]\n\u6708\u591c\u306b\u97ff\u304f\u541b\u306e\u6b4c",
           "duration_seconds": 20,
           "options": {
             "lm_cfg_scale": 2.0,
@@ -381,7 +381,7 @@
         },
         {
           "id": "custom_dialect_speaker",
-          "text": "这个自定义声音应该保持清晰, 语气自然, 并且在短句中稳定。",
+          "text": "\u8fd9\u4e2a\u81ea\u5b9a\u4e49\u58f0\u97f3\u5e94\u8be5\u4fdd\u6301\u6e05\u6670, \u8bed\u6c14\u81ea\u7136, \u5e76\u4e14\u5728\u77ed\u53e5\u4e2d\u7a33\u5b9a\u3002",
           "language": "Chinese",
           "speaker": "Dylan",
           "seed": 1234,
@@ -699,7 +699,7 @@
       "requests": [
         {
           "id": "short_emoji",
-          "text": "今日は短い確認です。😊やさしく、聞き取りやすい声でお願いします。",
+          "text": "\u4eca\u65e5\u306f\u77ed\u3044\u78ba\u8a8d\u3067\u3059\u3002\ud83d\ude0a\u3084\u3055\u3057\u304f\u3001\u805e\u304d\u53d6\u308a\u3084\u3059\u3044\u58f0\u3067\u304a\u9858\u3044\u3057\u307e\u3059\u3002",
           "language": "ja",
           "seed": 1234,
           "num_inference_steps": 40,
@@ -709,7 +709,7 @@
         },
         {
           "id": "style_sound",
-          "text": "📞お電話ありがとうございます。少しお待ちください。⏸️ただいま担当者へおつなぎします。",
+          "text": "\ud83d\udcde\u304a\u96fb\u8a71\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\u5c11\u3057\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002\u23f8\ufe0f\u305f\u3060\u3044\u307e\u62c5\u5f53\u8005\u3078\u304a\u3064\u306a\u304e\u3057\u307e\u3059\u3002",
           "language": "ja",
           "seed": 1234,
           "num_inference_steps": 40,
@@ -719,7 +719,7 @@
         },
         {
           "id": "clone_reference",
-          "text": "この声の雰囲気を保ったまま、落ち着いて自然に読み上げます。",
+          "text": "\u3053\u306e\u58f0\u306e\u96f0\u56f2\u6c17\u3092\u4fdd\u3063\u305f\u307e\u307e\u3001\u843d\u3061\u7740\u3044\u3066\u81ea\u7136\u306b\u8aad\u307f\u4e0a\u3052\u307e\u3059\u3002",
           "language": "ja",
           "voice_ref": "resources/sample.wav",
           "seed": 1234,
@@ -743,24 +743,24 @@
       "requests": [
         {
           "id": "voice_design_caption",
-          "text": "本日はお越しいただき、誠にありがとうございます。どうぞごゆっくりお過ごしください。",
+          "text": "\u672c\u65e5\u306f\u304a\u8d8a\u3057\u3044\u305f\u3060\u304d\u3001\u8aa0\u306b\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\u3069\u3046\u305e\u3054\u3086\u3063\u304f\u308a\u304a\u904e\u3054\u3057\u304f\u3060\u3055\u3044\u3002",
           "language": "ja",
           "seed": 1234,
           "num_inference_steps": 40,
           "options": {
-            "caption": "落ち着いた大人の男性。フォーマルな場で、深く響く声で丁寧かつ歓迎の意を込めて話している。",
+            "caption": "\u843d\u3061\u7740\u3044\u305f\u5927\u4eba\u306e\u7537\u6027\u3002\u30d5\u30a9\u30fc\u30de\u30eb\u306a\u5834\u3067\u3001\u6df1\u304f\u97ff\u304f\u58f0\u3067\u4e01\u5be7\u304b\u3064\u6b53\u8fce\u306e\u610f\u3092\u8fbc\u3081\u3066\u8a71\u3057\u3066\u3044\u308b\u3002",
             "no_ref": true
           }
         },
         {
           "id": "voice_design_ref_caption_emoji",
-          "text": "あははっ🤭、それ本当に言ってるの？…😮‍💨まぁ、君らしいけどね。",
+          "text": "\u3042\u306f\u306f\u3063\ud83e\udd2d\u3001\u305d\u308c\u672c\u5f53\u306b\u8a00\u3063\u3066\u308b\u306e\uff1f\u2026\ud83d\ude2e\u200d\ud83d\udca8\u307e\u3041\u3001\u541b\u3089\u3057\u3044\u3051\u3069\u306d\u3002",
           "language": "ja",
           "voice_ref": "models/Irodori-TTS-600M-v3-VoiceDesign/samples/clone_ref2.wav",
           "seed": 1234,
           "num_inference_steps": 40,
           "options": {
-            "caption": "余裕のある大人の男性。親しい相手に対して、くだけた雰囲気で呆れながらも楽しそうに話している。",
+            "caption": "\u4f59\u88d5\u306e\u3042\u308b\u5927\u4eba\u306e\u7537\u6027\u3002\u89aa\u3057\u3044\u76f8\u624b\u306b\u5bfe\u3057\u3066\u3001\u304f\u3060\u3051\u305f\u96f0\u56f2\u6c17\u3067\u5446\u308c\u306a\u304c\u3089\u3082\u697d\u3057\u305d\u3046\u306b\u8a71\u3057\u3066\u3044\u308b\u3002",
             "no_ref": false
           }
         }
@@ -921,6 +921,35 @@
           "speaking_rate": 1.05,
           "seed": 1234,
           "num_inference_steps": 10
+        }
+      ]
+    },
+    {
+      "id": "rvc_packaged_voice_vc",
+      "coverage": "RVC native voice conversion with packaged voices, HuBERT, RMVPE, and packaged retrieval vectors",
+      "family": "rvc",
+      "model": "models/RVC/inference/safetensors",
+      "task": "vc",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "default_no_index",
+          "audio": "resources/sample_16k.wav",
+          "options": {
+            "rvc.voice": "default",
+            "rvc.index_rate": 0.0
+          }
+        },
+        {
+          "id": "default_indexed",
+          "audio": "resources/sample_16k.wav",
+          "options": {
+            "rvc.voice": "default",
+            "rvc.index_rate": 0.5
+          }
         }
       ]
     },
@@ -1635,7 +1664,7 @@
       "task": "asr",
       "mode": "offline",
       "session_options": {
-        "decoder_algorithm": "greedy_duration_loop"
+        "parakeet_tdt.offline_mode": "long_form"
       },
       "outputs": [
         "text"
@@ -1655,7 +1684,9 @@
       "task": "asr",
       "mode": "streaming",
       "session_options": {
-        "decoder_algorithm": "greedy_duration_loop"
+        "parakeet_tdt.audio_chunk_duration_sec": "2",
+        "parakeet_tdt.left_context_sec": "10",
+        "parakeet_tdt.right_context_sec": "2"
       },
       "outputs": [
         "text"
@@ -2156,7 +2187,7 @@
       "requests": [
         {
           "id": "chinese_voice_clone",
-          "text": "这个呀，就是我们精心制作准备的纪念品，大家可以看到这个色泽和这个材质啊，哎呀多么的光彩照人。",
+          "text": "\u8fd9\u4e2a\u5440\uff0c\u5c31\u662f\u6211\u4eec\u7cbe\u5fc3\u5236\u4f5c\u51c6\u5907\u7684\u7eaa\u5ff5\u54c1\uff0c\u5927\u5bb6\u53ef\u4ee5\u770b\u5230\u8fd9\u4e2a\u8272\u6cfd\u548c\u8fd9\u4e2a\u6750\u8d28\u554a\uff0c\u54ce\u5440\u591a\u4e48\u7684\u5149\u5f69\u7167\u4eba\u3002",
           "language": "zh",
           "voice_ref": "resources/index_tts2/official_examples/voice_03.wav",
           "seed": 1245
@@ -2176,16 +2207,87 @@
       "requests": [
         {
           "id": "chinese_emotion_text",
-          "text": "快躲起来！是他要来了！他要来抓我们了！",
+          "text": "\u5feb\u8eb2\u8d77\u6765\uff01\u662f\u4ed6\u8981\u6765\u4e86\uff01\u4ed6\u8981\u6765\u6293\u6211\u4eec\u4e86\uff01",
           "language": "zh",
           "voice_ref": "resources/index_tts2/official_examples/voice_12.wav",
           "options": {
             "use_emotion_text": true,
-            "emotion_text": "你吓死我了！你是鬼吗？",
+            "emotion_text": "\u4f60\u5413\u6b7b\u6211\u4e86\uff01\u4f60\u662f\u9b3c\u5417\uff1f",
             "emotion_alpha": 0.6,
             "use_random_emotion": false
           },
           "seed": 1246
+        }
+      ]
+    },
+    {
+      "id": "dramabox_voice_ref_cfg_stg_cold",
+      "coverage": "DramaBox single cold voice-reference TTS request with CFG and STG enabled",
+      "family": "dramabox",
+      "model": "models/Dramabox",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "voice_ref_cfg_stg",
+          "text": "A woman speaks warmly, \"Hello, how are you today?\" She laughs softly, \"Hahaha, it is so good to see you again.\"",
+          "voice_ref": "reference/DramaBox/assets/voices/female_american.wav",
+          "options": {
+            "cfg_scale": 2.5,
+            "stg_scale": 1.5,
+            "duration_multiplier": 1.1,
+            "ref_duration": 10.0,
+            "rescale_scale": "auto",
+            "watermark": false,
+            "denoise_ref": false
+          },
+          "seed": 52
+        }
+      ]
+    },
+    {
+      "id": "dramabox_voice_ref_cfg_stg_warmed",
+      "coverage": "DramaBox two-request voice-reference TTS session with short warmup then full CFG/STG voice-reference request",
+      "family": "dramabox",
+      "model": "models/Dramabox",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup_voice_ref_cfg_stg",
+          "text": "A woman says warmly, \"Hello.\"",
+          "voice_ref": "reference/DramaBox/assets/voices/female_american.wav",
+          "options": {
+            "cfg_scale": 2.5,
+            "stg_scale": 1.5,
+            "duration_multiplier": 1.1,
+            "ref_duration": 10.0,
+            "rescale_scale": "auto",
+            "watermark": false,
+            "denoise_ref": false
+          },
+          "seed": 52
+        },
+        {
+          "id": "voice_ref_cfg_stg",
+          "text": "A woman speaks warmly, \"Hello, how are you today?\" She laughs softly, \"Hahaha, it is so good to see you again.\"",
+          "voice_ref": "reference/DramaBox/assets/voices/female_american.wav",
+          "options": {
+            "cfg_scale": 2.5,
+            "stg_scale": 1.5,
+            "duration_multiplier": 1.1,
+            "ref_duration": 10.0,
+            "rescale_scale": "auto",
+            "watermark": false,
+            "denoise_ref": false
+          },
+          "seed": 52
         }
       ]
     }

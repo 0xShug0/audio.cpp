@@ -1,5 +1,65 @@
 {
   "family": "seed_vc",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "seed_vc_mlx_q8_0",
+      "display_name": "SeedVC-MLX Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "SeedVC-MLX-GGUF",
+      "files": [
+        "SeedVC-MLX-GGUF/seed-vc-mlx-q8_0.gguf"
+      ],
+      "strip_prefix": "SeedVC-MLX-GGUF"
+    },
+    {
+      "id": "seed_vc_mlx_f16",
+      "display_name": "SeedVC-MLX F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "SeedVC-MLX-GGUF",
+      "files": [
+        "SeedVC-MLX-GGUF/seed-vc-mlx-f16.gguf"
+      ],
+      "strip_prefix": "SeedVC-MLX-GGUF"
+    },
+    {
+      "id": "seed_vc_mlx_orig",
+      "display_name": "SeedVC-MLX Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "SeedVC-MLX-GGUF",
+      "files": [
+        "SeedVC-MLX-GGUF/seed-vc-mlx-orig.gguf"
+      ],
+      "strip_prefix": "SeedVC-MLX-GGUF"
+    },
+    {
+      "id": "seed_vc_mlx_safetensors",
+      "display_name": "SeedVC-MLX Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "SeedVC-MLX",
+      "files": [
+        "seed_vc_manifest.json",
+        "v2/ar.safetensors",
+        "v2/cfm.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mlx-community/SeedVC-MLX"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

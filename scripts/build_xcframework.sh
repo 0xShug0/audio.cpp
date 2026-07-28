@@ -15,6 +15,8 @@ CLEAN="OFF"
 LLAMAFILE="ON"
 NATIVE_CPU="ON"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
+AUDIOCPP_MODEL_SET="full"
+AUDIOCPP_MODELS=""
 
 usage() {
     cat <<'EOF'
@@ -41,6 +43,11 @@ Options:
   --native-cpu ON|OFF   Build ggml CPU kernels with native host ISA flags.
                         Default: ON
   --deployment-build    Embed package specs for standalone GGUF/model loading.
+  --model-set full|core|custom
+                        Model composite to build.
+                        Default: full
+  --models "<list>"     Comma or semicolon separated model targets when
+                        --model-set custom is used.
   -j, --jobs <n>        Parallel build jobs.
   -h, --help            Show this help.
 
@@ -92,6 +99,22 @@ while [[ $# -gt 0 ]]; do
         --deployment-build)
             AUDIOCPP_DEPLOYMENT_BUILD="ON"
             shift
+            ;;
+        --model-set)
+            case "$2" in
+                full|core|custom)
+                    AUDIOCPP_MODEL_SET="$2"
+                    ;;
+                *)
+                    echo "--model-set must be full, core, or custom" >&2
+                    exit 1
+                    ;;
+            esac
+            shift 2
+            ;;
+        --models)
+            AUDIOCPP_MODELS="$2"
+            shift 2
             ;;
         -j|--jobs)
             JOBS="$2"
@@ -192,7 +215,9 @@ archive_for_arch() {
         -DGGML_METAL_EMBED_LIBRARY=ON \
         -DENGINE_BUILD_TESTS=OFF \
         -DENGINE_BUILD_EXAMPLES=OFF \
-        -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
+        -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD" \
+        -DAUDIOCPP_MODEL_SET="$AUDIOCPP_MODEL_SET" \
+        -DAUDIOCPP_MODELS="$AUDIOCPP_MODELS"
     )
     if [[ -n "$GENERATOR" ]]; then
         cmake_cmd+=(-G "$GENERATOR")

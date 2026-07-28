@@ -4,7 +4,10 @@
 
 #include "engine/framework/audio/wav_reader.h"
 
+#include <cmath>
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -74,7 +77,14 @@ std::string json_option_string(const engine::io::json::Value & value) {
         return value.as_bool() ? "true" : "false";
     }
     if (value.is_number()) {
-        return engine::io::json::stringify_number(value.as_number());
+        const double number = value.as_number();
+        constexpr double kMaxExactJsonInteger = 9007199254740992.0;  // 2^53
+        if (std::isfinite(number) && std::trunc(number) == number && std::fabs(number) < kMaxExactJsonInteger) {
+            std::ostringstream out;
+            out << std::fixed << std::setprecision(0) << number;
+            return out.str();
+        }
+        return engine::io::json::stringify_number(number);
     }
     return engine::io::json::stringify(value);
 }

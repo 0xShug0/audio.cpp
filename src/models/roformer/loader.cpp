@@ -36,6 +36,15 @@ runtime::ModelCliInterface cli(const RoformerAssets & assets) {
             "RoFormer weight storage type.",
         },
     };
+    if (assets.config.family == kBsRoformerFamily) {
+        out.session_options.push_back({
+            assets.config.family + ".num_overlap",
+            "n",
+            "Number of overlapping inference windows; defaults to the package "
+            "configuration. Lower values improve throughput but can reduce "
+            "boundary quality.",
+        });
+    }
     return out;
 }
 

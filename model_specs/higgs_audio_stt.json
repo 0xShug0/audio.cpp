@@ -1,5 +1,38 @@
 {
   "family": "higgs_audio_stt",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "higgs_audio_stt_q8_0",
+      "display_name": "Higgs Audio v3 STT Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Higgs-Audio-v3-STT-GGUF",
+      "files": [
+        "Higgs-Audio-v3-STT-GGUF/higgs-audio-v3-stt-q8_0.gguf"
+      ],
+      "strip_prefix": "Higgs-Audio-v3-STT-GGUF"
+    },
+    {
+      "id": "higgs_audio_stt_f16",
+      "display_name": "Higgs Audio v3 STT F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Higgs-Audio-v3-STT-GGUF",
+      "files": [
+        "Higgs-Audio-v3-STT-GGUF/higgs-audio-v3-stt-f16.gguf"
+      ],
+      "strip_prefix": "Higgs-Audio-v3-STT-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

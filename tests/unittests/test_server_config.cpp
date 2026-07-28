@@ -1,6 +1,8 @@
 #include "busy_guard.h"
 #include "config.h"
 
+#include "engine/framework/io/json.h"
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -141,6 +143,27 @@ void test_missing_default_preset_name_is_rejected() {
     require(rejected, "unknown default preset name is rejected");
 }
 
+void test_duplicate_json_keys_are_rejected() {
+    bool rejected = false;
+    try {
+        (void) engine::io::json::parse(R"JSON({
+  "voice_presets": {
+    "cosette": {
+      "voice_id": "cosette"
+    }
+  },
+  "voice_presets": {
+    "anna": {
+      "voice_id": "anna"
+    }
+  }
+})JSON");
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("duplicate json object key: voice_presets") != std::string::npos;
+    }
+    require(rejected, "duplicate json object keys are rejected");
+}
+
 const char * const kMinimalModel = R"JSON(
   "models": [
     {
@@ -272,6 +295,7 @@ int main() {
         test_inline_default_and_named_presets();
         test_default_preset_name();
         test_missing_default_preset_name_is_rejected();
+        test_duplicate_json_keys_are_rejected();
         test_busy_timeout_defaults_and_overrides();
         test_negative_busy_timeout_is_rejected();
         test_per_model_busy_timeout();

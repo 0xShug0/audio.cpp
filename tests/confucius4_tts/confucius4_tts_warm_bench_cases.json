@@ -1,0 +1,143 @@
+{
+  "same_language_voice_clone": {
+    "requests": [
+      {
+        "id": "english_same_language_male_reference",
+        "language": "en",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/male-voice.wav",
+        "text": "The operations desk reviewed the morning brief, confirmed that the relay stayed online through the storm, and asked the field team to record one clear status update before the next inspection window opened.",
+        "seed": 4101
+      }
+    ]
+  },
+  "cross_language_voice_clone": {
+    "requests": [
+      {
+        "id": "chinese_cross_language_female_reference",
+        "language": "zh",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/female-voice.wav",
+        "text": "今天的系统检查已经完成，控制室确认备用电源稳定，远端传感器恢复通信，下一组工程师将在傍晚之前核对所有记录，并把结果同步给值班团队，确保后续任务能够按计划继续推进，同时观察跨语言克隆时语气和节奏是否保持自然。",
+        "seed": 4201
+      }
+    ]
+  },
+  "same_language_voice_clone_single_beam": {
+    "requests": [
+      {
+        "id": "english_same_language_male_reference_single_beam",
+        "language": "en",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/male-voice.wav",
+        "text": "The operations desk reviewed the morning brief, confirmed that the relay stayed online through the storm, and asked the field team to record one clear status update before the next inspection window opened.",
+        "seed": 4101,
+        "num_beams": 1,
+        "top_k": 1,
+        "top_p": 1.0,
+        "temperature": 1.0
+      }
+    ]
+  },
+  "cross_language_voice_clone_single_beam": {
+    "requests": [
+      {
+        "id": "chinese_cross_language_female_reference_single_beam",
+        "language": "zh",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/female-voice.wav",
+        "text": "今天的系统检查已经完成，控制室确认备用电源稳定，远端传感器恢复通信，下一组工程师将在傍晚之前核对所有记录，并把结果同步给值班团队，确保后续任务能够按计划继续推进，同时观察跨语言克隆时语气和节奏是否保持自然。",
+        "seed": 4201,
+        "num_beams": 1,
+        "top_k": 1,
+        "top_p": 1.0,
+        "temperature": 1.0
+      }
+    ]
+  },
+  "long_text_chunking_single_beam": {
+    "requests": [
+      {
+        "id": "chinese_long_text_chunking_single_beam",
+        "language": "zh",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/male-voice.wav",
+        "text": "下午的复盘会议开始后，协调员先确认维护摘要已经更新，又要求远端团队逐项核对电源读数、档案检查、告警恢复、备用计划和交接记录是否一致，最后提醒大家在提交报告之前保持语速平稳清楚。随后测试负责人继续说明，长文本会被分成多个片段生成，系统需要稳定复用参考声音，并在每个片段之间保持自然衔接，避免音色突然变化。",
+        "seed": 4401,
+        "num_beams": 1,
+        "top_k": 1,
+        "top_p": 1.0,
+        "temperature": 1.0,
+        "text_chunk_size": 10
+      }
+    ]
+  },
+  "multi_request_logic_paths": {
+    "requests": [
+      {
+        "id": "session_same_language_sample_reference",
+        "language": "en",
+        "reference_audio": "resources/sample.wav",
+        "text": "The narrator should keep a steady pace while explaining that the archive was checked twice, the missing labels were restored, and the final audio report now matches the production notes exactly.",
+        "seed": 4301
+      },
+      {
+        "id": "session_cross_language_male_reference",
+        "language": "zh",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/male-voice.wav",
+        "text": "请用清晰自然的语气朗读这段内容：实验室已经完成新的压力测试，服务器日志显示缓存命中率稳定提高，负责人要求在交付之前再次确认长文本合成和跨语言克隆路径都没有退化，并记录不同参考声音在同一会话中的切换情况。",
+        "seed": 4302
+      },
+      {
+        "id": "session_cross_language_female_reference",
+        "language": "ja",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/female-voice.wav",
+        "text": "今朝の確認では、音声クローニングの品質、長い文章の区切り処理、そして別の言語で話す場合の声の安定性を順番に確認しました。担当者は結果を記録し、参考音声を切り替えた後も出力が自然に続くかを確認してから、次の検証に進みます。",
+        "seed": 4303
+      }
+    ]
+  },
+  "japanese_cross_language_voice_clone": {
+    "requests": [
+      {
+        "id": "japanese_cross_language_female_reference",
+        "language": "ja",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/female-voice.wav",
+        "text": "今朝の確認では、音声クローニングの品質、長い文章の区切り処理、そして別の言語で話す場合の声の安定性を順番に確認しました。担当者は結果を記録し、参考音声を切り替えた後も出力が自然に続くかを確認してから、次の検証に進みます。",
+        "seed": 4303
+      }
+    ]
+  },
+  "multi_request_logic_paths_single_beam": {
+    "requests": [
+      {
+        "id": "session_same_language_sample_reference_single_beam",
+        "language": "en",
+        "reference_audio": "resources/sample.wav",
+        "text": "The narrator should keep a steady pace while explaining that the archive was checked twice, the missing labels were restored, and the final audio report now matches the production notes exactly.",
+        "seed": 4301,
+        "num_beams": 1,
+        "top_k": 1,
+        "top_p": 1.0,
+        "temperature": 1.0
+      },
+      {
+        "id": "session_cross_language_male_reference_single_beam",
+        "language": "zh",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/male-voice.wav",
+        "text": "请用清晰自然的语气朗读这段内容：实验室已经完成新的压力测试，服务器日志显示缓存命中率稳定提高，负责人要求在交付之前再次确认长文本合成和跨语言克隆路径都没有退化，并记录不同参考声音在同一会话中的切换情况。",
+        "seed": 4302,
+        "num_beams": 1,
+        "top_k": 1,
+        "top_p": 1.0,
+        "temperature": 1.0
+      },
+      {
+        "id": "session_cross_language_female_reference_single_beam",
+        "language": "ja",
+        "reference_audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/female-voice.wav",
+        "text": "今朝の確認では、音声クローニングの品質、長い文章の区切り処理、そして別の言語で話す場合の声の安定性を順番に確認しました。担当者は結果を記録し、参考音声を切り替えた後も出力が自然に続くかを確認してから、次の検証に進みます。",
+        "seed": 4303,
+        "num_beams": 1,
+        "top_k": 1,
+        "top_p": 1.0,
+        "temperature": 1.0
+      }
+    ]
+  }
+}

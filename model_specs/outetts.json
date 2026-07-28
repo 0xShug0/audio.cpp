@@ -1,5 +1,23 @@
 {
   "family": "outetts",
+  "packages": [
+    {
+      "id": "outetts_1_0_1b_q8_0",
+      "display_name": "Llama-OuteTTS 1.0 1B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Llama-OuteTTS-1.0-1B_Q8",
+      "files": [
+        "Text to audio (TTS)/Llama-OuteTTS-1.0-1B_Q8.gguf"
+      ],
+      "strip_prefix": "Text to audio (TTS)",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mirek190/audio.cpp"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

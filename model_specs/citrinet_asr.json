@@ -1,5 +1,27 @@
 {
   "family": "citrinet_asr",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "citrinet_asr_q8_0",
+      "display_name": "Citrinet ASR Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Citrinet-ASR-GGUF",
+      "files": [
+        "Citrinet-ASR-GGUF/citrinet-asr-q8_0.gguf"
+      ],
+      "strip_prefix": "Citrinet-ASR-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

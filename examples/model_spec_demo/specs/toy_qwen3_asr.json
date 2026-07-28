@@ -167,38 +167,6 @@
       ]
     }
   ],
-  "layouts": {
-    "safetensors": {
-      "format": "safetensors",
-      "roots": {
-        "model": "."
-      },
-      "files": {
-        "config": "model:config.json",
-        "generation_config": "model:generation_config.json",
-        "tokenizer_config": "model:tokenizer_config.json"
-      },
-      "optional_files": {
-        "tokenizer_json": "model:tokenizer.json"
-      },
-      "tensors": {
-        "weights": "model:model.safetensors"
-      }
-    },
-    "gguf": {
-      "format": "gguf",
-      "roots": {
-        "model": ".",
-        "weights": "$gguf"
-      },
-      "files": {
-        "config": "model:config.json"
-      },
-      "tensors": {
-        "weights": "weights:"
-      }
-    }
-  },
   "dependencies": [
     {
       "kind": "model",

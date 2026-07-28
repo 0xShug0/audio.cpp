@@ -1,5 +1,65 @@
 {
   "family": "omnivoice",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "omnivoice_q8_0",
+      "display_name": "OmniVoice Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "OmniVoice-GGUF",
+      "files": [
+        "OmniVoice-GGUF/omnivoice-q8_0.gguf"
+      ],
+      "strip_prefix": "OmniVoice-GGUF"
+    },
+    {
+      "id": "omnivoice_bf16",
+      "display_name": "OmniVoice BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "OmniVoice-GGUF",
+      "files": [
+        "OmniVoice-GGUF/omnivoice-bf16.gguf"
+      ],
+      "strip_prefix": "OmniVoice-GGUF"
+    },
+    {
+      "id": "omnivoice_f16",
+      "display_name": "OmniVoice F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "OmniVoice-GGUF",
+      "files": [
+        "OmniVoice-GGUF/omnivoice-f16.gguf"
+      ],
+      "strip_prefix": "OmniVoice-GGUF"
+    },
+    {
+      "id": "omnivoice_safetensors",
+      "display_name": "OmniVoice Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "OmniVoice",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "k2-fsa/OmniVoice"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

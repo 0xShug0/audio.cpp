@@ -1,5 +1,66 @@
 {
   "family": "voxcpm2",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "voxcpm2_q8_0",
+      "display_name": "VoxCPM2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/voxcpm2-q8_0.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_bf16",
+      "display_name": "VoxCPM2 BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/voxcpm2-bf16.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_orig",
+      "display_name": "VoxCPM2 Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/voxcpm2-orig.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_safetensors",
+      "display_name": "VoxCPM2 Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "VoxCPM2",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "OpenBMB/VoxCPM2"
+      }
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

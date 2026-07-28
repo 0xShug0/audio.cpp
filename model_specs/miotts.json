@@ -1,5 +1,49 @@
 {
   "family": "miotts",
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "miotts_1_7b_q8_0",
+      "display_name": "MioTTS 1.7B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MioTTS-1.7B-GGUF",
+      "files": [
+        "MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf"
+      ],
+      "strip_prefix": "MioTTS-1.7B-GGUF"
+    },
+    {
+      "id": "miotts_1_7b_bf16",
+      "display_name": "MioTTS 1.7B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MioTTS-1.7B-GGUF",
+      "files": [
+        "MioTTS-1.7B-GGUF/miotts-1.7b-bf16.gguf"
+      ],
+      "strip_prefix": "MioTTS-1.7B-GGUF"
+    },
+    {
+      "id": "miotts_1_7b_orig",
+      "display_name": "MioTTS 1.7B Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "MioTTS-1.7B-GGUF",
+      "files": [
+        "MioTTS-1.7B-GGUF/miotts-1.7b-orig.gguf"
+      ],
+      "strip_prefix": "MioTTS-1.7B-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",
