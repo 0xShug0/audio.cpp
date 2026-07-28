@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <cstdint>
 #include <cerrno>
 #include <iostream>
@@ -36,6 +37,12 @@ constexpr SocketHandle kInvalidSocket = -1;
 
 namespace minitts::server {
 namespace {
+
+/// Upper bound on a single buffered request body. The whole body is held in
+/// memory, so without a ceiling a hostile Content-Length drives unbounded
+/// accumulation. Generous enough for long audio uploads -- which are the point
+/// of this server -- but finite. Raise it if you accept larger uploads.
+constexpr unsigned long long kMaxRequestBody = 2ull * 1024ull * 1024ull * 1024ull;
 
 std::string lower_ascii(std::string value) {
     for (char & ch : value) {
@@ -204,7 +211,27 @@ HttpRequest read_http_request(SocketHandle socket) {
 
     size_t content_length = 0;
     if (const auto it = request.headers.find("content-length"); it != request.headers.end()) {
-        content_length = static_cast<size_t>(std::stoull(it->second));
+        // std::stoull throws on a non-numeric or overflowing header, and the
+        // body loop below grows request.body until it reaches whatever this
+        // says. An absurd Content-Length is therefore an unbounded in-memory
+        // accumulation driven by a single request.
+        //
+        // kMaxRequestBody is deliberately generous -- long audio uploads are
+        // the point of this server -- but finite. Maintainers: adjust to match
+        // the largest upload you intend to accept.
+        const std::string & raw = it->second;
+        unsigned long long parsed = 0;
+        const auto * first = raw.data();
+        const auto * last = raw.data() + raw.size();
+        const auto [ptr, ec] = std::from_chars(first, last, parsed);
+        if (ec != std::errc{} || ptr != last) {
+            throw std::runtime_error("invalid Content-Length header");
+        }
+        if (parsed > kMaxRequestBody) {
+            throw std::runtime_error(
+                "request body exceeds the maximum of " + std::to_string(kMaxRequestBody) + " bytes");
+        }
+        content_length = static_cast<size_t>(parsed);
     }
     request.body = data.substr(header_end + 4);
     while (request.body.size() < content_length) {

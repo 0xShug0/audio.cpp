@@ -106,10 +106,26 @@ WavData read_wav_f32(std::istream & input) {
                 skip_bytes(input, static_cast<std::streamoff>(chunk_size - 16));
             }
         } else if (id == "data") {
-            data.resize(chunk_size);
-            input.read(data.data(), static_cast<std::streamsize>(chunk_size));
-            if (!input) {
-                throw std::runtime_error("failed to read WAV data chunk");
+            // chunk_size is a 32-bit field read straight from the file, so a
+            // few-byte WAV can claim up to 4 GiB. resize() commits that whole
+            // allocation before a single byte of it is read, which turns a
+            // truncated or hostile header into an out-of-memory condition
+            // instead of a parse error.
+            //
+            // Grow only as fast as data actually arrives: a claim the file
+            // cannot back now fails after one block rather than one allocation.
+            constexpr size_t kReadBlock = 1u << 20;  // 1 MiB
+            data.clear();
+            size_t remaining = chunk_size;
+            while (remaining > 0) {
+                const size_t step = std::min(remaining, kReadBlock);
+                const size_t filled = data.size();
+                data.resize(filled + step);
+                input.read(data.data() + filled, static_cast<std::streamsize>(step));
+                if (!input) {
+                    throw std::runtime_error("failed to read WAV data chunk");
+                }
+                remaining -= step;
             }
         } else {
             skip_bytes(input, chunk_size);

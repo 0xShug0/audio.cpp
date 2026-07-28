@@ -1418,6 +1418,20 @@ if (ENGINE_BUILD_TESTS)
         COMMAND wav_reader_test
     )
 
+    add_engine_unittest(wav_reader_chunk_bounds_test tests/unittests/test_wav_reader_chunk_bounds.cpp)
+
+    add_test(
+        NAME wav_reader_chunk_bounds_test
+        COMMAND wav_reader_chunk_bounds_test
+    )
+
+    add_engine_unittest(hf_tokenizer_vocab_bounds_test tests/unittests/test_hf_tokenizer_vocab_bounds.cpp)
+
+    add_test(
+        NAME hf_tokenizer_vocab_bounds_test
+        COMMAND hf_tokenizer_vocab_bounds_test
+    )
+
     add_engine_unittest(safetensors_offsets_test tests/unittests/test_safetensors_offsets.cpp)
 
     add_test(

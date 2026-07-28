@@ -75,9 +75,24 @@ std::shared_ptr<HuggingFaceTokenizerJson> load_huggingface_tokenizer_json(
     const engine::io::json::Value & model = root.require("model");
     const engine::io::json::Value & vocab = model.require("vocab");
 
+    // Token ids come straight from the file and size the table below, so an id
+    // of 10^12 is a request to allocate terabytes and a negative one becomes
+    // ~SIZE_MAX on the cast. Neither is a model we could load; both are
+    // out-of-memory conditions rather than parse errors, so bound them here.
+    //
+    // The largest published vocabularies are on the order of 256k entries.
+    // 2^24 leaves two orders of magnitude of headroom while keeping the worst
+    // case allocation bounded.
+    constexpr int64_t kMaxTokenId = 1 << 24;
+
     size_t max_id = 0;
     for (const auto & [_, value] : vocab.as_object()) {
-        max_id = std::max(max_id, static_cast<size_t>(value.as_i64()));
+        const int64_t raw_id = value.as_i64();
+        if (raw_id < 0 || raw_id > kMaxTokenId) {
+            throw std::runtime_error(
+                "token id out of range while loading huggingface tokenizer: " + std::to_string(raw_id));
+        }
+        max_id = std::max(max_id, static_cast<size_t>(raw_id));
     }
 
     std::vector<std::string> id_to_token(max_id + 1);
