@@ -151,7 +151,6 @@ if (value == "hip") {
 ---
 
 ### 6. `external/sentencepiece/src/CMakeLists.txt` (build compatibility fix)
-
 **L266** -- Disable `-fPIC` on Windows (clang Windows target does not support it):
 ```cmake
 # Original:
@@ -164,13 +163,34 @@ if (NOT MSVC AND NOT WIN32)
 
 ---
 
+### 7. `external/ggml` -- hipBLASLt GEMM path
+
+rocBLAS does not ship Tensile kernels for every AMD GPU arch (e.g. gfx1103 on Windows), while hipBLASLt covers more arches. HIP builds therefore route every cuBLAS-equivalent GEMM through hipBLASLt by default.
+
+**`external/ggml/src/ggml-hip/CMakeLists.txt`** -- New option `GGML_HIP_HIPBLASLT` (default `ON`). Runs `find_package(hipblaslt)`; when found, defines `GGML_HIP_USE_HIPBLASLT` and links `roc::hipblaslt`. When not found (e.g. older ROCm without the hipblaslt dev package), it warns and falls back to the original hipBLAS (rocBLAS) path, so Linux builds are unaffected.
+
+**`external/ggml/src/ggml-cuda/common.cuh`** -- Includes `<hipblaslt/hipblaslt.h>` when `GGML_HIP_USE_HIPBLASLT` is defined; adds a `HIPBLASLT_CHECK` error macro; adds lazily-created per-device `hipblasLtHandle_t` handles and a 32 MiB per-device workspace to `ggml_backend_cuda_context` (freed in the context destructor in `ggml-cuda.cu`).
+
+**`external/ggml/src/ggml-cuda/ggml-cuda.cu`** -- New `ggml_hipblaslt_gemm()` helper mirroring the cublas call semantics (`OP_T`/`OP_N`, column-major, strided-batch support), plus a `hipblasDatatype_t` -> `hipDataType` conversion (the legacy hipBLAS enum values, 150+, differ from hipDataType, 0-based, on ROCm < 6.5). All GEMM call sites are switched to it when `GGML_HIP_USE_HIPBLASLT` is defined, with the original cublas code kept as `#else` fallback:
+
+- `ggml_cuda_op_mul_mat_cublas()`: BF16, FP16->FP32, FP16->FP16, and FP32 GEMM paths
+- `ggml_cuda_mul_mat_batched_cublas_impl()`: strided-batched path (native hipBLASLt batched layouts) and pointer-array batched path (emulated with a per-batch-element GEMM loop; hipBLASLt has no pointer-array API)
+
+All Lt GEMMs use `HIPBLAS_COMPUTE_32F` with FP32 scale for accuracy. The algorithm heuristic is queried per call -- caching heuristics per shape is future work.
+
+### 8. `scripts/build_windows_hip.ps1`
+
+Dedicated Windows HIP build script. Auto-detects ROCm (`HIP_PATH` or `C:\Program Files\AMD\ROCm\*`), GPU targets (`amdgpu-arch`), cmake, and ninja (PATH or the VS-bundled copy), then configures and builds with `ENGINE_ENABLE_HIP=ON`. See the Windows build section below for options.
+
+---
+
 ## Build Instructions
 
-### Linux (Recommended -- full rocBLAS support)
+### Linux
 
 Prerequisites:
 - ROCm 6.1+ installed (`/opt/rocm` or custom path)
-- hipBLAS, rocBLAS packages
+- hipBLAS, rocBLAS, hipBLASLt packages (hipBLASLt is used for GEMM by default; without it the build falls back to hipBLAS/rocBLAS)
 - Find your GPU target: `rocminfo | grep gfx | head -1 | awk '{print $2}'`
   (e.g. `gfx1100` for RX 7900 XTX, `gfx1151` for Strix Halo iGPU)
 
@@ -198,56 +218,63 @@ Multiple GPU targets (for distribution):
 
 ### Windows
 
-> **IMPORTANT:** ROCm on Windows only ships rocBLAS Tensile libraries for the GPU architectures listed below. If your AMD GPU is not in this list (notably: RDNA3 iGPU `gfx1103` / Radeon 780M is NOT supported), you will need to use the workaround build flags.
->
-> Supported: `gfx1030`, `gfx1100`, `gfx1101`, `gfx1102`, `gfx1150`, `gfx1151`, `gfx1200`, `gfx1201`, `gfx906`
+> **hipBLASLt GEMM (default):** HIP builds use hipBLASLt instead of hipBLAS (rocBLAS) for all cuBLAS-equivalent GEMM calls. hipBLASLt ships Tensile kernels for more GPU architectures than rocBLAS on Windows — notably **gfx1103 (Radeon 780M) works**, even though rocBLAS has no gfx1103 library. Disable with `-DGGML_HIP_HIPBLASLT=OFF` to fall back to hipBLAS.
 
-**Standard build (supported GPU):**
+**Build script (recommended):**
+
+```powershell
+# Auto-detects ROCm (HIP_PATH), GPU targets (amdgpu-arch), cmake, and ninja
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_hip.ps1
+
+# Useful options:
+#   -GpuTargets gfx1103        override target arch
+#   -NoHipblasLt               use hipBLAS (rocBLAS) instead of hipBLASLt
+#   -ForceMmq                  route quantized matmul through GGML MMQ kernels
+#   -WithVmm                   enable HIP virtual memory management
+#   -ConfigureOnly / -Clean / -Target audiocpp_cli / -Jobs 8
+```
+
+**Manual build:**
 
 ```cmd
 # Set ROCm environment
 set PATH=C:\Program Files\AMD\ROCm\6.4\bin;%PATH%
 set HIP_PATH=C:\Program Files\AMD\ROCm\6.4
+set ROCM_PATH=C:\Program Files\AMD\ROCm\6.4
 
-# Install ninja if not present:
-# Download from https://github.com/ninja-build/ninja/releases
-
-# Configure
-cmake -S . -B build_hip -G Ninja ^
-  -DCMAKE_MAKE_PROGRAM=<path-to-ninja.exe> ^
+# Configure (ninja: bundled with Visual Studio CMake tools or standalone)
+cmake -S . -B build/hip -G Ninja ^
   -DENGINE_ENABLE_HIP=ON ^
   -DENGINE_ENABLE_OPENMP=OFF ^
-  -DGPU_TARGETS=gfx1100 ^
+  -DGPU_TARGETS=gfx1103 ^
   -DCMAKE_C_COMPILER="%HIP_PATH%\bin\clang.exe" ^
   -DCMAKE_CXX_COMPILER="%HIP_PATH%\bin\clang++.exe" ^
   -DCMAKE_BUILD_TYPE=Release
 
 # Build
-cmake --build build_hip
+cmake --build build/hip
 ```
 
-**Workaround build (unsupported GPU, e.g. 780M / gfx1103):**
+The resulting binaries need the ROCm `bin` directory on `PATH` at runtime (for `amdhip64_6.dll`, `hipblas.dll`, `hipblaslt.dll`, ...).
 
-Add `-DGGML_CUDA_FORCE_MMQ=ON -DGGML_HIP_NO_VMM=ON` to the cmake command above. This bypasses hipBLAS/rocBLAS for matrix multiplication and uses GGML's own MMQ kernels instead. Performance will be lower for large matrix multiplications but functionally correct.
-
-Why: rocBLAS requires pre-compiled Tensile library files per GPU architecture. If none exist for your GPU, `hipblasCreate()` fails fatally. `GGML_CUDA_FORCE_MMQ` routes all matmul through GGML's custom dequant+matmul kernels, avoiding rocBLAS entirely.
+> **Legacy workaround (pre-hipBLASLt):** `-DGGML_CUDA_FORCE_MMQ=ON` bypasses BLAS for *quantized* matmul only; FP16/FP32 GEMM still required rocBLAS and failed on gfx1103. Renaming rocBLAS `gfx1100` Tensile files to `gfx1103` segfaults with ROCm 6.4 on Windows — do not use. hipBLASLt is the supported path.
 
 ---
 
 ## Architecture Support Matrix
 
-| GPU Target | Type | rocBLAS Tensile (Linux) | rocBLAS Tensile (Windows) | MMQ Workaround |
+| GPU Target | Type | rocBLAS Tensile (Linux) | rocBLAS Tensile (Windows) | hipBLASLt (Linux + Windows) |
 |---|---|---|---|---|
-| gfx1100 | RDNA3 discrete (7900 XTX/XT) | Yes | Yes | Not needed |
-| gfx1101 | RDNA3 discrete (7900 GRE) | Yes | Yes | Not needed |
-| gfx1102 | RDNA3 discrete (7600 XT) | Yes | Yes | Not needed |
-| **gfx1103** | **RDNA3 iGPU (780M)** | Yes 1 | **No** | **Required on Windows** |
-| gfx1150 | RDNA3.5 iGPU (Strix Point) | Yes | Yes | Not needed |
-| gfx1151 | RDNA3.5 iGPU (Strix Halo) | Yes | Yes | Not needed |
-| gfx1200 | RDNA4 discrete | Yes | Yes | Not needed |
-| gfx1201 | RDNA4 discrete | Yes | Yes | Not needed |
+| gfx1100 | RDNA3 discrete (7900 XTX/XT) | Yes | Yes | Yes |
+| gfx1101 | RDNA3 discrete (7900 GRE) | Yes | Yes | Yes |
+| gfx1102 | RDNA3 discrete (7600 XT) | Yes | Yes | Yes |
+| **gfx1103** | **RDNA3 iGPU (780M)** | Yes 1 | **No** | **Yes** |
+| gfx1150 | RDNA3.5 iGPU (Strix Point) | Yes | Yes | Yes |
+| gfx1151 | RDNA3.5 iGPU (Strix Halo) | Yes | Yes | Yes |
+| gfx1200 | RDNA4 discrete | Yes | Yes | Yes |
+| gfx1201 | RDNA4 discrete | Yes | Yes | Yes |
 
-> 1 gfx1103 on Linux requires `HSA_OVERRIDE_GFX_VERSION=11.0.0`. This environment variable is [not supported on Windows](https://github.com/ROCm/ROCm/issues/2654).
+> 1 gfx1103 on Linux requires `HSA_OVERRIDE_GFX_VERSION=11.0.0` for rocBLAS. This environment variable is [not supported on Windows](https://github.com/ROCm/ROCm/issues/2654). With the hipBLASLt GEMM path (default), gfx1103 works on both Linux and Windows without any override.
 
 ---
 
@@ -275,13 +302,18 @@ The following locations check `BackendType::Cuda` specifically and will not appl
 
 ### Switch statements missing `Hip` case (compiler warnings)
 
-These produce `-Wswitch` warnings but behave correctly (fall through to `default` or implicit return):
+- `app/server/runtime.cpp` (`backend_name()`) and `src/models/ace_step/planner.cpp` (`planner_prefill_uses_host_backend()`) now handle `Hip` explicitly.
+- `src/models/moss/moss_tts_local/session.cpp` (`resolve_auto_weight_type()`) intentionally keeps HIP on the `Native` dtype default; enabling the CUDA-style BF16 path for HIP needs validation with real models first.
 
-| File | Line | Notes |
-|---|---|---|
-| `app/server/runtime.cpp` | 61 | `backend_name()` returns `"unknown"` for HIP |
-| `src/models/ace_step/planner.cpp` | 153 | Falls through; HIP treated same as CUDA/Cpu/Metal for this path |
-| `src/models/moss/moss_tts_local/session.cpp` | 157 | Falls through |
+### hipBLASLt GEMM path notes
+
+- Heuristics are queried per GEMM call (shape-keyed algo caching is future work).
+- The pointer-array batched GEMM (`cublasGemmBatchedEx` equivalent) is emulated with a per-batch-element loop.
+- Verified on gfx1103 / ROCm 6.4 / Windows: F32 and F16 2D GEMM, strided-batched, and broadcast-batched all match CPU reference within 1e-4.
+
+### CUDA graphs on iGPUs / limited VRAM
+
+`ENGINE_ENABLE_CUDA_GRAPHS` defaults to ON (inherited from the CUDA build), but every cached graph reserves its own VRAM buffers. On memory-constrained GPUs (notably UMA iGPUs like the 780M, where `GGML_HIP_NO_VMM` also reduces ggml's memory-pool reuse), a burst of new shapes (e.g. the second inference request) can exhaust VRAM with `cudaMalloc failed: out of memory` during graph warmup. `scripts/build_windows_hip.ps1` therefore builds with `-DENGINE_ENABLE_CUDA_GRAPHS=OFF` by default; pass `-Graphs` to re-enable on discrete GPUs with headroom.
 
 ### audio.cpp CUDA-specific `.cu` files
 
@@ -297,8 +329,10 @@ These are skipped entirely on HIP builds. To enable GPU acceleration for ISTFT a
 - [ ] Linux: `cmake -DENGINE_ENABLE_HIP=ON ...` configures without errors
 - [ ] Linux: `cmake --build build_hip` completes without errors
 - [ ] Linux: `--backend hip --device 0` initializes and detects AMD GPU
-- [ ] Windows: Same as above (standard GPU only)
-- [ ] Windows: `--backend hip` appears in `--help` output
+- [x] Windows: HIP build configures and compiles (ROCm 6.4, gfx1103)
+- [x] Windows: `--backend hip` appears in `--help` output
+- [x] Windows: HIP backend initializes and detects the GPU (`ROCm0`, gfx1103)
+- [x] Windows: F32/F16/BF16 GEMM via hipBLASLt matches CPU reference (2D, strided-batched, broadcast-batched)
 - [ ] `backend_type()` returns `BackendType::Hip` for ROCm-initialized backends
 - [ ] `query_backend_memory()` works for HIP
 - [ ] `release_backend_graph_resources()` works for HIP
