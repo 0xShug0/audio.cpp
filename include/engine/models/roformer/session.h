@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/roformer/assets.h"
@@ -9,6 +10,8 @@
 
 namespace engine::models::roformer {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_bs_roformer_loader();
+
 class RoformerSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession {
@@ -17,6 +20,11 @@ public:
         const runtime::TaskSpec & task,
         const runtime::SessionOptions & options,
         std::shared_ptr<const RoformerAssets> assets);
+    RoformerSession(
+        const runtime::TaskSpec & task,
+        const runtime::SessionOptions & options,
+        std::shared_ptr<const RoformerAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~RoformerSession() override;
 
     std::string family() const override;
@@ -28,6 +36,7 @@ public:
 private:
     runtime::TaskSpec task_;
     std::shared_ptr<const RoformerAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
     std::unique_ptr<RoformerRuntime> runtime_;
     int64_t chunk_size_ = 0;

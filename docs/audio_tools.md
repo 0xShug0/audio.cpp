@@ -98,6 +98,11 @@ non-overlapping frequency bands. The native implementation accepts either the
 converted SafeTensors package or a standalone GGUF with the package spec and
 `config.json` embedded.
 
+BS-RoFormer is v1-native. `model_specs/bs_roformer.json` is the single source
+of truth for metadata, packages, session options, and GGUF/safetensors
+resources. Its loader uses the generic spec-backed path; the shared Mel-Band
+RoFormer loader remains unchanged.
+
 | Field | Value |
 |---|---|
 | Family | `bs_roformer` |

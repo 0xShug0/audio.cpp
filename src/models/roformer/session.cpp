@@ -5,6 +5,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <chrono>
@@ -49,15 +50,39 @@ runtime::AudioBuffer derive_instrumental(
     return out;
 }
 
+void validate_session_option_keys(
+    const runtime::SessionOptions & options,
+    const engine::model_spec::ModelContract & contract,
+    std::string_view family) {
+    const std::string family_prefix = std::string(family) + ".";
+    for (const auto & [key, _] : options.options) {
+        if (key.rfind(family_prefix, 0) == 0 &&
+            contract.session_option_keys.find(key) ==
+                contract.session_option_keys.end()) {
+            throw std::runtime_error(
+                "unknown " + std::string(family) +
+                " session option: " + key);
+        }
+    }
+}
+
 }  // namespace
 
 RoformerSession::RoformerSession(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options,
     std::shared_ptr<const RoformerAssets> assets)
+    : RoformerSession(task, options, std::move(assets), nullptr) {}
+
+RoformerSession::RoformerSession(
+    const runtime::TaskSpec & task,
+    const runtime::SessionOptions & options,
+    std::shared_ptr<const RoformerAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : RuntimeSessionBase(options),
       task_(task),
-      assets_(std::move(assets)) {
+      assets_(std::move(assets)),
+      contract_(std::move(contract)) {
     if (assets_ == nullptr) {
         throw std::runtime_error("RoFormer session requires assets");
     }
@@ -66,6 +91,14 @@ RoformerSession::RoformerSession(
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("RoFormer models only support offline mode");
+    }
+    if (assets_->config.family == kBsRoformerFamily) {
+        if (contract_ == nullptr) {
+            throw std::runtime_error(
+                "BS-RoFormer session requires a model contract");
+        }
+        validate_session_option_keys(
+            options, *contract_, kBsRoformerFamily);
     }
     const auto default_weight_storage =
         core::requested_backend_uses_host_graph_plan(RuntimeSessionBase::options().backend)
@@ -295,6 +328,29 @@ runtime::TaskResult RoformerSession::run(const runtime::TaskRequest & request) {
         engine::debug::elapsed_ms(assemble_start));
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(total_start));
     return result_task;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_bs_roformer_loader() {
+    runtime::SpecBackedVoiceModelConfig<RoformerAssets> config;
+    config.family = std::string(kBsRoformerFamily);
+    config.load_assets = [](const std::filesystem::path & model_path) {
+        runtime::ModelLoadRequest request;
+        request.model_path = model_path;
+        request.family_hint = std::string(kBsRoformerFamily);
+        return load_bs_roformer_assets(request);
+    };
+    config.create_session = [](
+                                const runtime::TaskSpec & task,
+                                const runtime::SessionOptions & options,
+                                std::shared_ptr<const RoformerAssets> assets,
+                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<RoformerSession>(
+            task,
+            options,
+            std::move(assets),
+            std::move(contract));
+    };
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::roformer

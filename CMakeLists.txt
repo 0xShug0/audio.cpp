@@ -361,6 +361,7 @@ audiocpp_add_model(roformer
         src/models/roformer/session.cpp
     INCLUDES
         engine/models/roformer/loader.h
+        engine/models/roformer/session.h
     LOADERS
         engine::models::roformer::make_mel_band_roformer_loader
         engine::models::roformer::make_bs_roformer_loader

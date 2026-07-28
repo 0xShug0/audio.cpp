@@ -157,9 +157,4 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_mel_band_roformer_loader() {
         std::string(kMelBandRoformerFamily));
 }
 
-std::shared_ptr<runtime::IVoiceModelLoader> make_bs_roformer_loader() {
-    return std::make_shared<RoformerLoader>(
-        std::string(kBsRoformerFamily));
-}
-
 }  // namespace engine::models::roformer
