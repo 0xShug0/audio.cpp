@@ -11,6 +11,8 @@ WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
+AUDIOCPP_MODEL_SET="full"
+AUDIOCPP_MODELS=""
 OPENMP_MODE="off"
 LLAMAFILE="ON"
 NATIVE_CPU="ON"
@@ -46,6 +48,11 @@ Options:
   --with-examples          Build example binaries.
   --with-warmbench         Build warmbench helper binaries.
   --deployment-build       Embed package specs for standalone GGUF/model loading.
+  --model-set full|core|custom
+                           Model composite to build.
+                           Default: full
+  --models "<list>"        Comma or semicolon separated model targets when
+                           --model-set custom is used.
   --target <name>          Build a specific CMake target. May be repeated.
   -j, --jobs <n>           Parallel build jobs.
   -h, --help               Show this help.
@@ -123,6 +130,22 @@ while [[ $# -gt 0 ]]; do
         --deployment-build)
             AUDIOCPP_DEPLOYMENT_BUILD="ON"
             shift
+            ;;
+        --model-set)
+            case "$2" in
+                full|core|custom)
+                    AUDIOCPP_MODEL_SET="$2"
+                    ;;
+                *)
+                    echo "--model-set must be full, core, or custom" >&2
+                    exit 1
+                    ;;
+            esac
+            shift 2
+            ;;
+        --models)
+            AUDIOCPP_MODELS="$2"
+            shift 2
             ;;
         --target)
             TARGETS+=("$2")
@@ -214,6 +237,8 @@ CMAKE_CMD=(
     -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES"
     -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
     -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
+    -DAUDIOCPP_MODEL_SET="$AUDIOCPP_MODEL_SET"
+    -DAUDIOCPP_MODELS="$AUDIOCPP_MODELS"
 )
 
 if [[ -n "$GENERATOR" ]]; then
@@ -245,6 +270,10 @@ echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
 echo "Building warmbench: $WITH_WARMBENCH"
 echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
+echo "Model composite: $AUDIOCPP_MODEL_SET"
+if [[ -n "$AUDIOCPP_MODELS" ]]; then
+    echo "Selected models: $AUDIOCPP_MODELS"
+fi
 
 "${CMAKE_CMD[@]}"
 

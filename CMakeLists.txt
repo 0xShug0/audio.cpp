@@ -159,6 +159,14 @@ add_compile_options(
 set(AUDIOCPP_MODEL_SET "full" CACHE STRING "Model composite to build: full, core, or custom")
 set_property(CACHE AUDIOCPP_MODEL_SET PROPERTY STRINGS full core custom)
 set(AUDIOCPP_MODELS "" CACHE STRING "Comma or semicolon separated model targets for AUDIOCPP_MODEL_SET=custom")
+set(AUDIOCPP_LIBYAML_COMPILE_DEFINITIONS
+    _POSIX_C_SOURCE=200809L
+    YAML_DECLARE_STATIC=1
+    YAML_VERSION_MAJOR=0
+    YAML_VERSION_MINOR=2
+    YAML_VERSION_PATCH=5
+    YAML_VERSION_STRING=\"0.2.5\"
+)
 
 function(audiocpp_configure_runtime_object target_name)
     target_include_directories(${target_name} PUBLIC
@@ -171,6 +179,7 @@ function(audiocpp_configure_runtime_object target_name)
         ${CMAKE_CURRENT_SOURCE_DIR}/external/cJSON
         ${CMAKE_CURRENT_SOURCE_DIR}/external/libyaml/include
     )
+    target_compile_definitions(${target_name} PRIVATE ${AUDIOCPP_LIBYAML_COMPILE_DEFINITIONS})
     target_link_libraries(${target_name} PRIVATE ggml sentencepiece)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(${target_name} PRIVATE OpenMP::OpenMP_CXX)
@@ -181,12 +190,13 @@ function(audiocpp_configure_runtime_object target_name)
 endfunction()
 
 function(audiocpp_add_model target_name)
-    cmake_parse_arguments(ARG "" "" "SOURCES;INCLUDES;LOADERS;ALIASES" ${ARGN})
+    cmake_parse_arguments(ARG "" "" "SOURCES;INCLUDES;LOADERS;ALIASES;DEPENDS" ${ARGN})
     add_library(engine_model_${target_name} OBJECT ${ARG_SOURCES})
     audiocpp_configure_runtime_object(engine_model_${target_name})
     set(AUDIOCPP_MODEL_TARGETS ${AUDIOCPP_MODEL_TARGETS} ${target_name} PARENT_SCOPE)
     set(AUDIOCPP_MODEL_${target_name}_INCLUDES "${ARG_INCLUDES}" PARENT_SCOPE)
     set(AUDIOCPP_MODEL_${target_name}_LOADERS "${ARG_LOADERS}" PARENT_SCOPE)
+    set(AUDIOCPP_MODEL_${target_name}_DEPENDS "${ARG_DEPENDS}" PARENT_SCOPE)
     set(AUDIOCPP_MODEL_ALIAS_${target_name} ${target_name} PARENT_SCOPE)
     foreach(alias IN LISTS ARG_ALIASES)
         set(AUDIOCPP_MODEL_ALIAS_${alias} ${target_name} PARENT_SCOPE)
@@ -388,6 +398,8 @@ audiocpp_add_model(glm_tts
         engine/community_models/glm_tts/loader.h
     LOADERS
         engine::models::glm_tts::make_glm_tts_loader
+    DEPENDS
+        outetts
 )
 
 audiocpp_add_model(outetts
@@ -402,6 +414,9 @@ audiocpp_add_model(outetts
         engine/community_models/outetts/loader.h
     LOADERS
         engine::models::outetts::make_outetts_loader
+    DEPENDS
+        qwen3_asr
+        qwen3_forced_aligner
 )
 
 audiocpp_add_model(pocket_tts
@@ -450,6 +465,9 @@ audiocpp_add_model(miotts
         engine/models/miotts/loader.h
     LOADERS
         engine::models::miotts::make_miotts_loader
+    DEPENDS
+        miocodec
+        qwen3_asr
 )
 
 audiocpp_add_model(moss
@@ -756,6 +774,8 @@ audiocpp_add_model(vietneu_tts
         engine/community_models/vietneu_tts/loader.h
     LOADERS
         engine::models::vietneu_tts::make_vietneu_tts_loader
+    DEPENDS
+        moss
 )
 
 audiocpp_add_model(qwen3_asr
@@ -773,6 +793,8 @@ audiocpp_add_model(qwen3_asr
         engine/models/qwen3_asr/loader.h
     LOADERS
         engine::models::qwen3_asr::make_qwen3_asr_loader
+    DEPENDS
+        qwen3_forced_aligner
 )
 
 audiocpp_add_model(qwen3_forced_aligner
@@ -784,6 +806,8 @@ audiocpp_add_model(qwen3_forced_aligner
         engine/models/qwen3_forced_aligner/loader.h
     LOADERS
         engine::models::qwen3_forced_aligner::make_qwen3_forced_aligner_loader
+    DEPENDS
+        qwen3_asr
 )
 
 audiocpp_add_model(sortformer_diar
@@ -888,6 +912,7 @@ audiocpp_add_model(rvc
         src/models/rvc/assets.cpp
         src/models/rvc/hubert.cpp
         src/models/rvc/native_pipeline.cpp
+        src/models/rvc/rmvpe.cpp
         src/models/rvc/retrieval_index.cpp
         src/models/rvc/session.cpp
         src/models/rvc/synthesizer.cpp
@@ -984,6 +1009,23 @@ foreach(model_name IN LISTS AUDIOCPP_ENABLED_MODELS)
         string(APPEND AUDIOCPP_REGISTRY_LOADER_CONTENT "        ${loader_name}(),\n")
     endforeach()
 endforeach()
+
+set(AUDIOCPP_LINKED_MODELS ${AUDIOCPP_ENABLED_MODELS})
+set(AUDIOCPP_DEPENDENCY_SCAN_INDEX 0)
+list(LENGTH AUDIOCPP_LINKED_MODELS AUDIOCPP_LINKED_MODEL_COUNT)
+while(AUDIOCPP_DEPENDENCY_SCAN_INDEX LESS AUDIOCPP_LINKED_MODEL_COUNT)
+    list(GET AUDIOCPP_LINKED_MODELS ${AUDIOCPP_DEPENDENCY_SCAN_INDEX} model_name)
+    foreach(dependency IN LISTS AUDIOCPP_MODEL_${model_name}_DEPENDS)
+        if (NOT dependency IN_LIST AUDIOCPP_MODEL_TARGETS)
+            message(FATAL_ERROR "Unknown composite dependency for ${model_name}: ${dependency}")
+        endif()
+        if (NOT dependency IN_LIST AUDIOCPP_LINKED_MODELS)
+            list(APPEND AUDIOCPP_LINKED_MODELS ${dependency})
+        endif()
+    endforeach()
+    math(EXPR AUDIOCPP_DEPENDENCY_SCAN_INDEX "${AUDIOCPP_DEPENDENCY_SCAN_INDEX} + 1")
+    list(LENGTH AUDIOCPP_LINKED_MODELS AUDIOCPP_LINKED_MODEL_COUNT)
+endwhile()
 file(GENERATE
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/model_registry_includes.inc"
     CONTENT "${AUDIOCPP_REGISTRY_INCLUDE_CONTENT}")
@@ -996,11 +1038,11 @@ set(AUDIOCPP_RUNTIME_OBJECTS
     $<TARGET_OBJECTS:engine_model_silero_vad>
     $<TARGET_OBJECTS:engine_model_marblenet_vad>
 )
-foreach(model_name IN LISTS AUDIOCPP_ENABLED_MODELS)
+foreach(model_name IN LISTS AUDIOCPP_LINKED_MODELS)
     list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:engine_model_${model_name}>)
 endforeach()
 
-message(STATUS "audio.cpp model composite: ${AUDIOCPP_MODEL_SET} [${AUDIOCPP_ENABLED_MODELS}]")
+message(STATUS "audio.cpp model composite: ${AUDIOCPP_MODEL_SET} selected [${AUDIOCPP_ENABLED_MODELS}] linked [${AUDIOCPP_LINKED_MODELS}]")
 add_library(engine_runtime STATIC
     src/framework/runtime/registry.cpp
     ${AUDIOCPP_RUNTIME_OBJECTS}
@@ -1026,14 +1068,7 @@ target_include_directories(yaml_vendor PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/external/libyaml/include
 )
 
-target_compile_definitions(yaml_vendor PUBLIC
-    _POSIX_C_SOURCE=200809L
-    YAML_DECLARE_STATIC=1
-    YAML_VERSION_MAJOR=0
-    YAML_VERSION_MINOR=2
-    YAML_VERSION_PATCH=5
-    YAML_VERSION_STRING=\"0.2.5\"
-)
+target_compile_definitions(yaml_vendor PUBLIC ${AUDIOCPP_LIBYAML_COMPILE_DEFINITIONS})
 
 target_include_directories(engine_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
