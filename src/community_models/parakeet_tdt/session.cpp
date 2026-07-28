@@ -214,7 +214,7 @@ runtime::TaskResult ParakeetTDTOfflineSession::run(const runtime::TaskRequest & 
 
     runtime::TaskResult result;
     result.text_output = runtime::Transcript{decoded.text, ""};
-    result.word_timestamps = std::move(decoded.token_timestamps);
+    result.word_timestamps = std::move(decoded.word_timestamps);
     debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
     return result;
 }

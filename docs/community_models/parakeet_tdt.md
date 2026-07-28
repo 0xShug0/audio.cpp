@@ -36,6 +36,13 @@ Install the model with:
 ```bash
 python3 tools/model_manager_v2.py install parakeet_tdt --models-root models
 ```
+
+Word timestamps are built from the decoder's actual nonblank token-emission
+frames. SentencePiece fragments and following punctuation are merged into
+human-readable words. Each completed word ends at the next word's emission
+boundary; the final word ends at the final token's predicted duration boundary,
+clamped to the encoded audio.
+
 ## Performance
 
 Reference clip (`2086-149220-0033.wav`, 7.435s) on an Intel i7-9750H (6C/12T)

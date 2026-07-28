@@ -194,72 +194,164 @@ std::string ParakeetDecoderRuntime::decode_text(const std::vector<int32_t>& ids,
     return assets_->tokenizer->decode_ids(f);
 }
 
-std::vector<runtime::WordTimestamp> ParakeetDecoderRuntime::build_token_timestamps(
-    const std::vector<int32_t>& ids, const std::vector<int32_t>& durs) const {
+std::vector<runtime::WordTimestamp> ParakeetDecoderRuntime::build_word_timestamps(
+    const std::vector<int32_t>& ids,
+    const std::vector<int32_t>& frame_indices,
+    const std::vector<int32_t>& durs,
+    int64_t audio_end_frame) const {
     std::vector<runtime::WordTimestamp> out;
     const int64_t spf = assets_->config.frontend.hop_length * assets_->config.encoder.subsampling_factor;
-    int64_t fi = 0;
-    for (size_t i = 0; i < std::min(ids.size(), durs.size()); ++i) {
-        int32_t tid = ids[i]; int64_t tf = fi; fi += std::max<int32_t>(durs[i], 0);
+    const size_t count = std::min({ids.size(), frame_indices.size(), durs.size()});
+    constexpr const char* kSentencePieceSpace = "\xE2\x96\x81";
+
+    std::string current_word;
+    int64_t current_start_frame = 0;
+    int64_t current_natural_end_frame = 0;
+
+    auto flush_word = [&](int64_t boundary_frame) {
+        if (current_word.empty()) return;
+        const int64_t end_frame = std::clamp(
+            boundary_frame,
+            current_start_frame,
+            audio_end_frame);
+        runtime::WordTimestamp ts;
+        ts.span.start_sample = current_start_frame * spf;
+        ts.span.end_sample = end_frame * spf;
+        ts.word = std::move(current_word);
+        ts.confidence = 0.f;
+        out.push_back(std::move(ts));
+        current_word.clear();
+    };
+
+    for (size_t i = 0; i < count; ++i) {
+        const int32_t tid = ids[i];
         if (tid == static_cast<int32_t>(assets_->config.blank_token_id) || tid == static_cast<int32_t>(assets_->config.pad_token_id)) continue;
         if (tid >= 0 && tid < static_cast<int32_t>(assets_->special_token_ids.size()) && assets_->special_token_ids[static_cast<size_t>(tid)]) continue;
-        runtime::WordTimestamp ts;
-        ts.span.start_sample = tf * spf; ts.span.end_sample = (tf + 1) * spf;
-        ts.word = assets_->tokenizer->id_to_token()[static_cast<size_t>(tid)]; ts.confidence = 0.f;
-        out.push_back(std::move(ts));
+        if (tid < 0 || tid >= static_cast<int32_t>(assets_->tokenizer->id_to_token().size())) continue;
+
+        std::string piece = assets_->tokenizer->id_to_token()[static_cast<size_t>(tid)];
+        const bool starts_word = piece.rfind(kSentencePieceSpace, 0) == 0;
+        if (starts_word) {
+            piece.erase(0, 3);
+        }
+        if (piece.empty()) continue;
+
+        const int64_t token_start = std::clamp<int64_t>(
+            frame_indices[i],
+            0,
+            audio_end_frame);
+        const int64_t token_end = std::clamp<int64_t>(
+            frame_indices[i] + std::max<int32_t>(durs[i], 1),
+            token_start,
+            audio_end_frame);
+
+        if (starts_word && !current_word.empty()) {
+            // A word ends at the emission boundary of the next word. This
+            // keeps adjacent spans non-overlapping even when a token predicts
+            // a longer duration than the next observed boundary.
+            flush_word(token_start);
+        }
+        if (current_word.empty()) {
+            current_start_frame = token_start;
+            current_natural_end_frame = token_end;
+        } else {
+            current_natural_end_frame = std::max(current_natural_end_frame, token_end);
+        }
+        current_word += piece;
     }
+    flush_word(std::max(current_natural_end_frame, current_start_frame));
     return out;
 }
 
-ParakeetDecodedText ParakeetDecoderRuntime::decode(const ParakeetEncodedAudio& enc, const ParakeetDecodeOptions& opts) {
-    if (enc.valid_frames <= 0 || enc.hidden_size != assets_->config.encoder.hidden_size)
-        throw std::runtime_error("decoder requires encoded frames");
-    const auto t0 = Clock::now(); ensure_step_graph();
-    engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
+void ParakeetDecoderRuntime::reset_state() {
     const auto& cfg = assets_->config;
-    int64_t max_tok = opts.max_tokens > 0 ? opts.max_tokens : (enc.valid_frames * cfg.max_symbols_per_step + 1);
     hidden_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
     cell_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
     decoder_cache_scratch_.assign(static_cast<size_t>(cfg.decoder_hidden_size), 0.f);
+    pending_input_token_ = static_cast<int32_t>(cfg.blank_token_id);
+    predictor_cache_valid_ = false;
+    state_initialized_ = true;
+}
+
+ParakeetDecodedText ParakeetDecoderRuntime::decode_incremental(
+    const ParakeetEncodedAudio& enc,
+    const ParakeetDecodeOptions& opts,
+    int64_t frame_offset) {
+    if (enc.valid_frames <= 0 || enc.hidden_size != assets_->config.encoder.hidden_size)
+        throw std::runtime_error("decoder requires encoded frames");
+    if (!state_initialized_) {
+        throw std::runtime_error("incremental decoder state must be reset before decoding");
+    }
+    if (frame_offset < 0) {
+        throw std::runtime_error("incremental decoder frame offset must be non-negative");
+    }
+    const auto t0 = Clock::now(); ensure_step_graph();
+    engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
+    const auto& cfg = assets_->config;
+    const int64_t max_tok = opts.max_tokens > 0
+        ? opts.max_tokens
+        : (enc.valid_frames * cfg.max_symbols_per_step);
 
     ParakeetDecodedText out;
-    out.token_ids.reserve(static_cast<size_t>(std::min(max_tok + 1, int64_t{4096})));
+    out.token_ids.reserve(static_cast<size_t>(std::min(max_tok, int64_t{4096})));
+    out.token_frame_indices.reserve(out.token_ids.capacity());
     out.durations.reserve(out.token_ids.capacity());
-    out.token_ids.push_back(static_cast<int32_t>(cfg.blank_token_id));
-    out.durations.push_back(0);
 
-    int32_t blank = static_cast<int32_t>(cfg.blank_token_id);
-    int32_t in_tok = blank;
-    bool pred_valid = false;
+    const int32_t blank = static_cast<int32_t>(cfg.blank_token_id);
 
     // TDT decode loop with duration-based frame skipping
     int64_t fi = 0;
-    while (fi < enc.valid_frames && static_cast<int64_t>(out.token_ids.size()) - 1 < max_tok) {
+    int64_t last_label_frame = -1;
+    int64_t labels_at_current_frame = 0;
+    while (fi < enc.valid_frames && static_cast<int64_t>(out.token_ids.size()) < max_tok) {
         const float* f = enc.values.data() + static_cast<std::ptrdiff_t>(fi * enc.hidden_size);
-        int inner = 0;
-        while (inner < cfg.max_symbols_per_step) {
-            int32_t dur_id = 0;
-            int32_t tok = run_step(in_tok, f, pred_valid, &dur_id);
-            pred_valid = true;
+        int32_t dur_id = 0;
+        const int32_t tok = run_step(
+            pending_input_token_,
+            f,
+            predictor_cache_valid_,
+            &dur_id);
+        predictor_cache_valid_ = true;
+        pending_input_token_ = tok;
 
-            out.token_ids.push_back(tok);
-            int dur_skip = (dur_id >= 0 && dur_id < static_cast<int32_t>(cfg.durations.size())) ? cfg.durations[static_cast<size_t>(dur_id)] : 0;
-            out.durations.push_back(dur_skip);
-            in_tok = tok;
-
-            if (tok == blank) {
-                if (dur_skip > 0) { fi += dur_skip; break; }
-                inner++; continue;
-            }
-            if (dur_skip > 0) { fi += dur_skip; break; }
-            inner++;
+        int32_t duration = cfg.durations.at(static_cast<size_t>(dur_id));
+        if (tok == blank) {
+            // A zero-duration blank must still make progress.
+            fi += duration == 0 ? 1 : duration;
+            continue;
         }
-        if (inner >= cfg.max_symbols_per_step) ++fi;
+
+        out.token_ids.push_back(tok);
+        out.token_frame_indices.push_back(static_cast<int32_t>(frame_offset + fi));
+        out.durations.push_back(duration);
+
+        if (fi == last_label_frame) {
+            ++labels_at_current_frame;
+        } else {
+            last_label_frame = fi;
+            labels_at_current_frame = 1;
+        }
+
+        fi += duration;
+        if (labels_at_current_frame >= cfg.max_symbols_per_step && fi == last_label_frame) {
+            ++fi;
+        }
     }
     out.text = decode_text(out.token_ids, opts.keep_language_tags);
-    out.token_timestamps = build_token_timestamps(out.token_ids, out.durations);
+    out.word_timestamps = build_word_timestamps(
+        out.token_ids,
+        out.token_frame_indices,
+        out.durations,
+        frame_offset + enc.valid_frames);
     debug::timing_log_scalar("parakeet.decoder_ms", engine::debug::elapsed_ms(t0, Clock::now()));
     return out;
+}
+
+ParakeetDecodedText ParakeetDecoderRuntime::decode(
+    const ParakeetEncodedAudio& enc,
+    const ParakeetDecodeOptions& opts) {
+    reset_state();
+    return decode_incremental(enc, opts);
 }
 
 }  // namespace engine::community_models::parakeet_tdt

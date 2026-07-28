@@ -124,7 +124,43 @@ int main(int argc, char ** argv) {
             return kExitFail;
         }
 
-        std::printf("PASS: transcription matches expected reference output\n");
+        if (result.word_timestamps.empty()) {
+            std::fprintf(stderr, "FAIL: expected word timestamps\n");
+            return kExitFail;
+        }
+
+        std::string reconstructed;
+        int64_t previous_end = 0;
+        const int64_t audio_samples = static_cast<int64_t>(wav.samples.size());
+        for (const auto & timestamp : result.word_timestamps) {
+            if (timestamp.word.empty() ||
+                timestamp.word.find("\xE2\x96\x81") != std::string::npos) {
+                std::fprintf(stderr, "FAIL: timestamp contains a token piece instead of a word\n");
+                return kExitFail;
+            }
+            if (timestamp.span.start_sample < previous_end ||
+                timestamp.span.end_sample < timestamp.span.start_sample ||
+                timestamp.span.end_sample > audio_samples) {
+                std::fprintf(stderr, "FAIL: word timestamp spans are not monotonic and bounded\n");
+                return kExitFail;
+            }
+            if (!reconstructed.empty()) {
+                reconstructed += ' ';
+            }
+            reconstructed += timestamp.word;
+            previous_end = timestamp.span.end_sample;
+        }
+        if (reconstructed != actual) {
+            std::fprintf(
+                stderr,
+                "FAIL: word timestamps do not reconstruct the transcript\n"
+                "  expected: \"%s\"\n  actual:   \"%s\"\n",
+                actual.c_str(),
+                reconstructed.c_str());
+            return kExitFail;
+        }
+
+        std::printf("PASS: transcription and word timestamps match expected reference output\n");
         return kExitPass;
     } catch (const std::exception & e) {
         std::fprintf(stderr, "FAIL: exception: %s\n", e.what());
