@@ -38,12 +38,6 @@ constexpr SocketHandle kInvalidSocket = -1;
 namespace minitts::server {
 namespace {
 
-/// Upper bound on a single buffered request body. The whole body is held in
-/// memory, so without a ceiling a hostile Content-Length drives unbounded
-/// accumulation. Generous enough for long audio uploads -- which are the point
-/// of this server -- but finite. Raise it if you accept larger uploads.
-constexpr unsigned long long kMaxRequestBody = 2ull * 1024ull * 1024ull * 1024ull;
-
 std::string lower_ascii(std::string value) {
     for (char & ch : value) {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -158,7 +152,7 @@ void send_all(SocketHandle socket, const std::string & data) {
     }
 }
 
-HttpRequest read_http_request(SocketHandle socket) {
+HttpRequest read_http_request(SocketHandle socket, uint64_t max_request_body_bytes) {
     std::string data;
     std::array<char, 8192> buffer{};
     size_t header_end = std::string::npos;
@@ -216,9 +210,6 @@ HttpRequest read_http_request(SocketHandle socket) {
         // says. An absurd Content-Length is therefore an unbounded in-memory
         // accumulation driven by a single request.
         //
-        // kMaxRequestBody is deliberately generous -- long audio uploads are
-        // the point of this server -- but finite. Maintainers: adjust to match
-        // the largest upload you intend to accept.
         const std::string & raw = it->second;
         unsigned long long parsed = 0;
         const auto * first = raw.data();
@@ -227,9 +218,12 @@ HttpRequest read_http_request(SocketHandle socket) {
         if (ec != std::errc{} || ptr != last) {
             throw std::runtime_error("invalid Content-Length header");
         }
-        if (parsed > kMaxRequestBody) {
+        if (parsed > max_request_body_bytes) {
             throw std::runtime_error(
-                "request body exceeds the maximum of " + std::to_string(kMaxRequestBody) + " bytes");
+                "request body exceeds the maximum of " + std::to_string(max_request_body_bytes) + " bytes");
+        }
+        if (parsed > std::numeric_limits<size_t>::max()) {
+            throw std::runtime_error("request body exceeds the maximum addressable size");
         }
         content_length = static_cast<size_t>(parsed);
     }
@@ -330,10 +324,10 @@ UniqueSocket bind_listen_socket(const std::string & host, int port) {
     return socket_handle;
 }
 
-void handle_client(SocketHandle client, IHttpHandler & handler) {
+void handle_client(SocketHandle client, IHttpHandler & handler, uint64_t max_request_body_bytes) {
     UniqueSocket socket(client);
     try {
-        const auto request = read_http_request(socket.get());
+        const auto request = read_http_request(socket.get(), max_request_body_bytes);
         const auto response = handler.handle(request);
         if (response.stream_body) {
             send_all(socket.get(), serialize_stream_headers(response));
@@ -403,7 +397,7 @@ HttpResponse error_response(int status, const std::string & message, const std::
     return json_response(body, status);
 }
 
-void serve_http(const std::string & host, int port, IHttpHandler & handler, ShutdownRequested shutdown_requested) {
+void serve_http(const std::string & host, int port, IHttpHandler & handler, ShutdownRequested shutdown_requested, uint64_t max_request_body_bytes) {
     SocketRuntime sockets;
     auto listen_socket = bind_listen_socket(host, port);
     std::cout << "audiocpp_server listening on http://" << host << ":" << port << "\n";
@@ -433,7 +427,7 @@ void serve_http(const std::string & host, int port, IHttpHandler & handler, Shut
             }
             throw std::runtime_error("accept failed");
         }
-        std::thread(handle_client, client, std::ref(handler)).detach();
+        std::thread(handle_client, client, std::ref(handler), max_request_body_bytes).detach();
     }
     std::cout << "audiocpp_server stopped\n";
 }

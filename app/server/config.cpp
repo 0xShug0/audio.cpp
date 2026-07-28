@@ -5,6 +5,8 @@
 
 #include "engine/framework/io/json.h"
 
+#include <cmath>
+#include <cstdint>
 #include <stdexcept>
 #include <utility>
 
@@ -17,6 +19,24 @@ std::filesystem::path resolve_path(const std::filesystem::path & base, const std
 
 std::unordered_map<std::string, std::string> options_from_object(const engine::io::json::Value * value) {
     return minitts::cli::json_options_map(value);
+}
+
+uint64_t parse_max_request_body_bytes(const engine::io::json::Value & value) {
+    if (!value.is_number()) {
+        throw std::runtime_error("server max_request_body_bytes must be a number");
+    }
+    const double parsed = value.as_number();
+    constexpr double kMaxSafeJsonInteger = 9007199254740991.0;  // 2^53 - 1
+    if (parsed < 0.0) {
+        throw std::runtime_error("server max_request_body_bytes must be non-negative");
+    }
+    if (std::floor(parsed) != parsed) {
+        throw std::runtime_error("server max_request_body_bytes must be an integer");
+    }
+    if (parsed > kMaxSafeJsonInteger) {
+        throw std::runtime_error("server max_request_body_bytes must be <= 2^53 - 1");
+    }
+    return static_cast<uint64_t>(parsed);
 }
 
 ServerModelConfig::VoicePreset parse_voice_preset(
@@ -63,6 +83,9 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
     config.device = engine::io::json::optional_i32(root, "device", config.device);
     config.threads = engine::io::json::optional_i32(root, "threads", config.threads);
     config.lazy_load = engine::io::json::optional_bool(root, "lazy_load", config.lazy_load);
+    if (const auto * value = root.find("max_request_body_bytes")) {
+        config.max_request_body_bytes = parse_max_request_body_bytes(*value);
+    }
     config.busy_timeout_ms = engine::io::json::optional_i32(root, "busy_timeout_ms", config.busy_timeout_ms);
     if (const auto * value = root.find("model_spec_override")) {
         config.model_spec_override = resolve_path(base, value->as_string());

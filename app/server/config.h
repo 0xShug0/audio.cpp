@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -9,6 +10,8 @@
 #include "engine/framework/core/backend.h"
 
 namespace minitts::server {
+
+constexpr uint64_t kDefaultMaxRequestBodyBytes = 2ull * 1024ull * 1024ull * 1024ull;
 
 struct ServerModelConfig {
     struct VoicePreset {
@@ -46,6 +49,7 @@ struct ServerConfig {
     int device = 0;
     int threads = 1;
     bool lazy_load = false;
+    uint64_t max_request_body_bytes = kDefaultMaxRequestBodyBytes;
     // A single model runs one request at a time (serialized on model.mutex). If a
     // running inference wedges the GPU -- a CUDA call that never returns cannot be
     // cancelled from userspace -- later requests would otherwise block forever, so

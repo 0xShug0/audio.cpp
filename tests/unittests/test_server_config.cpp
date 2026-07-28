@@ -196,6 +196,63 @@ void test_busy_timeout_defaults_and_overrides() {
         "busy_timeout_ms accepts 0 to disable the guard");
 }
 
+void test_max_request_body_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "request_body_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).max_request_body_bytes ==
+            minitts::server::kDefaultMaxRequestBodyBytes,
+        "max_request_body_bytes defaults to 2 GiB when omitted");
+
+    const auto override_path = write_config(
+        root,
+        "request_body_override.json",
+        std::string(R"JSON({"max_request_body_bytes": 1048576,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(override_path).max_request_body_bytes == 1048576,
+        "max_request_body_bytes is read from the config");
+
+    const auto zero_path = write_config(
+        root, "request_body_zero.json", std::string(R"JSON({"max_request_body_bytes": 0,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(zero_path).max_request_body_bytes == 0,
+        "max_request_body_bytes accepts 0 to reject non-empty request bodies");
+}
+
+void test_negative_max_request_body_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "request_body_negative.json",
+        std::string(R"JSON({"max_request_body_bytes": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("max_request_body_bytes") != std::string::npos;
+    }
+    require(rejected, "negative max_request_body_bytes is rejected");
+}
+
+void test_unsafe_numeric_max_request_body_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "request_body_unsafe_number.json",
+        std::string(R"JSON({"max_request_body_bytes": 9007199254740993,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("max_request_body_bytes") != std::string::npos;
+    }
+    require(rejected, "unsafe numeric max_request_body_bytes is rejected");
+}
+
 void test_negative_busy_timeout_is_rejected() {
     const auto root = make_temp_root();
     const auto config_path = write_config(
@@ -297,6 +354,9 @@ int main() {
         test_missing_default_preset_name_is_rejected();
         test_duplicate_json_keys_are_rejected();
         test_busy_timeout_defaults_and_overrides();
+        test_max_request_body_defaults_and_overrides();
+        test_negative_max_request_body_is_rejected();
+        test_unsafe_numeric_max_request_body_is_rejected();
         test_negative_busy_timeout_is_rejected();
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();

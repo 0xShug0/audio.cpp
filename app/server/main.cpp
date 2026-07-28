@@ -128,7 +128,7 @@ int main(int argc, char ** argv) {
         }
 
         minitts::server::ServerState state(config, std::filesystem::current_path());
-        minitts::server::serve_http(config.host, config.port, state, shutdown_requested);
+        minitts::server::serve_http(config.host, config.port, state, shutdown_requested, config.max_request_body_bytes);
         return 0;
     } catch (const std::exception & ex) {
         std::cerr << "audiocpp_server failed: " << ex.what() << "\n";
