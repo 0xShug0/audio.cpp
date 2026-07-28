@@ -480,7 +480,7 @@ DramaBoxEncodedReferenceLatents DramaBoxSession::encode_reference_latents(
     const DramaBoxRequest & parsed,
     const runtime::TaskRequest & request) {
     const auto inline_key = inline_reference_cache_key(parsed, request);
-    const ReferenceCacheKey reference_key{parsed.target_voice, inline_key, parsed.reference_duration_sec};
+    const ReferenceCacheKey reference_key{parsed.target_voice.string(), inline_key, parsed.reference_duration_sec};
     const bool cacheable_reference = !parsed.target_voice.empty() || inline_key.has_value();
     if (cacheable_reference) {
         if (auto * cached = reference_latents_.find(reference_key)) {
