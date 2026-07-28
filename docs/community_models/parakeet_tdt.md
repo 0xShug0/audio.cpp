@@ -1,16 +1,18 @@
 # Parakeet-TDT 0.6B v3
 
 FastConformer-TDT ASR port of NVIDIA's [`nvidia/parakeet-tdt-0.6b-v3`](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
-(0.6B params, 25 European languages with auto language detection), loaded directly
-from the repo's Transformers-compatible `model.safetensors` checkpoint (not the
-`.nemo` archive).
+(0.6B params, 25 European languages with auto language detection). The default
+package uses the repository's Transformers-compatible `model.safetensors`
+checkpoint rather than the `.nemo` archive; standalone audio.cpp GGUF packages
+are also supported.
 
 ## Status
 
 Offline full-context, bounded-window long-form, and buffered-streaming sessions
 are implemented. The full-context path is verified end to end on CPU and CUDA
 against the real NeMo reference model, both by final transcription and by
-numerical (per-layer activation) comparison; see [Validation](#validation).
+numerical comparison at selected intermediate and full-encoder boundaries; see
+[Validation](#validation).
 Buffered modes deliberately re-encode fixed bidirectional windows and are not
 native cache-aware streaming.
 
@@ -70,10 +72,14 @@ Install the model with:
 python3 tools/model_manager_v2.py install parakeet_tdt --models-root models
 ```
 
-This installs the upstream safetensors package. To create a standalone GGUF
-with the model spec, tokenizer, and configs embedded:
+This installs the upstream F32 safetensors package. The repository does not
+ship a Parakeet weight file; build `audiocpp_gguf` and convert the installed
+package to create a standalone GGUF with the model spec, tokenizer, and
+configs embedded:
 
 ```bash
+cmake --build build/<preset> --target audiocpp_gguf
+
 # Original F32 weights
 build/<preset>/bin/audiocpp_gguf \
     --input models/parakeet-tdt-0.6b-v3/model.safetensors \
@@ -108,6 +114,37 @@ storage variants reproduce the checked-in golden transcription in offline
 full-context, bounded-window long-form, and buffered-streaming tests. Q8_0 has
 the broader multilingual accuracy tradeoff described under
 [Performance](#performance).
+
+GGUF is the package container, not a different execution engine: both the
+safetensors and GGUF paths execute through ggml. With a safetensors source,
+`parakeet_tdt.matmul_weight_type` converts eligible weights when the session is
+created. With a pre-converted GGUF, the default `native` setting uses the
+types stored in that file. The performance study below used the safetensors
+package plus session-time storage conversion; the GGUF checks validate
+standalone loading and output, not a separate GGUF-vs-safetensors speed claim.
+
+## Options
+
+Request options are bare names. Session options use the
+`parakeet_tdt.` prefix.
+
+| Option | Scope | Values/default | Meaning |
+|---|---|---|---|
+| `max_tokens` | request | integer >= 0; `0` | TDT token limit; `0` uses the model-derived limit |
+| `keep_language_tags` | request | boolean; `false` | Preserve language-tag tokens in decoded text |
+| `weight_type` | session | `native`, `f32`, `f16`, `bf16`, `q8_0`; `native` | Fallback storage type for matmul weights |
+| `matmul_weight_type` | session | same values; inherits `weight_type` | Encoder and decoder matmul storage type |
+| `conv_weight_type` | session | `native`, `f32`, `f16`; `native` | True convolution-weight storage type |
+| `perf_mode` | session | `off`, `flash_attention`; `off` | Attention implementation; flash attention was slower on the tested hardware |
+| `weight_context_mb` | session | integer >= 1; `3072` | Weight arena size in MiB |
+| `encoder_graph_arena_mb` | session | integer >= 1; `1024` | Encoder graph arena size in MiB |
+| `decoder_graph_arena_mb` | session | integer >= 1; `256` | Decoder graph arena size in MiB |
+| `audio_chunk_duration_sec` | session | float >= 0.001; `2` | Center-region duration for long-form and buffered streaming |
+| `left_context_sec` | session | float >= 0; `10` | Past context included in each bounded window |
+| `right_context_sec` | session | float >= 0; `2` | Future context/lookahead included in each bounded window |
+| `streaming_attention_mode` | session | `full_context`; `full_context` | Bidirectional attention within each bounded streaming window |
+| `offline_mode` | session | `full_context`, `long_form`, `auto`; `full_context` | Offline scheduling policy |
+| `audio_chunk_threshold_sec` | session | float >= 0.001; `30` | `auto` threshold for switching to long-form execution |
 
 Word timestamps are built from the decoder's actual nonblank token-emission
 frames. SentencePiece fragments and following punctuation are merged into
@@ -213,11 +250,23 @@ and rejected are in
 
 - **Golden-transcription regression test** (`ctest -R parakeet_golden_transcription_test`,
   wired into the normal `ENGINE_BUILD_TESTS` suite, skips cleanly when the model
-  isn't downloaded): runs the offline pipeline against a checked-in LibriSpeech
-  test-clean clip (`tests/parakeet_tdt/assets/2086-149220-0033.wav`) and asserts the
-  decoded text matches the real NeMo model's transcription for that clip exactly:
+  isn't downloaded): runs full-context and bounded-window long-form decoding
+  against a checked-in LibriSpeech test-clean clip
+  (`tests/parakeet_tdt/assets/2086-149220-0033.wav`) and asserts the decoded
+  text matches the real NeMo model's transcription for that clip exactly:
   *"Well, I don't wish to see it any more, observed Phoebe, turning away her eyes.
   It is certainly very like the old portrait."*
+- **Buffered-streaming regression test**
+  (`ctest -R parakeet_streaming_transcription_test`): checks partial output,
+  finalization, reset/reuse, option validation, and the final transcript on the
+  same fixture.
+- **Standalone GGUF path tests:** original F32, F16, BF16, and Q8_0 GGUFs with
+  embedded specs and sidecars pass the offline, long-form, timestamp, and
+  buffered-streaming regression paths while using their stored tensor types.
+- **Multilingual precision study:** 120 FLEURS clips across the 24 supported
+  languages covered by FLEURS measure transcript and WER movement for
+  `native`, F16, BF16, and Q8_0. This is a precision comparison, not a general
+  benchmark of Parakeet's absolute WER.
 - **Numerical parity harness** (`tests/parakeet_tdt/parity/`, manual/pre-release
   check, not a CI gate — needs a NeMo install): compares mel features, a single
   isolated encoder layer, and the full encoder output directly against real NeMo
@@ -276,8 +325,10 @@ you're touching this code:
   same-size-class NVIDIA checkpoint actually trained cache-aware, with
   configurable chunk sizes down to 80ms, and already implements
   `IStreamingVoiceTaskSession` in this codebase.
-- Validated against a single test clip end to end; the numerical parity
-  harness has not been run across a broader validation set.
+- Direct layer-by-layer numerical parity against NeMo is limited to one
+  English fixture. The end-to-end multilingual study is broader (120 clips,
+  24 languages) but shallow at five clips per language and is intended to
+  compare storage precisions, not certify production WER for every domain.
 - The frontend does not implement NeMo's preprocessor `dither` (small random
   waveform noise, standard to disable at inference time in most ASR
   pipelines) — no observed effect on transcription correctness.

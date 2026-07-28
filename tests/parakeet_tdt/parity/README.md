@@ -77,7 +77,7 @@ The first run downloads the `nvidia/parakeet-tdt-0.6b-v3` NeMo checkpoint
     --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
     --output-dir /tmp/parakeet_nemo_dump
 
-# 2. C++ dump (needs the real model weights at the given --model path).
+# 2. C++ dump (accepts the installed safetensors directory or standalone GGUF).
 #    --matmul-weight-type defaults to "native" (F32); pass f16/bf16/q8_0 to
 #    numerically quantify the accuracy cost of a reduced-precision weight
 #    storage type against the same NeMo reference. --flash-attention 1 swaps
@@ -123,10 +123,11 @@ PASS enc_out: cosine=0.97xxxx (>= 0.97) ...
 
 ## Known limitation
 
-This only covers the offline (full-context) encoder path with a single
-test clip. It does not exercise the decoder/joint network numerically (the
-golden transcription test covers that end to end, just not stage by
-stage), and it will need a streaming-mode counterpart once cache-aware
-streaming support is added — concatenated streaming-chunk encoder output
-should match `enc_out` frame-for-frame (modulo the documented streaming
-tail on the final chunk).
+This only covers the offline full-context encoder path with one test clip. It
+does not exercise the decoder/joint network numerically; the golden and
+streaming transcription tests cover those paths end to end, but not stage by
+stage. The implemented streaming mode deliberately re-encodes bounded
+bidirectional windows, so its encoder output is not expected to concatenate
+into the utterance-wide `enc_out` tensor frame-for-frame. A cache-aware parity
+test would require a checkpoint trained for chunked-limited attention; this
+checkpoint is not one.

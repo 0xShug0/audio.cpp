@@ -50,7 +50,8 @@ means the second config is faster. Treat a result as real only if the sign is
 consistent across passes — the per-pass spread tells you whether the machine
 was quiet enough to trust the number at all.
 
-Environment overrides: `PARAKEET_MODEL` (model directory), `TIMING_LOG`.
+Environment overrides: `PARAKEET_MODEL` (safetensors directory or standalone
+GGUF), `TIMING_LOG`.
 
 These compare *encoder graph compute* specifically, which is ~93-96% of wall
 time and the part almost every optimization targets. For end-to-end numbers,

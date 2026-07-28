@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "parakeet_tdt",
   "display_name": "Parakeet-TDT 0.6B v3",
-  "description": "NVIDIA Parakeet-TDT 0.6B v3 FastConformer-TDT ASR covering 25 European languages with automatic language detection, loaded from the repository's Transformers-compatible safetensors checkpoint. Supports offline full-context, bounded-window long-form, and buffered streaming; the checkpoint uses unlimited bidirectional attention and is not a native cache-aware streaming model.",
+  "description": "NVIDIA Parakeet-TDT 0.6B v3 FastConformer-TDT ASR covering 25 European languages with automatic language detection. Supports the upstream Transformers-compatible safetensors package and standalone audio.cpp GGUF, with offline full-context, bounded-window long-form, and buffered streaming; the checkpoint uses unlimited bidirectional attention and is not a native cache-aware streaming model.",
   "category": "asr",
   "status": "community",
   "tasks": [

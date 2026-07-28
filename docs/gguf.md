@@ -79,7 +79,7 @@ Status labels:
 | `nemotron_asr` | Done | Pass | --- | Pass | Pass (minor filler drift) |
 | `omnivoice` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `outetts` | Done | Pass (TTS + clone) | --- | --- | Pass (TTS + clone) |
-| `parakeet_tdt` | Done | Pass | Pass | --- | Pass |
+| `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
 | `pocket_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `qwen3_asr` | Done | Pass | --- | Pass | Pass |
 | `qwen3_forced_aligner` | Done | Pass | --- | Pass | Pass |

@@ -19,12 +19,13 @@ sounds harmless; what it actually costs is measured here.
 
 ## Why this matters
 
-Measured on 35 FLEURS clips across 7 languages, `q8_0` — which is ~1.8x faster
-than f32 on CPU — matched the f32 transcription **exactly on only 91.4% of
-clips**, and cost +0.4 points of absolute WER, concentrated in specific
-languages (Estonian 16.4% → 18.4%). On the single English golden clip it is
-byte-identical, which is exactly the trap: one clip in one language will tell
-you a quantization is free when it is not.
+The completed run covers 120 FLEURS clips across 24 languages. `q8_0`—about
+1.79x faster than F32 on the tested CPU—matches the F32 transcript exactly on
+91.7% of clips. Its aggregate absolute WER is effectively flat on this sample
+(`0.1331` versus F32's `0.1338`), but the 8.3% transcript churn proves that it
+is not byte-for-byte interchangeable with F32. On the single English golden
+clip it is identical, which is exactly the trap: one clip in one language
+cannot characterize a quantization tradeoff.
 
 ## Corpus
 
@@ -60,6 +61,11 @@ else is compared against, so put `native` first.
 
 Environment overrides: `FLEURS_DIR` (corpus location, default `tmp/fleurs`),
 `PARAKEET_BENCH` (bench binary), `PARAKEET_THREADS`.
+
+The checked-in results under `results/` were produced from the upstream
+safetensors package with each storage type selected at session creation. The
+standalone-GGUF regression checks cover package loading and the golden paths;
+they are not a second 120-clip corpus run.
 
 ## Reading the output
 

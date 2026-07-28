@@ -25,8 +25,6 @@ CUDA; that is a statement about this card, not about the optimization. They
 are worth re-measuring on anything Ampere or newer before concluding
 anything.
 
-## Reference benchmark
-
 ## Performance
 
 Measured on the reference test clip (`2086-149220-0033.wav`, 7.435s), 5 timed
@@ -79,7 +77,7 @@ section for the actual methodology and numbers.
 ```bash
 build/<preset>/bin/parakeet_warm_bench \
     --model models/parakeet-tdt-0.6b-v3 --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
-    --backend cpu --threads 6 \
+    --backend cpu --threads 12 \
     --session-option parakeet_tdt.matmul_weight_type=q8_0
 ```
 
@@ -164,6 +162,22 @@ So the honest guidance is:
 exactly, and because 120 clips at 5 per language is enough to rule out a cliff
 but not enough to certify a default for every language and domain. Turn the
 others on explicitly via the session option above.
+
+### Safetensors, GGUF, and what was measured
+
+The timing and multilingual tables above use the upstream F32 safetensors
+package and select the in-memory storage type with
+`parakeet_tdt.matmul_weight_type`. GGUF is a standalone package format, not a
+separate runtime: both source formats execute through the same ggml graphs.
+
+Path tests were also run against standalone original-F32, F16, BF16, and Q8_0
+GGUF files with the schema, tokenizer, and configs embedded. Their measured
+sizes were approximately 2.4 GB, 1.2 GB, 1.2 GB, and 874 MB respectively. All
+four passed full-context, long-form, timestamp, and buffered-streaming
+regressions while using the type stored in the GGUF. Those checks establish
+format support and output stability on the fixture; they are not a separate
+GGUF startup or throughput benchmark, and the 120-clip corpus was not rerun
+from each GGUF.
 
 ## Where the CPU time actually goes
 
@@ -258,13 +272,12 @@ capacity is a *memory* reservation, not a promise that no rebuild happens.
 ## The ggml graph optimizer
 
 `src/framework/runtime/graph_optimizer.cpp` implements a real, unit-tested
-graph rewrite pass (`engine::runtime::optimize_graph`) — folds broadcast
-`ggml_repeat` nodes into the consuming op, elides pure metadata ops
-(reshapes/views that don't move data), elides no-op nodes — but grepping the
-whole codebase turned up **zero callers** anywhere: not `graph_executor.cpp`,
-not any of the ~40 model families, nothing. It's built, tested
-(`encoder_module_test`), and entirely unused in production. Wired into
-Parakeet's `ensure_graph()` (`encoder.cpp`), called once per distinct input
+graph rewrite pass (`engine::runtime::optimize_graph`) that folds broadcast
+`ggml_repeat` nodes into the consuming op and elides pure metadata and no-op
+nodes. Before the Parakeet work, grepping the codebase found **zero production
+callers**: it was built and unit-tested (`encoder_module_test`) but unused by
+model execution. Parakeet now calls it from `ensure_graph()` (`encoder.cpp`)
+once per distinct input
 length right after `ggml_build_forward_expand` and before `ggml_gallocr_alloc_graph`
 — free to call since the graph is cached and reused across every subsequent
 `encode()` at that length. Effect on the reference clip's encoder graph:
@@ -371,8 +384,9 @@ actually measured here.
 
 ## CUDA: why nothing here showed a dispatch-overhead win
 
-above: CUDA graph capture is already on, but architecturally disabled on this
-test GPU.** Traced with `nsys profile --trace=cuda` against `parakeet_warm_bench`:
+**CUDA graph capture is enabled by the build but architecturally unavailable
+on this test GPU.** Traced with `nsys profile --trace=cuda` against
+`parakeet_warm_bench`:
 16,068 individual `cudaLaunchKernel` calls and 4,265 `cudaStreamSynchronize`
 calls (47% of total CUDA API time) across 6 encoder passes plus the full
 per-token TDT decode loop — real per-launch/per-sync overhead that CUDA graph
