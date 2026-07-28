@@ -70,6 +70,45 @@ Install the model with:
 python3 tools/model_manager_v2.py install parakeet_tdt --models-root models
 ```
 
+This installs the upstream safetensors package. To create a standalone GGUF
+with the model spec, tokenizer, and configs embedded:
+
+```bash
+# Original F32 weights
+build/<preset>/bin/audiocpp_gguf \
+    --input models/parakeet-tdt-0.6b-v3/model.safetensors \
+    --root models/parakeet-tdt-0.6b-v3 \
+    --family parakeet_tdt \
+    --model-spec model_specs/parakeet_tdt.json \
+    --type orig --overwrite \
+    --output models/parakeet-tdt-0.6b-v3-f32.gguf
+
+# F16 weights (use `--type bf16` for BF16)
+build/<preset>/bin/audiocpp_gguf \
+    --input models/parakeet-tdt-0.6b-v3/model.safetensors \
+    --root models/parakeet-tdt-0.6b-v3 \
+    --family parakeet_tdt \
+    --model-spec model_specs/parakeet_tdt.json \
+    --type f16 --overwrite \
+    --output models/parakeet-tdt-0.6b-v3-f16.gguf
+
+# Q8_0 weights
+build/<preset>/bin/audiocpp_gguf \
+    --input models/parakeet-tdt-0.6b-v3/model.safetensors \
+    --root models/parakeet-tdt-0.6b-v3 \
+    --family parakeet_tdt \
+    --model-spec model_specs/parakeet_tdt.json \
+    --type q8_0 --overwrite \
+    --output models/parakeet-tdt-0.6b-v3-q8_0.gguf
+```
+
+Pass any `.gguf` file directly to `--model`. The tested files are about
+2.4 GB for original F32, 1.2 GB for F16 or BF16, and 874 MB for Q8_0. All four
+storage variants reproduce the checked-in golden transcription in offline
+full-context, bounded-window long-form, and buffered-streaming tests. Q8_0 has
+the broader multilingual accuracy tradeoff described under
+[Performance](#performance).
+
 Word timestamps are built from the decoder's actual nonblank token-emission
 frames. SentencePiece fragments and following punctuation are merged into
 human-readable words. Each completed word ends at the next word's emission

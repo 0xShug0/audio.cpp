@@ -72,13 +72,17 @@ int main(int argc, char ** argv) {
         argc, argv, "--model", repo_path("models/parakeet-tdt-0.6b-v3").string());
     const std::filesystem::path audio_path = arg_value(
         argc, argv, "--audio", repo_path("tests/parakeet_tdt/assets/2086-149220-0033.wav").string());
+    const std::string weight_type = arg_value(argc, argv, "--weight-type", "");
 
-    if (!engine::io::is_existing_file(model_path / "config.json") ||
+    const bool model_available =
+        engine::io::is_existing_file(model_path) ||
+        engine::io::is_existing_file(model_path / "config.json");
+    if (!model_available ||
         !engine::io::is_existing_file(audio_path)) {
         std::fprintf(
             stderr,
             "SKIP: parakeet_golden_transcription_test requires model weights at '%s' "
-            "and test audio at '%s' — neither is present, skipping.\n",
+            "and test audio at '%s'; a model directory or standalone GGUF is accepted.\n",
             model_path.string().c_str(),
             audio_path.string().c_str());
         return kExitSkip;
@@ -86,7 +90,10 @@ int main(int argc, char ** argv) {
 
     try {
         auto registry = engine::runtime::make_default_registry();
-        auto model = registry.load(model_path);
+        engine::runtime::ModelLoadRequest load_request;
+        load_request.model_path = model_path;
+        load_request.family_hint = "parakeet_tdt";
+        auto model = registry.load(load_request);
 
         const engine::runtime::TaskSpec task{
             engine::runtime::VoiceTaskKind::Asr,
@@ -94,6 +101,9 @@ int main(int argc, char ** argv) {
         };
         engine::runtime::SessionOptions session_options;
         session_options.backend.type = engine::core::BackendType::Cpu;
+        if (!weight_type.empty()) {
+            session_options.options["parakeet_tdt.matmul_weight_type"] = weight_type;
+        }
 
         auto session_base = model->create_task_session(task, session_options);
         auto * session = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(session_base.get());
@@ -161,7 +171,8 @@ int main(int argc, char ** argv) {
         }
 
         session_base.reset();
-        session_options.options["parakeet_tdt.matmul_weight_type"] = "q8_0";
+        session_options.options["parakeet_tdt.matmul_weight_type"] =
+            weight_type.empty() ? "q8_0" : weight_type;
         session_options.options["parakeet_tdt.offline_mode"] = "long_form";
         session_options.options["parakeet_tdt.left_context_sec"] = "2";
         session_options.options["parakeet_tdt.right_context_sec"] = "1";
