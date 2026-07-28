@@ -1186,6 +1186,20 @@ if (ENGINE_BUILD_TESTS)
         TIMEOUT 120
     )
 
+    add_engine_unittest(parakeet_streaming_transcription_test tests/parakeet_tdt/test_streaming_transcription.cpp)
+    target_compile_definitions(parakeet_streaming_transcription_test PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_test(
+        NAME parakeet_streaming_transcription_test
+        COMMAND parakeet_streaming_transcription_test
+    )
+    set_tests_properties(parakeet_streaming_transcription_test PROPERTIES
+        SKIP_RETURN_CODE 125
+        TIMEOUT 180
+    )
+
     # Numerical parity dump tool (not registered as an add_test — it's a
     # manual/pre-release check, not a CI gate). Run it against a NeMo
     # reference dump via compare_parity.py; see tests/parakeet_tdt/parity/README.md.

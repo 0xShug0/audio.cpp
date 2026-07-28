@@ -43,6 +43,34 @@ human-readable words. Each completed word ends at the next word's emission
 boundary; the final word ends at the final token's predicted duration boundary,
 clamped to the encoded audio.
 
+## Buffered streaming
+
+`RunMode::Streaming` provides bounded-window buffered streaming for callers
+that need incremental results. The default window uses a 2-second center
+region, 10 seconds of left context, and 2 seconds of right context. Each fixed
+window is re-encoded with full bidirectional attention, then only its center
+frames are decoded while the TDT predictor state is retained. This is not
+cache-aware streaming: right context adds lookahead latency, partial text can
+differ from offline full-context output, and recent text remains provisional
+until the next center boundary. Use `nemotron_asr` when native cache-aware,
+lower-latency ASR is required.
+
+The window is controlled with `parakeet_tdt.audio_chunk_duration_sec`,
+`parakeet_tdt.left_context_sec`, and `parakeet_tdt.right_context_sec`.
+Streaming currently requires contiguous mono 16 kHz chunks. `finalize()`
+flushes a short tail; `reset()` retains the loaded weights and reusable graphs.
+
+## Long-form audio
+
+Offline mode remains full-context by default. Set
+`parakeet_tdt.offline_mode=long_form` to process arbitrarily long mono 16 kHz
+audio with the same bounded overlapping-window scheduler, or use `auto` to
+switch after `parakeet_tdt.full_context_max_duration_sec` (30 seconds by
+default). Long-form mode preserves global timestamps and predictor state while
+decoding every center region exactly once. Because each region sees bounded
+rather than utterance-wide context, its transcript can differ from the default
+full-context result.
+
 ## Performance
 
 Reference clip (`2086-149220-0033.wav`, 7.435s) on an Intel i7-9750H (6C/12T)

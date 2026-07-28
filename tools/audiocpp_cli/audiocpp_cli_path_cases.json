@@ -1664,7 +1664,7 @@
       "task": "asr",
       "mode": "offline",
       "session_options": {
-        "decoder_algorithm": "greedy_duration_loop"
+        "parakeet_tdt.offline_mode": "long_form"
       },
       "outputs": [
         "text"
@@ -1684,7 +1684,9 @@
       "task": "asr",
       "mode": "streaming",
       "session_options": {
-        "decoder_algorithm": "greedy_duration_loop"
+        "parakeet_tdt.audio_chunk_duration_sec": "2",
+        "parakeet_tdt.left_context_sec": "10",
+        "parakeet_tdt.right_context_sec": "2"
       },
       "outputs": [
         "text"

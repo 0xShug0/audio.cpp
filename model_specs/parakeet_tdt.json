@@ -9,7 +9,8 @@
     "asr"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "bg",
@@ -40,10 +41,16 @@
   ],
   "runtime": {
     "tags": [
-      "gguf"
+      "gguf",
+      "stream"
     ]
   },
-  "capabilities": {},
+  "capabilities": {
+    "asr": [
+      "word_timestamps",
+      "partial_results"
+    ]
+  },
   "options": {
     "request": [
       {
@@ -117,6 +124,60 @@
         "required": false,
         "min": 1,
         "default": 256
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Center-region duration for buffered streaming in seconds; default 2. Fixed context windows are re-encoded rather than cache-aware.",
+        "required": false,
+        "min": 0.001,
+        "default": 2.0
+      },
+      {
+        "name": "left_context_sec",
+        "type": "float",
+        "description": "Past context included when re-encoding each buffered-streaming window in seconds; default 10.",
+        "required": false,
+        "min": 0.0,
+        "default": 10.0
+      },
+      {
+        "name": "right_context_sec",
+        "type": "float",
+        "description": "Future lookahead included when re-encoding each buffered-streaming window in seconds; default 2 and adds equivalent partial-result latency.",
+        "required": false,
+        "min": 0.0,
+        "default": 2.0
+      },
+      {
+        "name": "streaming_attention_mode",
+        "type": "enum",
+        "description": "Attention policy inside each buffered window. full_context preserves bidirectional attention over the bounded window.",
+        "values": [
+          "full_context"
+        ],
+        "required": false,
+        "default": "full_context"
+      },
+      {
+        "name": "offline_mode",
+        "type": "enum",
+        "description": "Offline encoder scheduling. full_context encodes the whole utterance, long_form uses bounded overlapping windows, and auto selects long_form beyond full_context_max_duration_sec.",
+        "values": [
+          "full_context",
+          "long_form",
+          "auto"
+        ],
+        "required": false,
+        "default": "full_context"
+      },
+      {
+        "name": "full_context_max_duration_sec",
+        "type": "float",
+        "description": "Duration threshold used by offline_mode=auto before switching to bounded-window long-form execution; default 30 seconds.",
+        "required": false,
+        "min": 0.001,
+        "default": 30.0
       }
     ],
     "load": []

@@ -47,6 +47,12 @@ public:
         const ParakeetEncodedAudio & encoded,
         const ParakeetDecodeOptions & options,
         int64_t frame_offset = 0);
+    ParakeetDecodedText format_tokens(
+        std::vector<int32_t> token_ids,
+        std::vector<int32_t> token_frame_indices,
+        std::vector<int32_t> durations,
+        const ParakeetDecodeOptions & options,
+        int64_t audio_end_frame) const;
 
     int32_t run_step(int32_t input_token, const float * encoder_frame, bool decoder_cache_valid, int32_t * out_dur_id = nullptr);
     int32_t run_joint_step(const float * encoder_frame, int32_t * out_dur_id = nullptr);

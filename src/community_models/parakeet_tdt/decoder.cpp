@@ -337,13 +337,32 @@ ParakeetDecodedText ParakeetDecoderRuntime::decode_incremental(
             ++fi;
         }
     }
+    out = format_tokens(
+        std::move(out.token_ids),
+        std::move(out.token_frame_indices),
+        std::move(out.durations),
+        opts,
+        frame_offset + enc.valid_frames);
+    debug::timing_log_scalar("parakeet.decoder_ms", engine::debug::elapsed_ms(t0, Clock::now()));
+    return out;
+}
+
+ParakeetDecodedText ParakeetDecoderRuntime::format_tokens(
+    std::vector<int32_t> token_ids,
+    std::vector<int32_t> token_frame_indices,
+    std::vector<int32_t> durations,
+    const ParakeetDecodeOptions& opts,
+    int64_t audio_end_frame) const {
+    ParakeetDecodedText out;
+    out.token_ids = std::move(token_ids);
+    out.token_frame_indices = std::move(token_frame_indices);
+    out.durations = std::move(durations);
     out.text = decode_text(out.token_ids, opts.keep_language_tags);
     out.word_timestamps = build_word_timestamps(
         out.token_ids,
         out.token_frame_indices,
         out.durations,
-        frame_offset + enc.valid_frames);
-    debug::timing_log_scalar("parakeet.decoder_ms", engine::debug::elapsed_ms(t0, Clock::now()));
+        audio_end_frame);
     return out;
 }
 

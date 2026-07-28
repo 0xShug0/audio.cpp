@@ -1,0 +1,131 @@
+#include "engine/framework/audio/wav_reader.h"
+#include "engine/framework/core/backend.h"
+#include "engine/framework/io/filesystem.h"
+#include "engine/framework/runtime/model.h"
+#include "engine/framework/runtime/registry.h"
+#include "engine/framework/runtime/session.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <filesystem>
+#include <stdexcept>
+#include <string>
+
+#ifndef ENGINE_REPO_ROOT
+#define ENGINE_REPO_ROOT "."
+#endif
+
+namespace {
+
+constexpr int kExitPass = 0;
+constexpr int kExitFail = 1;
+constexpr int kExitSkip = 125;
+constexpr const char* kExpectedText =
+    "Well, I don't wish to see it any more, observed Phoebe, turning away "
+    "her eyes. It is certainly very like the old portrait.";
+
+std::filesystem::path repo_path(const std::string& relative) {
+    return std::filesystem::path(ENGINE_REPO_ROOT) / relative;
+}
+
+engine::runtime::TaskResult run_stream(
+    engine::runtime::IStreamingVoiceTaskSession& session,
+    const engine::audio::WavData& wav,
+    bool& saw_partial) {
+    engine::runtime::TaskRequest stream_request;
+    session.start_stream(stream_request);
+    constexpr size_t chunk_samples = 8000;
+    for (size_t offset = 0; offset < wav.samples.size(); offset += chunk_samples) {
+        const size_t count = std::min(chunk_samples, wav.samples.size() - offset);
+        engine::runtime::AudioChunk chunk;
+        chunk.sample_rate = wav.sample_rate;
+        chunk.channels = 1;
+        chunk.start_sample = static_cast<int64_t>(offset);
+        chunk.samples.assign(
+            wav.samples.begin() + static_cast<std::ptrdiff_t>(offset),
+            wav.samples.begin() + static_cast<std::ptrdiff_t>(offset + count));
+        const auto event = session.process_audio_chunk(chunk);
+        saw_partial = saw_partial ||
+            (event.partial_text.has_value() && !event.partial_text->text.empty());
+    }
+    return session.finalize();
+}
+
+}  // namespace
+
+int main() {
+    const auto model_path = repo_path("models/parakeet-tdt-0.6b-v3");
+    const auto audio_path =
+        repo_path("tests/parakeet_tdt/assets/2086-149220-0033.wav");
+    if (!engine::io::is_existing_file(model_path / "config.json") ||
+        !engine::io::is_existing_file(audio_path)) {
+        std::fprintf(stderr, "SKIP: Parakeet streaming test requires model weights\n");
+        return kExitSkip;
+    }
+
+    try {
+        const auto wav = engine::audio::read_wav_f32(audio_path);
+        auto registry = engine::runtime::make_default_registry();
+        auto model = registry.load(model_path);
+        const engine::runtime::TaskSpec task{
+            engine::runtime::VoiceTaskKind::Asr,
+            engine::runtime::RunMode::Streaming,
+        };
+        engine::runtime::SessionOptions options;
+        options.backend.type = engine::core::BackendType::Cpu;
+        options.backend.threads = 12;
+        options.options["parakeet_tdt.matmul_weight_type"] = "q8_0";
+        options.options["parakeet_tdt.audio_chunk_duration_sec"] = "2";
+        options.options["parakeet_tdt.left_context_sec"] = "2";
+        options.options["parakeet_tdt.right_context_sec"] = "1";
+
+        auto base = model->create_task_session(task, options);
+        auto* session =
+            dynamic_cast<engine::runtime::IStreamingVoiceTaskSession*>(base.get());
+        if (session == nullptr) {
+            throw std::runtime_error("model did not create a streaming session");
+        }
+        engine::runtime::TaskRequest prepare_request;
+        prepare_request.audio_input = engine::runtime::AudioBuffer{
+            wav.sample_rate,
+            wav.channels,
+            wav.samples,
+        };
+        session->prepare(engine::runtime::build_preparation_request(prepare_request));
+
+        bool saw_partial = false;
+        const auto first = run_stream(*session, wav, saw_partial);
+        if (!saw_partial) {
+            throw std::runtime_error("stream produced no partial result before finalize");
+        }
+        const std::string first_text =
+            first.text_output.has_value() ? first.text_output->text : "";
+        if (first_text != kExpectedText) {
+            throw std::runtime_error("buffered-streaming final transcript mismatch");
+        }
+
+        bool repeated_finalize_failed = false;
+        try {
+            (void)session->finalize();
+        } catch (const std::exception&) {
+            repeated_finalize_failed = true;
+        }
+        if (!repeated_finalize_failed) {
+            throw std::runtime_error("repeated finalize did not fail");
+        }
+
+        bool second_saw_partial = false;
+        const auto second = run_stream(*session, wav, second_saw_partial);
+        const std::string second_text =
+            second.text_output.has_value() ? second.text_output->text : "";
+        if (second_text != first_text || !second_saw_partial) {
+            throw std::runtime_error("reset stream did not reproduce the first result");
+        }
+
+        std::printf("PASS: buffered streaming partials, finalize, and reset are stable\n");
+        return kExitPass;
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr, "FAIL: %s\n", ex.what());
+        return kExitFail;
+    }
+}

@@ -223,6 +223,7 @@ int main(int argc, char ** argv) {
         const int warmup = int_arg(argc, argv, "--warmup", 1);
         const int iterations = int_arg(argc, argv, "--iterations", 5);
         const std::string run_mode = arg_value(argc, argv, "--run-mode", "offline");
+        const std::string offline_mode = arg_value(argc, argv, "--offline-mode", "");
         const std::string encoder_variant = arg_value(argc, argv, "--encoder-variant", "full_context");
         const std::string graph_capacity_mode =
             arg_value(argc, argv, "--graph-capacity-mode", run_mode == "streaming" ? "fixed" : "tiered");
@@ -255,18 +256,20 @@ int main(int argc, char ** argv) {
         session_options.options["decoder_algorithm"] = decoder_algorithm;
         session_options.options["encoder_variant"] = encoder_variant;
         if (run_mode == "streaming") {
-            session_options.options["streaming_graph_capacity_mode"] = graph_capacity_mode;
             if (!streaming_chunk_secs.empty()) {
-                session_options.options["chunk_secs"] = streaming_chunk_secs;
+                session_options.options["parakeet_tdt.audio_chunk_duration_sec"] = streaming_chunk_secs;
             }
             if (!streaming_left_context_secs.empty()) {
-                session_options.options["left_context_secs"] = streaming_left_context_secs;
+                session_options.options["parakeet_tdt.left_context_sec"] = streaming_left_context_secs;
             }
             if (!streaming_right_context_secs.empty()) {
-                session_options.options["right_context_secs"] = streaming_right_context_secs;
+                session_options.options["parakeet_tdt.right_context_sec"] = streaming_right_context_secs;
             }
         } else {
             session_options.options["offline_graph_capacity_mode"] = graph_capacity_mode;
+            if (!offline_mode.empty()) {
+                session_options.options["parakeet_tdt.offline_mode"] = offline_mode;
+            }
             if (!full_context_capacity_frames.empty()) {
                 session_options.options["full_context_capacity_frames"] = full_context_capacity_frames;
             }
