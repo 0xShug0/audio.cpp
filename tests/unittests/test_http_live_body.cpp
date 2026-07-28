@@ -92,6 +92,38 @@ public:
             "{\"stream\":true,\"bytes\":" + std::to_string(body.size()) +
             ",\"sum\":" + std::to_string(sum) + "}");
     }
+
+    // Stands in for the server's per-model resolution: a request naming
+    // `model=tight` gets tightened bounds, everything else the defaults. The real
+    // handler reads them from config; what matters here is that the transport asks,
+    // and that what it is told actually takes effect.
+    minitts::server::LiveIngestLimits live_ingest_limits(
+        const minitts::server::HttpRequest & request) const override {
+        limits_queries.fetch_add(1);
+        if (request.query.find("model=nocap") != std::string::npos) {
+            // Not reachable through config, which rejects it — but the transport must
+            // not depend on config having done so.
+            minitts::server::LiveIngestLimits nocap;
+            nocap.max_chunk_bytes = 0;
+            return nocap;
+        }
+        if (request.query.find("model=tiny") != std::string::npos) {
+            // Small enough that a single hex digit exceeds it, which is where the
+            // chunk-size guard used to underflow.
+            minitts::server::LiveIngestLimits tiny;
+            tiny.max_chunk_bytes = 1;
+            return tiny;
+        }
+        if (request.query.find("model=tight") == std::string::npos) {
+            return {};
+        }
+        minitts::server::LiveIngestLimits tight;
+        tight.max_chunk_bytes = 1024;
+        tight.max_body_bytes = 4096;
+        return tight;
+    }
+
+    mutable std::atomic<int> limits_queries{0};
 };
 
 void close_socket(socket_t handle) {
@@ -418,6 +450,92 @@ int main() {
         require(
             contains(reply, "\"buffered\":0"),
             "chunked bodies on other routes must keep their existing handling: " + reply);
+    }
+
+    // Limits are resolved per request, not compiled in. The same 2000-byte chunk is
+    // fine under the defaults and rejected once the handler tightens max_chunk_bytes
+    // for this request — which is the whole point of the per-model override.
+    {
+        const std::string chunk = payload(2000, 3);
+        const std::string relaxed = round_trip({chunk}, true, kLivePath);
+        require(contains(relaxed, "\"bytes\":2000"),
+                "a 2000-byte chunk is within the default per-chunk cap: " + relaxed);
+
+        const std::string tightened =
+            round_trip({chunk}, true, "/v1/audio/transcriptions/live?model=tight");
+        require(contains(tightened, "chunk size exceeds the maximum"),
+                "a handler-supplied per-chunk cap must be enforced: " + tightened);
+    }
+
+    // Same for the whole-body cap, which is a separate axis: each chunk is legal on
+    // its own and only their total crosses the bound.
+    {
+        const std::vector<std::string> chunks(6, payload(1000, 11));
+        const std::string relaxed = round_trip(chunks, true, kLivePath);
+        require(contains(relaxed, "\"bytes\":6000"),
+                "6000 bytes is within the default body cap: " + relaxed);
+
+        const std::string tightened =
+            round_trip(chunks, true, "/v1/audio/transcriptions/live?model=tight");
+        require(contains(tightened, "exceeded its maximum size"),
+                "a handler-supplied body cap must be enforced: " + tightened);
+    }
+
+    // A cap smaller than one hex digit's value must still reject. `cap - value`
+    // underflows for any cap below the digit, so at cap=1 a declared `f` used to be
+    // accepted outright — a 15-byte chunk against a 1-byte bound.
+    {
+        const std::string reply =
+            round_trip({}, /*terminate=*/false, "/v1/audio/transcriptions/live?model=tiny",
+                       "f\r\n123456789012345\r\n");
+        require(contains(reply, "chunk size exceeds the maximum"),
+                "a chunk cap below the digit value must not underflow: " + reply);
+    }
+
+    // The body cap must count bytes that arrived alongside the headers. A body short
+    // enough to fit in the first receive never calls receive_more(), so a cap checked
+    // only there is skipped by exactly the request most likely to be probing it.
+    {
+        std::string request = headers_for("/v1/audio/transcriptions/live?model=tight", true);
+        for (int i = 0; i < 6; ++i) {
+            std::ostringstream frame;
+            frame << std::hex << 1000 << "\r\n" << payload(1000, 23) << "\r\n";
+            request += frame.str();
+        }
+        request += "0\r\n\r\n";
+        // One write, so headers and the whole 6000-byte body land in a single recv().
+        const socket_t handle = connect_to_server();
+        send_raw(handle, request);
+        const std::string reply = read_reply(handle);
+        close_socket(handle);
+        require(contains(reply, "exceeded its maximum size"),
+                "a fully prefetched body must still be measured against the cap: " + reply);
+    }
+
+    // A zero per-chunk cap must not disable the overflow guard. Config rejects a 0,
+    // but a Limits built in code could still carry one, and this parse is the last
+    // thing between a declared SIZE_MAX and `size + 2` wrapping to 1.
+    {
+        const std::string reply =
+            round_trip({}, /*terminate=*/false, "/v1/audio/transcriptions/live?model=nocap",
+                       "ffffffffffffffff\r\n");
+        require(contains(reply, "chunk size exceeds the maximum"),
+                "a zero max_chunk_bytes must fall back to a real cap, not disable it: " + reply);
+    }
+
+    // Asked for only when the request actually opts into an incremental body: every
+    // other route must not pay for a lookup it cannot use.
+    {
+        const int before = handler.limits_queries.load();
+        const socket_t handle = connect_to_server();
+        send_raw(handle, headers_for("/v1/audio/speech", true));
+        send_raw(handle, "4\r\nabcd\r\n0\r\n\r\n");
+        (void) read_reply(handle);
+        close_socket(handle);
+        require_eq(
+            handler.limits_queries.load(),
+            before,
+            "live-ingest limits must not be resolved for a non-live route");
     }
 
     g_stop.store(true);

@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -62,7 +63,150 @@ ServerModelConfig::VoicePreset parse_voice_preset(
     return preset;
 }
 
+// Every live-ingest bound uses 0 to mean "disabled", matching busy_timeout_ms, so
+// only a negative value is malformed. Rejected at parse time rather than clamped:
+// a negative deadline is a typo, and silently treating it as "no bound" would
+// remove a guard the operator believed they had set.
+//
+// Read and validated by hand rather than through optional_i32/optional_i64, both
+// of which are wrong here in two ways. They return the supplied fallback for a
+// present-but-wrong-typed field, so `"max_body_bytes": "oops"` in a MODEL override
+// would silently record the compiled default as a deliberate override and widen a
+// stricter server policy. And optional_i32 narrows to int before anything checks
+// the range, so on a 32-bit int a value of 4294967296 becomes 0 — which here means
+// "disabled", quietly removing the bound the operator was trying to set.
+double live_ingest_number(
+    const engine::io::json::Value & value,
+    const char * key,
+    const std::string & context) {
+    const auto * field = value.find(key);
+    if (field == nullptr || !field->is_number()) {
+        throw std::runtime_error(context + " " + key + " must be a number");
+    }
+    const double parsed = field->as_number();
+    constexpr double kMaxSafeJsonInteger = 9007199254740991.0;  // 2^53 - 1
+    if (std::floor(parsed) != parsed) {
+        throw std::runtime_error(context + " " + key + " must be an integer");
+    }
+    if (parsed < 0.0) {
+        throw std::runtime_error(context + " " + key + " must be >= 0 (0 disables the bound)");
+    }
+    if (parsed > kMaxSafeJsonInteger) {
+        throw std::runtime_error(context + " " + key + " must be <= 2^53 - 1");
+    }
+    return parsed;
+}
+
+int live_ingest_ms(
+    const engine::io::json::Value & value,
+    const char * key,
+    int fallback,
+    const std::string & context) {
+    if (value.find(key) == nullptr) {
+        return fallback;
+    }
+    const double parsed = live_ingest_number(value, key, context);
+    if (parsed > static_cast<double>(std::numeric_limits<int>::max())) {
+        throw std::runtime_error(
+            context + " " + key + " must be <= " + std::to_string(std::numeric_limits<int>::max()) + " ms");
+    }
+    return static_cast<int>(parsed);
+}
+
+size_t live_ingest_bytes(
+    const engine::io::json::Value & value,
+    const char * key,
+    size_t fallback,
+    const std::string & context) {
+    if (value.find(key) == nullptr) {
+        return fallback;
+    }
+    const double parsed = live_ingest_number(value, key, context);
+    // Range-checked against size_t rather than cast blindly: on a 32-bit target a
+    // legal-looking 4294967296 would otherwise truncate to 0 and disable the bound.
+    if (parsed > static_cast<double>(std::numeric_limits<size_t>::max())) {
+        throw std::runtime_error(context + " " + key + " is too large for this platform");
+    }
+    return static_cast<size_t>(parsed);
+}
+
+LiveIngestLimits parse_live_ingest_limits(
+    const engine::io::json::Value & value,
+    const LiveIngestLimits & fallback,
+    const std::string & context) {
+    if (!value.is_object()) {
+        throw std::runtime_error(context + " must be an object");
+    }
+    LiveIngestLimits limits;
+    limits.idle_timeout_ms = live_ingest_ms(value, "idle_timeout_ms", fallback.idle_timeout_ms, context);
+    limits.total_timeout_ms = live_ingest_ms(value, "total_timeout_ms", fallback.total_timeout_ms, context);
+    limits.max_body_bytes = live_ingest_bytes(value, "max_body_bytes", fallback.max_body_bytes, context);
+    limits.max_chunk_bytes = live_ingest_bytes(value, "max_chunk_bytes", fallback.max_chunk_bytes, context);
+    // The one bound that cannot be disabled. A chunk is materialized in memory
+    // before it is served, so "unbounded" is not implementable — and a 0 here would
+    // underflow the overflow guard in the chunk-size parser, re-admitting a declared
+    // size of SIZE_MAX. Rejected rather than quietly substituted.
+    if (limits.max_chunk_bytes == 0) {
+        throw std::runtime_error(
+            context + " max_chunk_bytes must be > 0: a chunk is held in memory, so it cannot be unbounded");
+    }
+    limits.send_timeout_ms = live_ingest_ms(value, "send_timeout_ms", fallback.send_timeout_ms, context);
+    return limits;
+}
+
+LiveIngestOverrides parse_live_ingest_overrides(
+    const engine::io::json::Value & value,
+    const std::string & context) {
+    if (!value.is_object()) {
+        throw std::runtime_error(context + " must be an object");
+    }
+    // Parsed against the compiled-in defaults purely to reuse the validation; only
+    // the keys actually present are recorded, so the rest still fall through to
+    // whatever server policy is at the time the override is applied.
+    const LiveIngestLimits defaults;
+    const auto parsed = parse_live_ingest_limits(value, defaults, context);
+    LiveIngestOverrides overrides;
+    if (value.find("idle_timeout_ms") != nullptr) {
+        overrides.idle_timeout_ms = parsed.idle_timeout_ms;
+    }
+    if (value.find("total_timeout_ms") != nullptr) {
+        overrides.total_timeout_ms = parsed.total_timeout_ms;
+    }
+    if (value.find("max_body_bytes") != nullptr) {
+        overrides.max_body_bytes = parsed.max_body_bytes;
+    }
+    if (value.find("max_chunk_bytes") != nullptr) {
+        overrides.max_chunk_bytes = parsed.max_chunk_bytes;
+    }
+    if (value.find("send_timeout_ms") != nullptr) {
+        overrides.send_timeout_ms = parsed.send_timeout_ms;
+    }
+    return overrides;
+}
+
 }  // namespace
+
+LiveIngestLimits resolve_live_ingest_limits(
+    const LiveIngestLimits & base,
+    const LiveIngestOverrides & overrides) {
+    LiveIngestLimits limits = base;
+    if (overrides.idle_timeout_ms.has_value()) {
+        limits.idle_timeout_ms = *overrides.idle_timeout_ms;
+    }
+    if (overrides.total_timeout_ms.has_value()) {
+        limits.total_timeout_ms = *overrides.total_timeout_ms;
+    }
+    if (overrides.max_body_bytes.has_value()) {
+        limits.max_body_bytes = *overrides.max_body_bytes;
+    }
+    if (overrides.max_chunk_bytes.has_value()) {
+        limits.max_chunk_bytes = *overrides.max_chunk_bytes;
+    }
+    if (overrides.send_timeout_ms.has_value()) {
+        limits.send_timeout_ms = *overrides.send_timeout_ms;
+    }
+    return limits;
+}
 
 engine::core::BackendType parse_server_backend(const std::string & value) {
     auto backend = minitts::cli::parse_backend(value);
@@ -87,6 +231,9 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         config.max_request_body_bytes = parse_max_request_body_bytes(*value);
     }
     config.busy_timeout_ms = engine::io::json::optional_i32(root, "busy_timeout_ms", config.busy_timeout_ms);
+    if (const auto * value = root.find("live_ingest")) {
+        config.live_ingest = parse_live_ingest_limits(*value, config.live_ingest, "server live_ingest");
+    }
     if (const auto * value = root.find("model_spec_override")) {
         config.model_spec_override = resolve_path(base, value->as_string());
     }
@@ -122,6 +269,9 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
                     "busy_timeout_ms for model " + model.id + " must be >= 0 (0 disables the guard)");
             }
             model.busy_timeout_ms = busy_timeout_ms;
+        }
+        if (const auto * value = item.find("live_ingest")) {
+            model.live_ingest = parse_live_ingest_overrides(*value, "live_ingest for model " + model.id);
         }
         if (const auto * value = item.find("config")) {
             model.config_id = value->as_string();

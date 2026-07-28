@@ -223,20 +223,11 @@ bool wants_incremental_body(const HttpRequest & request) {
 // an idle timeout between reads, an absolute deadline for the whole body, a cap on
 // total bytes, and a cap on any single chunk. A client that opens a body and then
 // stalls, never stops, or names an enormous chunk therefore cannot pin the model
-// indefinitely or exhaust the host.
+// indefinitely or exhaust the host. The values come from `LiveIngestLimits`
+// (app/server/http.h), which the handler resolves per request.
 class ChunkedSocketStreambuf final : public std::streambuf {
 public:
-    struct Limits {
-        int idle_timeout_ms = 30'000;
-        int total_timeout_ms = 600'000;
-        size_t max_bytes = 512u * 1024u * 1024u;
-        // Bounds one chunk, independently of the total. A chunk is held in memory
-        // twice while being de-framed, so without this a single legal chunk could
-        // name a size large enough to exhaust the host — while holding a model lock.
-        size_t max_chunk_bytes = 8u * 1024u * 1024u;
-    };
-
-    ChunkedSocketStreambuf(SocketHandle socket, std::string prefetched, Limits limits)
+    ChunkedSocketStreambuf(SocketHandle socket, std::string prefetched, LiveIngestLimits limits)
         : socket_(socket),
           pending_(std::move(prefetched)),
           limits_(limits),
@@ -250,6 +241,10 @@ protected:
         if (gptr() < egptr()) {
             return traits_type::to_int_type(*gptr());
         }
+        // Covers the bytes that arrived alongside the headers. A body short enough to
+        // fit in that first receive never calls receive_more(), so a cap enforced only
+        // there would be skipped by the single request most likely to be probing it.
+        require_within_body_cap();
         // A chunk is handed out in windows rather than all at once. Reads that stay
         // inside the published get area never re-enter underflow(), so publishing a
         // whole 8 MiB chunk would let the body keep advancing across many model
@@ -295,6 +290,12 @@ private:
 #endif
     }
 
+    void require_within_body_cap() const {
+        if (limits_.max_body_bytes > 0 && received_bytes_ > limits_.max_body_bytes) {
+            throw std::runtime_error("live request body exceeded its maximum size");
+        }
+    }
+
     // Enforced at every point where the body advances, not only before a receive:
     // checking it in receive_more() alone lets an already-buffered tail — the rest
     // of a large chunk, trailers, the terminating chunk — be consumed after the
@@ -337,9 +338,7 @@ private:
             return false;
         }
         received_bytes_ += static_cast<size_t>(received);
-        if (limits_.max_bytes > 0 && received_bytes_ > limits_.max_bytes) {
-            throw std::runtime_error("live request body exceeded its maximum size");
-        }
+        require_within_body_cap();
         pending_.append(buffer.data(), static_cast<size_t>(received));
         return true;
     }
@@ -405,6 +404,11 @@ private:
         if (header.empty()) {
             throw std::runtime_error("chunked request body: empty chunk size");
         }
+        // Unlike the other bounds, a per-chunk cap cannot be disabled: the chunk is
+        // materialized in memory, so "unbounded" is not implementable. 0 falls back
+        // to the default rather than meaning "no limit".
+        const size_t chunk_cap =
+            limits_.max_chunk_bytes > 0 ? limits_.max_chunk_bytes : LiveIngestLimits{}.max_chunk_bytes;
         size_t size = 0;
         for (const char digit : header) {
             int value = 0;
@@ -418,10 +422,20 @@ private:
                 throw std::runtime_error(
                     "chunked request body: invalid chunk size \"" + header + "\"");
             }
-            if (size > (limits_.max_chunk_bytes - static_cast<size_t>(value)) / 16) {
+            // Checked in two steps, each on operands already known to be in range.
+            // The single-expression form `size > (cap - value) / 16` underflows
+            // whenever cap < value — at cap = 1 a digit of 'f' wraps to a huge
+            // quotient and is accepted — which is the same class of bug this
+            // hand-rolled parse exists to prevent.
+            if (size > chunk_cap / 16) {
                 throw std::runtime_error("chunked request body: chunk size exceeds the maximum");
             }
-            size = size * 16 + static_cast<size_t>(value);
+            size *= 16;
+            // size <= (cap / 16) * 16 <= cap here, so the subtraction cannot wrap.
+            if (static_cast<size_t>(value) > chunk_cap - size) {
+                throw std::runtime_error("chunked request body: chunk size exceeds the maximum");
+            }
+            size += static_cast<size_t>(value);
         }
         if (size == 0) {
             finished_ = true;
@@ -494,7 +508,7 @@ private:
     size_t pending_pos_ = 0;
     std::vector<char> chunk_;  // the de-framed chunk currently being served
     size_t chunk_pos_ = 0;     // how much of chunk_ has been published so far
-    Limits limits_;
+    LiveIngestLimits limits_;
     std::chrono::steady_clock::time_point started_;
     size_t received_bytes_;
     bool finished_ = false;
@@ -707,23 +721,29 @@ void handle_client(SocketHandle client, IHttpHandler & handler, uint64_t max_req
     try {
         std::string leftover;
         auto request = read_http_request(socket.get(), max_request_body_bytes, leftover);
-        if (wants_incremental_body(request)) {
+        const bool incremental_body = wants_incremental_body(request);
+        // Asked for once, before the stream exists, because the streambuf takes its
+        // bounds at construction. The handler resolves them from server config and
+        // any per-model override — the transport has no notion of models.
+        const LiveIngestLimits limits =
+            incremental_body ? handler.live_ingest_limits(request) : LiveIngestLimits{};
+        if (incremental_body && limits.send_timeout_ms > 0) {
             // Scoped to this endpoint: it is the only one whose response is written
             // while a model lock is held, so it is the only one where a client that
             // stops reading can pin a model. Applying it server-wide would risk
             // truncating a large ordinary response to a merely slow client.
-            set_send_timeout(socket.get(), 30'000);
+            set_send_timeout(socket.get(), limits.send_timeout_ms);
         }
         // Constructed unconditionally so it outlives the handler call, but only
         // published on `request` when the client actually declared a chunked body.
-        ChunkedSocketStreambuf body_buffer(socket.get(), std::move(leftover), ChunkedSocketStreambuf::Limits{});
+        ChunkedSocketStreambuf body_buffer(socket.get(), std::move(leftover), limits);
         std::istream body_stream(&body_buffer);
         // Without this, a throw from underflow() is caught by istream and turned into
         // badbit. A reader that checks gcount() then sees a short read and reports a
         // clean end of input, so a stall, an oversize chunk or a mid-body disconnect
         // would all be delivered as a successful, silently truncated body.
         body_stream.exceptions(std::ios::badbit);
-        if (wants_incremental_body(request)) {
+        if (incremental_body) {
             request.body_stream = &body_stream;
         }
         const auto response = handler.handle(request);

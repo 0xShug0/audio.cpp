@@ -102,7 +102,7 @@ The bound is resolved in three layers, since model runtimes differ by orders of 
 
 1. **Server** — top-level `"busy_timeout_ms"` (or `--busy-timeout-ms`) sets the fleet default.
 2. **Model** — `"busy_timeout_ms"` on an entry in `"models"` overrides that default for one model, and becomes the ceiling for requests to it.
-3. **Request** — `"busy_timeout_ms"` in the request body (or as a `busy_timeout_ms` form field on multipart transcription) lets a caller bound its own wait.
+3. **Request** — `"busy_timeout_ms"` in the request body (or as a `busy_timeout_ms` form field on multipart transcription, or a `busy_timeout_ms` query parameter on the live-ingest route, whose body is audio and has nowhere to put JSON) lets a caller bound its own wait.
 
 A request may ask for a **shorter** bound than the model's ceiling but never a longer one — `effective = min(request, ceiling)` — so a client cannot weaken the guard and reintroduce the hang it prevents. Because `0` means "unbounded", it compares as infinity on both sides: a request asking for `0` is still capped by the model ceiling, while under a ceiling of `0` a request's own bound is honored.
 
@@ -303,6 +303,7 @@ Because the body carries audio rather than JSON, parameters are query parameters
 | `channels` | `1` | interleaved channel count |
 | `sample_format` | `s16le` | `s16le` or `f32le` |
 | `language` | unset | passed through to the model |
+| `busy_timeout_ms` | model policy | how long to wait for the model lock, as elsewhere; clamped by the configured ceiling, so a request can shorten its own wait but never weaken the guard |
 
 ```bash
 # Microphone straight into transcription (macOS; -f alsa on Linux, -f dshow on Windows)
@@ -319,16 +320,35 @@ Whether partial text actually appears *during* capture is a property of the mode
 
 The request ends when the client sends the terminating chunk. Closing the connection without one is an error, not an end of speech — a truncated transcript that arrives as a normal `transcript.text.done` would be indistinguishable from the speaker stopping, so the endpoint refuses to produce one. The same applies to a stall past the idle timeout, an oversized chunk, or a malformed frame: each surfaces as an SSE `error` event.
 
-Because the model is held for the length of the request, the body is bounded on four axes, all compile-time constants today:
+Because the model is held for the length of the request, the body is bounded on several axes:
 
-| bound | value | meaning |
+| key | default | meaning |
 | --- | --- | --- |
-| idle | 30 s | longest wait for more data once the reader asks for it |
-| total | 600 s | checked at every point the body advances, so it caps the whole request |
-| size | 512 MiB | received body bytes, framing included |
-| chunk | 8 MiB | largest single declared chunk |
+| `idle_timeout_ms` | 30 s | longest wait for more data once the reader asks for it |
+| `total_timeout_ms` | 600 s | checked at every point the body advances, so it caps the whole request |
+| `max_body_bytes` | 512 MiB | received body bytes, framing included |
+| `max_chunk_bytes` | 8 MiB | largest single declared chunk |
+| `send_timeout_ms` | 30 s | `SO_SNDTIMEO` on the connection, so a client that stops reading the SSE response cannot hold the model open |
 
-The 600 s figure is an upper bound on one dictation; continuous captioning would need it raised. `sample_rate` and `channels` are range-checked too (1000–384000 and 1–16): they size the model's per-chunk buffer, so an absurd value would otherwise be an allocation request made while the model lock is held.
+Those defaults suit one dictation at a time. Continuous captioning needs a longer deadline, and a trusted deployment may want a different trade entirely, so they are configurable — server-wide under `live_ingest`, with any subset overridden per model:
+
+```json
+{
+  "live_ingest": { "total_timeout_ms": 600000, "max_chunk_bytes": 8388608 },
+  "models": [
+    {
+      "id": "voxtral-realtime",
+      "family": "voxtral_realtime",
+      "mode": "streaming",
+      "live_ingest": { "total_timeout_ms": 1800000 }
+    }
+  ]
+}
+```
+
+A model entry sets only the values it needs and inherits the rest, so raising one bound for a long-capture model does not mean restating the whole policy and letting it drift. `0` means *disabled*, the same convention as `busy_timeout_ms`; a negative value is rejected at startup rather than silently treated as "no bound". The exception is `max_chunk_bytes`, which must stay positive and is rejected at `0`: a chunk is materialized in memory before it is served, so an unbounded one is not implementable, and the same value backs the overflow check that rejects a declared chunk size of `SIZE_MAX`. The keys are only consulted for this route, since no other one delivers its body incrementally.
+
+`sample_rate` and `channels` are range-checked too (1000–384000 and 1–16), and are not configurable: they size the model's per-chunk buffer, so an absurd value would be an allocation request made while the model lock is held.
 
 **Deployment.** This endpoint streams the request body and the response on one connection at the same time. That is legal HTTP/1.1, but it needs a direct connection or a proxy that does not buffer requests. Behind nginx both of these are required, because `proxy_request_buffering off` still buffers a chunked body unless the upstream connection is HTTP/1.1:
 

@@ -27,6 +27,12 @@ public:
 
     HttpResponse handle(const HttpRequest & request) override;
 
+    // Server-level `live_ingest` policy with this request's model override applied.
+    // Deliberately does not reject an unknown or non-streaming model: it runs before
+    // the handler, and rejecting here would turn a client's mistake into a dropped
+    // connection instead of the 400 handle_transcription_live already produces.
+    LiveIngestLimits live_ingest_limits(const HttpRequest & request) const override;
+
 private:
     struct LoadedModel {
         struct RuntimeVoicePreset {

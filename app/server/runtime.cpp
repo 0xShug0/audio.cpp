@@ -19,6 +19,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -717,6 +718,18 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
     model.streaming = streaming;
 }
 
+LiveIngestLimits ServerState::live_ingest_limits(const HttpRequest & request) const {
+    const std::string model_id = query_param(request.query, "model");
+    if (model_id.empty()) {
+        return config_.live_ingest;
+    }
+    const auto it = model_index_.find(model_id);
+    if (it == model_index_.end()) {
+        return config_.live_ingest;
+    }
+    return resolve_live_ingest_limits(config_.live_ingest, models_.at(it->second)->config.live_ingest);
+}
+
 ServerState::LoadedModel & ServerState::require_model(const Value & body) {
     const std::string id = engine::io::json::require_string(body, "model");
     const auto it = model_index_.find(id);
@@ -1173,6 +1186,7 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
     LoadedModel * model_ptr = nullptr;
     int sample_rate = 16000;
     int channels = 1;
+    std::optional<int> busy_timeout_ms;
     minitts::app::PcmSampleFormat sample_format = minitts::app::PcmSampleFormat::S16LE;
     engine::runtime::TaskRequest task_request;
     try {
@@ -1227,6 +1241,14 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
         };
         sample_rate = parse_bounded_int("sample_rate", 16000, 1000, 384'000);
         channels = parse_bounded_int("channels", 1, 1, 16);
+        // The other routes take this in their JSON body; this one has no body to put
+        // it in, so it arrives as a query param. Same meaning either way: a request
+        // may shorten its own wait for the model lock but never lengthen it past the
+        // configured ceiling — resolve_busy_timeout_ms clamps it.
+        if (!query_param(request.query, "busy_timeout_ms").empty()) {
+            busy_timeout_ms = parse_bounded_int(
+                "busy_timeout_ms", 0, 0, std::numeric_limits<int>::max());
+        }
         const std::string sample_format_name = query_param(request.query, "sample_format");
         sample_format = minitts::app::parse_pcm_sample_format(
             sample_format_name.empty() ? "s16le" : sample_format_name);
@@ -1254,7 +1276,7 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
 
     std::istream * pcm_input = request.body_stream;
     return sse_response(
-        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format](
+        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms](
             HttpStreamWriter & writer) {
             const minitts::app::AudioStreamFormat format{sample_rate, channels};
             const auto audio = minitts::app::make_pcm_chunk_stream(*pcm_input, format, sample_format);
@@ -1271,7 +1293,8 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
                         "{\"type\":\"transcript.text.delta\",\"delta\":" +
                             json_quote(event.partial_text->text) +
                             "}");
-                });
+                },
+                busy_timeout_ms);
             if (!timed_result.result.text_output.has_value()) {
                 throw std::runtime_error("live transcription result did not contain transcript text");
             }
