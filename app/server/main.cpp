@@ -48,7 +48,7 @@ void print_help() {
         << "                [--model-spec-override <json-or-directory>]\n"
         << "                [--log] [--log-file <path>]\n"
         << "                [--cors-origins <origins>]\n"
-        << "  --backend cpu|cuda|vulkan|metal  default cuda\n"
+        << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
         << "                                   busy this long; default 300000, 0 disables\n"
         << "  --cors-origins \"*\"              experimental; disabled by default. Allows browser\n"
