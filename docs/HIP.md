@@ -46,24 +46,31 @@ endif()
 option(ENGINE_ENABLE_HIP "Build ggml with HIP/ROCm backend support" ${ENGINE_DEFAULT_ENABLE_HIP})
 ```
 
-**L99** -- Guard CUDA language/Toolkit to CUDA-only builds:
+**L100-L106** -- Reject configurations that enable both CUDA and HIP. HIP compiles ggml's CUDA backend sources as HIP code, so both options drive the same ggml backend and cannot coexist in one configure:
+```cmake
+if (ENGINE_ENABLE_CUDA AND ENGINE_ENABLE_HIP)
+    message(FATAL_ERROR ...)
+endif()
+```
+
+**L108** -- Guard CUDA language/Toolkit to CUDA-only builds:
 ```cmake
 if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
 ```
 
-**L140** -- Forward to vendored GGML:
+**L149** -- Forward to vendored GGML:
 ```cmake
 set(GGML_HIP ${ENGINE_ENABLE_HIP} CACHE BOOL "Build ggml with HIP backend support" FORCE)
 ```
 
-**L147** -- Keep ggml's separate HIP graphs option in sync with the CUDA graphs toggle, so `ENGINE_ENABLE_CUDA_GRAPHS=OFF` also disables graphs on HIP builds:
+**L156** -- Keep ggml's separate HIP graphs option in sync with the CUDA graphs toggle, so `ENGINE_ENABLE_CUDA_GRAPHS=OFF` also disables graphs on HIP builds:
 ```cmake
 set(GGML_HIP_GRAPHS ${ENGINE_ENABLE_CUDA_GRAPHS} CACHE BOOL "Enable ggml HIP graphs support" FORCE)
 ```
 
-**L648** -- Guard audio.cpp's own `.cu` files to CUDA-only builds:
+**L657** -- Guard audio.cpp's own `.cu` files to CUDA-only builds:
 ```cmake
 if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     target_sources(engine_runtime PRIVATE

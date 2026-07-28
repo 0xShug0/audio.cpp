@@ -126,6 +126,7 @@ $configureArgs = @(
     "-DCMAKE_BUILD_TYPE=$BuildType",
     "-DCMAKE_C_COMPILER=$(Convert-ToCMakePath $clangc)",
     "-DCMAKE_CXX_COMPILER=$(Convert-ToCMakePath $clangxx)",
+    "-DENGINE_ENABLE_CUDA=OFF",
     "-DENGINE_ENABLE_HIP=ON",
     "-DENGINE_ENABLE_OPENMP=OFF",
     "-DGPU_TARGETS=$GpuTargets",

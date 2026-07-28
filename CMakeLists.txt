@@ -96,6 +96,15 @@ set(AUDIOCPP_GGML_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/external/ggml"
     CACHE PATH "ggml source tree to build with AudioCPP")
 
+# HIP compiles ggml's CUDA backend sources as HIP code, so the two options drive the
+# same ggml backend and cannot coexist: enabling both starts CUDA backend setup and
+# HIP backend setup in the same configure, which fails in confusing ways downstream.
+if (ENGINE_ENABLE_CUDA AND ENGINE_ENABLE_HIP)
+    message(FATAL_ERROR
+        "ENGINE_ENABLE_CUDA and ENGINE_ENABLE_HIP are mutually exclusive; "
+        "configure with exactly one of them (e.g. -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_HIP=ON)")
+endif()
+
 if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     enable_language(CUDA)
     # 12.0 is a floor, not a target: any 12.x or 13.x works (the Dockerfile pins
