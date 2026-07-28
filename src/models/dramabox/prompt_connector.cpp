@@ -29,6 +29,7 @@ using Clock = std::chrono::steady_clock;
 
 constexpr size_t kConnectorWeightContextBytes = 1400ull * 1024ull * 1024ull;
 constexpr float kRmsNormEps = 1.0e-6F;
+constexpr double kPi = 3.14159265358979323846264338327950288;
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -101,7 +102,7 @@ std::vector<float> make_split_rope_values(
             }
             const double power = std::log(start) / std::log(theta) +
                                  lin * (std::log(end) / std::log(theta) - std::log(start) / std::log(theta));
-            const double index = std::pow(theta, power) * M_PI / 2.0;
+            const double index = std::pow(theta, power) * kPi / 2.0;
             const double freq = index * (fractional * 2.0 - 1.0);
             const float value = static_cast<float>(cosine ? std::cos(freq) : std::sin(freq));
             const int64_t h = i / values_per_head;

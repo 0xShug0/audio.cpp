@@ -32,6 +32,7 @@ constexpr size_t kDitWeightContextBytes = 8500ull * 1024ull * 1024ull;
 constexpr size_t kDitGraphContextBytes = 768ull * 1024ull * 1024ull;
 constexpr size_t kDitGraphNodeCapacity = 32768;
 constexpr float kNormEps = 1.0e-6F;
+constexpr double kPi = 3.14159265358979323846264338327950288;
 constexpr int64_t kTimestepFeatures = 256;
 constexpr int64_t kStgSelfAttentionBlock = 29;
 
@@ -732,7 +733,7 @@ void make_dramabox_audio_rope(
         if (total_freqs > 1) {
             lin = static_cast<double>(i) / static_cast<double>(total_freqs - 1);
         }
-        rope_index[static_cast<size_t>(i)] = std::pow(10000.0, lin) * M_PI / 2.0;
+        rope_index[static_cast<size_t>(i)] = std::pow(10000.0, lin) * kPi / 2.0;
     }
     for (int64_t b = 0; b < batch; ++b) {
         for (int64_t t = 0; t < tokens; ++t) {
