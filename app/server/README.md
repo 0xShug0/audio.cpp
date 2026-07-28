@@ -178,6 +178,8 @@ For multiple server-side presets, use `voice_presets` and optionally point `defa
 }
 ```
 
+Define `voice_presets` once and put every named preset inside that object. Duplicate JSON keys are rejected so a config cannot silently drop presets.
+
 When a request sends `"voice": "assistant"`, the server uses that configured preset. When `"voice"` does not match a configured preset, it is passed through as the model-native cached voice id, preserving the previous behavior.
 
 ## Start

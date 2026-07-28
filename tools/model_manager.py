@@ -1238,6 +1238,24 @@ CATALOG: tuple[ModelPackage, ...] = (
         description="Installs Vevo2 plus the sibling whisper-medium dependency required by the framework runtime.",
     ),
     ModelPackage(
+        id="vevo2_gguf",
+        display_name="Vevo2 Q8_0 GGUF",
+        target_directory="Vevo2-GGUF",
+        source=SnapshotSource(
+            repo_id="audio-cpp/audio.cpp-gguf",
+            include_prefixes=("Vevo2-GGUF/vevo2-q8_0.gguf",),
+            strip_prefix="Vevo2-GGUF/",
+        ),
+        required_files=("vevo2-q8_0.gguf",),
+        family="vevo2",
+        tasks=("tts", "music", "vc", "edit", "svc", "s2s"),
+        description=(
+            "Standalone audio.cpp Q8_0 GGUF package for Vevo2. It embeds every config the runtime "
+            "reads, whisper-medium included, so unlike the safetensors package it needs no sibling "
+            "whisper-medium download."
+        ),
+    ),
+    ModelPackage(
         id="seed_vc",
         display_name="SeedVC-MLX",
         target_directory="SeedVC-MLX",
@@ -1577,9 +1595,11 @@ def hf_resolve_url(source: SnapshotSource, relative_path: str) -> str:
     return f"https://huggingface.co/{source.repo_id}/resolve/{revision}/{path}"
 
 
-def http_json(url: str) -> object:
+def http_json(url: str, timeout: float = 30.0) -> object:
+    # Bounded by default: the WebUI probes package sizes from a request thread before
+    # starting a download, and an unbounded urlopen there would hang the page.
     request = Request(url, headers=http_headers())
-    with urlopen(request) as response:
+    with urlopen(request, timeout=timeout) as response:
         return json.load(response)
 
 

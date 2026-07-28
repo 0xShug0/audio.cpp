@@ -3,7 +3,7 @@
 
 ``model_manager list --json`` family fields and ``audiocpp_cli --list-loaders``
 must stay aligned. Installable standalone packages cannot advertise a family
-that is missing or commented out in ``src/framework/runtime/registry.cpp``.
+that is missing from the generated default registry source inputs.
 
 See docs/maintainers/loader_and_catalog.md.
 """
@@ -17,11 +17,12 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+CMAKE_PATH = REPO_ROOT / "CMakeLists.txt"
 REGISTRY_PATH = REPO_ROOT / "src" / "framework" / "runtime" / "registry.cpp"
 MODEL_MANAGER_PATH = REPO_ROOT / "tools" / "model_manager.py"
 PACKAGE_TABLE_PATH = REPO_ROOT / "docs" / "model_manager.md"
 
-_LOADER_CALL_RE = re.compile(r"\bmake_([a-z0-9_]+)_loader\s*\(\s*\)")
+_LOADER_CALL_RE = re.compile(r"\bmake_([a-z0-9_]+)_loader(?:\s*\(\s*\))?")
 
 # Optional: catalog family strings that map to a differently named parked stub.
 PARKED_FAMILY_ALIASES: dict[str, set[str]] = {
@@ -52,6 +53,35 @@ def parse_registry_loaders(registry_text: str) -> tuple[set[str], set[str]]:
     return active, commented
 
 
+def parse_cmake_loaders(cmake_text: str) -> tuple[set[str], set[str]]:
+    """Return (active_families, commented_families) from audiocpp_add_model LOADERS."""
+    active: set[str] = set()
+    commented: set[str] = set()
+    for raw_line in cmake_text.splitlines():
+        line = raw_line.strip()
+        match = _LOADER_CALL_RE.search(line)
+        if not match:
+            continue
+        family = match.group(1)
+        if line.startswith("#"):
+            commented.add(family)
+        else:
+            active.add(family)
+    return active, commented
+
+
+def parse_declared_loaders(cmake_text: str, registry_text: str) -> tuple[set[str], set[str]]:
+    """Return source-declared default registry loaders.
+
+    Most model-family loaders are declared in CMake and emitted into generated
+    registry include files. A few bundled loaders are still written directly in
+    registry.cpp, so the checker unions both source inputs.
+    """
+    cmake_active, cmake_commented = parse_cmake_loaders(cmake_text)
+    registry_active, registry_commented = parse_registry_loaders(registry_text)
+    return cmake_active | registry_active, cmake_commented | registry_commented
+
+
 def family_is_registered(family: str, active: set[str]) -> bool:
     return family in active
 
@@ -67,7 +97,7 @@ def family_is_parked(family: str, commented: set[str]) -> bool:
 
 def parked_hint(family: str, commented: set[str]) -> str:
     if family in commented:
-        return " (commented out in registry.cpp)"
+        return " (commented out in registry source inputs)"
     for stub, aliases in PARKED_FAMILY_ALIASES.items():
         if stub in commented and family in aliases:
             return (
@@ -157,11 +187,11 @@ def check_catalog(
         if not family_is_registered(family, active):
             errors.append(
                 f"{package_id}: installable standalone package family '{family}' "
-                f"is not registered in registry.cpp{parked_hint(family, commented)}"
+                f"is not registered in generated registry inputs{parked_hint(family, commented)}"
             )
         elif family_is_parked(family, commented):
             errors.append(
-                f"{package_id}: family '{family}' is both active and commented in registry.cpp"
+                f"{package_id}: family '{family}' is both active and commented in registry source inputs"
             )
 
     for stub in sorted(commented):
@@ -244,6 +274,18 @@ class _SyncCheckSelfTests(unittest.TestCase):
         self.assertEqual(active, {"family_b", "family_c"})
         self.assertEqual(commented, {"family_a"})
 
+    def test_parse_cmake_loader_declarations(self) -> None:
+        text = """
+        audiocpp_add_model(example
+            LOADERS
+                engine::models::family_a::make_family_a_loader
+                # engine::models::family_b::make_family_b_loader
+        )
+        """
+        active, commented = parse_cmake_loaders(text)
+        self.assertEqual(active, {"family_a"})
+        self.assertEqual(commented, {"family_b"})
+
     def test_parked_alias_blocks_installable(self) -> None:
         class Pkg:
             def __init__(self, family=None):
@@ -275,6 +317,12 @@ class _SyncCheckSelfTests(unittest.TestCase):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--cmake",
+        type=Path,
+        default=CMAKE_PATH,
+        help="Path to top-level CMakeLists.txt",
+    )
+    parser.add_argument(
         "--registry",
         type=Path,
         default=REGISTRY_PATH,
@@ -297,6 +345,9 @@ def main() -> int:
         result = unittest.TextTestRunner(verbosity=2).run(suite)
         return 0 if result.wasSuccessful() else 1
 
+    if not args.cmake.is_file():
+        print(f"error: CMakeLists.txt not found: {args.cmake}", file=sys.stderr)
+        return 2
     if not args.registry.is_file():
         print(f"error: registry not found: {args.registry}", file=sys.stderr)
         return 2
@@ -307,9 +358,12 @@ def main() -> int:
     sys.path.insert(0, str(MODEL_MANAGER_PATH.parent))
     import model_manager as mm  # noqa: E402
 
-    active, commented = parse_registry_loaders(args.registry.read_text(encoding="utf-8"))
+    active, commented = parse_declared_loaders(
+        args.cmake.read_text(encoding="utf-8"),
+        args.registry.read_text(encoding="utf-8"),
+    )
     if not active:
-        print("error: no active loaders parsed from registry.cpp", file=sys.stderr)
+        print("error: no active loaders parsed from generated registry inputs", file=sys.stderr)
         return 2
 
     errors, warnings = check_catalog(
@@ -343,7 +397,7 @@ def main() -> int:
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         print(
-            "\nFix: register the loader in registry.cpp (with sources in-tree), "
+            "\nFix: register the loader in CMake/registry source inputs (with sources in-tree), "
             "or mark the package UnsupportedSource / update docs/model_manager.md. See "
             "docs/maintainers/loader_and_catalog.md",
             file=sys.stderr,

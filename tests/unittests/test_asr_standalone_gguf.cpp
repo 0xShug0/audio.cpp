@@ -71,13 +71,13 @@ void test_hviske_standalone_gguf() {
         native / "model.safetensors",
         gguf,
         engine::assets::TensorStorageType::F16);
-    const auto assets = engine::models::hviske_asr::load_hviske_assets(gguf);
+    const auto assets = engine::models::hviske_asr::load_hviske_asr_assets(gguf);
     engine::test::require_eq(assets->config.model_type, std::string("cohere_asr"), "Hviske model type");
     engine::test::require(assets->model_weights->has_tensor("dummy.weight"), "Hviske standalone GGUF weights");
     engine::test::require(!assets->tokenizer_pieces.empty(), "Hviske embedded tokenizer");
 
     std::filesystem::copy_file(gguf, native / "model.gguf");
-    const auto explicitly_native = engine::models::hviske_asr::load_hviske_assets(native / "model.safetensors");
+    const auto explicitly_native = engine::models::hviske_asr::load_hviske_asr_assets(native / "model.safetensors");
     engine::test::require_eq(
         explicitly_native->model_weights->require_metadata("dummy.weight").dtype,
         std::string("F32"),

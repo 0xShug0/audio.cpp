@@ -33,6 +33,7 @@ COPY . .
 # Configure and build
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
+        -DAUDIOCPP_MODEL_SET=full \
         -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \
         -DENGINE_ENABLE_CUDA=ON \
         -DENGINE_ENABLE_CUDA_GRAPHS=ON \

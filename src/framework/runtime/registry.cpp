@@ -4,46 +4,10 @@
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/filesystem.h"
-#include "engine/models/ace_step/loader.h"
-#include "engine/models/chatterbox/loader.h"
-#include "engine/models/citrinet_asr/session.h"
-#include "engine/models/confucius4_tts/session.h"
-#include "engine/models/demucs/loader.h"
-#include "engine/models/dramabox/loader.h"
-#include "engine/models/fish_audio/loader.h"
-#include "engine/models/heartmula/loader.h"
-#include "engine/models/higgs_audio_stt/loader.h"
-#include "engine/models/higgs_audio_tts/loader.h"
-#include "engine/models/hviske_asr/loader.h"
-#include "engine/models/index_tts2/loader.h"
-#include "engine/models/irodori_tts/loader.h"
 #include "engine/models/marblenet_vad/session.h"
-#include "engine/models/miocodec/loader.h"
-#include "engine/models/miotts/loader.h"
-#include "engine/models/moss/moss_tts_local/loader.h"
-#include "engine/models/moss/moss_tts_nano/loader.h"
-#include "engine/models/nemotron_asr/loader.h"
-#include "engine/models/omnivoice/loader.h"
-#include "engine/community_models/glm_tts/loader.h"
-#include "engine/community_models/outetts/loader.h"
-#include "engine/community_models/parakeet_tdt/session.h"
-#include "engine/models/pocket_tts/loader.h"
-#include "engine/models/qwen3_asr/loader.h"
-#include "engine/models/qwen3_forced_aligner/loader.h"
-#include "engine/models/qwen3_tts/loader.h"
-#include "engine/community_models/vietneu_tts/loader.h"
-#include "engine/models/roformer/loader.h"
-#include "engine/models/rvc/loader.h"
 #include "engine/models/silero_vad/session.h"
-#include "engine/models/seed_vc/loader.h"
-#include "engine/models/sortformer_diar/loader.h"
-#include "engine/models/stable_audio/loader.h"
-#include "engine/models/supertonic/loader.h"
-#include "engine/models/vevo2/loader.h"
-#include "engine/models/vibevoice/loader.h"
-#include "engine/models/vibevoice_asr/loader.h"
-#include "engine/models/voxtral_realtime/loader.h"
-#include "engine/models/voxcpm2/loader.h"
+
+#include "model_registry_includes.inc"
 
 #include <algorithm>
 #include <cctype>
@@ -245,47 +209,9 @@ ModelRegistry make_registry_from_config(
 
 ModelRegistry make_default_registry(const std::optional<std::filesystem::path> & config_path) {
     const std::vector<std::shared_ptr<IVoiceModelLoader>> available_loaders = {
-        engine::models::ace_step::make_ace_step_loader(),
-        engine::models::demucs::make_htdemucs_loader(),
-        engine::models::roformer::make_mel_band_roformer_loader(),
-        engine::models::roformer::make_bs_roformer_loader(),
-        engine::models::omnivoice::make_omnivoice_loader(),
-        engine::models::glm_tts::make_glm_tts_loader(),
-        engine::models::outetts::make_outetts_loader(),
-        engine::community_models::parakeet_tdt::make_parakeet_tdt_loader(),
-        engine::models::miocodec::make_miocodec_loader(),
-        engine::models::miotts::make_miotts_loader(),
-        engine::models::moss_tts_local::make_moss_tts_local_loader(),
-        engine::models::moss_tts_nano::make_moss_tts_nano_loader(),
-        engine::models::voxcpm2::make_voxcpm2_loader(),
-        engine::models::vibevoice::make_vibevoice_loader(),
-        engine::models::vibevoice_asr::make_vibevoice_asr_loader(),
-        engine::models::voxtral_realtime::make_voxtral_realtime_loader(),
-        engine::models::fish_audio::make_fish_audio_loader(),
-        engine::models::confucius4_tts::make_confucius4_tts_loader(),
-        engine::models::dramabox::make_dramabox_loader(),
-        engine::models::heartmula::make_heartmula_loader(),
-        engine::models::higgs_audio_stt::make_higgs_audio_stt_loader(),
-        engine::models::higgs_audio_tts::make_higgs_audio_tts_loader(),
-        engine::models::hviske_asr::make_hviske_asr_loader(),
-        engine::models::irodori_tts::make_irodori_tts_loader(),
-        engine::models::nemotron_asr::make_nemotron_asr_loader(),
-        engine::models::pocket_tts::make_pocket_tts_loader(),
-        engine::models::qwen3_forced_aligner::make_qwen3_forced_aligner_loader(),
-        engine::models::qwen3_asr::make_qwen3_asr_loader(),
-        engine::models::index_tts2::make_index_tts2_loader(),
-        engine::models::qwen3_tts::make_qwen3_tts_loader(),
-        engine::models::vietneu_tts::make_vietneu_tts_loader(),
-        engine::models::sortformer_diar::make_sortformer_diar_loader(),
-        engine::models::stable_audio::make_stable_audio_loader(),
-        engine::models::supertonic::make_supertonic_loader(),
         engine::models::silero_vad::make_silero_vad_loader(),
-        engine::models::citrinet_asr::make_citrinet_asr_loader(),
         engine::models::marblenet_vad::make_marblenet_vad_loader(),
-        engine::models::vevo2::make_vevo2_loader(),
-        engine::models::seed_vc::make_seed_vc_loader(),
-        engine::models::rvc::make_rvc_loader(),
-        engine::models::chatterbox::make_chatterbox_loader(),
+#include "model_registry_loaders.inc"
     };
     if (!config_path.has_value()) {
         ModelRegistry registry;

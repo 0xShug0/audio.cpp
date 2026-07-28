@@ -155,6 +155,23 @@ brew install audio-cpp
 
 For Nix and NixOS builds, see [docs/build/nixos.md](docs/build/nixos.md).
 
+### Composite Builds
+
+Composite builds let you compile only the model families you need. `full` is the default and is what release/Docker builds should use. `custom` registers only the requested loaders while still linking required internal dependencies; `core` builds the runtime without the optional model-family set.
+
+The helper scripts expose this as `--model-set` and `--models` on Linux/macOS, and `-ModelSet` and `-Models` on Windows:
+
+```bash
+scripts/build_linux.sh --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
+```
+
+Direct CMake builds use the same underlying variables:
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=qwen3_tts,pocket_tts,qwen3_asr
+cmake --build build/debug --target audiocpp_cli -j 8
+```
+
 ### Linux Build
 
 Use the Linux helper script for CPU, CUDA, or Vulkan builds:
@@ -166,6 +183,14 @@ scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_ser
 ```
 
 The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-vulkan-release`, and `build/linux-cpu-release`.
+
+Composite examples:
+
+```bash
+scripts/build_linux.sh --backend cuda --model-set full --target audiocpp_cli
+scripts/build_linux.sh --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
+scripts/build_linux.sh --backend cpu --model-set core --target audiocpp_cli
+```
 
 For portable CPU kernels on machines where native ISA flags are not suitable:
 
@@ -195,6 +220,7 @@ Common presets:
 .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
+.\scripts\build_windows.ps1 -Preset windows-cuda-release -ModelSet custom -Models "qwen3_tts,pocket_tts,qwen3_asr" -Target audiocpp_cli
 ```
 
 From `cmd.exe`, use the wrapper:
@@ -226,6 +252,7 @@ Useful variants:
 ```bash
 scripts/build_metal.sh --target audiocpp_server
 scripts/build_metal.sh --build-type Release --archs arm64 --target audiocpp_cli
+scripts/build_metal.sh --model-set custom --models qwen3_tts,pocket_tts --target audiocpp_cli
 scripts/build_metal.sh --with-tests --target audio_dsp_test
 scripts/build_metal.sh --openmp auto --target audiocpp_cli
 scripts/build_metal.sh --native-cpu OFF --target audiocpp_cli
@@ -253,6 +280,8 @@ build/macos-metal-release/bin/audiocpp_cli
 | `ENGINE_BUILD_TESTS` | Build framework unit tests. | `OFF` |
 | `ENGINE_BUILD_WARMBENCH` | Build warmbench helper binaries. | `OFF` |
 | `AUDIOCPP_DEPLOYMENT_BUILD` | Compile package specs into CLI/server binaries for standalone GGUF and package-spec fallback loading. Script builds expose this as `--deployment-build` on Linux/macOS and `-DeploymentBuild` on Windows. | `OFF` |
+| `AUDIOCPP_MODEL_SET` | Model composite to build: `full`, `core`, or `custom`. Script builds expose this as `--model-set` on Linux/macOS and `-ModelSet` on Windows. | `full` |
+| `AUDIOCPP_MODELS` | Comma or semicolon separated model target names when `AUDIOCPP_MODEL_SET=custom`, such as `qwen3_tts,pocket_tts,qwen3_asr`. Script builds expose this as `--models` on Linux/macOS and `-Models` on Windows. | empty |
 
 ## Usage
 

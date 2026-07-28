@@ -6,8 +6,8 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/rvc/hubert.h"
+#include "engine/models/rvc/rmvpe.h"
 #include "engine/models/rvc/synthesizer.h"
-#include "engine/models/seed_vc/rmvpe.h"
 
 #include "retrieval_index.h"
 
@@ -518,7 +518,7 @@ struct RvcNativePipeline::State {
     engine::core::BackendConfig backend;
     engine::assets::TensorStorageType storage_type = engine::assets::TensorStorageType::Native;
     RvcHubertEncoder hubert;
-    seed_vc::SeedVcRmvpeF0Extractor rmvpe;
+    RvcRmvpeF0Extractor rmvpe;
     std::unordered_map<std::string, std::unique_ptr<RvcSynthesizer>> synthesizers;
     std::unordered_map<std::string, std::unique_ptr<RvcRetrievalIndex>> retrieval_indices;
     std::mutex mutex;
@@ -536,7 +536,7 @@ RvcNativePipeline::RvcNativePipeline(
     state_->backend = std::move(backend);
     state_->storage_type = storage_type;
     state_->hubert = RvcHubertEncoder(state_->assets->hubert, state_->backend, state_->storage_type);
-    state_->rmvpe = seed_vc::SeedVcRmvpeF0Extractor(
+    state_->rmvpe = RvcRmvpeF0Extractor(
         state_->assets->rmvpe,
         state_->backend,
         state_->storage_type);
