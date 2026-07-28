@@ -1,5 +1,140 @@
 {
+  "schema_version": 1,
   "family": "inflect_v2",
+  "display_name": "Inflect Micro v2 / Nano v2",
+  "description": "Compact English VITS text-to-speech models with a native GGML inference path and an external eSpeak-ng phonemizer.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "speaking_rate",
+        "type": "float",
+        "description": "Speech speed multiplier mapped directly to Inflect speed; default 1.0.",
+        "required": false,
+        "min": 0.5,
+        "max": 2.0,
+        "default": 1.0
+      },
+      {
+        "name": "variation",
+        "type": "float",
+        "description": "Latent Gaussian variation; default 0.667.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.667
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Non-negative latent noise seed; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Long-form text chunking mode.",
+        "values": [
+          "word_budget"
+        ],
+        "required": false,
+        "default": "word_budget"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 280.",
+        "required": false,
+        "min": 1,
+        "default": 280
+      }
+    ],
+    "session": [
+      {
+        "name": "espeak_library_path",
+        "type": "path",
+        "description": "Optional explicit path to the eSpeak-ng shared library.",
+        "required": false
+      },
+      {
+        "name": "espeak_data_path",
+        "type": "path",
+        "description": "Optional explicit path to the directory containing espeak-ng-data.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "inflect_micro_v2",
+      "display_name": "Inflect Micro v2 FP32",
+      "default": true,
+      "format": "safetensors",
+      "precision": "f32",
+      "target_directory": "Inflect-Micro-v2",
+      "files": [
+        "config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "converter",
+        "converter": "tools/model_manager.py install inflect_micro_v2",
+        "description": "Download the pinned official ONNX snapshot and convert it locally without PyTorch."
+      }
+    },
+    {
+      "id": "inflect_nano_v2",
+      "display_name": "Inflect Nano v2 FP32",
+      "format": "safetensors",
+      "precision": "f32",
+      "target_directory": "Inflect-Nano-v2",
+      "files": [
+        "config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "converter",
+        "converter": "tools/model_manager.py install inflect_nano_v2",
+        "description": "Download the pinned official ONNX snapshot and convert it locally without PyTorch."
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "inflect_micro_v2",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/community_models/inflect_v2.md",
+      "docs/gguf.md"
+    ]
+  },
   "sources": [
     {
       "format": "gguf",

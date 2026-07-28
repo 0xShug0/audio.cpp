@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/utf8.h"
 
 #include <algorithm>
@@ -14,12 +15,22 @@
 namespace engine::models::inflect_v2 {
 namespace {
 
+constexpr const char * kFamily = "inflect_v2";
+
 std::shared_ptr<const InflectV2Assets> require_assets(
     std::shared_ptr<const InflectV2Assets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("Inflect v2 session requires assets");
     }
     return assets;
+}
+
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("Inflect v2 session requires a model contract");
+    }
+    return contract;
 }
 
 std::filesystem::path session_path(
@@ -31,17 +42,17 @@ std::filesystem::path session_path(
         : std::filesystem::path(found->second);
 }
 
-void validate_session_options(const runtime::SessionOptions & options) {
-    for (const auto & [key, value] : options.options) {
-        (void)value;
-        if (key.rfind("inflect_v2.", 0) != 0) {
-            continue;
+void validate_session_options(
+    const runtime::SessionOptions & options,
+    const engine::model_spec::ModelContract & contract) {
+    const std::string family_prefix = std::string(kFamily) + ".";
+    for (const auto & [key, _] : options.options) {
+        if (key.rfind(family_prefix, 0) == 0 &&
+            contract.session_option_keys.find(key) ==
+                contract.session_option_keys.end()) {
+            throw std::runtime_error(
+                "unknown Inflect v2 session option: " + key);
         }
-        if (key == "inflect_v2.espeak_library_path" ||
-            key == "inflect_v2.espeak_data_path") {
-            continue;
-        }
-        throw std::runtime_error("unknown Inflect v2 session option: " + key);
     }
 }
 
@@ -79,18 +90,20 @@ void append_pause(runtime::AudioBuffer & output, double seconds) {
 InflectV2Session::InflectV2Session(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const InflectV2Assets> assets)
+    std::shared_ptr<const InflectV2Assets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),
-      frontend_(
-          session_path(options, "inflect_v2.espeak_library_path"),
-          session_path(options, "inflect_v2.espeak_data_path")) {
+      contract_(require_contract(std::move(contract))) {
     if (task_.task != runtime::VoiceTaskKind::Tts ||
         task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Inflect v2 only supports offline TTS");
     }
-    validate_session_options(options);
+    validate_session_options(options, *contract_);
+    frontend_ = std::make_unique<InflectV2Frontend>(
+        session_path(options, "inflect_v2.espeak_library_path"),
+        session_path(options, "inflect_v2.espeak_data_path"));
     runtime_ = std::make_unique<InflectV2NativeRuntime>(
         assets_,
         options.backend);
@@ -163,7 +176,7 @@ runtime::TaskResult InflectV2Session::run(const runtime::TaskRequest & request) 
                 merged,
                 InflectV2Frontend::boundary_pause_seconds(chunks[index - 1]));
         }
-        const auto frontend = frontend_.encode(chunks[index]);
+        const auto frontend = frontend_->encode(chunks[index]);
         auto chunk_options = base_options;
         chunk_options.seed += static_cast<uint32_t>(index);
         auto audio = runtime_->synthesize(frontend.token_ids, chunk_options);
@@ -182,6 +195,24 @@ runtime::TaskResult InflectV2Session::run(const runtime::TaskRequest & request) 
     runtime::TaskResult result;
     result.audio_output = std::move(merged);
     return result;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_inflect_v2_loader() {
+    runtime::SpecBackedVoiceModelConfig<InflectV2Assets> config;
+    config.family = kFamily;
+    config.load_assets = load_inflect_v2_assets;
+    config.create_session = [](
+                                const runtime::TaskSpec & task,
+                                const runtime::SessionOptions & options,
+                                std::shared_ptr<const InflectV2Assets> assets,
+                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<InflectV2Session>(
+            task,
+            options,
+            std::move(assets),
+            std::move(contract));
+    };
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::inflect_v2

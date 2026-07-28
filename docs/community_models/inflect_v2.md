@@ -131,34 +131,60 @@ output without non-finite samples, the 4000-frame rejection, and standalone
 FP32 GGUF loading.
 
 The committed `inflect_v2_tts_longform` path case runs two 783-codepoint
-requests through one loaded session. Each request produces 12 chunks and a
-48.544-second WAV. The Windows host used a Ryzen 7 7800X3D and RTX 4090 with
-CUDA 13.3. The Linux CPU run used Debian 13 under WSL2, GCC 14.2, and the
-system `libespeak-ng.so.1` without explicit session paths:
+requests through one loaded session. Each Micro request produces 12 chunks
+and a 48.544-second WAV. The Windows host used a Ryzen 7 7800X3D and RTX 4090
+with CUDA 13.3. The Linux CPU run used Debian 13 under WSL2, GCC 14.2, and
+the system `libespeak-ng.so.1` without explicit session paths:
 
 | Environment | Cold request | Repeated request | RTF cold / repeat | Memory |
 |---|---:|---:|---:|---:|
-| Windows CPU | `11952.7 ms` | `11485.5 ms` | `0.246 / 0.237` | `370.17 MiB` observed peak RSS |
-| Windows CUDA | `672.274 ms` | `563.121 ms` | `0.0138 / 0.0116` | Per-process VRAM unavailable from NVML under Windows WDDM |
-| WSL2 Debian 13 CPU | `12492 ms` | `13182.3 ms` | `0.257 / 0.272` | Not measured |
+| Windows CPU, Micro v2 | `12180.5 ms` | `11901.2 ms` | `0.251 / 0.245` | `352.04 MiB` observed peak RSS |
+| Windows CPU, Nano v2 | `5776.82 ms` | `5670.52 ms` | `0.119 / 0.117` | `220.94 MiB` observed peak RSS |
+| Windows CUDA, Micro v2 | `714.823 ms` | `535.650 ms` | `0.0147 / 0.0110` | Per-process VRAM unavailable from NVML under Windows WDDM |
+| Windows CUDA, Nano v2 | `531.946 ms` | `443.968 ms` | `0.0110 / 0.00915` | Per-process VRAM unavailable from NVML under Windows WDDM |
+| WSL2 Debian 13 CPU, Micro v2 | `8848.11 ms` | `8737.13 ms` | `0.182 / 0.180` | Not measured |
+| WSL2 Debian 13 CPU, Nano v2 | `4652.59 ms` | `4044.53 ms` | `0.0959 / 0.0834` | Not measured |
 
 For Micro v2, the two generated WAVs have identical frame counts and SHA-256
 hashes within each environment:
-`2ff1deaf7abc70b34ebf830d1afac9fd87d70261962b60ed56d8d93b334f2a27`
+`f78254203b26d28f4acd97bf8883617f21c2f33f38cf43452a7640aba1acb778`
 on Windows CPU,
-`b5ef595317439a75a17927e45561ac36120e56f0350347eaf6e068af5d4de4fa`
+`01b0d2e3bd035bb942a2626c73680d442ebd18388f98d144a381134adb801e9e`
 on CUDA, and
-`187ac7df2ef186a4ce9048379fffb16e7e5728b6d6464215a2c790168feffed1`
+`03a4b533ce442bab73c169426335f56d3908cc9112ca4c4858bf455ba74e30f6`
 under WSL2. Trace output records duration- and decoder-graph cache hits; the
 retained caches are bounded to four duration shapes and two decoder shapes.
 
-Nano v2 was also run through the same WSL2 path case. It produced two
-byte-identical 48.512-second WAVs with SHA-256
-`0e3182545a604c88725108962d16db896dd4a23ef6e9f4d8b9eb25336b3d5f79`.
-Across three runs, cold-request time ranged from `7378.31 ms` to `8155.06 ms`
-and repeated-request time ranged from `6762.01 ms` to `23046.2 ms`. The slowest
-observed RTF was `0.475`. These WSL2 results establish runtime coverage, not a
-controlled Nano performance benchmark.
+On Windows CPU, Nano v2 produced two byte-identical 48.512-second WAVs with
+SHA-256
+`37de9733c5db6827c5875865cbce3fb63b632e846508e9572e6e67c2184da5aa`.
+The Windows CUDA Nano v2 outputs were byte-identical with SHA-256
+`99c5c76f794adc12d491978e63346dabf0619714dc02d1291a99dadecca7ecab`.
+The WSL2 Nano v2 outputs were also byte-identical, with SHA-256
+`56679f720574b6bd0470eed8ee82c0b7147be2d514ddf71afc9a53ea94c440fd`.
+
+The CUDA figures are cold and repeated requests within a fresh session after
+the NVIDIA kernel cache has been populated. The first request immediately
+after a new CUDA build spent an additional 9.5 seconds compiling kernels.
+For the complete long-form outputs, CPU-to-CUDA correlation was `0.999889`
+for Micro and `0.999759` for Nano; mean absolute errors were `2.43e-4` and
+`3.38e-4`, respectively.
+
+The maintainer's `preview/inflect-micro-v2` branch was measured separately
+with the same 6026-codepoint input, Micro v2 weights, CPU, eight threads, and
+Ryzen 7 7800X3D host:
+
+| Implementation | Wall time | Audio duration | RTF | Real-time factor |
+|---|---:|---:|---:|---:|
+| `preview/inflect-micro-v2` | `102.178 s` | `330.096 s` | `0.3095` | `3.23x` |
+| This implementation | `96.825 s` | `335.269 s` | `0.2888` | `3.46x` |
+
+This implementation has a 6.7% lower RTF in that comparison. The preview
+branch uses its bundled Misaki G2P resources while this implementation uses
+the approved external eSpeak-ng frontend, so waveform and duration parity are
+not implied. The native runtime incorporates the preview branch's useful
+backend-addressable layout reuse, indexed channel reversal, 1x1 convolution
+matmul, broadcast bias, and direct CPU transposed-convolution paths.
 
 ### Reproduce the validation
 

@@ -1,5 +1,6 @@
 #include "engine/community_models/inflect_v2/frontend.h"
 #include "engine/community_models/inflect_v2/runtime.h"
+#include "engine/community_models/inflect_v2/session.h"
 
 #include "test_assert.h"
 
@@ -72,6 +73,59 @@ int main() try {
     engine::test::require(
         missing_library_rejected,
         "missing eSpeak library must be rejected");
+
+    auto assets =
+        std::make_shared<engine::models::inflect_v2::InflectV2Assets>();
+    auto contract =
+        std::make_shared<engine::model_spec::ModelContract>();
+    contract->session_option_keys = {
+        "inflect_v2.espeak_library_path",
+        "inflect_v2.espeak_data_path",
+    };
+
+    engine::runtime::SessionOptions invalid_task_options;
+    invalid_task_options.options["inflect_v2.espeak_library_path"] =
+        missing_library.string();
+    bool invalid_task_reported_first = false;
+    try {
+        engine::models::inflect_v2::InflectV2Session session(
+            {
+                engine::runtime::VoiceTaskKind::Vad,
+                engine::runtime::RunMode::Offline,
+            },
+            invalid_task_options,
+            assets,
+            contract);
+    } catch (const std::runtime_error & error) {
+        invalid_task_reported_first =
+            std::string(error.what()).find("offline TTS") != std::string::npos;
+    }
+    engine::test::require(
+        invalid_task_reported_first,
+        "task validation must run before eSpeak initialization");
+
+    engine::runtime::SessionOptions invalid_option_options;
+    invalid_option_options.options["inflect_v2.espeak_library_path"] =
+        missing_library.string();
+    invalid_option_options.options["inflect_v2.unknown"] = "1";
+    bool invalid_option_reported_first = false;
+    try {
+        engine::models::inflect_v2::InflectV2Session session(
+            {
+                engine::runtime::VoiceTaskKind::Tts,
+                engine::runtime::RunMode::Offline,
+            },
+            invalid_option_options,
+            assets,
+            contract);
+    } catch (const std::runtime_error & error) {
+        invalid_option_reported_first =
+            std::string(error.what()).find("unknown Inflect v2 session option") !=
+            std::string::npos;
+    }
+    engine::test::require(
+        invalid_option_reported_first,
+        "session option validation must run before eSpeak initialization");
 
     const auto missing_data =
         std::filesystem::temp_directory_path() /

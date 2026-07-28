@@ -302,9 +302,9 @@ void validate_tensors(const InflectV2Assets & assets) {
 
 std::shared_ptr<const InflectV2Assets> load_inflect_v2_assets(
     const std::filesystem::path & model_path) {
-    auto resources = engine::model_spec::load_resource_bundle(
+    auto resources = engine::model_spec::load_resource_bundle_for_family(
         model_path,
-        engine::model_spec::default_spec_path("inflect_v2"));
+        "inflect_v2");
     InflectV2Assets out;
     out.config = parse_config(resources);
     out.weights = resources.open_tensor_source("weights");

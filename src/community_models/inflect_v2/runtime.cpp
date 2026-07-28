@@ -51,10 +51,21 @@ struct GgmlContextDeleter {
 core::TensorValue contiguous(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & value) {
+    if (core::has_backend_addressable_layout(value.tensor)) {
+        return value;
+    }
     return core::wrap_tensor(
         ggml_cont(ctx.ggml, value.tensor),
         value.shape,
         value.type);
+}
+
+ggml_tensor * contiguous_if_needed(
+    ggml_context * context,
+    ggml_tensor * tensor) {
+    return core::has_backend_addressable_layout(tensor)
+        ? tensor
+        : ggml_cont(context, tensor);
 }
 
 core::TensorValue scaled(
@@ -143,20 +154,6 @@ std::shared_ptr<const InflectV2BackendWeights> load_weights(
     return out;
 }
 
-modules::Conv1dWeights conv_weights(
-    const InflectV2BackendWeights & weights,
-    const std::string & prefix,
-    bool use_bias = true) {
-    modules::Conv1dWeights out{
-        weight(weights, prefix + ".weight"),
-        std::nullopt,
-    };
-    if (use_bias) {
-        out.bias = weight(weights, prefix + ".bias");
-    }
-    return out;
-}
-
 modules::ConvTranspose1dWeights conv_transpose_weights(
     const InflectV2BackendWeights & weights,
     const std::string & prefix) {
@@ -176,15 +173,85 @@ core::TensorValue conv1d(
     int padding,
     int dilation = 1,
     bool use_bias = true) {
-    return modules::Conv1dModule({
-        input.shape.dims[1],
-        out_channels,
-        kernel,
-        1,
-        padding,
-        dilation,
-        use_bias,
-    }).build(ctx, input, conv_weights(weights, prefix, use_bias));
+    const int64_t in_channels = input.shape.dims[1];
+    const int64_t input_frames = input.shape.dims[2];
+    const int64_t output_frames =
+        input_frames + 2 * padding - dilation * (kernel - 1);
+    const auto source = contiguous(ctx, input);
+    auto * input_2d = ggml_reshape_2d(
+        ctx.ggml,
+        source.tensor,
+        input_frames,
+        in_channels);
+    auto * kernel_tensor = weight(weights, prefix + ".weight").tensor;
+    ggml_tensor * output = nullptr;
+    if (kernel == 1 && padding == 0 && dilation == 1) {
+        auto * kernel_2d = ggml_reshape_2d(
+            ctx.ggml,
+            kernel_tensor,
+            in_channels,
+            out_channels);
+        auto * input_channels_first = contiguous_if_needed(
+            ctx.ggml,
+            ggml_permute(ctx.ggml, input_2d, 1, 0, 2, 3));
+        auto * output_channels_first =
+            ggml_mul_mat(ctx.ggml, kernel_2d, input_channels_first);
+        output = ggml_reshape_2d(
+            ctx.ggml,
+            contiguous_if_needed(
+                ctx.ggml,
+                ggml_permute(
+                    ctx.ggml,
+                    output_channels_first,
+                    1,
+                    0,
+                    2,
+                    3)),
+            output_frames,
+            out_channels);
+    } else {
+        auto * kernel_3d = ggml_reshape_3d(
+            ctx.ggml,
+            kernel_tensor,
+            kernel,
+            in_channels,
+            out_channels);
+        auto * input_3d = ggml_reshape_3d(
+            ctx.ggml,
+            input_2d,
+            input_frames,
+            in_channels,
+            1);
+        auto * output_3d = ggml_conv_1d(
+            ctx.ggml,
+            kernel_3d,
+            input_3d,
+            1,
+            padding,
+            dilation);
+        output = ggml_reshape_2d(
+            ctx.ggml,
+            output_3d,
+            output_frames,
+            out_channels);
+    }
+    if (use_bias) {
+        auto * bias = ggml_reshape_2d(
+            ctx.ggml,
+            weight(weights, prefix + ".bias").tensor,
+            1,
+            out_channels);
+        output = ggml_add(ctx.ggml, output, bias);
+    }
+    return core::wrap_tensor(
+        ggml_reshape_3d(
+            ctx.ggml,
+            output,
+            output_frames,
+            out_channels,
+            1),
+        core::TensorShape::from_dims({1, out_channels, output_frames}),
+        GGML_TYPE_F32);
 }
 
 core::TensorValue channel_layer_norm(
@@ -430,16 +497,19 @@ core::TensorValue duration_predictor(
 
 core::TensorValue flip_channels(
     core::ModuleBuildContext & ctx,
-    const core::TensorValue & input) {
-    core::TensorValue output;
-    for (int64_t channel = input.shape.dims[1]; channel > 0; --channel) {
-        const auto slice =
-            modules::SliceModule({1, channel - 1, 1}).build(ctx, input);
-        output = output.valid()
-            ? modules::ConcatModule({1}).build(ctx, output, slice)
-            : slice;
-    }
-    return output;
+    const core::TensorValue & input,
+    const core::TensorValue & reverse_indices) {
+    const int64_t channels = input.shape.dims[1];
+    const int64_t frames = input.shape.dims[2];
+    const auto matrix = core::reshape_tensor(
+        ctx,
+        contiguous(ctx, input),
+        core::TensorShape::from_dims({channels, frames}));
+    auto gathered = core::wrap_tensor(
+        ggml_get_rows(ctx.ggml, matrix.tensor, reverse_indices.tensor),
+        core::TensorShape::from_dims({channels, frames}),
+        input.type);
+    return core::reshape_tensor(ctx, contiguous(ctx, gathered), input.shape);
 }
 
 core::TensorValue wavenet(
@@ -512,10 +582,11 @@ core::TensorValue reverse_flow(
     core::ModuleBuildContext & ctx,
     const InflectV2BackendWeights & weights,
     const InflectV2Config & config,
-    core::TensorValue input) {
+    core::TensorValue input,
+    const core::TensorValue & reverse_indices) {
     const int64_t half = config.inter_channels / 2;
     for (int flow = static_cast<int>(config.flow_count) - 1; flow >= 0; --flow) {
-        input = flip_channels(ctx, input);
+        input = flip_channels(ctx, input, reverse_indices);
         const std::string prefix =
             "model.flow.flows." + std::to_string(flow * 2);
         const auto x0 =
@@ -594,6 +665,83 @@ core::TensorValue resblock(
     return input;
 }
 
+core::TensorValue conv_transpose1d(
+    core::ModuleBuildContext & ctx,
+    const InflectV2BackendWeights & weights,
+    const core::TensorValue & input,
+    const std::string & prefix,
+    int64_t out_channels,
+    int64_t kernel,
+    int stride,
+    int64_t padding) {
+    const int64_t input_frames = input.shape.dims[2];
+    const int64_t output_frames = input_frames * stride;
+    if (ctx.backend_type == core::BackendType::Cpu && padding > 0) {
+        const auto source = contiguous(ctx, input);
+        auto * input_2d = ggml_reshape_2d(
+            ctx.ggml,
+            source.tensor,
+            input_frames,
+            input.shape.dims[1]);
+        auto * output = ggml_conv_transpose_1d(
+            ctx.ggml,
+            weight(weights, prefix + ".weight").tensor,
+            input_2d,
+            stride,
+            0,
+            1);
+        const int64_t full_frames =
+            (input_frames - 1) * stride + kernel;
+        output = ggml_reshape_2d(
+            ctx.ggml,
+            output,
+            full_frames,
+            out_channels);
+        output = ggml_view_2d(
+            ctx.ggml,
+            output,
+            output_frames,
+            out_channels,
+            ggml_row_size(output->type, full_frames),
+            ggml_row_size(output->type, padding));
+        output = contiguous_if_needed(ctx.ggml, output);
+        auto * bias = ggml_reshape_2d(
+            ctx.ggml,
+            weight(weights, prefix + ".bias").tensor,
+            1,
+            out_channels);
+        output = ggml_add(ctx.ggml, output, bias);
+        return core::wrap_tensor(
+            ggml_reshape_3d(
+                ctx.ggml,
+                output,
+                output_frames,
+                out_channels,
+                1),
+            core::TensorShape::from_dims(
+                {1, out_channels, output_frames}),
+            GGML_TYPE_F32);
+    }
+
+    auto output = modules::ConvTranspose1dModule({
+        input.shape.dims[1],
+        out_channels,
+        kernel,
+        stride,
+        0,
+        1,
+        true,
+    }).build(
+        ctx,
+        input,
+        conv_transpose_weights(weights, prefix));
+    return modules::SliceModule({
+        2,
+        padding,
+        output_frames,
+    }).build(ctx, output);
+}
+
 core::TensorValue decoder(
     core::ModuleBuildContext & ctx,
     const InflectV2BackendWeights & weights,
@@ -614,27 +762,16 @@ core::TensorValue decoder(
             (int64_t{1} << static_cast<int64_t>(stage + 1));
         const int rate = static_cast<int>(config.upsample_rates[stage]);
         const int64_t kernel = config.upsample_kernel_sizes[stage];
-        const int64_t input_frames = hidden.shape.dims[2];
         const int64_t padding = (kernel - rate) / 2;
-        hidden = modules::ConvTranspose1dModule({
-            hidden.shape.dims[1],
+        hidden = conv_transpose1d(
+            ctx,
+            weights,
+            hidden,
+            "model.dec.ups." + std::to_string(stage),
             out_channels,
             kernel,
             rate,
-            0,
-            1,
-            true,
-        }).build(
-            ctx,
-            hidden,
-            conv_transpose_weights(
-                weights,
-                "model.dec.ups." + std::to_string(stage)));
-        hidden = modules::SliceModule({
-            2,
-            padding,
-            input_frames * rate,
-        }).build(ctx, hidden);
+            padding);
 
         core::TensorValue sum;
         for (size_t block = 0; block < config.resblock_kernel_sizes.size(); ++block) {
@@ -785,6 +922,7 @@ std::unique_ptr<DurationGraph> build_duration_graph(
 struct DecoderGraph : GraphResources {
     int64_t latent_frames = 0;
     ggml_tensor * latent = nullptr;
+    ggml_tensor * reverse_indices = nullptr;
     ggml_tensor * waveform = nullptr;
 };
 
@@ -817,19 +955,31 @@ std::unique_ptr<DecoderGraph> build_decoder_graph(
         GGML_TYPE_F32,
         core::TensorShape::from_dims(
             {1, config.inter_channels, latent_frames}));
+    auto reverse_indices = core::make_tensor(
+        io_ctx,
+        GGML_TYPE_I32,
+        core::TensorShape::from_dims({config.inter_channels}));
     ggml_set_input(latent.tensor);
+    ggml_set_input(reverse_indices.tensor);
     auto waveform = decoder(
         ctx,
         weights,
         config,
-        reverse_flow(ctx, weights, config, latent));
+        reverse_flow(ctx, weights, config, latent, reverse_indices));
     waveform = contiguous(ctx, waveform);
     out->latent = latent.tensor;
+    out->reverse_indices = reverse_indices.tensor;
     out->waveform = waveform.tensor;
     ggml_set_output(out->waveform);
     out->graph = ggml_new_graph_custom(ctx.ggml, 131072, false);
     ggml_build_forward_expand(out->graph, out->waveform);
     allocate_graph(*out);
+    std::vector<int32_t> indices;
+    indices.reserve(static_cast<size_t>(config.inter_channels));
+    for (int64_t channel = config.inter_channels - 1; channel >= 0; --channel) {
+        indices.push_back(static_cast<int32_t>(channel));
+    }
+    core::write_tensor_i32(reverse_indices, indices);
     return out;
 }
 
