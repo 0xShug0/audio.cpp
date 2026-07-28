@@ -161,8 +161,8 @@ load_embedded_aligner(const assets::ResourceBundle &resources) {
 
 std::shared_ptr<const OuteTTSAssets>
 load_outetts_assets(const std::filesystem::path &model_path) {
-  auto resources = engine::model_spec::load_resource_bundle(
-      model_path, engine::model_spec::default_spec_path("outetts"));
+  auto resources = engine::model_spec::load_resource_bundle_for_family(
+      model_path, "outetts");
   OuteTTSAssets model_assets;
   model_assets.config = parse_config(resources);
   model_assets.generation = parse_generation(resources);

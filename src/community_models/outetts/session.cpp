@@ -2,6 +2,7 @@
 
 #include "engine/framework/audio/fft.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/framework/text/utf8.h"
@@ -25,10 +26,47 @@ namespace engine::models::outetts {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr std::string_view kFamily = "outetts";
 
 constexpr int64_t kDefaultTextChunkSize = 256;
 constexpr int64_t kAutomaticChunkTokenBudget = 4096;
 constexpr size_t kDefaultReferenceCacheSlots = 1;
+
+std::shared_ptr<const OuteTTSAssets> require_assets(
+    std::shared_ptr<const OuteTTSAssets> assets) {
+  if (assets == nullptr)
+    throw std::runtime_error("OuteTTS session requires assets");
+  return assets;
+}
+
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+  if (contract == nullptr)
+    throw std::runtime_error(
+        "OuteTTS session requires a model contract");
+  return contract;
+}
+
+bool is_legacy_session_option(std::string_view key) {
+  return key == "outetts.dac_graph_context_mb" ||
+         key == "outetts.aligner_model_path" ||
+         key == "outetts.forced_aligner_model_path";
+}
+
+void validate_session_option_keys(
+    const runtime::SessionOptions &options,
+    const engine::model_spec::ModelContract &contract) {
+  const std::string family_prefix = std::string(kFamily) + ".";
+  for (const auto &[key, _] : options.options) {
+    if (key.rfind(family_prefix, 0) == 0 &&
+        contract.session_option_keys.find(key) ==
+            contract.session_option_keys.end() &&
+        !is_legacy_session_option(key)) {
+      throw std::runtime_error(
+          "unknown OuteTTS session option: " + key);
+    }
+  }
+}
 
 int64_t generation_budget_with_headroom(int64_t estimated_tokens) {
   // The upstream heuristic is a useful lower bound, but sampled generation can
@@ -478,8 +516,12 @@ reference_audio(const runtime::TaskRequest &request) {
 
 OuteTTSSession::OuteTTSSession(runtime::TaskSpec task,
                                runtime::SessionOptions options,
-                               std::shared_ptr<const OuteTTSAssets> assets)
-    : RuntimeSessionBase(options), task_(task), assets_(std::move(assets)),
+                               std::shared_ptr<const OuteTTSAssets> assets,
+                               std::shared_ptr<const
+                                   engine::model_spec::ModelContract> contract)
+    : RuntimeSessionBase(options), task_(task),
+      assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))),
       tokenizer_(assets_),
       dac_(assets_, execution_context(),
            runtime::parse_size_mb_option(options.options,
@@ -492,14 +534,13 @@ OuteTTSSession::OuteTTSSession(runtime::TaskSpec task,
            assets::TensorStorageType::F32),
       mem_saver_(mem_saver_from_options(options)),
       reference_profile_cache_(reference_cache_slots(options)) {
-  if (assets_ == nullptr)
-    throw std::runtime_error("OuteTTS session requires assets");
   if ((task_.task != runtime::VoiceTaskKind::Tts &&
        task_.task != runtime::VoiceTaskKind::VoiceCloning) ||
       task_.mode != runtime::RunMode::Offline) {
     throw std::runtime_error(
         "OuteTTS supports offline TTS and voice cloning only");
   }
+  validate_session_option_keys(options, *contract_);
 }
 
 OuteTTSSession::~OuteTTSSession() = default;
@@ -639,7 +680,9 @@ OuteTTSVoiceProfile OuteTTSSession::prepare_voice_profile(
   return profile;
 }
 
-std::string OuteTTSSession::family() const { return "outetts"; }
+std::string OuteTTSSession::family() const {
+  return std::string(kFamily);
+}
 runtime::VoiceTaskKind OuteTTSSession::task_kind() const { return task_.task; }
 runtime::RunMode OuteTTSSession::run_mode() const { return task_.mode; }
 void OuteTTSSession::prepare(
@@ -923,6 +966,22 @@ runtime::TaskResult OuteTTSSession::run(const runtime::TaskRequest &request) {
   debug::timing_log_scalar("session.wall_ms",
                            debug::elapsed_ms(wall_start));
   return result;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_outetts_loader() {
+  runtime::SpecBackedVoiceModelConfig<OuteTTSAssets> config;
+  config.family = std::string(kFamily);
+  config.load_assets = load_outetts_assets;
+  config.create_session = [](
+                              const runtime::TaskSpec &task,
+                              const runtime::SessionOptions &options,
+                              std::shared_ptr<const OuteTTSAssets> assets,
+                              std::shared_ptr<const
+                                  engine::model_spec::ModelContract> contract) {
+    return std::make_unique<OuteTTSSession>(
+        task, options, std::move(assets), std::move(contract));
+  };
+  return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 } // namespace engine::models::outetts

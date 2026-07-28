@@ -2,6 +2,11 @@
 
 OuteTTS 1.0 1B generates 24 kHz speech with a Llama text/audio-token model and the IBM DAC 1.5 kbps codec. The integration supports both no-reference generation and native voice cloning. For cloning, the DAC encoder turns a reference WAV into the two codec-token streams used to condition the language model; no separate encoder model or speaker-profile file is required.
 
+OuteTTS is v1-native. `model_specs/outetts.json` is the single source of truth
+for metadata, packages, normalized options, and GGUF/safetensors resources.
+The runtime uses the generic spec-backed loader while retaining the previously
+released aligner and DAC-arena option names as internal compatibility aliases.
+
 | Field | Value |
 |---|---|
 | Family | `outetts` |

@@ -425,11 +425,10 @@ audiocpp_add_model(outetts
         src/community_models/outetts/assets.cpp
         src/community_models/outetts/dac.cpp
         src/community_models/outetts/llama.cpp
-        src/community_models/outetts/loader.cpp
         src/community_models/outetts/session.cpp
         src/community_models/outetts/tokenizer.cpp
     INCLUDES
-        engine/community_models/outetts/loader.h
+        engine/community_models/outetts/session.h
     LOADERS
         engine::models::outetts::make_outetts_loader
     DEPENDS

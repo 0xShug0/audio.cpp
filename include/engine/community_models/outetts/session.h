@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/community_models/outetts/assets.h"
@@ -19,11 +20,15 @@ class Qwen3ForcedAlignerSession;
 
 namespace engine::models::outetts {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_outetts_loader();
+
 class OuteTTSSession final : public runtime::RuntimeSessionBase,
                              public runtime::IOfflineVoiceTaskSession {
 public:
   OuteTTSSession(runtime::TaskSpec task, runtime::SessionOptions options,
-                 std::shared_ptr<const OuteTTSAssets> assets);
+                 std::shared_ptr<const OuteTTSAssets> assets,
+                 std::shared_ptr<const engine::model_spec::ModelContract>
+                     contract);
   ~OuteTTSSession() override;
   std::string family() const override;
   runtime::VoiceTaskKind task_kind() const override;
@@ -53,6 +58,7 @@ private:
 
   runtime::TaskSpec task_;
   std::shared_ptr<const OuteTTSAssets> assets_;
+  std::shared_ptr<const engine::model_spec::ModelContract> contract_;
   OuteTTSTokenizer tokenizer_;
   std::unique_ptr<OuteTTSLlamaRuntime> llama_;
   std::optional<assets::TensorStorageType> llama_storage_type_;
