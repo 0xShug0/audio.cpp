@@ -1518,11 +1518,41 @@ std::filesystem::path materialize_gguf_sidecars(const std::filesystem::path & pa
     return root;
 }
 
+std::vector<std::filesystem::path> directory_gguf_files(const std::filesystem::path & directory) {
+    std::vector<std::filesystem::path> files;
+    if (!engine::io::is_existing_directory(directory)) {
+        return files;
+    }
+    for (const auto & entry : std::filesystem::directory_iterator(directory)) {
+        const auto & candidate = entry.path();
+        if (engine::io::is_existing_file(candidate) && lower_ascii(candidate.extension().string()) == ".gguf") {
+            files.push_back(candidate);
+        }
+    }
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+std::optional<std::filesystem::path> find_directory_gguf(const std::filesystem::path & directory) {
+    const auto named = directory / "model.gguf";
+    if (engine::io::is_existing_file(named)) {
+        return named;
+    }
+    auto files = directory_gguf_files(directory);
+    if (files.size() != 1) {
+        return std::nullopt;
+    }
+    return files.front();
+}
+
 PreparedModelDirectory prepare_model_directory(const std::filesystem::path & model_path,
     const std::filesystem::path & gguf_relative_path) {
     std::filesystem::path gguf_path;
     if (engine::io::is_existing_directory(model_path)) {
         gguf_path = model_path / gguf_relative_path;
+        if (!engine::io::is_existing_file(gguf_path)) {
+            gguf_path = find_directory_gguf(model_path).value_or(gguf_path);
+        }
     } else if (engine::io::is_existing_file(model_path)) {
         gguf_path = model_path;
     } else {

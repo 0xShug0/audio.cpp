@@ -157,11 +157,12 @@ def download_file(
 
 def download_hf_file(
     source,
-    relative_path: str,
+    remote_path: str,
+    local_path: str,
     destination_root: Path,
     expected_size: int | None,
 ) -> None:
-    """Fetch one repo file into ``destination_root/relative_path`` via huggingface_hub.
+    """Fetch repo file ``remote_path`` and place it at ``destination_root/local_path``.
 
     Plain HTTP against the resolve URL cannot be used here: Xet-backed repos redirect
     to a CDN that rejects ordinary GETs, so only the hub client (with ``hf_xet``) can
@@ -169,19 +170,42 @@ def download_hf_file(
     instead of duplicating it in the shared blob cache, and the hub client does its
     own resume, so an interrupted run picks up where it left off just like
     ``download_file`` does for the plain-URL callers.
+
+    The two paths differ whenever the package sets ``strip_prefix`` — the GGUF packages
+    in audio-cpp/audio.cpp-gguf all live under a repo subdirectory
+    (``Vevo2-GGUF/vevo2-q8_0.gguf``) that must not appear in the installed model
+    directory. hf_hub_download can only write ``local_dir/<filename>``, so the file is
+    moved into place afterwards and the emptied repo subdirectory is pruned; leaving it
+    behind would promote a stray ``Vevo2-GGUF/`` into the installed package.
     """
-    destination = destination_root / relative_path
+    destination = destination_root / local_path
     if expected_size is not None and destination.is_file() and destination.stat().st_size == expected_size:
-        print(f"skip {relative_path} (already complete)")
+        print(f"skip {local_path} (already complete)")
         return
-    print(f"download {relative_path}")
-    hf_hub_download(
+    print(f"download {remote_path}")
+    downloaded = Path(hf_hub_download(
         repo_id=source.repo_id,
-        filename=relative_path,
+        filename=remote_path,
         revision=source.revision,
         local_dir=destination_root,
         token=mm.huggingface_token(),
-    )
+    ))
+    if downloaded.resolve() == destination.resolve():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    downloaded.replace(destination)
+    prune_empty_parents(downloaded.parent, destination_root)
+
+
+def prune_empty_parents(directory: Path, stop_at: Path) -> None:
+    """Remove ``directory`` and its now-empty parents, never touching ``stop_at``."""
+    current = directory
+    while current != stop_at and stop_at in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
 
 
 def prune_hf_local_dir_cache(destination_root: Path) -> None:
@@ -209,10 +233,11 @@ def install_snapshot_into_dir(
     validate: bool = True,
 ) -> None:
     files = mm.list_hf_files(source)
-    for relative, _local_snapshot_path, expected_size in files:
-        destination = destination_root / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        download_hf_file(source, relative, destination_root, expected_size)
+    # list_hf_files yields (repo path, installed path, size); the two differ for packages
+    # with a strip_prefix, and the installed path is what required_files is written against.
+    for remote_path, local_path, expected_size in files:
+        (destination_root / local_path).parent.mkdir(parents=True, exist_ok=True)
+        download_hf_file(source, remote_path, local_path, destination_root, expected_size)
     prune_hf_local_dir_cache(destination_root)
     if validate:
         mm.validate_required_files_list(required_files, destination_root, source.repo_id)

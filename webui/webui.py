@@ -2221,19 +2221,65 @@ def _fmt_bytes(n):
     return f"{n / 1e9:.2f} GB" if n >= 1e9 else f"{n / 1e6:.1f} MB"
 
 
-def _download_progress_note(entry):
-    """Bytes already on disk for a running download. model_manager stages into
-    models/.engine_model_staging/<target>.partial/ and renames on completion;
-    fall back to the whole staging root for packages with composite targets."""
+def _staged_bytes(entry):
+    """Bytes already on disk for a running download, or None before staging starts.
+    model_manager stages into models/.engine_model_staging/<target>.partial/ and renames
+    on completion; fall back to the whole staging root for composite targets."""
     staging_root = os.path.join(MODELS_ROOT, ".engine_model_staging")
     base = os.path.basename(entry.get("path", "").rstrip("/\\"))
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", base)
     staging = os.path.join(staging_root, safe + ".partial")
     probe = staging if os.path.isdir(staging) else staging_root
-    if not os.path.isdir(probe):
+    return _dir_size_bytes(probe) if os.path.isdir(probe) else None
+
+
+def _download_progress_note(entry):
+    """Progress for a running download, against the package total when it is known.
+    The total is what makes a long download legible ("2 of 14 GB" rather than "2 GB")."""
+    done = _staged_bytes(entry)
+    if done is None:
         return _t("尚未写入数据（正在连接/解析）", "Waiting for data…")
-    return _t("已下载 {size}", "Downloaded {size}",
-              size=_fmt_bytes(_dir_size_bytes(probe)))
+    total = package_download_bytes(entry.get("download_id"))
+    if not total:
+        return _t("已下载 {size}", "Downloaded {size}", size=_fmt_bytes(done))
+    return _t("已下载 {done} / {total}（{pct}%）", "Downloaded {done} of {total} ({pct}%)",
+              done=_fmt_bytes(done), total=_fmt_bytes(total),
+              pct=min(100, int(done * 100 / total)))
+
+
+def _live_download_prefix(entry):
+    """Requirements and warnings that have to survive the progress refresh.
+
+    download_status() rewrites the whole message every timer tick, so anything shown
+    only by the initial Download click was replaced within three seconds — long enough
+    to miss entirely, which reads as no warning ever being shown. Disk is judged against
+    the bytes still to fetch, so a healthy download does not drift into a false alarm as
+    free space drops."""
+    lines = []
+    memory = memory_alarm(entry)
+    if memory:
+        need_gb, available_gb, share, device = memory
+        lines.append(_t(
+            "🚨 **{device}告警**：估算需 **{need:g}G** / 本机 {local:g}G，占用 **{share:.0%}**。",
+            "🚨 **{device} alarm**: needs ≈**{need:g} GB** of the {local:g} GB here — **{share:.0%}**.",
+            device=_t("显存", "VRAM") if device == "vram" else _t("内存", "RAM"),
+            need=need_gb, local=available_gb, share=share))
+    total = package_download_bytes(entry.get("download_id"))
+    usage = _disk_usage(MODELS_ROOT)
+    if total is not None:
+        remaining = max(0, total - (_staged_bytes(entry) or 0))
+        verdict = _disk_verdict(remaining, usage)
+        if verdict == "short":
+            lines.append(_t("❌ **磁盘将不够**：还需约 {need}，models/ 只剩 {free}。",
+                            "❌ **Will run out of disk**: ≈{need} still to fetch, only {free} free "
+                            "on models/.", need=_fmt_bytes(remaining), free=_fmt_bytes(usage.free)))
+        elif verdict == "alarm":
+            lines.append(_t("🚨 **磁盘告警**：下完将占用 {fill:.0%}（告警线 {limit:.0%}）。",
+                            "🚨 **Disk alarm**: {fill:.0%} full when this finishes "
+                            "(alarm above {limit:.0%}).",
+                            fill=_disk_fill_after(remaining, usage), limit=DISK_USAGE_ALARM))
+    lines.extend(requirements_info_lines(entry))
+    return "\n\n".join(lines) + "\n\n" if lines else ""
 
 
 def hf_token_present():
@@ -2241,6 +2287,248 @@ def hf_token_present():
     if os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"):
         return True
     return os.path.isfile(os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "token"))
+
+
+# --- pre-download requirements (disk + VRAM) --------------------------------
+# Weights run from 40 MB to 17 GB, and nothing used to say so before the download
+# started: a package that could not fit simply filled the disk and failed late, with
+# the partial left behind in .engine_model_staging.
+
+_dl_size_cache = {}      # download_id -> total remote bytes, or None when unknown
+_dl_size_lock = threading.Lock()
+# A volume this full after the download is worth stopping for — not because the fetch
+# fails (it fits) but because what is left is no longer comfortable to work in. Alarming,
+# not blocking: it is the user's disk, so the download stays available behind a confirm.
+DISK_USAGE_ALARM = 0.75
+# Likewise for the device the model runs on: needing more than this share of VRAM (or of
+# system RAM on the CPU backend) means it will run, if at all, with nothing to spare.
+MEMORY_USAGE_ALARM = 0.80
+
+
+def _model_manager_module():
+    """Import tools/model_manager.py for catalog metadata (sizes), or None.
+
+    Imported lazily and only for read-only lookups: installs still run it as a
+    subprocess, so the WebUI process never carries its download/convert dependencies."""
+    tools_dir = os.path.join(PROJECT_ROOT, "tools")
+    if os.path.isdir(tools_dir) and tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    try:
+        import model_manager
+        return model_manager
+    except Exception as exc:
+        print(f"[webui] model_manager import failed ({exc}); download sizes unavailable")
+        return None
+
+
+def _snapshot_sources(mm, source):
+    """The SnapshotSources a package downloads from; empty for converter installs."""
+    if isinstance(source, mm.SnapshotSource):
+        return [source]
+    if isinstance(source, mm.CompositeSnapshotSource):
+        return [placement.source for placement in source.placements]
+    return []
+
+
+def package_download_bytes(download_id):
+    """Total remote size of everything `download_id` fetches, or None if unknown.
+
+    Read live from the Hugging Face tree API rather than stored in the catalog: a
+    hand-copied size goes stale the moment a repo is reuploaded, and models_catalog.json
+    already carries more hand-maintained facts than is comfortable. Unknown (None) for
+    converter installs, unreachable repos, and gated repos without a token — callers
+    must treat it as "no information", never as zero."""
+    if not download_id:
+        return None
+    with _dl_size_lock:
+        if download_id in _dl_size_cache:
+            return _dl_size_cache[download_id]
+    mm = _model_manager_module()
+    total = None
+    if mm is not None:
+        package = mm.PACKAGE_BY_ID.get(download_id)
+        sources = _snapshot_sources(mm, package.source) if package else []
+        try:
+            sizes = [size for source in sources for _remote, _local, size in mm.list_hf_files(source)]
+            # A repo listing without sizes would understate the total; say nothing instead.
+            total = sum(sizes) if sizes and all(size is not None for size in sizes) else None
+        except Exception as exc:
+            print(f"[webui] could not read the download size of {download_id}: {exc}")
+    with _dl_size_lock:
+        _dl_size_cache[download_id] = total
+    return total
+
+
+def _disk_usage(path):
+    """(total, used, free) for the volume holding `path`, walking up to the nearest
+    existing ancestor (models/ need not exist yet), or None if it cannot be read."""
+    probe = os.path.abspath(path)
+    while not os.path.isdir(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return None
+        probe = parent
+    try:
+        return shutil.disk_usage(probe)
+    except OSError:
+        return None
+
+
+def _free_bytes(path):
+    """Free bytes on the volume holding `path`, or None."""
+    usage = _disk_usage(path)
+    return usage.free if usage else None
+
+
+def _system_ram_gb():
+    """Total physical RAM in GB, or None. What the CPU backend actually runs a model in,
+    so it is the figure to judge against when there is no GPU in play."""
+    try:
+        if hasattr(os, "sysconf") and "SC_PAGE_SIZE" in os.sysconf_names:
+            return round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024 ** 3, 1)
+    except (OSError, ValueError):
+        pass
+    try:                                  # Windows has no sysconf
+        import ctypes
+
+        class _MemStatus(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+        status = _MemStatus()
+        status.dwLength = ctypes.sizeof(_MemStatus)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+        return round(status.ullTotalPhys / 1024 ** 3, 1)
+    except Exception:
+        return None
+
+
+LOCAL_RAM_GB = _system_ram_gb()
+
+
+def memory_alarm(entry):
+    """(need_gb, available_gb, share, device) when the model would take more than
+    MEMORY_USAGE_ALARM of the device it runs on, else None.
+
+    The CPU backend is judged against system RAM: min_vram_gb is a weights-plus-activations
+    estimate, so it is the right order of magnitude for either device, and a CPU run that
+    needs 150% of RAM is exactly as unusable as a GPU one."""
+    need = entry.get("min_vram_gb")
+    if not need:
+        return None
+    device = "ram" if BACKEND == "cpu" else "vram"
+    available = LOCAL_RAM_GB if device == "ram" else LOCAL_VRAM_GB
+    if not available:
+        return None
+    share = float(need) / float(available)
+    return (float(need), float(available), share, device) if share > MEMORY_USAGE_ALARM else None
+
+
+def _disk_fill_after(need_bytes, usage):
+    """Fraction of the volume in use once `need_bytes` more is written, or None."""
+    if need_bytes is None or usage is None or not usage.total:
+        return None
+    return (usage.used + need_bytes) / usage.total
+
+
+def _disk_verdict(need_bytes, usage):
+    """"" | "alarm" | "short" for fetching `need_bytes` onto `usage`'s volume.
+
+    "short" means it cannot fit at all; "alarm" means it fits but leaves the volume over
+    DISK_USAGE_ALARM full."""
+    if need_bytes is None or usage is None:
+        return ""
+    if usage.free < need_bytes:
+        return "short"
+    fill = _disk_fill_after(need_bytes, usage)
+    return "alarm" if fill is not None and fill > DISK_USAGE_ALARM else ""
+
+
+def requirements_info_lines(entry):
+    """What the model costs: download size, free space, and the VRAM estimate.
+
+    Reported whatever the backend. _vram_shortfall() deliberately stays quiet on CPU —
+    there is no VRAM to fall short of — but "how much GPU memory does this need" is a
+    question worth answering before a multi-GB download, whichever backend happens to
+    be built, so the estimate is stated here and the CPU case is labelled."""
+    lines = []
+    need = package_download_bytes(entry.get("download_id"))
+    usage = _disk_usage(MODELS_ROOT)
+    if need is not None:
+        fill = _disk_fill_after(need, usage)
+        if fill is None:
+            lines.append(_t("📦 下载约 {need}", "📦 Download ≈{need}", need=_fmt_bytes(need)))
+        else:
+            # Before → after, so a volume that is already past the line is distinguishable
+            # from a download that pushes it there.
+            lines.append(_t("📦 下载约 {need} · models/ 可用 {free} · 占用 {before:.0%} → {fill:.0%}",
+                            "📦 Download ≈{need} · {free} free on models/ · {before:.0%} → {fill:.0%} full",
+                            need=_fmt_bytes(need), free=_fmt_bytes(usage.free),
+                            before=usage.used / usage.total, fill=fill))
+    vram = entry.get("min_vram_gb")
+    if vram:
+        on_cpu = BACKEND == "cpu"
+        available = LOCAL_RAM_GB if on_cpu else LOCAL_VRAM_GB
+        if not available:
+            lines.append(_t("🎛️ 估算需显存 ≥{need:g}G", "🎛️ Needs ≈{need:g} GB VRAM",
+                            need=float(vram)))
+        elif on_cpu:
+            lines.append(_t(
+                "🎛️ 估算需 ≥{need:g}G（GPU 显存口径）· 当前 CPU 后端跑在系统内存里：本机 {local:g}G，"
+                "占用 {share:.0%}",
+                "🎛️ Needs ≈{need:g} GB (VRAM estimate) · CPU backend runs in system RAM: "
+                "{local:g} GB here, {share:.0%} of it",
+                need=float(vram), local=available, share=float(vram) / available))
+        else:
+            lines.append(_t("🎛️ 估算需显存 ≥{need:g}G · 本机 {local:g}G，占用 {share:.0%}",
+                            "🎛️ Needs ≈{need:g} GB VRAM · {local:g} GB here, {share:.0%} of it",
+                            need=float(vram), local=available, share=float(vram) / available))
+    return lines
+
+
+def download_requirements(entry):
+    """(note, blocker) for `entry`: what the download costs, and why it must not start.
+
+    `note` is always shown so the size and VRAM estimate are visible up front; `blocker`
+    is non-empty only when the models volume provably cannot hold the download, in which
+    case starting it would just fill the disk and fail late."""
+    lines, blocker = requirements_info_lines(entry), ""
+    need = package_download_bytes(entry.get("download_id"))
+    usage = _disk_usage(MODELS_ROOT)
+    verdict = _disk_verdict(need, usage)
+    if verdict == "short":
+        blocker = _t(
+            "❌ **磁盘空间不足**：{label} 需要约 {need}，models/ 只剩 {free}，未开始下载。",
+            "❌ **Not enough disk space**: {label} needs ≈{need} but only {free} is free "
+            "on models/. The download was not started.",
+            label=entry["label"], need=_fmt_bytes(need), free=_fmt_bytes(usage.free))
+    elif verdict == "alarm":
+        already = usage.used / usage.total > DISK_USAGE_ALARM
+        lines.append(_t(
+            "🚨 **磁盘告警**：models/ 所在分区{already}将占用 **{fill:.0%}**（告警线 {limit:.0%}），"
+            "下完仅剩约 {left}。确定要下载再点确认。",
+            "🚨 **Disk alarm**: the `models/` volume {already}would be **{fill:.0%}** full "
+            "(alarm above {limit:.0%}), ≈{left} left. Confirm only if you really want it.",
+            already=_t("本来就已超过告警线，下载后", "is already over the line and ") if already else "",
+            fill=_disk_fill_after(need, usage), limit=DISK_USAGE_ALARM,
+            left=_fmt_bytes(usage.free - need)))
+    memory = memory_alarm(entry)
+    if memory:
+        need_gb, available_gb, share, device = memory
+        lines.append(_t(
+            "🚨 **{device}告警**：估算需 **{need:g}G**，本机 {local:g}G，占用 **{share:.0%}**"
+            "（告警线 {limit:.0%}）。下载没问题，但跑起来可能非常勉强甚至跑不动。",
+            "🚨 **{device} alarm**: needs ≈**{need:g} GB** of the {local:g} GB here — "
+            "**{share:.0%}** (alarm above {limit:.0%}). It will download fine, but expect it to "
+            "run badly or not at all.",
+            device=_t("显存", "VRAM") if device == "vram" else _t("内存", "RAM"),
+            need=need_gb, local=available_gb, share=share, limit=MEMORY_USAGE_ALARM))
+    return ("\n\n".join(lines) + "\n\n" if lines else ""), blocker
 
 
 def download_model(model_id, hf_token="", proxy=""):
@@ -2289,6 +2577,13 @@ def download_model(model_id, hf_token="", proxy=""):
         warn = _t("⚠️ {path} 不完整（缺 {count} 个文件），将覆盖重装。\n\n",
                   "⚠️ {path} is incomplete ({count} files missing); it will be reinstalled.\n\n",
                   path=entry["abs_path"], count=len(entry["missing_files"])) + warn
+    # What this costs, before anything is fetched. A download that cannot fit is
+    # refused outright rather than filling the volume and failing near the end.
+    requirements, blocker = download_requirements(entry)
+    if blocker:
+        _ui_log(_t("下载被拒绝（磁盘空间不足）：{label}",
+                   "download refused (not enough disk space): {label}", label=entry['label']))
+        return requirements + blocker
 
     with _dl_lock:
         rec = _downloads.get(model_id)
@@ -2306,9 +2601,10 @@ def download_model(model_id, hf_token="", proxy=""):
     _ui_log(_t("开始后台下载 {label}（{dl_id}），日志：{log}",
                "started background download {label} ({dl_id}), log: {log}",
                label=entry['label'], dl_id=dl_id, log=log))
-    return warn + proxy_note + _t(
-        "⏳ 已开始下载 **{label}**（{download_id}）。完成后刷新列表。\n日志：{log}",
-        "⏳ Download started: **{label}** ({download_id}). Refresh the list when complete.\nLog: {log}",
+    return warn + proxy_note + requirements + _t(
+        "⏳ 已开始下载 **{label}**（{download_id}）。完成后列表会自动刷新。\n日志：{log}",
+        "⏳ Download started: **{label}** ({download_id}). The list refreshes when it finishes.\n"
+        "Log: {log}",
         label=entry["label"], download_id=dl_id, log=log)
 
 
@@ -2320,28 +2616,42 @@ def download_status(model_id):
         return _t("✅ {label} 已安装", "✅ {label} is installed.", label=entry["label"])
     rec = _downloads.get(model_id)
     if rec is None:
+        # Nothing has been fetched yet, so this is the one place to state the cost
+        # while it can still change the user's mind. The size probe is a network call,
+        # which is why it hangs off this button rather than off selecting a model.
+        requirements, blocker = download_requirements(entry)
+        if blocker:
+            return requirements + blocker
         if entry["incomplete"]:
-            return _t("⚠️ {label} 目录不完整（缺 {count} 个文件），请重新下载。",
-                      "⚠️ {label} is incomplete ({count} files missing). Download it again.",
-                      label=entry["label"], count=len(entry["missing_files"]))
-        return _t("⚪ {label} 未安装，未开始下载", "⚪ {label} is not installed.",
-                  label=entry["label"])
+            return requirements + _t(
+                "⚠️ {label} 目录不完整（缺 {count} 个文件），请重新下载。",
+                "⚠️ {label} is incomplete ({count} files missing). Download it again.",
+                label=entry["label"], count=len(entry["missing_files"]))
+        return requirements + _t("⚪ {label} 未安装，未开始下载", "⚪ {label} is not installed.",
+                                 label=entry["label"])
     code = rec["proc"].poll()
     tail = _read_tail(rec["log"], n=12)
     if code is None:
-        return _t("⏳ 正在下载 {label}… {progress} · 更新于 {time}\n```\n{tail}\n```",
-                  "⏳ Downloading {label}… {progress} · {time}\n```\n{tail}\n```",
-                  label=entry["label"], progress=_download_progress_note(entry),
-                  time=_ts(), tail=tail)
+        return _live_download_prefix(entry) + _t(
+            "⏳ 正在下载 {label}… {progress} · 更新于 {time}\n```\n{tail}\n```",
+            "⏳ Downloading {label}… {progress} · {time}\n```\n{tail}\n```",
+            label=entry["label"], progress=_download_progress_note(entry),
+            time=_ts(), tail=tail)
     if not rec.get("reported"):
         rec["reported"] = True
         _ui_log(_t("{label} 下载进程结束 (exit {code})",
                    "{label} download process ended (exit {code})",
                    label=entry['label'], code=code))
     if code == 0:
-        return _t("✅ {label} 下载完成，请刷新列表。\n```\n{tail}\n```",
-                  "✅ {label} downloaded. Refresh the model list.\n```\n{tail}\n```",
-                  label=entry["label"], tail=tail)
+        # The VRAM estimate outlives the download: it is what decides whether the model
+        # can actually be run, so it must not disappear the moment the bytes land.
+        vram = _vram_shortfall(entry)
+        note = _t("⚠️ **显存不足**：估算需 **≥{need:g}G**，本机为 **{local:g}G**。\n\n",
+                  "⚠️ **Low VRAM**: estimated **≥{need:g} GB**, detected **{local:g} GB**.\n\n",
+                  need=vram[0], local=vram[1]) if vram else ""
+        return note + _t("✅ {label} 下载完成。\n```\n{tail}\n```",
+                         "✅ {label} downloaded.\n```\n{tail}\n```",
+                         label=entry["label"], tail=tail)
     return _t("❌ {label} 下载失败（exit {code}）。\n```\n{tail}\n```",
               "❌ {label} download failed (exit {code}).\n```\n{tail}\n```",
               label=entry["label"], code=code, tail=tail)
@@ -2352,15 +2662,105 @@ def _download_running(model_id):
     return rec is not None and rec["proc"].poll() is None
 
 
+def _download_blockers(entry, model_id):
+    """Why this entry cannot be downloaded right now, or "" if it can."""
+    if entry["installed"]:
+        return _t("✅ {label} 已安装，无需下载", "✅ {label} is already installed.",
+                  label=entry["label"])
+    if not entry.get("download_id"):
+        return _t("⚠️ {label} 没有 download_id，请手动安装。",
+                  "⚠️ {label} has no download_id; install it manually.", label=entry["label"])
+    if MODEL_MANAGER is None:
+        return _t("❌ 找不到 tools/model_manager.py", "❌ tools/model_manager.py was not found.")
+    if _download_running(model_id):
+        return _t("⏳ {label} 已在后台下载中…", "⏳ {label} is already downloading…",
+                  label=entry["label"])
+    return ""
+
+
+def download_proposal(model_id):
+    """(message, can_confirm) for the Download button — the decision, not its rendering.
+
+    Weights run to 17 GB and a download cannot be undone once the bytes are on the disk,
+    so the button that used to commit now only proposes. `can_confirm` is False whenever
+    there is nothing to confirm: already installed, already running, or provably out of
+    disk. Kept free of Gradio types so the decision is testable on its own."""
+    if not model_id:
+        return _t("❌ 请先选择一个模型", "❌ Select a model first."), False
+    entry = catalog_by_id(model_id)
+    if entry is None:
+        return _t("❌ catalog 里没有模型 id：{model}", "❌ Model id not found: {model}",
+                  model=model_id), False
+    stop = _download_blockers(entry, model_id)
+    if stop:
+        return stop, False
+
+    requirements, blocker = download_requirements(entry)
+    if blocker:
+        return requirements + blocker, False
+
+    # The disk and memory alarms are already in `requirements`; these are the rest.
+    warnings = ""
+    if entry["incomplete"]:
+        warnings += _t("⚠️ {path} 不完整（缺 {count} 个文件），将覆盖重装。\n\n",
+                       "⚠️ {path} is incomplete ({count} files missing); it will be reinstalled.\n\n",
+                       path=entry["abs_path"], count=len(entry["missing_files"]))
+    if not hf_token_present():
+        warnings += _t("⚠️ 未检测到 HF token，受限模型可能返回 401。\n\n",
+                       "⚠️ No HF token detected; gated models may return 401.\n\n")
+    alarmed = "🚨" in requirements
+    ask = _t("🚨 **有告警**（见上）。确定仍要下载 **{label}**？确定就点『✅ 确认下载』，"
+             "否则点『✖️ 取消』。",
+             "🚨 **Alarms raised** (above). Download **{label}** anyway? Click ✅ Confirm if you "
+             "really want it, otherwise ✖️ Cancel.", label=entry["label"]) if alarmed else _t(
+             "❓ 确认下载 **{label}**？点『✅ 确认下载』开始，或点『✖️ 取消』放弃。",
+             "❓ Download **{label}**? Click ✅ Confirm to start, or ✖️ Cancel to abandon it.",
+             label=entry["label"])
+    return warnings + requirements + ask, True
+
+
+def download_preview(model_id):
+    """Click handler: the proposal, plus visibility for the confirm/cancel pair."""
+    message, can_confirm = download_proposal(model_id)
+    return message, gr.update(visible=can_confirm), gr.update(visible=can_confirm)
+
+
+def download_cancel(model_id):
+    """Cancel button: nothing was started, so this only clears the prompt."""
+    entry = catalog_by_id(model_id) if model_id else None
+    label = entry["label"] if entry else model_id
+    _ui_log(_t("已取消下载：{label}", "download cancelled: {label}", label=label))
+    return (_t("✖️ 已取消，未下载 {label}。", "✖️ Cancelled; {label} was not downloaded.",
+               label=label),
+            gr.update(visible=False), gr.update(visible=False))
+
+
 def download_start(model_id, hf_token="", proxy=""):
-    """Click handler: kick off the download and arm the auto-refresh timer."""
+    """Confirm button: kick off the download and arm the auto-refresh timer."""
     msg = download_model(model_id, hf_token, proxy)
-    return msg, gr.Timer(active=_download_running(model_id))
+    return (msg, gr.Timer(active=_download_running(model_id)),
+            gr.update(visible=False), gr.update(visible=False))
+
+
+def _model_choice_updates():
+    """gr.update(choices=...) for every tab's model dropdown, in TAB_SPECS order.
+
+    Only choices are rebuilt, never values: the ids are unchanged, so each tab keeps
+    whatever the user had selected while the stale "· not installed" suffix in the
+    labels goes away."""
+    return [gr.update(choices=choices_for_tasks(tasks)) for tasks in TAB_SPECS]
 
 
 def download_status_tick(model_id):
-    """Timer tick: refresh status; stop the timer once the download is idle."""
-    return download_status(model_id), gr.Timer(active=_download_running(model_id))
+    """Timer tick: refresh status; stop the timer once the download is idle.
+
+    Install state is baked into the dropdown labels when the page is built, so a
+    finished download used to leave every tab still reading "· not installed" until
+    the user clicked Refresh. The tick that observes the process exit rebuilds the
+    choices instead."""
+    running = _download_running(model_id)
+    updates = [gr.update()] * len(TAB_SPECS) if running else _model_choice_updates()
+    return (download_status(model_id), gr.Timer(active=running), *updates)
 
 
 def _gguf_entry(model_id, require_installed=True):
@@ -2376,11 +2776,37 @@ def _gguf_entry(model_id, require_installed=True):
 
 
 def _gguf_output_path(entry):
+    """Where a WebUI conversion writes its GGUF. Always model.gguf — the name the
+    C++ loader picks first when a directory holds more than one."""
     model_path = entry["abs_path"]
     if os.path.isfile(model_path) and model_path.lower().endswith(".gguf"):
         return model_path
     root = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
     return os.path.join(root, "model.gguf")
+
+
+def _existing_gguf_path(entry):
+    """The GGUF this entry would actually load, or None.
+
+    Mirrors find_directory_gguf() in src/framework/assets/tensor_source.cpp: an
+    explicitly configured .gguf path, else model.gguf in the model directory, else
+    the sole .gguf in it. Published packages keep their release name
+    (vevo2-q8_0.gguf, voxtral-mini-4b-realtime-2602-q8_0.gguf), so matching only
+    model.gguf reported an installed GGUF package as "no GGUF yet" and offered to
+    convert weights that were never downloaded."""
+    model_path = entry["abs_path"]
+    if os.path.isfile(model_path) and model_path.lower().endswith(".gguf"):
+        return model_path
+    if not os.path.isdir(model_path):
+        return None
+    default = os.path.join(model_path, "model.gguf")
+    if os.path.isfile(default):
+        return default
+    found = sorted(f for f in os.listdir(model_path)
+                   if f.lower().endswith(".gguf") and os.path.isfile(os.path.join(model_path, f)))
+    # Several GGUFs with no model.gguf are ambiguous for the loader too; it refuses
+    # to guess, so the WebUI must not claim one of them is what will load.
+    return os.path.join(model_path, found[0]) if len(found) == 1 else None
 
 
 def _gguf_tensor_entrypoint(model_dir):
@@ -2435,16 +2861,21 @@ def gguf_status(model_id):
     entry, error = _gguf_entry(model_id, require_installed=False)
     if entry is None:
         return f"⚪ {error}"
+    # Report a GGUF that is already there before anything about converting one:
+    # downloaded GGUF packages are exactly the entries the WebUI cannot convert,
+    # and they used to read as "this model cannot be converted" instead.
+    existing = _existing_gguf_path(entry)
+    if existing is not None:
+        return _t("🧊 已有GGUF（`{name}`），将优先加载该模型。",
+                  "🧊 GGUF is available (`{name}`) and will be loaded first.",
+                  name=os.path.basename(existing))
     unavailable = _gguf_conversion_unavailable(entry)
     if unavailable:
         return f"⚠️ {unavailable}"
     if not entry["installed"]:
         return _t("🧊 可转换，但模型未完整安装。",
                   "🧊 Convertible, but the model is not fully installed.")
-    output = _gguf_output_path(entry)
     converter = _find_gguf_exe()
-    if os.path.isfile(output):
-        return _t("🧊 已有GGUF，将优先加载该模型。", "🧊 GGUF is available and will be loaded first.")
     if converter is None:
         return _t("⚠️ 找不到转换器。", "⚠️ Converter not found.")
     inputs = _gguf_conversion_inputs(entry)
@@ -2489,8 +2920,8 @@ def inspect_gguf(model_id):
     entry, error = _gguf_entry(model_id)
     if entry is None:
         return f"❌ {error}"
-    output = _gguf_output_path(entry)
-    if not os.path.isfile(output):
+    output = _existing_gguf_path(entry)
+    if output is None:
         return _t("⚠️ 暂无 GGUF。", "⚠️ No GGUF yet.")
     converter = _find_gguf_exe()
     if converter is None:
@@ -2515,9 +2946,12 @@ def convert_model_to_gguf(model_id, weight_type, progress=gr.Progress()):
     unavailable = _gguf_conversion_unavailable(entry)
     if unavailable:
         return f"❌ {unavailable}"
-    output = _gguf_output_path(entry)
-    if os.path.isfile(output):
+    # Guard on any GGUF already in the directory, not just model.gguf: converting
+    # next to a downloaded release-named one would leave the loader two candidates
+    # and no way to choose between them.
+    if _existing_gguf_path(entry) is not None:
         return _t("⚠️ GGUF 已存在；请先检查或删除。", "⚠️ GGUF already exists; inspect or delete it first.")
+    output = _gguf_output_path(entry)
     converter = _find_gguf_exe()
     if converter is None:
         return _t("❌ 找不到 `{name}`；已检查开发构建和 portable 的 gpu/cpu 目录。",
@@ -2581,9 +3015,18 @@ def delete_gguf(model_id):
     entry, error = _gguf_entry(model_id)
     if entry is None:
         return f"❌ {error}", server_status()
-    output = _gguf_output_path(entry)
-    if not os.path.isfile(output):
+    output = _existing_gguf_path(entry)
+    if output is None:
         return _t("⚠️ 暂无 GGUF。", "⚠️ No GGUF to delete."), server_status()
+    # This button removes conversion output. A GGUF listed in the package's
+    # required_files is the downloaded model itself — deleting it here would look
+    # like discarding a cache and instead uninstall a multi-GB download.
+    packaged = REQUIRED_FILES.get(entry.get("download_id") or "") or []
+    if os.path.basename(output) in {os.path.basename(f) for f in packaged}:
+        return _t("⚠️ `{name}` 是下载的 GGUF 模型包，不是转换产物；请用模型列表重新下载/删除。",
+                  "⚠️ `{name}` is the downloaded GGUF package, not conversion output. "
+                  "Manage it from the model list instead.",
+                  name=os.path.basename(output)), server_status()
     with _proc_lock:
         if _loaded_id == model_id and _server_proc is not None and _server_proc.poll() is None:
             _stop_server()
@@ -4015,6 +4458,17 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
                     value=("🧹 释放显存", "🧹 Unload"))
             load_status = gr.Markdown("")
             dl_status = gr.Markdown("")
+            # Hidden until "⬇️ Download" has stated what the download costs; a
+            # multi-GB fetch is not something a single click should commit to.
+            with gr.Row(elem_classes="mm-btn-row"):
+                dl_confirm_btn = _localized(
+                    gr.Button("✅ 确认下载", variant="primary", size="lg",
+                              min_width=100, visible=False),
+                    value=("✅ 确认下载", "✅ Confirm download"))
+                dl_cancel_btn = _localized(
+                    gr.Button("✖️ 取消", variant="secondary", size="lg",
+                              min_width=100, visible=False),
+                    value=("✖️ 取消", "✖️ Cancel"))
             with _localized(gr.Accordion("🧊 GGUF 工具（转换 / 检查 / 删除）", open=False),
                             label=("🧊 GGUF 工具（转换 / 检查 / 删除）",
                                    "🧊 GGUF tools (convert / inspect / delete)")):
@@ -4035,6 +4489,7 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
             timer = gr.Timer(3, active=False)
         return {"model": model, "load_btn": load_btn, "refresh_btn": refresh_btn,
                 "dl_btn": dl_btn, "dl_stat_btn": dl_stat_btn, "unload_btn": unload_btn,
+                "dl_confirm_btn": dl_confirm_btn, "dl_cancel_btn": dl_cancel_btn,
                 "load_status": load_status, "dl_status": dl_status, "timer": timer,
                 "gguf_type": gguf_type, "gguf_convert_btn": gguf_convert_btn,
                 "gguf_inspect_btn": gguf_inspect_btn, "gguf_delete_btn": gguf_delete_btn,
@@ -4043,10 +4498,20 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
     def _wire_model_manager(mm, tasks, hint):
         mm["load_btn"].click(_make_load_handler(tasks), mm["model"],
                              [mm["load_status"], status])
-        mm["dl_btn"].click(download_start, [mm["model"], hf_token, proxy],
-                           [mm["dl_status"], mm["timer"]])
-        mm["timer"].tick(download_status_tick, mm["model"],
-                         [mm["dl_status"], mm["timer"]])
+        # Download only proposes; the confirm button is what actually commits.
+        mm["dl_btn"].click(download_preview, mm["model"],
+                           [mm["dl_status"], mm["dl_confirm_btn"], mm["dl_cancel_btn"]])
+        mm["dl_confirm_btn"].click(
+            download_start, [mm["model"], hf_token, proxy],
+            [mm["dl_status"], mm["timer"], mm["dl_confirm_btn"], mm["dl_cancel_btn"]])
+        mm["dl_cancel_btn"].click(download_cancel, mm["model"],
+                                  [mm["dl_status"], mm["dl_confirm_btn"], mm["dl_cancel_btn"]])
+        # Switching model mid-prompt would otherwise leave a confirm button armed for
+        # whatever was selected when it appeared.
+        mm["model"].change(lambda: (gr.update(visible=False), gr.update(visible=False)),
+                           None, [mm["dl_confirm_btn"], mm["dl_cancel_btn"]])
+        # The timer tick is wired further down, where the per-tab dropdowns it has to
+        # refresh on completion are all in scope.
         mm["dl_stat_btn"].click(download_status, mm["model"], mm["dl_status"])
         mm["unload_btn"].click(unload_model, None, [mm["load_status"], status])
         mm["gguf_convert_btn"].click(convert_model_to_gguf,
@@ -4659,8 +5124,13 @@ with gr.Blocks(title="audio.cpp WebUI") as demo:
         tts_hint, asr_hint, gen_hint, vc_hint, sep_hint, ana_hint, vdes_hint,
         asr_stream,
     ]
+    # 下载进度轮询要在下载结束时刷新各页下拉（安装状态写在下拉标签里），
+    # 因此和「刷新列表」一样放在这里 —— 此时各页下拉才都在作用域内。
+    _model_dropdowns = [tts_model, asr_model, gen_model, vc_model, sep_model, ana_model, vdes_model]
     for _mm in (tts_mm, asr_mm, gen_mm, vc_mm, sep_mm, ana_mm, vdes_mm):
         _mm["refresh_btn"].click(refresh, None, _refresh_outputs)
+        _mm["timer"].tick(download_status_tick, _mm["model"],
+                          [_mm["dl_status"], _mm["timer"], *_model_dropdowns])
     # 顶部状态行在建界面时只求值一次，浏览器刷新会看到那份静态初值（即使模型
     # 已加载也显示“server 未运行”）。server 本身就是状态的唯一真相源
     # （/health + /v1/models），每次页面加载重新探测即可，无需额外状态文件。

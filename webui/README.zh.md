@@ -91,6 +91,16 @@ python3 -m venv venv && ./venv/bin/pip install -r webui/requirements.txt
 - **按需加载**：不需要先手动启动 `audiocpp_server`——在界面里选模型点“加载”/“生成”时，WebUI 会自动
   起/切换底层的 `audiocpp_server`（一次一个模型在显存里，换模型即重启）。
 - 界面里可上传参考音色、下载未安装的模型、填 HF token / 代理等。
+- **「⬇️ 下载模型」会先问再下**：点它不会直接开始下载，而是先说明代价——下载体积（实时读 Hugging Face
+  仓库文件列表，不会过期）、`models/` 剩余空间、估算显存，以及各项警告，然后显示 **✅ 确认下载** /
+  **✖️ 取消** 两个按钮。不点确认就不会下载任何东西；切换所选模型会自动收起确认按钮。对尚未下载的模型点
+  「📊 下载进度」也会显示同样的信息，方便只看不下。显存估算在 CPU 后端下同样显示（并标注 CPU 后端跑在
+  系统内存里）；只有“显存不足”**警告**在 CPU 模式下保持静默，因为没有显存可谈。`models/` 所在分区装不
+  下时直接拒绝（不给出确认按钮）；装得下但下完剩余不足 2 GB 会提醒，但仍允许下载。转换类安装、以及未
+  提供 token 的受限仓库无法取得体积，这类下载行为与以前一致。
+- **下载过程中**进度按整包体积显示（如「已下载 5.00 GB / 17.00 GB（29%）」），显存不足与磁盘不足的提醒
+  每次刷新都会重新显示，不会只闪一下就被进度覆盖。磁盘判断按**剩余待下载**的字节数计算，因此正常下载
+  不会随着可用空间减少而误报。下载完成后显存提醒仍然保留——它决定模型能不能跑，而不是能不能下完。
 - 后端自动检测（同上：有 CUDA 用 GPU，否则 CPU）；`AUDIOCPP_BACKEND=gpu|cpu` 可强制。
   CPU 模式下 ggml 线程数按**物理核数**自动设置（不计超线程的逻辑核，物理核多于 4 时再留一个核给系统），
   这样长任务跑起来机器仍然可用。把逻辑核占满会更快（8 核 16 线程的 5800H 上，一次短文本 CPU TTS 快约 1.4 倍），
@@ -190,7 +200,11 @@ TTS 标签页「合成设置 → 高级参数」里的控件由 **`configs/model
 `v1_svc` 只能配 svc 条目。`intelligibility_cfg_rate` / `similarity_cfg_rate` 仅 v2 生效，
 `inference_cfg_rate` 仅 v1 生效。
 
-**Vevo2（语音转换）**：默认 `route=style_preserved_vc`（保留源语音的说话风格，只换音色）。
+**Vevo2（语音转换）**：三个 Vevo2 条目改为下载自包含的 Q8_0 GGUF 包（`vevo2_gguf` → `models/Vevo2-GGUF`，
+约 3.2 GB），不再需要额外下载同级的 `whisper-medium`。此前装在 `models/Vevo2` 的 safetensors 版本不再是这些
+条目指向的目录；它仍可用 CLI `--model models/Vevo2` 加载，或用
+`python3 tools/model_manager.py install vevo2` 重新安装。
+Vevo2 默认 `route=style_preserved_vc`（保留源语音的说话风格，只换音色）。
 `route` 留空按条目任务默认（vc→style_preserved_vc，svc→style_preserved_svc，s2s→editing），
 且须与所选条目任务匹配；`style_converted_*` / `editing` 需在「其它参数(JSON)」里补
 `style_ref`（服务器本地 wav 路径）/ `style_ref_text` / `target_text`。
@@ -231,9 +245,11 @@ singing 路线默认开，style_converted_vc / editing 默认关。
 
 每个任务页的「模型管理」卡片都提供同一组 GGUF 操作：选择类型（默认 `q8_0`）后点「🧊 转换 GGUF」，
 会把结果写为所选模型目录下的 `model.gguf`；已有文件不会被覆盖。点「🔎 检查 GGUF」会在页面上执行
-`audiocpp_gguf.exe --inspect` 并显示包的元数据。对已接入原生 GGUF 的模型，目录存在 `model.gguf` 时，普通
-「📥 加载模型」会自动优先使用 GGUF；点「🗑️ 删除 GGUF」会删除该文件（以及同名残留 `.tmp`），下次普通加载
-即恢复原始权重。
+`audiocpp_gguf.exe --inspect` 并显示包的元数据。对已接入原生 GGUF 的模型，普通「📥 加载模型」会自动优先
+使用模型目录里的 GGUF：优先 `model.gguf`，否则取目录里唯一的 `*.gguf`，因此下载的模型包可以保留其发布名
+（如 `vevo2-q8_0.gguf`）而无需改名；目录里有多个 GGUF 且没有 `model.gguf` 时无法判定，页面与 server 都不会
+擅自选一个。点「🗑️ 删除 GGUF」会删除转换产物（以及同名残留 `.tmp`），下次普通加载即恢复原始权重；若该
+GGUF 本身就是下载的模型包，则不会删除，请改用模型列表重新下载/删除。
 
 - 转换器按顺序查找开发构建的 `build\windows-cuda-release\bin` / `build\windows-cpu-release\bin`，以及整合包的
   `audiocpp-portable\gpu` / `audiocpp-portable\cpu`；也可用 `AUDIOCPP_GGUF` 指向自定义 `audiocpp_gguf.exe`。

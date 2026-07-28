@@ -57,39 +57,40 @@ bool is_gguf_file(const std::filesystem::path & path) {
     return extension == ".gguf";
 }
 
-std::vector<std::string> directory_gguf_files(const std::filesystem::path & path) {
-    std::vector<std::string> files;
-    if (!engine::io::is_existing_directory(path)) {
-        return files;
-    }
-    for (const auto & entry : std::filesystem::directory_iterator(path)) {
-        const auto candidate = entry.path();
-        if (is_gguf_file(candidate)) {
-            files.push_back(candidate.filename().string());
+std::string gguf_file_list(const std::vector<std::filesystem::path> & files) {
+    std::string names;
+    for (size_t i = 0; i < files.size(); ++i) {
+        if (i != 0) {
+            names += ", ";
         }
+        names += files[i].filename().string();
     }
-    std::sort(files.begin(), files.end());
-    return files;
+    return names;
+}
+
+// Only fires for a directory holding several GGUFs and no model.gguf to pick between them
+// (e.g. both vevo2-q8_0.gguf and vevo2-f16.gguf installed side by side).
+std::string ambiguous_directory_gguf_message(const std::filesystem::path & directory,
+    const std::vector<std::filesystem::path> & files) {
+    return "model directory contains " + std::to_string(files.size()) + " GGUF files: " + directory.string() +
+           "; found: " + gguf_file_list(files) +
+           "; pass one of them directly with --model, or keep a single GGUF in the directory";
 }
 
 std::string directory_gguf_hint(std::string_view family) {
     if (!active_model_path.has_value()) {
         return {};
     }
-    const auto files = directory_gguf_files(*active_model_path);
+    const auto files = assets::directory_gguf_files(*active_model_path);
     if (files.empty()) {
         return {};
     }
-    std::string message = "model directory has no default GGUF for family '" + std::string(family) +
-                          "': " + active_model_path->string() + "; found: ";
-    for (size_t i = 0; i < files.size(); ++i) {
-        if (i != 0) {
-            message += ", ";
-        }
-        message += files[i];
+    if (files.size() > 1) {
+        return ambiguous_directory_gguf_message(*active_model_path, files);
     }
-    message += "; pass the GGUF file directly with --model, or rename it to model.gguf";
-    return message;
+    return "GGUF has no embedded model spec for family '" + std::string(family) + "': " +
+           files.front().string() + "; install model_specs/" + std::string(family) +
+           ".json next to it, or pass --model-spec-override";
 }
 
 std::optional<std::filesystem::path> active_gguf_path() {
@@ -99,8 +100,8 @@ std::optional<std::filesystem::path> active_gguf_path() {
     if (is_gguf_file(path)) {
         return std::filesystem::weakly_canonical(path);
     }
-    if (engine::io::is_existing_directory(path) && engine::io::is_existing_file(path / "model.gguf")) {
-        return std::filesystem::weakly_canonical(path / "model.gguf");
+    if (const auto found = assets::find_directory_gguf(path)) {
+        return std::filesystem::weakly_canonical(*found);
     }
     return std::nullopt;
 }
@@ -235,7 +236,7 @@ void add_resource_map(assets::ResourceBundle & bundle,
     for (const auto & [id, ref] : map_value->as_object()) {
         const auto path = resolve_resource_ref(roots, ref.as_string());
         if (!engine::io::is_existing_file(path)) {
-            throw std::runtime_error("missing model file '" + id + "': " + path.string());
+            throw std::runtime_error("missing model package file '" + id + "': " + path.string());
         }
         bundle.add_file(id, path);
     }
@@ -361,9 +362,14 @@ SelectedSource require_selected_source(const std::filesystem::path & model_path,
     }
     const auto & sources = spec.require("sources").as_array();
     const bool explicit_gguf_path = is_gguf_file(model_path);
-    const bool directory_has_gguf =
-        engine::io::is_existing_directory(model_path) && engine::io::is_existing_file(model_path / "model.gguf");
-    const bool use_gguf = explicit_gguf_path || directory_has_gguf;
+    const bool use_gguf = explicit_gguf_path || assets::find_directory_gguf(model_path).has_value();
+    if (!use_gguf) {
+        // A directory whose GGUFs cannot be narrowed down to one would otherwise fall through to
+        // the safetensors source and fail much later on a config file the GGUF package never ships.
+        if (const auto files = assets::directory_gguf_files(model_path); files.size() > 1) {
+            throw std::runtime_error(ambiguous_directory_gguf_message(model_path, files));
+        }
+    }
     for (const auto & source : sources) {
         const auto format = require_source_format(source);
         if ((use_gguf && format == "gguf") || (!use_gguf && format == "safetensors")) {

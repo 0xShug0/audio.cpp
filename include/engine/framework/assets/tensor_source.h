@@ -190,6 +190,13 @@ struct PreparedModelDirectory {
     std::filesystem::path model_root;
     std::optional<std::filesystem::path> standalone_gguf;
 };
+// *.gguf files directly inside `directory`, sorted by name; empty when it is not a directory.
+[[nodiscard]] std::vector<std::filesystem::path> directory_gguf_files(const std::filesystem::path & directory);
+// The one GGUF a model directory stands for: `model.gguf` when present, otherwise the sole
+// *.gguf in it. Published GGUF packages keep their release name (vevo2-q8_0.gguf), so requiring
+// `model.gguf` would silently push those directories onto the safetensors path. Returns nullopt
+// when the directory holds no GGUF, or several with no `model.gguf` to disambiguate them.
+[[nodiscard]] std::optional<std::filesystem::path> find_directory_gguf(const std::filesystem::path & directory);
 [[nodiscard]] PreparedModelDirectory
 prepare_model_directory(const std::filesystem::path & model_path,
     const std::filesystem::path & gguf_relative_path = "model.gguf");

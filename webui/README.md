@@ -100,6 +100,21 @@ Starts the Gradio web interface (`webui.py`); open **http://127.0.0.1:7860** in 
   "load" / "generate" in the UI, the WebUI automatically starts/switches the underlying `audiocpp_server`
   (one model in VRAM at a time; switching models restarts it).
 - The UI lets you upload a reference voice, download uninstalled models, enter an HF token / proxy, and so on.
+- **"⬇️ Download" asks before it downloads.** It does not start anything: it reports what the download will cost —
+  size (read live from the Hugging Face repo listing, so it never goes stale), free space on `models/`, the
+  estimated VRAM, and any warnings — then shows **✅ Confirm download** / **✖️ Cancel**. Nothing is fetched until
+  you confirm, and changing the selected model withdraws the prompt. "📊 Progress" shows the same figures for a
+  model that has not been downloaded yet, if you want to check without arming anything.
+  The VRAM estimate is reported on the CPU backend too (labelled as such — the CPU backend runs in system RAM);
+  only the low-VRAM *warning* stays CPU-quiet, since there is no VRAM to fall short of. A download the `models/`
+  volume cannot hold is refused outright — no Confirm button is offered — and a fit that leaves under 2 GB free is
+  flagged but still allowed.
+  Sizes are unavailable for converter installs and for gated repos without a token; those download as before.
+- **While it runs**, progress is shown against the package total ("Downloaded 5.00 GB of 17.00 GB (29%)"), and the
+  low-VRAM and low-disk warnings are repeated on every refresh rather than scrolling away after the first one.
+  Disk is judged against the bytes still to fetch, so a healthy download does not drift into a false alarm as free
+  space drops. The VRAM warning stays on screen after the download finishes — it decides whether the model can be
+  run at all, not whether it can be fetched.
 - Backend is auto-detected (as above: GPU if CUDA is present, otherwise CPU); `AUDIOCPP_BACKEND=gpu|cpu` forces it.
   In CPU mode, the ggml thread count is set automatically from the **physical** core count — SMT/Hyper-Threading
   siblings are not counted, and one core is left free above 4 — so a long run leaves the rest of the machine
@@ -221,7 +236,11 @@ An empty `route` follows the task default (a vc entry → `v2_vc`, an svc entry 
 `v1_xlsr_hift_vc` are the older v1 routes; `v1_svc` only pairs with an svc entry. `intelligibility_cfg_rate` /
 `similarity_cfg_rate` are v2-only, `inference_cfg_rate` is v1-only.
 
-**Vevo2 (voice conversion):** defaults to `route=style_preserved_vc` (preserves the source speech's speaking style,
+**Vevo2 (voice conversion):** the three Vevo2 entries install the self-contained Q8_0 GGUF package
+(`vevo2_gguf` → `models/Vevo2-GGUF`, ~3.2 GB), which needs no sibling `whisper-medium` download. An earlier
+safetensors install in `models/Vevo2` is no longer what these entries point at; it still works from the CLI with
+`--model models/Vevo2`, or reinstall it with `python3 tools/model_manager.py install vevo2`.
+Vevo2 defaults to `route=style_preserved_vc` (preserves the source speech's speaking style,
 changing only the voice). An empty `route` follows the entry's task default (vc → style_preserved_vc, svc →
 style_preserved_svc, s2s → editing) and must match the selected entry's task; `style_converted_*` / `editing` need
 `style_ref` (a server-local wav path) / `style_ref_text` / `target_text` added in the "Other parameters (JSON)" box.
@@ -267,9 +286,12 @@ and a reference voice longer than ~10s is auto-truncated (an 8G VRAM limit).
 Every task page's "Model management" card offers the same set of GGUF operations: pick a type (default `q8_0`) then click
 "🧊 Convert GGUF", which writes the result as `model.gguf` in the selected model's directory; an existing file is not
 overwritten. Clicking "🔎 Inspect GGUF" runs `audiocpp_gguf.exe --inspect` and shows the package metadata on the page.
-For models with native GGUF support, when a `model.gguf` exists in the directory, a normal "📥 Load model" automatically
-prefers the GGUF; clicking "🗑️ Delete GGUF" removes that file (and any leftover `.tmp` of the same name), and the next
-normal load restores the original weights.
+For models with native GGUF support, a normal "📥 Load model" automatically prefers the GGUF in the model directory —
+`model.gguf` if it is there, otherwise the single `*.gguf` in the directory, so a downloaded package keeps its release
+name (`vevo2-q8_0.gguf`). A directory holding several GGUFs and no `model.gguf` is ambiguous and neither the page nor the
+server picks one. Clicking "🗑️ Delete GGUF" removes conversion output (and any leftover `.tmp` of the same name) and the
+next normal load restores the original weights; a GGUF that is itself the downloaded package is left alone — re-download
+or remove it from the model list instead.
 
 - The converter looks in order for the dev builds' `build\windows-cuda-release\bin` / `build\windows-cpu-release\bin`, and
   the bundle's `audiocpp-portable\gpu` / `audiocpp-portable\cpu`; you can also point `AUDIOCPP_GGUF` at a custom `audiocpp_gguf.exe`.

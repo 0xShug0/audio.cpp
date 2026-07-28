@@ -274,11 +274,17 @@ If the GGUF embeds all required sidecars, it can be passed directly as `--model`
 audiocpp_cli --task asr --family qwen3_asr --model /path/to/model-gguf/model.gguf --backend cuda --audio speech.wav
 ```
 
-A directory containing `model.gguf` is also accepted by supported package specs:
+A directory is also accepted by supported package specs. It resolves to `model.gguf` when that
+name is present, otherwise to the single `*.gguf` inside it — so a downloaded package directory
+works under its release name without renaming anything:
 
 ```bash
 audiocpp_cli --task tts --family qwen3_tts --model /path/to/model-gguf --backend cuda --text "Hello." --out out.wav
+audiocpp_cli --task vc --family vevo2 --model models/Vevo2-GGUF --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
 ```
+
+A directory holding several GGUFs and no `model.gguf` is ambiguous and is rejected with the
+candidates listed; pass one of them directly as `--model`, or keep a single GGUF per directory.
 
 Compatibility summary:
 
