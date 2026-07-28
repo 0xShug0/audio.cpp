@@ -33,6 +33,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 #ifdef _OPENMP
@@ -905,24 +906,30 @@ int audiocpp_cli_main(int argc, char ** argv) {
     }
 }
 
+int main(int argc, char ** argv) {
 #ifdef _WIN32
-int wmain(int argc, wchar_t ** wargv) {
+    (void)argc;
+    (void)argv;
     try {
-        auto utf8_args = wide_args_to_utf8(argc, wargv);
-        std::vector<char *> argv;
-        argv.reserve(utf8_args.size() + 1);
-        for (auto & arg : utf8_args) {
-            argv.push_back(arg.data());
+        int wargc = 0;
+        wchar_t ** wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+        if (wargv == nullptr) {
+            throw std::runtime_error("CommandLineToArgvW failed");
         }
-        argv.push_back(nullptr);
-        return audiocpp_cli_main(argc, argv.data());
+        auto utf8_args = wide_args_to_utf8(wargc, wargv);
+        LocalFree(wargv);
+        std::vector<char *> argv_utf8;
+        argv_utf8.reserve(utf8_args.size() + 1);
+        for (auto & arg : utf8_args) {
+            argv_utf8.push_back(arg.data());
+        }
+        argv_utf8.push_back(nullptr);
+        return audiocpp_cli_main(wargc, argv_utf8.data());
     } catch (const std::exception & ex) {
         std::cerr << "audiocpp_cli failed: " << ex.what() << "\n";
         return 1;
     }
-}
 #else
-int main(int argc, char ** argv) {
     return audiocpp_cli_main(argc, argv);
-}
 #endif
+}
