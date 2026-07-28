@@ -160,7 +160,32 @@ int main(int argc, char ** argv) {
             return kExitFail;
         }
 
-        std::printf("PASS: transcription and word timestamps match expected reference output\n");
+        session_base.reset();
+        session_options.options["parakeet_tdt.matmul_weight_type"] = "q8_0";
+        session_options.options["parakeet_tdt.offline_mode"] = "long_form";
+        session_options.options["parakeet_tdt.left_context_sec"] = "2";
+        session_options.options["parakeet_tdt.right_context_sec"] = "1";
+        auto long_form_base = model->create_task_session(task, session_options);
+        auto* long_form =
+            dynamic_cast<engine::runtime::IOfflineVoiceTaskSession*>(long_form_base.get());
+        if (long_form == nullptr) {
+            std::fprintf(stderr, "FAIL: Parakeet TDT did not produce a long-form session\n");
+            return kExitFail;
+        }
+        long_form->prepare(engine::runtime::build_preparation_request(request));
+        const auto long_form_result = long_form->run(request);
+        const std::string long_form_text =
+            long_form_result.text_output.has_value()
+                ? long_form_result.text_output->text
+                : "";
+        if (long_form_text != kExpectedText) {
+            std::fprintf(stderr, "FAIL: long-form transcription mismatch\n");
+            return kExitFail;
+        }
+
+        std::printf(
+            "PASS: full-context and long-form transcription plus word timestamps "
+            "match expected reference output\n");
         return kExitPass;
     } catch (const std::exception & e) {
         std::fprintf(stderr, "FAIL: exception: %s\n", e.what());

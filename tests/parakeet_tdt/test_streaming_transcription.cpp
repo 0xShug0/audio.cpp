@@ -93,6 +93,22 @@ int main() {
         };
         session->prepare(engine::runtime::build_preparation_request(prepare_request));
 
+        session->start_stream({});
+        bool discontinuity_failed = false;
+        try {
+            (void)session->process_audio_chunk({
+                wav.sample_rate,
+                1,
+                1,
+                {},
+            });
+        } catch (const std::exception&) {
+            discontinuity_failed = true;
+        }
+        if (!discontinuity_failed) {
+            throw std::runtime_error("non-contiguous stream chunk did not fail");
+        }
+
         bool saw_partial = false;
         const auto first = run_stream(*session, wav, saw_partial);
         if (!saw_partial) {
@@ -112,6 +128,20 @@ int main() {
         }
         if (!repeated_finalize_failed) {
             throw std::runtime_error("repeated finalize did not fail");
+        }
+        bool post_finalize_chunk_failed = false;
+        try {
+            (void)session->process_audio_chunk({
+                wav.sample_rate,
+                1,
+                static_cast<int64_t>(wav.samples.size()),
+                {},
+            });
+        } catch (const std::exception&) {
+            post_finalize_chunk_failed = true;
+        }
+        if (!post_finalize_chunk_failed) {
+            throw std::runtime_error("post-finalize chunk did not fail");
         }
 
         bool second_saw_partial = false;
