@@ -8,6 +8,7 @@
 #include "engine/community_models/glm_tts/tokenizer_text.h"
 #include "engine/framework/modules/speech_encoders/campplus_encoder.h"
 #include "engine/framework/modules/vocoders/hift_vocoder.h"
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 
@@ -19,13 +20,16 @@
 
 namespace engine::models::glm_tts {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_glm_tts_loader();
+
 class GlmTTSSession final : public runtime::RuntimeSessionBase,
                             public runtime::IOfflineVoiceTaskSession {
 public:
     GlmTTSSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const GlmTTSAssets> assets);
+        std::shared_ptr<const GlmTTSAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~GlmTTSSession() override;
 
     std::string family() const override;
@@ -66,6 +70,7 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const GlmTTSAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     GlmTTSTextTokenizer text_tokenizer_;
     assets::TensorStorageType weight_storage_type_ =
         assets::TensorStorageType::Native;

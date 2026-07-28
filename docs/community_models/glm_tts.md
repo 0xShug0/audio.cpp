@@ -6,6 +6,11 @@ encoder, Flow/DiT mel generator, CAMPPlus speaker encoder, and HiFT vocoder.
 Both advertised routes are reference-conditioned: provide a clean WAV and the
 exact words spoken in it.
 
+GLM-TTS is v1-native. `model_specs/glm_tts.json` is the single source of truth
+for metadata, packages, normalized options, and GGUF/safetensors resources.
+The runtime uses the generic spec-backed loader; the legacy request aliases
+listed below remain an internal compatibility layer for existing users.
+
 | Field | Value |
 |---|---|
 | Family | `glm_tts` |

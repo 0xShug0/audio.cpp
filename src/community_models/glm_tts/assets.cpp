@@ -162,8 +162,8 @@ void validate_anchors(const GlmTTSAssets & model_assets) {
 
 std::shared_ptr<const GlmTTSAssets> load_glm_tts_assets(
     const std::filesystem::path & model_path) {
-    auto resources = engine::model_spec::load_resource_bundle(
-        model_path, engine::model_spec::default_spec_path("glm_tts"));
+    auto resources = engine::model_spec::load_resource_bundle_for_family(
+        model_path, "glm_tts");
 
     GlmTTSAssets assets;
     assets.config.llama = parse_llama(resources);

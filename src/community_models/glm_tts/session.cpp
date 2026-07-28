@@ -6,6 +6,7 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/binary.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/sampling/torch_random.h"
 
 #include <algorithm>
@@ -23,7 +24,39 @@ namespace engine::models::glm_tts {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr std::string_view kFamily = "glm_tts";
 constexpr size_t kDefaultReferenceCacheSlots = 1;
+
+std::shared_ptr<const GlmTTSAssets> require_assets(
+    std::shared_ptr<const GlmTTSAssets> assets) {
+    if (assets == nullptr) {
+        throw std::runtime_error("GLM-TTS session requires assets");
+    }
+    return assets;
+}
+
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error(
+            "GLM-TTS session requires a model contract");
+    }
+    return contract;
+}
+
+void validate_session_option_keys(
+    const runtime::SessionOptions & options,
+    const engine::model_spec::ModelContract & contract) {
+    const std::string family_prefix = std::string(kFamily) + ".";
+    for (const auto & [key, _] : options.options) {
+        if (key.rfind(family_prefix, 0) == 0 &&
+            contract.session_option_keys.find(key) ==
+                contract.session_option_keys.end()) {
+            throw std::runtime_error(
+                "unknown GLM-TTS session option: " + key);
+        }
+    }
+}
 
 const runtime::AudioBuffer * reference_audio(
     const runtime::TaskRequest & request) {
@@ -182,10 +215,12 @@ std::vector<float> frame_major_to_channel_major(
 GlmTTSSession::GlmTTSSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const GlmTTSAssets> assets)
+    std::shared_ptr<const GlmTTSAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : RuntimeSessionBase(options),
       task_(task),
-      assets_(std::move(assets)),
+      assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))),
       text_tokenizer_(
           assets_->resources.require_file("tokenizer_vocab"),
           assets_->resources.require_file("tokenizer_merges"),
@@ -193,15 +228,13 @@ GlmTTSSession::GlmTTSSession(
       weight_storage_type_(requested_weight_type(this->options())),
       reference_cache_(
           requested_reference_cache_slots(this->options())) {
-    if (assets_ == nullptr) {
-        throw std::runtime_error("GLM-TTS session requires assets");
-    }
     if ((task_.task != runtime::VoiceTaskKind::Tts &&
          task_.task != runtime::VoiceTaskKind::VoiceCloning) ||
         task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error(
             "GLM-TTS supports offline TTS and voice cloning only");
     }
+    validate_session_option_keys(options, *contract_);
     aggressive_mem_saver_ =
         requested_aggressive_mem_saver(this->options());
     mem_saver_ =
@@ -221,7 +254,7 @@ bool GlmTTSSession::ReferenceCacheKeyEqual::operator()(
 }
 
 std::string GlmTTSSession::family() const {
-    return "glm_tts";
+    return std::string(kFamily);
 }
 
 runtime::VoiceTaskKind GlmTTSSession::task_kind() const {
@@ -520,6 +553,24 @@ runtime::TaskResult GlmTTSSession::run(
     debug::timing_log_scalar(
         "session.wall_ms", debug::elapsed_ms(wall_start));
     return result;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_glm_tts_loader() {
+    runtime::SpecBackedVoiceModelConfig<GlmTTSAssets> config;
+    config.family = std::string(kFamily);
+    config.load_assets = load_glm_tts_assets;
+    config.create_session = [](
+                                const runtime::TaskSpec & task,
+                                const runtime::SessionOptions & options,
+                                std::shared_ptr<const GlmTTSAssets> assets,
+                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<GlmTTSSession>(
+            task,
+            options,
+            std::move(assets),
+            std::move(contract));
+    };
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::glm_tts

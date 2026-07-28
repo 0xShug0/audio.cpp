@@ -406,14 +406,13 @@ audiocpp_add_model(glm_tts
         src/community_models/glm_tts/assets.cpp
         src/community_models/glm_tts/flow.cpp
         src/community_models/glm_tts/frontend.cpp
-        src/community_models/glm_tts/loader.cpp
         src/community_models/glm_tts/llama.cpp
         src/community_models/glm_tts/session.cpp
         src/community_models/glm_tts/prompt.cpp
         src/community_models/glm_tts/speech_tokenizer.cpp
         src/community_models/glm_tts/tokenizer_text.cpp
     INCLUDES
-        engine/community_models/glm_tts/loader.h
+        engine/community_models/glm_tts/session.h
     LOADERS
         engine::models::glm_tts::make_glm_tts_loader
     DEPENDS
