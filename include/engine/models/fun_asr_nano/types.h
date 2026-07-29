@@ -26,4 +26,16 @@ struct FunAsrNanoEncoderEmbeddings {
   std::vector<FunAsrNanoEncoderStage> stages;
 };
 
+struct FunAsrNanoAdaptorStage {
+  std::string name;
+  std::vector<float> values;
+};
+
+struct FunAsrNanoAdaptorEmbeddings {
+  std::vector<float> values;
+  int64_t tokens = 0;
+  int64_t hidden_size = 0;
+  std::vector<FunAsrNanoAdaptorStage> stages;
+};
+
 } // namespace engine::models::fun_asr_nano

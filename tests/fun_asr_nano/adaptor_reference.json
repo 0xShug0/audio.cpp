@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "transformers_commit": "f9966442ac24fff57060774ce22e1884760f4a3b",
+  "model_revision": "854d88f94205cd17d2afdb24332130d86fbe654a",
+  "modeling_sha256": "70f8230fd5a75e8a119cea1c8dc919c3f51d8aa7c5d8f1c23c5402b856ebebfb",
+  "model_config_sha256": "c7c4a30316929631ac5fabc5fb3c0dd3278dcc9809670720c5920186285d004a",
+  "model_safetensors_sha256": "335ca3e74917f1156690400e2c344350112950165789cf78ce3d0a367affd821",
+  "weight_catalog_count": 36,
+  "weight_catalog_sha256": "7580a687f064aad5d235c36cbfbe8bfdfc742677c2f8a022f924cfd8d5953913",
+  "torch_version": "2.11.0+cu130",
+  "data_file": "adaptor_reference.bin",
+  "data_format": "little-endian-float32",
+  "input": {
+    "shape": [
+      2,
+      4,
+      512
+    ],
+    "offset_f32": 0,
+    "count": 4096
+  },
+  "mask": {
+    "shape": [
+      2,
+      4
+    ],
+    "offset_f32": 4096,
+    "count": 8
+  },
+  "checkpoints": {
+    "linear_1": {
+      "shape": [
+        6,
+        2048
+      ],
+      "offset_f32": 4104,
+      "count": 12288
+    },
+    "linear_2": {
+      "shape": [
+        6,
+        1024
+      ],
+      "offset_f32": 16392,
+      "count": 6144
+    },
+    "block_0": {
+      "shape": [
+        6,
+        1024
+      ],
+      "offset_f32": 22536,
+      "count": 6144
+    },
+    "block_1": {
+      "shape": [
+        6,
+        1024
+      ],
+      "offset_f32": 28680,
+      "count": 6144
+    },
+    "packed_valid": {
+      "shape": [
+        6,
+        1024
+      ],
+      "offset_f32": 34824,
+      "count": 6144
+    }
+  },
+  "data_sha256": "340ebd8f080c205fa42d1646600a35661ff64d1f17a21cdd12102ca6012ef70d"
+}
