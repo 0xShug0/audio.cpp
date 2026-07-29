@@ -279,6 +279,7 @@ add_library(engine_core OBJECT
     src/framework/modules/vocoders/hift_vocoder.cpp
     src/framework/modules/speech_encoders/hubert_encoder.cpp
     src/framework/modules/speech_encoders/wavlm_encoder.cpp
+    src/framework/modules/speech_encoders/sanm.cpp
     src/framework/modules/optimizations/fast_conv_modules.cpp
     src/framework/modules/optimizations/fast_projection_modules.cpp
     src/framework/modules/recurrent_modules.cpp
@@ -1684,6 +1685,16 @@ if (ENGINE_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/frontend_reference.json
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/frontend_reference.bin
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav
+    )
+
+    add_engine_unittest(fun_asr_nano_sanm_probe tests/fun_asr_nano/sanm_probe.cpp)
+
+    add_test(
+        NAME fun_asr_nano_sanm_probe
+        COMMAND fun_asr_nano_sanm_probe
+            --backend cpu
+            --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/sanm_reference.json
+            --data ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/sanm_reference.bin
     )
 
     add_engine_unittest(tdt_decoder_duration_loop_test tests/unittests/test_tdt_decoder_duration_loop.cpp)

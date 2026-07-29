@@ -56,9 +56,11 @@ core::TensorValue build_explicit(
     const core::TensorValue & v_heads,
     const std::optional<core::TensorValue> & attention_mask,
     float scale,
+    ggml_prec precision,
     AttentionCausality causality) {
     const MatMulModule matmul;
     auto scores = matmul.build(ctx, q_heads, TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
+    ggml_mul_mat_set_prec(scores.tensor, precision);
     scores = core::ensure_backend_addressable_layout(ctx, scores);
     core::TensorValue attn;
     if (attention_mask.has_value()) {
@@ -75,6 +77,7 @@ core::TensorValue build_explicit(
         attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
     }
     auto context = matmul.build(ctx, attn, v_heads);
+    ggml_mul_mat_set_prec(context.tensor, precision);
     return TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
 }
 
@@ -150,7 +153,7 @@ core::TensorValue ScaledDotProductAttentionModule::build(
     const float scale = 1.0F / std::sqrt(static_cast<float>(config_.head_dim));
     switch (config_.lowering) {
         case ScaledDotProductAttentionLowering::Explicit:
-            return build_explicit(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.causality);
+            return build_explicit(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
         case ScaledDotProductAttentionLowering::Flash:
             return build_flash(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
         case ScaledDotProductAttentionLowering::FlashPreserveViews:

@@ -1,0 +1,341 @@
+{
+  "schema_version": 1,
+  "reference": "transformers.FunAsrNanoEncoderStem/FunAsrNanoEncoderLayer",
+  "transformers_commit": "48e7f65fb274172e15aa88875d780c67c37606c7",
+  "modeling_sha256": "70f8230fd5a75e8a119cea1c8dc919c3f51d8aa7c5d8f1c23c5402b856ebebfb",
+  "torch_version": "2.11.0+cu130",
+  "data_file": "sanm_reference.bin",
+  "data_format": "little-endian-float32",
+  "data_sha256": "2149540b2a724efa8e3242933071163ae97fab5d85331a35b119330de090255e",
+  "config": {
+    "input_size": 12,
+    "model_size": 8,
+    "num_heads": 2,
+    "ffn_size": 16,
+    "fsmn_kernel_size": 3,
+    "layer_norm_eps": 1e-05,
+    "frames": 5
+  },
+  "blocks": {
+    "projection": {
+      "input": {
+        "shape": [
+          1,
+          5,
+          12
+        ],
+        "offset_f32": 0,
+        "count": 60
+      },
+      "output": {
+        "shape": [
+          1,
+          5,
+          8
+        ],
+        "offset_f32": 60,
+        "count": 40
+      },
+      "checkpoints": {
+        "self_attn_layer_norm": {
+          "shape": [
+            1,
+            5,
+            12
+          ],
+          "offset_f32": 100,
+          "count": 60
+        }
+      },
+      "weights": {
+        "fc1.bias": {
+          "shape": [
+            16
+          ],
+          "offset_f32": 160,
+          "count": 16
+        },
+        "fc1.weight": {
+          "shape": [
+            16,
+            8
+          ],
+          "offset_f32": 176,
+          "count": 128
+        },
+        "fc2.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 304,
+          "count": 8
+        },
+        "fc2.weight": {
+          "shape": [
+            8,
+            16
+          ],
+          "offset_f32": 312,
+          "count": 128
+        },
+        "feedforward_sequential_memory.conv.weight": {
+          "shape": [
+            8,
+            1,
+            3
+          ],
+          "offset_f32": 440,
+          "count": 24
+        },
+        "final_layer_norm.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 464,
+          "count": 8
+        },
+        "final_layer_norm.weight": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 472,
+          "count": 8
+        },
+        "self_attn.k_proj.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 480,
+          "count": 8
+        },
+        "self_attn.k_proj.weight": {
+          "shape": [
+            8,
+            12
+          ],
+          "offset_f32": 488,
+          "count": 96
+        },
+        "self_attn.out_proj.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 584,
+          "count": 8
+        },
+        "self_attn.out_proj.weight": {
+          "shape": [
+            8,
+            8
+          ],
+          "offset_f32": 592,
+          "count": 64
+        },
+        "self_attn.q_proj.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 656,
+          "count": 8
+        },
+        "self_attn.q_proj.weight": {
+          "shape": [
+            8,
+            12
+          ],
+          "offset_f32": 664,
+          "count": 96
+        },
+        "self_attn.v_proj.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 760,
+          "count": 8
+        },
+        "self_attn.v_proj.weight": {
+          "shape": [
+            8,
+            12
+          ],
+          "offset_f32": 768,
+          "count": 96
+        },
+        "self_attn_layer_norm.bias": {
+          "shape": [
+            12
+          ],
+          "offset_f32": 864,
+          "count": 12
+        },
+        "self_attn_layer_norm.weight": {
+          "shape": [
+            12
+          ],
+          "offset_f32": 876,
+          "count": 12
+        }
+      }
+    },
+    "residual": {
+      "input": {
+        "shape": [
+          1,
+          5,
+          8
+        ],
+        "offset_f32": 888,
+        "count": 40
+      },
+      "output": {
+        "shape": [
+          1,
+          5,
+          8
+        ],
+        "offset_f32": 928,
+        "count": 40
+      },
+      "checkpoints": {
+        "self_attn_layer_norm": {
+          "shape": [
+            1,
+            5,
+            8
+          ],
+          "offset_f32": 968,
+          "count": 40
+        }
+      },
+      "weights": {
+        "fc1.bias": {
+          "shape": [
+            16
+          ],
+          "offset_f32": 1008,
+          "count": 16
+        },
+        "fc1.weight": {
+          "shape": [
+            16,
+            8
+          ],
+          "offset_f32": 1024,
+          "count": 128
+        },
+        "fc2.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 1152,
+          "count": 8
+        },
+        "fc2.weight": {
+          "shape": [
+            8,
+            16
+          ],
+          "offset_f32": 1160,
+          "count": 128
+        },
+        "feedforward_sequential_memory.conv.weight": {
+          "shape": [
+            8,
+            1,
+            3
+          ],
+          "offset_f32": 1288,
+          "count": 24
+        },
+        "final_layer_norm.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 1312,
+          "count": 8
+        },
+        "final_layer_norm.weight": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 1320,
+          "count": 8
+        },
+        "self_attn.k_proj.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 1328,
+          "count": 8
+        },
+        "self_attn.k_proj.weight": {
+          "shape": [
+            8,
+            8
+          ],
+          "offset_f32": 1336,
+          "count": 64
+        },
+        "self_attn.out_proj.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 1400,
+          "count": 8
+        },
+        "self_attn.out_proj.weight": {
+          "shape": [
+            8,
+            8
+          ],
+          "offset_f32": 1408,
+          "count": 64
+        },
+        "self_attn.q_proj.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 1472,
+          "count": 8
+        },
+        "self_attn.q_proj.weight": {
+          "shape": [
+            8,
+            8
+          ],
+          "offset_f32": 1480,
+          "count": 64
+        },
+        "self_attn.v_proj.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 1544,
+          "count": 8
+        },
+        "self_attn.v_proj.weight": {
+          "shape": [
+            8,
+            8
+          ],
+          "offset_f32": 1552,
+          "count": 64
+        },
+        "self_attn_layer_norm.bias": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 1616,
+          "count": 8
+        },
+        "self_attn_layer_norm.weight": {
+          "shape": [
+            8
+          ],
+          "offset_f32": 1624,
+          "count": 8
+        }
+      }
+    }
+  }
+}
