@@ -38,4 +38,26 @@ struct FunAsrNanoAdaptorEmbeddings {
   std::vector<FunAsrNanoAdaptorStage> stages;
 };
 
+struct FunAsrNanoPromptRequest {
+  std::string prompt;
+  std::string language = "auto";
+  bool enable_itn = true;
+};
+
+struct FunAsrNanoPrompt {
+  std::vector<int32_t> input_ids;
+  std::vector<int32_t> audio_token_positions;
+  std::vector<int32_t> attention_mask;
+};
+
+struct FunAsrNanoGenerationOptions {
+  int64_t max_new_tokens = 512;
+  bool capture_logits = false;
+};
+
+struct FunAsrNanoGeneratedTokens {
+  std::vector<int32_t> token_ids;
+  std::vector<std::vector<float>> step_logits;
+};
+
 } // namespace engine::models::fun_asr_nano

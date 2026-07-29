@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "transformers_commit": "f9966442ac24fff57060774ce22e1884760f4a3b",
+  "transformers_source_sha256": {
+    "src/transformers/models/fun_asr_nano/configuration_fun_asr_nano.py": "174abb3aad5b38f7208c7eae140531be900eafb3a5d7f9f5562c300c93240e2d",
+    "src/transformers/models/fun_asr_nano/modeling_fun_asr_nano.py": "70f8230fd5a75e8a119cea1c8dc919c3f51d8aa7c5d8f1c23c5402b856ebebfb",
+    "src/transformers/models/fun_asr_nano/processing_fun_asr_nano.py": "bc1601a59f6acef6e5be743e511891fad688afa192d10e722fdea2dc42b5f72a",
+    "src/transformers/models/qwen3/modeling_qwen3.py": "966626c5f2c0f729dd6b61b99c000038602805f7d7ad73957507a63f8c2de563"
+  },
+  "model_revision": "854d88f94205cd17d2afdb24332130d86fbe654a",
+  "model_config_sha256": "c7c4a30316929631ac5fabc5fb3c0dd3278dcc9809670720c5920186285d004a",
+  "model_safetensors_sha256": "335ca3e74917f1156690400e2c344350112950165789cf78ce3d0a367affd821",
+  "tokenizer_json_sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506",
+  "tokenizer_config_sha256": "f8bd91da51857bc4674f92676d8b4979065c9f1d0b4ab2f9764fc58148cb5c62",
+  "text_weight_catalog_count": 310,
+  "text_weight_catalog_sha256": "5c75f016a25f2b0cb8abe959633ccb2fc25a8c50654b05962b6ca24493ccedd1",
+  "torch_version": "2.11.0+cu130",
+  "device": "cpu",
+  "data_file": "decoder_reference.bin",
+  "data_format": "little-endian-float32",
+  "audio_token_id": 151646,
+  "im_start_token_id": 151644,
+  "im_end_token_id": 151645,
+  "eos_token_id": 151645,
+  "itn": {
+    "prompt": "语音转写：",
+    "input_ids": [
+      151644,
+      8948,
+      198,
+      2610,
+      525,
+      264,
+      10950,
+      17847,
+      13,
+      151645,
+      198,
+      151644,
+      872,
+      198,
+      105761,
+      46670,
+      61443,
+      5122,
+      151646,
+      151646,
+      151645,
+      198,
+      151644,
+      77091,
+      198
+    ],
+    "audio_token_positions": [
+      18,
+      19
+    ]
+  },
+  "no_itn": {
+    "prompt": "语音转写，不进行文本规整：",
+    "input_ids": [
+      151644,
+      8948,
+      198,
+      2610,
+      525,
+      264,
+      10950,
+      17847,
+      13,
+      151645,
+      198,
+      151644,
+      872,
+      198,
+      105761,
+      46670,
+      61443,
+      3837,
+      16530,
+      71817,
+      108704,
+      74386,
+      63431,
+      5122,
+      151646,
+      151646,
+      151645,
+      198,
+      151644,
+      77091,
+      198
+    ],
+    "audio_token_positions": [
+      24,
+      25
+    ]
+  },
+  "audio_embeddings": {
+    "offset_f32": 0,
+    "count": 2048,
+    "shape": [
+      2,
+      1024
+    ]
+  },
+  "greedy_token_ids": [
+    56568,
+    1773,
+    151645
+  ],
+  "generated_text": "你。",
+  "logits": [
+    {
+      "offset_f32": 2048,
+      "count": 151936,
+      "shape": [
+        151936
+      ]
+    },
+    {
+      "offset_f32": 153984,
+      "count": 151936,
+      "shape": [
+        151936
+      ]
+    },
+    {
+      "offset_f32": 305920,
+      "count": 151936,
+      "shape": [
+        151936
+      ]
+    }
+  ],
+  "data_sha256": "37ee1e15e2017a9839f3c1fae08fbc1ef6ade55c9a0ed2f7890bcfc1d7cb7894"
+}
