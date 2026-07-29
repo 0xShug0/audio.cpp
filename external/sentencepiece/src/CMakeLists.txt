@@ -264,7 +264,14 @@ set_target_properties(sentencepiece-static PROPERTIES OUTPUT_NAME "sentencepiece
 set_target_properties(sentencepiece_train-static PROPERTIES OUTPUT_NAME "sentencepiece_train")
 
 if (NOT MSVC)
-  set(CMAKE_CXX_FLAGS "-O3 -Wall -fPIC ${CMAKE_CXX_FLAGS}")
+  if (WIN32)
+    # clang with the GNU driver targeting windows-msvc rejects -fPIC
+    # ("unsupported option for target 'x86_64-pc-windows-msvc'"); PIC is
+    # meaningless on Windows anyway. Keep the rest of the flags.
+    set(CMAKE_CXX_FLAGS "-O3 -Wall ${CMAKE_CXX_FLAGS}")
+  else()
+    set(CMAKE_CXX_FLAGS "-O3 -Wall -fPIC ${CMAKE_CXX_FLAGS}")
+  endif()
   if (SPM_NO_THREADLOCAL)
     add_definitions(-DSPM_NO_THREADLOCAL=1)
     add_definitions(-DGOOGLE_PROTOBUF_NO_THREADLOCAL=1)
