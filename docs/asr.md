@@ -350,6 +350,10 @@ and the transcript scrolls like ordinary output. When stdout is redirected, each
 as its own `partial_text=` line and flushed as it is produced, so pipes and logs stay parseable.
 The complete transcript is also printed once at the end as `text_output=`.
 
+An update covers one decoded chunk, so `stream_batch_tokens=<n>` reports every `n`th token's worth
+of text in a single update rather than making the updates `n` times shorter. Whatever the batch
+size, concatenating the updates reproduces `text_output=` exactly.
+
 Emitting deltas rather than restating the transcript matters for long runs, where the restated form
 is quadratic in the transcript length: a one-hour session writes roughly 364 MB restated against
 about 54 KB as deltas.

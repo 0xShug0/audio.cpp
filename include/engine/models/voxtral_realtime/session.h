@@ -10,7 +10,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
-#include <vector>
+#include <string>
 
 namespace engine::models::voxtral_realtime {
 
@@ -45,8 +45,11 @@ private:
     runtime::StreamEvent process_available_stream_chunks();
     runtime::StreamEvent process_one_stream_chunk(const runtime::AudioBuffer & audio);
     // Feeds a freshly decoded token back as the next stream input and, when it carries text,
-    // appends it to the transcript and refreshes the event's partial.
-    void record_stream_token(int32_t token, runtime::StreamEvent & event);
+    // appends it to the transcript.
+    void record_stream_token(int32_t token);
+    // Moves the transcript decoded since the last partial onto the event. Called once a chunk
+    // rather than once a token, so a chunk that decoded a batch of them reports all their text.
+    void take_stream_delta(runtime::StreamEvent & event);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const VoxtralRealtimeAssets> assets_;
@@ -75,7 +78,11 @@ private:
     runtime::StreamEventCallback stream_event_sink_;
     VoxtralRealtimeFrontendStreamState frontend_stream_state_;
     VoxtralRealtimeAudioEncoderStreamState audio_stream_state_;
-    std::vector<int32_t> streaming_token_ids_;
+    // The transcript decoded so far, and how much of it has already gone out as a partial. Every
+    // partial is the suffix between the two, so the deltas concatenate to exactly this string.
+    std::string streaming_text_;
+    size_t streaming_published_bytes_ = 0;
+    int64_t streaming_token_count_ = 0;
     int32_t previous_stream_token_ = 0;
     bool stream_started_ = false;
     bool first_stream_chunk_ = true;
