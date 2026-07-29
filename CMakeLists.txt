@@ -691,6 +691,23 @@ audiocpp_add_model(dramabox
         engine::models::dramabox::make_dramabox_loader
 )
 
+audiocpp_add_model(fun_asr_nano
+    SOURCES
+        src/models/fun_asr_nano/assets.cpp
+        src/models/fun_asr_nano/frontend.cpp
+        src/models/fun_asr_nano/encoder.cpp
+        src/models/fun_asr_nano/adaptor.cpp
+        src/models/fun_asr_nano/tokenizer_text.cpp
+        src/models/fun_asr_nano/prompt.cpp
+        src/models/fun_asr_nano/decoder.cpp
+        src/models/fun_asr_nano/session.cpp
+        src/models/fun_asr_nano/loader.cpp
+    INCLUDES
+        engine/models/fun_asr_nano/loader.h
+    LOADERS
+        engine::models::fun_asr_nano::make_fun_asr_nano_loader
+)
+
 audiocpp_add_model(heartmula
     SOURCES
         src/models/heartmula/assets.cpp
@@ -1332,6 +1349,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
     add_engine_warmbench(confucius4_tts_warm_bench tests/confucius4_tts/confucius4_tts_warm_bench.cpp)
     add_engine_warmbench(dramabox_warm_bench tools/dramabox/dramabox_warm_bench.cpp)
+    add_engine_warmbench(fun_asr_nano_warm_bench tests/fun_asr_nano/fun_asr_nano_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_tts_warm_bench tests/higgs_audio_tts/higgs_audio_tts_warm_bench.cpp)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)
@@ -1728,6 +1746,24 @@ if (ENGINE_BUILD_TESTS)
                     --model ${AUDIOCPP_FUN_ASR_NANO_TEST_MODEL}
                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/encoder_reference.json
                     --data ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/encoder_reference.bin
+            )
+        endif()
+
+        add_engine_unittest(fun_asr_nano_session_probe tests/fun_asr_nano/fun_asr_nano_session_probe.cpp)
+        add_test(
+            NAME fun_asr_nano_session_probe_cpu
+            COMMAND fun_asr_nano_session_probe
+                --backend cpu
+                --model ${AUDIOCPP_FUN_ASR_NANO_TEST_MODEL}
+                --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav
+        )
+        if (GGML_CUDA)
+            add_test(
+                NAME fun_asr_nano_session_probe_cuda
+                COMMAND fun_asr_nano_session_probe
+                    --backend cuda
+                    --model ${AUDIOCPP_FUN_ASR_NANO_TEST_MODEL}
+                    --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav
             )
         endif()
     endif()

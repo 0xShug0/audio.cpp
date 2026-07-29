@@ -33,9 +33,46 @@
         "description": "Enable inverse text normalization in the transcription prompt.",
         "required": false,
         "default": true
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum number of generated transcript tokens.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode: auto, fixed, or none.",
+        "values": [
+          "auto",
+          "fixed",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_seconds",
+        "type": "float",
+        "description": "Fixed chunk duration in seconds.",
+        "required": false,
+        "min": 0.001,
+        "default": 30
       }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared model weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
     "load": []
   },
   "runtime": {
