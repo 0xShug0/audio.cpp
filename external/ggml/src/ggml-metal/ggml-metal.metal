@@ -5120,14 +5120,22 @@ kernel void kernel_conv_transpose_1d(
         device const float * src1,
         device        char * dst,
         uint3   tgpig[[threadgroup_position_in_grid]],
-        uint3   tgpg[[threadgroups_per_grid]]) {
+        uint3   tpitg[[thread_position_in_threadgroup]],
+        uint3   ntg  [[threads_per_threadgroup]]) {
+
+    // One thread per output element, grouped ntg.x to a threadgroup so the
+    // whole SIMD width does useful work (the previous one-thread-per-
+    // threadgroup dispatch left 31/32 lanes idle).
+    const int32_t j = tgpig[0] * ntg[0] + tpitg[0];
+    if (j >= args.OL) {
+        return;
+    }
 
     // For output position j on the time axis, only input positions
     //   i such that i*s0 <= j < i*s0 + K
     // contribute -- i.e. i in [ceil((j - K + 1)/s0), floor(j/s0)]
     // intersected with [0, IL-1]. That's at most ceil(K/s0) values
     // (typically 2 for stride==K/2 transposed convs).
-    const int32_t j  = tgpig[0];
     const int32_t s0 = args.s0;
     const int32_t K  = args.K;
     const int32_t IL = args.IL;
@@ -5142,8 +5150,8 @@ kernel void kernel_conv_transpose_1d(
 
     float v = 0.0f;
     if (i_min <= i_max) {
-        for (int64_t c = 0; c < args.IC; c++) {
-            const int32_t kernel_offset = c * tgpg[1] * K + K * tgpig[1];
+        for (int32_t c = 0; c < args.IC; c++) {
+            const int32_t kernel_offset = c * args.OC * K + K * tgpig[1];
             const int32_t input_offset  = c * IL;
 
             for (int32_t i = i_min; i <= i_max; i++) {
@@ -5152,7 +5160,7 @@ kernel void kernel_conv_transpose_1d(
         }
     }
 
-    device float * dst_ptr = (device float *) (dst + tgpig[0] * args.nb0 + tgpig[1] * args.nb1);
+    device float * dst_ptr = (device float *) (dst + j * args.nb0 + tgpig[1] * args.nb1);
 
     dst_ptr[0] = v;
 }
@@ -5164,7 +5172,8 @@ kernel void kernel_conv_transpose_1d<float>(
     device const float * src1,
     device        char * dst,
     uint3   tgpig[[threadgroup_position_in_grid]],
-    uint3    tgpg[[threadgroups_per_grid]]);
+    uint3   tpitg[[thread_position_in_threadgroup]],
+    uint3   ntg  [[threads_per_threadgroup]]);
 
 template [[host_name("kernel_conv_transpose_1d_f16_f32")]]
 kernel void kernel_conv_transpose_1d<half>(
@@ -5173,7 +5182,8 @@ kernel void kernel_conv_transpose_1d<half>(
     device const float * src1,
     device        char * dst,
     uint3   tgpig[[threadgroup_position_in_grid]],
-    uint3    tgpg[[threadgroups_per_grid]]);
+    uint3   tpitg[[thread_position_in_threadgroup]],
+    uint3   ntg  [[threads_per_threadgroup]]);
 
 
 template <typename T>
