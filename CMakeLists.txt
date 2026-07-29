@@ -1697,6 +1697,41 @@ if (ENGINE_BUILD_TESTS)
             --data ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/sanm_reference.bin
     )
 
+    add_engine_unittest(fun_asr_nano_encoder_probe tests/fun_asr_nano/fun_asr_nano_encoder_probe.cpp)
+    target_sources(
+        fun_asr_nano_encoder_probe
+        PRIVATE
+            src/models/fun_asr_nano/assets.cpp
+            src/models/fun_asr_nano/frontend.cpp
+            src/models/fun_asr_nano/encoder.cpp
+    )
+    set(
+        AUDIOCPP_FUN_ASR_NANO_TEST_MODEL
+        ""
+        CACHE PATH
+        "Optional local Fun-ASR-Nano model directory for full encoder parity tests"
+    )
+    if (AUDIOCPP_FUN_ASR_NANO_TEST_MODEL)
+        add_test(
+            NAME fun_asr_nano_encoder_probe_cpu
+            COMMAND fun_asr_nano_encoder_probe
+                --backend cpu
+                --model ${AUDIOCPP_FUN_ASR_NANO_TEST_MODEL}
+                --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/encoder_reference.json
+                --data ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/encoder_reference.bin
+        )
+        if (GGML_CUDA)
+            add_test(
+                NAME fun_asr_nano_encoder_probe_cuda
+                COMMAND fun_asr_nano_encoder_probe
+                    --backend cuda
+                    --model ${AUDIOCPP_FUN_ASR_NANO_TEST_MODEL}
+                    --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/encoder_reference.json
+                    --data ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/encoder_reference.bin
+            )
+        endif()
+    endif()
+
     add_engine_unittest(tdt_decoder_duration_loop_test tests/unittests/test_tdt_decoder_duration_loop.cpp)
     target_include_directories(tdt_decoder_duration_loop_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
 
