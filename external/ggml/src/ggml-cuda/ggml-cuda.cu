@@ -3771,6 +3771,43 @@ static bool ggml_cuda_check_fusion_memory_ranges(const ggml_cgraph * cgraph,
     return is_ok;
 }
 
+// Some model graphs reshape a matvec result before adding the residual. RESHAPE
+// is metadata-only and therefore cannot pass the generic compute-node fusion
+// validator. Validate this exact chain explicitly so the residual-only Q8_0
+// specialization can write the final result directly.
+static bool ggml_cuda_can_fuse_q8_0_mul_mat_reshape_add(
+        const struct ggml_cgraph * cgraph, int node_idx) {
+    if (node_idx + 2 >= cgraph->n_nodes) {
+        return false;
+    }
+
+    const ggml_tensor * mul_mat = cgraph->nodes[node_idx + 0];
+    const ggml_tensor * reshape = cgraph->nodes[node_idx + 1];
+    const ggml_tensor * add     = cgraph->nodes[node_idx + 2];
+
+    if (mul_mat->op != GGML_OP_MUL_MAT ||
+        !mul_mat->src[0] ||
+        mul_mat->src[0]->type != GGML_TYPE_Q8_0 ||
+        reshape->op != GGML_OP_RESHAPE ||
+        reshape->src[0] != mul_mat ||
+        add->op != GGML_OP_ADD ||
+        (add->src[0] != reshape && add->src[1] != reshape)) {
+        return false;
+    }
+
+    if (ggml_nelements(mul_mat) != ggml_nelements(reshape) ||
+        ggml_nelements(reshape) != ggml_nelements(add) ||
+        ggml_node_get_use_count(cgraph, node_idx + 0) != 1 ||
+        ggml_node_get_use_count(cgraph, node_idx + 1) != 1 ||
+        (mul_mat->flags & GGML_TENSOR_FLAG_OUTPUT) ||
+        (reshape->flags & GGML_TENSOR_FLAG_OUTPUT)) {
+        return false;
+    }
+
+    const int out_nodes[] = { node_idx + 2 };
+    return ggml_cuda_check_fusion_memory_ranges(cgraph, node_idx, 3, out_nodes, 1);
+}
+
 
 static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
                                int                                       node_idx,
@@ -4291,22 +4328,29 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
     fused_mul_mat_vec = false;
     fused_node_count  = 0;
 
-    // gate + add + glu + up + add
+    // mul_mat + optional metadata-only reshape + add
     for (ggml_op op : { GGML_OP_MUL_MAT, GGML_OP_MUL_MAT_ID }) {
         const ggml_op bias_op = op == GGML_OP_MUL_MAT ? GGML_OP_ADD : GGML_OP_ADD_ID;
 
-        if (!ggml_can_fuse(cgraph, i, { op, bias_op })) {
+        const bool reshape_bridge =
+            op == GGML_OP_MUL_MAT &&
+            ggml_cuda_can_fuse_q8_0_mul_mat_reshape_add(cgraph, i);
+        if (!reshape_bridge && !ggml_can_fuse(cgraph, i, { op, bias_op })) {
             continue;
         }
 
         ggml_tensor * mm_node   = cgraph->nodes[i];
-        ggml_tensor * bias_node = cgraph->nodes[i + 1];
+        ggml_tensor * mm_output = reshape_bridge ? cgraph->nodes[i + 1] : mm_node;
+        ggml_tensor * bias_node = cgraph->nodes[i + (reshape_bridge ? 2 : 1)];
+        if (reshape_bridge && mm_output->src[0] != mm_node) {
+            continue;
+        }
 
         ggml_tensor * bias_tensor = nullptr;
         if (bias_op == GGML_OP_ADD) {
-            if (bias_node->src[0] == mm_node) {
+            if (bias_node->src[0] == mm_output) {
                 bias_tensor = bias_node->src[1];
-            } else if (bias_node->src[1] == mm_node) {
+            } else if (bias_node->src[1] == mm_output) {
                 bias_tensor = bias_node->src[0];
             } else {
                 continue;
@@ -4331,19 +4375,20 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
         }
 
         ggml_cuda_mm_fusion_args_host fusion_data{};
-        fusion_data.x_bias = bias_tensor;
+        fusion_data.x_bias        = bias_tensor;
+        fusion_data.residual_only = reshape_bridge;
 
         if (ggml_cuda_should_fuse_mul_mat_vec_f(mm_node)) {
             ggml_cuda_mul_mat_vec_f(*cuda_ctx, src0, src1, ids, bias_node, &fusion_data);
             fused_mul_mat_vec = true;
-            fused_node_count  = 2;
+            fused_node_count  = reshape_bridge ? 3 : 2;
             break;
         }
 
         if (ggml_cuda_should_fuse_mul_mat_vec_q(mm_node)) {
             ggml_cuda_mul_mat_vec_q(*cuda_ctx, src0, src1, ids, bias_node, &fusion_data);
             fused_mul_mat_vec = true;
-            fused_node_count  = 2;
+            fused_node_count  = reshape_bridge ? 3 : 2;
             break;
         }
     }
