@@ -267,11 +267,36 @@ The built CLI is written to:
 build/macos-metal-release/bin/audiocpp_cli
 ```
 
+### HIP/ROCm Build
+
+On Linux and Windows, HIP builds compile ggml's CUDA backend sources as HIP code for AMD GPUs. `ENGINE_ENABLE_HIP` and `ENGINE_ENABLE_CUDA` are mutually exclusive — configure with exactly one of them.
+
+Linux:
+
+```bash
+cmake -S . -B build_hip \
+  -DENGINE_ENABLE_HIP=ON \
+  -DGPU_TARGETS=gfx1151 \
+  -DCMAKE_C_COMPILER="$(hipconfig -l)/clang" \
+  -DCMAKE_CXX_COMPILER="$(hipconfig -l)/clang++" \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build_hip -j$(nproc)
+```
+
+Windows (the helper script auto-detects ROCm, GPU targets, cmake, and ninja):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_hip.ps1
+```
+
+Run with `--backend hip` (`rocm` is accepted as an alias). For GPU target selection, hipBLASLt GEMM notes, iGPU tuning, and known limitations, see [docs/HIP.md](docs/HIP.md).
+
 ### Build Options
 
 | Option | Meaning | Default |
 |---|---|---|
 | `ENGINE_ENABLE_CUDA` | Enable the ggml CUDA backend. Required for `--backend cuda`. | `OFF` |
+| `ENGINE_ENABLE_HIP` | Enable the ggml HIP backend (AMD GPUs). Required for `--backend hip`; mutually exclusive with `ENGINE_ENABLE_CUDA`. | `OFF` |
 | `ENGINE_ENABLE_VULKAN` | Enable the ggml Vulkan backend. Required for `--backend vulkan`. | `OFF` |
 | `ENGINE_ENABLE_METAL` | Enable the ggml Metal backend. Required for `--backend metal`. | `OFF` on most platforms, `ON` on Apple |
 | `ENGINE_ENABLE_LLAMAFILE` | Enable llamafile SGEMM support in ggml CPU builds. | `ON` |
