@@ -4,10 +4,9 @@
 
 namespace minitts::cli {
 
-// Streaming sessions emit each partial as the text newly decoded since the last one, so the
-// updates concatenate into the transcript. A terminal can therefore just append them, and the
-// transcript scrolls like ordinary output instead of arriving as a column of labelled fragments.
-// Redirected output keeps the labelled line-per-update form so pipes and logs stay parseable.
+// Partials are the text newly decoded since the last one, so they concatenate into the transcript.
+// A terminal can therefore just append them and the transcript scrolls like ordinary output, while
+// redirected output keeps the labelled line-per-update form so pipes and logs stay parseable.
 //
 // Returns the bytes to write rather than taking a stream, so the caller decides when to flush and
 // the behaviour can be tested without a terminal.

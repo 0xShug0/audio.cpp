@@ -328,8 +328,8 @@ runtime::TaskResult VoxtralRealtimeSession::finalize() {
     if (streaming_audio_offset_values_ == streaming_audio_.samples.size() && streaming_token_count_ == 0) {
         throw std::runtime_error("VoxTral realtime finalize() requires streamed audio");
     }
-    auto event = process_available_stream_chunks();
-    (void) event;
+    // Any partial this last pass produces has already gone to the sink.
+    (void) process_available_stream_chunks();
     streaming_result_ = runtime::TaskResult{};
     streaming_result_.text_output = runtime::Transcript{streaming_text_, ""};
     stream_started_ = false;
@@ -457,30 +457,24 @@ runtime::StreamEvent VoxtralRealtimeSession::process_one_stream_chunk(const runt
     const auto decoder_start = Clock::now();
     if (first_stream_chunk_) {
         auto prompt = tokenizer_.build_transcription_prompt(frontend_.first_stream_chunk_samples(), true);
-        const int32_t token = text_decoder_.begin_stream(prompt, audio_embeddings, streaming_generation_);
+        record_stream_token(text_decoder_.begin_stream(prompt, audio_embeddings, streaming_generation_));
         first_stream_chunk_ = false;
-        stream_decoder_ms_ += engine::debug::elapsed_ms(decoder_start);
-        record_stream_token(token);
-        take_stream_delta(event);
-        return event;
-    }
-    if (!have_previous_stream_token_) {
+    } else if (!have_previous_stream_token_) {
         throw std::runtime_error("VoxTral streaming decoder is missing previous token");
-    }
-    // One encoder forward covers `stream_batch_tokens_` audio tokens; the decoder still runs one
-    // step per token, each consuming its own row of the batch.
-    for (int64_t row = 0; row < audio_embeddings.tokens; ++row) {
-        const int32_t token = text_decoder_.stream_step(
-            previous_stream_token_,
-            audio_embeddings,
-            row,
-            assets_->config.default_num_delay_tokens,
-            streaming_generation_);
-        record_stream_token(token);
+    } else {
+        // One encoder forward covers `stream_batch_tokens_` audio tokens; the decoder still runs one
+        // step per token, each consuming its own row of the batch.
+        for (int64_t row = 0; row < audio_embeddings.tokens; ++row) {
+            record_stream_token(text_decoder_.stream_step(
+                previous_stream_token_,
+                audio_embeddings,
+                row,
+                assets_->config.default_num_delay_tokens,
+                streaming_generation_));
+        }
     }
     stream_decoder_ms_ += engine::debug::elapsed_ms(decoder_start);
-    // The chunk reports one event however many tokens it decoded, so the delta is taken once, after
-    // the whole batch has been recorded.
+    // Once a chunk, not once a token: the chunk reports a single event however many it decoded.
     take_stream_delta(event);
     return event;
 }
@@ -495,20 +489,15 @@ void VoxtralRealtimeSession::record_stream_token(int32_t token) {
         return;
     }
     ++streaming_token_count_;
-    // Decoding one token at a time costs nothing here — Tekken decode is a concatenation of each
-    // id's bytes — and it keeps the transcript an amortized O(1) append per token rather than a
-    // fresh decode of the whole list.
+    // Tekken decode concatenates each id's bytes, so decoding token by token builds the same
+    // transcript as decoding the list, at an amortized O(1) append instead of a fresh decode.
     streaming_text_ += tokenizer_.decode({token});
 }
 
 void VoxtralRealtimeSession::take_stream_delta(runtime::StreamEvent & event) {
     // Partials carry only the text decoded since the last one, as the other streaming ASR sessions
-    // already emit, rather than restating the transcript: restating is quadratic in its length and
-    // hands a consumer of transcript.text.delta text it was already given.
-    //
-    // Deriving the delta as the not-yet-published suffix of the transcript, rather than assembling
-    // it from the tokens of a chunk, is what keeps the two in step: whatever the decoder does per
-    // chunk, the deltas concatenate to exactly the transcript finalize() reports as text_output.
+    // already emit. Restating the transcript is quadratic in its length and hands a consumer of
+    // transcript.text.delta text it was already given.
     if (streaming_published_bytes_ >= streaming_text_.size()) {
         return;
     }
