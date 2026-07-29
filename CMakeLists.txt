@@ -311,6 +311,7 @@ add_library(engine_core OBJECT
     external/llama_tokenizer/unicode-data.cpp
     src/framework/tokenizers/sentencepiece.cpp
     src/framework/audio/fft.cpp
+    src/framework/audio/kaldi_fbank.cpp
     src/framework/audio/activity.cpp
     src/framework/audio/chunking.cpp
     src/framework/audio/conversion.cpp
@@ -1673,6 +1674,16 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME fun_asr_nano_assets_test
         COMMAND fun_asr_nano_assets_test
+    )
+
+    add_engine_unittest(fun_asr_nano_frontend_probe tests/fun_asr_nano/fun_asr_nano_frontend_probe.cpp)
+
+    add_test(
+        NAME fun_asr_nano_frontend_probe
+        COMMAND fun_asr_nano_frontend_probe
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/frontend_reference.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fun_asr_nano/frontend_reference.bin
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav
     )
 
     add_engine_unittest(tdt_decoder_duration_loop_test tests/unittests/test_tdt_decoder_duration_loop.cpp)
