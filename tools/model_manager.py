@@ -353,6 +353,42 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
     ),
     ModelPackage(
+        id="fun_asr_nano_2512_q8_0",
+        display_name="Fun-ASR-Nano-2512 Q8_0 GGUF",
+        target_directory="Fun-ASR-Nano-2512-GGUF",
+        source=SnapshotSource(
+            repo_id="FunAudioLLM/Fun-ASR-Nano-2512-GGUF",
+            revision="ce72677f84900f0dc57f498ace253bfb3c9155b6",
+            include_prefixes=("fun-asr-nano-2512-q8_0.gguf",),
+        ),
+        required_files=("fun-asr-nano-2512-q8_0.gguf",),
+        family="fun_asr_nano",
+        tasks=("asr",),
+        modes=("offline",),
+        description=(
+            "Standalone Fun-ASR-Nano-2512 Q8_0 GGUF for offline multilingual ASR; "
+            "governed by the FunASR Model Open Source License Agreement v1.1."
+        ),
+    ),
+    ModelPackage(
+        id="fun_asr_nano_2512_f16",
+        display_name="Fun-ASR-Nano-2512 F16 GGUF",
+        target_directory="Fun-ASR-Nano-2512-GGUF",
+        source=SnapshotSource(
+            repo_id="FunAudioLLM/Fun-ASR-Nano-2512-GGUF",
+            revision="ce72677f84900f0dc57f498ace253bfb3c9155b6",
+            include_prefixes=("fun-asr-nano-2512-f16.gguf",),
+        ),
+        required_files=("fun-asr-nano-2512-f16.gguf",),
+        family="fun_asr_nano",
+        tasks=("asr",),
+        modes=("offline",),
+        description=(
+            "Standalone Fun-ASR-Nano-2512 F16 GGUF for offline multilingual ASR; "
+            "governed by the FunASR Model Open Source License Agreement v1.1."
+        ),
+    ),
+    ModelPackage(
         id="qwen3_asr_0_6b",
         display_name="Qwen3 ASR 0.6B",
         target_directory="Qwen3-ASR-0.6B",

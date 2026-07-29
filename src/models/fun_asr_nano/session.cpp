@@ -52,6 +52,30 @@ option_weight_type(const runtime::SessionOptions &options, const char *key,
              : assets::parse_tensor_storage_type(value->second);
 }
 
+assets::TensorStorageType
+decoder_weight_type(const runtime::SessionOptions &options,
+                    core::BackendType backend_type) {
+  const auto decoder = options.options.find("fun_asr_nano.decoder_weight_type");
+  if (decoder != options.options.end()) {
+    return assets::parse_tensor_storage_type(decoder->second);
+  }
+  auto shared = assets::TensorStorageType::Native;
+  const auto shared_option = options.options.find("fun_asr_nano.weight_type");
+  if (shared_option != options.options.end()) {
+    shared = assets::parse_tensor_storage_type(shared_option->second);
+  }
+  // Native F16/Q8 decoder weights currently produce invalid logits with the
+  // CUDA graph path. BF16 preserves the compact GPU representation and exact
+  // transcript parity while encoder/adaptor weights keep the shared type.
+  if (backend_type == core::BackendType::Cuda &&
+      (shared == assets::TensorStorageType::Native ||
+       shared == assets::TensorStorageType::F16 ||
+       shared == assets::TensorStorageType::Q8_0)) {
+    return assets::TensorStorageType::BF16;
+  }
+  return shared;
+}
+
 runtime::SessionOptions
 validate_session_setup(const runtime::TaskSpec &task,
                        runtime::SessionOptions options) {
@@ -70,9 +94,8 @@ validate_session_setup(const runtime::TaskSpec &task,
   validate_weight_storage(
       option_weight_type(options, "fun_asr_nano.adaptor_weight_type", shared),
       "fun_asr_nano.adaptor_weight_type");
-  validate_weight_storage(
-      option_weight_type(options, "fun_asr_nano.decoder_weight_type", shared),
-      "fun_asr_nano.decoder_weight_type");
+  validate_weight_storage(decoder_weight_type(options, options.backend.type),
+                          "fun_asr_nano.decoder_weight_type");
   for (const auto &[key, value] : options.options) {
     (void)value;
     if (key.rfind("fun_asr_nano.", 0) == 0 &&
@@ -175,10 +198,8 @@ FunAsrNanoSession::FunAsrNanoSession(
           options, "fun_asr_nano.adaptor_weight_type",
           option_weight_type(options, "fun_asr_nano.weight_type",
                              assets::TensorStorageType::Native))),
-      decoder_weight_storage_type_(option_weight_type(
-          options, "fun_asr_nano.decoder_weight_type",
-          option_weight_type(options, "fun_asr_nano.weight_type",
-                             assets::TensorStorageType::Native))),
+      decoder_weight_storage_type_(
+          decoder_weight_type(options, execution_context().backend_type())),
       tokenizer_(assets_), frontend_(assets_->config.frontend),
       encoder_(assets_, execution_context(), encoder_graph_arena_bytes_,
                encoder_weight_storage_type_),

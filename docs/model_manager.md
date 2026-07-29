@@ -14,6 +14,7 @@ If a model has a ready-to-use GGUF package, prefer that route first.
 Ready-to-use GGUF packages are published here:
 
 - Core released models: [audio-cpp/audio.cpp-gguf](https://huggingface.co/audio-cpp/audio.cpp-gguf)
+- Fun-ASR-Nano: [FunAudioLLM/Fun-ASR-Nano-2512-GGUF](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-2512-GGUF)
 - Community OuteTTS package: [mirek190/audio.cpp](https://huggingface.co/mirek190/audio.cpp/tree/main/Text%20to%20audio%20(TTS))
 
 For support status and tested precision coverage, see the [GGUF guide](gguf.md).
@@ -112,6 +113,8 @@ Packages whose loaders are not registered in the current release tree are listed
 | `chatterbox` | Chatterbox | **Yes** |
 | `citrinet_asr` | Citrinet ASR converted layout | No |
 | `fish_audio_s2_pro` | Fish Audio S2 Pro GGUF Q8_0 | **Yes** |
+| `fun_asr_nano_2512_f16` | Fun-ASR-Nano-2512 F16 GGUF | **Yes** |
+| `fun_asr_nano_2512_q8_0` | Fun-ASR-Nano-2512 Q8_0 GGUF | **Yes** |
 | `glm_tts` | GLM-TTS with converted Flow/HiFT/tokenizer and CAMPPlus assets | No |
 | `heartmula` | HeartMuLa | No |
 | `higgs_audio_stt` | Higgs Audio STT | No |

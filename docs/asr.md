@@ -2,6 +2,7 @@
 
 | Model | Family | Mode(s) | Quick Start |
 |---|---|---|---|
+| Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
 | Qwen3 ASR | `qwen3_asr` | offline | [Qwen3 ASR](#qwen3-asr) |
 | Citrinet ASR | `citrinet_asr` | offline | [Citrinet ASR](#citrinet-asr) |
 | Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
@@ -20,6 +21,24 @@ audiocpp_cli --task asr --family <family> --model <model-dir> --backend cuda --a
 ```
 
 When `--mode streaming` is used, the selected model provides its default streaming policy.
+
+## Fun-ASR-Nano
+
+Fun-ASR-Nano provides offline multilingual transcription for Chinese, English,
+and Japanese with automatic language selection. The recommended package is the
+standalone Q8_0 GGUF published by FunAudioLLM.
+
+```bash
+python3 tools/model_manager_v2.py install fun_asr_nano
+audiocpp_cli --task asr --family fun_asr_nano \
+  --model models/Fun-ASR-Nano-2512-GGUF/fun-asr-nano-2512-q8_0.gguf \
+  --backend cuda --audio speech_16k.wav --text-out transcript.txt
+```
+
+The runtime supports fixed offline chunking and inverse text normalization.
+Streaming and timestamp output are not exposed. See the
+[Fun-ASR-Nano model guide](models/fun_asr_nano.md) for package, option, GGUF,
+and server details.
 
 ## Qwen3 ASR
 

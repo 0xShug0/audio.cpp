@@ -1729,6 +1729,12 @@ if (ENGINE_BUILD_TESTS)
         CACHE PATH
         "Optional local Fun-ASR-Nano model directory for full runtime parity tests"
     )
+    set(
+        AUDIOCPP_FUN_ASR_NANO_TEST_GGUF
+        ""
+        CACHE FILEPATH
+        "Optional standalone Fun-ASR-Nano GGUF for full CLI transcript tests"
+    )
     if (AUDIOCPP_FUN_ASR_NANO_TEST_MODEL)
         add_test(
             NAME fun_asr_nano_encoder_probe_cpu
@@ -1764,6 +1770,68 @@ if (ENGINE_BUILD_TESTS)
                     --backend cuda
                     --model ${AUDIOCPP_FUN_ASR_NANO_TEST_MODEL}
                     --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav
+            )
+        endif()
+    endif()
+    if (AUDIOCPP_FUN_ASR_NANO_TEST_GGUF)
+        add_test(
+            NAME fun_asr_nano_gguf_cli_cpu
+            COMMAND audiocpp_cli
+                --task asr
+                --family fun_asr_nano
+                --model ${AUDIOCPP_FUN_ASR_NANO_TEST_GGUF}
+                --backend cpu
+                --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav
+        )
+        set_tests_properties(
+            fun_asr_nano_gguf_cli_cpu
+            PROPERTIES PASS_REGULAR_EXPRESSION
+                "text_output=Some call me nature, others call me mother nature"
+        )
+        if (GGML_CUDA)
+            add_test(
+                NAME fun_asr_nano_gguf_cli_cuda
+                COMMAND audiocpp_cli
+                    --task asr
+                    --family fun_asr_nano
+                    --model ${AUDIOCPP_FUN_ASR_NANO_TEST_GGUF}
+                    --backend cuda
+                    --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav
+            )
+            set_tests_properties(
+                fun_asr_nano_gguf_cli_cuda
+                PROPERTIES PASS_REGULAR_EXPRESSION
+                    "text_output=Some call me nature, others call me mother nature"
+            )
+            add_test(
+                NAME fun_asr_nano_gguf_cli_cuda_shared_q8
+                COMMAND audiocpp_cli
+                    --task asr
+                    --family fun_asr_nano
+                    --model ${AUDIOCPP_FUN_ASR_NANO_TEST_GGUF}
+                    --backend cuda
+                    --session-option fun_asr_nano.weight_type=q8_0
+                    --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav
+            )
+            set_tests_properties(
+                fun_asr_nano_gguf_cli_cuda_shared_q8
+                PROPERTIES PASS_REGULAR_EXPRESSION
+                    "text_output=Some call me nature, others call me mother nature"
+            )
+            add_test(
+                NAME fun_asr_nano_gguf_cli_best_shared_q8
+                COMMAND audiocpp_cli
+                    --task asr
+                    --family fun_asr_nano
+                    --model ${AUDIOCPP_FUN_ASR_NANO_TEST_GGUF}
+                    --backend best
+                    --session-option fun_asr_nano.weight_type=q8_0
+                    --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav
+            )
+            set_tests_properties(
+                fun_asr_nano_gguf_cli_best_shared_q8
+                PROPERTIES PASS_REGULAR_EXPRESSION
+                    "text_output=Some call me nature, others call me mother nature"
             )
         endif()
     endif()

@@ -43,13 +43,14 @@ runtime::ModelCliInterface cli() {
   };
   result.session_options = {
       {"fun_asr_nano.weight_type", "native|f32|f16|bf16|q8_0",
-       "Shared model weight storage type."},
+       "Shared model weight storage preference."},
       {"fun_asr_nano.encoder_weight_type", "native|f32|f16|bf16|q8_0",
        "Encoder matmul weight storage type."},
       {"fun_asr_nano.adaptor_weight_type", "native|f32|f16|bf16|q8_0",
        "Adaptor matmul weight storage type."},
       {"fun_asr_nano.decoder_weight_type", "native|f32|f16|bf16|q8_0",
-       "Decoder matmul weight storage type."},
+       "Decoder matmul weight storage type; CUDA promotes unsafe shared "
+       "native/F16/Q8 requests to BF16 unless this option is explicit."},
       {"fun_asr_nano.encoder_graph_arena_mb", "mb",
        "Encoder graph arena size."},
       {"fun_asr_nano.adaptor_graph_arena_mb", "mb",

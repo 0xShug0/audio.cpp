@@ -86,10 +86,44 @@
   },
   "packages": [
     {
+      "id": "fun_asr_nano_2512_q8_0",
+      "display_name": "Fun-ASR-Nano-2512 Q8_0 GGUF",
+      "description": "Standalone audio.cpp GGUF built from the pinned official checkpoint; governed by the FunASR Model Open Source License Agreement v1.1.",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Fun-ASR-Nano-2512-GGUF",
+      "files": [
+        "fun-asr-nano-2512-q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "FunAudioLLM/Fun-ASR-Nano-2512-GGUF",
+        "revision": "ce72677f84900f0dc57f498ace253bfb3c9155b6",
+        "gated": false
+      }
+    },
+    {
+      "id": "fun_asr_nano_2512_f16",
+      "display_name": "Fun-ASR-Nano-2512 F16 GGUF",
+      "description": "Standalone audio.cpp GGUF built from the pinned official checkpoint; governed by the FunASR Model Open Source License Agreement v1.1.",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Fun-ASR-Nano-2512-GGUF",
+      "files": [
+        "fun-asr-nano-2512-f16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "FunAudioLLM/Fun-ASR-Nano-2512-GGUF",
+        "revision": "ce72677f84900f0dc57f498ace253bfb3c9155b6",
+        "gated": false
+      }
+    },
+    {
       "id": "fun_asr_nano_2512_safetensors",
       "display_name": "Fun-ASR-Nano-2512 HF Safetensors",
       "description": "Official checkpoint governed by the FunASR Model Open Source License Agreement v1.1.",
-      "default": true,
       "format": "safetensors",
       "precision": "native",
       "target_directory": "Fun-ASR-Nano-2512-hf",
@@ -112,7 +146,7 @@
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "fun_asr_nano_2512_safetensors",
+    "recommended_package": "fun_asr_nano_2512_q8_0",
     "tags": [
       "ASR",
       "GGUF"
@@ -124,6 +158,26 @@
     "summary": "Offline Fun-ASR-Nano transcription from official safetensors or audio.cpp GGUF."
   },
   "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "optional_files": {
+        "chat_template_jinja": "model:chat_template.jinja",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
     {
       "format": "safetensors",
       "roots": {
