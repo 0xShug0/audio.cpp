@@ -245,6 +245,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows_hip.ps1
 #   -NoHipblasLt               use hipBLAS (rocBLAS) instead of hipBLASLt
 #   -ForceMmq                  route quantized matmul through GGML MMQ kernels
 #   -WithVmm                   enable HIP virtual memory management
+#   -NoNativeCpu               portable CPU kernels (no native ISA); required for distribution builds
 #   -ConfigureOnly / -Clean / -Target audiocpp_cli / -Jobs 8
 ```
 
