@@ -7,6 +7,8 @@ BUILD_DIR=""
 BUILD_TYPE="RelWithDebInfo"
 CUDA_MODE="auto"
 VULKAN_MODE="off"
+HIP_MODE="off"
+GPU_TARGETS=""
 WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
@@ -36,12 +38,19 @@ while [[ $# -gt 0 ]]; do
             if [[ "$2" == "cuda" ]]; then
                 CUDA_MODE="on"
                 VULKAN_MODE="off"
+                HIP_MODE="off"
             elif [[ "$2" == "cpu" ]]; then
                 CUDA_MODE="off"
                 VULKAN_MODE="off"
+                HIP_MODE="off"
             elif [[ "$2" == "vulkan" ]]; then
                 CUDA_MODE="off"
                 VULKAN_MODE="on"
+                HIP_MODE="off"
+            elif [[ "$2" == "hip" || "$2" == "rocm" ]]; then
+                CUDA_MODE="off"
+                VULKAN_MODE="off"
+                HIP_MODE="on"
             else
                 echo "Unsupported legacy --backend value: $2" >&2
                 exit 1
@@ -54,6 +63,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --vulkan)
             VULKAN_MODE="$2"
+            shift 2
+            ;;
+        --hip)
+            HIP_MODE="$2"
+            shift 2
+            ;;
+        --gpu-targets)
+            GPU_TARGETS="$2"
             shift 2
             ;;
         --with-tests)
@@ -171,8 +188,78 @@ case "$VULKAN_MODE" in
         ;;
 esac
 
+ENGINE_ENABLE_HIP="OFF"
+HIP_CLANG_C=""
+HIP_CLANG_CXX=""
+case "$HIP_MODE" in
+    on)
+        ENGINE_ENABLE_HIP="ON"
+        # ROCm ships its own clang; hipconfig -l prints the ROCm lib dir's
+        # parent on some installs, so prefer ROCM_PATH/HIP_PATH when set.
+        ROCM_HOME="${ROCM_PATH:-${HIP_PATH:-/opt/rocm}}"
+        HIP_CLANG_C="$ROCM_HOME/bin/clang"
+        HIP_CLANG_CXX="$ROCM_HOME/bin/clang++"
+        if [[ ! -x "$HIP_CLANG_CXX" ]] && command -v hipconfig >/dev/null 2>&1; then
+            HIP_CLANG_C="$(hipconfig -l)/clang"
+            HIP_CLANG_CXX="$(hipconfig -l)/clang++"
+        fi
+        if [[ ! -x "$HIP_CLANG_C" || ! -x "$HIP_CLANG_CXX" ]]; then
+            echo "ROCm clang not found (looked in $ROCM_HOME/bin and via hipconfig). Install ROCm or set ROCM_PATH." >&2
+            exit 1
+        fi
+        if [[ -z "$GPU_TARGETS" ]]; then
+            AMDGPU_ARCH=""
+            if [[ -x "$ROCM_HOME/bin/amdgpu-arch" ]]; then
+                AMDGPU_ARCH="$ROCM_HOME/bin/amdgpu-arch"
+            elif command -v amdgpu-arch >/dev/null 2>&1; then
+                AMDGPU_ARCH="$(command -v amdgpu-arch)"
+            fi
+            if [[ -n "$AMDGPU_ARCH" ]]; then
+                GPU_TARGETS="$("$AMDGPU_ARCH" 2>/dev/null | grep -xE 'gfx[0-9a-f]{3,}' | sort -u | paste -sd ';' -)"
+            fi
+            # Fall back to rocminfo (e.g. amdgpu-arch missing from minimal
+            # ROCm packages, or sandboxed environments where it prints nothing).
+            # Only accept full agent "Name: gfxXXX" lines — a loose grep would
+            # also catch fragments like "gfx11" from ISA description text.
+            if [[ -z "$GPU_TARGETS" ]]; then
+                ROCMINFO=""
+                if [[ -x "$ROCM_HOME/bin/rocminfo" ]]; then
+                    ROCMINFO="$ROCM_HOME/bin/rocminfo"
+                elif command -v rocminfo >/dev/null 2>&1; then
+                    ROCMINFO="$(command -v rocminfo)"
+                fi
+                if [[ -n "$ROCMINFO" ]]; then
+                    GPU_TARGETS="$("$ROCMINFO" 2>/dev/null | grep -E '^[[:space:]]+Name:[[:space:]]+gfx[0-9a-f]{3,}[[:space:]]*$' | grep -oE 'gfx[0-9a-f]{3,}' | sort -u | paste -sd ';' -)"
+                fi
+            fi
+            if [[ -z "$GPU_TARGETS" ]]; then
+                echo "Could not detect GPU targets (tried amdgpu-arch and rocminfo)." >&2
+                echo "If this machine has no visible AMD GPU (VM/container), pass --gpu-targets gfxXXXX explicitly (semicolon-separated for several)." >&2
+                exit 1
+            fi
+        fi
+        GPU_TARGETS="${GPU_TARGETS//,/;}"
+        ;;
+    off)
+        ENGINE_ENABLE_HIP="OFF"
+        ;;
+    *)
+        echo "Unknown --hip mode: $HIP_MODE (expected on or off)" >&2
+        exit 1
+        ;;
+esac
+
 if [[ "$ENGINE_ENABLE_CUDA" == "ON" && "$ENGINE_ENABLE_VULKAN" == "ON" ]]; then
     echo "CUDA and Vulkan backends cannot both be enabled by this script" >&2
+    exit 1
+fi
+
+ENABLED_GPU_BACKENDS=0
+[[ "$ENGINE_ENABLE_CUDA" == "ON" ]] && ENABLED_GPU_BACKENDS=$((ENABLED_GPU_BACKENDS + 1))
+[[ "$ENGINE_ENABLE_VULKAN" == "ON" ]] && ENABLED_GPU_BACKENDS=$((ENABLED_GPU_BACKENDS + 1))
+[[ "$ENGINE_ENABLE_HIP" == "ON" ]] && ENABLED_GPU_BACKENDS=$((ENABLED_GPU_BACKENDS + 1))
+if [[ "$ENABLED_GPU_BACKENDS" -gt 1 ]]; then
+    echo "CUDA, Vulkan, and HIP backends are mutually exclusive in this script" >&2
     exit 1
 fi
 
@@ -181,6 +268,8 @@ if [[ "$ENGINE_ENABLE_CUDA" == "ON" ]]; then
     BACKEND_NAME="cuda"
 elif [[ "$ENGINE_ENABLE_VULKAN" == "ON" ]]; then
     BACKEND_NAME="vulkan"
+elif [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
+    BACKEND_NAME="hip"
 fi
 
 BUILD_TYPE_NAME="$(printf '%s' "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')"
@@ -193,7 +282,7 @@ if [[ -z "$BUILD_DIR" ]]; then
 fi
 
 if [[ -z "$JOBS" ]]; then
-    JOBS="8"
+    JOBS="$(nproc 2>/dev/null || echo 8)"
 fi
 
 RUNNER=()
@@ -216,6 +305,11 @@ echo "Using generator: $GENERATOR"
 echo "Using build dir: $BUILD_DIR"
 echo "Including CUDA backend: $ENGINE_ENABLE_CUDA"
 echo "Including Vulkan backend: $ENGINE_ENABLE_VULKAN"
+echo "Including HIP backend: $ENGINE_ENABLE_HIP"
+if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
+    echo "ROCm clang: $HIP_CLANG_CXX"
+    echo "GPU targets: $GPU_TARGETS"
+fi
 echo "Native CPU optimization: $NATIVE_CPU"
 echo "llamafile SGEMM: $LLAMAFILE"
 echo "Building examples: $WITH_EXAMPLES"
@@ -227,21 +321,38 @@ if [[ -n "$AUDIOCPP_MODELS" ]]; then
     echo "Selected models: $AUDIOCPP_MODELS"
 fi
 
-"${RUNNER[@]}" cmake \
-    -S . \
-    -B "$BUILD_DIR" \
-    -G "$GENERATOR" \
-    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DENGINE_ENABLE_CUDA="$ENGINE_ENABLE_CUDA" \
-    -DENGINE_ENABLE_VULKAN="$ENGINE_ENABLE_VULKAN" \
-    -DENGINE_ENABLE_NATIVE_CPU="$NATIVE_CPU" \
-    -DENGINE_ENABLE_LLAMAFILE="$LLAMAFILE" \
-    -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES" \
-    -DENGINE_BUILD_TESTS="$WITH_TESTS" \
-    -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH" \
-    -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD" \
-    -DAUDIOCPP_MODEL_SET="$AUDIOCPP_MODEL_SET" \
+CMAKE_ARGS=(
+    -S .
+    -B "$BUILD_DIR"
+    -G "$GENERATOR"
+    -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+    -DENGINE_ENABLE_CUDA="$ENGINE_ENABLE_CUDA"
+    -DENGINE_ENABLE_VULKAN="$ENGINE_ENABLE_VULKAN"
+    -DENGINE_ENABLE_HIP="$ENGINE_ENABLE_HIP"
+    -DENGINE_ENABLE_NATIVE_CPU="$NATIVE_CPU"
+    -DENGINE_ENABLE_LLAMAFILE="$LLAMAFILE"
+    -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES"
+    -DENGINE_BUILD_TESTS="$WITH_TESTS"
+    -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
+    -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
+    -DAUDIOCPP_MODEL_SET="$AUDIOCPP_MODEL_SET"
     -DAUDIOCPP_MODELS="$AUDIOCPP_MODELS"
+)
+
+if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
+    CMAKE_ARGS+=(
+        -DCMAKE_C_COMPILER="$HIP_CLANG_C"
+        -DCMAKE_CXX_COMPILER="$HIP_CLANG_CXX"
+        # GPU_BUILD_TARGETS/AMDGPU_TARGETS are sticky cache entries set by
+        # hip-config from GPU_TARGETS; without -U a previous configure's arch
+        # list would win over a new --gpu-targets value.
+        -UGPU_BUILD_TARGETS
+        -UAMDGPU_TARGETS
+        -DGPU_TARGETS="$GPU_TARGETS"
+    )
+fi
+
+"${RUNNER[@]}" cmake "${CMAKE_ARGS[@]}"
 
 BUILD_CMD=("${RUNNER[@]}" cmake --build "$BUILD_DIR" --parallel "$JOBS")
 for target in "${TARGETS[@]}"; do
