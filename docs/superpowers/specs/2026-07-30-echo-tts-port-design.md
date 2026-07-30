@@ -19,7 +19,11 @@ table. The supporting data is already published and reproducible:
 - **Installed and run locally.** `venvs/echo/` with upstream source; both weight sets cached
   (`jordand/echo-tts-base`, `jordand/fish-s1-dac-min`); a dedicated runner
   (`runners/echo_runner.py`) documenting the exact upstream API and its gotchas.
-- **Speed benched** on RTX 3090 CUDA, warm: **1.35× RTFx**, 4 326 ms TTFA, 9 357 MB peak VRAM.
+- **Speed benched** on RTX 3090 CUDA, warm: **1.35× RTFx** (= RTF 0.74), 4 326 ms TTFA, 9 357 MB
+  peak VRAM. **Units warning:** tts-bench reports **RTFx** (higher = faster); audio.cpp's README
+  tabulates **RTF** (wall ÷ audio, lower = faster) alongside a separate "x faster than real time"
+  column. They are inverses. Echo's PyTorch 1.35× RTFx already satisfies the community RTF < 1.0
+  bar before any GGUF work; do not invert these in the PR.
 - **Objectively scored** over the bench prompt set: **16 rows** in `scoring/scores.csv` across
   default and cloning lenses, via seed-tts-eval-style ASR + speaker verification.
 - **Publicly auditioned**: generated wavs published to gh-pages and playable in the Listen lens.
@@ -99,8 +103,9 @@ EchoDiT: 40 Euler steps in 80-D PCA space, latents [1, 640, 80]
 | Attention | joint: self + text KV + speaker KV (+ latent-prefix KV, blockwise only) |
 | MLP | SwiGLU |
 | Conditioning | adaLN on both attention and MLP, driven by timestep |
-| Positional | RoPE, **rotating only half the heads** |
+| Positional | RoPE, theta **10000.0**, complex-valued, **rotating only half the heads** (`model.py:9`) |
 | Norm | RMSNorm, FP32 accumulation |
+| Timestep embedding | sinusoidal, `1000 · exp(−log(10000)·k)` (`model.py:35-40`) |
 
 Text frontend is **byte-level** — no phonemizer, no G2P, no external pronunciation dependency.
 This is a significant scope win and removes the class of dependency problem that sank Kokoro.
@@ -186,12 +191,20 @@ and drop the `long_form` capability claim.
 
 Each milestone has a gate. **No milestone is "done" on report — only on executed evidence.**
 
+**Decomposition note.** This spec deliberately covers the whole arc so the end state is agreed up
+front, but it is too large for one implementation plan. M1 alone (GGUF conversion + a 2.5 B DiT +
+the Fish decode stack, parity-gated) is a full plan on its own. Plan boundaries: **M0 + M1 together**
+in the first plan; **M2**, **M3**, and **M4** each get their own plan written after the preceding
+gate is green. Re-plan rather than extrapolate — M1's parity results will change what M2 should look
+like.
+
 ### M0 — spec + draft PR
 - `model_specs/echo_tts.json`, `"schema_version": 1`, placed in `model_specs/` (not `model_specs_v1/`).
 - `capabilities` **omits `long_form`** until M3 earns it.
 - Draft PR opened, explicitly raising: the 29.72 s window, the blockwise-untested caveat, and the
   CC-BY-NC-SA output-licence constraint.
-- Gate: spec validates against the framework schema; PR open and marked **draft**.
+- Gate: spec passes the framework schema validator (`src/framework/model_spec/schema.cpp:674-680`
+  checks `schema_version`); PR open and marked **draft**.
 
 ### M1 — decode path, parity-gated
 - GGUF conversion script; EchoDiT minus `latent_encoder`; PCA⁻¹; Fish decode path.
@@ -221,7 +234,8 @@ build/run commands, model paths or package ids, generated outputs, parity or pat
 relevant performance or memory notes"*).
 
 1. **Builds clean** on Linux CUDA release; no new warnings in our files.
-2. **Parity**: per-tensor cosine ≥ 0.999 against PyTorch on a fixed seed, for DiT output, PCA⁻¹,
+2. **Parity**: cosine similarity ≥ 0.999 against PyTorch on a fixed seed, computed over each
+   tensor flattened to 1-D, reported alongside max-absolute-error. Stages: DiT output, PCA⁻¹,
    Fish decode, and (M2+) speaker encode. Numbers recorded in the PR.
 3. **Path tests**: the family passes the CLI path-test matrix for safetensors, F16 GGUF, Q8_0 GGUF.
 4. **Long-form**: the shared long-form clone case renders and is auditioned for seam artefacts —
@@ -301,7 +315,6 @@ Each of these would cost days if hit blind.
 
 - `latent_scale` is resolved (1/18) but its *derivation* is unverified; confirm it is applied on both
   the forward and inverse PCA legs consistently.
-- Exact RoPE theta for the Echo trunk — read from source at implementation time, do not assume.
 - Whether `quantizer.post_module` + `upsample` can be skipped in the M2 encode call without drift, as
   §2.4 suggests. Verify numerically before optimising.
 - Whether the maintainer will accept a `long_form` implementation built on an upstream path its own
