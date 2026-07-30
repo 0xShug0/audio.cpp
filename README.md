@@ -22,7 +22,7 @@ Highlights:
 
 - **Parity.** Strong parity tooling against Python reference paths.
 - **Performance.** Performance-focused execution, reusable sessions, and batch-style offline inference. **Optimized for CUDA**.
-- **Portability.** A portable native stack centered on `ggml`, with CLI and server entry points instead of Python-only deployment paths.
+- **Portability.** A portable native stack centered on `ggml`, with CUDA, HIP/ROCm, Vulkan, Metal, and CPU backends behind shared CLI and server entry points instead of Python-only deployment paths.
 - **Pipelines.** Experimental JSON pipeline support for higher-level multi-step workflows.
 - **Audio Utilities.** Built-in denoise, enhancement, resampling, and STFT/ISTFT utilities for real production-style task paths.
 
@@ -141,12 +141,17 @@ The WebUI lives in [webui/](webui/). See [webui/README.md](webui/README.md) for 
 
 Huge thanks to [@kigner](https://github.com/kigner) for the original [audio.cpp-webui](https://github.com/kigner/audio.cpp-webui), and to [@patrickjchen](https://github.com/patrickjchen) for porting and integrating it into audio.cpp.
 
+## Prebuilt Binaries
+
+- **Windows (CUDA / CPU):** official packages on the [Releases page](https://github.com/0xShug0/audio.cpp/releases).
+- **Windows (HIP/ROCm, AMD GPUs):** community-maintained packages with the ROCm runtime bundled — no HIP SDK installation required. Published from [@IIIIIllllIIIIIlllll's fork Releases](https://github.com/IIIIIllllIIIIIlllll/audio.cpp/releases) in two tracks: ROCm 6.4 (full coverage incl. RX 7600 / gfx1102) and ROCm 7.1 (recommended for RDNA4). Version numbers follow the upstream releases; see [docs/build/windows-hip-distribution.md](docs/build/windows-hip-distribution.md) for details.
+
 ## Build
 
 | OS | Requirements |
 |---|---|
-| Linux | GCC 13 or newer, CMake, backend toolchain for CUDA or Vulkan builds |
-| Windows | Visual Studio Build Tools 2022 or newer with C++ desktop workload, MSVC x64 compiler, Windows SDK, CMake, Ninja, MSVC OpenMP components; official NVIDIA CUDA Toolkit for CUDA builds |
+| Linux | GCC 13 or newer, CMake, plus the backend toolchain for the build you want: NVIDIA CUDA Toolkit for CUDA, Vulkan SDK for Vulkan, ROCm for HIP |
+| Windows | Visual Studio Build Tools 2022 or newer with C++ desktop workload, MSVC x64 compiler, Windows SDK, CMake, Ninja, MSVC OpenMP components; official NVIDIA CUDA Toolkit for CUDA builds, AMD HIP SDK for HIP builds |
 | macOS | Xcode or Xcode Command Line Tools with the Metal compiler available through `xcrun` |
 
 ### Homebrew Install
@@ -180,15 +185,16 @@ cmake --build build/debug --target audiocpp_cli -j 8
 
 ### Linux Build
 
-Use the Linux helper script for CPU, CUDA, or Vulkan builds:
+Use the Linux helper script for CPU, CUDA, Vulkan, or HIP builds:
 
 ```bash
 scripts/build_linux.sh --backend cuda --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend vulkan --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --backend hip --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_server
 ```
 
-The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-vulkan-release`, and `build/linux-cpu-release`.
+The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-vulkan-release`, `build/linux-hip-release`, and `build/linux-cpu-release`.
 
 Composite examples:
 
@@ -275,7 +281,14 @@ build/macos-metal-release/bin/audiocpp_cli
 
 On Linux and Windows, HIP builds compile ggml's CUDA backend sources as HIP code for AMD GPUs. `ENGINE_ENABLE_HIP` and `ENGINE_ENABLE_CUDA` are mutually exclusive — configure with exactly one of them.
 
-Linux:
+Linux (the helper script auto-detects ROCm via `ROCM_PATH`/`HIP_PATH`/hipconfig and local GPU targets via `amdgpu-arch`, falling back to `rocminfo`; pass `--gpu-targets` to build for other architectures, or when no AMD GPU is visible, e.g. in a VM or container):
+
+```bash
+scripts/build_linux.sh --backend hip --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --backend hip --gpu-targets "gfx1100;gfx1103" --target audiocpp_cli
+```
+
+Direct CMake:
 
 ```bash
 cmake -S . -B build_hip \
@@ -479,7 +492,7 @@ JSON
 
 Set `"lazy_load": true` to register configured model ids at startup while loading each model only on first use. Use per-model `"lazy": true` or `"lazy": false` to override that default.
 
-Set top-level `"backend"` to `"cuda"`, `"cpu"`, `"vulkan"`, or `"metal"`. CUDA is the optimized path for audio.cpp; CPU, Vulkan, and Metal are intended for portability and testing when the binary is built with that backend, but performance and model coverage may be lower.
+Set top-level `"backend"` to `"cuda"`, `"cpu"`, `"vulkan"`, `"metal"`, or `"hip"`. CUDA is the optimized path for audio.cpp; CPU, Vulkan, Metal, and HIP are intended for portability and testing when the binary is built with that backend, but performance and model coverage may be lower.
 
 > [!WARNING]
 > Lazy loading does not unload models after a request. Once a model is first used, the server keeps that model and session in memory for reuse until the server exits.
