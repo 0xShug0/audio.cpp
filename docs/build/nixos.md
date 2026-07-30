@@ -3,89 +3,69 @@
 ## Prerequisites
 
 - The [Nix package manager](https://nixos.org/download) must be installed.
-- [Flakes](https://nixos.wiki/wiki/Flakes) must be enabled in your Nix configuration.
+- [Flakes](https://nixos.wiki/wiki/Flakes) must be enabled.
 
 ## Packages
 
-The `flake.nix` provides multiple platform and hardware-specific builds. 
-The following backends are available:
-- **`vulkan`**: Hardware-accelerated build using Vulkan. (Default on Linux)
-- **`cuda`**: Hardware-accelerated build using NVIDIA CUDA.
-- **`metal`**: Hardware-accelerated build using Apple Metal. (Default on macOS)
-- **`cpu`**: Portable CPU-only build.
+The flake provides backend-specific builds:
 
-All packages include the main tools: ***audiocpp_cli***, ***audiocpp_server***, ***audiocpp_gguf***, and the Python-based ***audiocpp_model_manager***.
+| Package        | Backend                  | Platform |
+| -------------- | ------------------------ | -------- |
+| `cpu`          | CPU-only                 | All      |
+| `vulkan`       | Vulkan                   | All      |
+| `cuda`         | NVIDIA CUDA              | Linux    |
+| `rocm`         | AMD ROCm                 | Linux    |
+| `rocm-gfx1151` | AMD ROCm (single target) | Linux    |
+| `metal`        | Apple Metal              | macOS    |
 
-## Build the package
+All packages include: **audiocpp_cli**, **audiocpp_server**, **audiocpp_gguf**, and **audiocpp_model_manager**.
 
-### Default (Auto-detected OS)
-
-Build the default package for your operating system:
-
-```bash
-nix build .
-```
-
-### Specific Backends
-
-Build explicitly for a desired backend:
+## Build
 
 ```bash
+nix build .#cpu
 nix build .#vulkan
 nix build .#cuda
-nix build .#metal
-nix build .#cpu
+nix build .#rocm
+nix build .#rocm-gfx1151    # Single GPU target (faster)
 ```
 
-## Usage
-
-After building, the compiled binaries will be available in the `result/bin/` directory.
-
-### Running the CLI
-
-You can execute the CLI directly via `nix run` (which uses `audiocpp_cli` as the main program):
+## Run
 
 ```bash
-nix run .#vulkan -- <arguments...>
+nix run .#rocm -- --backend hip --task tts --family supertonic --model ./model --text "hello"
+./result/bin/audiocpp_cli --backend hip --device 0
 ```
 
-### Running the Server
+## Download Models
 
-To run the server, use `nix shell` or execute from the build result:
-
-```bash
-nix shell .#vulkan -c audiocpp_server <arguments...>
-# or
-./result/bin/audiocpp_server <arguments...>
-```
-
-### Downloading Models (Model Manager)
-
-The flake seamlessly bundles the `model_manager.py` Python script along with all its required dependencies (PyTorch, Safetensors, etc.) as `audiocpp_model_manager`.
+The `python-scripts` package includes all dependencies for `model_manager.py`:
 
 ```bash
-nix shell .#vulkan -c audiocpp_model_manager install supertonic_3
+nix shell .#python-scripts -c python3 tools/model_manager.py install supertonic_3
 ```
 
 ## Development Shell
 
-If you want to work on `audio.cpp` and need a development environment with `cmake`, `ninja`, and all the necessary C++ and Python dependencies pre-configured, simply run:
-
 ```bash
-nix develop
+nix develop              # Default backend
+nix develop .#cuda       # CUDA dev environment
 ```
 
-## Using in a NixOS Configuration
+## Custom GPU Target
 
-You can easily include `audio.cpp` as a flake input in your own NixOS configuration or other Nix projects.
+Override `hipGpuTargets` for a specific GPU:
 
-In your `flake.nix`, add it to your `inputs`, making sure to use `follows` to avoid duplicating `nixpkgs` versions:
+```bash
+nix build --impure --expr '(builtins.getFlake (toString ./.)).outputs.packages.x86_64-linux.rocm.override { rocmGpuTargets = ["gfx1151"]; }'
+```
+
+## NixOS Configuration
 
 ```nix
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    
     audiocpp.url = "github:0xShug0/audio.cpp";
     audiocpp.inputs.nixpkgs.follows = "nixpkgs";
   };
@@ -94,14 +74,19 @@ In your `flake.nix`, add it to your `inputs`, making sure to use `follows` to av
     nixosConfigurations.my-machine = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
-        ({ pkgs, ... }: {
+        ({ ... }: {
           environment.systemPackages = [
-            # Add the default package (auto-detects Metal/Vulkan based on OS)
             audiocpp.packages.x86_64-linux.default
-            
+
             # Or explicitly select a backend flavor:
             # audiocpp.packages.x86_64-linux.vulkan
             # audiocpp.packages.x86_64-linux.cuda
+            # audiocpp.packages.x86_64-linux.rocm
+
+            # Custom GPU target:
+            # audiocpp.packages.x86_64-linux.rocm.override {
+            #   rocmGpuTargets = [ "gfx1151" ];
+            # }
           ];
         })
       ];
