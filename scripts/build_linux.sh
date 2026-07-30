@@ -13,6 +13,7 @@ WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
+DEPLOYMENT_BUILD_SET="OFF"
 AUDIOCPP_MODEL_SET="full"
 AUDIOCPP_MODELS=""
 NATIVE_CPU="ON"
@@ -87,6 +88,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         --deployment-build)
             AUDIOCPP_DEPLOYMENT_BUILD="ON"
+            DEPLOYMENT_BUILD_SET="ON"
+            shift
+            ;;
+        --no-deployment-build)
+            AUDIOCPP_DEPLOYMENT_BUILD="OFF"
+            DEPLOYMENT_BUILD_SET="ON"
             shift
             ;;
         --model-set)
@@ -248,6 +255,13 @@ case "$HIP_MODE" in
         exit 1
         ;;
 esac
+
+# HIP builds default to deployment builds so the produced binaries embed
+# package specs and run standalone outside the repo checkout. Other backends
+# keep the historical OFF default; --no-deployment-build opts out.
+if [[ "$ENGINE_ENABLE_HIP" == "ON" && "$DEPLOYMENT_BUILD_SET" == "OFF" ]]; then
+    AUDIOCPP_DEPLOYMENT_BUILD="ON"
+fi
 
 if [[ "$ENGINE_ENABLE_CUDA" == "ON" && "$ENGINE_ENABLE_VULKAN" == "ON" ]]; then
     echo "CUDA and Vulkan backends cannot both be enabled by this script" >&2
