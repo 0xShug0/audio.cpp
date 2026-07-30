@@ -60,6 +60,27 @@ Override `hipGpuTargets` for a specific GPU:
 nix build --impure --expr '(builtins.getFlake (toString ./.)).outputs.packages.x86_64-linux.rocm.override { rocmGpuTargets = ["gfx1151"]; }'
 ```
 
+## Model Selection
+
+By default, Nix builds include **all** model backends. Pass a list of model
+target names via `models` to build only those — this automatically maps to
+the CMake `AUDIOCPP_MODEL_SET=custom` option.
+This works with any backend flavor. Refer to the
+[CMake model targets](https://github.com/0xShug0/audio.cpp/blob/main/CMakeLists.txt)
+(search for `audiocpp_add_model`) for the full, up-to-date list.
+
+Build with a custom model list from the command line:
+
+```bash
+nix build --impure --expr '(builtins.getFlake (toString ./.)).outputs.packages.x86_64-linux.cpu.override { models = [ "chatterbox" "roformer" ]; }'
+```
+
+Combine with a backend (e.g. CUDA + custom models):
+
+```bash
+nix build --impure --expr '(builtins.getFlake (toString ./.)).outputs.packages.x86_64-linux.cuda.override { models = [ "chatterbox" ]; }'
+```
+
 ## NixOS Configuration
 
 ```nix
@@ -86,6 +107,11 @@ nix build --impure --expr '(builtins.getFlake (toString ./.)).outputs.packages.x
             # Custom GPU target:
             # audiocpp.packages.x86_64-linux.rocm.override {
             #   rocmGpuTargets = [ "gfx1151" ];
+            # }
+
+            # Custom model list (only build specific models):
+            # audiocpp.packages.x86_64-linux.cpu.override {
+            #   models = [ "roformer" "miotts" ];
             # }
           ];
         })

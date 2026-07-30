@@ -210,6 +210,7 @@ endfunction()
 function(audiocpp_add_model target_name)
     cmake_parse_arguments(ARG "" "" "SOURCES;INCLUDES;LOADERS;ALIASES;DEPENDS" ${ARGN})
     add_library(engine_model_${target_name} OBJECT ${ARG_SOURCES})
+    set_target_properties(engine_model_${target_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
     audiocpp_configure_runtime_object(engine_model_${target_name})
     set(AUDIOCPP_MODEL_TARGETS ${AUDIOCPP_MODEL_TARGETS} ${target_name} PARENT_SCOPE)
     set(AUDIOCPP_MODEL_${target_name}_INCLUDES "${ARG_INCLUDES}" PARENT_SCOPE)
@@ -352,6 +353,7 @@ add_library(engine_model_silero_vad OBJECT
     src/models/silero_vad/runtime.cpp
     src/models/silero_vad/session.cpp
 )
+set_target_properties(engine_model_silero_vad PROPERTIES EXCLUDE_FROM_ALL TRUE)
 audiocpp_configure_runtime_object(engine_model_silero_vad)
 
 add_library(engine_model_marblenet_vad OBJECT
@@ -359,6 +361,7 @@ add_library(engine_model_marblenet_vad OBJECT
     src/models/marblenet_vad/runtime.cpp
     src/models/marblenet_vad/session.cpp
 )
+set_target_properties(engine_model_marblenet_vad PROPERTIES EXCLUDE_FROM_ALL TRUE)
 audiocpp_configure_runtime_object(engine_model_marblenet_vad)
 
 audiocpp_add_model(roformer
@@ -1290,13 +1293,16 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(torch_bin_parity PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
-add_executable(vibevoice_finetune_overlay_check
-    tests/vibevoice/finetune_overlay_check.cpp
-)
-
-target_link_libraries(vibevoice_finetune_overlay_check PRIVATE engine_runtime ggml)
-if (ENGINE_ENABLE_OPENMP)
-    target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
+# Only build this parity check when the vibevoice model is linked, since it
+# directly references model-internal symbols (load_vibevoice_assets etc.).
+if (vibevoice IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_executable(vibevoice_finetune_overlay_check
+        tests/vibevoice/finetune_overlay_check.cpp
+    )
+    target_link_libraries(vibevoice_finetune_overlay_check PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
+    endif()
 endif()
 
 if (ENGINE_BUILD_TESTS)

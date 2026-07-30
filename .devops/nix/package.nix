@@ -11,7 +11,6 @@
   vulkan-tools,
   glslang,
   shaderc,
-  darwin,
   python-scripts,
   config,
   version,
@@ -22,6 +21,9 @@
   metalSupport ? stdenv.isDarwin,
   rocmSupport ? config.rocmSupport or false,
   rocmGpuTargets ? (lib.optionals rocmSupport rocmPackages.clr.gpuTargets),
+  # Model selection: if non-empty, only these model targets are built.
+  # See CMakeLists.txt AUDIOCPP_MODEL_SET / AUDIOCPP_MODELS.
+  models ? [ ],
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -60,7 +62,17 @@ stdenv.mkDerivation (finalAttrs: {
     "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
     "-DENGINE_ENABLE_NATIVE_CPU=ON"
     "-DENGINE_ENABLE_LLAMAFILE=ON"
-  ] ++ lib.optional stdenv.isDarwin "-DENGINE_ENABLE_OPENMP=OFF"
+  ]
+  ++ (
+    if models != [ ] then
+      [
+        "-DAUDIOCPP_MODEL_SET=custom"
+        "-DAUDIOCPP_MODELS=${lib.concatStringsSep "," models}"
+      ]
+    else
+      [ "-DAUDIOCPP_MODEL_SET=full" ]
+  )
+  ++ lib.optional stdenv.isDarwin "-DENGINE_ENABLE_OPENMP=OFF"
   ++ lib.optional vulkanSupport "-DENGINE_ENABLE_VULKAN=ON"
   ++ lib.optional cudaSupport "-DENGINE_ENABLE_CUDA=ON"
   ++ lib.optional metalSupport "-DENGINE_ENABLE_METAL=ON"

@@ -51,8 +51,7 @@
         }
       );
       pythonScripts = forAllSystems (
-        system:
-        pkgs.${system}.callPackage .devops/nix/python-scripts.nix { }
+        system: pkgs.${system}.callPackage .devops/nix/python-scripts.nix { }
       );
     in
     {
