@@ -19,6 +19,16 @@ struct BackendConfig {
     int threads = 1;
 };
 
+struct BackendDeviceInfo {
+    std::string backend;    // ggml registry name, e.g. "CUDA", "ROCm", "Vulkan", "CPU"
+    int index = 0;          // device index within the owning registry (the value --device takes)
+    std::string name;       // human-readable device name
+    std::string type;       // CPU, GPU, IGPU, ACCEL, or META
+};
+
+// Enumerates every device of every loaded ggml backend registry, in registry order.
+std::vector<BackendDeviceInfo> list_backend_devices();
+
 struct BackendMemorySnapshot {
     bool available = false;
     int64_t total_bytes = 0;

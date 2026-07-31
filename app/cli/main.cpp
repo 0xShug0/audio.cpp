@@ -56,6 +56,7 @@ void print_task_list_help() {
         << "    --backend cpu|cuda|hip|rocm|vulkan|metal|best  (rocm is an alias for hip)\n"
         << "    --mode offline|streaming  default offline\n"
         << "    --device <n>\n"
+        << "    --list-devices  List available backend devices and exit\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
         << "    --model-spec-override <json-or-directory>  Override package-spec resolution\n"
@@ -622,6 +623,19 @@ int audiocpp_cli_main(int argc, char ** argv) {
             for (const auto & id : ids) {
                 std::cout << id << "\n";
             }
+            return 0;
+        }
+        if (has_arg(argc, argv, "--list-devices")) {
+            const auto devices = engine::core::list_backend_devices();
+            std::cout << "available_devices=" << devices.size() << "\n";
+            for (const auto & device : devices) {
+                std::cout << device.backend << ":" << device.index;
+                if (!device.name.empty()) {
+                    std::cout << " \"" << device.name << "\"";
+                }
+                std::cout << " [" << device.type << "]\n";
+            }
+            std::cout << "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
             return 0;
         }
         if (has_arg(argc, argv, "--list-loaders")) {

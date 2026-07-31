@@ -119,30 +119,15 @@ const char * backend_dev_type_label(enum ggml_backend_dev_type type) {
 
 std::string describe_available_devices() {
     std::string description;
-    for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
-        ggml_backend_reg_t reg = ggml_backend_reg_get(i);
-        if (reg == nullptr) {
-            continue;
+    for (const auto & device : list_backend_devices()) {
+        if (!description.empty()) {
+            description += ", ";
         }
-        const char * reg_name = ggml_backend_reg_name(reg);
-        for (size_t j = 0; j < ggml_backend_reg_dev_count(reg); ++j) {
-            ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, j);
-            if (dev == nullptr) {
-                continue;
-            }
-            if (!description.empty()) {
-                description += ", ";
-            }
-            description += (reg_name != nullptr ? reg_name : "<unnamed>");
-            description += ":" + std::to_string(j);
-            const char * dev_name = ggml_backend_dev_name(dev);
-            if (dev_name != nullptr) {
-                description += " \"" + std::string(dev_name) + "\"";
-            }
-            description += " [";
-            description += backend_dev_type_label(ggml_backend_dev_type(dev));
-            description += "]";
+        description += device.backend + ":" + std::to_string(device.index);
+        if (!device.name.empty()) {
+            description += " \"" + device.name + "\"";
         }
+        description += " [" + device.type + "]";
     }
     return description.empty() ? "none" : description;
 }
@@ -188,6 +173,40 @@ bool backend_graph_validation_enabled() {
 }
 #endif
 
+}  // namespace
+
+std::vector<BackendDeviceInfo> list_backend_devices() {
+    ensure_backends_loaded();
+    std::vector<BackendDeviceInfo> devices;
+    for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
+        ggml_backend_reg_t reg = ggml_backend_reg_get(i);
+        if (reg == nullptr) {
+            continue;
+        }
+        const char * reg_name = ggml_backend_reg_name(reg);
+        for (size_t j = 0; j < ggml_backend_reg_dev_count(reg); ++j) {
+            ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, j);
+            if (dev == nullptr) {
+                continue;
+            }
+            BackendDeviceInfo info;
+            info.backend = reg_name != nullptr ? reg_name : "<unnamed>";
+            info.index = static_cast<int>(j);
+            // Prefer the description: ggml's device name is a generic handle
+            // ("CUDA0", "ROCm0"), while the description carries the hardware
+            // name ("NVIDIA GeForce RTX 2080 Ti") that tells identical cards apart.
+            const char * dev_description = ggml_backend_dev_description(dev);
+            const char * dev_name = ggml_backend_dev_name(dev);
+            if (dev_description != nullptr && dev_description[0] != '\0') {
+                info.name = dev_description;
+            } else if (dev_name != nullptr) {
+                info.name = dev_name;
+            }
+            info.type = backend_dev_type_label(ggml_backend_dev_type(dev));
+            devices.push_back(std::move(info));
+        }
+    }
+    return devices;
 }
 
 ggml_backend_t init_backend(const BackendConfig & config) {
