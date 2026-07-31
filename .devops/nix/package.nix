@@ -96,11 +96,11 @@ stdenv.mkDerivation (finalAttrs: {
     # Copy the built C++ executables directly from the bin directory
     cp bin/audiocpp_cli bin/audiocpp_server bin/audiocpp_gguf $out/bin/
 
-    # Install the python model manager script
-    cp $src/tools/model_manager.py $out/bin/audiocpp_model_manager
-    chmod +x $out/bin/audiocpp_model_manager
+    # Install the supported spec-backed model manager and the catalog it reads
+    # relative to its installed location.
+    install -Dm755 $src/tools/model_manager_v2.py $out/bin/audiocpp_model_manager
+    cp -R $src/model_specs $out/model_specs
 
-    # Patch the shebang to use our python environment with torch/safetensors/pyyaml
     patchShebangs $out/bin/audiocpp_model_manager
 
     runHook postInstall
