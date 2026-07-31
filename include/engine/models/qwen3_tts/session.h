@@ -18,6 +18,10 @@
 
 namespace engine::models::qwen3_tts {
 
+Qwen3TTSGenerationOptions qwen3_tts_generation_options_from_request(
+    const runtime::TaskRequest & request,
+    const Qwen3TTSConfig & config);
+
 class Qwen3TTSSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession {

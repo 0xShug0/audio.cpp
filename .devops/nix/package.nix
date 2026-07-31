@@ -21,10 +21,13 @@
   metalSupport ? stdenv.isDarwin,
   rocmSupport ? config.rocmSupport or false,
   rocmGpuTargets ? (lib.optionals rocmSupport rocmPackages.clr.gpuTargets),
+  strixHaloOptimizations ? false,
   # Model selection: if non-empty, only these model targets are built.
   # See CMakeLists.txt AUDIOCPP_MODEL_SET / AUDIOCPP_MODELS.
   models ? [ ],
 }:
+
+assert !strixHaloOptimizations || rocmSupport;
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "audio.cpp";
@@ -78,7 +81,8 @@ stdenv.mkDerivation (finalAttrs: {
   ++ lib.optional metalSupport "-DENGINE_ENABLE_METAL=ON"
   ++ lib.optional rocmSupport "-DENGINE_ENABLE_HIP=ON"
   ++ lib.optional rocmSupport "-DCMAKE_HIP_COMPILER=${rocmPackages.llvm.clang}/bin/clang"
-  ++ lib.optional rocmSupport "-DGPU_TARGETS=${lib.concatStringsSep ";" rocmGpuTargets}";
+  ++ lib.optional rocmSupport "-DGPU_TARGETS=${lib.concatStringsSep ";" rocmGpuTargets}"
+  ++ lib.optional strixHaloOptimizations "-DENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=ON";
 
   env = lib.optionalAttrs rocmSupport {
     ROCM_PATH = "${rocmPackages.clr}";

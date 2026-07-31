@@ -77,6 +77,7 @@
           rocm-gfx1151 = base.override {
             rocmSupport = true;
             rocmGpuTargets = [ "gfx1151" ];
+            strixHaloOptimizations = true;
           };
         }
         // nixpkgs.lib.optionalAttrs pkgs.${system}.stdenv.isDarwin {
@@ -94,6 +95,16 @@
         // nixpkgs.lib.optionalAttrs pkgs.${system}.stdenv.isLinux {
           cuda = pkgsCuda.${system}.mkShell {
             inputsFrom = [ self.packages.${system}.cuda ];
+          };
+        }
+        # ROCm's Nix toolchain is currently supported on x86_64 Linux only.
+        # Keep the shell off aarch64 rather than exposing an unevaluable output.
+        // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          rocm = pkgs.${system}.mkShell {
+            inputsFrom = [ self.packages.${system}.rocm ];
+          };
+          rocm-gfx1151 = pkgs.${system}.mkShell {
+            inputsFrom = [ self.packages.${system}.rocm-gfx1151 ];
           };
         }
       );

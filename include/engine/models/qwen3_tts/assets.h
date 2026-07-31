@@ -88,6 +88,7 @@ struct Qwen3TTSAssets {
     std::shared_ptr<const assets::TensorSource> speech_tokenizer_weights;
 };
 
+void validate_qwen3_tts_config(const Qwen3TTSConfig & config);
 std::shared_ptr<const Qwen3TTSAssets> load_qwen3_tts_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::qwen3_tts

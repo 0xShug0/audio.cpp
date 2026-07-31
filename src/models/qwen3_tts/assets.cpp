@@ -3,6 +3,7 @@
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -23,6 +24,25 @@ Qwen3TTSVariant parse_variant(const std::string & value) {
     throw std::runtime_error("Qwen3 TTS unsupported tts_model_type: " + value);
 }
 
+int64_t parse_head_dim(
+    const json::Value & value,
+    int64_t hidden_size,
+    int64_t attention_heads,
+    const char * component) {
+    if (const auto * head_dim = value.find("head_dim")) {
+        return head_dim->as_i64();
+    }
+    if (hidden_size <= 0 || attention_heads <= 0) {
+        throw std::runtime_error(std::string("Qwen3 TTS ") + component +
+            " hidden_size and num_attention_heads must be positive");
+    }
+    if (hidden_size % attention_heads != 0) {
+        throw std::runtime_error(std::string("Qwen3 TTS ") + component +
+            " hidden_size must be divisible by num_attention_heads when head_dim is omitted");
+    }
+    return hidden_size / attention_heads;
+}
+
 Qwen3TTSCodePredictorConfig parse_code_predictor_config(const json::Value & value) {
     Qwen3TTSCodePredictorConfig config;
     config.hidden_size = json::require_i64(value, "hidden_size");
@@ -30,7 +50,11 @@ Qwen3TTSCodePredictorConfig parse_code_predictor_config(const json::Value & valu
     config.num_hidden_layers = json::require_i64(value, "num_hidden_layers");
     config.num_attention_heads = json::require_i64(value, "num_attention_heads");
     config.num_key_value_heads = json::require_i64(value, "num_key_value_heads");
-    config.head_dim = json::optional_i64(value, "head_dim", config.hidden_size / config.num_attention_heads);
+    config.head_dim = parse_head_dim(
+        value,
+        config.hidden_size,
+        config.num_attention_heads,
+        "code predictor");
     config.vocab_size = json::require_i64(value, "vocab_size");
     config.rms_norm_eps = json::optional_f32(value, "rms_norm_eps", config.rms_norm_eps);
     config.rope_theta = json::optional_f32(value, "rope_theta", config.rope_theta);
@@ -47,7 +71,11 @@ Qwen3TTSTalkerConfig parse_talker_config(const json::Value & value) {
     config.num_hidden_layers = json::require_i64(value, "num_hidden_layers");
     config.num_attention_heads = json::require_i64(value, "num_attention_heads");
     config.num_key_value_heads = json::require_i64(value, "num_key_value_heads");
-    config.head_dim = json::optional_i64(value, "head_dim", config.hidden_size / config.num_attention_heads);
+    config.head_dim = parse_head_dim(
+        value,
+        config.hidden_size,
+        config.num_attention_heads,
+        "talker");
     config.num_code_groups = json::require_i64(value, "num_code_groups");
     config.vocab_size = json::require_i64(value, "vocab_size");
     config.codec_bos_id = json::require_i64(value, "codec_bos_id");
@@ -134,22 +162,95 @@ Qwen3TTSConfig parse_config(const assets::ResourceBundle & resources) {
     return config;
 }
 
-void validate_config(const Qwen3TTSConfig & config) {
+void validate_transformer_shape(
+    int64_t hidden_size,
+    int64_t intermediate_size,
+    int64_t layers,
+    int64_t attention_heads,
+    int64_t key_value_heads,
+    int64_t head_dim,
+    const char * component) {
+    if (hidden_size <= 0 || intermediate_size <= 0 || layers <= 0 ||
+        attention_heads <= 0 || key_value_heads <= 0 || head_dim <= 0) {
+        throw std::runtime_error(std::string("Qwen3 TTS ") + component +
+            " transformer dimensions must be positive");
+    }
+    if (attention_heads % key_value_heads != 0) {
+        throw std::runtime_error(std::string("Qwen3 TTS ") + component +
+            " num_attention_heads must be divisible by num_key_value_heads");
+    }
+}
+
+void validate_config_impl(const Qwen3TTSConfig & config) {
     if (config.tokenizer_type != "qwen3_tts_tokenizer_12hz") {
         throw std::runtime_error("Qwen3 TTS currently supports qwen3_tts_tokenizer_12hz");
     }
-    if (config.variant == Qwen3TTSVariant::Base && !config.has_speaker_encoder) {
-        throw std::runtime_error("Qwen3 base TTS model must provide speaker_encoder_config for voice clone");
+    if (config.max_new_tokens <= 0) {
+        throw std::runtime_error("Qwen3 TTS max_new_tokens must be positive");
     }
-    if (config.variant == Qwen3TTSVariant::CustomVoice && config.talker.speaker_id.empty()) {
-        throw std::runtime_error("Qwen3 custom voice model must provide speaker ids");
+    validate_transformer_shape(
+        config.talker.hidden_size,
+        config.talker.intermediate_size,
+        config.talker.num_hidden_layers,
+        config.talker.num_attention_heads,
+        config.talker.num_key_value_heads,
+        config.talker.head_dim,
+        "talker");
+    if (config.talker.max_position_embeddings <= 0 || config.talker.text_hidden_size <= 0 ||
+        config.talker.text_vocab_size <= 0 || config.talker.num_code_groups <= 1 ||
+        config.talker.vocab_size <= 0) {
+        throw std::runtime_error("Qwen3 TTS talker sizes must be positive and include multiple code groups");
+    }
+    if (!std::isfinite(config.talker.rms_norm_eps) || config.talker.rms_norm_eps <= 0.0F ||
+        !std::isfinite(config.talker.rope_theta) || config.talker.rope_theta <= 0.0F) {
+        throw std::runtime_error("Qwen3 TTS talker norm and RoPE parameters must be finite and positive");
+    }
+    validate_transformer_shape(
+        config.code_predictor.hidden_size,
+        config.code_predictor.intermediate_size,
+        config.code_predictor.num_hidden_layers,
+        config.code_predictor.num_attention_heads,
+        config.code_predictor.num_key_value_heads,
+        config.code_predictor.head_dim,
+        "code predictor");
+    if (config.code_predictor.vocab_size <= 0 ||
+        !std::isfinite(config.code_predictor.rms_norm_eps) || config.code_predictor.rms_norm_eps <= 0.0F ||
+        !std::isfinite(config.code_predictor.rope_theta) || config.code_predictor.rope_theta <= 0.0F) {
+        throw std::runtime_error("Qwen3 TTS code predictor vocabulary, norm, and RoPE parameters must be positive");
     }
     if (config.speech_tokenizer.model_type != "qwen3_tts_tokenizer_12hz") {
         throw std::runtime_error("Qwen3 TTS speech tokenizer must be qwen3_tts_tokenizer_12hz");
     }
+    if (config.speech_tokenizer.input_sample_rate <= 0 ||
+        config.speech_tokenizer.output_sample_rate <= 0 ||
+        config.speech_tokenizer.num_quantizers <= 0 ||
+        config.speech_tokenizer.codebook_size <= 0 ||
+        config.speech_tokenizer.semantic_codebook_size <= 0) {
+        throw std::runtime_error("Qwen3 TTS speech tokenizer sizes and sample rates must be positive");
+    }
+    if (config.talker.num_code_groups != config.speech_tokenizer.num_quantizers) {
+        throw std::runtime_error("Qwen3 TTS talker code groups must match speech tokenizer quantizers");
+    }
+    if (config.variant == Qwen3TTSVariant::Base && !config.has_speaker_encoder) {
+        throw std::runtime_error("Qwen3 base TTS model must provide speaker_encoder_config for voice clone");
+    }
+    if (config.has_speaker_encoder &&
+        (config.speaker_encoder.embedding_dim <= 0 || config.speaker_encoder.sample_rate <= 0)) {
+        throw std::runtime_error("Qwen3 TTS speaker encoder dimensions and sample rate must be positive");
+    }
+    if (config.has_speaker_encoder && config.speaker_encoder.embedding_dim != config.talker.hidden_size) {
+        throw std::runtime_error("Qwen3 TTS speaker encoder embedding_dim must match talker hidden_size");
+    }
+    if (config.variant == Qwen3TTSVariant::CustomVoice && config.talker.speaker_id.empty()) {
+        throw std::runtime_error("Qwen3 custom voice model must provide speaker ids");
+    }
 }
 
 }  // namespace
+
+void validate_qwen3_tts_config(const Qwen3TTSConfig & config) {
+    validate_config_impl(config);
+}
 
 std::shared_ptr<const Qwen3TTSAssets> load_qwen3_tts_assets(const std::filesystem::path & model_path) {
     auto resources = engine::model_spec::load_resource_bundle(
@@ -157,7 +258,7 @@ std::shared_ptr<const Qwen3TTSAssets> load_qwen3_tts_assets(const std::filesyste
         engine::model_spec::default_spec_path("qwen3_tts"));
     auto assets = std::make_shared<Qwen3TTSAssets>();
     assets->config = parse_config(resources);
-    validate_config(assets->config);
+    validate_qwen3_tts_config(assets->config);
     assets->model_weights = resources.open_tensor_source("model_weights");
     assets->speech_tokenizer_weights = resources.open_tensor_source("speech_tokenizer_weights");
     assets->resources = std::move(resources);
