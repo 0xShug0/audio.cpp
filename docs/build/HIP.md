@@ -325,11 +325,12 @@ The following locations check `BackendType::Cuda` specifically and will not appl
 | `src/framework/modules/optimizations/fast_projection_modules.cpp` | 62 | CUDA projection acceleration |
 | `src/models/miocodec/audio_pipeline.cpp` | 294 | CUDA audio pipeline |
 | `src/models/index_tts2/gpt.cpp` | 83 | CUDA-required GPT module |
-| `src/models/vibevoice/session.cpp` | 164 | CUDA-specific max seconds |
 | `src/models/vibevoice_asr/session.cpp` | 543, 545 | CUDA-specific weight storage |
 | `src/models/vibevoice_asr/speech_encoder.cpp` | 54 | CUDA-specific speech encoder |
 
 **To enable:** Change `== BackendType::Cuda` to `== BackendType::Cuda || == BackendType::Hip` on a per-file basis after verifying each optimization works correctly on AMD hardware.
+
+**Enabled for HIP:** VibeVoice TTS (`src/models/vibevoice/session.cpp` -- backend whitelist and the 30 s voice-prompt cap) and the conv-transpose1d col2im fast path (`src/framework/modules/conv_modules.cpp`) are enabled for HIP. Validated on gfx1151 (ROCm 7.14, Linux): prompt-side fingerprints (text encoding, acoustic encoder, prompt embeddings, prefill logits/top-5) match CPU/CUDA within ~1e-3 relative float noise, `test-backend-ops` passes 11953/11953 on ROCm0, and the remaining end-to-end divergence vs CPU is the same chaotic argmax amplification that CUDA exhibits vs CPU.
 
 ### Switch statements missing `Hip` case (compiler warnings)
 

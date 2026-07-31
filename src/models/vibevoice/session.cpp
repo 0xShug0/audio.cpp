@@ -46,9 +46,10 @@ void validate_weight_storage(engine::assets::TensorStorageType storage_type, con
 const runtime::SessionOptions & require_supported_backend_options(const runtime::SessionOptions & options) {
     if (options.backend.type != engine::core::BackendType::Cpu &&
         options.backend.type != engine::core::BackendType::Cuda &&
+        options.backend.type != engine::core::BackendType::Hip &&
         options.backend.type != engine::core::BackendType::Vulkan &&
         options.backend.type != engine::core::BackendType::Metal) {
-        throw std::runtime_error("VibeVoice session supports only CPU, CUDA, Vulkan, and Metal backends");
+        throw std::runtime_error("VibeVoice session supports only CPU, CUDA, HIP, Vulkan, and Metal backends");
     }
     for (const auto & [key, value] : options.options) {
         if (key == "vibevoice.weight_type" ||
@@ -161,7 +162,7 @@ runtime::AudioBuffer cap_voice_sample_duration(
     runtime::AudioBuffer audio,
     core::BackendType backend_type,
     const std::string & path) {
-    const int64_t max_seconds = backend_type == core::BackendType::Cuda
+    const int64_t max_seconds = (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip)
         ? kCudaVoicePromptMaxSeconds
         : kDefaultVoicePromptMaxSeconds;
     const int64_t max_frames = static_cast<int64_t>(audio.sample_rate) * max_seconds;
