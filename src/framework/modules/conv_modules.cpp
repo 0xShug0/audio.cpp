@@ -234,15 +234,24 @@ core::TensorValue build_conv_transpose1d_cuda_col2im_path(
         throw std::runtime_error("ConvTranspose1dModule CUDA col2im path was requested for an ineligible config");
     }
     const auto input_contiguous = core::ensure_backend_addressable_layout(ctx, input);
-    auto weight_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weights.weight);
-    if (weight_contiguous.type != GGML_TYPE_F32) {
-        weight_contiguous = core::wrap_tensor(ggml_cast(ctx.ggml, weight_contiguous.tensor, GGML_TYPE_F32), weight_contiguous.shape, GGML_TYPE_F32);
+    ggml_tensor * weight_perm = nullptr;
+    if (weights.col2im_weight.has_value()) {
+        core::validate_shape(
+            *weights.col2im_weight,
+            core::TensorShape::from_dims({config.kernel_size * config.out_channels, config.in_channels}),
+            "col2im_weight");
+        weight_perm = tensor_layout::ensure_contiguous_layout_if_needed(ctx, *weights.col2im_weight).tensor;
+    } else {
+        auto weight_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weights.weight);
+        if (weight_contiguous.type != GGML_TYPE_F32) {
+            weight_contiguous = core::wrap_tensor(ggml_cast(ctx.ggml, weight_contiguous.tensor, GGML_TYPE_F32), weight_contiguous.shape, GGML_TYPE_F32);
+        }
+        weight_perm = ggml_reshape_2d(
+            ctx.ggml,
+            ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight_contiguous.tensor, 1, 2, 0, 3)),
+            config.in_channels,
+            config.kernel_size * config.out_channels);
     }
-    auto * weight_perm = ggml_reshape_2d(
-        ctx.ggml,
-        ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight_contiguous.tensor, 1, 2, 0, 3)),
-        config.in_channels,
-        config.kernel_size * config.out_channels);
     ggml_tensor * bias_matrix = nullptr;
     if (config.use_bias) {
         if (!weights.bias.has_value()) {

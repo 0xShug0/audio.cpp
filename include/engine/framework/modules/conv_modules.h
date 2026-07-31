@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace engine::modules {
 
@@ -229,8 +230,23 @@ struct ConvTranspose1dConfig {
 };
 
 struct ConvTranspose1dWeights {
+    ConvTranspose1dWeights() = default;
+    ConvTranspose1dWeights(
+        core::TensorValue weight_value,
+        std::optional<core::TensorValue> bias_value)
+        : weight(std::move(weight_value)),
+          bias(std::move(bias_value)) {}
+    ConvTranspose1dWeights(
+        core::TensorValue weight_value,
+        std::optional<core::TensorValue> bias_value,
+        std::optional<core::TensorValue> col2im_weight_value)
+        : weight(std::move(weight_value)),
+          bias(std::move(bias_value)),
+          col2im_weight(std::move(col2im_weight_value)) {}
+
     core::TensorValue weight;
     std::optional<core::TensorValue> bias;
+    std::optional<core::TensorValue> col2im_weight;
 };
 
 bool is_conv_transpose1d_col2im_fast_path_eligible(

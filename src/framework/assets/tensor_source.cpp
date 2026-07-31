@@ -667,6 +667,7 @@ struct GgufTensorInfo {
     std::string physical_name;
     std::string dtype;
     std::vector<int64_t> shape;
+    std::vector<int64_t> physical_shape;
     ggml_type type = GGML_TYPE_F32;
     size_t data_offset = 0;
     size_t byte_size = 0;
@@ -723,6 +724,11 @@ public:
                 if (tensor == nullptr) {
                     throw std::runtime_error("GGUF tensor metadata is missing: " + info.physical_name);
                 }
+                const int physical_dimensions = ggml_n_dims(tensor);
+                info.physical_shape.reserve(static_cast<size_t>(physical_dimensions));
+                for (int dim = physical_dimensions - 1; dim >= 0; --dim) {
+                    info.physical_shape.push_back(tensor->ne[dim]);
+                }
                 if (has_exact_shapes) {
                     const auto * ranks = static_cast<const int32_t *>(gguf_get_arr_data(gguf, ranks_key));
                     const auto * shapes = static_cast<const int64_t *>(gguf_get_arr_data(gguf, shapes_key));
@@ -738,11 +744,7 @@ public:
                     }
                     shape_cursor += static_cast<size_t>(tensor_rank);
                 } else {
-                    const int dimensions = ggml_n_dims(tensor);
-                    info.shape.reserve(static_cast<size_t>(dimensions));
-                    for (int dim = dimensions - 1; dim >= 0; --dim) {
-                        info.shape.push_back(tensor->ne[dim]);
-                    }
+                    info.shape = info.physical_shape;
                 }
                 if (!info_by_name_.emplace(info.logical_name, infos_.size()).second) {
                     throw std::runtime_error("GGUF contains duplicate logical tensor name: " + info.logical_name);
@@ -814,7 +816,10 @@ public:
         }
         std::vector<std::byte> raw_bytes(byte_size);
         std::memcpy(raw_bytes.data(), data, byte_size);
-        const auto values = decode_tensor_data_f32(name, TensorData{shape, info.type, std::move(raw_bytes)});
+        const auto physical_shape = info.physical_shape.empty()
+            ? shape_from_dims({1})
+            : shape_from_dims(info.physical_shape);
+        const auto values = decode_tensor_data_f32(name, TensorData{physical_shape, info.type, std::move(raw_bytes)});
         set_backend_tensor_from_f32(tensor, name, values, shape, type);
         bytes_.discard_range(data_begin_ + info.data_offset, byte_size);
     }
@@ -831,12 +836,50 @@ public:
         const std::optional<std::vector<int64_t>> & expected_shape) const override {
         const auto tensor = require_tensor_data(name);
         validate_expected_shape(name, tensor.metadata.shape, expected_shape);
-        const auto physical_shape = tensor.metadata.shape.empty()
+        const auto & info = require_info(name);
+        const auto physical_shape = info.physical_shape.empty()
             ? shape_from_dims({1})
-            : shape_from_dims(tensor.metadata.shape);
+            : shape_from_dims(info.physical_shape);
         return decode_tensor_data_f32(
             name,
-            TensorData{physical_shape, require_info(name).type, tensor.bytes});
+            TensorData{physical_shape, info.type, tensor.bytes});
+    }
+
+    TensorData require_tensor_as_shape(
+        std::string_view name,
+        TensorStorageType storage_type,
+        std::initializer_list<int64_t> expected_source_shape,
+        std::initializer_list<int64_t> tensor_shape) const override {
+        const auto & info = require_info(name);
+        const std::vector<int64_t> expected(expected_source_shape);
+        validate_expected_shape(name, info.shape, expected);
+        const core::TensorShape shape = shape_from_dims(std::vector<int64_t>(tensor_shape));
+        const int64_t expected_elements =
+            std::accumulate(expected.begin(), expected.end(), int64_t{1}, std::multiplies<int64_t>());
+        if (shape.num_elements() != expected_elements) {
+            throw std::runtime_error("tensor source shape element count mismatch for " + std::string(name));
+        }
+        const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
+        const auto [data, byte_size] = require_data_range(info);
+        const std::vector<int64_t> requested_shape(tensor_shape);
+        if (info.physical_shape == requested_shape && info.type == type) {
+            validate_raw_tensor_byte_size(name, shape, type, byte_size);
+            TensorData out;
+            out.shape = shape;
+            out.type = type;
+            out.bytes.resize(byte_size);
+            std::memcpy(out.bytes.data(), data, byte_size);
+            bytes_.discard_range(data_begin_ + info.data_offset, byte_size);
+            return out;
+        }
+        std::vector<std::byte> raw_bytes(byte_size);
+        std::memcpy(raw_bytes.data(), data, byte_size);
+        const core::TensorShape physical_shape = info.physical_shape.empty()
+            ? shape_from_dims({1})
+            : shape_from_dims(info.physical_shape);
+        const auto values = decode_tensor_data_f32(name, TensorData{physical_shape, info.type, std::move(raw_bytes)});
+        bytes_.discard_range(data_begin_ + info.data_offset, byte_size);
+        return TensorData{shape, type, encode_f32_tensor_data(name, values, shape, type)};
     }
 
     std::optional<std::vector<float>> optional_f32(
@@ -1843,8 +1886,10 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
     struct OutputTensor {
         TensorMetadata metadata;
         std::string physical_name;
+        core::TensorShape physical_shape;
         ggml_type type = GGML_TYPE_F32;
         TensorStorageType storage_type = TensorStorageType::Native;
+        bool vibevoice_conv_transpose_col2im_pack = false;
     };
     std::vector<OutputTensor> outputs;
     outputs.reserve(convertible_metadata.size());
@@ -1982,8 +2027,20 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 item.name.compare(item.name.size() - 7, 7, ".weight") == 0;
             const bool is_lookup_table = normalized_name.find("embed") != std::string::npos ||
                 normalized_name.find("codebook") != std::string::npos;
-            const bool can_quantize = !preserve_source_dtype && source_is_float && name_is_weight && item.shape.size() == 2 &&
-                !is_lookup_table && item.shape.back() % ggml_blck_size(requested_type) == 0;
+            const bool can_pack_vibevoice_conv_transpose_col2im =
+                model_spec.has_value() &&
+                model_spec->family == "vibevoice" &&
+                requested_type == GGML_TYPE_Q8_0 &&
+                source_is_float &&
+                name_is_weight &&
+                item.shape.size() == 3 &&
+                !is_lookup_table &&
+                normalized_name.find("tokenizer.decoder.upsample_layers") != std::string::npos &&
+                normalized_name.find("convtr.convtr.weight") != std::string::npos &&
+                item.shape[0] % ggml_blck_size(requested_type) == 0;
+            const bool can_quantize = !preserve_source_dtype && source_is_float && name_is_weight && !is_lookup_table &&
+                ((item.shape.size() == 2 && item.shape.back() % ggml_blck_size(requested_type) == 0) ||
+                 can_pack_vibevoice_conv_transpose_col2im);
             const bool use_requested = !preserve_source_dtype &&
                 (!ggml_is_quantized(requested_type) ? source_is_float && !item.shape.empty() : can_quantize);
             const bool use_f16_lookup = !preserve_source_dtype && ggml_is_quantized(requested_type) &&
@@ -2012,7 +2069,11 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 : (use_requested
                 ? weight_type
                 : (use_f16_lookup ? TensorStorageType::F16 : TensorStorageType::Native)));
-
+            const bool vibevoice_conv_transpose_col2im_pack =
+                model_spec.has_value() &&
+                model_spec->family == "vibevoice" &&
+                output_type == GGML_TYPE_Q8_0 &&
+                can_pack_vibevoice_conv_transpose_col2im;
             std::string physical_name = item.name;
             if (physical_name.size() >= GGML_MAX_NAME || !physical_names.insert(physical_name).second) {
                 physical_name = "_audiocpp." + std::to_string(i);
@@ -2026,18 +2087,29 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             core::TensorShape shape = item.shape.empty()
                 ? shape_from_dims({1})
                 : shape_from_dims(item.shape);
-            const auto dims = core::to_ggml_dims(shape);
+            core::TensorShape physical_shape = shape;
+            if (vibevoice_conv_transpose_col2im_pack) {
+                physical_shape = shape_from_dims({item.shape[2] * item.shape[1], item.shape[0]});
+            }
+            const auto dims = core::to_ggml_dims(physical_shape);
             ggml_tensor * tensor = ggml_new_tensor(
                 tensor_context,
                 output_type,
-                static_cast<int>(shape.rank),
+                static_cast<int>(physical_shape.rank),
                 dims.data());
             if (tensor == nullptr) {
                 throw std::runtime_error("failed to create GGUF tensor metadata: " + item.name);
             }
             ggml_set_name(tensor, physical_name.c_str());
             gguf_add_tensor(gguf, tensor);
-            outputs.push_back({item, std::move(physical_name), output_type, output_storage});
+            outputs.push_back({
+                item,
+                std::move(physical_name),
+                physical_shape,
+                output_type,
+                output_storage,
+                vibevoice_conv_transpose_col2im_pack,
+            });
             logical_names.push_back(item.name);
         }
 
@@ -2083,6 +2155,29 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 RawTensorData raw;
                 if (convert_bnb_nf4 && source->has_tensor(bnb_nf4_quant_state_name(item.metadata.name))) {
                     raw = convert_bnb_nf4_weight(*source, item.metadata, item.storage_type);
+                } else if (item.vibevoice_conv_transpose_col2im_pack) {
+                    const auto values = source->require_f32(item.metadata.name, item.metadata.shape);
+                    const int64_t in_channels = item.metadata.shape[0];
+                    const int64_t out_channels = item.metadata.shape[1];
+                    const int64_t kernel_size = item.metadata.shape[2];
+                    std::vector<float> packed(values.size());
+                    for (int64_t out = 0; out < out_channels; ++out) {
+                        for (int64_t kernel = 0; kernel < kernel_size; ++kernel) {
+                            const int64_t row = kernel + out * kernel_size;
+                            for (int64_t in = 0; in < in_channels; ++in) {
+                                const int64_t source_index =
+                                    (in * out_channels + out) * kernel_size + kernel;
+                                packed[static_cast<size_t>(row * in_channels + in)] =
+                                    values[static_cast<size_t>(source_index)];
+                            }
+                        }
+                    }
+                    raw.metadata = item.metadata;
+                    raw.bytes = encode_f32_tensor_data(
+                        item.metadata.name,
+                        packed,
+                        item.physical_shape,
+                        item.type);
                 } else if (item.storage_type == TensorStorageType::Native) {
                     raw = source->require_tensor_data(item.metadata.name);
                 } else {

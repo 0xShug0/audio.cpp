@@ -93,7 +93,7 @@ public:
         std::string_view name,
         TensorStorageType storage_type,
         const std::vector<int64_t> & expected_shape) const;
-    [[nodiscard]] TensorData require_tensor_as_shape(
+    [[nodiscard]] virtual TensorData require_tensor_as_shape(
         std::string_view name,
         TensorStorageType storage_type,
         std::initializer_list<int64_t> expected_source_shape,

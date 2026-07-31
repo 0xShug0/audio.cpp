@@ -195,6 +195,16 @@ modules::ConvTranspose1dWeights load_conv_transpose1d(
     modules::ConvTranspose1dWeights weights;
     weights.weight = store.load_tensor(source, prefix + ".weight", weight_storage_type, {in_channels, out_channels, kernel_size});
     weights.bias = store.load_tensor(source, prefix + ".bias", assets::TensorStorageType::F32, {out_channels});
+    const auto metadata = source.require_metadata(prefix + ".weight");
+    const auto native_type = assets::tensor_storage_type_for_dtype(metadata.dtype);
+    if (native_type == assets::TensorStorageType::Q8_0 && in_channels % ggml_blck_size(GGML_TYPE_Q8_0) == 0) {
+        weights.col2im_weight = store.load_tensor_as_shape(
+            source,
+            prefix + ".weight",
+            assets::TensorStorageType::Native,
+            {in_channels, out_channels, kernel_size},
+            core::TensorShape::from_dims({kernel_size * out_channels, in_channels}));
+    }
     return weights;
 }
 
