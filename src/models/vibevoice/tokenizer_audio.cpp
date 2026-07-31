@@ -197,7 +197,8 @@ modules::ConvTranspose1dWeights load_conv_transpose1d(
     weights.bias = store.load_tensor(source, prefix + ".bias", assets::TensorStorageType::F32, {out_channels});
     const auto metadata = source.require_metadata(prefix + ".weight");
     const auto native_type = assets::tensor_storage_type_for_dtype(metadata.dtype);
-    if (native_type == assets::TensorStorageType::Q8_0 && in_channels % ggml_blck_size(GGML_TYPE_Q8_0) == 0) {
+    const ggml_type ggml_native_type = assets::ggml_type_for_tensor_storage(native_type);
+    if (ggml_is_quantized(ggml_native_type) && in_channels % ggml_blck_size(ggml_native_type) == 0) {
         weights.col2im_weight = store.load_tensor_as_shape(
             source,
             prefix + ".weight",

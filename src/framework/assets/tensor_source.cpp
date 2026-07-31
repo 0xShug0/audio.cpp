@@ -2030,7 +2030,7 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             const bool can_pack_vibevoice_conv_transpose_col2im =
                 model_spec.has_value() &&
                 model_spec->family == "vibevoice" &&
-                requested_type == GGML_TYPE_Q8_0 &&
+                ggml_is_quantized(requested_type) &&
                 source_is_float &&
                 name_is_weight &&
                 item.shape.size() == 3 &&
@@ -2072,7 +2072,7 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             const bool vibevoice_conv_transpose_col2im_pack =
                 model_spec.has_value() &&
                 model_spec->family == "vibevoice" &&
-                output_type == GGML_TYPE_Q8_0 &&
+                ggml_is_quantized(output_type) &&
                 can_pack_vibevoice_conv_transpose_col2im;
             std::string physical_name = item.name;
             if (physical_name.size() >= GGML_MAX_NAME || !physical_names.insert(physical_name).second) {
