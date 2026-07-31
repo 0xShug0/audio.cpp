@@ -52,6 +52,7 @@ private:
 
 struct VibeVoiceDecoderLogits {
     std::vector<float> values;
+    std::vector<int32_t> token_ids;
     int64_t vocab_size = 0;
 };
 
@@ -135,7 +136,9 @@ public:
     VibeVoiceDecoderResult cached_step(
         const std::vector<float> & embedding,
         VibeVoiceDecoderCachedState & state,
-        int64_t cache_capacity) const;
+        int64_t cache_capacity,
+        bool include_logits = true,
+        const std::vector<int32_t> * logit_tokens = nullptr) const;
     std::vector<VibeVoiceDecoderResult> cached_step_batch(
         const std::vector<std::vector<float>> & embeddings,
         const std::vector<VibeVoiceDecoderCachedState *> & states,

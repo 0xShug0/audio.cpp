@@ -911,9 +911,13 @@ public:
     VibeVoiceDecoderCachedStepGraph(
         const VibeVoiceDecoderWeightsRuntime & runtime,
         int64_t cache_steps,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        bool include_logits,
+        std::vector<int32_t> logit_tokens)
         : runtime_(&runtime),
-          cache_steps_(cache_steps) {
+          cache_steps_(cache_steps),
+          include_logits_(include_logits),
+          logit_tokens_(std::move(logit_tokens)) {
         if (cache_steps_ <= 0) {
             throw std::runtime_error("VibeVoice decoder cached step graph requires positive cache steps");
         }
@@ -1000,17 +1004,45 @@ public:
         x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
                 .build(ctx, x, binding::norm_data(constants, runtime_->weights().norm));
         hidden_output_ = x.tensor;
-        auto logits = modules::LinearModule(
-                          binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
-        logits_output_ = logits.tensor;
-        ggml_set_output(logits_output_);
-        ggml_build_forward_expand(graph_, logits_output_);
+        if (include_logits_ && !logit_tokens_.empty()) {
+            logit_token_ids_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, static_cast<int64_t>(logit_tokens_.size()));
+            auto logit_ids = core::wrap_tensor(
+                logit_token_ids_,
+                core::TensorShape::from_dims({static_cast<int64_t>(logit_tokens_.size())}),
+                GGML_TYPE_I32);
+            auto candidate_rows = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
+                                      .build(ctx, logit_ids, runtime_->weights().lm_head);
+            candidate_rows = modules::TransposeModule({{1, 0}, candidate_rows.shape.rank}).build(ctx, candidate_rows);
+            candidate_rows = core::ensure_backend_addressable_layout(ctx, candidate_rows);
+            candidate_rows = core::reshape_tensor(
+                ctx,
+                candidate_rows,
+                core::TensorShape::from_dims({1, config.hidden_size, static_cast<int64_t>(logit_tokens_.size())}));
+            auto logits = modules::MatMulModule{}.build(ctx, x, candidate_rows);
+            logits_output_ = logits.tensor;
+            ggml_set_output(logits_output_);
+        } else if (include_logits_) {
+            auto logits = modules::LinearModule(
+                              binding::linear_config(config.hidden_size, config.vocab_size, false))
+                              .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
+            logits_output_ = logits.tensor;
+            ggml_set_output(logits_output_);
+        } else {
+            ggml_set_output(hidden_output_);
+        }
+        ggml_build_forward_expand(graph_, include_logits_ ? logits_output_ : hidden_output_);
         constants.finish_graph();
         constants.ensure_uploaded();
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate VibeVoice decoder cached step graph");
+        }
+        if (logit_token_ids_ != nullptr) {
+            ggml_backend_tensor_set(
+                logit_token_ids_,
+                logit_tokens_.data(),
+                0,
+                logit_tokens_.size() * sizeof(int32_t));
         }
         attention_mask_buffer_.assign(static_cast<size_t>(cache_tensor_steps), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
@@ -1022,8 +1054,13 @@ public:
         }
     }
 
-    bool can_decode(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t required_capacity) const {
-        return runtime_ == &runtime && cache_steps_ >= required_capacity;
+    bool can_decode(
+        const VibeVoiceDecoderWeightsRuntime & runtime,
+        int64_t required_capacity,
+        bool include_logits,
+        const std::vector<int32_t> & logit_tokens) const {
+        return runtime_ == &runtime && cache_steps_ >= required_capacity && include_logits_ == include_logits &&
+            logit_tokens_ == logit_tokens;
     }
 
     int64_t current_end() const noexcept {
@@ -1079,10 +1116,20 @@ public:
 
         VibeVoiceDecoderResult out;
         out.logits.vocab_size = config.vocab_size;
-        out.logits.values.resize(static_cast<size_t>(config.vocab_size));
+        out.logits.token_ids = logit_tokens_;
         out.last_hidden.dims = config.hidden_size;
         out.last_hidden.values.resize(static_cast<size_t>(config.hidden_size));
-        ggml_backend_tensor_get(logits_output_, out.logits.values.data(), 0, out.logits.values.size() * sizeof(float));
+        if (include_logits_) {
+            const size_t logit_count = logit_tokens_.empty()
+                ? static_cast<size_t>(config.vocab_size)
+                : logit_tokens_.size();
+            out.logits.values.resize(logit_count);
+            ggml_backend_tensor_get(
+                logits_output_,
+                out.logits.values.data(),
+                0,
+                out.logits.values.size() * sizeof(float));
+        }
         ggml_backend_tensor_get(hidden_output_, out.last_hidden.values.data(), 0, out.last_hidden.values.size() * sizeof(float));
         if (scratch_tail_) {
             const size_t dst_slot = static_cast<size_t>(cache_.valid_steps());
@@ -1115,14 +1162,17 @@ private:
     const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
     int64_t cache_steps_ = 0;
     bool scratch_tail_ = false;
+    bool include_logits_ = true;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * cache_slot_ = nullptr;
     ggml_tensor * attention_mask_ = nullptr;
+    ggml_tensor * logit_token_ids_ = nullptr;
     ggml_tensor * hidden_output_ = nullptr;
     ggml_tensor * logits_output_ = nullptr;
     std::vector<ggml_fp16_t> attention_mask_buffer_;
+    std::vector<int32_t> logit_tokens_;
     runtime::TransformerKVCache cache_;
     std::vector<ggml_tensor *> key_sources_;
     std::vector<ggml_tensor *> value_sources_;
@@ -1645,7 +1695,9 @@ void VibeVoiceDecoderWeightsRuntime::reset_cached_state(
 VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
     const std::vector<float> & embedding,
     VibeVoiceDecoderCachedState & state,
-    int64_t cache_capacity) const {
+    int64_t cache_capacity,
+    bool include_logits,
+    const std::vector<int32_t> * logit_tokens) const {
     const auto & config = assets_->config.decoder;
     if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
         throw std::runtime_error("VibeVoice decoder cached step embedding payload size mismatch");
@@ -1662,11 +1714,16 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
     const int64_t required_capacity = cache_graph_capacity(
         std::max<int64_t>(cache_capacity, current_end + 1),
         config.max_position_embeddings);
-    if (state.graph_ != nullptr && state.graph_has_state_ && !state.graph_->can_decode(*this, required_capacity)) {
+    const std::vector<int32_t> empty_logit_tokens;
+    const auto & requested_logit_tokens = logit_tokens == nullptr ? empty_logit_tokens : *logit_tokens;
+    if (state.graph_ != nullptr &&
+        state.graph_has_state_ &&
+        !state.graph_->can_decode(*this, required_capacity, include_logits, requested_logit_tokens)) {
         state.pending_state_ = state.graph_->export_state();
         state.graph_has_state_ = false;
     }
-    if (state.graph_ == nullptr || !state.graph_->can_decode(*this, required_capacity)) {
+    if (state.graph_ == nullptr ||
+        !state.graph_->can_decode(*this, required_capacity, include_logits, requested_logit_tokens)) {
         state.graph_.reset();
         const size_t graph_arena_bytes = required_capacity >= kScratchTailCachedAttentionMinSteps
             ? 1536ull * 1024ull * 1024ull
@@ -1674,7 +1731,9 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
         state.graph_ = std::make_unique<VibeVoiceDecoderCachedStepGraph>(
             *this,
             required_capacity,
-            graph_arena_bytes);
+            graph_arena_bytes,
+            include_logits,
+            requested_logit_tokens);
     }
     if (!state.graph_has_state_) {
         if (state.pending_state_.layers.empty() && state.pending_state_.current_end == 0) {

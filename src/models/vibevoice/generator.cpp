@@ -424,9 +424,31 @@ int32_t select_vibevoice_constrained_token(
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceGenerationOptions & options,
     std::mt19937 & rng) {
-    if (logits.vocab_size <= 0 || static_cast<int64_t>(logits.values.size()) != logits.vocab_size) {
+    if (logits.vocab_size <= 0) {
         throw std::runtime_error("VibeVoice constrained token selection received invalid logits");
     }
+    const bool sparse_logits = !logits.token_ids.empty();
+    if (sparse_logits) {
+        if (logits.token_ids.size() != logits.values.size()) {
+            throw std::runtime_error("VibeVoice constrained token selection received mismatched sparse logits");
+        }
+    } else if (static_cast<int64_t>(logits.values.size()) != logits.vocab_size) {
+        throw std::runtime_error("VibeVoice constrained token selection received invalid dense logits");
+    }
+    auto logit_for_token = [&](int32_t token) -> float {
+        if (token < 0 || token >= logits.vocab_size) {
+            throw std::runtime_error("VibeVoice constrained token candidate is outside logits vocabulary");
+        }
+        if (!sparse_logits) {
+            return logits.values[static_cast<size_t>(token)];
+        }
+        for (size_t i = 0; i < logits.token_ids.size(); ++i) {
+            if (logits.token_ids[i] == token) {
+                return logits.values[i];
+            }
+        }
+        throw std::runtime_error("VibeVoice constrained token candidate is missing from sparse logits");
+    };
     const int32_t candidates[] = {
         text_tokenizer.speech_start_id(),
         text_tokenizer.speech_end_id(),
@@ -436,10 +458,7 @@ int32_t select_vibevoice_constrained_token(
     int32_t best_token = candidates[0];
     float best_score = -std::numeric_limits<float>::infinity();
     for (const int32_t token : candidates) {
-        if (token < 0 || token >= logits.vocab_size) {
-            throw std::runtime_error("VibeVoice constrained token candidate is outside logits vocabulary");
-        }
-        const float score = logits.values[static_cast<size_t>(token)];
+        const float score = logit_for_token(token);
         if (score > best_score) {
             best_score = score;
             best_token = token;
@@ -466,7 +485,7 @@ int32_t select_vibevoice_constrained_token(
     std::vector<VibeVoiceSamplingCandidate> scores;
     scores.reserve(sizeof(candidates) / sizeof(candidates[0]));
     for (const int32_t token : candidates) {
-        scores.push_back({token, logits.values[static_cast<size_t>(token)] / options.temperature});
+        scores.push_back({token, logit_for_token(token) / options.temperature});
     }
     if (options.top_k > 0 && static_cast<size_t>(options.top_k) < scores.size()) {
         const auto top_end = scores.begin() + static_cast<std::ptrdiff_t>(options.top_k);
@@ -577,6 +596,12 @@ VibeVoiceResult generate_vibevoice(
     std::mt19937 sampler_rng(request.generation.seed);
 
     auto current = std::move(positive.result);
+    const std::vector<int32_t> constrained_logit_tokens = {
+        text_tokenizer.speech_start_id(),
+        text_tokenizer.speech_end_id(),
+        text_tokenizer.speech_diffusion_id(),
+        text_tokenizer.eos_id(),
+    };
     double token_select_ms = 0.0;
     double diffusion_ms = 0.0;
     double acoustic_decode_ms = 0.0;
@@ -671,14 +696,17 @@ VibeVoiceResult generate_vibevoice(
             negative.result = decoder.cached_step(
                 next_embedding,
                 negative_cache,
-                1);
+                1,
+                false);
             negative_cached_step_ms += engine::debug::elapsed_ms(negative_step_started);
         }
         const auto positive_step_started = std::chrono::steady_clock::now();
         current = decoder.cached_step(
             next_embedding,
             positive_cache,
-            prompt.steps + step + 1);
+            prompt.steps + step + 1,
+            true,
+            &constrained_logit_tokens);
         positive_cached_step_ms += engine::debug::elapsed_ms(positive_step_started);
     }
 
