@@ -1,0 +1,12 @@
+{
+  "default_clone": {
+    "requests": [
+      {
+        "id": "chris_ref_p1",
+        "target_voice": "reference/chris_hemsworth_15s.wav",
+        "text": "[S1] The operations desk reviewed the morning brief and confirmed the relay stayed online through the storm.",
+        "seed": 0
+      }
+    ]
+  }
+}

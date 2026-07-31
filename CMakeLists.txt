@@ -710,6 +710,15 @@ audiocpp_add_model(neutts
         engine::models::neutts::make_neutts_loader
 )
 
+audiocpp_add_model(echo_tts
+    SOURCES
+        src/community_models/echo_tts/session.cpp
+    INCLUDES
+        engine/community_models/echo_tts/session.h
+    LOADERS
+        engine::models::echo_tts::make_echo_tts_loader
+)
+
 if (MSVC)
     set_source_files_properties(
         src/community_models/inflect_v2/frontend.cpp

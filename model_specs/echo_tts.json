@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "family": "echo_tts",
+  "display_name": "Echo-TTS",
+  "description": "Echo-TTS is an English zero-shot voice-cloning TTS model packaged for audio.cpp. A 2.8B diffusion transformer generates 80-D latents in PCA space which the Fish S1-DAC decodes to 44.1 kHz audio. Generation is a fixed 29.72 s window (640 latents).",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": ["clone"],
+  "modes": ["offline"],
+  "languages": ["en"],
+  "runtime": { "tags": ["gguf"] },
+  "capabilities": { "clone": ["speaker_reference"] },
+  "options": {
+    "request": [
+      { "name": "target_voice", "type": "audio_path", "description": "Reference audio path for zero-shot cloning. Wav only; no transcript required.", "required": false },
+      { "name": "cfg_scale_text", "type": "float", "description": "Classifier-free guidance scale on the text condition.", "required": false, "min": 0.0, "default": 3.0 },
+      { "name": "cfg_scale_speaker", "type": "float", "description": "Classifier-free guidance scale on the speaker condition.", "required": false, "min": 0.0, "default": 8.0 },
+      { "name": "num_steps", "type": "int", "description": "Euler sampler steps.", "required": false, "min": 1, "default": 40 },
+      { "name": "truncation_factor", "type": "float", "description": "Initial-noise truncation factor.", "required": false, "min": 0.0, "max": 1.0, "default": 0.8 },
+      { "name": "speaker_kv_scale", "type": "float", "description": "Force-speaker KV scaling. 1.0 disables; 1.5 is the upstream default when enabled.", "required": false, "min": 1.0, "default": 1.0 },
+      { "name": "seed", "type": "int", "description": "RNG seed for the initial latent.", "required": false, "default": 0 }
+    ],
+    "session": [],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "echo_tts_orig",
+      "display_name": "Echo-TTS Original-Dtype GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Echo-TTS-GGUF",
+      "files": ["Echo-TTS-GGUF/model.gguf"],
+      "download": {
+        "kind": "unsupported",
+        "reason": "Echo-TTS model packaging is not implemented yet."
+      },
+      "strip_prefix": "Echo-TTS-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "echo_tts_orig",
+    "tags": ["TTS", "Clone", "GGUF"],
+    "docs": []
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      }
+    }
+  ]
+}
