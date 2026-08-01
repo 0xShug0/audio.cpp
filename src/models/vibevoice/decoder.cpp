@@ -33,7 +33,7 @@ namespace binding = modules::binding;
 
 constexpr int64_t kScratchTailCachedAttentionMinSteps = 32768;
 constexpr int64_t kLargeCacheGrowthStep = 2048;
-constexpr int64_t kLayerwisePrefillMinSteps = 2048;
+constexpr int64_t kLayerwisePrefillMinSteps = 256;
 constexpr ggml_type kDecoderCacheType = GGML_TYPE_F16;
 
 struct GgmlContextDeleter {
@@ -1651,6 +1651,11 @@ std::vector<VibeVoiceDecoderPrefillOutput> VibeVoiceDecoderWeightsRuntime::prefi
             1024ull * 1024ull * 1024ull);
     }
     return prefill_graph_->run_batch(embeddings);
+}
+
+void VibeVoiceDecoderWeightsRuntime::release_prompt_graphs() const {
+    prefill_graph_.reset();
+    embedding_graph_.reset();
 }
 
 VibeVoiceDecoderCachedBatchStepGraph * VibeVoiceDecoderWeightsRuntime::find_cached_batch_graph(

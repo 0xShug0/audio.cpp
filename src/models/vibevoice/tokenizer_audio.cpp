@@ -1888,6 +1888,11 @@ runtime::AudioBuffer VibeVoiceTokenizerWeightsRuntime::decode_acoustic(const Vib
     return runtime::AudioBuffer{kTokenizerSampleRate, 1, std::move(samples)};
 }
 
+void VibeVoiceTokenizerWeightsRuntime::release_prompt_graphs() const {
+    acoustic_encoder_graph_.reset();
+    semantic_encoder_graph_.reset();
+}
+
 VibeVoiceTokenizerLatents VibeVoiceTokenizerWeightsRuntime::encode_semantic_streaming(
     const runtime::AudioBuffer & audio,
     VibeVoiceTokenizerStreamingState & state) const {

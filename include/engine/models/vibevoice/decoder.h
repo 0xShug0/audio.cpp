@@ -143,6 +143,7 @@ public:
         const std::vector<std::vector<float>> & embeddings,
         const std::vector<VibeVoiceDecoderCachedState *> & states,
         int64_t cache_capacity) const;
+    void release_prompt_graphs() const;
 
 private:
     VibeVoiceDecoderCachedBatchStepGraph * find_cached_batch_graph(
