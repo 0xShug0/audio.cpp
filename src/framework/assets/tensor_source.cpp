@@ -2027,6 +2027,17 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 item.name.compare(item.name.size() - 7, 7, ".weight") == 0;
             const bool is_lookup_table = normalized_name.find("embed") != std::string::npos ||
                 normalized_name.find("codebook") != std::string::npos;
+            const bool can_quantize_vibevoice_decoder_lookup =
+                model_spec.has_value() &&
+                model_spec->family == "vibevoice" &&
+                requested_type == GGML_TYPE_Q8_0 &&
+                source_is_float &&
+                name_is_weight &&
+                item.shape.size() == 2 &&
+                item.shape.back() % ggml_blck_size(requested_type) == 0 &&
+                (normalized_name == "model.language_model.embed_tokens.weight" ||
+                 normalized_name == "lm_head.weight" ||
+                 normalized_name == "model.lm_head.weight");
             const bool can_pack_vibevoice_conv_transpose_col2im =
                 model_spec.has_value() &&
                 model_spec->family == "vibevoice" &&
@@ -2038,13 +2049,14 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 normalized_name.find("tokenizer.decoder.upsample_layers") != std::string::npos &&
                 normalized_name.find("convtr.convtr.weight") != std::string::npos &&
                 item.shape[0] % ggml_blck_size(requested_type) == 0;
-            const bool can_quantize = !preserve_source_dtype && source_is_float && name_is_weight && !is_lookup_table &&
+            const bool can_quantize = !preserve_source_dtype && source_is_float && name_is_weight &&
+                (!is_lookup_table || can_quantize_vibevoice_decoder_lookup) &&
                 ((item.shape.size() == 2 && item.shape.back() % ggml_blck_size(requested_type) == 0) ||
                  can_pack_vibevoice_conv_transpose_col2im);
             const bool use_requested = !preserve_source_dtype &&
                 (!ggml_is_quantized(requested_type) ? source_is_float && !item.shape.empty() : can_quantize);
             const bool use_f16_lookup = !preserve_source_dtype && ggml_is_quantized(requested_type) &&
-                source_is_float && is_lookup_table;
+                source_is_float && is_lookup_table && !can_quantize_vibevoice_decoder_lookup;
             const auto type_override = find_tensor_type_override(item.name, options.type_overrides);
             const bool use_override = type_override.has_value() && *type_override != TensorStorageType::Native;
             const ggml_type override_type = use_override ? ggml_type_for_tensor_storage(*type_override) : source_type;
