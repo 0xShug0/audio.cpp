@@ -158,13 +158,31 @@ runtime::AudioBuffer read_voice_sample(const std::string & path) {
     return runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples};
 }
 
-runtime::AudioBuffer cap_voice_sample_duration(
-    runtime::AudioBuffer audio,
-    core::BackendType backend_type,
-    const std::string & path) {
-    const int64_t max_seconds = (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip)
+int64_t default_voice_prompt_max_seconds(core::BackendType backend_type) {
+    return (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip)
         ? kCudaVoicePromptMaxSeconds
         : kDefaultVoicePromptMaxSeconds;
+}
+
+int64_t voice_prompt_max_seconds_from_request(
+    const runtime::TaskRequest & request,
+    core::BackendType backend_type) {
+    auto max_seconds = default_voice_prompt_max_seconds(backend_type);
+    if (const auto value = runtime::parse_i64_option(
+            request.options,
+            {"vibevoice.voice_prompt_max_seconds", "voice_prompt_max_seconds"})) {
+        if (*value <= 0) {
+            throw std::runtime_error("VibeVoice voice_prompt_max_seconds must be positive");
+        }
+        max_seconds = *value;
+    }
+    return max_seconds;
+}
+
+runtime::AudioBuffer cap_voice_sample_duration(
+    runtime::AudioBuffer audio,
+    int64_t max_seconds,
+    const std::string & path) {
     const int64_t max_frames = static_cast<int64_t>(audio.sample_rate) * max_seconds;
     const auto max_samples = static_cast<size_t>(max_frames * static_cast<int64_t>(audio.channels));
     engine::debug::trace_log_scalar("vibevoice.reference_voice.prompt_path", path);
@@ -312,7 +330,9 @@ VibeVoiceRequest VibeVoiceSession::make_request(const runtime::TaskRequest & req
         throw std::runtime_error("VibeVoice request cannot combine voice_samples option with voice_ref");
     }
     if (!voice_sample_paths.empty()) {
-        out.speakers = resolve_voice_sample_prompts(voice_sample_paths);
+        out.speakers = resolve_voice_sample_prompts(
+            voice_sample_paths,
+            voice_prompt_max_seconds_from_request(request, options().backend.type));
     }
     if (has_voice_ref) {
         const auto & speaker = *request.voice->speaker;
@@ -328,7 +348,8 @@ VibeVoiceRequest VibeVoiceSession::make_request(const runtime::TaskRequest & req
 }
 
 std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_sample_prompts(
-    const std::vector<std::string> & sample_paths) const {
+    const std::vector<std::string> & sample_paths,
+    int64_t max_seconds) const {
     if (sample_paths.size() > kMaxReferenceVoiceStates) {
         throw std::runtime_error("VibeVoice 1.5B supports at most 4 reference speakers");
     }
@@ -344,7 +365,7 @@ std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_sample_promp
         reference_voice_state_cache_.begin(),
         reference_voice_state_cache_.end(),
         [&](const ReferenceVoiceStateCacheEntry & entry) {
-            return entry.sample_paths == sample_paths;
+            return entry.sample_paths == sample_paths && entry.max_seconds == max_seconds;
         });
     if (found != reference_voice_state_cache_.end()) {
         std::vector<VibeVoiceSpeakerPrompt> prompts;
@@ -373,7 +394,7 @@ std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_sample_promp
     std::vector<runtime::AudioBuffer> audio;
     audio.reserve(sample_paths.size());
     for (const auto & path : sample_paths) {
-        audio.push_back(cap_voice_sample_duration(read_voice_sample(path), options().backend.type, path));
+        audio.push_back(cap_voice_sample_duration(read_voice_sample(path), max_seconds, path));
     }
     auto acoustic_means = audio_tokenizer_.encode_acoustic_batch(audio);
     if (acoustic_means.size() != sample_paths.size()) {
@@ -382,6 +403,7 @@ std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_sample_promp
 
     ReferenceVoiceStateCacheEntry entry;
     entry.sample_paths = sample_paths;
+    entry.max_seconds = max_seconds;
     entry.audio = audio;
     entry.states.reserve(acoustic_means.size());
     std::vector<VibeVoiceSpeakerPrompt> prompts;

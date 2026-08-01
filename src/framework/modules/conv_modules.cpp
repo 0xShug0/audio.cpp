@@ -224,14 +224,14 @@ core::TensorValue add_4d_channel_bias_if_needed(
     return core::wrap_tensor(ggml_add(ctx.ggml, output_contiguous.tensor, bias_expanded.tensor), output.shape, GGML_TYPE_F32);
 }
 
-core::TensorValue build_conv_transpose1d_cuda_col2im_path(
+core::TensorValue build_conv_transpose1d_col2im_path(
     core::ModuleBuildContext & ctx,
     const ConvTranspose1dConfig & config,
     const core::TensorValue & input,
     const ConvTranspose1dWeights & weights,
     const core::TensorShape & output_shape) {
     if (!is_conv_transpose1d_col2im_fast_path_eligible(ctx, config)) {
-        throw std::runtime_error("ConvTranspose1dModule CUDA col2im path was requested for an ineligible config");
+        throw std::runtime_error("ConvTranspose1dModule col2im path was requested for an ineligible config");
     }
     const auto input_contiguous = core::ensure_backend_addressable_layout(ctx, input);
     ggml_tensor * weight_perm = nullptr;
@@ -313,7 +313,9 @@ core::TensorValue view_batch_matrix(
 bool is_conv_transpose1d_col2im_fast_path_eligible(
     const core::ModuleBuildContext & ctx,
     const ConvTranspose1dConfig & config) noexcept {
-    return (ctx.backend_type == core::BackendType::Cuda || ctx.backend_type == core::BackendType::Hip) &&
+    return (ctx.backend_type == core::BackendType::Cuda ||
+            ctx.backend_type == core::BackendType::Hip ||
+            ctx.backend_type == core::BackendType::Metal) &&
            config.dilation == 1;
 }
 
@@ -764,7 +766,7 @@ core::TensorValue ConvTranspose1dModule::build(
     const auto output_shape = core::TensorShape::from_dims(
         {input.shape.dims[0], config_.out_channels, conv_transpose1d_output_frames(config_, input.shape.dims[2])});
     if (is_conv_transpose1d_col2im_fast_path_eligible(ctx, config_)) {
-        return build_conv_transpose1d_cuda_col2im_path(ctx, config_, input, weights, output_shape);
+        return build_conv_transpose1d_col2im_path(ctx, config_, input, weights, output_shape);
     }
     const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
     const auto weight_contiguous = conv_transpose1d_weight(ctx, weights.weight);

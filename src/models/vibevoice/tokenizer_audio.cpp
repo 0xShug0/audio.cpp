@@ -1811,6 +1811,37 @@ std::vector<VibeVoiceTokenizerLatents> VibeVoiceTokenizerWeightsRuntime::encode_
             waveform.end(),
             padded.begin() + static_cast<std::ptrdiff_t>(batch * sample_count));
     }
+    if (backend_type_ == core::BackendType::Metal && batch_size > 1) {
+        if (acoustic_encoder_graph_ == nullptr ||
+            !acoustic_encoder_graph_->matches(weights_->acoustic.encoder, 1, sample_count, backend_, threads_)) {
+            acoustic_encoder_graph_.reset();
+            acoustic_encoder_graph_ = std::make_unique<VibeVoiceTokenizerEncoderGraph>(
+                weights_,
+                weights_->acoustic.encoder,
+                assets_->config.acoustic_tokenizer,
+                "vibevoice.tokenizer.acoustic_encoder",
+                1,
+                sample_count,
+                backend_,
+                backend_type_,
+                threads_,
+                *acoustic_encoder_constants_,
+                1024ull * 1024ull * 1024ull);
+        }
+        std::vector<VibeVoiceTokenizerLatents> encoded;
+        encoded.reserve(static_cast<size_t>(batch_size));
+        std::vector<float> sample(static_cast<size_t>(sample_count), 0.0F);
+        for (int64_t batch = 0; batch < batch_size; ++batch) {
+            const auto begin = padded.begin() + static_cast<std::ptrdiff_t>(batch * sample_count);
+            std::copy(begin, begin + static_cast<std::ptrdiff_t>(sample_count), sample.begin());
+            auto single = acoustic_encoder_graph_->run(sample);
+            if (single.size() != 1) {
+                throw std::runtime_error("VibeVoice acoustic tokenizer Metal encoder returned unexpected batch size");
+            }
+            encoded.push_back(std::move(single.front()));
+        }
+        return encoded;
+    }
     if (acoustic_encoder_graph_ == nullptr ||
         !acoustic_encoder_graph_->matches(weights_->acoustic.encoder, batch_size, sample_count, backend_, threads_)) {
         acoustic_encoder_graph_.reset();

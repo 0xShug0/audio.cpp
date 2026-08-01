@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.!
 
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT COMMAND set_xcode_property)
+  macro(set_xcode_property TARGET XCODE_PROPERTY XCODE_VALUE XCODE_RELVERSION)
+    set_property(TARGET ${TARGET} PROPERTY XCODE_ATTRIBUTE_${XCODE_PROPERTY} ${XCODE_VALUE})
+  endmacro()
+endif()
+
 if (SPM_ABSL_PROVIDER STREQUAL "module" OR SPM_ABSL_PROVIDER STREQUAL "package")
   set(ABSL_FLAGS_SRCS "")
   set(ABSL_STRINGS_SRCS "")

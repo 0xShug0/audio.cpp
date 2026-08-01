@@ -338,13 +338,13 @@ RunResult run_conv_transpose_ab_case(
 }
 
 void require_fast_path_trigger_conditions(engine::core::BackendType backend_type) {
-    BackendModuleRunner cuda_runner("conv_transpose_fast_path_test.cuda_trigger", backend_type);
+    BackendModuleRunner fast_runner("conv_transpose_fast_path_test.fast_trigger", backend_type);
     BackendModuleRunner cpu_runner("conv_transpose_fast_path_test.cpu_trigger", engine::core::BackendType::Cpu);
 
     const ConvTransposeCase test_case{"trigger_condition_probe", 1, 256, 128, 96, 10, 5, true};
     auto eligible_config = make_config(test_case);
-    if (!engine::modules::is_conv_transpose1d_col2im_fast_path_eligible(cuda_runner.ctx, eligible_config)) {
-        throw std::runtime_error("expected Qwen3-style CUDA conv-transpose config to be col2im fast-path eligible");
+    if (!engine::modules::is_conv_transpose1d_col2im_fast_path_eligible(fast_runner.ctx, eligible_config)) {
+        throw std::runtime_error("expected Qwen3-style conv-transpose config to be col2im fast-path eligible");
     }
     if (engine::modules::is_conv_transpose1d_col2im_fast_path_eligible(cpu_runner.ctx, eligible_config)) {
         throw std::runtime_error("CPU conv-transpose config must not be col2im fast-path eligible");
@@ -352,7 +352,7 @@ void require_fast_path_trigger_conditions(engine::core::BackendType backend_type
 
     auto dilated_config = eligible_config;
     dilated_config.dilation = 2;
-    if (engine::modules::is_conv_transpose1d_col2im_fast_path_eligible(cuda_runner.ctx, dilated_config)) {
+    if (engine::modules::is_conv_transpose1d_col2im_fast_path_eligible(fast_runner.ctx, dilated_config)) {
         throw std::runtime_error("dilated conv-transpose config must not be col2im fast-path eligible");
     }
 }
@@ -417,6 +417,8 @@ const char * backend_name(engine::core::BackendType backend_type) {
             return "cpu";
         case engine::core::BackendType::Cuda:
             return "cuda";
+        case engine::core::BackendType::Metal:
+            return "metal";
         case engine::core::BackendType::Vulkan:
             return "vulkan";
         default:
@@ -453,6 +455,22 @@ void run_ab_case(const ConvTransposeCase & test_case, engine::core::BackendType 
               << " mean_diff=" << worst.mean_diff << '\n';
 }
 
+void run_fast_path_backend(
+    engine::core::BackendType backend_type,
+    const ConvTransposeCase & qwen3_case,
+    const ConvTransposeCase & batched_case) {
+    if (!backend_is_available(backend_type)) {
+        std::cout << "[SKIP] " << backend_name(backend_type)
+                  << " backend is not available for conv transpose fast-path parity test\n";
+        return;
+    }
+    require_fast_path_trigger_conditions(backend_type);
+    run_case(qwen3_case, backend_type);
+    run_case(batched_case, backend_type);
+    run_ab_case(qwen3_case, backend_type);
+    run_ab_case(batched_case, backend_type);
+}
+
 }  // namespace
 
 int main() {
@@ -460,16 +478,8 @@ int main() {
         const ConvTransposeCase qwen3_case{"qwen3_decoder_mid_block_biased", 1, 256, 128, 96, 10, 5, true};
         const ConvTransposeCase batched_case{"batched_decoder_block_no_bias", 2, 192, 192, 48, 2, 2, false};
 
-        constexpr auto kBackend = engine::core::BackendType::Cuda;
-        if (!backend_is_available(kBackend)) {
-            std::cout << "[SKIP] CUDA backend is not available for conv transpose fast-path parity test\n";
-        } else {
-            require_fast_path_trigger_conditions(kBackend);
-            run_case(qwen3_case, kBackend);
-            run_case(batched_case, kBackend);
-            run_ab_case(qwen3_case, kBackend);
-            run_ab_case(batched_case, kBackend);
-        }
+        run_fast_path_backend(engine::core::BackendType::Cuda, qwen3_case, batched_case);
+        run_fast_path_backend(engine::core::BackendType::Metal, qwen3_case, batched_case);
 
         std::cout << "[SKIP] CPU backend does not implement ggml_col2im_1d for conv transpose A/B test\n";
 

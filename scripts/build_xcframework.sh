@@ -9,11 +9,13 @@ BUILD_ROOT="$REPO_ROOT/build/xcframework"
 OUTPUT="$BUILD_ROOT/AudioCpp.xcframework"
 BUILD_TYPE="Release"
 ARCHS="$(uname -m)"
+PLATFORM="macos"
 DEPLOYMENT_TARGET="13.3"
 JOBS="$(sysctl -n hw.logicalcpu 2>/dev/null || echo 8)"
 CLEAN="OFF"
 LLAMAFILE="ON"
 NATIVE_CPU="ON"
+OPENMP="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
 AUDIOCPP_MODEL_SET="full"
 AUDIOCPP_MODELS=""
@@ -22,7 +24,7 @@ usage() {
     cat <<'EOF'
 Usage: scripts/build_xcframework.sh [options]
 
-Build audio.cpp as a macOS static XCFramework.
+Build audio.cpp as a static XCFramework.
 
 Options:
   --output <path>       Output XCFramework path.
@@ -31,10 +33,12 @@ Options:
                         Default: build/xcframework
   --build-type <type>   CMake build type.
                         Default: Release
+  --platform macos|ios  Target Apple platform.
+                        Default: macos
   --deployment-target <version>
-                        Minimum macOS deployment target.
+                        Minimum deployment target.
                         Default: 13.3
-  --archs "<list>"      Space or comma separated macOS architectures.
+  --archs "<list>"      Space or comma separated target architectures.
                         Default: current machine architecture
   --universal           Build arm64 and x86_64, then lipo a universal macOS lib.
   --clean               Remove intermediate/output directories first.
@@ -42,6 +46,8 @@ Options:
                         Default: ON
   --native-cpu ON|OFF   Build ggml CPU kernels with native host ISA flags.
                         Default: ON
+  --openmp ON|OFF       Enable OpenMP host parallelism.
+                        Default: OFF
   --deployment-build    Embed package specs for standalone GGUF/model loading.
   --model-set full|core|custom
                         Model composite to build.
@@ -54,6 +60,7 @@ Options:
 Examples:
   scripts/build_xcframework.sh
   scripts/build_xcframework.sh --universal
+  scripts/build_xcframework.sh --platform ios --archs arm64 --model-set custom --models vibevoice
   scripts/build_xcframework.sh --output /tmp/AudioCpp.xcframework
 EOF
 }
@@ -70,6 +77,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --build-type)
             BUILD_TYPE="$2"
+            shift 2
+            ;;
+        --platform)
+            case "$2" in
+                macos|ios)
+                    PLATFORM="$2"
+                    ;;
+                *)
+                    echo "--platform must be macos or ios" >&2
+                    exit 1
+                    ;;
+            esac
             shift 2
             ;;
         --deployment-target)
@@ -94,6 +113,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --native-cpu)
             NATIVE_CPU="$2"
+            shift 2
+            ;;
+        --openmp)
+            OPENMP="$2"
             shift 2
             ;;
         --deployment-build)
@@ -164,6 +187,16 @@ case "$NATIVE_CPU" in
         ;;
 esac
 
+case "$OPENMP" in
+    ON|OFF) ;;
+    on) OPENMP="ON" ;;
+    off) OPENMP="OFF" ;;
+    *)
+        echo "--openmp must be ON or OFF" >&2
+        exit 1
+        ;;
+esac
+
 ARCHS="${ARCHS//,/ }"
 read -r -a ARCH_LIST <<< "$ARCHS"
 if [[ ${#ARCH_LIST[@]} -eq 0 ]]; then
@@ -174,6 +207,14 @@ fi
 GENERATOR=""
 if command -v ninja >/dev/null 2>&1; then
     GENERATOR="Ninja"
+fi
+
+SDK_NAME="macosx"
+PLATFORM_LABEL="macos"
+if [[ "$PLATFORM" == "ios" ]]; then
+    SDK_NAME="iphoneos"
+    PLATFORM_LABEL="ios"
+    GENERATOR="Xcode"
 fi
 
 ARTIFACT_ROOT="$BUILD_ROOT/artifacts"
@@ -190,28 +231,32 @@ mkdir -p "$HEADER_DIR"
 
 ditto "$REPO_ROOT/include" "$HEADER_DIR"
 ditto "$REPO_ROOT/external/ggml/include" "$HEADER_DIR"
+find "$HEADER_DIR" -name '._*' -delete
 
 archive_for_arch() {
     local arch="$1"
-    local build_dir="$BUILD_ROOT/macos-$arch"
-    local out_dir="$ARTIFACT_ROOT/macos-$arch"
+    local build_dir="$BUILD_ROOT/$PLATFORM_LABEL-$arch"
+    local out_dir="$ARTIFACT_ROOT/$PLATFORM_LABEL-$arch"
     local out_lib="$out_dir/libMiniTTS.a"
 
     mkdir -p "$out_dir"
 
-    echo "==> Configuring audio.cpp for macOS $arch"
+    echo "==> Configuring audio.cpp for $PLATFORM_LABEL $arch"
     local cmake_cmd=(
         cmake
         -S "$REPO_ROOT" \
         -B "$build_dir" \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
         -DCMAKE_OSX_ARCHITECTURES="$arch" \
+        -DCMAKE_OSX_SYSROOT="$SDK_NAME" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
         -DENGINE_ENABLE_CUDA=OFF \
         -DENGINE_ENABLE_VULKAN=OFF \
         -DENGINE_ENABLE_METAL=ON \
+        -DENGINE_ENABLE_OPENMP="$OPENMP" \
         -DENGINE_ENABLE_LLAMAFILE="$LLAMAFILE" \
         -DENGINE_ENABLE_NATIVE_CPU="$NATIVE_CPU" \
+        -DGGML_OPENMP="$OPENMP" \
         -DGGML_METAL_EMBED_LIBRARY=ON \
         -DENGINE_BUILD_TESTS=OFF \
         -DENGINE_BUILD_EXAMPLES=OFF \
@@ -219,28 +264,53 @@ archive_for_arch() {
         -DAUDIOCPP_MODEL_SET="$AUDIOCPP_MODEL_SET" \
         -DAUDIOCPP_MODELS="$AUDIOCPP_MODELS"
     )
+    if [[ "$PLATFORM" == "ios" ]]; then
+        cmake_cmd+=(
+            -DCMAKE_SYSTEM_NAME=iOS
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
+        )
+    fi
     if [[ -n "$GENERATOR" ]]; then
         cmake_cmd+=(-G "$GENERATOR")
     fi
     "${cmake_cmd[@]}"
 
-    echo "==> Building engine_runtime for macOS $arch"
-    cmake --build "$build_dir" --target engine_runtime -j "$JOBS"
+    echo "==> Building engine_runtime for $PLATFORM_LABEL $arch"
+    cmake --build "$build_dir" --target engine_runtime --config "$BUILD_TYPE" -j "$JOBS"
 
-    local libs=(
-        "$build_dir/libengine_runtime.a"
-        "$build_dir/libcjson_vendor.a"
-        "$build_dir/libyaml_vendor.a"
-        "$build_dir/external/sentencepiece/src/libsentencepiece.a"
-        "$build_dir/external/ggml/src/libggml.a"
-        "$build_dir/external/ggml/src/libggml-base.a"
-        "$build_dir/external/ggml/src/libggml-cpu.a"
-        "$build_dir/external/ggml/src/ggml-metal/libggml-metal.a"
-    )
-
-    local optional_libs=(
-        "$build_dir/external/ggml/src/ggml-blas/libggml-blas.a"
-    )
+    local libs=()
+    local optional_libs=()
+    if [[ "$GENERATOR" == "Xcode" ]]; then
+        local lib_root="$build_dir/$BUILD_TYPE-$SDK_NAME"
+        libs=(
+            "$lib_root/libengine_runtime.a"
+            "$build_dir/build/engine_core.build/$BUILD_TYPE-$SDK_NAME/libengine_core.a"
+            "$lib_root/libcjson_vendor.a"
+            "$lib_root/libyaml_vendor.a"
+            "$build_dir/external/sentencepiece/src/$BUILD_TYPE-$SDK_NAME/libsentencepiece.a"
+            "$build_dir/ggml/src/$BUILD_TYPE-$SDK_NAME/libggml.a"
+            "$build_dir/ggml/src/$BUILD_TYPE-$SDK_NAME/libggml-base.a"
+            "$build_dir/ggml/src/$BUILD_TYPE-$SDK_NAME/libggml-cpu.a"
+            "$build_dir/ggml/src/ggml-metal/$BUILD_TYPE-$SDK_NAME/libggml-metal.a"
+        )
+        optional_libs=(
+            "$build_dir/ggml/src/ggml-blas/$BUILD_TYPE-$SDK_NAME/libggml-blas.a"
+        )
+    else
+        libs=(
+            "$build_dir/libengine_runtime.a"
+            "$build_dir/libcjson_vendor.a"
+            "$build_dir/libyaml_vendor.a"
+            "$build_dir/external/sentencepiece/src/libsentencepiece.a"
+            "$build_dir/ggml/src/libggml.a"
+            "$build_dir/ggml/src/libggml-base.a"
+            "$build_dir/ggml/src/libggml-cpu.a"
+            "$build_dir/ggml/src/ggml-metal/libggml-metal.a"
+        )
+        optional_libs=(
+            "$build_dir/ggml/src/ggml-blas/libggml-blas.a"
+        )
+    fi
     for lib in "${optional_libs[@]}"; do
         if [[ -f "$lib" ]]; then
             libs+=("$lib")
@@ -254,7 +324,7 @@ archive_for_arch() {
         fi
     done
 
-    echo "==> Merging static libraries for macOS $arch"
+    echo "==> Merging static libraries for $PLATFORM_LABEL $arch"
     rm -f "$out_lib"
     libtool -static -o "$out_lib" "${libs[@]}"
     lipo -info "$out_lib"
@@ -266,11 +336,11 @@ done
 
 rm -f "$UNIVERSAL_LIB"
 if [[ ${#ARCH_LIST[@]} -eq 1 ]]; then
-    cp "$ARTIFACT_ROOT/macos-${ARCH_LIST[0]}/libMiniTTS.a" "$UNIVERSAL_LIB"
+    cp "$ARTIFACT_ROOT/$PLATFORM_LABEL-${ARCH_LIST[0]}/libMiniTTS.a" "$UNIVERSAL_LIB"
 else
     lipo_inputs=()
     for arch in "${ARCH_LIST[@]}"; do
-        lipo_inputs+=("$ARTIFACT_ROOT/macos-$arch/libMiniTTS.a")
+        lipo_inputs+=("$ARTIFACT_ROOT/$PLATFORM_LABEL-$arch/libMiniTTS.a")
     done
     lipo -create "${lipo_inputs[@]}" -output "$UNIVERSAL_LIB"
 fi
@@ -283,5 +353,6 @@ xcodebuild -create-xcframework \
     -library "$UNIVERSAL_LIB" \
     -headers "$HEADER_DIR" \
     -output "$OUTPUT"
+find "$OUTPUT" -name '._*' -delete
 
 echo "Created: $OUTPUT"

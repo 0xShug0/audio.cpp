@@ -1,0 +1,419 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		710000000000000000000001 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710000000000000000000021 /* App.swift */; };
+		710000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710000000000000000000022 /* ContentView.swift */; };
+		710000000000000000000003 /* VibeVoiceEngine.mm in Sources */ = {isa = PBXBuildFile; fileRef = 710000000000000000000023 /* VibeVoiceEngine.mm */; };
+		710000000000000000000004 /* AudioCpp.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 710000000000000000000028 /* AudioCpp.xcframework */; };
+		710000000000000000000005 /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 710000000000000000000029 /* Accelerate.framework */; };
+		710000000000000000000006 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 71000000000000000000002A /* Metal.framework */; };
+		710000000000000000000007 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 71000000000000000000002B /* MetalKit.framework */; };
+		710000000000000000000008 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 71000000000000000000002C /* AVFoundation.framework */; };
+		710000000000000000000009 /* vibevoice-1.5b-q4_k-lookup_q8-convtr_q4.gguf in Resources */ = {isa = PBXBuildFile; fileRef = 71000000000000000000002D /* vibevoice-1.5b-q4_k-lookup_q8-convtr_q4.gguf */; };
+		71000000000000000000000A /* en-Alice_woman.wav in Resources */ = {isa = PBXBuildFile; fileRef = 71000000000000000000002E /* en-Alice_woman.wav */; };
+		71000000000000000000000B /* en-Frank_man.wav in Resources */ = {isa = PBXBuildFile; fileRef = 71000000000000000000002F /* en-Frank_man.wav */; };
+		71000000000000000000000C /* en-Carter_man.wav in Resources */ = {isa = PBXBuildFile; fileRef = 710000000000000000000030 /* en-Carter_man.wav */; };
+		71000000000000000000000D /* en-Maya_woman.wav in Resources */ = {isa = PBXBuildFile; fileRef = 710000000000000000000031 /* en-Maya_woman.wav */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		710000000000000000000020 /* VibeVoiceDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VibeVoiceDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		710000000000000000000021 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		710000000000000000000022 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		710000000000000000000023 /* VibeVoiceEngine.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = VibeVoiceEngine.mm; sourceTree = "<group>"; };
+		710000000000000000000024 /* VibeVoiceEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VibeVoiceEngine.h; sourceTree = "<group>"; };
+		710000000000000000000025 /* VibeVoiceDemo-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "VibeVoiceDemo-Bridging-Header.h"; sourceTree = "<group>"; };
+		710000000000000000000026 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		710000000000000000000027 /* VibeVoiceDemo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VibeVoiceDemo.entitlements; sourceTree = "<group>"; };
+		710000000000000000000028 /* AudioCpp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = AudioCpp.xcframework; path = Frameworks/AudioCpp.xcframework; sourceTree = SOURCE_ROOT; };
+		710000000000000000000029 /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
+		71000000000000000000002A /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		71000000000000000000002B /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		71000000000000000000002C /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		71000000000000000000002D /* vibevoice-1.5b-q4_k-lookup_q8-convtr_q4.gguf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "vibevoice-1.5b-q4_k-lookup_q8-convtr_q4.gguf"; path = "Resources/vibevoice-1.5b-q4_k-lookup_q8-convtr_q4.gguf"; sourceTree = SOURCE_ROOT; };
+		71000000000000000000002E /* en-Alice_woman.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = "en-Alice_woman.wav"; path = "Resources/en-Alice_woman.wav"; sourceTree = SOURCE_ROOT; };
+		71000000000000000000002F /* en-Frank_man.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = "en-Frank_man.wav"; path = "Resources/en-Frank_man.wav"; sourceTree = SOURCE_ROOT; };
+		710000000000000000000030 /* en-Carter_man.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = "en-Carter_man.wav"; path = "Resources/en-Carter_man.wav"; sourceTree = SOURCE_ROOT; };
+		710000000000000000000031 /* en-Maya_woman.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = "en-Maya_woman.wav"; path = "Resources/en-Maya_woman.wav"; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		710000000000000000000040 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				710000000000000000000004 /* AudioCpp.xcframework in Frameworks */,
+				710000000000000000000005 /* Accelerate.framework in Frameworks */,
+				710000000000000000000006 /* Metal.framework in Frameworks */,
+				710000000000000000000007 /* MetalKit.framework in Frameworks */,
+				710000000000000000000008 /* AVFoundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		710000000000000000000050 = {
+			isa = PBXGroup;
+			children = (
+				710000000000000000000051 /* VibeVoiceDemo */,
+				710000000000000000000052 /* Frameworks */,
+				710000000000000000000053 /* Resources */,
+				710000000000000000000054 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		710000000000000000000051 /* VibeVoiceDemo */ = {
+			isa = PBXGroup;
+			children = (
+				710000000000000000000021 /* App.swift */,
+				710000000000000000000022 /* ContentView.swift */,
+				710000000000000000000023 /* VibeVoiceEngine.mm */,
+				710000000000000000000024 /* VibeVoiceEngine.h */,
+				710000000000000000000025 /* VibeVoiceDemo-Bridging-Header.h */,
+				710000000000000000000026 /* Info.plist */,
+				710000000000000000000027 /* VibeVoiceDemo.entitlements */,
+			);
+			path = VibeVoiceDemo;
+			sourceTree = "<group>";
+		};
+		710000000000000000000052 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				710000000000000000000028 /* AudioCpp.xcframework */,
+				710000000000000000000029 /* Accelerate.framework */,
+				71000000000000000000002A /* Metal.framework */,
+				71000000000000000000002B /* MetalKit.framework */,
+				71000000000000000000002C /* AVFoundation.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		710000000000000000000053 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				71000000000000000000002D /* vibevoice-1.5b-q4_k-lookup_q8-convtr_q4.gguf */,
+				71000000000000000000002E /* en-Alice_woman.wav */,
+				71000000000000000000002F /* en-Frank_man.wav */,
+				710000000000000000000030 /* en-Carter_man.wav */,
+				710000000000000000000031 /* en-Maya_woman.wav */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		710000000000000000000054 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				710000000000000000000020 /* VibeVoiceDemo.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		710000000000000000000060 /* VibeVoiceDemo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 710000000000000000000100 /* Build configuration list for PBXNativeTarget "VibeVoiceDemo" */;
+			buildPhases = (
+				710000000000000000000070 /* Sources */,
+				710000000000000000000040 /* Frameworks */,
+				710000000000000000000080 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VibeVoiceDemo;
+			productName = VibeVoiceDemo;
+			productReference = 710000000000000000000020 /* VibeVoiceDemo.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		710000000000000000000090 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					710000000000000000000060 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = 7100000000000000000000F0 /* Build configuration list for PBXProject "VibeVoiceDemo" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 710000000000000000000050;
+			productRefGroup = 710000000000000000000054 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				710000000000000000000060 /* VibeVoiceDemo */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		710000000000000000000080 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				710000000000000000000009 /* vibevoice-1.5b-q4_k-lookup_q8-convtr_q4.gguf in Resources */,
+				71000000000000000000000A /* en-Alice_woman.wav in Resources */,
+				71000000000000000000000B /* en-Frank_man.wav in Resources */,
+				71000000000000000000000C /* en-Carter_man.wav in Resources */,
+				71000000000000000000000D /* en-Maya_woman.wav in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		710000000000000000000070 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				710000000000000000000001 /* App.swift in Sources */,
+				710000000000000000000002 /* ContentView.swift in Sources */,
+				710000000000000000000003 /* VibeVoiceEngine.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		7100000000000000000000A0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		7100000000000000000000A1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		7100000000000000000000B0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				CLANG_CXX_LIBRARY = "libc++";
+				CODE_SIGN_ENTITLEMENTS = VibeVoiceDemo/VibeVoiceDemo.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = ARFGZ873S3;
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Frameworks",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Frameworks/AudioCpp.xcframework/ios-arm64/Headers",
+				);
+				INFOPLIST_FILE = VibeVoiceDemo/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lz",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.audio.cpp.VibeVoiceDemo;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "VibeVoiceDemo/VibeVoiceDemo-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7100000000000000000000B1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				CLANG_CXX_LIBRARY = "libc++";
+				CODE_SIGN_ENTITLEMENTS = VibeVoiceDemo/VibeVoiceDemo.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = ARFGZ873S3;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Frameworks",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Frameworks/AudioCpp.xcframework/ios-arm64/Headers",
+				);
+				INFOPLIST_FILE = VibeVoiceDemo/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lz",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.audio.cpp.VibeVoiceDemo;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "VibeVoiceDemo/VibeVoiceDemo-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		7100000000000000000000F0 /* Build configuration list for PBXProject "VibeVoiceDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7100000000000000000000A0 /* Debug */,
+				7100000000000000000000A1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		710000000000000000000100 /* Build configuration list for PBXNativeTarget "VibeVoiceDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7100000000000000000000B0 /* Debug */,
+				7100000000000000000000B1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 710000000000000000000090 /* Project object */;
+}
