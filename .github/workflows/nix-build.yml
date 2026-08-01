@@ -1,0 +1,43 @@
+name: Nix Build
+
+on:
+    push:
+        branches:
+            - ci/**
+            - main
+            - dev
+            - release-0.2
+    pull_request:
+        branches:
+            - main
+            - dev
+            - release-0.2
+    workflow_dispatch:
+
+jobs:
+    build:
+        name: Nix (${{ matrix.package }})
+        runs-on: ubuntu-24.04
+
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - package: cpu
+                    - package: vulkan
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@v31
+
+            - name: Check loader/spec sync
+              run: |
+                  python3 tools/check_loader_catalog_sync.py --self-test
+                  python3 tools/check_loader_catalog_sync.py
+
+            - name: Build ${{ matrix.package }}
+              run: |
+                  nix build ".#${{ matrix.package }}"
