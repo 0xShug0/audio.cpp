@@ -304,7 +304,9 @@ core::TensorValue view_batch_matrix(
 bool is_conv_transpose1d_col2im_fast_path_eligible(
     const core::ModuleBuildContext & ctx,
     const ConvTranspose1dConfig & config) noexcept {
-    return (ctx.backend_type == core::BackendType::Cuda || ctx.backend_type == core::BackendType::Hip) &&
+    return (ctx.backend_type == core::BackendType::Cuda ||
+            ctx.backend_type == core::BackendType::Hip ||
+            ctx.backend_type == core::BackendType::Metal) &&
            config.dilation == 1;
 }
 
