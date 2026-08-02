@@ -1,5 +1,6 @@
 {
   "family": "seed_vc",
+  "schema_version": 1,
   "display_name": "Seed-VC",
   "description": "Zero-shot voice conversion and singing voice conversion model for transferring timbre and style from reference audio, with low-latency realtime conversion and optional lightweight fine-tuning.",
   "category": "voice_conversion",
@@ -23,6 +24,7 @@
       "singing"
     ]
   },
+  "dependencies": [],
   "runtime": {
     "tags": [
       "gguf"
@@ -39,6 +41,114 @@
       "docs/audio_tools.md",
       "docs/gguf.md"
     ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "route",
+        "type": "enum",
+        "description": "Select the Seed-VC conversion route. Defaults to v2_vc for VC and v1_svc for SVC.",
+        "values": [
+          "v2_vc",
+          "v1_svc",
+          "v1_whisper_bigvgan_vc",
+          "v1_xlsr_hift_vc"
+        ],
+        "required": false
+      },
+      {
+        "name": "length_adjust",
+        "type": "float",
+        "description": "Output duration multiplier; must be positive, default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Diffusion steps; default 30.",
+        "required": false,
+        "min": 1,
+        "default": 30
+      },
+      {
+        "name": "inference_guidance_scale",
+        "type": "float",
+        "description": "V1 classifier-free guidance scale; default 0.7.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.7
+      },
+      {
+        "name": "intelligibility_guidance_scale",
+        "type": "float",
+        "description": "V2 classifier-free guidance scale for source-content intelligibility; default 0.7.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.7
+      },
+      {
+        "name": "similarity_guidance_scale",
+        "type": "float",
+        "description": "V2 classifier-free guidance scale for target-speaker similarity; default 0.7.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.7
+      },
+      {
+        "name": "voice_anonymization",
+        "type": "bool",
+        "description": "Use randomized average-voice conditioning instead of target-speaker conditioning for V2 anonymization; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Seed for V1/V2 diffusion noise and HiFT stochastic source excitation; omitted requests choose a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "noise_path",
+        "type": "path",
+        "description": "Optional raw f32 noise file for deterministic V1/V2 diffusion noise and XLSR/HiFT source excitation.",
+        "required": false
+      },
+      {
+        "name": "f0_condition",
+        "type": "bool",
+        "description": "Enable V1 F0 conditioning for singing voice conversion; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "auto_f0_adjust",
+        "type": "bool",
+        "description": "Automatically adjust V1 source pitch toward the target pitch level; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "semitone_shift",
+        "type": "int",
+        "description": "V1 pitch shift in semitones for singing voice conversion; default 0.",
+        "required": false,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared Seed-VC component weight storage type; default native, except RMVPE uses f32 unless overridden.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
   },
   "package_defaults": {
     "download": {

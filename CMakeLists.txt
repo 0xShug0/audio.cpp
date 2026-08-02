@@ -987,9 +987,8 @@ audiocpp_add_model(seed_vc
         src/models/seed_vc/v1_cfm.cpp
         src/models/seed_vc/v2_cfm.cpp
         src/models/seed_vc/session.cpp
-        src/models/seed_vc/loader.cpp
     INCLUDES
-        engine/models/seed_vc/loader.h
+        engine/models/seed_vc/session.h
     LOADERS
         engine::models::seed_vc::make_seed_vc_loader
 )
