@@ -4,6 +4,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <chrono>
@@ -15,6 +16,39 @@
 
 namespace engine::models::demucs {
 namespace {
+
+constexpr const char * kFamily = "htdemucs";
+
+std::shared_ptr<const HTDemucsAssets> require_assets(std::shared_ptr<const HTDemucsAssets> assets) {
+    if (assets == nullptr) {
+        throw std::runtime_error("HTDemucs session requires assets");
+    }
+    return assets;
+}
+
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("HTDemucs session requires a model contract");
+    }
+    return contract;
+}
+
+runtime::SessionOptions apply_htdemucs_v1_compatibility(runtime::SessionOptions options) {
+    auto legacy = options.options.find("weight_type");
+    if (legacy == options.options.end()) {
+        return options;
+    }
+    auto current = options.options.find("htdemucs.weight_type");
+    if (current != options.options.end()) {
+        throw std::runtime_error(
+            "HTDemucs session options contain both weight_type and htdemucs.weight_type; use htdemucs.weight_type");
+    }
+    std::string value = std::move(legacy->second);
+    options.options.erase(legacy);
+    options.options.emplace("htdemucs.weight_type", std::move(value));
+    return options;
+}
 
 assets::TensorStorageType option_weight_type(
     const runtime::SessionOptions & options,
@@ -70,15 +104,15 @@ std::pair<float, float> normalize_separator_audio(runtime::AudioBuffer & audio) 
 }  // namespace
 
 HTDemucsSession::HTDemucsSession(
-    const runtime::TaskSpec & task,
-    const runtime::SessionOptions & options,
-    std::shared_ptr<const HTDemucsAssets> assets)
-    : RuntimeSessionBase(options),
-      task_(task),
-      assets_(std::move(assets)) {
-    if (assets_ == nullptr) {
-        throw std::runtime_error("HTDemucs session requires assets");
-    }
+    runtime::TaskSpec task,
+    runtime::SessionOptions options,
+    std::shared_ptr<const HTDemucsAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : RuntimeSessionBase(apply_htdemucs_v1_compatibility(std::move(options))),
+      task_(std::move(task)),
+      assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))) {
+    runtime::validate_spec_backed_session_options(RuntimeSessionBase::options(), *contract_, kFamily, "HTDemucs");
     if (task_.task != runtime::VoiceTaskKind::SourceSeparation) {
         throw std::runtime_error("HTDemucs models only support --task sep");
     }
@@ -112,7 +146,7 @@ HTDemucsSession::HTDemucsSession(
 HTDemucsSession::~HTDemucsSession() = default;
 
 std::string HTDemucsSession::family() const {
-    return "htdemucs";
+    return kFamily;
 }
 
 runtime::VoiceTaskKind HTDemucsSession::task_kind() const {
@@ -146,6 +180,7 @@ void HTDemucsSession::prepare(const runtime::SessionPreparationRequest & request
 
 runtime::TaskResult HTDemucsSession::run(const runtime::TaskRequest & request) {
     require_prepared("HTDemucs run()");
+    runtime::validate_spec_backed_request_options(request.options, *contract_, "HTDemucs");
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("HTDemucs run() requires audio_input");
     }
@@ -262,6 +297,25 @@ runtime::TaskResult HTDemucsSession::run(const runtime::TaskRequest & request) {
     debug::timing_log_scalar("htdemucs.merge_ms", merge_ms);
     debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(wall_start));
     return result;
+}
+
+// Loading adapter: HTDemucs uses the schema-v1 spec-backed loader, so the
+// loader wiring stays beside the session it constructs.
+std::shared_ptr<runtime::IVoiceModelLoader> make_htdemucs_loader() {
+    runtime::SpecBackedVoiceModelConfig<HTDemucsAssets> config;
+    config.family = kFamily;
+    config.load_assets = load_htdemucs_assets;
+    config.create_session = [](const runtime::TaskSpec & task,
+                                const runtime::SessionOptions & options,
+                                std::shared_ptr<const HTDemucsAssets> assets,
+                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<HTDemucsSession>(
+            task,
+            options,
+            std::move(assets),
+            std::move(contract));
+    };
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::demucs

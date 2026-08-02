@@ -2,8 +2,8 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/framework/runtime/model.h"
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -83,6 +83,6 @@ struct HTDemucsAssets {
 };
 
 void validate_demucs_weight_storage_type(assets::TensorStorageType storage_type);
-std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(const runtime::ModelLoadRequest & request);
+std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::demucs

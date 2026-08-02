@@ -387,10 +387,9 @@ audiocpp_add_model(demucs
         src/models/demucs/frontend.cpp
         src/models/demucs/pipeline.cpp
         src/models/demucs/postprocess.cpp
-        src/models/demucs/loader.cpp
         src/models/demucs/session.cpp
     INCLUDES
-        engine/models/demucs/loader.h
+        engine/models/demucs/session.h
     LOADERS
         engine::models::demucs::make_htdemucs_loader
     ALIASES

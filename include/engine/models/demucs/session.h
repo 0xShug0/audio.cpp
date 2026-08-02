@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/demucs/assets.h"
 #include "engine/models/demucs/pipeline.h"
@@ -9,14 +10,17 @@
 
 namespace engine::models::demucs {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_htdemucs_loader();
+
 class HTDemucsSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession {
 public:
     HTDemucsSession(
-        const runtime::TaskSpec & task,
-        const runtime::SessionOptions & options,
-        std::shared_ptr<const HTDemucsAssets> assets);
+        runtime::TaskSpec task,
+        runtime::SessionOptions options,
+        std::shared_ptr<const HTDemucsAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~HTDemucsSession() override;
 
     std::string family() const override;
@@ -28,6 +32,7 @@ public:
 private:
     runtime::TaskSpec task_;
     std::shared_ptr<const HTDemucsAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
     std::unique_ptr<HTDemucsPipeline> pipeline_;
     int64_t chunk_size_ = 0;
