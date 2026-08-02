@@ -14,6 +14,13 @@
 namespace minitts::app {
 namespace {
 
+struct MetricsAudioView {
+    int sample_rate = 0;
+    int channels = 0;
+    size_t samples = 0;
+    const char * source = "";
+};
+
 std::string quote_json(const std::string & value) {
     std::string out = "\"";
     for (char ch : value) {
@@ -124,6 +131,31 @@ std::string artifact_to_json(const engine::runtime::VoiceArtifact & artifact) {
     return out.str();
 }
 
+double audio_duration_ms(const MetricsAudioView & audio) {
+    if (audio.sample_rate <= 0 || audio.channels <= 0) {
+        return 0.0;
+    }
+    return 1000.0 * static_cast<double>(audio.samples) /
+        static_cast<double>(audio.sample_rate * audio.channels);
+}
+
+std::optional<MetricsAudioView> select_metrics_audio(
+    const engine::runtime::TaskResult & result,
+    const std::optional<AudioMetricsInfo> & input_audio) {
+    if (result.audio_output.has_value()) {
+        const auto & audio = *result.audio_output;
+        return MetricsAudioView{audio.sample_rate, audio.channels, audio.samples.size(), "output"};
+    }
+    if (result.named_audio_outputs.size() == 1) {
+        const auto & audio = result.named_audio_outputs.front().audio;
+        return MetricsAudioView{audio.sample_rate, audio.channels, audio.samples.size(), "output"};
+    }
+    if (input_audio.has_value()) {
+        return MetricsAudioView{input_audio->sample_rate, input_audio->channels, input_audio->samples, "input"};
+    }
+    return std::nullopt;
+}
+
 std::optional<std::filesystem::path> suffixed_json_path(
     const std::optional<std::filesystem::path> & base,
     const std::string & request_id) {
@@ -205,6 +237,30 @@ std::string safe_output_name(const std::string & value) {
         out.push_back(std::isalnum(uch) != 0 || ch == '-' || ch == '_' ? ch : '_');
     }
     return out.empty() ? "request" : out;
+}
+
+void emit_task_metrics(
+    const engine::runtime::TaskResult & result,
+    const std::optional<AudioMetricsInfo> & input_audio,
+    double wall_ms,
+    const std::string & prefix) {
+    std::cout << prefix << ".wall_ms=" << wall_ms << "\n";
+    const auto audio = select_metrics_audio(result, input_audio);
+    if (!audio.has_value()) {
+        return;
+    }
+    const double duration_ms = audio_duration_ms(*audio);
+    std::cout << prefix << ".audio_duration_ms=" << duration_ms << "\n";
+    if (duration_ms > 0.0) {
+        const double rtf = wall_ms / duration_ms;
+        std::cout << prefix << ".rtf=" << rtf << "\n";
+        if (rtf > 0.0) {
+            std::cout << prefix << ".x_realtime=" << (1.0 / rtf) << "\n";
+        }
+    }
+    std::cout << prefix << ".audio_duration_source=" << audio->source << "\n";
+    std::cout << prefix << ".sample_rate=" << audio->sample_rate << "\n";
+    std::cout << prefix << ".channels=" << audio->channels << "\n";
 }
 
 void emit_task_result(

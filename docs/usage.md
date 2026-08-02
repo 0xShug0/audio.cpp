@@ -20,6 +20,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--threads` | integer | `4` | Backend/OpenMP worker threads. |
 | `--log` | flag | off | Print progress and timing logs to stdout. |
 | `--log-file` | path | not set | Stream progress and timing logs to a file. |
+| `--metrics` | flag | off | Print compact offline wall time, audio duration, RTF, realtime speed, sample rate, and channel metrics. |
 
 ## Common Inputs And Outputs
 

@@ -23,6 +23,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -253,6 +254,87 @@ bool is_wav_upload_filename(const std::string & filename) {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     }
     return ext.empty() || ext == ".wav";
+}
+
+std::string lower_ascii(std::string value) {
+    for (char & ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+std::string_view trim_ascii(std::string_view value) {
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+        value.remove_prefix(1);
+    }
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+        value.remove_suffix(1);
+    }
+    return value;
+}
+
+bool is_json_content_type(const HttpRequest & request) {
+    const auto it = request.headers.find("content-type");
+    if (it == request.headers.end()) {
+        return false;
+    }
+    const std::string content_type = lower_ascii(it->second);
+    const auto media_type = trim_ascii(std::string_view(content_type).substr(0, content_type.find(';')));
+    return media_type == "application/json" ||
+        (media_type.size() > 5 && media_type.substr(media_type.size() - 5) == "+json");
+}
+
+std::string request_content_type(const HttpRequest & request) {
+    const auto it = request.headers.find("content-type");
+    return it == request.headers.end() ? "" : it->second;
+}
+
+void log_request_body_if_enabled(const ServerConfig & config, const HttpRequest & request) {
+    if (!config.log_request_body || !engine::debug::log_enabled()) {
+        return;
+    }
+    if (request.method != "POST") {
+        return;
+    }
+    if (!request.body.empty() && is_json_content_type(request)) {
+        engine::debug::log_message("[REQUEST_BODY] " + request.method + " " + request.path);
+        engine::debug::log_message(request.body);
+        return;
+    }
+    if (request.body.empty() && request.body_stream == nullptr) {
+        return;
+    }
+    std::ostringstream out;
+    out << "[REQUEST_BODY_SKIPPED] " << request.method << " " << request.path
+        << " content_type=" << json_quote(request_content_type(request));
+    if (request.body_stream != nullptr) {
+        out << " body=stream";
+    } else {
+        out << " body_bytes=" << request.body.size();
+    }
+    if (!request.query.empty()) {
+        out << " query=" << json_quote(request.query);
+    }
+    engine::debug::log_message(out.str());
+}
+
+void log_multipart_request_summary_if_enabled(
+    const ServerConfig & config,
+    const std::vector<MultipartPart> & parts) {
+    if (!config.log_request_body || !engine::debug::log_enabled()) {
+        return;
+    }
+    for (const auto & part : parts) {
+        if (part.filename.empty()) {
+            continue;
+        }
+        std::ostringstream out;
+        out << "[REQUEST_BODY_SKIPPED] multipart_file"
+            << " field=" << json_quote(part.name)
+            << " filename=" << json_quote(part.filename)
+            << " bytes=" << part.data.size();
+        engine::debug::log_message(out.str());
+    }
 }
 
 double elapsed_ms(Clock::time_point started) {
@@ -565,6 +647,7 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
   HttpResponse response;
   const std::string allowed_origin = get_allowed_origin(request);
   try {
+    log_request_body_if_enabled(config_, request);
     if (request.method == "OPTIONS" && !allowed_origin.empty()) {
         response.status = 204;
         response.content_type = "text/plain";
@@ -1053,6 +1136,7 @@ HttpResponse ServerState::handle_transcription_json(const std::string & body_tex
 // spooled to a temp file and routed through the existing JSON request builder.
 HttpResponse ServerState::handle_transcription_multipart(const std::string & body_text, const std::string & boundary) {
     const auto parts = parse_multipart_body(body_text, boundary);
+    log_multipart_request_summary_if_enabled(config_, parts);
 
     const MultipartPart * file_part = nullptr;
     std::string model_id;

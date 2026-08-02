@@ -17,6 +17,7 @@
 #include "engine/framework/runtime/session.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -64,6 +65,7 @@ void print_task_list_help() {
         << "    --weight <id>\n"
         << "    --log  Stream framework progress and timing logs to stdout\n"
         << "    --log-file <path>  Stream framework progress and timing logs to a file\n"
+        << "    --metrics  Print compact wall time, audio duration, and RTF summary after offline generation\n"
         << "    --load-option key=value\n"
         << "    --session-option key=value\n"
         << "    --request-option key=value\n"
@@ -477,6 +479,23 @@ bool stdout_is_terminal() {
 #endif
 }
 
+double duration_ms(std::chrono::steady_clock::duration duration) {
+    return std::chrono::duration<double, std::milli>(duration).count();
+}
+
+std::optional<minitts::app::AudioMetricsInfo> audio_metrics_info(
+    const engine::runtime::TaskRequest & request) {
+    if (!request.audio_input.has_value()) {
+        return std::nullopt;
+    }
+    const auto & audio = *request.audio_input;
+    return minitts::app::AudioMetricsInfo{
+        audio.sample_rate,
+        audio.channels,
+        audio.samples.size(),
+    };
+}
+
 // Feeds raw PCM from stdin into the session chunk by chunk, so nothing has to be buffered up
 // front and transcription tracks the input as it arrives.
 engine::runtime::TaskResult run_streaming_from_stdin(
@@ -611,6 +630,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             has_arg(argc, argv, "--log") || log_file.has_value(),
             log_file,
         });
+        const bool metrics_requested = has_arg(argc, argv, "--metrics");
 
         const auto registry_config = find_arg(argc, argv, "--registry-config");
         auto registry = engine::runtime::make_default_registry(
@@ -781,6 +801,9 @@ int audiocpp_cli_main(int argc, char ** argv) {
         if (stream_audio_from_stdin(argc, argv) && task_spec.mode != engine::runtime::RunMode::Streaming) {
             throw std::runtime_error("--audio - reads live PCM and requires --mode streaming");
         }
+        if (metrics_requested && task_spec.mode != engine::runtime::RunMode::Offline) {
+            throw std::runtime_error("--metrics currently supports offline mode only");
+        }
 
         engine::runtime::SessionOptions session_options;
         session_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
@@ -852,6 +875,13 @@ int audiocpp_cli_main(int argc, char ** argv) {
                 merge_mode,
                 [&](size_t index, const minitts::app::AppRequestResult & item) {
                     minitts::app::emit_batch_item_result(index, item, output_policy);
+                    if (metrics_requested) {
+                        minitts::app::emit_task_metrics(
+                            item.result,
+                            audio_metrics_info(batch_request.requests[index].request),
+                            item.wall_ms,
+                            "metrics[" + minitts::app::safe_output_name(item.id) + "]");
+                    }
                     if (text_out.has_value()) {
                         const auto request_id = minitts::app::safe_output_name(item.id);
                         const auto path = text_out->parent_path() /
@@ -888,6 +918,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             }
             request.options["pocket_tts.export_voice_state_path"] = voice_state_out->string();
         }
+        const auto session_start = std::chrono::steady_clock::now();
         session->prepare(engine::runtime::build_preparation_request(request));
         if (voice_state_out.has_value()) {
             std::cout << "family=" << session->family() << "\n";
@@ -901,6 +932,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
                 throw std::runtime_error("selected task session does not support offline execution");
             }
             const auto result = offline->run(request);
+            const double wall_ms = duration_ms(std::chrono::steady_clock::now() - session_start);
             std::cout << "family=" << session->family() << "\n";
             std::cout << "task=" << engine::runtime::to_string(session->task_kind()) << "\n";
             std::cout << "mode=" << engine::runtime::to_string(session->run_mode()) << "\n";
@@ -921,6 +953,9 @@ int audiocpp_cli_main(int argc, char ** argv) {
             }
             if (text_out.has_value()) {
                 write_text_output(result, *text_out, "text_out");
+            }
+            if (metrics_requested) {
+                minitts::app::emit_task_metrics(result, audio_metrics_info(request), wall_ms);
             }
             return 0;
         }

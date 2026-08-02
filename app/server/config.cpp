@@ -227,6 +227,7 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
     config.device = engine::io::json::optional_i32(root, "device", config.device);
     config.threads = engine::io::json::optional_i32(root, "threads", config.threads);
     config.lazy_load = engine::io::json::optional_bool(root, "lazy_load", config.lazy_load);
+    config.log_request_body = engine::io::json::optional_bool(root, "log_request_body", config.log_request_body);
     if (const auto * value = root.find("max_request_body_bytes")) {
         config.max_request_body_bytes = parse_max_request_body_bytes(*value);
     }

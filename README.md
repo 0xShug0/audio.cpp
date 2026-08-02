@@ -438,6 +438,7 @@ Useful CLI features:
 - `--request-sequence <json>` runs a multi-request offline session
 - `--batch-merge-audio none|concat` controls batch audio merge behavior
 - `--batch-manifest-out <json>` writes a batch output manifest
+- `--metrics` prints compact offline wall time, audio duration, RTF, realtime speed, sample rate, and channel metrics
 - `--pipeline <json>` runs a workflow instead of a raw task
 - `--list-pipelines` prints registered workflows
 - `--workflow-input key=value` overrides pipeline inputs
