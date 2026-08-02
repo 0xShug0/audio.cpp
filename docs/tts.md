@@ -165,6 +165,8 @@ Voice clone:
 audiocpp_cli --task clon --family dramabox --model models/DramaBox-GGUF/dramabox-q8_0.gguf --backend cuda --text "Hello from DramaBox." --voice-ref assets/resources/b.wav --out out.wav
 ```
 
+Older prebuilts that reject `--task clon` can use `--task tts --voice-ref ...`; the same reference-conditioning path is used.
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--voice-ref` / `--target-voice` | WAV path | not set | Reference voice for cloning; omitted requests text-only speech. |
