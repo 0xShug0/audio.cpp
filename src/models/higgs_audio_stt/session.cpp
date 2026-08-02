@@ -3,6 +3,7 @@
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <chrono>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace engine::models::higgs_audio_stt {
@@ -17,11 +19,25 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+constexpr const char * kFamily = "higgs_audio_stt";
+constexpr size_t kDefaultAudioEncoderGraphArenaBytes = 512ull * 1024ull * 1024ull;
+constexpr size_t kDefaultTextDecoderPrefillGraphArenaBytes = 512ull * 1024ull * 1024ull;
+constexpr size_t kDefaultTextDecoderDecodeGraphArenaBytes = 256ull * 1024ull * 1024ull;
+constexpr size_t kDefaultTextDecoderWeightContextBytes = 4096ull * 1024ull * 1024ull;
+
 std::shared_ptr<const HiggsAudioSTTAssets> require_assets(std::shared_ptr<const HiggsAudioSTTAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("Higgs Audio STT session requires assets");
     }
     return assets;
+}
+
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("Higgs Audio STT session requires a model contract");
+    }
+    return contract;
 }
 
 int64_t audio_frame_count(const runtime::AudioBuffer & audio) {
@@ -32,37 +48,6 @@ int64_t audio_frame_count(const runtime::AudioBuffer & audio) {
         throw std::runtime_error("Higgs Audio STT audio samples must be divisible by channel count");
     }
     return static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
-}
-
-void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
-    if (storage_type == engine::assets::TensorStorageType::Native ||
-        storage_type == engine::assets::TensorStorageType::F32 ||
-        storage_type == engine::assets::TensorStorageType::F16 ||
-        storage_type == engine::assets::TensorStorageType::BF16 ||
-        storage_type == engine::assets::TensorStorageType::Q8_0) {
-        return;
-    }
-    throw std::runtime_error(std::string(option_name) + " supports only native, f32, f16, bf16, and q8_0");
-}
-
-void validate_conv_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
-    if (storage_type == engine::assets::TensorStorageType::Native ||
-        storage_type == engine::assets::TensorStorageType::F32 ||
-        storage_type == engine::assets::TensorStorageType::F16) {
-        return;
-    }
-    throw std::runtime_error(std::string(option_name) + " supports only native, f32, and f16");
-}
-
-engine::assets::TensorStorageType option_weight_type(
-    const runtime::SessionOptions & options,
-    const char * key,
-    engine::assets::TensorStorageType default_value) {
-    const auto it = options.options.find(key);
-    if (it == options.options.end()) {
-        return default_value;
-    }
-    return engine::assets::parse_tensor_storage_type(it->second);
 }
 
 size_t common_prefix_size(const std::string & lhs, const std::string & rhs) {
@@ -114,24 +99,90 @@ std::string append_streaming_transcript(
     return delta;
 }
 
+runtime::SessionOptions normalize_session_options(
+    runtime::SessionOptions options,
+    const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
+    options = runtime::apply_option_v1_compatibility(
+        std::move(options),
+        {
+            {"weight_type", "higgs_audio_stt.weight_type"},
+            {"audio_encoder_weight_type", "higgs_audio_stt.audio_encoder_weight_type"},
+            {"text_decoder_weight_type", "higgs_audio_stt.text_decoder_weight_type"},
+            {"audio_encoder_graph_arena_mb", "higgs_audio_stt.audio_encoder_graph_arena_mb"},
+            {"text_decoder_prefill_graph_arena_mb", "higgs_audio_stt.text_decoder_prefill_graph_arena_mb"},
+            {"text_decoder_decode_graph_arena_mb", "higgs_audio_stt.text_decoder_decode_graph_arena_mb"},
+            {"text_decoder_weight_context_mb", "higgs_audio_stt.text_decoder_weight_context_mb"},
+        },
+        "Higgs Audio STT");
+    runtime::validate_spec_backed_session_options(
+        options,
+        *require_contract(contract),
+        kFamily,
+        "Higgs Audio STT");
+    return options;
+}
+
+std::unordered_map<std::string, std::string> normalize_request_options(
+    std::unordered_map<std::string, std::string> options) {
+    return runtime::apply_option_v1_compatibility(
+        std::move(options),
+        {
+            {"audio_chunk_seconds", "audio_chunk_duration_sec"},
+            {"audio_chunk_duration_seconds", "audio_chunk_duration_sec"},
+            {"audio_chunk_duration", "audio_chunk_duration_sec"},
+        },
+        "Higgs Audio STT",
+        "request");
+}
+
+std::unique_ptr<runtime::IVoiceTaskSession> create_higgs_audio_stt_session(
+    const runtime::TaskSpec & task,
+    const runtime::SessionOptions & options,
+    std::shared_ptr<const HiggsAudioSTTAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    return std::make_unique<HiggsAudioSTTSession>(
+        task,
+        options,
+        std::move(assets),
+        std::move(contract));
+}
+
 }  // namespace
 
 HiggsAudioSTTSession::HiggsAudioSTTSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const HiggsAudioSTTAssets> assets)
-    : RuntimeSessionBase(options),
+    std::shared_ptr<const HiggsAudioSTTAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : RuntimeSessionBase(normalize_session_options(std::move(options), contract)),
       task_(task),
       assets_(require_assets(std::move(assets))),
-      audio_encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"higgs_audio_stt.audio_encoder_graph_arena_mb"}, 512ull * 1024ull * 1024ull)),
-      text_decoder_prefill_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"higgs_audio_stt.text_decoder_prefill_graph_arena_mb"}, 512ull * 1024ull * 1024ull)),
-      text_decoder_decode_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"higgs_audio_stt.text_decoder_decode_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
-      text_decoder_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"higgs_audio_stt.text_decoder_weight_context_mb"}, 4096ull * 1024ull * 1024ull)),
-      audio_encoder_weight_storage_type_(option_weight_type(options, "higgs_audio_stt.audio_encoder_weight_type", engine::assets::TensorStorageType::Native)),
-      text_decoder_weight_storage_type_(option_weight_type(
-          options,
+      contract_(require_contract(std::move(contract))),
+      audio_encoder_graph_arena_bytes_(runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"higgs_audio_stt.audio_encoder_graph_arena_mb"}, kDefaultAudioEncoderGraphArenaBytes)),
+      text_decoder_prefill_graph_arena_bytes_(runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"higgs_audio_stt.text_decoder_prefill_graph_arena_mb"}, kDefaultTextDecoderPrefillGraphArenaBytes)),
+      text_decoder_decode_graph_arena_bytes_(runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"higgs_audio_stt.text_decoder_decode_graph_arena_mb"}, kDefaultTextDecoderDecodeGraphArenaBytes)),
+      text_decoder_weight_context_bytes_(runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"higgs_audio_stt.text_decoder_weight_context_mb"}, kDefaultTextDecoderWeightContextBytes)),
+      audio_encoder_weight_storage_type_(runtime::parse_tensor_storage_option(
+          RuntimeSessionBase::options().options,
+          "higgs_audio_stt.audio_encoder_weight_type",
+          engine::assets::TensorStorageType::Native,
+          {
+              engine::assets::TensorStorageType::Native,
+              engine::assets::TensorStorageType::F32,
+              engine::assets::TensorStorageType::F16,
+          })),
+      text_decoder_weight_storage_type_(runtime::parse_tensor_storage_option(
+          RuntimeSessionBase::options().options,
           "higgs_audio_stt.text_decoder_weight_type",
-          option_weight_type(options, "higgs_audio_stt.weight_type", engine::assets::TensorStorageType::Native))),
+          "higgs_audio_stt.weight_type",
+          engine::assets::TensorStorageType::Native,
+          {
+              engine::assets::TensorStorageType::Native,
+              engine::assets::TensorStorageType::F32,
+              engine::assets::TensorStorageType::F16,
+              engine::assets::TensorStorageType::BF16,
+              engine::assets::TensorStorageType::Q8_0,
+          })),
       tokenizer_(assets_),
       frontend_(assets_),
       audio_encoder_(assets_, execution_context(), audio_encoder_graph_arena_bytes_, audio_encoder_weight_storage_type_),
@@ -150,28 +201,13 @@ HiggsAudioSTTSession::HiggsAudioSTTSession(
     if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Higgs Audio STT supports offline and streaming sessions");
     }
-    validate_conv_weight_storage(audio_encoder_weight_storage_type_, "higgs_audio_stt.audio_encoder_weight_type");
-    validate_matmul_weight_storage(text_decoder_weight_storage_type_, "higgs_audio_stt.text_decoder_weight_type");
-    for (const auto & [key, value] : options.options) {
-        (void)value;
-        if (key.rfind("higgs_audio_stt.", 0) == 0 &&
-            key != "higgs_audio_stt.audio_encoder_graph_arena_mb" &&
-            key != "higgs_audio_stt.text_decoder_prefill_graph_arena_mb" &&
-            key != "higgs_audio_stt.text_decoder_decode_graph_arena_mb" &&
-            key != "higgs_audio_stt.text_decoder_weight_context_mb" &&
-            key != "higgs_audio_stt.audio_encoder_weight_type" &&
-            key != "higgs_audio_stt.text_decoder_weight_type" &&
-            key != "higgs_audio_stt.weight_type") {
-            throw std::runtime_error("unknown Higgs Audio STT session option: " + key);
-        }
-    }
     assets_->model_weights->release_storage();
 }
 
 HiggsAudioSTTSession::~HiggsAudioSTTSession() = default;
 
 std::string HiggsAudioSTTSession::family() const {
-    return "higgs_audio_stt";
+    return kFamily;
 }
 
 runtime::VoiceTaskKind HiggsAudioSTTSession::task_kind() const {
@@ -194,23 +230,29 @@ void HiggsAudioSTTSession::prepare(const runtime::SessionPreparationRequest & re
 
 runtime::TaskResult HiggsAudioSTTSession::run(const runtime::TaskRequest & request) {
     require_prepared("Higgs Audio STT run()");
+    auto normalized_request = request;
+    normalized_request.options = normalize_request_options(request.options);
+    runtime::validate_spec_backed_request_options(
+        normalized_request.options,
+        *contract_,
+        "Higgs Audio STT");
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Higgs Audio STT offline run called on non-offline session");
     }
-    const auto chunks = audio_chunk_plan(request);
+    const auto chunks = audio_chunk_plan(normalized_request);
     if (chunks.empty()) {
-        return run_single(make_request(request));
+        return run_single(make_request(normalized_request));
     }
-    const auto & audio = *request.audio_input;
+    const auto & audio = *normalized_request.audio_input;
     if (chunks.size() == 1) {
-        auto item_request = request;
+        auto item_request = normalized_request;
         item_request.audio_input = engine::audio::slice_audio_buffer(audio, chunks.front().source_span);
         return run_single(make_request(item_request));
     }
     runtime::TaskResult merged;
     std::ostringstream text;
     for (const auto & chunk : chunks) {
-        auto item_request = request;
+        auto item_request = normalized_request;
         item_request.audio_input = engine::audio::slice_audio_buffer(audio, chunk.source_span);
         const auto item = run_single(make_request(item_request));
         if (item.text_output.has_value() && !item.text_output->text.empty()) {
@@ -246,6 +288,11 @@ void HiggsAudioSTTSession::start_stream(const runtime::TaskRequest & request) {
     }
     reset();
     streaming_request_ = request;
+    streaming_request_.options = normalize_request_options(request.options);
+    runtime::validate_spec_backed_request_options(
+        streaming_request_.options,
+        *contract_,
+        "Higgs Audio STT");
     streaming_request_.audio_input = std::nullopt;
     streaming_result_ = runtime::TaskResult{};
     stream_started_ = true;
@@ -394,12 +441,12 @@ std::vector<HiggsAudioSTTSession::AudioChunkPlan> HiggsAudioSTTSession::audio_ch
     const int64_t frames = audio_frame_count(audio);
     const auto seconds = engine::audio::parse_audio_chunk_seconds_override(request.options).value_or(4.0F);
     if (!(seconds > 0.0F)) {
-        throw std::runtime_error("Higgs Audio STT audio_chunk_seconds must be positive");
+        throw std::runtime_error("Higgs Audio STT audio_chunk_duration_sec must be positive");
     }
     const int64_t samples = static_cast<int64_t>(
         std::llround(static_cast<double>(seconds) * static_cast<double>(audio.sample_rate)));
     if (samples <= 0) {
-        throw std::runtime_error("Higgs Audio STT audio_chunk_seconds produced an empty chunk");
+        throw std::runtime_error("Higgs Audio STT audio_chunk_duration_sec produced an empty chunk");
     }
     const auto chunks = engine::audio::plan_audio_chunks(
         frames,
@@ -447,6 +494,16 @@ HiggsAudioSTTRequest HiggsAudioSTTSession::make_request(const runtime::TaskReque
         out.generation.enable_thinking = runtime::parse_bool_option(*value, "enable_thinking");
     }
     return out;
+}
+
+// Loading adapter: Higgs Audio STT uses the schema-v1 spec-backed loader, so the
+// loader wiring stays beside the session it constructs.
+std::shared_ptr<runtime::IVoiceModelLoader> make_higgs_audio_stt_loader() {
+    runtime::SpecBackedVoiceModelConfig<HiggsAudioSTTAssets> config;
+    config.family = kFamily;
+    config.load_assets = load_higgs_audio_stt_assets;
+    config.create_session = create_higgs_audio_stt_session;
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::higgs_audio_stt

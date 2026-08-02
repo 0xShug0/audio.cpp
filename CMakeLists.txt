@@ -737,9 +737,8 @@ audiocpp_add_model(higgs_audio_stt
         src/models/higgs_audio_stt/prompt_asr.cpp
         src/models/higgs_audio_stt/postprocess.cpp
         src/models/higgs_audio_stt/session.cpp
-        src/models/higgs_audio_stt/loader.cpp
     INCLUDES
-        engine/models/higgs_audio_stt/loader.h
+        engine/models/higgs_audio_stt/session.h
     LOADERS
         engine::models::higgs_audio_stt::make_higgs_audio_stt_loader
 )
