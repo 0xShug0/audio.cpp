@@ -1,9 +1,9 @@
 #include "engine/models/sortformer_diar/session.h"
 
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/models/sortformer_diar/frontend.h"
 #include "engine/models/sortformer_diar/postprocess.h"
 
@@ -17,6 +17,10 @@ namespace engine::models::sortformer_diar {
 namespace {
 using engine::debug::measure_ms;
 
+constexpr const char * kFamily = "sortformer_diar";
+constexpr size_t kDefaultGraphArenaBytes = 512ull * 1024ull * 1024ull;
+constexpr size_t kDefaultWeightContextBytes = 128ull * 1024ull * 1024ull;
+
 int64_t context_sample_capacity(
     const SortformerFixedContextContract & contract,
     const SortformerAssets & assets) {
@@ -24,43 +28,19 @@ int64_t context_sample_capacity(
         std::llround(contract.session_len_sec * static_cast<double>(assets.feature_config.sample_rate)));
 }
 
-engine::assets::TensorStorageType option_weight_type(
-    const runtime::SessionOptions & options,
-    const char * key,
-    engine::assets::TensorStorageType default_value) {
-    const auto it = options.options.find(key);
-    if (it == options.options.end()) {
-        return default_value;
+std::shared_ptr<const SortformerAssets> require_assets(std::shared_ptr<const SortformerAssets> assets) {
+    if (assets == nullptr) {
+        throw std::runtime_error("Sortformer diar session requires assets");
     }
-    return engine::assets::parse_tensor_storage_type(it->second);
+    return assets;
 }
 
-void validate_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
-    if (storage_type == engine::assets::TensorStorageType::Native ||
-        storage_type == engine::assets::TensorStorageType::F32 ||
-        storage_type == engine::assets::TensorStorageType::F16 ||
-        storage_type == engine::assets::TensorStorageType::BF16 ||
-        storage_type == engine::assets::TensorStorageType::Q8_0) {
-        return;
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("Sortformer diar session requires a model contract");
     }
-    throw std::runtime_error(std::string(option_name) + " currently supports only native, f32, f16, bf16, and q8_0");
-}
-
-void reject_unknown_sortformer_options(const runtime::SessionOptions & options) {
-    for (const auto & [key, value] : options.options) {
-        (void) value;
-        if (key.rfind("sortformer_diar.", 0) != 0) {
-            continue;
-        }
-        if (key == "sortformer_diar.graph_context_mb" ||
-            key == "sortformer_diar.weight_context_mb" ||
-            key == "sortformer_diar.weight_type" ||
-            key == "sortformer_diar.matmul_weight_type" ||
-            key == "sortformer_diar.conv_weight_type") {
-            continue;
-        }
-        throw std::runtime_error("unknown Sortformer diar session option: " + key);
-    }
+    return contract;
 }
 
 runtime::GraphCapacityMode default_graph_capacity_mode(const core::ExecutionContext & execution_context) {
@@ -69,34 +49,86 @@ runtime::GraphCapacityMode default_graph_capacity_mode(const core::ExecutionCont
         : runtime::GraphCapacityMode::Fixed;
 }
 
+runtime::SessionOptions normalize_session_options(
+    runtime::SessionOptions options,
+    const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
+    options = runtime::apply_option_v1_compatibility(
+        std::move(options),
+        {
+            {"graph_context_mb", "sortformer_diar.graph_arena_mb"},
+            {"sortformer_diar.graph_context_mb", "sortformer_diar.graph_arena_mb"},
+            {"weight_context_mb", "sortformer_diar.weight_context_mb"},
+            {"weight_type", "sortformer_diar.weight_type"},
+            {"matmul_weight_type", "sortformer_diar.matmul_weight_type"},
+            {"conv_weight_type", "sortformer_diar.conv_weight_type"},
+            {"session_len_sec", "sortformer_diar.session_len_sec"},
+            {"speaker_threshold", "sortformer_diar.speaker_threshold"},
+            {"speaker_min_frames", "sortformer_diar.speaker_min_frames"},
+            {"speaker_pad_frames", "sortformer_diar.speaker_pad_frames"},
+            {"offline_graph_capacity_mode", "sortformer_diar.graph_capacity_mode"},
+            {"graph_capacity_mode", "sortformer_diar.graph_capacity_mode"},
+        },
+        "Sortformer diar");
+    runtime::validate_spec_backed_session_options(
+        options,
+        *require_contract(contract),
+        kFamily,
+        "Sortformer diar");
+    return options;
+}
+
+std::unique_ptr<runtime::IVoiceTaskSession> create_sortformer_diar_session(
+    const runtime::TaskSpec & task,
+    const runtime::SessionOptions & options,
+    std::shared_ptr<const SortformerAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    return std::make_unique<SortformerDiarSession>(
+        task,
+        options,
+        std::move(assets),
+        std::move(contract));
+}
+
 }  // namespace
 
 SortformerDiarSession::SortformerDiarSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const SortformerAssets> assets)
-    : RuntimeSessionBase(options),
+    std::shared_ptr<const SortformerAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : RuntimeSessionBase(normalize_session_options(std::move(options), contract)),
       task_(std::move(task)),
-      assets_(std::move(assets)),
+      assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))),
       default_postprocess_(parse_sortformer_postprocess_config(RuntimeSessionBase::options())),
-      graph_context_bytes_(
-          runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"sortformer_diar.graph_context_mb"}, 512ull * 1024ull * 1024ull)),
+      graph_arena_bytes_(
+          runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"sortformer_diar.graph_arena_mb"}, kDefaultGraphArenaBytes)),
       weight_context_bytes_(
-          runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"sortformer_diar.weight_context_mb"}, 128ull * 1024ull * 1024ull)),
-      matmul_weight_storage_type_(option_weight_type(
-          RuntimeSessionBase::options(),
+          runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"sortformer_diar.weight_context_mb"}, kDefaultWeightContextBytes)),
+      matmul_weight_storage_type_(runtime::parse_tensor_storage_option(
+          RuntimeSessionBase::options().options,
           "sortformer_diar.matmul_weight_type",
-          option_weight_type(RuntimeSessionBase::options(), "sortformer_diar.weight_type", engine::assets::TensorStorageType::F32))),
-      conv_weight_storage_type_(option_weight_type(
-          RuntimeSessionBase::options(),
+          "sortformer_diar.weight_type",
+          engine::assets::TensorStorageType::F32,
+          {
+              engine::assets::TensorStorageType::Native,
+              engine::assets::TensorStorageType::F32,
+              engine::assets::TensorStorageType::F16,
+              engine::assets::TensorStorageType::BF16,
+              engine::assets::TensorStorageType::Q8_0,
+          })),
+      conv_weight_storage_type_(runtime::parse_tensor_storage_option(
+          RuntimeSessionBase::options().options,
           "sortformer_diar.conv_weight_type",
-          option_weight_type(RuntimeSessionBase::options(), "sortformer_diar.weight_type", engine::assets::TensorStorageType::F32))) {
-    if (!assets_) {
-        throw std::runtime_error("Sortformer diar session requires assets");
-    }
-    reject_unknown_sortformer_options(RuntimeSessionBase::options());
-    validate_weight_storage(matmul_weight_storage_type_, "sortformer_diar.matmul_weight_type");
-    validate_weight_storage(conv_weight_storage_type_, "sortformer_diar.conv_weight_type");
+          "sortformer_diar.weight_type",
+          engine::assets::TensorStorageType::F32,
+          {
+              engine::assets::TensorStorageType::Native,
+              engine::assets::TensorStorageType::F32,
+              engine::assets::TensorStorageType::F16,
+              engine::assets::TensorStorageType::BF16,
+              engine::assets::TensorStorageType::Q8_0,
+          })) {
     weights_ = load_sortformer_diar_weights(
         *assets_,
         execution_context().backend(),
@@ -108,7 +140,7 @@ SortformerDiarSession::SortformerDiarSession(
     const auto graph_capacity_mode = runtime::resolve_graph_capacity_mode(
         RuntimeSessionBase::options(),
         default_graph_capacity_mode(execution_context()),
-        {"offline_graph_capacity_mode", "graph_capacity_mode"});
+        {"sortformer_diar.graph_capacity_mode"});
     if (graph_capacity_mode == runtime::GraphCapacityMode::Unsupported) {
         throw std::runtime_error("Sortformer diar graph_capacity_mode=unsupported is not implemented");
     }
@@ -119,7 +151,7 @@ SortformerDiarSession::SortformerDiarSession(
 SortformerDiarSession::~SortformerDiarSession() = default;
 
 std::string SortformerDiarSession::family() const {
-    return "sortformer_diar";
+    return kFamily;
 }
 
 runtime::VoiceTaskKind SortformerDiarSession::task_kind() const {
@@ -176,7 +208,7 @@ void SortformerDiarSession::prepare_graph_capacity(int64_t capacity) {
         execution_context(),
         *assets_,
         *weights_,
-        graph_context_bytes_,
+        graph_arena_bytes_,
         context.feature_frames,
         context.encoder_frames);
     prepared_contexts_[capacity] = context;
@@ -200,6 +232,10 @@ void SortformerDiarSession::prepare(const runtime::SessionPreparationRequest & r
 
 runtime::TaskResult SortformerDiarSession::run(const runtime::TaskRequest & request) {
     require_prepared("Sortformer run()");
+    runtime::validate_spec_backed_request_options(
+        request.options,
+        *contract_,
+        "Sortformer diar");
     if (task_.task != runtime::VoiceTaskKind::Diarization) {
         throw std::runtime_error("Sortformer diar session only supports --task diar");
     }
@@ -319,6 +355,16 @@ runtime::TaskResult SortformerDiarSession::run_offline_diarization(
     timings.wall_ms = std::chrono::duration<double, std::milli>(wall_ended - wall_started).count();
     emit_sortformer_timings(timings);
     return result;
+}
+
+// Loading adapter: Sortformer diarization uses the schema-v1 spec-backed loader,
+// so loader wiring stays beside the session it constructs.
+std::shared_ptr<runtime::IVoiceModelLoader> make_sortformer_diar_loader() {
+    runtime::SpecBackedVoiceModelConfig<SortformerAssets> config;
+    config.family = kFamily;
+    config.load_assets = load_sortformer_assets;
+    config.create_session = create_sortformer_diar_session;
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::sortformer_diar

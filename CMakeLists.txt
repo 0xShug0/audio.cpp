@@ -904,10 +904,9 @@ audiocpp_add_model(sortformer_diar
         src/models/sortformer_diar/graph.cpp
         src/models/sortformer_diar/modules.cpp
         src/models/sortformer_diar/postprocess.cpp
-        src/models/sortformer_diar/loader.cpp
         src/models/sortformer_diar/session.cpp
     INCLUDES
-        engine/models/sortformer_diar/loader.h
+        engine/models/sortformer_diar/session.h
     LOADERS
         engine::models::sortformer_diar::make_sortformer_diar_loader
 )

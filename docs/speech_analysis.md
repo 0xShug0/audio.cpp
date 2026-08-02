@@ -103,23 +103,47 @@ Sortformer diarization identifies speaker turns. The packaged model path is the 
 | Field | Value |
 |---|---|
 | Family | `sortformer_diar` |
-| Model directory | `models/diar_sortformer_4spk-v1` |
+| Model directory | `models/Sortformer-Diar-4spk-v1-GGUF` |
 | Task | `diar` |
 | Modes | `offline` |
 | Output | Speaker turn JSON through `--turns-out` |
 | Speakers | Up to the speaker count supported by the model package; the default model is 4-speaker |
 
 ```bash
-audiocpp_cli --task diar --family sortformer_diar --model models/diar_sortformer_4spk-v1 --backend cuda --audio meeting_16k.wav --turns-out turns.json
+audiocpp_cli --task diar --family sortformer_diar --model models/Sortformer-Diar-4spk-v1-GGUF/sortformer-diar-4spk-v1-q8_0.gguf --backend cuda --audio meeting_16k.wav --turns-out turns.json
 ```
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Meeting or conversation audio. |
 | `--turns-out` | JSON path | not set | Write speaker turns. |
-| `--session-option speaker_threshold=<float>` | float | `0.5` | Speaker activation threshold. |
-| `--session-option speaker_min_frames=<n>` | integer | `0` | Minimum speaker segment frames. |
-| `--session-option speaker_pad_frames=<n>` | integer | `0` | Padding around speaker turns. |
-| `--session-option session_len_sec=<float>` | seconds | `20.0` | Diarization graph window length. |
+| `--request-option speaker_threshold=<float>` | float | session default | Per-request speaker activation threshold. |
+| `--request-option speaker_min_frames=<n>` | integer | session default | Per-request minimum speaker segment frames. |
+| `--request-option speaker_pad_frames=<n>` | integer | session default | Per-request padding around speaker turns. |
+| `--session-option sortformer_diar.speaker_threshold=<float>` | float | `0.5` | Default speaker activation threshold. |
+| `--session-option sortformer_diar.speaker_min_frames=<n>` | integer | `0` | Default minimum speaker segment frames. |
+| `--session-option sortformer_diar.speaker_pad_frames=<n>` | integer | `0` | Default padding around speaker turns. |
+| `--session-option sortformer_diar.session_len_sec=<float>` | seconds | `20.0` | Diarization graph window length. |
+| `--session-option sortformer_diar.graph_capacity_mode=<mode>` | `fixed`, `tiered`, `grow`, `double` | backend default | Offline graph capacity policy. |
+| `--session-option sortformer_diar.graph_arena_mb=<n>` | MB | `512` | Inference graph arena size. |
+| `--session-option sortformer_diar.weight_context_mb=<n>` | MB | `128` | Weight context size. |
+| `--session-option sortformer_diar.weight_type=<type>` | storage type | `f32` | Default weight storage type. |
+| `--session-option sortformer_diar.matmul_weight_type=<type>` | storage type | `weight_type` | Matmul weight storage override. |
+| `--session-option sortformer_diar.conv_weight_type=<type>` | storage type | `weight_type` | Convolution weight storage override. |
+
+Compatibility aliases are applied before v1 option validation:
+
+| Legacy session option | v1 session option |
+|---|---|
+| `speaker_threshold` | `sortformer_diar.speaker_threshold` |
+| `speaker_min_frames` | `sortformer_diar.speaker_min_frames` |
+| `speaker_pad_frames` | `sortformer_diar.speaker_pad_frames` |
+| `session_len_sec` | `sortformer_diar.session_len_sec` |
+| `graph_context_mb`, `sortformer_diar.graph_context_mb` | `sortformer_diar.graph_arena_mb` |
+| `graph_capacity_mode`, `offline_graph_capacity_mode` | `sortformer_diar.graph_capacity_mode` |
+| `weight_context_mb` | `sortformer_diar.weight_context_mb` |
+| `weight_type` | `sortformer_diar.weight_type` |
+| `matmul_weight_type` | `sortformer_diar.matmul_weight_type` |
+| `conv_weight_type` | `sortformer_diar.conv_weight_type` |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.

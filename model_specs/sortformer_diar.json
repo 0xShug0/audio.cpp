@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "family": "sortformer_diar",
   "display_name": "Sortformer Diarization",
   "description": "NVIDIA Transformer-based end-to-end speaker diarization model trained primarily on English speech, predicting speaker labels directly from audio and resolving speaker ordering by arrival time for up to four speakers.",
@@ -17,6 +18,122 @@
     "diar": [
       "speaker_turns"
     ]
+  },
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "speaker_threshold",
+        "type": "float",
+        "description": "Speaker activity probability threshold used when decoding speaker turns; default 0.5.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "speaker_min_frames",
+        "type": "int",
+        "description": "Minimum decoded segment length in model output frames; default 0 disables short-segment filtering.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "speaker_pad_frames",
+        "type": "int",
+        "description": "Pad each decoded speaker segment by this many model output frames before filtering and merging; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Inference graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight context size in MiB; default 128.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "session_len_sec",
+        "type": "float",
+        "description": "Base offline graph context length in seconds; must be positive, default 20.",
+        "required": false,
+        "min": 0.0,
+        "default": 20.0
+      },
+      {
+        "name": "graph_capacity_mode",
+        "type": "enum",
+        "description": "Offline graph capacity policy; defaults to tiered on host-graph backends and fixed otherwise.",
+        "values": [
+          "fixed",
+          "tiered",
+          "grow",
+          "double"
+        ],
+        "required": false
+      },
+      {
+        "name": "speaker_threshold",
+        "type": "float",
+        "description": "Default speaker activity probability threshold for decoded speaker turns; default 0.5.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "speaker_min_frames",
+        "type": "int",
+        "description": "Default minimum decoded segment length in model output frames; default 0 disables short-segment filtering.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "speaker_pad_frames",
+        "type": "int",
+        "description": "Default decoded segment padding in model output frames; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "All weight storage type; default f32.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "f32"
+      },
+      {
+        "name": "matmul_weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage type; defaults to weight_type when set, otherwise f32.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type; defaults to weight_type when set, otherwise f32.",
+        "preset": "weight_type_full",
+        "required": false
+      }
+    ],
+    "load": []
   },
   "runtime": {
     "tags": [
