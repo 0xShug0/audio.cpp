@@ -7,11 +7,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace engine::model_spec {
@@ -21,6 +23,7 @@ thread_local std::optional<std::filesystem::path> active_model_spec_override;
 thread_local std::optional<std::filesystem::path> active_model_path;
 thread_local bool active_embedded_spec_checked = false;
 thread_local std::optional<assets::GgufEmbeddedModelSpec> active_embedded_spec;
+thread_local std::unordered_set<std::string> legacy_embedded_contract_warnings;
 
 const std::unordered_map<std::string, std::string_view> & builtin_model_specs() {
     static const std::unordered_map<std::string, std::string_view> specs = {
@@ -114,6 +117,27 @@ const std::optional<assets::GgufEmbeddedModelSpec> & embedded_model_spec() {
         }
     }
     return active_embedded_spec;
+}
+
+bool embedded_model_spec_has_v1_contract(
+    const assets::GgufEmbeddedModelSpec & embedded,
+    std::string_view family) {
+    if (embedded.family != family) {
+        throw std::runtime_error("GGUF embeds model spec for family '" + embedded.family + "', not '" +
+                                 std::string(family) + "'");
+    }
+    const auto root = engine::io::json::parse(embedded.json);
+    return root.find("schema_version") != nullptr;
+}
+
+void warn_legacy_embedded_contract(std::string_view family) {
+    if (!legacy_embedded_contract_warnings.emplace(family).second) {
+        return;
+    }
+    std::cerr << "[warning][model_spec] GGUF for family '" << family
+              << "' embeds a legacy model spec. Using the current schema-v1 model contract "
+                 "from the installed audio.cpp runtime for option validation. Regenerate the "
+                 "GGUF to make the package fully standalone.\n";
 }
 
 bool external_spec_matches_family(const std::filesystem::path & path, std::string_view family) {
@@ -465,21 +489,36 @@ std::filesystem::path default_contract_spec_path(std::string_view family) {
         }
         return std::filesystem::weakly_canonical(path);
     }
+    bool active_gguf_has_legacy_spec = false;
+    if (const auto gguf = active_gguf_path()) {
+        const auto & embedded = embedded_model_spec();
+        if (!embedded.has_value()) {
+            throw std::runtime_error("GGUF for family '" + std::string(family) +
+                                     "' does not embed an audio.cpp model spec: " + gguf->string() +
+                                     ". Published GGUF packages must embed a model spec; regenerate the GGUF "
+                                     "or pass --model-spec-override.");
+        }
+        if (embedded_model_spec_has_v1_contract(*embedded, family)) {
+            return std::filesystem::path("@gguf") / (std::string(family) + ".json");
+        }
+        active_gguf_has_legacy_spec = true;
+        warn_legacy_embedded_contract(family);
+    }
     if (const auto external = discover_workspace_model_spec(family)) {
         return *external;
     }
     if (builtin_model_specs().find(std::string(family)) != builtin_model_specs().end()) {
         return std::filesystem::path("@builtin") / (std::string(family) + ".json");
     }
-    if (const auto & embedded = embedded_model_spec(); embedded.has_value()) {
-        if (embedded->family != family) {
-            throw std::runtime_error("GGUF embeds model spec for family '" + embedded->family + "', not '" +
-                                     std::string(family) + "'");
-        }
-        return std::filesystem::path("@gguf") / (std::string(family) + ".json");
-    }
     if (const auto hint = directory_gguf_hint(family); !hint.empty()) {
         throw std::runtime_error(hint);
+    }
+    if (active_gguf_has_legacy_spec) {
+        throw std::runtime_error("GGUF for family '" + std::string(family) +
+                                 "' embeds a legacy model spec, but no current schema-v1 model contract was found. "
+                                 "Install model_specs/" + std::string(family) +
+                                 ".json, enable AUDIOCPP_DEPLOYMENT_BUILD, regenerate the GGUF, "
+                                 "or pass --model-spec-override.");
     }
     throw std::runtime_error("model contract spec not found for family '" + std::string(family) +
                              "' (provide --model-spec-override, install model_specs/" +
