@@ -12,8 +12,10 @@ for an explicit confirmation. A download that cannot fit at all is refused outri
 Sizes come from the Hugging Face tree API; it is stubbed here so the tests stay offline.
 """
 import collections
+import email.utils
 import os
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -418,6 +420,98 @@ class SizeProbeTests(unittest.TestCase):
     def test_packages_without_a_download_id_report_unknown(self):
         self.assertIsNone(app.package_download_bytes(None))
         self.assertIsNone(app.package_download_bytes(""))
+
+
+class ModelUpdateNoteTests(_AppPatch):
+    def setUp(self):
+        self.root = tempfile.TemporaryDirectory(prefix="audiocpp_webui_update_test_")
+        self.addCleanup(self.root.cleanup)
+        self.old_language = app.get_language()
+        app.set_language("en")
+        self.addCleanup(app.set_language, self.old_language)
+        local = os.path.join(self.root.name, "model.gguf")
+        open(local, "wb").close()
+        self.local = local
+        self.entry = {
+            "id": "demo",
+            "label": "Demo",
+            "download_id": "demo_q8_0",
+            "download_installed": True,
+            "abs_path": self.root.name,
+        }
+        self.package = {
+            "format": "gguf",
+            "files": ("Demo-GGUF/model.gguf",),
+            "download": {"kind": "huggingface_snapshot", "repo": "audio-cpp/audio.cpp-gguf"},
+        }
+        self.patch(SPEC_PACKAGE_BY_ID={"demo_q8_0": self.package},
+                   REQUIRED_FILES={"demo_q8_0": ["model.gguf"]})
+        app._model_update_cache.clear()
+        self.addCleanup(app._model_update_cache.clear)
+
+    def _head_last_modified(self, timestamp):
+        original = app.requests.head
+
+        class _Response:
+            headers = {
+                "Last-Modified": email.utils.formatdate(timestamp, usegmt=True),
+                "Content-Length": str(os.path.getsize(self.local)),
+            }
+
+            def raise_for_status(self):
+                pass
+
+        app.requests.head = lambda *a, **k: _Response()
+        self.addCleanup(setattr, app.requests, "head", original)
+
+    def _head_content_length(self, size):
+        original = app.requests.head
+
+        class _Response:
+            headers = {"Content-Length": str(size)}
+
+            def raise_for_status(self):
+                pass
+
+        app.requests.head = lambda *a, **k: _Response()
+        self.addCleanup(setattr, app.requests, "head", original)
+
+    def test_newer_remote_package_is_reported(self):
+        now = time.time()
+        os.utime(self.local, (now - 7200, now - 7200))
+        self._head_last_modified(now)
+
+        self.assertIn("Model package update available", app.model_update_note(self.entry))
+
+    def test_current_local_package_is_reported_current(self):
+        now = time.time()
+        os.utime(self.local, (now, now))
+        self._head_last_modified(now - 7200)
+
+        self.assertIn("Local model package is up to date", app.model_update_note(self.entry))
+
+    def test_content_length_fallback_reports_current_package(self):
+        self._head_content_length(os.path.getsize(self.local))
+
+        self.assertIn("Local model package is up to date", app.model_update_note(self.entry))
+
+    def test_content_length_fallback_reports_updated_package(self):
+        self._head_content_length(os.path.getsize(self.local) + 1)
+
+        self.assertIn("Model package update available", app.model_update_note(self.entry))
+
+    def test_unreachable_remote_is_quiet(self):
+        original = app.requests.head
+        app.requests.head = lambda *a, **k: (_ for _ in ()).throw(OSError("offline"))
+        self.addCleanup(setattr, app.requests, "head", original)
+
+        self.assertEqual("", app.model_update_note(self.entry))
+
+    def test_legacy_install_points_user_to_default_gguf_package(self):
+        self.entry["installed"] = True
+        self.entry["download_installed"] = False
+
+        self.assertIn("install the default GGUF package", app.model_update_note(self.entry))
 
 
 class DiskUsageTests(unittest.TestCase):

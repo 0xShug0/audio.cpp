@@ -43,6 +43,7 @@ import threading
 import time
 import warnings
 import wave
+from email.utils import parsedate_to_datetime
 from urllib.parse import quote, urlparse
 
 import numpy as np
@@ -2335,7 +2336,7 @@ def ensure_model_loaded(model_id, expect_tasks=None, session_options=None, mode=
                 and (session_options or {}) == (_loaded_session_options or {})
                 and want_mode == (_loaded_mode or entry.get("mode", "offline"))):
             return _t("✅ 已加载：{label}{mode}", "✅ Loaded: {label}{mode}",
-                      label=entry["label"], mode=mode_note)
+                      label=entry["label"], mode=mode_note) + model_update_note(entry)
 
         if not managed_alive and server_alive():
             # A server we didn't launch is holding the port.
@@ -2351,7 +2352,7 @@ def ensure_model_loaded(model_id, expect_tasks=None, session_options=None, mode=
                     host=HOST, port=PORT, mode=mode))
             if model_id in loaded_ids():
                 return _t("✅ 复用外部 server：{label}",
-                          "✅ Using external server: {label}", label=entry["label"])
+                          "✅ Using external server: {label}", label=entry["label"]) + model_update_note(entry)
             raise gr.Error(_t(
                 "检测到外部 server 占用 {host}:{port}，请先关闭或设置 AUDIOCPP_SERVER。",
                 "An external server is using {host}:{port}. Stop it or set AUDIOCPP_SERVER.",
@@ -2381,7 +2382,7 @@ def ensure_model_loaded(model_id, expect_tasks=None, session_options=None, mode=
                    "model {label} loaded{mode_note}, elapsed {seconds:.1f}s",
                    label=entry['label'], mode_note=mode_note, seconds=time.time() - t0))
         return _t("✅ 已加载：{label}{mode}", "✅ Loaded: {label}{mode}",
-                  label=entry["label"], mode=mode_note)
+                  label=entry["label"], mode=mode_note) + model_update_note(entry)
 
 
 def unload_model():
@@ -2571,6 +2572,8 @@ def hf_token_present():
 
 _dl_size_cache = {}      # download_id -> total remote bytes, or None when unknown
 _dl_size_lock = threading.Lock()
+_model_update_cache = {}  # cache key -> markdown note
+_model_update_lock = threading.Lock()
 
 
 # Leaving too little free space after the download is worth stopping for: not because the
@@ -2629,6 +2632,112 @@ def package_download_bytes(download_id):
     with _dl_size_lock:
         _dl_size_cache[download_id] = None
     return None
+
+
+def _hf_request_headers():
+    headers = {"User-Agent": "audio.cpp webui"}
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token.strip()}"
+    return headers
+
+
+def _hf_resolve_url(package, remote_path):
+    download = package.get("download") or {}
+    repo = download.get("repo")
+    if not repo:
+        return None
+    revision = download.get("revision", "main")
+    return ("https://huggingface.co/"
+            + repo + "/resolve/" + quote(str(revision), safe="")
+            + "/" + "/".join(quote(part, safe="") for part in remote_path.split("/")))
+
+
+def _remote_file_info(package, remote_path):
+    url = _hf_resolve_url(package, remote_path)
+    if not url:
+        return None
+    try:
+        response = requests.head(url, headers=_hf_request_headers(), allow_redirects=True, timeout=10)
+        response.raise_for_status()
+        modified = response.headers.get("Last-Modified")
+        size = response.headers.get("Content-Length")
+        return {
+            "modified": parsedate_to_datetime(modified).timestamp() if modified else None,
+            "size": int(size) if size and size.isdigit() else None,
+        }
+    except Exception as exc:
+        print(f"[webui] could not check model update for {remote_path}: {exc}")
+        return None
+
+
+def _installed_package_files(entry):
+    package = SPEC_PACKAGE_BY_ID.get(entry.get("download_id") or "")
+    if package is None or not entry.get("download_installed"):
+        return None, []
+    required = list(REQUIRED_FILES.get(entry.get("download_id") or "") or [])
+    remotes = list(package.get("files") or [])
+    if len(required) != len(remotes):
+        return package, []
+    pairs = []
+    for remote, rel in zip(remotes, required):
+        local = os.path.join(entry["abs_path"], *str(rel).replace("\\", "/").split("/"))
+        if os.path.isfile(local):
+            pairs.append((remote, local))
+    return package, pairs
+
+
+def model_update_note(entry):
+    """Advisory remote package freshness note for an installed spec package."""
+    if entry.get("installed") and not entry.get("download_installed"):
+        package = SPEC_PACKAGE_BY_ID.get(entry.get("download_id") or "")
+        if package is not None and package.get("format") == "gguf":
+            return _t(
+                "\n\nℹ️ 当前从已有本地模型加载。点击『⬇️ (Re) 下载』可安装默认 GGUF 包并启用包更新检查。",
+                "\n\nℹ️ Loaded from existing local model files. Click ⬇️ (Re) Download to install the default GGUF package and enable package update checks.")
+    package, files = _installed_package_files(entry)
+    if package is None or not files:
+        return ""
+    download = package.get("download") or {}
+    if download.get("kind") != "huggingface_snapshot" or not download.get("repo"):
+        return ""
+    local_state = tuple(
+        (remote, int(os.path.getmtime(local)), os.path.getsize(local))
+        for remote, local in files)
+    cache_key = (entry.get("download_id"), local_state)
+    with _model_update_lock:
+        if cache_key in _model_update_cache:
+            return _model_update_cache[cache_key]
+
+    updated = []
+    checked = 0
+    for remote, local in files:
+        remote_info = _remote_file_info(package, remote)
+        if remote_info is None:
+            continue
+        remote_mtime = remote_info.get("modified")
+        remote_size = remote_info.get("size")
+        if remote_mtime is None and remote_size is None:
+            continue
+        checked += 1
+        if remote_size is not None and remote_size != os.path.getsize(local):
+            updated.append(os.path.basename(local))
+        elif remote_mtime is not None and remote_mtime > os.path.getmtime(local) + 60:
+            updated.append(os.path.basename(local))
+
+    if updated:
+        shown = ", ".join(updated[:3]) + (f", +{len(updated) - 3}" if len(updated) > 3 else "")
+        note = _t(
+            "\n\n🔄 远端模型包有更新：{files}。点击『⬇️ (Re) 下载』可更新。",
+            "\n\n🔄 Model package update available: {files}. Click ⬇️ (Re) Download to update.",
+            files=shown)
+    elif checked == 0:
+        note = ""
+    else:
+        note = _t("\n\n✅ 本地模型包已是最新。", "\n\n✅ Local model package is up to date.")
+    with _model_update_lock:
+        _model_update_cache[cache_key] = note
+    return note
 
 
 def _disk_usage(path):
@@ -2889,7 +2998,7 @@ def download_status(model_id):
     if rec is None:
         if entry.get("download_installed", entry["installed"]):
             return _t("✅ {label} 的下载包已安装",
-                      "✅ {label}'s download package is installed.", label=entry["label"])
+                      "✅ {label}'s download package is installed.", label=entry["label"]) + model_update_note(entry)
         if entry["installed"]:
             return _t("✅ {label} 可从已有本地模型加载；如需默认 GGUF 包，请重新下载。",
                       "✅ {label} can load from existing local files; re-download to install "
@@ -2929,7 +3038,7 @@ def download_status(model_id):
                   need=vram[0], local=vram[1]) if vram else ""
         return note + _t("✅ {label} 下载完成。\n```\n{tail}\n```",
                          "✅ {label} downloaded.\n```\n{tail}\n```",
-                         label=entry["label"], tail=tail)
+                         label=entry["label"], tail=tail) + model_update_note(entry)
     return _t("❌ {label} 下载失败（exit {code}）。\n```\n{tail}\n```",
               "❌ {label} download failed (exit {code}).\n```\n{tail}\n```",
               label=entry["label"], code=code, tail=tail)
