@@ -768,10 +768,9 @@ audiocpp_add_model(hviske_asr
         src/models/hviske_asr/encoder.cpp
         src/models/hviske_asr/decoder.cpp
         src/models/hviske_asr/session.cpp
-        src/models/hviske_asr/loader.cpp
         src/models/hviske_asr/weights.cpp
     INCLUDES
-        engine/models/hviske_asr/loader.h
+        engine/models/hviske_asr/session.h
     LOADERS
         engine::models::hviske_asr::make_hviske_asr_loader
 )

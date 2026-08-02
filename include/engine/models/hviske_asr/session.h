@@ -1,6 +1,7 @@
 #pragma once
 
-#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/hviske_asr/assets.h"
 #include "engine/models/hviske_asr/decoder.h"
@@ -16,6 +17,8 @@
 
 namespace engine::models::hviske_asr {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_hviske_asr_loader();
+
 class HviskeASRSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession {
@@ -23,7 +26,8 @@ public:
     HviskeASRSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const HviskeASRAssets> assets);
+        std::shared_ptr<const HviskeASRAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~HviskeASRSession() override;
 
     std::string family() const override;
@@ -40,14 +44,18 @@ private:
     std::vector<Segment> prepare_segments(
         const runtime::AudioBuffer & audio,
         const std::unordered_map<std::string, std::string> & options) const;
-    std::string language_for_request(const runtime::TaskRequest & request) const;
-    bool punctuation_for_request(const runtime::TaskRequest & request) const;
-    HviskeDecodingOptions decoding_options_for_request(const runtime::TaskRequest & request) const;
+    std::string language_for_request(
+        const runtime::TaskRequest & request,
+        const std::unordered_map<std::string, std::string> & options) const;
+    bool punctuation_for_request(const std::unordered_map<std::string, std::string> & options) const;
+    HviskeDecodingOptions decoding_options_for_request(
+        const std::unordered_map<std::string, std::string> & options) const;
 
     runtime::TaskSpec task_;
     std::shared_ptr<const HviskeASRAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::shared_ptr<const HviskeWeights> weights_;
-    size_t weight_context_bytes_ = 512ull * 1024ull * 1024ull;
+    size_t weight_context_bytes_ = 32ull * 1024ull * 1024ull;
     size_t encoder_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t decoder_prefill_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t decoder_decode_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;

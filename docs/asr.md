@@ -203,8 +203,16 @@ completed GGUF can therefore be moved, renamed, and passed directly to `--model`
 | `--top-p` | float | model default | Nucleus sampling limit. |
 | `--seed` | integer | random if omitted | Sampling seed. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `none` | `auto` | Long-audio chunking mode. `auto` uses the model clip limit and speech-energy boundaries when chunking is needed. |
-| `--audio-chunk-seconds` | float seconds | model config | Fixed audio chunk duration. |
+| `--request-option audio_chunk_duration_sec=<seconds>` | float seconds | model config | Fixed audio chunk duration. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
+
+Compatibility aliases for existing requests:
+
+| Legacy option | Current option |
+|---|---|
+| `audio_chunk_seconds` | `audio_chunk_duration_sec` |
+| `audio_chunk_duration_seconds` | `audio_chunk_duration_sec` |
+| `audio_chunk_duration` | `audio_chunk_duration_sec` |
 
 ## Nemotron ASR
 
