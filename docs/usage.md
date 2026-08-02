@@ -65,6 +65,7 @@ Omit these unless you need explicit control. If `--seed` is omitted, models that
 
 | Option | Meaning |
 |---|---|
+| `--request-sequence <json>` | Run multiple JSON requests through one offline model session. |
 | `--batch-text-file <txt>` | One request per non-empty text line. |
 | `--batch-text-dir <dir>` | One request per `.txt`, `.md`, or `.json` file; each file is normalized into a single paragraph. |
 | `--batch-audio-dir <dir>` | One request per `.wav` file. |
@@ -73,6 +74,19 @@ Omit these unless you need explicit control. If `--seed` is omitted, models that
 | `--batch-manifest-out <json>` | Write a batch output manifest. |
 
 `--batch-text-dir` reads `.txt` and `.md` files as plain text. For `.json`, use either a JSON string root or an object with a string `input` or `text` field.
+
+Use `--request-sequence` when you want to send multiple requests in one long-lived offline session:
+
+```bash
+audiocpp_cli --task tts --family pocket_tts \
+  --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
+  --backend cuda \
+  --request-sequence requests.json \
+  --out-dir outputs \
+  --metrics
+```
+
+For each request id, `--metrics` prints `metrics[<id>].wall_ms`, `audio_duration_ms`, `rtf`, `x_realtime`, `sample_rate`, and `channels`.
 
 ## Model Docs
 
