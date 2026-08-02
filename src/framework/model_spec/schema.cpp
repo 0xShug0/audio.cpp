@@ -158,7 +158,7 @@ const std::unordered_set<std::string> & capabilities_for_task(const std::string 
         {"vad", {"speech_segments", "chunk_planning"}},
         {"diar", {"speaker_turns"}},
         {"sep", {"stems"}},
-        {"music", {"lyrics", "instrumental", "continuation"}},
+        {"music", {"lyrics", "instrumental", "continuation", "style_control"}},
         {"sfx", {"prompt_generation"}},
         {"edit", {"prompt_editing", "inpaint"}},
         {"design", {"voice_design"}},

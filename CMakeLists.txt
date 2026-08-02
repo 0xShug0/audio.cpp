@@ -718,12 +718,11 @@ audiocpp_add_model(heartmula
         src/models/heartmula/assets.cpp
         src/models/heartmula/codec.cpp
         src/models/heartmula/generator.cpp
-        src/models/heartmula/loader.cpp
         src/models/heartmula/mula.cpp
         src/models/heartmula/session.cpp
         src/models/heartmula/tokenizer_text.cpp
     INCLUDES
-        engine/models/heartmula/loader.h
+        engine/models/heartmula/session.h
     LOADERS
         engine::models::heartmula::make_heartmula_loader
 )

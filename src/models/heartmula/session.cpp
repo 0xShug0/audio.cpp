@@ -3,6 +3,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 
 #include <algorithm>
@@ -15,6 +16,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+constexpr const char * kFamily = "heartmula";
+
 std::shared_ptr<const HeartMuLaAssets> require_assets(std::shared_ptr<const HeartMuLaAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("HeartMuLa session requires assets");
@@ -22,95 +25,70 @@ std::shared_ptr<const HeartMuLaAssets> require_assets(std::shared_ptr<const Hear
     return assets;
 }
 
-void validate_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
-    if (storage_type == engine::assets::TensorStorageType::Native ||
-        storage_type == engine::assets::TensorStorageType::F32 ||
-        storage_type == engine::assets::TensorStorageType::F16 ||
-        storage_type == engine::assets::TensorStorageType::BF16 ||
-        storage_type == engine::assets::TensorStorageType::Q8_0) {
-        return;
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("HeartMuLa session requires a model contract");
     }
-    throw std::runtime_error(std::string(option_name) + " currently supports only native, f32, f16, bf16, and q8_0");
+    return contract;
 }
 
-void validate_session_options(const runtime::SessionOptions & options) {
+runtime::SessionOptions normalize_session_options(runtime::SessionOptions options) {
+    return runtime::apply_option_v1_compatibility(
+        std::move(options),
+        {
+            {"heartmula.mula_weight_type", "heartmula.generator_weight_type"},
+            {"heartmula.mula_weight_context_mb", "heartmula.generator_weight_context_mb"},
+            {"heartmula.mula_constant_context_mb", "heartmula.generator_constant_context_mb"},
+            {"heartmula.mula_backbone_prefill_graph_arena_mb", "heartmula.backbone_prefill_graph_arena_mb"},
+            {"heartmula.mula_backbone_step_graph_arena_mb", "heartmula.backbone_step_graph_arena_mb"},
+            {"heartmula.mula_decoder_prefill_graph_arena_mb", "heartmula.decoder_prefill_graph_arena_mb"},
+            {"heartmula.mula_decoder_step_graph_arena_mb", "heartmula.decoder_step_graph_arena_mb"},
+            {"heartmula.mula_frame_embedding_graph_arena_mb", "heartmula.frame_embedding_graph_arena_mb"},
+            {"heartmula.codec_flow_estimator_graph_arena_mb", "heartmula.flow_estimator_graph_arena_mb"},
+            {"heartmula.codec_conditioning_graph_arena_mb", "heartmula.conditioning_graph_arena_mb"},
+            {"heartmula.codec_scalar_decoder_graph_arena_mb", "heartmula.scalar_decoder_graph_arena_mb"},
+        },
+        "HeartMuLa");
+}
+
+runtime::SessionOptions require_supported_session_options(
+    runtime::SessionOptions options,
+    const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
+    options = normalize_session_options(std::move(options));
+    const auto checked_contract = require_contract(contract);
+    runtime::validate_spec_backed_session_options(options, *checked_contract, kFamily, "HeartMuLa");
     if (options.backend.threads <= 0) {
         throw std::runtime_error("HeartMuLa requires positive backend thread count");
     }
-    for (const auto & [key, value] : options.options) {
-        if (key == "heartmula.weight_type" ||
-            key == "heartmula.mula_weight_type" ||
-            key == "heartmula.codec_weight_type") {
-            validate_weight_storage(engine::assets::parse_tensor_storage_type(value), key.c_str());
-        } else if (key == "heartmula.mula_weight_context_mb" ||
-            key == "heartmula.codec_weight_context_mb" ||
-            key == "heartmula.mula_constant_context_mb" ||
-            key == "heartmula.mula_backbone_prefill_graph_arena_mb" ||
-            key == "heartmula.mula_backbone_step_graph_arena_mb" ||
-            key == "heartmula.mula_decoder_prefill_graph_arena_mb" ||
-            key == "heartmula.mula_decoder_step_graph_arena_mb" ||
-            key == "heartmula.mula_frame_embedding_graph_arena_mb" ||
-            key == "heartmula.codec_flow_estimator_graph_arena_mb" ||
-            key == "heartmula.codec_conditioning_graph_arena_mb" ||
-            key == "heartmula.codec_scalar_decoder_graph_arena_mb") {
-            (void) value;
-        } else if (key == "heartmula.mem_saver") {
-            (void) runtime::parse_bool_option(value, key);
-        } else if (key.rfind("heartmula.", 0) == 0) {
-            throw std::runtime_error("unknown HeartMuLa session option: " + key);
-        }
+    if (const auto mem_saver = runtime::find_option(options.options, {"heartmula.mem_saver"})) {
+        (void) runtime::parse_bool_option(*mem_saver, "heartmula.mem_saver");
     }
-}
-
-runtime::SessionOptions require_supported_options(runtime::SessionOptions options) {
-    validate_session_options(options);
     return options;
 }
 
 HeartMuLaGenerationOptions generation_options_from_request(const runtime::TaskRequest & request) {
     HeartMuLaGenerationOptions options;
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"duration_seconds"})) {
-        if (*value <= 0.0F) {
-            throw std::runtime_error("HeartMuLa duration_seconds must be positive");
-        }
+    if (const auto value = runtime::parse_positive_finite_float_option(request.options, {"duration_sec"})) {
         options.duration_seconds = *value;
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"temperature"})) {
-        if (*value <= 0.0F) {
-            throw std::runtime_error("HeartMuLa temperature must be positive");
-        }
+    if (const auto value = runtime::parse_positive_finite_float_option(request.options, {"temperature"})) {
         options.temperature = *value;
     }
-    if (const auto value = runtime::parse_i64_option(request.options, {"top_k"})) {
-        if (*value <= 0) {
-            throw std::runtime_error("HeartMuLa top_k must be positive");
-        }
-        options.top_k = *value;
-    }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"guidance_scale"})) {
-        if (*value <= 0.0F) {
-            throw std::runtime_error("HeartMuLa guidance_scale must be positive");
-        }
+    options.top_k = runtime::parse_positive_i64_option(request.options, {"top_k"}, options.top_k);
+    if (const auto value = runtime::parse_positive_finite_float_option(request.options, {"guidance_scale"})) {
         options.guidance_scale = *value;
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"codec_duration"})) {
-        if (*value <= 0.0F) {
-            throw std::runtime_error("HeartMuLa codec_duration must be positive");
-        }
+    if (const auto value = runtime::parse_positive_finite_float_option(request.options, {"codec_duration_sec"})) {
         options.codec_duration = *value;
     }
-    if (const auto value = runtime::parse_i64_option(request.options, {"num_inference_steps"})) {
-        if (*value <= 0) {
-            throw std::runtime_error("HeartMuLa num_inference_steps must be positive");
-        }
-        options.num_inference_steps = *value;
-    }
-    if (const auto value = runtime::parse_finite_float_option(
+    options.num_inference_steps = runtime::parse_positive_i64_option(
+        request.options,
+        {"num_inference_steps"},
+        options.num_inference_steps);
+    if (const auto value = runtime::parse_positive_finite_float_option(
             request.options,
             {"codec_guidance_scale"})) {
-        if (*value <= 0.0F) {
-            throw std::runtime_error("HeartMuLa codec_guidance_scale must be positive");
-        }
         options.codec_guidance_scale = *value;
     }
     if (const auto value = runtime::find_option(request.options, {"infinite_mode"})) {
@@ -119,15 +97,36 @@ HeartMuLaGenerationOptions generation_options_from_request(const runtime::TaskRe
     if (const auto value = engine::text::parse_text_chunk_size_override(request.options)) {
         options.text_chunk_size = *value;
     }
-    if (const auto value = runtime::parse_i64_option(
-            request.options,
-            {"infinite_chunk_audio_length_ms"})) {
-        if (*value <= 0) {
-            throw std::runtime_error("HeartMuLa infinite_chunk_audio_length_ms must be positive");
-        }
-        options.infinite_chunk_audio_length_ms = *value;
-    }
+    options.infinite_chunk_audio_length_ms = runtime::parse_positive_i64_option(
+        request.options,
+        {"infinite_chunk_audio_duration_ms"},
+        options.infinite_chunk_audio_length_ms);
     return options;
+}
+
+runtime::TaskRequest normalize_request_options(runtime::TaskRequest request) {
+    request.options = runtime::apply_option_v1_compatibility(
+        std::move(request.options),
+        {
+            {"duration_seconds", "duration_sec"},
+            {"codec_duration", "codec_duration_sec"},
+            {"infinite_chunk_audio_length_ms", "infinite_chunk_audio_duration_ms"},
+        },
+        "HeartMuLa",
+        "request");
+    return request;
+}
+
+std::unique_ptr<runtime::IVoiceTaskSession> create_heartmula_session(
+    const runtime::TaskSpec & task,
+    const runtime::SessionOptions & options,
+    std::shared_ptr<const HeartMuLaAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    return std::make_unique<HeartMuLaSession>(
+        task,
+        options,
+        std::move(assets),
+        std::move(contract));
 }
 
 std::string request_tags(const runtime::TaskRequest & request) {
@@ -173,73 +172,89 @@ int64_t audio_duration_ms(const runtime::AudioBuffer & audio) {
 HeartMuLaSession::HeartMuLaSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const HeartMuLaAssets> assets)
-    : runtime::RuntimeSessionBase(require_supported_options(options)),
+    std::shared_ptr<const HeartMuLaAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : runtime::RuntimeSessionBase(require_supported_session_options(std::move(options), contract)),
       task_(task),
       assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))),
       text_tokenizer_(assets_),
       mula_(
           assets_,
-          options.backend.type,
-          options.backend.device,
-          options.backend.threads,
+          RuntimeSessionBase::options().backend.type,
+          RuntimeSessionBase::options().backend.device,
+          RuntimeSessionBase::options().backend.threads,
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.mula_weight_context_mb"},
-              mula_weight_context_bytes_),
+              RuntimeSessionBase::options().options,
+              {"heartmula.generator_weight_context_mb"},
+              generator_weight_context_bytes_),
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.mula_constant_context_mb"},
-              mula_constant_context_bytes_),
+              RuntimeSessionBase::options().options,
+              {"heartmula.generator_constant_context_mb"},
+              generator_constant_context_bytes_),
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.mula_backbone_prefill_graph_arena_mb"},
-              mula_backbone_prefill_graph_arena_bytes_),
+              RuntimeSessionBase::options().options,
+              {"heartmula.backbone_prefill_graph_arena_mb"},
+              generator_backbone_prefill_graph_arena_bytes_),
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.mula_backbone_step_graph_arena_mb"},
-              mula_backbone_step_graph_arena_bytes_),
+              RuntimeSessionBase::options().options,
+              {"heartmula.backbone_step_graph_arena_mb"},
+              generator_backbone_step_graph_arena_bytes_),
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.mula_decoder_prefill_graph_arena_mb"},
-              mula_decoder_prefill_graph_arena_bytes_),
+              RuntimeSessionBase::options().options,
+              {"heartmula.decoder_prefill_graph_arena_mb"},
+              generator_decoder_prefill_graph_arena_bytes_),
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.mula_decoder_step_graph_arena_mb"},
-              mula_decoder_step_graph_arena_bytes_),
+              RuntimeSessionBase::options().options,
+              {"heartmula.decoder_step_graph_arena_mb"},
+              generator_decoder_step_graph_arena_bytes_),
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.mula_frame_embedding_graph_arena_mb"},
-              mula_frame_embedding_graph_arena_bytes_),
-          options.options.find("heartmula.mula_weight_type") != options.options.end()
-              ? engine::assets::parse_tensor_storage_type(options.options.at("heartmula.mula_weight_type"))
-              : (options.options.find("heartmula.weight_type") != options.options.end()
-                      ? engine::assets::parse_tensor_storage_type(options.options.at("heartmula.weight_type"))
-                      : mula_weight_storage_type_)),
+              RuntimeSessionBase::options().options,
+              {"heartmula.frame_embedding_graph_arena_mb"},
+              generator_frame_embedding_graph_arena_bytes_),
+          runtime::parse_tensor_storage_option(
+              RuntimeSessionBase::options().options,
+              "heartmula.generator_weight_type",
+              "heartmula.weight_type",
+              mula_weight_storage_type_,
+              {
+                  engine::assets::TensorStorageType::Native,
+                  engine::assets::TensorStorageType::F32,
+                  engine::assets::TensorStorageType::F16,
+                  engine::assets::TensorStorageType::BF16,
+                  engine::assets::TensorStorageType::Q8_0,
+              })),
       codec_(
           assets_,
           execution_context(),
           runtime::parse_size_mb_option(
-              options.options,
+              RuntimeSessionBase::options().options,
               {"heartmula.codec_weight_context_mb"},
               codec_weight_context_bytes_),
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.codec_flow_estimator_graph_arena_mb"},
+              RuntimeSessionBase::options().options,
+              {"heartmula.flow_estimator_graph_arena_mb"},
               codec_flow_estimator_graph_arena_bytes_),
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.codec_conditioning_graph_arena_mb"},
+              RuntimeSessionBase::options().options,
+              {"heartmula.conditioning_graph_arena_mb"},
               codec_conditioning_graph_arena_bytes_),
           runtime::parse_size_mb_option(
-              options.options,
-              {"heartmula.codec_scalar_decoder_graph_arena_mb"},
+              RuntimeSessionBase::options().options,
+              {"heartmula.scalar_decoder_graph_arena_mb"},
               codec_scalar_decoder_graph_arena_bytes_),
-          options.options.find("heartmula.codec_weight_type") != options.options.end()
-              ? engine::assets::parse_tensor_storage_type(options.options.at("heartmula.codec_weight_type"))
-              : (options.options.find("heartmula.weight_type") != options.options.end()
-                      ? engine::assets::parse_tensor_storage_type(options.options.at("heartmula.weight_type"))
-                      : codec_weight_storage_type_)) {
+          runtime::parse_tensor_storage_option(
+              RuntimeSessionBase::options().options,
+              "heartmula.codec_weight_type",
+              "heartmula.weight_type",
+              codec_weight_storage_type_,
+              {
+                  engine::assets::TensorStorageType::Native,
+                  engine::assets::TensorStorageType::F32,
+                  engine::assets::TensorStorageType::F16,
+                  engine::assets::TensorStorageType::BF16,
+                  engine::assets::TensorStorageType::Q8_0,
+              })) {
     if (const auto mem_saver = runtime::find_option(RuntimeSessionBase::options().options, {"heartmula.mem_saver"})) {
         mem_saver_ = runtime::parse_bool_option(*mem_saver, "heartmula.mem_saver");
     }
@@ -252,7 +267,7 @@ HeartMuLaSession::HeartMuLaSession(
 }
 
 std::string HeartMuLaSession::family() const {
-    return "heartmula";
+    return kFamily;
 }
 
 runtime::VoiceTaskKind HeartMuLaSession::task_kind() const {
@@ -270,9 +285,11 @@ void HeartMuLaSession::prepare(const runtime::SessionPreparationRequest & reques
 
 runtime::TaskResult HeartMuLaSession::run(const runtime::TaskRequest & request) {
     require_prepared("HeartMuLa run");
+    auto normalized_request = normalize_request_options(request);
+    runtime::validate_spec_backed_request_options(normalized_request.options, *contract_, "HeartMuLa");
     const auto wall_start = Clock::now();
-    const auto heartmula_request = make_request(request);
-    const uint32_t seed = request_seed(request);
+    const auto heartmula_request = make_request(normalized_request);
+    const uint32_t seed = request_seed(normalized_request);
     if (heartmula_request.options.infinite_mode) {
         const auto chunks = engine::text::split_text_chunks(
             heartmula_request.lyrics,
@@ -425,6 +442,14 @@ HeartMuLaPromptRequest HeartMuLaSession::make_request(const runtime::TaskRequest
     }
     out.options = generation_options_from_request(request);
     return out;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_heartmula_loader() {
+    runtime::SpecBackedVoiceModelConfig<HeartMuLaAssets> config;
+    config.family = kFamily;
+    config.load_assets = load_heartmula_assets;
+    config.create_session = create_heartmula_session;
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::heartmula
