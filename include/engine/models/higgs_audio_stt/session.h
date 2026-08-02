@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/model.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/higgs_audio_stt/assets.h"
@@ -16,11 +18,9 @@
 #include <string>
 #include <vector>
 
-namespace engine::runtime {
-class ILoadedVoiceModel;
-}
-
 namespace engine::models::higgs_audio_stt {
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_higgs_audio_stt_loader();
 
 class HiggsAudioSTTSession final
     : public runtime::RuntimeSessionBase
@@ -30,7 +30,8 @@ public:
     HiggsAudioSTTSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const HiggsAudioSTTAssets> assets);
+        std::shared_ptr<const HiggsAudioSTTAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~HiggsAudioSTTSession() override;
 
     std::string family() const override;
@@ -57,10 +58,11 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const HiggsAudioSTTAssets> assets_;
-    size_t audio_encoder_graph_arena_bytes_ = 128ull * 1024ull * 1024ull;
-    size_t text_decoder_prefill_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
+    size_t audio_encoder_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
+    size_t text_decoder_prefill_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t text_decoder_decode_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
-    size_t text_decoder_weight_context_bytes_ = 64ull * 1024ull * 1024ull;
+    size_t text_decoder_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType audio_encoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType text_decoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     HiggsAudioSTTTextTokenizer tokenizer_;

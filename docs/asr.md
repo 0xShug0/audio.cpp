@@ -159,8 +159,29 @@ audiocpp_cli --task asr --family higgs_audio_stt --model models/higgs-audio-v3-s
 | `--max-tokens` | integer | model default | Maximum generated transcript tokens. |
 | `--request-option enable_thinking=true|false` | bool | `true` | Enable the model thinking prompt. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `none` | `auto` | Long-audio chunking mode. `auto` uses fixed chunks. |
-| `--audio-chunk-seconds` | float seconds | `4` | Fixed audio chunk duration. |
+| `--request-option audio_chunk_duration_sec=<seconds>` / `--audio-chunk-seconds` | float seconds | `4` | Fixed audio chunk duration. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
+| `--session-option higgs_audio_stt.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared text decoder weight storage type. |
+| `--session-option higgs_audio_stt.audio_encoder_weight_type=<type>` | `native`, `f32`, `f16` | `native` | Audio encoder convolution weight storage type. |
+| `--session-option higgs_audio_stt.text_decoder_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `higgs_audio_stt.weight_type` or `native` | Text decoder matmul weight storage type. |
+
+Compatibility aliases are applied before v1 option validation:
+
+| Legacy request option | v1 request option |
+|---|---|
+| `audio_chunk_seconds` | `audio_chunk_duration_sec` |
+| `audio_chunk_duration_seconds` | `audio_chunk_duration_sec` |
+| `audio_chunk_duration` | `audio_chunk_duration_sec` |
+
+| Legacy session option | v1 session option |
+|---|---|
+| `weight_type` | `higgs_audio_stt.weight_type` |
+| `audio_encoder_weight_type` | `higgs_audio_stt.audio_encoder_weight_type` |
+| `text_decoder_weight_type` | `higgs_audio_stt.text_decoder_weight_type` |
+| `audio_encoder_graph_arena_mb` | `higgs_audio_stt.audio_encoder_graph_arena_mb` |
+| `text_decoder_prefill_graph_arena_mb` | `higgs_audio_stt.text_decoder_prefill_graph_arena_mb` |
+| `text_decoder_decode_graph_arena_mb` | `higgs_audio_stt.text_decoder_decode_graph_arena_mb` |
+| `text_decoder_weight_context_mb` | `higgs_audio_stt.text_decoder_weight_context_mb` |
 
 ## Hviske ASR
 

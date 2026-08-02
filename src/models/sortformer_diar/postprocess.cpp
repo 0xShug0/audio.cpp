@@ -1,6 +1,7 @@
 #include "engine/models/sortformer_diar/postprocess.h"
 
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/runtime/options.h"
 #include "engine/models/sortformer_diar/graph.h"
 
 #include <algorithm>
@@ -220,14 +221,29 @@ std::vector<SecondSpan> merge_float_intervals_with_margin(
 
 SortformerPostprocessConfig parse_sortformer_postprocess_config(const runtime::SessionOptions & options) {
     SortformerPostprocessConfig config;
-    if (const auto it = options.options.find("speaker_threshold"); it != options.options.end()) {
-        config.threshold = std::stof(it->second);
+    if (const auto value = runtime::parse_finite_float_option(
+            options.options,
+            {"sortformer_diar.speaker_threshold", "speaker_threshold"})) {
+        if (*value < 0.0F || *value > 1.0F) {
+            throw std::runtime_error("Sortformer diar speaker_threshold must be between 0 and 1");
+        }
+        config.threshold = *value;
     }
-    if (const auto it = options.options.find("speaker_min_frames"); it != options.options.end()) {
-        config.min_frames = std::stoll(it->second);
+    if (const auto value = runtime::parse_i64_option(
+            options.options,
+            {"sortformer_diar.speaker_min_frames", "speaker_min_frames"})) {
+        if (*value < 0) {
+            throw std::runtime_error("Sortformer diar speaker_min_frames must be non-negative");
+        }
+        config.min_frames = *value;
     }
-    if (const auto it = options.options.find("speaker_pad_frames"); it != options.options.end()) {
-        config.pad_frames = std::stoll(it->second);
+    if (const auto value = runtime::parse_i64_option(
+            options.options,
+            {"sortformer_diar.speaker_pad_frames", "speaker_pad_frames"})) {
+        if (*value < 0) {
+            throw std::runtime_error("Sortformer diar speaker_pad_frames must be non-negative");
+        }
+        config.pad_frames = *value;
     }
     return config;
 }
@@ -265,8 +281,10 @@ SortformerFixedContextContract parse_sortformer_fixed_context_contract(
     const runtime::SessionOptions & options,
     const SortformerAssets & assets) {
     double session_len_sec = kDefaultSessionLenSec;
-    if (const auto it = options.options.find("session_len_sec"); it != options.options.end()) {
-        session_len_sec = std::stod(it->second);
+    if (const auto value = runtime::parse_positive_finite_float_option(
+            options.options,
+            {"sortformer_diar.session_len_sec", "session_len_sec"})) {
+        session_len_sec = *value;
     }
     if (!(session_len_sec > 0.0)) {
         throw std::runtime_error("Sortformer diar session_len_sec must be > 0");
