@@ -367,11 +367,9 @@ audiocpp_configure_runtime_object(engine_model_marblenet_vad)
 audiocpp_add_model(roformer
     SOURCES
         src/models/roformer/assets.cpp
-        src/models/roformer/loader.cpp
         src/models/roformer/runtime.cpp
         src/models/roformer/session.cpp
     INCLUDES
-        engine/models/roformer/loader.h
         engine/models/roformer/session.h
     LOADERS
         engine::models::roformer::make_mel_band_roformer_loader

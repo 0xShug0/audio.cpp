@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -14,6 +15,11 @@
 #include <utility>
 
 namespace engine::runtime {
+
+struct OptionV1CompatibilityAlias {
+    std::string legacy_key;
+    std::string current_key;
+};
 
 template <typename Assets>
 struct SpecBackedVoiceModelConfig {
@@ -57,6 +63,29 @@ inline void validate_spec_backed_request_options(
             throw std::runtime_error("unknown " + std::string(model_name) + " request option: " + key);
         }
     }
+}
+
+inline SessionOptions apply_option_v1_compatibility(
+    SessionOptions options,
+    std::initializer_list<OptionV1CompatibilityAlias> aliases,
+    std::string_view model_name) {
+    for (const auto & alias : aliases) {
+        auto legacy = options.options.find(alias.legacy_key);
+        if (legacy == options.options.end()) {
+            continue;
+        }
+        auto current = options.options.find(alias.current_key);
+        if (current != options.options.end()) {
+            throw std::runtime_error(
+                std::string(model_name) + " session options contain both " +
+                alias.legacy_key + " and " + alias.current_key + "; use " +
+                alias.current_key);
+        }
+        std::string value = std::move(legacy->second);
+        options.options.erase(legacy);
+        options.options.emplace(alias.current_key, std::move(value));
+    }
+    return options;
 }
 
 template <typename Assets>

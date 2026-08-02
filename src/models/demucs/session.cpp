@@ -34,22 +34,6 @@ std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
     return contract;
 }
 
-runtime::SessionOptions apply_htdemucs_v1_compatibility(runtime::SessionOptions options) {
-    auto legacy = options.options.find("weight_type");
-    if (legacy == options.options.end()) {
-        return options;
-    }
-    auto current = options.options.find("htdemucs.weight_type");
-    if (current != options.options.end()) {
-        throw std::runtime_error(
-            "HTDemucs session options contain both weight_type and htdemucs.weight_type; use htdemucs.weight_type");
-    }
-    std::string value = std::move(legacy->second);
-    options.options.erase(legacy);
-    options.options.emplace("htdemucs.weight_type", std::move(value));
-    return options;
-}
-
 assets::TensorStorageType option_weight_type(
     const runtime::SessionOptions & options,
     const std::string & key,
@@ -108,7 +92,10 @@ HTDemucsSession::HTDemucsSession(
     runtime::SessionOptions options,
     std::shared_ptr<const HTDemucsAssets> assets,
     std::shared_ptr<const engine::model_spec::ModelContract> contract)
-    : RuntimeSessionBase(apply_htdemucs_v1_compatibility(std::move(options))),
+    : RuntimeSessionBase(runtime::apply_option_v1_compatibility(
+          std::move(options),
+          {{"weight_type", "htdemucs.weight_type"}},
+          "HTDemucs")),
       task_(std::move(task)),
       assets_(require_assets(std::move(assets))),
       contract_(require_contract(std::move(contract))) {

@@ -225,7 +225,7 @@ Mel-Band RoFormer is wired as a vocal/source-separation model. The CLI uses the 
 | Modes | `offline` |
 | Input | 44.1 kHz music mixture WAV through `--audio` |
 | Output | Named separated artifacts under `--out-dir` |
-| Notes | Chunking/overlap behavior is internal to the integration; no user chunk option is exposed here |
+| Notes | Uses the package overlap count by default; `mel_band_roformer.num_overlap` can lower the overlap for faster inference with a quality tradeoff |
 
 ```bash
 audiocpp_cli --task sep --family mel_band_roformer --model models/mel-roformer-mlx --backend cuda --audio song_44k.wav --out-dir stems
@@ -236,5 +236,14 @@ audiocpp_cli --task sep --family mel_band_roformer --model models/mel-roformer-m
 | `--audio` | 44.1 kHz WAV path | required | Input music mixture. |
 | `--out-dir` | directory | required | Directory for separated outputs. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
+| `--session-option mel_band_roformer.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | backend-dependent | Weight storage type. Defaults to `f32` when the backend requires a host graph plan, otherwise `native`. |
+| `--session-option mel_band_roformer.num_overlap=<n>` | integer `>= 1` | package config | Number of overlapping inference windows. Lower values improve throughput but can reduce boundary quality. |
+
+Schema-v1 option compatibility:
+
+| Legacy/session input | Schema-v1 option | Notes |
+|---|---|---|
+| `weight_type` | `mel_band_roformer.weight_type` | Accepted as a compatibility alias for direct session-option callers. Prefer the family-prefixed form. |
+| `num_overlap` | `mel_band_roformer.num_overlap` | Accepted as a compatibility alias for direct session-option callers. Prefer the family-prefixed form. |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.
