@@ -41,6 +41,10 @@ std::optional<float> parse_finite_float_option(
     const std::unordered_map<std::string, std::string> & options,
     std::initializer_list<std::string_view> keys);
 
+std::optional<float> parse_positive_finite_float_option(
+    const std::unordered_map<std::string, std::string> & options,
+    std::initializer_list<std::string_view> keys);
+
 std::optional<uint32_t> parse_u32_option(
     const std::unordered_map<std::string, std::string> & options,
     std::initializer_list<std::string_view> keys);
@@ -66,6 +70,13 @@ size_t parse_size_mb_option(
 assets::TensorStorageType parse_tensor_storage_option(
     const std::unordered_map<std::string, std::string> & options,
     std::string_view key,
+    assets::TensorStorageType fallback,
+    std::initializer_list<assets::TensorStorageType> allowed);
+
+assets::TensorStorageType parse_tensor_storage_option(
+    const std::unordered_map<std::string, std::string> & options,
+    std::string_view key,
+    std::string_view fallback_key,
     assets::TensorStorageType fallback,
     std::initializer_list<assets::TensorStorageType> allowed);
 

@@ -185,7 +185,7 @@ std::optional<float> parse_audio_chunk_seconds_override(
     const std::unordered_map<std::string, std::string> & options) {
     return runtime::parse_float_option(
         options,
-        {"audio_chunk_seconds", "audio_chunk_duration_seconds", "audio_chunk_duration"});
+        {"audio_chunk_duration_sec", "audio_chunk_seconds", "audio_chunk_duration_seconds", "audio_chunk_duration"});
 }
 
 std::vector<runtime::TimeSpan> plan_vad_audio_chunks(

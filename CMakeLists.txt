@@ -367,11 +367,9 @@ audiocpp_configure_runtime_object(engine_model_marblenet_vad)
 audiocpp_add_model(roformer
     SOURCES
         src/models/roformer/assets.cpp
-        src/models/roformer/loader.cpp
         src/models/roformer/runtime.cpp
         src/models/roformer/session.cpp
     INCLUDES
-        engine/models/roformer/loader.h
         engine/models/roformer/session.h
     LOADERS
         engine::models::roformer::make_mel_band_roformer_loader
@@ -387,10 +385,9 @@ audiocpp_add_model(demucs
         src/models/demucs/frontend.cpp
         src/models/demucs/pipeline.cpp
         src/models/demucs/postprocess.cpp
-        src/models/demucs/loader.cpp
         src/models/demucs/session.cpp
     INCLUDES
-        engine/models/demucs/loader.h
+        engine/models/demucs/session.h
     LOADERS
         engine::models::demucs::make_htdemucs_loader
     ALIASES
@@ -721,12 +718,11 @@ audiocpp_add_model(heartmula
         src/models/heartmula/assets.cpp
         src/models/heartmula/codec.cpp
         src/models/heartmula/generator.cpp
-        src/models/heartmula/loader.cpp
         src/models/heartmula/mula.cpp
         src/models/heartmula/session.cpp
         src/models/heartmula/tokenizer_text.cpp
     INCLUDES
-        engine/models/heartmula/loader.h
+        engine/models/heartmula/session.h
     LOADERS
         engine::models::heartmula::make_heartmula_loader
 )
@@ -772,10 +768,9 @@ audiocpp_add_model(hviske_asr
         src/models/hviske_asr/encoder.cpp
         src/models/hviske_asr/decoder.cpp
         src/models/hviske_asr/session.cpp
-        src/models/hviske_asr/loader.cpp
         src/models/hviske_asr/weights.cpp
     INCLUDES
-        engine/models/hviske_asr/loader.h
+        engine/models/hviske_asr/session.h
     LOADERS
         engine::models::hviske_asr::make_hviske_asr_loader
 )
@@ -992,9 +987,8 @@ audiocpp_add_model(seed_vc
         src/models/seed_vc/v1_cfm.cpp
         src/models/seed_vc/v2_cfm.cpp
         src/models/seed_vc/session.cpp
-        src/models/seed_vc/loader.cpp
     INCLUDES
-        engine/models/seed_vc/loader.h
+        engine/models/seed_vc/session.h
     LOADERS
         engine::models::seed_vc::make_seed_vc_loader
 )

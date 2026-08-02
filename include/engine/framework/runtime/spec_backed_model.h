@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -14,6 +15,11 @@
 #include <utility>
 
 namespace engine::runtime {
+
+struct OptionV1CompatibilityAlias {
+    std::string legacy_key;
+    std::string current_key;
+};
 
 template <typename Assets>
 struct SpecBackedVoiceModelConfig {
@@ -57,6 +63,42 @@ inline void validate_spec_backed_request_options(
             throw std::runtime_error("unknown " + std::string(model_name) + " request option: " + key);
         }
     }
+}
+
+inline std::unordered_map<std::string, std::string> apply_option_v1_compatibility(
+    std::unordered_map<std::string, std::string> options,
+    std::initializer_list<OptionV1CompatibilityAlias> aliases,
+    std::string_view model_name,
+    std::string_view scope_name) {
+    for (const auto & alias : aliases) {
+        auto legacy = options.find(alias.legacy_key);
+        if (legacy == options.end()) {
+            continue;
+        }
+        auto current = options.find(alias.current_key);
+        if (current != options.end()) {
+            throw std::runtime_error(
+                std::string(model_name) + " " + std::string(scope_name) +
+                " options contain both " + alias.legacy_key + " and " +
+                alias.current_key + "; use " + alias.current_key);
+        }
+        std::string value = std::move(legacy->second);
+        options.erase(legacy);
+        options.emplace(alias.current_key, std::move(value));
+    }
+    return options;
+}
+
+inline SessionOptions apply_option_v1_compatibility(
+    SessionOptions options,
+    std::initializer_list<OptionV1CompatibilityAlias> aliases,
+    std::string_view model_name) {
+    options.options = apply_option_v1_compatibility(
+        std::move(options.options),
+        aliases,
+        model_name,
+        "session");
+    return options;
 }
 
 template <typename Assets>

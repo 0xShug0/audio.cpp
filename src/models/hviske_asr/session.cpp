@@ -5,6 +5,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <chrono>
@@ -18,10 +19,12 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kDefaultWeightContextBytes = 512ull * 1024ull * 1024ull;
+constexpr size_t kDefaultWeightContextBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kDefaultEncoderGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultDecoderPrefillGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultDecoderDecodeGraphArenaBytes = 512ull * 1024ull * 1024ull;
+
+constexpr const char * kFamily = "hviske_asr";
 
 std::shared_ptr<const HviskeASRAssets> require_assets(std::shared_ptr<const HviskeASRAssets> assets) {
     if (assets == nullptr) {
@@ -30,35 +33,33 @@ std::shared_ptr<const HviskeASRAssets> require_assets(std::shared_ptr<const Hvis
     return assets;
 }
 
-engine::assets::TensorStorageType option_weight_type(
-    const runtime::SessionOptions & options,
-    const char * key,
-    engine::assets::TensorStorageType default_value) {
-    const auto it = options.options.find(key);
-    if (it == options.options.end()) {
-        return default_value;
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("Hviske ASR session requires a model contract");
     }
-    return engine::assets::parse_tensor_storage_type(it->second);
+    return contract;
 }
 
-void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
-    if (storage_type == engine::assets::TensorStorageType::Native ||
-        storage_type == engine::assets::TensorStorageType::F32 ||
-        storage_type == engine::assets::TensorStorageType::F16 ||
-        storage_type == engine::assets::TensorStorageType::BF16 ||
-        storage_type == engine::assets::TensorStorageType::Q8_0) {
-        return;
-    }
-    throw std::runtime_error(std::string(option_name) + " supports only native, f32, f16, bf16, and q8_0");
+runtime::SessionOptions require_supported_session_options(
+    runtime::SessionOptions options,
+    const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
+    const auto checked_contract = require_contract(contract);
+    runtime::validate_spec_backed_session_options(options, *checked_contract, kFamily, "Hviske ASR");
+    return options;
 }
 
-void validate_conv_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
-    if (storage_type == engine::assets::TensorStorageType::Native ||
-        storage_type == engine::assets::TensorStorageType::F32 ||
-        storage_type == engine::assets::TensorStorageType::F16) {
-        return;
-    }
-    throw std::runtime_error(std::string(option_name) + " supports only native, f32, and f16");
+std::unordered_map<std::string, std::string> normalize_request_options(
+    std::unordered_map<std::string, std::string> options) {
+    return runtime::apply_option_v1_compatibility(
+        std::move(options),
+        {
+            {"audio_chunk_seconds", "audio_chunk_duration_sec"},
+            {"audio_chunk_duration_seconds", "audio_chunk_duration_sec"},
+            {"audio_chunk_duration", "audio_chunk_duration_sec"},
+        },
+        "Hviske ASR",
+        "request");
 }
 
 void ensure_supported_language(const HviskeASRAssets & assets, const std::string & language) {
@@ -114,41 +115,60 @@ int64_t prepared_frontend_frames(const runtime::AudioPreparationContract & audio
     return std::max(request_frames, max_clip_frames);
 }
 
+std::unique_ptr<runtime::IVoiceTaskSession> create_hviske_asr_session(
+    const runtime::TaskSpec & task,
+    const runtime::SessionOptions & options,
+    std::shared_ptr<const HviskeASRAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    return std::make_unique<HviskeASRSession>(
+        task,
+        options,
+        std::move(assets),
+        std::move(contract));
+}
+
 }  // namespace
 
 HviskeASRSession::HviskeASRSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const HviskeASRAssets> assets)
-    : RuntimeSessionBase(options),
+    std::shared_ptr<const HviskeASRAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : RuntimeSessionBase(require_supported_session_options(std::move(options), contract)),
       task_(task),
       assets_(require_assets(std::move(assets))),
-      weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"hviske_asr.weight_context_mb"}, kDefaultWeightContextBytes)),
-      encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"hviske_asr.encoder_graph_arena_mb"}, kDefaultEncoderGraphArenaBytes)),
-      decoder_prefill_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"hviske_asr.decoder_prefill_graph_arena_mb"}, kDefaultDecoderPrefillGraphArenaBytes)),
-      decoder_decode_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"hviske_asr.decoder_decode_graph_arena_mb"}, kDefaultDecoderDecodeGraphArenaBytes)),
-      matmul_weight_storage_type_(option_weight_type(options, "hviske_asr.weight_type", engine::assets::TensorStorageType::Native)),
-      conv_weight_storage_type_(option_weight_type(options, "hviske_asr.conv_weight_type", matmul_weight_storage_type_)),
+      contract_(require_contract(std::move(contract))),
+      weight_context_bytes_(runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"hviske_asr.weight_context_mb"}, kDefaultWeightContextBytes)),
+      encoder_graph_arena_bytes_(runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"hviske_asr.encoder_graph_arena_mb"}, kDefaultEncoderGraphArenaBytes)),
+      decoder_prefill_graph_arena_bytes_(runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"hviske_asr.decoder_prefill_graph_arena_mb"}, kDefaultDecoderPrefillGraphArenaBytes)),
+      decoder_decode_graph_arena_bytes_(runtime::parse_size_mb_option(RuntimeSessionBase::options().options, {"hviske_asr.decoder_decode_graph_arena_mb"}, kDefaultDecoderDecodeGraphArenaBytes)),
+      matmul_weight_storage_type_(runtime::parse_tensor_storage_option(
+          RuntimeSessionBase::options().options,
+          "hviske_asr.weight_type",
+          engine::assets::TensorStorageType::Native,
+          {
+              engine::assets::TensorStorageType::Native,
+              engine::assets::TensorStorageType::F32,
+              engine::assets::TensorStorageType::F16,
+              engine::assets::TensorStorageType::BF16,
+              engine::assets::TensorStorageType::Q8_0,
+          })),
+      conv_weight_storage_type_(runtime::parse_tensor_storage_option(
+          RuntimeSessionBase::options().options,
+          "hviske_asr.conv_weight_type",
+          "hviske_asr.weight_type",
+          matmul_weight_storage_type_,
+          {
+              engine::assets::TensorStorageType::Native,
+              engine::assets::TensorStorageType::F32,
+              engine::assets::TensorStorageType::F16,
+          })),
       frontend_(assets_) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Hviske ASR only supports VoiceTaskKind::Asr");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Hviske ASR currently supports offline sessions");
-    }
-    validate_matmul_weight_storage(matmul_weight_storage_type_, "hviske_asr.weight_type");
-    validate_conv_weight_storage(conv_weight_storage_type_, "hviske_asr.conv_weight_type");
-    for (const auto & [key, value] : options.options) {
-        (void)value;
-        if (key.rfind("hviske_asr.", 0) == 0 &&
-            key != "hviske_asr.weight_context_mb" &&
-            key != "hviske_asr.encoder_graph_arena_mb" &&
-            key != "hviske_asr.decoder_prefill_graph_arena_mb" &&
-            key != "hviske_asr.decoder_decode_graph_arena_mb" &&
-            key != "hviske_asr.weight_type" &&
-            key != "hviske_asr.conv_weight_type") {
-            throw std::runtime_error("unknown Hviske ASR session option: " + key);
-        }
     }
     weights_ = load_hviske_weights(
         *assets_,
@@ -173,7 +193,7 @@ HviskeASRSession::HviskeASRSession(
 HviskeASRSession::~HviskeASRSession() = default;
 
 std::string HviskeASRSession::family() const {
-    return "hviske_asr";
+    return kFamily;
 }
 
 runtime::VoiceTaskKind HviskeASRSession::task_kind() const {
@@ -199,66 +219,69 @@ void HviskeASRSession::prepare(const runtime::SessionPreparationRequest & reques
     debug::trace_log_scalar("hviske_asr.prepare.max_input_samples", request.audio->max_input_samples);
 }
 
-std::string HviskeASRSession::language_for_request(const runtime::TaskRequest & request) const {
+std::string HviskeASRSession::language_for_request(
+    const runtime::TaskRequest & request,
+    const std::unordered_map<std::string, std::string> & options) const {
     if (request.text_input.has_value() && !request.text_input->language.empty()) {
         return request.text_input->language;
     }
-    if (const auto language = runtime::find_option(request.options, {"language"})) {
+    if (const auto language = runtime::find_option(options, {"language"})) {
         return *language;
     }
     return "da";
 }
 
-bool HviskeASRSession::punctuation_for_request(const runtime::TaskRequest & request) const {
-    if (const auto value = runtime::find_option(request.options, {"punctuation"})) {
+bool HviskeASRSession::punctuation_for_request(const std::unordered_map<std::string, std::string> & options) const {
+    if (const auto value = runtime::find_option(options, {"punctuation"})) {
         return runtime::parse_bool_option(*value, "punctuation");
     }
     return true;
 }
 
-HviskeDecodingOptions HviskeASRSession::decoding_options_for_request(const runtime::TaskRequest & request) const {
+HviskeDecodingOptions HviskeASRSession::decoding_options_for_request(
+    const std::unordered_map<std::string, std::string> & request_options) const {
     HviskeDecodingOptions options;
     options.max_new_tokens = assets_->config.decoder.max_new_tokens;
-    if (const auto value = runtime::parse_i64_option(request.options, {"max_tokens"})) {
+    if (const auto value = runtime::parse_i64_option(request_options, {"max_tokens"})) {
         if (*value <= 0) {
             throw std::runtime_error("Hviske ASR max_tokens must be positive");
         }
         options.max_new_tokens = *value;
     }
-    if (const auto value = runtime::parse_i64_option(request.options, {"num_beams"})) {
+    if (const auto value = runtime::parse_i64_option(request_options, {"num_beams"})) {
         if (*value <= 0) {
             throw std::runtime_error("Hviske ASR num_beams must be positive");
         }
         options.num_beams = *value;
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"length_penalty"})) {
+    if (const auto value = runtime::parse_finite_float_option(request_options, {"length_penalty"})) {
         if (*value <= 0.0f) {
             throw std::runtime_error("Hviske ASR length_penalty must be positive");
         }
         options.length_penalty = *value;
     }
-    if (const auto value = runtime::find_option(request.options, {"do_sample"})) {
+    if (const auto value = runtime::find_option(request_options, {"do_sample"})) {
         options.do_sample = runtime::parse_bool_option(*value, "do_sample");
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"temperature"})) {
+    if (const auto value = runtime::parse_finite_float_option(request_options, {"temperature"})) {
         if (*value <= 0.0f) {
             throw std::runtime_error("Hviske ASR temperature must be positive");
         }
         options.temperature = *value;
     }
-    if (const auto value = runtime::parse_i64_option(request.options, {"top_k"})) {
+    if (const auto value = runtime::parse_i64_option(request_options, {"top_k"})) {
         if (*value < 0) {
             throw std::runtime_error("Hviske ASR top_k must be non-negative");
         }
         options.top_k = *value;
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"top_p"})) {
+    if (const auto value = runtime::parse_finite_float_option(request_options, {"top_p"})) {
         if (*value <= 0.0f || *value > 1.0f) {
             throw std::runtime_error("Hviske ASR top_p must be within (0, 1]");
         }
         options.top_p = *value;
     }
-    if (const auto value = runtime::parse_u32_option(request.options, {"seed"})) {
+    if (const auto value = runtime::parse_u32_option(request_options, {"seed"})) {
         options.seed = *value;
     }
     return options;
@@ -295,7 +318,7 @@ std::vector<HviskeASRSession::Segment> HviskeASRSession::prepare_segments(
         engine::audio::parse_audio_chunk_seconds_override(options).value_or(
             static_cast<float>(assets_->config.max_audio_clip_seconds)));
     if (!(chunk_seconds > 0.0)) {
-        throw std::runtime_error("Hviske ASR audio_chunk_seconds must be positive");
+        throw std::runtime_error("Hviske ASR audio_chunk_duration_sec must be positive");
     }
     const int64_t chunk_size = std::max<int64_t>(
         1,
@@ -344,15 +367,17 @@ std::vector<HviskeASRSession::Segment> HviskeASRSession::prepare_segments(
 
 runtime::TaskResult HviskeASRSession::run(const runtime::TaskRequest & request) {
     require_prepared("Hviske ASR run()");
+    auto request_options = normalize_request_options(request.options);
+    runtime::validate_spec_backed_request_options(request_options, *contract_, "Hviske ASR");
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("Hviske ASR run() requires audio_input");
     }
     const auto wall_start = Clock::now();
     const auto config_start = Clock::now();
-    const std::string language = language_for_request(request);
+    const std::string language = language_for_request(request, request_options);
     ensure_supported_language(*assets_, language);
-    const bool punctuation = punctuation_for_request(request);
-    const auto decoding_options = decoding_options_for_request(request);
+    const bool punctuation = punctuation_for_request(request_options);
+    const auto decoding_options = decoding_options_for_request(request_options);
     debug::timing_log_scalar("hviske_asr.request_config_ms", engine::debug::elapsed_ms(config_start, Clock::now()));
 
     const auto prompt_start = Clock::now();
@@ -360,7 +385,7 @@ runtime::TaskResult HviskeASRSession::run(const runtime::TaskRequest & request) 
     debug::timing_log_scalar("hviske_asr.prompt_tokenize_ms", engine::debug::elapsed_ms(prompt_start, Clock::now()));
 
     const auto segments_start = Clock::now();
-    const auto segments = prepare_segments(*request.audio_input, request.options);
+    const auto segments = prepare_segments(*request.audio_input, request_options);
     debug::timing_log_scalar("hviske_asr.prepare_segments_ms", engine::debug::elapsed_ms(segments_start, Clock::now()));
 
     std::vector<std::string> texts;
@@ -402,6 +427,14 @@ runtime::TaskResult HviskeASRSession::run(const runtime::TaskRequest & request) 
     debug::trace_log_scalar("hviske_asr.prompt_tokens", prompt_ids.size());
     debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
     return result;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_hviske_asr_loader() {
+    runtime::SpecBackedVoiceModelConfig<HviskeASRAssets> config;
+    config.family = kFamily;
+    config.load_assets = load_hviske_asr_assets;
+    config.create_session = create_hviske_asr_session;
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::hviske_asr
