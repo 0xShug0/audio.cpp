@@ -211,9 +211,6 @@ std::vector<int32_t> IrodoriTextTokenizer::encode(const std::string & text) cons
     if (impl_->assets->config.text_add_bos) {
         ids.insert(ids.begin(), impl_->bos);
     }
-    if (impl_->uses_metaspace && impl_->eos >= 0) {
-        ids.push_back(impl_->eos);
-    }
     return ids;
 }
 

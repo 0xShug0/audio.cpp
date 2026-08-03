@@ -81,6 +81,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg-scale-text", type=float, default=3.0)
     parser.add_argument("--cfg-scale-caption", type=float, default=3.0)
     parser.add_argument("--cfg-scale-speaker", type=float, default=5.0)
+    parser.add_argument("--cfg-scale", type=float, default=0.0)
     parser.add_argument("--cfg-guidance-mode", choices=("independent", "joint", "alternating"), default="independent")
     parser.add_argument("--cfg-min-t", type=float, default=0.5)
     parser.add_argument("--cfg-max-t", type=float, default=1.0)
@@ -233,7 +234,11 @@ def run_request(
         cfg_scale_text=float(request.get("cfg_scale_text", args.cfg_scale_text)),
         cfg_scale_caption=float(request.get("cfg_scale_caption", args.cfg_scale_caption)),
         cfg_scale_speaker=float(request.get("cfg_scale_speaker", args.cfg_scale_speaker)),
-        cfg_scale=None,
+        cfg_scale=(
+            float(request.get("cfg_scale", args.cfg_scale))
+            if float(request.get("cfg_scale", args.cfg_scale)) > 0.0
+            else None
+        ),
         use_caption_condition=use_caption,
         use_speaker_condition=use_speaker,
     )
