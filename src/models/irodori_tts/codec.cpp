@@ -14,7 +14,7 @@
 namespace engine::models::irodori_tts {
 namespace {
 
-constexpr size_t kCodecWeightContextBytes = 512ull * 1024ull * 1024ull;
+constexpr size_t kCodecWeightContextBytes = 32ull * 1024ull * 1024ull;
 
 std::vector<float> squeeze_channel_alpha(const assets::TensorSource &source,
                                          const std::string &name,

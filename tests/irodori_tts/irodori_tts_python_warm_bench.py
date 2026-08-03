@@ -208,6 +208,14 @@ def summarize_audio(path: Path) -> dict[str, Any]:
     }
 
 
+def request_value(request: dict[str, Any], primary: str, fallback: str, default: Any) -> Any:
+    if primary in request:
+        return request[primary]
+    if fallback in request:
+        return request[fallback]
+    return default
+
+
 def run_request(
     runtime: Any,
     SamplingRequest: Any,
@@ -230,13 +238,13 @@ def run_request(
     use_caption = bool(runtime.model_cfg.use_caption_condition and caption)
     use_speaker = bool(runtime.model_cfg.use_speaker_condition_resolved and not no_ref)
     cfg_scale_text, cfg_scale_caption, cfg_scale_speaker, _ = resolve_cfg_scales(
-        cfg_guidance_mode=str(request.get("cfg_guidance_mode", args.cfg_guidance_mode)),
-        cfg_scale_text=float(request.get("cfg_scale_text", args.cfg_scale_text)),
-        cfg_scale_caption=float(request.get("cfg_scale_caption", args.cfg_scale_caption)),
-        cfg_scale_speaker=float(request.get("cfg_scale_speaker", args.cfg_scale_speaker)),
+        cfg_guidance_mode=str(request_value(request, "guidance_mode", "cfg_guidance_mode", args.cfg_guidance_mode)),
+        cfg_scale_text=float(request_value(request, "text_guidance_scale", "cfg_scale_text", args.cfg_scale_text)),
+        cfg_scale_caption=float(request_value(request, "caption_guidance_scale", "cfg_scale_caption", args.cfg_scale_caption)),
+        cfg_scale_speaker=float(request_value(request, "speaker_guidance_scale", "cfg_scale_speaker", args.cfg_scale_speaker)),
         cfg_scale=(
-            float(request.get("cfg_scale", args.cfg_scale))
-            if float(request.get("cfg_scale", args.cfg_scale)) > 0.0
+            float(request_value(request, "guidance_scale", "cfg_scale", args.cfg_scale))
+            if float(request_value(request, "guidance_scale", "cfg_scale", args.cfg_scale)) > 0.0
             else None
         ),
         use_caption_condition=use_caption,
@@ -250,15 +258,19 @@ def run_request(
         no_ref=no_ref,
         num_candidates=1,
         decode_mode=str(request.get("decode_mode", args.decode_mode)),
-        seconds=None if float(request.get("seconds", args.seconds)) <= 0.0 else float(request.get("seconds", args.seconds)),
+        seconds=(
+            None
+            if float(request_value(request, "duration_sec", "seconds", args.seconds)) <= 0.0
+            else float(request_value(request, "duration_sec", "seconds", args.seconds))
+        ),
         duration_scale=float(request.get("duration_scale", args.duration_scale)),
-        num_steps=int(request.get("num_steps", args.num_steps)),
+        num_steps=int(request_value(request, "num_inference_steps", "num_steps", args.num_steps)),
         cfg_scale_text=cfg_scale_text,
         cfg_scale_caption=cfg_scale_caption,
         cfg_scale_speaker=cfg_scale_speaker,
-        cfg_guidance_mode=str(request.get("cfg_guidance_mode", args.cfg_guidance_mode)),
-        cfg_min_t=float(request.get("cfg_min_t", args.cfg_min_t)),
-        cfg_max_t=float(request.get("cfg_max_t", args.cfg_max_t)),
+        cfg_guidance_mode=str(request_value(request, "guidance_mode", "cfg_guidance_mode", args.cfg_guidance_mode)),
+        cfg_min_t=float(request_value(request, "guidance_min_t", "cfg_min_t", args.cfg_min_t)),
+        cfg_max_t=float(request_value(request, "guidance_max_t", "cfg_max_t", args.cfg_max_t)),
         seed=seed,
         context_kv_cache=True,
         trim_tail=True,

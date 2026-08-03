@@ -59,11 +59,11 @@
         "text": "今日は新しいバージョンの短い確認です。自然で聞き取りやすい声でお願いします。",
         "caption": "落ち着いた若い女性。明るく丁寧に、少し微笑みながら話している。",
         "no_ref": true,
-        "num_steps": 40,
+        "num_inference_steps": 40,
         "seed": 1234,
-        "seconds": 8.0,
-        "cfg_guidance_mode": "independent",
-        "cfg_scale": 3.0
+        "duration_sec": 8.0,
+        "guidance_mode": "independent",
+        "guidance_scale": 3.0
       }
     ]
   },
@@ -73,11 +73,11 @@
         "text": "今日は新しいバージョンの短い確認です。自然で聞き取りやすい声でお願いします。",
         "caption": "落ち着いた若い女性。明るく丁寧に、少し微笑みながら話している。",
         "no_ref": true,
-        "num_steps": 40,
+        "num_inference_steps": 40,
         "seed": 1234,
-        "seconds": 8.0,
-        "cfg_guidance_mode": "joint",
-        "cfg_scale": 3.0
+        "duration_sec": 8.0,
+        "guidance_mode": "joint",
+        "guidance_scale": 3.0
       }
     ]
   },
@@ -87,11 +87,11 @@
         "text": "今日は新しいバージョンの短い確認です。自然で聞き取りやすい声でお願いします。",
         "caption": "落ち着いた若い女性。明るく丁寧に、少し微笑みながら話している。",
         "no_ref": true,
-        "num_steps": 40,
+        "num_inference_steps": 40,
         "seed": 1234,
-        "seconds": 8.0,
-        "cfg_guidance_mode": "alternating",
-        "cfg_scale": 3.0
+        "duration_sec": 8.0,
+        "guidance_mode": "alternating",
+        "guidance_scale": 3.0
       }
     ]
   },

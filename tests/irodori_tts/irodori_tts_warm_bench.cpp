@@ -111,6 +111,14 @@ engine::runtime::TaskRequest make_request(const engine::io::json::Value & object
     request.text_input = engine::runtime::Transcript{required_text(object), "ja"};
     set_optional_option(request, object, "caption");
     set_optional_option(request, object, "no_ref");
+    set_optional_option(request, object, "num_inference_steps");
+    set_optional_option(request, object, "guidance_scale");
+    set_optional_option(request, object, "text_guidance_scale");
+    set_optional_option(request, object, "caption_guidance_scale");
+    set_optional_option(request, object, "speaker_guidance_scale");
+    set_optional_option(request, object, "guidance_mode");
+    set_optional_option(request, object, "guidance_min_t");
+    set_optional_option(request, object, "guidance_max_t");
     set_mapped_optional_option(request, object, "num_steps", "num_inference_steps");
     set_mapped_optional_option(request, object, "cfg_scale", "guidance_scale");
     set_mapped_optional_option(request, object, "cfg_scale_text", "text_guidance_scale");
@@ -120,10 +128,15 @@ engine::runtime::TaskRequest make_request(const engine::io::json::Value & object
     set_mapped_optional_option(request, object, "cfg_min_t", "guidance_min_t");
     set_mapped_optional_option(request, object, "cfg_max_t", "guidance_max_t");
     set_optional_option(request, object, "duration_scale");
+    set_optional_option(request, object, "duration_sec");
     if (const auto * value = object.find("seconds"); value != nullptr && !value->is_null()) {
-        request.options["duration_seconds"] = option_text(*value);
+        request.options["duration_sec"] = option_text(*value);
     }
-    set_optional_option(request, object, "duration_seconds");
+    set_mapped_optional_option(request, object, "duration_seconds", "duration_sec");
+    set_mapped_optional_option(request, object, "min_seconds", "min_duration_sec");
+    set_mapped_optional_option(request, object, "max_seconds", "max_duration_sec");
+    set_optional_option(request, object, "min_duration_sec");
+    set_optional_option(request, object, "max_duration_sec");
     set_optional_option(request, object, "seed");
     set_optional_option(request, object, "trim_tail");
     const std::string ref_wav = optional_string(object, "ref_wav");

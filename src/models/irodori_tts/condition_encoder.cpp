@@ -22,8 +22,7 @@ namespace {
 
 namespace binding = modules::binding;
 
-constexpr size_t kConditionEncoderWeightContextBytes =
-    512ull * 1024ull * 1024ull;
+constexpr size_t kConditionEncoderWeightContextBytes = 32ull * 1024ull * 1024ull;
 
 int64_t text_ffn_dim(const IrodoriModelConfig &config) {
   return static_cast<int64_t>(static_cast<double>(config.text_dim) *

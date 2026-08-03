@@ -780,12 +780,11 @@ audiocpp_add_model(irodori_tts
         src/models/irodori_tts/codec.cpp
         src/models/irodori_tts/condition_encoder.cpp
         src/models/irodori_tts/duration.cpp
-        src/models/irodori_tts/loader.cpp
         src/models/irodori_tts/rf_dit.cpp
         src/models/irodori_tts/session.cpp
         src/models/irodori_tts/tokenizer_text.cpp
     INCLUDES
-        engine/models/irodori_tts/loader.h
+        engine/models/irodori_tts/session.h
     LOADERS
         engine::models::irodori_tts::make_irodori_tts_loader
 )

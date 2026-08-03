@@ -24,7 +24,7 @@ namespace {
 
 namespace binding = modules::binding;
 
-constexpr size_t kRfDitWeightContextBytes = 768ull * 1024ull * 1024ull;
+constexpr size_t kRfDitWeightContextBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kRfDitIoContextBytes = 64ull * 1024ull * 1024ull;
 
 modules::LinearWeights
