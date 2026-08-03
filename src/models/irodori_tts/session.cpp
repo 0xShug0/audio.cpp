@@ -9,6 +9,7 @@
 #include "engine/models/irodori_tts/rf_dit.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -78,6 +79,12 @@ generation_options_from_request(const runtime::TaskRequest &request) {
   }
   if (const auto value = runtime::parse_float_option(
           request.options, {"speaker_guidance_scale"})) {
+    options.speaker_guidance_scale = *value;
+  }
+  if (const auto value =
+          runtime::parse_float_option(request.options, {"guidance_scale"})) {
+    options.text_guidance_scale = *value;
+    options.caption_guidance_scale = *value;
     options.speaker_guidance_scale = *value;
   }
   if (const auto value =
@@ -211,6 +218,14 @@ std::string trim_ascii(std::string text) {
                            text.back() == '\r' || text.back() == '\t')) {
     text.pop_back();
   }
+  return text;
+}
+
+std::string lower_ascii(std::string text) {
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
   return text;
 }
 
@@ -549,12 +564,89 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
         text_cfg_enabled || speaker_cfg_enabled || caption_cfg_enabled;
     IrodoriRfSampler::ContextCache rf_context_cond;
     IrodoriRfSampler::ContextCache rf_context_cfg;
+    struct AlternatingGuidanceContext {
+      IrodoriRfSampler::ContextCache cache;
+      float scale = 0.0F;
+    };
+    std::vector<AlternatingGuidanceContext> alternating_contexts;
+    bool run_text_cfg_enabled = text_cfg_enabled;
+    bool run_speaker_cfg_enabled = speaker_cfg_enabled;
+    bool run_caption_cfg_enabled = caption_cfg_enabled;
+    float run_text_guidance_scale =
+        irodori_request.generation.text_guidance_scale;
+    float run_speaker_guidance_scale =
+        irodori_request.generation.speaker_guidance_scale;
+    float run_caption_guidance_scale =
+        irodori_request.generation.caption_guidance_scale;
+    auto build_guidance_context =
+        [&](const std::vector<IrodoriRfGuidanceBranch> &branches) {
+          const auto rf_context_cfg_start = Clock::now();
+          auto cache = rf_sampler_->build_guidance_context_cache(
+              conditions.text_state, tokenized.mask, rf_caption_state,
+              rf_caption, speaker, branches);
+          rf_context_cfg_ms += debug::elapsed_ms(rf_context_cfg_start);
+          return cache;
+        };
     if (any_cfg_enabled) {
-      const auto rf_context_cfg_start = Clock::now();
-      rf_context_cfg = rf_sampler_->build_context_cache(
-          conditions.text_state, tokenized.mask, rf_caption_state, rf_caption,
-          speaker, text_cfg_enabled, speaker_cfg_enabled, caption_cfg_enabled);
-      rf_context_cfg_ms += debug::elapsed_ms(rf_context_cfg_start);
+      if (irodori_request.generation.guidance_mode == "independent") {
+        std::vector<IrodoriRfGuidanceBranch> branches;
+        if (text_cfg_enabled) {
+          branches.push_back({false, true, true});
+        }
+        if (speaker_cfg_enabled) {
+          branches.push_back({true, false, true});
+        }
+        if (caption_cfg_enabled) {
+          branches.push_back({true, true, false});
+        }
+        rf_context_cfg = build_guidance_context(branches);
+      } else if (irodori_request.generation.guidance_mode == "joint") {
+        std::vector<float> scales;
+        if (text_cfg_enabled) {
+          scales.push_back(irodori_request.generation.text_guidance_scale);
+        }
+        if (speaker_cfg_enabled) {
+          scales.push_back(irodori_request.generation.speaker_guidance_scale);
+        }
+        if (caption_cfg_enabled) {
+          scales.push_back(irodori_request.generation.caption_guidance_scale);
+        }
+        const auto [min_scale, max_scale] =
+            std::minmax_element(scales.begin(), scales.end());
+        if (max_scale != scales.end() && *max_scale - *min_scale > 1.0e-6F) {
+          throw std::runtime_error(
+              "Irodori-TTS joint guidance requires equal enabled guidance "
+              "scales; use guidance_scale or matching per-condition scales");
+        }
+        rf_context_cfg = build_guidance_context({{false, false, false}});
+        run_text_cfg_enabled = true;
+        run_speaker_cfg_enabled = false;
+        run_caption_cfg_enabled = false;
+        run_text_guidance_scale = scales.front();
+        run_speaker_guidance_scale = 0.0F;
+        run_caption_guidance_scale = 0.0F;
+      } else {
+        if (text_cfg_enabled) {
+          alternating_contexts.push_back(
+              {build_guidance_context({{false, true, true}}),
+               irodori_request.generation.text_guidance_scale});
+        }
+        if (speaker_cfg_enabled) {
+          alternating_contexts.push_back(
+              {build_guidance_context({{true, false, true}}),
+               irodori_request.generation.speaker_guidance_scale});
+        }
+        if (caption_cfg_enabled) {
+          alternating_contexts.push_back(
+              {build_guidance_context({{true, true, false}}),
+               irodori_request.generation.caption_guidance_scale});
+        }
+        run_text_cfg_enabled = true;
+        run_speaker_cfg_enabled = false;
+        run_caption_cfg_enabled = false;
+        run_speaker_guidance_scale = 0.0F;
+        run_caption_guidance_scale = 0.0F;
+      }
     } else {
       const auto rf_context_cond_start = Clock::now();
       rf_context_cond = rf_sampler_->build_context_cache(
@@ -586,17 +678,43 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
       const bool cfg_active = any_cfg_enabled &&
                               t >= irodori_request.generation.guidance_min_t &&
                               t <= irodori_request.generation.guidance_max_t;
-      const auto &rf_context =
-          cfg_active ? rf_context_cfg
-                     : (any_cfg_enabled ? rf_context_cfg : rf_context_cond);
+      const IrodoriRfSampler::ContextCache *rf_context = &rf_context_cond;
+      bool step_text_cfg_enabled = false;
+      bool step_speaker_cfg_enabled = false;
+      bool step_caption_cfg_enabled = false;
+      float step_text_guidance_scale = run_text_guidance_scale;
+      float step_speaker_guidance_scale = run_speaker_guidance_scale;
+      float step_caption_guidance_scale = run_caption_guidance_scale;
+      if (any_cfg_enabled) {
+        if (irodori_request.generation.guidance_mode == "alternating") {
+          const auto &context =
+              cfg_active
+                  ? alternating_contexts[static_cast<size_t>(
+                        step % static_cast<int64_t>(alternating_contexts.size()))]
+                  : alternating_contexts.front();
+          rf_context = &context.cache;
+          if (cfg_active) {
+            step_text_cfg_enabled = true;
+            step_text_guidance_scale = context.scale;
+            step_speaker_guidance_scale = 0.0F;
+            step_caption_guidance_scale = 0.0F;
+          }
+        } else {
+          rf_context = &rf_context_cfg;
+          if (cfg_active) {
+            step_text_cfg_enabled = run_text_cfg_enabled;
+            step_speaker_cfg_enabled = run_speaker_cfg_enabled;
+            step_caption_cfg_enabled = run_caption_cfg_enabled;
+          }
+        }
+      }
       const auto rf_step_start = Clock::now();
-      rf_sampler_->run_step(x_t, step, modulation_cache, rf_context,
-                            cfg_active && text_cfg_enabled,
-                            cfg_active && speaker_cfg_enabled,
-                            cfg_active && caption_cfg_enabled,
-                            irodori_request.generation.text_guidance_scale,
-                            irodori_request.generation.speaker_guidance_scale,
-                            irodori_request.generation.caption_guidance_scale,
+      rf_sampler_->run_step(x_t, step, modulation_cache, *rf_context,
+                            step_text_cfg_enabled, step_speaker_cfg_enabled,
+                            step_caption_cfg_enabled,
+                            step_text_guidance_scale,
+                            step_speaker_guidance_scale,
+                            step_caption_guidance_scale,
                             patched_steps, velocity);
       const double rf_step_ms = debug::elapsed_ms(rf_step_start);
       if (cfg_active) {
@@ -727,10 +845,16 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
       out.generation.max_seconds < out.generation.min_seconds) {
     throw std::runtime_error("Irodori-TTS invalid duration bounds");
   }
+  out.generation.guidance_mode =
+      lower_ascii(trim_ascii(out.generation.guidance_mode));
   const std::string mode = out.generation.guidance_mode;
-  if (mode != "independent") {
+  if (mode != "independent" && mode != "joint" && mode != "alternating") {
     throw std::runtime_error(
-        "Irodori-TTS native path currently supports independent CFG mode");
+        "Irodori-TTS guidance_mode must be independent, joint, or alternating");
+  }
+  if (out.generation.guidance_min_t > out.generation.guidance_max_t) {
+    throw std::runtime_error(
+        "Irodori-TTS guidance_min_t must be <= guidance_max_t");
   }
   return out;
 }

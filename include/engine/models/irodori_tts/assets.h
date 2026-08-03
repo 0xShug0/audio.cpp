@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace engine::models::irodori_tts {
 
@@ -21,10 +22,21 @@ struct IrodoriModelConfig {
     float speaker_mlp_ratio = 2.6F;
     float dropout = 0.0F;
     int64_t text_vocab_size = 99574;
+    std::string text_encoder_type = "scratch";
     bool text_add_bos = true;
     int64_t text_dim = 512;
     int64_t text_layers = 10;
     int64_t text_heads = 8;
+    int64_t pretrained_text_dim = 0;
+    int64_t pretrained_text_layers = 0;
+    int64_t pretrained_text_heads = 0;
+    int64_t pretrained_text_intermediate_dim = 0;
+    int64_t pretrained_text_sliding_window = 0;
+    float pretrained_text_full_rope_theta = 160000.0F;
+    float pretrained_text_sliding_rope_theta = 10000.0F;
+    std::vector<std::string> pretrained_text_layer_types;
+    std::string pretrained_projector_type = "linear";
+    float pretrained_projector_hidden_ratio = 2.0F;
     bool use_caption_condition = false;
     bool use_speaker_condition = true;
     int64_t caption_vocab_size = 0;
@@ -55,6 +67,7 @@ struct IrodoriModelConfig {
 
     int64_t patched_latent_dim() const noexcept;
     int64_t speaker_patched_latent_dim() const noexcept;
+    bool use_pretrained_text_encoder() const noexcept;
     int64_t caption_vocab_size_resolved() const noexcept;
     int64_t caption_dim_resolved() const noexcept;
     int64_t caption_layers_resolved() const noexcept;

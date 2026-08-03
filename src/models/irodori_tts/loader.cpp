@@ -23,6 +23,9 @@ runtime::CapabilitySet capabilities(const IrodoriTTSAssets & assets) {
 }
 
 std::string variant(const IrodoriTTSAssets & assets) {
+    if (assets.config.use_pretrained_text_encoder()) {
+        return "v4-Small";
+    }
     return assets.config.use_caption_condition ? "600M-v3-VoiceDesign" : "500M-v3";
 }
 
@@ -30,7 +33,7 @@ runtime::ModelMetadata metadata(const IrodoriTTSAssets & assets) {
     runtime::ModelMetadata out;
     out.family = "irodori_tts";
     out.variant = variant(assets);
-    out.description = "Irodori-TTS V3 loaded from local safetensors and DACVAE assets.";
+    out.description = "Irodori-TTS loaded from local model and DACVAE assets.";
     return out;
 }
 
@@ -46,7 +49,8 @@ runtime::ModelCliInterface cli(const IrodoriTTSAssets &) {
         {"text_guidance_scale", "float", "Text classifier-free guidance scale."},
         {"speaker_guidance_scale", "float", "Speaker classifier-free guidance scale."},
         {"caption_guidance_scale", "float", "Caption classifier-free guidance scale."},
-        {"guidance_mode", "independent", "Classifier-free guidance combination mode."},
+        {"guidance_scale", "float", "Override all classifier-free guidance scales."},
+        {"guidance_mode", "independent|joint|alternating", "Classifier-free guidance combination mode."},
         {"guidance_min_t", "float", "Minimum diffusion time for guidance."},
         {"guidance_max_t", "float", "Maximum diffusion time for guidance."},
         {"seed", "n", "Torch RNG seed."},

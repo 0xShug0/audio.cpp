@@ -59,6 +59,29 @@ struct IrodoriTextBlockWeights {
   modules::LinearWeights mlp_w3;
 };
 
+struct IrodoriModernBertLayerWeights {
+  std::optional<core::TensorValue> attention_norm;
+  modules::LinearWeights qkv;
+  modules::LinearWeights out_proj;
+  core::TensorValue mlp_norm;
+  modules::LinearWeights mlp_in;
+  modules::LinearWeights mlp_out;
+};
+
+struct IrodoriModernBertWeights {
+  core::TensorValue embedding;
+  core::TensorValue embedding_norm;
+  core::TensorValue final_norm;
+  std::vector<IrodoriModernBertLayerWeights> layers;
+};
+
+struct IrodoriPretrainedProjectorWeights {
+  modules::LinearWeights projector;
+  core::TensorValue residual_norm;
+  modules::LinearWeights residual_up;
+  modules::LinearWeights residual_down;
+};
+
 struct IrodoriDurationBlockWeights {
   core::TensorValue norm;
   modules::LinearWeights mlp_w1;
@@ -82,12 +105,15 @@ struct IrodoriConditionEncoderWeights {
   core::TensorValue text_embedding;
   std::vector<IrodoriTextBlockWeights> text_blocks;
   core::TensorValue text_norm;
+  IrodoriModernBertWeights pretrained_text;
+  IrodoriPretrainedProjectorWeights text_projector;
   modules::LinearWeights speaker_in_proj;
   std::vector<IrodoriTextBlockWeights> speaker_blocks;
   core::TensorValue speaker_norm;
   core::TensorValue caption_embedding;
   std::vector<IrodoriTextBlockWeights> caption_blocks;
   core::TensorValue caption_norm;
+  IrodoriPretrainedProjectorWeights caption_projector;
   IrodoriDurationWeights duration;
 };
 
@@ -115,6 +141,7 @@ IrodoriConditionEncoderWeights load_irodori_condition_encoder_weights(
 core::TensorValue build_irodori_text_encoder(
     core::ModuleBuildContext &ctx, const core::TensorValue &input_ids,
     const core::TensorValue &text_mask, const core::TensorValue &attention_mask,
+    const core::TensorValue &sliding_attention_mask,
     const core::TensorValue &positions,
     const IrodoriConditionEncoderWeights &weights,
     const IrodoriModelConfig &config);
@@ -129,7 +156,9 @@ core::TensorValue build_irodori_reference_latent_encoder(
 core::TensorValue build_irodori_caption_encoder(
     core::ModuleBuildContext &ctx, const core::TensorValue &input_ids,
     const core::TensorValue &caption_mask,
-    const core::TensorValue &attention_mask, const core::TensorValue &positions,
+    const core::TensorValue &attention_mask,
+    const core::TensorValue &sliding_attention_mask,
+    const core::TensorValue &positions,
     const IrodoriConditionEncoderWeights &weights,
     const IrodoriModelConfig &config);
 

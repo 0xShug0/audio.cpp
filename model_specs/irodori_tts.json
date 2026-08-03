@@ -29,7 +29,7 @@
     ]
   },
   "ui": {
-    "recommended_package": "irodori_tts_600m_v3_voicedesign_q8_0",
+    "recommended_package": "irodori_tts_v4_small_q8_0",
     "tags": [
       "TTS",
       "Clone",
@@ -51,9 +51,20 @@
   },
   "packages": [
     {
+      "id": "irodori_tts_v4_small_q8_0",
+      "display_name": "Irodori-TTS v4 Small Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Irodori-TTS-v4-Small-GGUF",
+      "files": [
+        "Irodori-TTS-v4-Small-GGUF/irodori-tts-v4-small-q8_0.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-v4-Small-GGUF"
+    },
+    {
       "id": "irodori_tts_600m_v3_voicedesign_q8_0",
       "display_name": "Irodori-TTS 600M v3 VoiceDesign Q8_0 GGUF",
-      "default": true,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "Irodori-TTS-600M-v3-VoiceDesign-GGUF",
@@ -104,8 +115,12 @@
         "weights": "$gguf"
       },
       "files": {
-        "model_config": "model:model_config.json",
-        "tokenizer_json": "model:tokenizer.json"
+        "model_config": "model:model_config.json"
+      },
+      "optional_files": {
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_v4_json": "model:tokenizer/tokenizer.json",
+        "pretrained_text_config": "model:text_encoder_config.json"
       },
       "tensors": {
         "model_weights": {
@@ -126,8 +141,12 @@
         "codec": "../Semantic-DACVAE-Japanese-32dim"
       },
       "files": {
-        "model_config": "model:model_config.json",
-        "tokenizer_json": "tokenizer:tokenizer.json"
+        "model_config": "model:model_config.json"
+      },
+      "optional_files": {
+        "tokenizer_json": "tokenizer:tokenizer.json",
+        "tokenizer_v4_json": "model:tokenizer/tokenizer.json",
+        "pretrained_text_config": "model:text_encoder_config.json"
       },
       "tensors": {
         "model_weights": "model:model.safetensors",
