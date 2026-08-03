@@ -29,6 +29,7 @@ __pycache__/
 /windows_prebuild/
 /*.wav
 /flutter/
+/examples/ios/
 /.cache/
 
 # --- portable bundle: distributed manually, never committed ---

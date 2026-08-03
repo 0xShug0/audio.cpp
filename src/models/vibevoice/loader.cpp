@@ -32,6 +32,8 @@ runtime::ModelCliInterface cli(const VibeVoiceAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"voice_samples", "path[,path...]", "Comma-separated speaker reference WAV paths for multi-speaker prompts."},
+        {"voice_state_files", "path[,path...]", "Comma-separated precomputed VibeVoice reference state files."},
+        {"voice_state_out_dir", "dir", "Export precomputed VibeVoice reference state files from voice_samples during prepare()."},
         {"num_inference_steps", "n", "Diffusion inference steps."},
         {"guidance_scale", "float", "Classifier-free guidance scale."},
         {"max_length_times", "float", "Generation length multiplier."},

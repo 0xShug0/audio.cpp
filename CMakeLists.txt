@@ -609,6 +609,7 @@ audiocpp_add_model(vibevoice
         src/models/vibevoice/session.cpp
         src/models/vibevoice/tokenizer_audio.cpp
         src/models/vibevoice/tokenizer_text.cpp
+        src/models/vibevoice/voice_state_io.cpp
     INCLUDES
         engine/models/vibevoice/loader.h
     LOADERS

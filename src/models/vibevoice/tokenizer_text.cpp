@@ -142,6 +142,16 @@ int64_t speech_token_count(const runtime::AudioBuffer & audio, int64_t compressi
     return speech_token_count(waveform.size(), compression_ratio);
 }
 
+int64_t speech_token_count(const VibeVoiceSpeakerPrompt & speaker, int64_t compression_ratio) {
+    if (speaker.reference_state.has_value() && speaker.reference_state->speech_tokens > 0) {
+        return speaker.reference_state->speech_tokens;
+    }
+    if (speaker.reference_state.has_value() && speaker.reference_state->frames > 0) {
+        return speaker.reference_state->frames;
+    }
+    return speech_token_count(speaker.audio, compression_ratio);
+}
+
 }  // namespace
 
 struct VibeVoiceTextTokenizer::Impl {
@@ -191,7 +201,7 @@ VibeVoicePromptEncoding VibeVoiceTextTokenizer::encode_prompt(const VibeVoiceReq
             append_tokens(encoding, encode(" Speaker " + std::to_string(index) + ":"), false);
             append_token(encoding, impl_->speech_start, false);
             const int64_t speech_tokens = speech_token_count(
-                request.speakers[index].audio,
+                request.speakers[index],
                 impl_->assets->processor.speech_tok_compress_ratio);
             encoding.speech_prompt_token_counts.push_back(speech_tokens);
             for (int64_t i = 0; i < speech_tokens; ++i) {

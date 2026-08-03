@@ -6,11 +6,13 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/models/vibevoice/lora.h"
+#include "engine/models/vibevoice/voice_state_io.h"
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -127,7 +129,7 @@ VibeVoiceGenerationOptions generation_options_from_request(
     return options;
 }
 
-std::vector<std::string> split_voice_sample_paths(std::string value) {
+std::vector<std::string> split_comma_separated_paths(std::string value) {
     std::vector<std::string> paths;
     size_t start = 0;
     while (start <= value.size()) {
@@ -148,6 +150,16 @@ std::vector<std::string> split_voice_sample_paths(std::string value) {
         start = end + 1;
     }
     return paths;
+}
+
+std::filesystem::path state_output_path(
+    const std::string & sample_path,
+    const std::string & output_dir) {
+    auto stem = std::filesystem::path(sample_path).stem().string();
+    if (stem.empty()) {
+        stem = "speaker";
+    }
+    return std::filesystem::path(output_dir) / (stem + ".vvstate");
 }
 
 runtime::AudioBuffer read_voice_sample(const std::string & path) {
@@ -210,6 +222,7 @@ VibeVoiceReferenceVoiceState reference_state_from_latents(const VibeVoiceTokeniz
     state.acoustic_mean = latents.values;
     state.frames = latents.frames;
     state.dim = latents.dim;
+    state.speech_tokens = latents.frames;
     return state;
 }
 
@@ -285,7 +298,35 @@ runtime::RunMode VibeVoiceSession::run_mode() const {
 }
 
 void VibeVoiceSession::prepare(const runtime::SessionPreparationRequest & request) {
-    (void) request;
+    if (const auto state_out_dir = runtime::find_option(
+            request.options,
+            {"vibevoice.voice_state_out_dir", "voice_state_out_dir"})) {
+        const auto voice_samples = runtime::find_option(
+            request.options,
+            {"vibevoice.voice_samples", "voice_samples"});
+        if (!voice_samples.has_value()) {
+            throw std::runtime_error("VibeVoice voice_state_out_dir requires voice_samples");
+        }
+        const auto sample_paths = split_comma_separated_paths(*voice_samples);
+        if (sample_paths.empty()) {
+            throw std::runtime_error("VibeVoice voice_state_out_dir requires at least one voice sample");
+        }
+        runtime::TaskRequest option_request;
+        option_request.options = request.options;
+        (void) resolve_voice_sample_prompts(
+            sample_paths,
+            voice_prompt_max_seconds_from_request(option_request, options().backend.type),
+            *state_out_dir);
+    }
+    if (const auto voice_state_files = runtime::find_option(
+            request.options,
+            {"vibevoice.voice_state_files", "voice_state_files"})) {
+        const auto state_paths = split_comma_separated_paths(*voice_state_files);
+        if (state_paths.empty()) {
+            throw std::runtime_error("VibeVoice voice_state_files requires at least one state file");
+        }
+        (void) resolve_voice_state_file_prompts(state_paths);
+    }
     mark_prepared();
 }
 
@@ -323,16 +364,31 @@ VibeVoiceRequest VibeVoiceSession::make_request(const runtime::TaskRequest & req
     out.generation = generation_options_from_request(request, *assets_);
     std::vector<std::string> voice_sample_paths;
     if (const auto voice_samples = runtime::find_option(request.options, {"vibevoice.voice_samples", "voice_samples"})) {
-        voice_sample_paths = split_voice_sample_paths(*voice_samples);
+        voice_sample_paths = split_comma_separated_paths(*voice_samples);
+    }
+    std::vector<std::string> voice_state_paths;
+    if (const auto voice_state_files = runtime::find_option(
+            request.options,
+            {"vibevoice.voice_state_files", "voice_state_files"})) {
+        voice_state_paths = split_comma_separated_paths(*voice_state_files);
     }
     const bool has_voice_ref = request.voice.has_value() && request.voice->speaker.has_value();
     if (!voice_sample_paths.empty() && has_voice_ref) {
         throw std::runtime_error("VibeVoice request cannot combine voice_samples option with voice_ref");
     }
+    if (!voice_state_paths.empty() && has_voice_ref) {
+        throw std::runtime_error("VibeVoice request cannot combine voice_state_files option with voice_ref");
+    }
+    if (!voice_sample_paths.empty() && !voice_state_paths.empty()) {
+        throw std::runtime_error("VibeVoice request cannot combine voice_samples with voice_state_files");
+    }
     if (!voice_sample_paths.empty()) {
         out.speakers = resolve_voice_sample_prompts(
             voice_sample_paths,
             voice_prompt_max_seconds_from_request(request, options().backend.type));
+    }
+    if (!voice_state_paths.empty()) {
+        out.speakers = resolve_voice_state_file_prompts(voice_state_paths);
     }
     if (has_voice_ref) {
         const auto & speaker = *request.voice->speaker;
@@ -349,7 +405,8 @@ VibeVoiceRequest VibeVoiceSession::make_request(const runtime::TaskRequest & req
 
 std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_sample_prompts(
     const std::vector<std::string> & sample_paths,
-    int64_t max_seconds) const {
+    int64_t max_seconds,
+    const std::optional<std::string> & state_out_dir) const {
     if (sample_paths.size() > kMaxReferenceVoiceStates) {
         throw std::runtime_error("VibeVoice 1.5B supports at most 4 reference speakers");
     }
@@ -371,6 +428,11 @@ std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_sample_promp
         std::vector<VibeVoiceSpeakerPrompt> prompts;
         prompts.reserve(found->states.size());
         for (size_t index = 0; index < found->states.size(); ++index) {
+            if (state_out_dir.has_value()) {
+                save_vibevoice_reference_voice_state(
+                    state_output_path(found->sample_paths[index], *state_out_dir),
+                    found->states[index]);
+            }
             VibeVoiceSpeakerPrompt prompt;
             prompt.audio = found->audio[index];
             prompt.reference_state = found->states[index];
@@ -410,6 +472,11 @@ std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_sample_promp
     prompts.reserve(acoustic_means.size());
     for (size_t index = 0; index < acoustic_means.size(); ++index) {
         auto state = reference_state_from_latents(acoustic_means[index]);
+        if (state_out_dir.has_value()) {
+            save_vibevoice_reference_voice_state(
+                state_output_path(sample_paths[index], *state_out_dir),
+                state);
+        }
         VibeVoiceSpeakerPrompt prompt;
         prompt.audio = audio[index];
         prompt.reference_state = state;
@@ -431,6 +498,57 @@ std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_sample_promp
     engine::debug::timing_log_scalar(
         "vibevoice.reference_voice.cached_speakers",
         static_cast<int64_t>(cached_speakers()));
+    return prompts;
+}
+
+std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_state_file_prompts(
+    const std::vector<std::string> & state_paths) const {
+    if (state_paths.size() > kMaxReferenceVoiceStates) {
+        throw std::runtime_error("VibeVoice 1.5B supports at most 4 reference speakers");
+    }
+    const auto found = std::find_if(
+        reference_voice_state_cache_.begin(),
+        reference_voice_state_cache_.end(),
+        [&](const ReferenceVoiceStateCacheEntry & entry) {
+            return entry.sample_paths == state_paths && entry.max_seconds == 0;
+        });
+    if (found != reference_voice_state_cache_.end()) {
+        std::vector<VibeVoiceSpeakerPrompt> prompts;
+        prompts.reserve(found->states.size());
+        for (const auto & state : found->states) {
+            VibeVoiceSpeakerPrompt prompt;
+            prompt.reference_state = state;
+            prompts.push_back(std::move(prompt));
+        }
+        auto entry = std::move(*found);
+        reference_voice_state_cache_.erase(found);
+        reference_voice_state_cache_.push_back(std::move(entry));
+        engine::debug::timing_log_scalar("vibevoice.reference_voice.cache_hits", static_cast<int64_t>(state_paths.size()));
+        engine::debug::timing_log_scalar("vibevoice.reference_voice.cache_misses", 0);
+        engine::debug::timing_log_scalar("vibevoice.reference_voice.cache_evictions", 0);
+        return prompts;
+    }
+
+    ReferenceVoiceStateCacheEntry entry;
+    entry.sample_paths = state_paths;
+    entry.max_seconds = 0;
+    entry.states.reserve(state_paths.size());
+    std::vector<VibeVoiceSpeakerPrompt> prompts;
+    prompts.reserve(state_paths.size());
+    for (const auto & path : state_paths) {
+        auto state = load_vibevoice_reference_voice_state(std::filesystem::path(path));
+        VibeVoiceSpeakerPrompt prompt;
+        prompt.reference_state = state;
+        prompts.push_back(std::move(prompt));
+        entry.states.push_back(std::move(state));
+    }
+    while (reference_voice_state_cache_.size() >= kMaxReferenceVoiceStates && !reference_voice_state_cache_.empty()) {
+        reference_voice_state_cache_.erase(reference_voice_state_cache_.begin());
+    }
+    reference_voice_state_cache_.push_back(std::move(entry));
+    engine::debug::timing_log_scalar("vibevoice.reference_voice.cache_hits", 0);
+    engine::debug::timing_log_scalar("vibevoice.reference_voice.cache_misses", static_cast<int64_t>(state_paths.size()));
+    engine::debug::timing_log_scalar("vibevoice.reference_voice.cache_evictions", 0);
     return prompts;
 }
 

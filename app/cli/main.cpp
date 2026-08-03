@@ -148,6 +148,7 @@ void print_task_list_help() {
         << "    --turns-out <json>\n"
         << "    --words-out <json>\n"
         << "    --voice-state-out <safetensors>  Export PocketTTS voice state from --voice-ref\n"
+        << "    --request-option vibevoice.voice_state_out_dir=<dir>  Export VibeVoice reference states from voice_samples and exit\n"
         << "  Streaming:\n"
         << "    --mode streaming uses the selected model's default streaming policy\n"
         << "  Utility:\n"
@@ -874,10 +875,27 @@ int audiocpp_cli_main(int argc, char ** argv) {
             }
             request.options["pocket_tts.export_voice_state_path"] = voice_state_out->string();
         }
+        const auto vibevoice_state_out = [&]() -> std::optional<std::string> {
+            if (const auto found = request.options.find("vibevoice.voice_state_out_dir"); found != request.options.end()) {
+                return found->second;
+            }
+            if (const auto found = request.options.find("voice_state_out_dir"); found != request.options.end()) {
+                return found->second;
+            }
+            return std::nullopt;
+        }();
         session->prepare(engine::runtime::build_preparation_request(request));
         if (voice_state_out.has_value()) {
             std::cout << "family=" << session->family() << "\n";
             std::cout << "voice_state_out=" << voice_state_out->string() << "\n";
+            return 0;
+        }
+        if (vibevoice_state_out.has_value()) {
+            if (session->family() != "vibevoice") {
+                throw std::runtime_error("vibevoice.voice_state_out_dir is only supported by VibeVoice");
+            }
+            std::cout << "family=" << session->family() << "\n";
+            std::cout << "voice_state_out_dir=" << *vibevoice_state_out << "\n";
             return 0;
         }
 
