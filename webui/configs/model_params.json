@@ -173,7 +173,7 @@
 
   "irodori_tts": [
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（RF 扩散步数）", "label_en": "num_inference_steps", "default": 40, "minimum": 1, "step": 1, "precision": 0},
-    {"name": "duration_seconds", "type": "number", "label": "duration_seconds（0=模型自动预测时长）", "label_en": "duration_seconds (0 = auto)", "default": 0, "minimum": 0, "step": 0.5},
+    {"name": "duration_sec", "type": "number", "label": "duration_sec（0=模型自动预测时长）", "label_en": "duration_sec (0 = auto)", "default": 0, "minimum": 0, "step": 0.5},
     {"name": "duration_scale", "type": "slider", "label": "duration_scale（语速倒数，越大越慢）", "label_en": "duration_scale", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05}
   ],
 

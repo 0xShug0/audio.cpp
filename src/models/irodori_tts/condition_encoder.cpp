@@ -11,6 +11,7 @@
 
 #include <ggml.h>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -38,6 +39,39 @@ int64_t caption_ffn_dim(const IrodoriModelConfig &config) {
   return static_cast<int64_t>(
       static_cast<double>(config.caption_dim_resolved()) *
       static_cast<double>(config.caption_mlp_ratio_resolved()));
+}
+
+std::vector<float>
+patch_speaker_reference_latent(const std::vector<float> &ref_latent,
+                               int64_t ref_tokens,
+                               const IrodoriModelConfig &config) {
+  const int64_t latent_dim = config.patched_latent_dim();
+  if (ref_tokens <= 0 ||
+      static_cast<int64_t>(ref_latent.size()) != ref_tokens * latent_dim) {
+    throw std::runtime_error("Irodori-TTS reference latent shape mismatch");
+  }
+  const int64_t patch = config.speaker_patch_size;
+  if (patch <= 1) {
+    return ref_latent;
+  }
+  const int64_t usable = (ref_tokens / patch) * patch;
+  if (usable <= 0) {
+    throw std::runtime_error(
+        "Irodori-TTS reference sequence is too short for speaker_patch_size");
+  }
+  std::vector<float> patched(
+      static_cast<size_t>((usable / patch) * latent_dim * patch));
+  size_t out = 0;
+  for (int64_t token = 0; token < usable; token += patch) {
+    for (int64_t offset = 0; offset < patch; ++offset) {
+      const size_t in = static_cast<size_t>((token + offset) * latent_dim);
+      std::copy(ref_latent.begin() + static_cast<std::ptrdiff_t>(in),
+                ref_latent.begin() + static_cast<std::ptrdiff_t>(in + latent_dim),
+                patched.begin() + static_cast<std::ptrdiff_t>(out));
+      out += static_cast<size_t>(latent_dim);
+    }
+  }
+  return patched;
 }
 
 modules::LinearWeights
@@ -1065,21 +1099,27 @@ public:
   encode_speaker_reference(const std::vector<float> &ref_latent,
                            int64_t ref_tokens) {
     const auto &config = assets_->config;
-    if (ref_tokens <= 0 ||
-        static_cast<int64_t>(ref_latent.size()) !=
-            ref_tokens * config.speaker_patched_latent_dim()) {
+    auto patched_ref_latent =
+        patch_speaker_reference_latent(ref_latent, ref_tokens, config);
+    const int64_t speaker_tokens =
+        config.speaker_patch_size <= 1
+            ? ref_tokens
+            : (ref_tokens / config.speaker_patch_size);
+    if (speaker_tokens <= 0 ||
+        static_cast<int64_t>(patched_ref_latent.size()) !=
+            speaker_tokens * config.speaker_patched_latent_dim()) {
       throw std::runtime_error("Irodori-TTS reference latent shape mismatch");
     }
     const bool graph_rebuild =
-        speaker_graph_ == nullptr || speaker_graph_->tokens() != ref_tokens;
+        speaker_graph_ == nullptr || speaker_graph_->tokens() != speaker_tokens;
     if (graph_rebuild) {
       speaker_graph_.reset();
       speaker_graph_ =
-          std::make_unique<SpeakerGraph>(*this, ref_tokens, graph_arena_bytes_);
+          std::make_unique<SpeakerGraph>(*this, speaker_tokens, graph_arena_bytes_);
     }
     debug::trace_log_scalar("irodori_tts.speaker_encoder.graph_rebuild",
                              graph_rebuild);
-    return speaker_graph_->run(ref_latent);
+    return speaker_graph_->run(patched_ref_latent);
   }
 
   void release_graphs() {

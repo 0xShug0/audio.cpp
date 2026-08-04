@@ -14,6 +14,8 @@ The default downloadable package is the GGUF v4 Small Q8_0 checkpoint. v4 Small 
 
 v4 GGUF packages are published in both `q8_0` and `f16`. v3 GGUF packages are also available in `q8_0` and `f16`.
 
+> **v4 reference-conditioning note:** Fresh v4 voice-clone or reference+caption generations may occasionally add a short extra phrase near the end of the clip. This behavior is also reproducible in the upstream Python path with the same reference/text/seed, so it is treated as a current v4 model/runtime limitation rather than a GGUF-only issue. No-reference and caption-only paths are usually cleaner; for reference-conditioned use, try a different seed, caption, or explicit `duration_sec` if the tail matters.
+
 ## Quick Start
 
 No-reference v4 speech:
@@ -24,6 +26,17 @@ audiocpp_cli --task tts --family irodori_tts \
   --backend cuda --language ja \
   --text "今日は短い確認です。やさしく、聞き取りやすい声でお願いします。" \
   --request-option no_ref=true \
+  --out out.wav
+```
+
+v4 voice cloning:
+
+```bash
+audiocpp_cli --task clon --family irodori_tts \
+  --model models/Irodori-TTS-v4-Small-GGUF/irodori-tts-v4-small-q8_0.gguf \
+  --backend cuda --language ja \
+  --text "どうしてもっと早く教えてくれなかったの？私、ずっと待ってたのに。" \
+  --voice-ref models/Irodori-TTS-v4-Small/samples/clone_ref1.wav \
   --out out.wav
 ```
 

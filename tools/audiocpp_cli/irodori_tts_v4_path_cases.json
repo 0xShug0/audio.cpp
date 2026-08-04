@@ -1,0 +1,90 @@
+{
+  "cases": [
+    {
+      "id": "irodori_tts_v4_no_reference_tts",
+      "coverage": "Irodori-TTS v4 no-reference Japanese TTS using the GGUF package",
+      "family": "irodori_tts",
+      "model": "models/Irodori-TTS-v4-Small-GGUF",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "no_reference",
+          "text": "本日はお越しいただき、誠にありがとうございます。どうぞごゆっくりお過ごしください。",
+          "language": "ja",
+          "seed": 1234,
+          "options": {
+            "no_ref": true,
+            "num_inference_steps": 24
+          }
+        }
+      ]
+    },
+    {
+      "id": "irodori_tts_v4_reference_clone",
+      "coverage": "Irodori-TTS v4 reference-audio voice clone using the GGUF package",
+      "family": "irodori_tts",
+      "model": "models/Irodori-TTS-v4-Small-GGUF",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "clone_reference",
+          "text": "どうしてもっと早く教えてくれなかったの？私、ずっと待ってたのに。",
+          "language": "ja",
+          "voice_ref": "models/Irodori-TTS-v4-Small/samples/clone_ref1.wav",
+          "seed": 1234,
+          "options": {
+            "num_inference_steps": 24
+          }
+        }
+      ]
+    },
+    {
+      "id": "irodori_tts_v4_caption_voice_design",
+      "coverage": "Irodori-TTS v4 caption-conditioned no-reference voice design using the GGUF package",
+      "family": "irodori_tts",
+      "model": "models/Irodori-TTS-v4-Small-GGUF",
+      "task": "vdes",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "caption_only",
+          "text": "すみません！この近くにコンビニってありますか？ちょっと急いでて、道に迷っちゃったみたいで。",
+          "language": "ja",
+          "seed": 1234,
+          "options": {
+            "caption": "若い女性が、慌てた様子で早口に話している。焦りと不安が声ににじんでいる。",
+            "no_ref": true,
+            "num_inference_steps": 24
+          }
+        }
+      ]
+    },
+    {
+      "id": "irodori_tts_v4_reference_caption_voice_design",
+      "coverage": "Irodori-TTS v4 combined reference-audio and caption voice design using the GGUF package",
+      "family": "irodori_tts",
+      "model": "models/Irodori-TTS-v4-Small-GGUF",
+      "task": "vdes",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "reference_caption",
+          "text": "どうしてもっと早く教えてくれなかったの？私、ずっと待ってたのに。",
+          "language": "ja",
+          "voice_ref": "models/Irodori-TTS-v4-Small/samples/clone_ref1.wav",
+          "seed": 1234,
+          "options": {
+            "caption": "深く傷つき、今にも泣き出しそうな様子。声が震えており、悲痛なトーンで弱々しく話す。",
+            "num_inference_steps": 24
+          }
+        }
+      ]
+    }
+  ]
+}
