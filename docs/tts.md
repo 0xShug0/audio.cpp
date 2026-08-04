@@ -548,65 +548,7 @@ audiocpp_cli --task tts --family index_tts2 --model /path/to/IndexTTS-2 --backen
 
 ## Irodori-TTS
 
-Irodori-TTS is Japanese TTS. The 500M model supports no-reference and reference-conditioned speech; the 600M VoiceDesign model adds caption-based voice design.
-
-| Field | Value |
-|---|---|
-| Family | `irodori_tts` |
-| Model directories | `models/Irodori-TTS-500M-v3`, `models/Irodori-TTS-600M-v3-VoiceDesign` |
-| Required shared tokenizer | `models/llm-jp-3-150m/tokenizer.json` |
-| Required shared codec | `models/Semantic-DACVAE-Japanese-32dim/weights.safetensors` |
-| Tasks | `tts`, `clon`, `vdes` |
-| Modes | `offline` |
-| Languages | `ja` |
-| Voice input | Optional reference WAV, no-reference mode, or caption for VoiceDesign |
-| Built-in voices | Not exposed |
-
-No-reference speech:
-
-```bash
-audiocpp_cli --task tts --family irodori_tts --model /path/to/Irodori-TTS-500M-v3 --backend cuda --language ja --text "今日は短い確認です。やさしく、聞き取りやすい声でお願いします。" --request-option no_ref=true --out out.wav
-```
-
-Voice design:
-
-```bash
-audiocpp_cli --task vdes --family irodori_tts --model /path/to/Irodori-TTS-600M-v3-VoiceDesign --backend cuda --language ja --text "本日はお越しいただき、誠にありがとうございます。" --request-option caption="落ち着いた大人の男性。深く響く声で丁寧に話している。" --request-option no_ref=true --out out.wav
-```
-
-Reference-conditioned speech:
-
-```bash
-audiocpp_cli --task clon --family irodori_tts --model /path/to/Irodori-TTS-500M-v3 --backend cuda --language ja --text "同じ声で短く話します。" --voice-ref /path/to/reference.wav --request-option no_ref=false --out out.wav
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--language` | `ja` | `ja` | Spoken language. |
-| `--request-option no_ref=true|false` | bool | `true` | Use no-reference generation. Set `false` with `--voice-ref` for reference conditioning. |
-| `--voice-ref` | WAV path | not set | Optional speaker reference. |
-| `--request-option caption=<text>` | text | empty string | Voice-design caption for the 600M model. |
-| `--num-inference-steps` | integer | `40` | RF diffusion steps. |
-| `--duration-seconds` | seconds | `0` | Force duration when positive; `0` uses model-predicted duration. |
-| `--text-chunk-mode` | `japanese`, `endline` | `endline` | Long-form chunking mode; `endline` splits only at sentence punctuation followed by a line break or end of input. |
-| `--request-option duration_scale=<float>` | float | `1.0` | Scale predicted duration. |
-| `--request-option min_seconds=<float>` | seconds | `0.5` | Minimum generated duration. |
-| `--request-option max_seconds=<float>` | seconds | `30` | Maximum generated duration. |
-| `--request-option text_guidance_scale=<float>` | float | `3.0` | Text CFG strength. |
-| `--request-option speaker_guidance_scale=<float>` | float | `5.0` | Speaker CFG strength. |
-| `--request-option caption_guidance_scale=<float>` | float | `3.0` | Caption CFG strength. |
-| `--request-option guidance_mode=<name>` | `independent` | `independent` | CFG combination mode. |
-| `--request-option trim_tail=true|false` | bool | `true` | Trim trailing silence-like samples. |
-| `--session-option irodori_tts.mem_saver=true|false` | bool | `true` | Release staged runtime graphs after request phases to reduce resident VRAM. Set `false` to keep graphs resident for maximum reuse. |
-| `--session-option irodori_tts.weight_type=native|f32|f16|bf16|q8_0` | enum | `native` | Model weight storage type. |
-| `--session-option irodori_tts.codec_weight_type=native|f32|f16|q8_0` | enum | `native` | DACVAE codec weight storage type. |
-| `--session-option irodori_tts.reference_cache_slots=<n>` | integer slots | `1` | Prepared reference-speaker cache slots; set `0` to disable reuse. |
-| `--session-option irodori_tts.condition_graph_arena_mb=<n>` | MB | `256` | Condition encoder graph arena size. |
-| `--session-option irodori_tts.rf_graph_arena_mb=<n>` | MB | `768` | RF sampler graph arena size. |
-| `--session-option irodori_tts.codec_graph_arena_mb=<n>` | MB | `512` | DACVAE codec graph arena size. |
-| `--session-option irodori_tts.condition_weight_context_mb=<n>` | MB | `512` | Condition encoder weight context size. |
-| `--session-option irodori_tts.rf_weight_context_mb=<n>` | MB | `768` | RF sampler weight context size. |
-| `--session-option irodori_tts.codec_weight_context_mb=<n>` | MB | `512` | DACVAE codec weight context size. |
+Irodori-TTS is Japanese TTS under `--family irodori_tts`. v4 Small is the preferred GGUF-first package and supports no-reference speech, reference-conditioned speech, and caption-based voice design in one checkpoint. The older 500M v3 and 600M v3 VoiceDesign packages remain supported for existing users. See [Irodori-TTS](models/irodori_tts.md) for v3/v4 differences, GGUF variants, options, and compatibility aliases.
 
 ## OuteTTS
 

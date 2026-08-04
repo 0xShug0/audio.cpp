@@ -241,8 +241,8 @@ singing 路线默认开，style_converted_vc / editing 默认关。
 - **IndexTTS2**（0.3 新增）：中/英声音克隆，**必须**提供参考音色。情感控制在高级参数：
   `emotion_text` 填情感描述（填了会自动开启 `use_emotion_text`）+ `emotion_alpha` 调强度；
   或勾 `use_emotion_text` 从朗读文本自动推断；`emotion_vector`（8 个浮点）走 JSON 兜底框。
-- **Irodori-TTS**（0.3 新增，日语）：500M 默认无参考直接生成，上传参考音色自动切克隆
-  （界面替你发 `no_ref=false`）；600M VoiceDesign 在『声音设计』页用日语 caption 描述音色。
+- **Irodori-TTS**（日语）：v4 Small GGUF 默认无参考直接生成，上传参考音色自动切克隆
+  （界面替你发 `no_ref=false`）；v4 Small VoiceDesign 在『声音设计』页用日语 caption 描述音色。
   语言下拉只认 japanese/留空。
 - **MOSS-TTS**（0.3 新增）：Local v1.5 纯文本可生成，克隆时建议配『参考文本』，输出 48kHz
   立体声；Nano 100M 轻量，无参考=续写式生成（音色随机），有参考=克隆。
@@ -274,8 +274,10 @@ legacy/safetensors 模型目录仍可按 catalog 路径加载。
 | `omnivoice` | omnivoice | tts | OmniVoice |
 | `pocket-tts` | pocket_tts | tts | Pocket TTS（需参考音色） |
 | `index-tts2` | index_tts2 | tts | IndexTTS2（中英克隆+情感，需参考音色） |
-| `irodori-tts` | irodori_tts | tts | Irodori-TTS 500M（日语） |
-| `irodori-tts-vdesign` | irodori_tts | vdes | Irodori-TTS 600M VoiceDesign（日语 caption） |
+| `irodori-tts` | irodori_tts | tts | Irodori-TTS v4 Small（日语，GGUF Q8） |
+| `irodori-tts-vdesign` | irodori_tts | vdes | Irodori-TTS v4 Small VoiceDesign（日语 caption，GGUF Q8） |
+| `irodori-tts-v3-500m` | irodori_tts | tts | Irodori-TTS 500M v3（日语，GGUF Q8） |
+| `irodori-tts-v3-vdesign` | irodori_tts | vdes | Irodori-TTS 600M v3 VoiceDesign（日语 caption，GGUF Q8） |
 | `moss-tts-local` | moss_tts_local | tts | MOSS-TTS-Local v1.5（48kHz 立体声） |
 | `moss-tts-nano` | moss_tts_nano | tts | MOSS-TTS-Nano 100M（轻量） |
 | `supertonic` | supertonic | tts | Supertonic 3（预置音色，无中文） |

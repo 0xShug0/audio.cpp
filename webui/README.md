@@ -283,8 +283,8 @@ and a reference voice longer than ~10s is auto-truncated (an 8G VRAM limit).
   advanced parameters: `emotion_text` holds an emotion description (setting it auto-enables `use_emotion_text`) +
   `emotion_alpha` adjusts strength; or check `use_emotion_text` to infer it automatically from the read text;
   `emotion_vector` (8 floats) goes through the JSON fallback box.
-- **Irodori-TTS** (new in 0.3, Japanese): the 500M generates directly without a reference by default; uploading a
-  reference voice auto-switches to cloning (the UI sends `no_ref=false` for you); the 600M VoiceDesign describes the
+- **Irodori-TTS** (Japanese): v4 Small GGUF generates directly without a reference by default; uploading a
+  reference voice auto-switches to cloning (the UI sends `no_ref=false` for you); v4 Small VoiceDesign describes the
   voice with a Japanese caption on the 'Voice design' page. The language dropdown only accepts japanese/blank.
 - **MOSS-TTS** (new in 0.3): Local v1.5 generates from plain text; for cloning, a 'reference text' is recommended, and it
   outputs 48 kHz stereo; Nano 100M is lightweight — no reference = continuation-style generation (random voice), with a
@@ -318,8 +318,10 @@ Common ones:
 | `omnivoice` | omnivoice | tts | OmniVoice |
 | `pocket-tts` | pocket_tts | tts | Pocket TTS (needs a reference voice) |
 | `index-tts2` | index_tts2 | tts | IndexTTS2 (Chinese/English cloning + emotion, needs a reference voice) |
-| `irodori-tts` | irodori_tts | tts | Irodori-TTS 500M (Japanese) |
-| `irodori-tts-vdesign` | irodori_tts | vdes | Irodori-TTS 600M VoiceDesign (Japanese caption) |
+| `irodori-tts` | irodori_tts | tts | Irodori-TTS v4 Small (Japanese, GGUF Q8) |
+| `irodori-tts-vdesign` | irodori_tts | vdes | Irodori-TTS v4 Small VoiceDesign (Japanese caption, GGUF Q8) |
+| `irodori-tts-v3-500m` | irodori_tts | tts | Irodori-TTS 500M v3 (Japanese, GGUF Q8) |
+| `irodori-tts-v3-vdesign` | irodori_tts | vdes | Irodori-TTS 600M v3 VoiceDesign (Japanese caption, GGUF Q8) |
 | `moss-tts-local` | moss_tts_local | tts | MOSS-TTS-Local v1.5 (48 kHz stereo) |
 | `moss-tts-nano` | moss_tts_nano | tts | MOSS-TTS-Nano 100M (lightweight) |
 | `supertonic` | supertonic | tts | Supertonic 3 (preset voices, no Chinese) |

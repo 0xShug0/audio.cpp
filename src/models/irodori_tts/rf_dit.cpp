@@ -24,7 +24,7 @@ namespace {
 
 namespace binding = modules::binding;
 
-constexpr size_t kRfDitWeightContextBytes = 768ull * 1024ull * 1024ull;
+constexpr size_t kRfDitWeightContextBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kRfDitIoContextBytes = 64ull * 1024ull * 1024ull;
 
 modules::LinearWeights
@@ -931,10 +931,31 @@ public:
                                    bool text_cfg_enabled,
                                    bool speaker_cfg_enabled,
                                    bool caption_cfg_enabled) {
+    std::vector<IrodoriRfGuidanceBranch> guidance_branches;
+    if (text_cfg_enabled) {
+      guidance_branches.push_back({false, true, true});
+    }
+    if (speaker_cfg_enabled) {
+      guidance_branches.push_back({true, false, true});
+    }
+    if (caption_cfg_enabled) {
+      guidance_branches.push_back({true, true, false});
+    }
+    return build_guidance_context_cache(text_state_cond, text_mask_cond,
+                                        caption_state_cond, caption, speaker,
+                                        guidance_branches);
+  }
+
+  ContextCache build_guidance_context_cache(
+      const std::vector<float> &text_state_cond,
+      const std::vector<uint8_t> &text_mask_cond,
+      const std::vector<float> &caption_state_cond,
+      const IrodoriCaptionCondition &caption,
+      const IrodoriSpeakerCondition &speaker,
+      const std::vector<IrodoriRfGuidanceBranch> &guidance_branches) {
     const auto &config = assets_->config;
-    const int64_t batch = 1 + (text_cfg_enabled ? 1 : 0) +
-                          (speaker_cfg_enabled ? 1 : 0) +
-                          (caption_cfg_enabled ? 1 : 0);
+    const int64_t batch =
+        1 + static_cast<int64_t>(guidance_branches.size());
     const int64_t caption_tokens =
         config.use_caption_condition ? static_cast<int64_t>(caption.mask.size())
                                      : 0;
@@ -975,17 +996,9 @@ public:
       }
     };
     copy_text_branch(0, true);
-    int64_t branch = 1;
-    if (text_cfg_enabled) {
-      copy_text_branch(branch, false);
-      ++branch;
-    }
-    if (speaker_cfg_enabled) {
-      copy_text_branch(branch, true);
-      ++branch;
-    }
-    if (caption_cfg_enabled) {
-      copy_text_branch(branch, true);
+    for (size_t branch = 0; branch < guidance_branches.size(); ++branch) {
+      copy_text_branch(static_cast<int64_t>(branch + 1),
+                       guidance_branches[branch].text);
     }
 
     const int64_t speaker_elems = speaker.tokens * config.speaker_dim;
@@ -1004,17 +1017,9 @@ public:
       }
     };
     copy_speaker_branch(0, true);
-    branch = 1;
-    if (text_cfg_enabled) {
-      copy_speaker_branch(branch, true);
-      ++branch;
-    }
-    if (speaker_cfg_enabled) {
-      copy_speaker_branch(branch, false);
-      ++branch;
-    }
-    if (caption_cfg_enabled) {
-      copy_speaker_branch(branch, true);
+    for (size_t branch = 0; branch < guidance_branches.size(); ++branch) {
+      copy_speaker_branch(static_cast<int64_t>(branch + 1),
+                          guidance_branches[branch].speaker);
     }
 
     std::vector<float> caption_state;
@@ -1035,17 +1040,9 @@ public:
         }
       };
       copy_caption_branch(0, true);
-      branch = 1;
-      if (text_cfg_enabled) {
-        copy_caption_branch(branch, true);
-        ++branch;
-      }
-      if (speaker_cfg_enabled) {
-        copy_caption_branch(branch, true);
-        ++branch;
-      }
-      if (caption_cfg_enabled) {
-        copy_caption_branch(branch, false);
+      for (size_t branch = 0; branch < guidance_branches.size(); ++branch) {
+        copy_caption_branch(static_cast<int64_t>(branch + 1),
+                            guidance_branches[branch].caption);
       }
     }
 
@@ -2336,6 +2333,21 @@ IrodoriRfSampler::ContextCache IrodoriRfSampler::build_context_cache(
       impl_->build_context_cache(
           text_state_cond, text_mask_cond, caption_state_cond, caption, speaker,
           text_cfg_enabled, speaker_cfg_enabled, caption_cfg_enabled));
+  return out;
+}
+
+IrodoriRfSampler::ContextCache IrodoriRfSampler::build_guidance_context_cache(
+    const std::vector<float> &text_state_cond,
+    const std::vector<uint8_t> &text_mask_cond,
+    const std::vector<float> &caption_state_cond,
+    const IrodoriCaptionCondition &caption,
+    const IrodoriSpeakerCondition &speaker,
+    const std::vector<IrodoriRfGuidanceBranch> &guidance_branches) {
+  IrodoriRfSampler::ContextCache out;
+  out.state_ = std::make_shared<IrodoriRfSampler::ContextCache::State>(
+      impl_->build_guidance_context_cache(text_state_cond, text_mask_cond,
+                                          caption_state_cond, caption, speaker,
+                                          guidance_branches));
   return out;
 }
 

@@ -768,6 +768,8 @@ MODEL_PROFILES = {
             "**Irodori-TTS**（日语）：默认无参考直接生成；上传参考音色即自动切换克隆模式。"
             "VoiceDesign 版走『声音设计』标签页，用日语 caption 描述音色。"),
         "lang_map": {"japanese": "ja"},
+        "send_max_tokens": False,
+        "send_reference_text": False,
         # 会话默认 no_ref=true（忽略参考音频），带参考时必须显式关掉才走克隆路径。
         "no_ref_toggle": True,
         # 声音设计标签页的『音色描述』对本家族要发 options.caption（qwen3_tts 走
@@ -3377,8 +3379,9 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
             "model": model,
             "language": resolve_language(prof, language),
             "seed": seed,
-            "max_tokens": int(max_tokens),
         }
+        if prof.get("send_max_tokens", True):
+            payload["max_tokens"] = int(max_tokens)
         auto_vibevoice_max_tokens = (
             is_vibevoice and int(max_tokens) == 1200
         )
@@ -3386,7 +3389,7 @@ def do_tts(model, text, language, uploaded_voice, builtin_voice,
             payload["voice_ref"] = _ensure_wav(voice_path)
         elif voice_preset:
             payload["voice"] = voice_preset
-        if (reference_text or "").strip():
+        if prof.get("send_reference_text", True) and (reference_text or "").strip():
             payload["reference_text"] = reference_text
         if options:
             payload["options"] = options
@@ -3493,17 +3496,18 @@ def do_tts_stream(model, text, language, uploaded_voice, builtin_voice,
         "model": model,
         "language": resolve_language(prof, language),
         "seed": seed,
-        "max_tokens": int(max_tokens),
         "stream": True,
         "stream_format": "sse",
         "response_format": "pcm",
         "options": options,
     }
+    if prof.get("send_max_tokens", True):
+        payload["max_tokens"] = int(max_tokens)
     if voice_path:
         payload["voice_ref"] = _ensure_wav(voice_path)
     elif voice_preset:
         payload["voice"] = voice_preset
-    if (reference_text or "").strip():
+    if prof.get("send_reference_text", True) and (reference_text or "").strip():
         payload["reference_text"] = reference_text
 
     chunks = _split_tts_chunks(text, prof.get("chunk_chars", 1000))
@@ -4390,8 +4394,9 @@ def do_vdes(model, text, instruct, seed, max_tokens, adv_values, adv_options):
         options = _merged_options(prof, adv_values, adv_options)
 
         seed, seed_note = _resolve_seed(seed)
-        payload = {"model": model, "input": text,
-                   "seed": seed, "max_tokens": int(max_tokens)}
+        payload = {"model": model, "input": text, "seed": seed}
+        if prof.get("send_max_tokens", True):
+            payload["max_tokens"] = int(max_tokens)
         # 音色描述的落点按家族区分：qwen3_tts 走服务器的 instructions→instruct 映射；
         # irodori 等只读自家 options 键（profile 里的 vdes_option_key，如 caption）。
         vdes_key = prof.get("vdes_option_key")

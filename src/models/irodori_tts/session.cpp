@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/irodori_tts/codec.h"
@@ -9,6 +10,7 @@
 #include "engine/models/irodori_tts/rf_dit.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -17,6 +19,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -24,6 +27,8 @@ namespace engine::models::irodori_tts {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr const char *kFamily = "irodori_tts";
+
 std::shared_ptr<const IrodoriTTSAssets>
 require_assets(std::shared_ptr<const IrodoriTTSAssets> assets) {
   if (assets == nullptr) {
@@ -32,34 +37,64 @@ require_assets(std::shared_ptr<const IrodoriTTSAssets> assets) {
   return assets;
 }
 
-void validate_weight_storage(assets::TensorStorageType storage_type,
-                             const char *option_name) {
-  if (storage_type == assets::TensorStorageType::Native ||
-      storage_type == assets::TensorStorageType::F32 ||
-      storage_type == assets::TensorStorageType::F16 ||
-      storage_type == assets::TensorStorageType::BF16 ||
-      storage_type == assets::TensorStorageType::Q8_0) {
-    return;
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+  if (contract == nullptr) {
+    throw std::runtime_error("Irodori-TTS session requires a model contract");
   }
-  throw std::runtime_error(std::string(option_name) +
-                           " supports only native, f32, f16, bf16, and q8_0");
+  return contract;
 }
 
-void validate_codec_weight_storage(assets::TensorStorageType storage_type,
-                                   const char *option_name) {
-  if (storage_type == assets::TensorStorageType::Native ||
-      storage_type == assets::TensorStorageType::F32 ||
-      storage_type == assets::TensorStorageType::F16 ||
-      storage_type == assets::TensorStorageType::Q8_0) {
-    return;
-  }
-  throw std::runtime_error(std::string(option_name) +
-                           " supports only native, f32, f16, and q8_0");
+runtime::SessionOptions normalize_session_options(runtime::SessionOptions options) {
+  return runtime::apply_option_v1_compatibility(
+      std::move(options),
+      {
+          {"mem_saver", "irodori_tts.mem_saver"},
+          {"reference_cache_slots", "irodori_tts.reference_cache_slots"},
+      },
+      "Irodori-TTS");
+}
+
+runtime::SessionOptions require_supported_session_options(
+    runtime::SessionOptions options,
+    const std::shared_ptr<const engine::model_spec::ModelContract> &contract) {
+  options = normalize_session_options(std::move(options));
+  const auto checked_contract = require_contract(contract);
+  runtime::validate_spec_backed_session_options(
+      options, *checked_contract, kFamily, "Irodori-TTS");
+  return options;
+}
+
+std::unordered_map<std::string, std::string> normalize_request_options(
+    std::unordered_map<std::string, std::string> options) {
+  return runtime::apply_option_v1_compatibility(
+      std::move(options),
+      {
+          {"duration_seconds", "duration_sec"},
+          {"min_seconds", "min_duration_sec"},
+          {"max_seconds", "max_duration_sec"},
+      },
+      "Irodori-TTS",
+      "request");
+}
+
+std::unique_ptr<runtime::IVoiceTaskSession> create_irodori_tts_session(
+    const runtime::TaskSpec &task,
+    const runtime::SessionOptions &options,
+    std::shared_ptr<const IrodoriTTSAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+  return std::make_unique<IrodoriTTSSession>(
+      task, options, std::move(assets), std::move(contract));
 }
 
 IrodoriGenerationOptions
 generation_options_from_request(const runtime::TaskRequest &request) {
   IrodoriGenerationOptions options;
+  if (const auto value = runtime::find_option(request.options, {"language"})) {
+    if (*value != "ja") {
+      throw std::runtime_error("Irodori-TTS language must be ja");
+    }
+  }
   if (const auto value =
           runtime::parse_int_option(request.options, {"num_inference_steps"})) {
     if (*value <= 0) {
@@ -81,6 +116,12 @@ generation_options_from_request(const runtime::TaskRequest &request) {
     options.speaker_guidance_scale = *value;
   }
   if (const auto value =
+          runtime::parse_float_option(request.options, {"guidance_scale"})) {
+    options.text_guidance_scale = *value;
+    options.caption_guidance_scale = *value;
+    options.speaker_guidance_scale = *value;
+  }
+  if (const auto value =
           runtime::find_option(request.options, {"guidance_mode"})) {
     options.guidance_mode = *value;
   }
@@ -97,18 +138,18 @@ generation_options_from_request(const runtime::TaskRequest &request) {
     options.duration_scale = *value;
   }
   if (const auto value =
-          runtime::parse_float_option(request.options, {"duration_seconds"})) {
+          runtime::parse_float_option(request.options, {"duration_sec"})) {
     if (*value > 0.0F) {
       options.duration_seconds = *value;
       options.duration_seconds_specified = true;
     }
   }
   if (const auto value =
-          runtime::parse_float_option(request.options, {"min_seconds"})) {
+          runtime::parse_float_option(request.options, {"min_duration_sec"})) {
     options.min_seconds = *value;
   }
   if (const auto value =
-          runtime::parse_float_option(request.options, {"max_seconds"})) {
+          runtime::parse_float_option(request.options, {"max_duration_sec"})) {
     options.max_seconds = *value;
   }
   if (const auto value = runtime::parse_u32_option(request.options, {"seed"})) {
@@ -214,6 +255,14 @@ std::string trim_ascii(std::string text) {
   return text;
 }
 
+std::string lower_ascii(std::string text) {
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
+  return text;
+}
+
 std::string escape_log_text(std::string_view text) {
   std::string out;
   out.reserve(text.size());
@@ -267,41 +316,55 @@ int find_flattening_point(const std::vector<float> &latent, int64_t frames,
 
 IrodoriTTSSession::IrodoriTTSSession(
     runtime::TaskSpec task, runtime::SessionOptions options,
-    std::shared_ptr<const IrodoriTTSAssets> assets)
-    : RuntimeSessionBase(options), task_(task),
-      assets_(require_assets(std::move(assets))), tokenizer_(assets_),
+    std::shared_ptr<const IrodoriTTSAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : RuntimeSessionBase(require_supported_session_options(std::move(options), contract)),
+      task_(task),
+      assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))),
+      tokenizer_(assets_),
       reference_speaker_cache_(resolve_reference_cache_slots(this->options())) {
   condition_graph_arena_bytes_ = runtime::parse_size_mb_option(
-      options.options, {"irodori_tts.condition_graph_arena_mb"},
+      this->options().options, {"irodori_tts.condition_graph_arena_mb"},
       condition_graph_arena_bytes_);
   rf_graph_arena_bytes_ = runtime::parse_size_mb_option(
-      options.options, {"irodori_tts.rf_graph_arena_mb"},
+      this->options().options, {"irodori_tts.rf_graph_arena_mb"},
       rf_graph_arena_bytes_);
   codec_graph_arena_bytes_ = runtime::parse_size_mb_option(
-      options.options, {"irodori_tts.codec_graph_arena_mb"},
+      this->options().options, {"irodori_tts.codec_graph_arena_mb"},
       codec_graph_arena_bytes_);
   condition_weight_context_bytes_ = runtime::parse_size_mb_option(
-      options.options, {"irodori_tts.condition_weight_context_mb"},
+      this->options().options, {"irodori_tts.condition_weight_context_mb"},
       condition_weight_context_bytes_);
   rf_weight_context_bytes_ = runtime::parse_size_mb_option(
-      options.options, {"irodori_tts.rf_weight_context_mb"},
+      this->options().options, {"irodori_tts.rf_weight_context_mb"},
       rf_weight_context_bytes_);
   codec_weight_context_bytes_ = runtime::parse_size_mb_option(
-      options.options, {"irodori_tts.codec_weight_context_mb"},
+      this->options().options, {"irodori_tts.codec_weight_context_mb"},
       codec_weight_context_bytes_);
-  if (const auto it = options.options.find("irodori_tts.weight_type");
-      it != options.options.end()) {
-    weight_storage_type_ = assets::parse_tensor_storage_type(it->second);
-    validate_weight_storage(weight_storage_type_, "irodori_tts.weight_type");
-  }
-  if (const auto it = options.options.find("irodori_tts.codec_weight_type");
-      it != options.options.end()) {
-    codec_weight_storage_type_ = assets::parse_tensor_storage_type(it->second);
-    validate_codec_weight_storage(codec_weight_storage_type_,
-                                  "irodori_tts.codec_weight_type");
-  }
+  weight_storage_type_ = runtime::parse_tensor_storage_option(
+      this->options().options,
+      "irodori_tts.weight_type",
+      assets::TensorStorageType::Native,
+      {
+          assets::TensorStorageType::Native,
+          assets::TensorStorageType::F32,
+          assets::TensorStorageType::F16,
+          assets::TensorStorageType::BF16,
+          assets::TensorStorageType::Q8_0,
+      });
+  codec_weight_storage_type_ = runtime::parse_tensor_storage_option(
+      this->options().options,
+      "irodori_tts.codec_weight_type",
+      assets::TensorStorageType::Native,
+      {
+          assets::TensorStorageType::Native,
+          assets::TensorStorageType::F32,
+          assets::TensorStorageType::F16,
+          assets::TensorStorageType::Q8_0,
+      });
   if (const auto value =
-          runtime::find_option(options.options, {"irodori_tts.mem_saver", "mem_saver"})) {
+          runtime::find_option(this->options().options, {"irodori_tts.mem_saver"})) {
     mem_saver_ = runtime::parse_bool_option(*value, "irodori_tts.mem_saver");
   }
   if (task_.mode != runtime::RunMode::Offline) {
@@ -345,7 +408,7 @@ bool IrodoriTTSSession::ReferenceAudioCacheKeyEqual::operator()(
          lhs.channels == rhs.channels && lhs.sample_count == rhs.sample_count;
 }
 
-std::string IrodoriTTSSession::family() const { return "irodori_tts"; }
+std::string IrodoriTTSSession::family() const { return kFamily; }
 
 runtime::VoiceTaskKind IrodoriTTSSession::task_kind() const {
   return task_.task;
@@ -362,15 +425,19 @@ void IrodoriTTSSession::prepare(
 runtime::TaskResult
 IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   require_prepared("Irodori-TTS run");
+  auto normalized_request = request;
+  normalized_request.options = normalize_request_options(request.options);
+  runtime::validate_spec_backed_request_options(
+      normalized_request.options, *contract_, "Irodori-TTS");
   const auto wall_start = Clock::now();
   const int64_t text_chunk_size =
-      engine::text::parse_text_chunk_size_override(request.options)
+      engine::text::parse_text_chunk_size_override(normalized_request.options)
           .value_or(assets_->config.max_text_len);
   const auto text_chunk_mode =
-      engine::text::parse_text_chunk_mode_override(request.options)
+      engine::text::parse_text_chunk_mode_override(normalized_request.options)
           .value_or(engine::text::TextChunkMode::Endline);
   const auto chunk_requests =
-      runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
+      runtime::chunk_text_request(normalized_request, text_chunk_size, text_chunk_mode);
   if (chunk_requests.empty()) {
     throw std::runtime_error("Irodori-TTS text chunking produced no requests");
   }
@@ -549,12 +616,89 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
         text_cfg_enabled || speaker_cfg_enabled || caption_cfg_enabled;
     IrodoriRfSampler::ContextCache rf_context_cond;
     IrodoriRfSampler::ContextCache rf_context_cfg;
+    struct AlternatingGuidanceContext {
+      IrodoriRfSampler::ContextCache cache;
+      float scale = 0.0F;
+    };
+    std::vector<AlternatingGuidanceContext> alternating_contexts;
+    bool run_text_cfg_enabled = text_cfg_enabled;
+    bool run_speaker_cfg_enabled = speaker_cfg_enabled;
+    bool run_caption_cfg_enabled = caption_cfg_enabled;
+    float run_text_guidance_scale =
+        irodori_request.generation.text_guidance_scale;
+    float run_speaker_guidance_scale =
+        irodori_request.generation.speaker_guidance_scale;
+    float run_caption_guidance_scale =
+        irodori_request.generation.caption_guidance_scale;
+    auto build_guidance_context =
+        [&](const std::vector<IrodoriRfGuidanceBranch> &branches) {
+          const auto rf_context_cfg_start = Clock::now();
+          auto cache = rf_sampler_->build_guidance_context_cache(
+              conditions.text_state, tokenized.mask, rf_caption_state,
+              rf_caption, speaker, branches);
+          rf_context_cfg_ms += debug::elapsed_ms(rf_context_cfg_start);
+          return cache;
+        };
     if (any_cfg_enabled) {
-      const auto rf_context_cfg_start = Clock::now();
-      rf_context_cfg = rf_sampler_->build_context_cache(
-          conditions.text_state, tokenized.mask, rf_caption_state, rf_caption,
-          speaker, text_cfg_enabled, speaker_cfg_enabled, caption_cfg_enabled);
-      rf_context_cfg_ms += debug::elapsed_ms(rf_context_cfg_start);
+      if (irodori_request.generation.guidance_mode == "independent") {
+        std::vector<IrodoriRfGuidanceBranch> branches;
+        if (text_cfg_enabled) {
+          branches.push_back({false, true, true});
+        }
+        if (speaker_cfg_enabled) {
+          branches.push_back({true, false, true});
+        }
+        if (caption_cfg_enabled) {
+          branches.push_back({true, true, false});
+        }
+        rf_context_cfg = build_guidance_context(branches);
+      } else if (irodori_request.generation.guidance_mode == "joint") {
+        std::vector<float> scales;
+        if (text_cfg_enabled) {
+          scales.push_back(irodori_request.generation.text_guidance_scale);
+        }
+        if (speaker_cfg_enabled) {
+          scales.push_back(irodori_request.generation.speaker_guidance_scale);
+        }
+        if (caption_cfg_enabled) {
+          scales.push_back(irodori_request.generation.caption_guidance_scale);
+        }
+        const auto [min_scale, max_scale] =
+            std::minmax_element(scales.begin(), scales.end());
+        if (max_scale != scales.end() && *max_scale - *min_scale > 1.0e-6F) {
+          throw std::runtime_error(
+              "Irodori-TTS joint guidance requires equal enabled guidance "
+              "scales; use guidance_scale or matching per-condition scales");
+        }
+        rf_context_cfg = build_guidance_context({{false, false, false}});
+        run_text_cfg_enabled = true;
+        run_speaker_cfg_enabled = false;
+        run_caption_cfg_enabled = false;
+        run_text_guidance_scale = scales.front();
+        run_speaker_guidance_scale = 0.0F;
+        run_caption_guidance_scale = 0.0F;
+      } else {
+        if (text_cfg_enabled) {
+          alternating_contexts.push_back(
+              {build_guidance_context({{false, true, true}}),
+               irodori_request.generation.text_guidance_scale});
+        }
+        if (speaker_cfg_enabled) {
+          alternating_contexts.push_back(
+              {build_guidance_context({{true, false, true}}),
+               irodori_request.generation.speaker_guidance_scale});
+        }
+        if (caption_cfg_enabled) {
+          alternating_contexts.push_back(
+              {build_guidance_context({{true, true, false}}),
+               irodori_request.generation.caption_guidance_scale});
+        }
+        run_text_cfg_enabled = true;
+        run_speaker_cfg_enabled = false;
+        run_caption_cfg_enabled = false;
+        run_speaker_guidance_scale = 0.0F;
+        run_caption_guidance_scale = 0.0F;
+      }
     } else {
       const auto rf_context_cond_start = Clock::now();
       rf_context_cond = rf_sampler_->build_context_cache(
@@ -586,17 +730,43 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
       const bool cfg_active = any_cfg_enabled &&
                               t >= irodori_request.generation.guidance_min_t &&
                               t <= irodori_request.generation.guidance_max_t;
-      const auto &rf_context =
-          cfg_active ? rf_context_cfg
-                     : (any_cfg_enabled ? rf_context_cfg : rf_context_cond);
+      const IrodoriRfSampler::ContextCache *rf_context = &rf_context_cond;
+      bool step_text_cfg_enabled = false;
+      bool step_speaker_cfg_enabled = false;
+      bool step_caption_cfg_enabled = false;
+      float step_text_guidance_scale = run_text_guidance_scale;
+      float step_speaker_guidance_scale = run_speaker_guidance_scale;
+      float step_caption_guidance_scale = run_caption_guidance_scale;
+      if (any_cfg_enabled) {
+        if (irodori_request.generation.guidance_mode == "alternating") {
+          const auto &context =
+              cfg_active
+                  ? alternating_contexts[static_cast<size_t>(
+                        step % static_cast<int64_t>(alternating_contexts.size()))]
+                  : alternating_contexts.front();
+          rf_context = &context.cache;
+          if (cfg_active) {
+            step_text_cfg_enabled = true;
+            step_text_guidance_scale = context.scale;
+            step_speaker_guidance_scale = 0.0F;
+            step_caption_guidance_scale = 0.0F;
+          }
+        } else {
+          rf_context = &rf_context_cfg;
+          if (cfg_active) {
+            step_text_cfg_enabled = run_text_cfg_enabled;
+            step_speaker_cfg_enabled = run_speaker_cfg_enabled;
+            step_caption_cfg_enabled = run_caption_cfg_enabled;
+          }
+        }
+      }
       const auto rf_step_start = Clock::now();
-      rf_sampler_->run_step(x_t, step, modulation_cache, rf_context,
-                            cfg_active && text_cfg_enabled,
-                            cfg_active && speaker_cfg_enabled,
-                            cfg_active && caption_cfg_enabled,
-                            irodori_request.generation.text_guidance_scale,
-                            irodori_request.generation.speaker_guidance_scale,
-                            irodori_request.generation.caption_guidance_scale,
+      rf_sampler_->run_step(x_t, step, modulation_cache, *rf_context,
+                            step_text_cfg_enabled, step_speaker_cfg_enabled,
+                            step_caption_cfg_enabled,
+                            step_text_guidance_scale,
+                            step_speaker_guidance_scale,
+                            step_caption_guidance_scale,
                             patched_steps, velocity);
       const double rf_step_ms = debug::elapsed_ms(rf_step_start);
       if (cfg_active) {
@@ -727,12 +897,26 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
       out.generation.max_seconds < out.generation.min_seconds) {
     throw std::runtime_error("Irodori-TTS invalid duration bounds");
   }
+  out.generation.guidance_mode =
+      lower_ascii(trim_ascii(out.generation.guidance_mode));
   const std::string mode = out.generation.guidance_mode;
-  if (mode != "independent") {
+  if (mode != "independent" && mode != "joint" && mode != "alternating") {
     throw std::runtime_error(
-        "Irodori-TTS native path currently supports independent CFG mode");
+        "Irodori-TTS guidance_mode must be independent, joint, or alternating");
+  }
+  if (out.generation.guidance_min_t > out.generation.guidance_max_t) {
+    throw std::runtime_error(
+        "Irodori-TTS guidance_min_t must be <= guidance_max_t");
   }
   return out;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_irodori_tts_loader() {
+  runtime::SpecBackedVoiceModelConfig<IrodoriTTSAssets> config;
+  config.family = kFamily;
+  config.load_assets = load_irodori_tts_assets;
+  config.create_session = create_irodori_tts_session;
+  return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 } // namespace engine::models::irodori_tts

@@ -84,6 +84,12 @@ struct IrodoriLayerAdaLNModulation {
   IrodoriAdaLNModulation mlp;
 };
 
+struct IrodoriRfGuidanceBranch {
+  bool text = true;
+  bool speaker = true;
+  bool caption = true;
+};
+
 IrodoriRfDitWeights
 load_irodori_rf_dit_weights(const IrodoriTTSAssets &assets, ggml_backend_t backend,
                             core::BackendType backend_type,
@@ -149,6 +155,13 @@ public:
                                    bool text_cfg_enabled,
                                    bool speaker_cfg_enabled,
                                    bool caption_cfg_enabled);
+  ContextCache build_guidance_context_cache(
+      const std::vector<float> &text_state_cond,
+      const std::vector<uint8_t> &text_mask_cond,
+      const std::vector<float> &caption_state_cond,
+      const IrodoriCaptionCondition &caption,
+      const IrodoriSpeakerCondition &speaker,
+      const std::vector<IrodoriRfGuidanceBranch> &guidance_branches);
   ModulationCache build_modulation_cache(const std::vector<float> &timesteps);
   void run_step(const std::vector<float> &x_t, int64_t step,
                 const ModulationCache &modulation_cache,

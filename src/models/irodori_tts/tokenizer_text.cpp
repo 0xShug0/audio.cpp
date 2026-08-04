@@ -31,6 +31,15 @@ std::string normalize_text_for_llm_jp(std::string text) {
     return text;
 }
 
+std::string normalize_text_for_metaspace(std::string text) {
+    size_t pos = 0;
+    while ((pos = text.find(' ', pos)) != std::string::npos) {
+        text.replace(pos, 1, kSentencePieceSpace);
+        pos += 3;
+    }
+    return text;
+}
+
 std::vector<std::string> utf8_chars(const std::string & text) {
     std::vector<std::string> chars;
     for (size_t i = 0; i < text.size();) {
@@ -70,7 +79,13 @@ std::string byte_token(unsigned char value) {
 struct IrodoriTextTokenizer::Impl {
     explicit Impl(std::shared_ptr<const IrodoriTTSAssets> input_assets)
         : assets(std::move(input_assets)) {
-        const auto root = assets->resources.parse_json("tokenizer_json");
+        const bool use_v4_tokenizer =
+            assets->config.use_pretrained_text_encoder() &&
+            assets->resources.has_file("tokenizer_v4_json");
+        uses_metaspace = use_v4_tokenizer;
+        const auto tokenizer_id =
+            use_v4_tokenizer ? "tokenizer_v4_json" : "tokenizer_json";
+        const auto root = assets->resources.parse_json(tokenizer_id);
         const auto & model = root.require("model");
         if (engine::io::json::require_string(model, "type") != "Unigram") {
             throw std::runtime_error("Irodori-TTS tokenizer expects HF Unigram tokenizer.json");
@@ -92,11 +107,17 @@ struct IrodoriTextTokenizer::Impl {
         }
         auto bos_it = token_to_id.find("<s>");
         auto pad_it = token_to_id.find("<PAD|LLM-jp>");
+        if (pad_it == token_to_id.end()) {
+            pad_it = token_to_id.find("<pad>");
+        }
         if (bos_it == token_to_id.end() || pad_it == token_to_id.end()) {
             throw std::runtime_error("Irodori-TTS tokenizer missing BOS or PAD token");
         }
         bos = bos_it->second;
         pad = pad_it->second;
+        if (auto eos_it = token_to_id.find("</s>"); eos_it != token_to_id.end()) {
+            eos = eos_it->second;
+        }
         if (assets->config.text_vocab_size != static_cast<int64_t>(pieces.size())) {
             throw std::runtime_error("Irodori-TTS text_vocab_size does not match tokenizer vocab size");
         }
@@ -174,15 +195,19 @@ struct IrodoriTextTokenizer::Impl {
     std::vector<float> scores;
     std::unordered_map<std::string, int32_t> token_to_id;
     int32_t bos = 1;
+    int32_t eos = -1;
     int32_t pad = 4;
     int32_t unk = 0;
+    bool uses_metaspace = false;
 };
 
 IrodoriTextTokenizer::IrodoriTextTokenizer(std::shared_ptr<const IrodoriTTSAssets> assets)
     : impl_(std::make_shared<Impl>(require_assets(std::move(assets)))) {}
 
 std::vector<int32_t> IrodoriTextTokenizer::encode(const std::string & text) const {
-    auto ids = impl_->encode_piece_sequence(normalize_text_for_llm_jp(text));
+    auto ids = impl_->encode_piece_sequence(
+        impl_->uses_metaspace ? normalize_text_for_metaspace(text)
+                              : normalize_text_for_llm_jp(text));
     if (impl_->assets->config.text_add_bos) {
         ids.insert(ids.begin(), impl_->bos);
     }
