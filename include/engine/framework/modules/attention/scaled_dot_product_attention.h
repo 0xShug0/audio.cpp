@@ -12,6 +12,7 @@ enum class ScaledDotProductAttentionLowering {
     Explicit,
     Flash,
     FlashPreserveViews,
+    ExplicitCpuPerHead,
 };
 
 enum class AttentionCausality {

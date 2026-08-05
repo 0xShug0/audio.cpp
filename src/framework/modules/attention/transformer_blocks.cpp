@@ -28,10 +28,22 @@ core::TensorValue TransformerEncoderBlockModule::build(
     validate_sequence_input(input, config_.hidden_size, "input");
 
     const LayerNormModule norm1(make_norm_config(config_.hidden_size, config_.eps));
-    const SelfAttentionModule self_attention({config_.hidden_size, config_.num_heads, config_.use_bias});
+    const SelfAttentionModule self_attention({
+        config_.hidden_size,
+        config_.num_heads,
+        config_.use_bias,
+        config_.projection_precision,
+        config_.attention_precision,
+        config_.prefix_cache_layout,
+    });
     const LayerNormModule norm2(make_norm_config(config_.hidden_size, config_.eps));
-    const FeedForwardModule feed_forward(
-        {config_.hidden_size, config_.intermediate_size, config_.use_bias, GeluApproximation::ExactErf});
+    const FeedForwardModule feed_forward({
+        config_.hidden_size,
+        config_.intermediate_size,
+        config_.use_bias,
+        GeluApproximation::ExactErf,
+        config_.projection_precision,
+    });
     const ResidualAddModule add;
 
     auto cur = norm1.build(ctx, input, weights.norm1);
@@ -77,10 +89,22 @@ StreamingTransformerEncoderBlockOutputs StreamingTransformerEncoderBlockModule::
     validate_sequence_input(input, config_.hidden_size, "input");
 
     const LayerNormModule norm1(make_norm_config(config_.hidden_size, config_.eps));
-    const StreamingSelfAttentionModule self_attention({config_.hidden_size, config_.num_heads, config_.use_bias});
+    const StreamingSelfAttentionModule self_attention({
+        config_.hidden_size,
+        config_.num_heads,
+        config_.use_bias,
+        config_.projection_precision,
+        config_.attention_precision,
+        config_.prefix_cache_layout,
+    });
     const LayerNormModule norm2(make_norm_config(config_.hidden_size, config_.eps));
-    const FeedForwardModule feed_forward(
-        {config_.hidden_size, config_.intermediate_size, config_.use_bias, GeluApproximation::ExactErf});
+    const FeedForwardModule feed_forward({
+        config_.hidden_size,
+        config_.intermediate_size,
+        config_.use_bias,
+        GeluApproximation::ExactErf,
+        config_.projection_precision,
+    });
     const ResidualAddModule add;
 
     auto attn_in = norm1.build(ctx, input, weights.norm1);
@@ -134,6 +158,9 @@ StreamingTransformerStackOutputs StreamingTransformerStackModule::build(
             config_.intermediate_size,
             config_.eps,
             config_.use_bias,
+            config_.projection_precision,
+            config_.attention_precision,
+            config_.prefix_cache_layout,
         }).build(
             ctx,
             output,
@@ -173,7 +200,8 @@ core::TensorValue ProjectedTransformerModule::build(
     auto x = permute_tensor(ctx, input_bct, {0, 2, 1});
     x = ensure_contiguous_layout(ctx, x);
     if (weights.input_projection.has_value()) {
-        x = LinearModule({config_.input_dimension, config_.hidden_size, config_.use_bias}).build(ctx, x, *weights.input_projection);
+        x = LinearModule({config_.input_dimension, config_.hidden_size, config_.use_bias, config_.projection_precision})
+                .build(ctx, x, *weights.input_projection);
     }
     TransformerStackWeights transformer_weights{weights.transformer_layers};
     x = TransformerStackModule({
@@ -183,9 +211,13 @@ core::TensorValue ProjectedTransformerModule::build(
         config_.layers,
         config_.eps,
         config_.use_bias,
+        config_.projection_precision,
+        config_.attention_precision,
+        config_.prefix_cache_layout,
     }).build(ctx, x, transformer_weights);
     if (weights.output_projection.has_value()) {
-        x = LinearModule({config_.hidden_size, config_.output_dimension, config_.use_bias}).build(ctx, x, *weights.output_projection);
+        x = LinearModule({config_.hidden_size, config_.output_dimension, config_.use_bias, config_.projection_precision})
+                .build(ctx, x, *weights.output_projection);
     }
     return permute_tensor(ctx, x, {0, 2, 1});
 }
@@ -218,7 +250,8 @@ StreamingProjectedTransformerOutputs StreamingProjectedTransformerModule::build(
     auto x = permute_tensor(ctx, input_bct, {0, 2, 1});
     x = ensure_contiguous_layout(ctx, x);
     if (weights.input_projection.has_value()) {
-        x = LinearModule({config_.input_dimension, config_.hidden_size, config_.use_bias}).build(ctx, x, *weights.input_projection);
+        x = LinearModule({config_.input_dimension, config_.hidden_size, config_.use_bias, config_.projection_precision})
+                .build(ctx, x, *weights.input_projection);
     }
     StreamingTransformerStackWeights transformer_weights{weights.transformer_layers};
     auto stack_outputs = StreamingTransformerStackModule({
@@ -228,10 +261,14 @@ StreamingProjectedTransformerOutputs StreamingProjectedTransformerModule::build(
         config_.layers,
         config_.eps,
         config_.use_bias,
+        config_.projection_precision,
+        config_.attention_precision,
+        config_.prefix_cache_layout,
     }).build(ctx, x, positions, transformer_weights, prefix_state, attention_mask);
     x = stack_outputs.output;
     if (weights.output_projection.has_value()) {
-        x = LinearModule({config_.hidden_size, config_.output_dimension, config_.use_bias}).build(ctx, x, *weights.output_projection);
+        x = LinearModule({config_.hidden_size, config_.output_dimension, config_.use_bias, config_.projection_precision})
+                .build(ctx, x, *weights.output_projection);
     }
     return {permute_tensor(ctx, x, {0, 2, 1}), std::move(stack_outputs.state)};
 }
@@ -262,6 +299,9 @@ core::TensorValue TransformerStackModule::build(
             config_.intermediate_size,
             config_.eps,
             config_.use_bias,
+            config_.projection_precision,
+            config_.attention_precision,
+            config_.prefix_cache_layout,
         }).build(ctx, output, layer_weights);
     }
     return output;

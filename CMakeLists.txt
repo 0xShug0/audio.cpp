@@ -247,6 +247,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/options.cpp
     src/framework/runtime/session_base.cpp
     src/framework/runtime/workspace.cpp
+    src/framework/midi/midi_file.cpp
     src/framework/io/filesystem.cpp
     src/framework/io/config.cpp
     src/framework/io/json.cpp
@@ -338,6 +339,7 @@ add_library(engine_core OBJECT
     src/framework/audio/zipenhancer.cpp
     src/framework/modules/speaker_encoders/ecapa_tdnn_runtime.cpp
     src/framework/modules/speaker_encoders/titanet_runtime.cpp
+    src/framework/codecs/mimi_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
     src/framework/sampling/decode_modules.cpp
     src/framework/sampling/diffusion_math.cpp
@@ -1431,6 +1433,13 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME audio_dsp_test
         COMMAND audio_dsp_test
+    )
+
+    add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
+
+    add_test(
+        NAME midi_file_test
+        COMMAND midi_file_test
     )
 
     add_engine_unittest(wav_reader_test tests/unittests/test_wav_reader.cpp)

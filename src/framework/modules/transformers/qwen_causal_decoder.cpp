@@ -61,13 +61,20 @@ QwenCausalDecoderOutputs QwenCausalDecoderModule::build(
         hidden = SliceModule({1, steps - 1, 1}).build(ctx, hidden_sequence);
     }
 
+    auto logits_input = hidden;
+    if (config_.lm_head_input_type.has_value() && logits_input.type != *config_.lm_head_input_type) {
+        logits_input = core::wrap_tensor(
+            ggml_cast(ctx.ggml, logits_input.tensor, *config_.lm_head_input_type),
+            logits_input.shape,
+            *config_.lm_head_input_type);
+    }
     const auto logits = LinearModule({
                             config_.stack.hidden_size,
                             config_.logits_size,
                             config_.use_lm_head_bias,
                             config_.lm_head_precision,
                         })
-                            .build(ctx, hidden, weights.lm_head);
+                            .build(ctx, logits_input, weights.lm_head);
     return {std::move(stack.output), hidden, logits, std::move(stack.state)};
 }
 
@@ -126,13 +133,20 @@ QwenCausalDecoderStaticCacheOutputs QwenCausalDecoderModule::build_static_cache_
 
     auto hidden = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false})
                       .build(ctx, x, weights.final_norm);
+    auto logits_input = hidden;
+    if (config_.lm_head_input_type.has_value() && logits_input.type != *config_.lm_head_input_type) {
+        logits_input = core::wrap_tensor(
+            ggml_cast(ctx.ggml, logits_input.tensor, *config_.lm_head_input_type),
+            logits_input.shape,
+            *config_.lm_head_input_type);
+    }
     const auto logits = LinearModule({
                             config_.stack.hidden_size,
                             config_.logits_size,
                             config_.use_lm_head_bias,
                             config_.lm_head_precision,
                         })
-                            .build(ctx, hidden, weights.lm_head);
+                            .build(ctx, logits_input, weights.lm_head);
     return {
         std::move(x),
         hidden,

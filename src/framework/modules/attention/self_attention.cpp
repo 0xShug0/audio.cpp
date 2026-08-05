@@ -53,15 +53,22 @@ StreamingAttentionOutputs StreamingSelfAttentionModule::build(
         if (prefix_key->shape.dims[0] != input.shape.dims[0] || prefix_value->shape.dims[0] != input.shape.dims[0]) {
             throw std::runtime_error("Streaming self-attention prefix batch size must match input");
         }
+        if (config_.prefix_cache_layout == AttentionPrefixCacheLayout::HeadsSequence) {
+            if (prefix_key->shape.dims[1] != config_.num_heads || prefix_value->shape.dims[1] != config_.num_heads) {
+                throw std::runtime_error("Streaming self-attention BHTD prefix head count mismatch");
+            }
+        } else if (prefix_key->shape.dims[2] != config_.num_heads || prefix_value->shape.dims[2] != config_.num_heads) {
+            throw std::runtime_error("Streaming self-attention BTHD prefix head count mismatch");
+        }
     }
 
     const int64_t head_dim = config_.hidden_size / config_.num_heads;
     const float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
 
-    const LinearModule q_proj({config_.hidden_size, config_.hidden_size, config_.use_bias});
-    const LinearModule k_proj({config_.hidden_size, config_.hidden_size, config_.use_bias});
-    const LinearModule v_proj({config_.hidden_size, config_.hidden_size, config_.use_bias});
-    const LinearModule out_proj({config_.hidden_size, config_.hidden_size, config_.use_bias});
+    const LinearModule q_proj({config_.hidden_size, config_.hidden_size, config_.use_bias, config_.projection_precision});
+    const LinearModule k_proj({config_.hidden_size, config_.hidden_size, config_.use_bias, config_.projection_precision});
+    const LinearModule v_proj({config_.hidden_size, config_.hidden_size, config_.use_bias, config_.projection_precision});
+    const LinearModule out_proj({config_.hidden_size, config_.hidden_size, config_.use_bias, config_.projection_precision});
     const MatMulModule matmul;
 
     auto q = q_proj.build(ctx, input, make_linear_weights(weights.q_weight, weights.q_bias));
@@ -81,12 +88,25 @@ StreamingAttentionOutputs StreamingSelfAttentionModule::build(
 
     core::TensorValue context;
     if (prefix_key.has_value()) {
-        auto all_k = concat_sequence_axis(ctx, prefix_key, k);
-        auto all_v = concat_sequence_axis(ctx, prefix_value, v);
-        auto all_k_heads = permute_tensor(ctx, all_k, {0, 2, 1, 3});
-        auto all_v_heads = permute_tensor(ctx, all_v, {0, 2, 1, 3});
+        core::TensorValue all_k_heads;
+        core::TensorValue all_v_heads;
+        int64_t prefix_steps = 0;
+        if (config_.prefix_cache_layout == AttentionPrefixCacheLayout::HeadsSequence) {
+            prefix_steps = prefix_key->shape.dims[2];
+            all_k_heads = ConcatModule({2}).build(ctx, *prefix_key, k_heads);
+            all_v_heads = ConcatModule({2}).build(ctx, *prefix_value, v_heads);
+        } else {
+            prefix_steps = prefix_key->shape.dims[1];
+            auto all_k = concat_sequence_axis(ctx, prefix_key, k);
+            auto all_v = concat_sequence_axis(ctx, prefix_value, v);
+            all_k_heads = permute_tensor(ctx, all_k, {0, 2, 1, 3});
+            all_v_heads = permute_tensor(ctx, all_v, {0, 2, 1, 3});
+        }
         auto k_transposed = permute_tensor(ctx, all_k_heads, {0, 1, 3, 2});
         auto scores = matmul.build(ctx, q_heads, k_transposed);
+        if (config_.attention_precision != GGML_PREC_DEFAULT) {
+            ggml_mul_mat_set_prec(scores.tensor, config_.attention_precision);
+        }
         core::TensorValue attn;
         if (attention_mask.has_value()) {
             attn = core::wrap_tensor(
@@ -96,15 +116,21 @@ StreamingAttentionOutputs StreamingSelfAttentionModule::build(
         } else {
             scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, scale), scores.shape, GGML_TYPE_F32);
             scores = core::wrap_tensor(
-                ggml_diag_mask_inf(ctx.ggml, scores.tensor, static_cast<int>(prefix_key->shape.dims[1])),
+                ggml_diag_mask_inf(ctx.ggml, scores.tensor, static_cast<int>(prefix_steps)),
                 scores.shape,
                 GGML_TYPE_F32);
             attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, ensure_contiguous_layout(ctx, scores).tensor), scores.shape, GGML_TYPE_F32);
         }
         context = matmul.build(ctx, attn, all_v_heads);
+        if (config_.attention_precision != GGML_PREC_DEFAULT) {
+            ggml_mul_mat_set_prec(context.tensor, config_.attention_precision);
+        }
     } else {
         auto k_transposed = permute_tensor(ctx, k_heads, {0, 1, 3, 2});
         auto scores = matmul.build(ctx, q_heads, k_transposed);
+        if (config_.attention_precision != GGML_PREC_DEFAULT) {
+            ggml_mul_mat_set_prec(scores.tensor, config_.attention_precision);
+        }
         core::TensorValue attn;
         if (attention_mask.has_value()) {
             attn = core::wrap_tensor(
@@ -117,6 +143,9 @@ StreamingAttentionOutputs StreamingSelfAttentionModule::build(
             attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, ensure_contiguous_layout(ctx, scores).tensor), scores.shape, GGML_TYPE_F32);
         }
         context = matmul.build(ctx, attn, v_heads);
+        if (config_.attention_precision != GGML_PREC_DEFAULT) {
+            ggml_mul_mat_set_prec(context.tensor, config_.attention_precision);
+        }
     }
 
     context = permute_tensor(ctx, context, {0, 2, 1, 3});
@@ -124,6 +153,13 @@ StreamingAttentionOutputs StreamingSelfAttentionModule::build(
     context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config_.hidden_size}));
 
     auto output = out_proj.build(ctx, context, make_linear_weights(weights.out_weight, weights.out_bias));
+    if (config_.prefix_cache_layout == AttentionPrefixCacheLayout::HeadsSequence) {
+        return {
+            output,
+            ensure_contiguous_layout(ctx, k_heads),
+            ensure_contiguous_layout(ctx, v_heads),
+        };
+    }
     return {output, k, v};
 }
 

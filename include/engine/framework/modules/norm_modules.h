@@ -11,6 +11,7 @@ struct NormConfig {
     float eps = 1e-5f;
     bool use_weight = true;
     bool use_bias = true;
+    bool preserve_input_layout = false;
 };
 
 struct NormWeights {

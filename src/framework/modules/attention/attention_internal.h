@@ -401,9 +401,9 @@ inline core::TensorValue build_feed_forward_impl(
     const core::TensorValue & input,
     const FeedForwardConfig & config,
     const FeedForwardWeights & weights) {
-    const LinearModule fc1({config.hidden_size, config.intermediate_size, config.use_bias});
+    const LinearModule fc1({config.hidden_size, config.intermediate_size, config.use_bias, config.projection_precision});
     const GeluModule gelu({config.gelu_approximation});
-    const LinearModule fc2({config.intermediate_size, config.hidden_size, config.use_bias});
+    const LinearModule fc2({config.intermediate_size, config.hidden_size, config.use_bias, config.projection_precision});
 
     auto hidden = fc1.build(ctx, input, make_linear_weights(weights.fc1_weight, weights.fc1_bias));
     hidden = gelu.build(ctx, hidden);
@@ -487,10 +487,10 @@ inline core::TensorValue build_attention_impl(
     const int64_t head_dim = config.hidden_size / config.num_heads;
     const float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
 
-    const LinearModule q_proj({config.hidden_size, config.hidden_size, config.use_bias});
-    const LinearModule k_proj({config.hidden_size, config.hidden_size, config.use_bias});
-    const LinearModule v_proj({config.hidden_size, config.hidden_size, config.use_bias});
-    const LinearModule out_proj({config.hidden_size, config.hidden_size, config.use_bias});
+    const LinearModule q_proj({config.hidden_size, config.hidden_size, config.use_bias, config.projection_precision});
+    const LinearModule k_proj({config.hidden_size, config.hidden_size, config.use_bias, config.projection_precision});
+    const LinearModule v_proj({config.hidden_size, config.hidden_size, config.use_bias, config.projection_precision});
+    const LinearModule out_proj({config.hidden_size, config.hidden_size, config.use_bias, config.projection_precision});
     const MatMulModule matmul;
 
     auto q = q_proj.build(ctx, query, make_linear_weights(weights.q_weight, weights.q_bias));
@@ -507,10 +507,16 @@ inline core::TensorValue build_attention_impl(
     auto k_transposed = permute_tensor(ctx, k_heads, {0, 1, 3, 2});
 
     auto scores = matmul.build(ctx, q_heads, k_transposed);
+    if (config.attention_precision != GGML_PREC_DEFAULT) {
+        ggml_mul_mat_set_prec(scores.tensor, config.attention_precision);
+    }
     scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, scale), scores.shape, GGML_TYPE_F32);
     auto attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
 
     auto context = matmul.build(ctx, attn, v_heads);
+    if (config.attention_precision != GGML_PREC_DEFAULT) {
+        ggml_mul_mat_set_prec(context.tensor, config.attention_precision);
+    }
     context = permute_tensor(ctx, context, {0, 2, 1, 3});
     context = ensure_contiguous_layout(ctx, context);
     context = core::reshape_tensor(
