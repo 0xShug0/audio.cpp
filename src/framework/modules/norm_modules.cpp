@@ -173,8 +173,10 @@ core::TensorValue build_norm(
     }
     core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");
     core::validate_last_dim(input, config.hidden_size, "input");
-    const auto input_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, input);
-    core::TensorValue normalized = core::wrap_tensor(fn(ctx.ggml, input_contiguous.tensor, config.eps), input.shape, GGML_TYPE_F32);
+    const auto norm_input = config.preserve_input_layout
+        ? input
+        : tensor_layout::ensure_contiguous_layout_if_needed(ctx, input);
+    core::TensorValue normalized = core::wrap_tensor(fn(ctx.ggml, norm_input.tensor, config.eps), input.shape, GGML_TYPE_F32);
     return apply_affine(ctx, normalized, config, weights);
 }
 

@@ -82,6 +82,8 @@ const char * artifact_kind_name(engine::runtime::ArtifactKind kind) {
         return "prompt_embedding";
     case engine::runtime::ArtifactKind::AcousticTokens:
         return "acoustic_tokens";
+    case engine::runtime::ArtifactKind::Midi:
+        return "midi";
     case engine::runtime::ArtifactKind::TranscriptAlignment:
         return "transcript_alignment";
     case engine::runtime::ArtifactKind::DiarizationState:
@@ -174,6 +176,38 @@ void write_wav_output(
     const auto tmp = path.parent_path() / (path.filename().string() + ".tmp");
     std::filesystem::remove(tmp);
     engine::audio::WavPcm16Sink().write(tmp, audio);
+    if (std::filesystem::exists(path)) {
+        std::filesystem::remove(path);
+    }
+    std::filesystem::rename(tmp, path);
+}
+
+std::string artifact_extension(const engine::runtime::VoiceArtifact & artifact) {
+    if (artifact.kind == engine::runtime::ArtifactKind::Midi) {
+        return ".mid";
+    }
+    return ".json";
+}
+
+void write_artifact_output(
+    const std::filesystem::path & path,
+    const engine::runtime::VoiceArtifact & artifact) {
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    const auto tmp = path.parent_path() / (path.filename().string() + ".tmp");
+    std::filesystem::remove(tmp);
+    std::ofstream output(tmp, std::ios::binary);
+    if (!output) {
+        throw std::runtime_error("failed to open artifact output: " + tmp.string());
+    }
+    output.write(
+        reinterpret_cast<const char *>(artifact.payload.data()),
+        static_cast<std::streamsize>(artifact.payload.size()));
+    if (!output) {
+        throw std::runtime_error("failed to write artifact output: " + tmp.string());
+    }
+    output.close();
     if (std::filesystem::exists(path)) {
         std::filesystem::remove(path);
     }
@@ -365,8 +399,12 @@ void emit_task_result(
                       << " bytes=" << artifact.payload.size() << "\n";
             if (artifact_out_dir.has_value()) {
                 std::filesystem::create_directories(*artifact_out_dir);
-                const auto path = *artifact_out_dir / (safe_output_name(artifact.id) + ".json");
-                std::ofstream(path) << artifact_to_json(artifact) << "\n";
+                const auto path = *artifact_out_dir / (safe_output_name(artifact.id) + artifact_extension(artifact));
+                if (artifact.kind == engine::runtime::ArtifactKind::Midi) {
+                    write_artifact_output(path, artifact);
+                } else {
+                    std::ofstream(path) << artifact_to_json(artifact) << "\n";
+                }
                 std::cout << "artifact_out[" << artifact.id << "]=" << path.string() << "\n";
             }
         }

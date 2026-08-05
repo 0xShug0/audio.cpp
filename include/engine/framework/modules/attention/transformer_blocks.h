@@ -19,6 +19,9 @@ struct TransformerEncoderBlockConfig {
     int64_t intermediate_size = 0;
     float eps = 1e-5f;
     bool use_bias = true;
+    ggml_prec projection_precision = GGML_PREC_DEFAULT;
+    ggml_prec attention_precision = GGML_PREC_DEFAULT;
+    AttentionPrefixCacheLayout prefix_cache_layout = AttentionPrefixCacheLayout::SequenceHeads;
 };
 
 struct TransformerEncoderBlockWeights {
@@ -80,6 +83,9 @@ struct StreamingTransformerStackConfig {
     int64_t layers = 0;
     float eps = 1e-5f;
     bool use_bias = true;
+    ggml_prec projection_precision = GGML_PREC_DEFAULT;
+    ggml_prec attention_precision = GGML_PREC_DEFAULT;
+    AttentionPrefixCacheLayout prefix_cache_layout = AttentionPrefixCacheLayout::SequenceHeads;
 };
 
 struct StreamingTransformerStackWeights {
@@ -127,6 +133,9 @@ struct ProjectedTransformerConfig {
     int64_t layers = 0;
     float eps = 1e-5f;
     bool use_bias = true;
+    ggml_prec projection_precision = GGML_PREC_DEFAULT;
+    ggml_prec attention_precision = GGML_PREC_DEFAULT;
+    AttentionPrefixCacheLayout prefix_cache_layout = AttentionPrefixCacheLayout::SequenceHeads;
 };
 
 struct ProjectedTransformerWeights {
@@ -186,6 +195,9 @@ struct TransformerStackConfig {
     int64_t layers = 0;
     float eps = 1e-5f;
     bool use_bias = true;
+    ggml_prec projection_precision = GGML_PREC_DEFAULT;
+    ggml_prec attention_precision = GGML_PREC_DEFAULT;
+    AttentionPrefixCacheLayout prefix_cache_layout = AttentionPrefixCacheLayout::SequenceHeads;
 };
 
 struct TransformerStackWeights {

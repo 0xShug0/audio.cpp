@@ -25,6 +25,7 @@ struct QwenCausalDecoderConfig {
     QwenCausalDecoderLogitsMode logits_mode = QwenCausalDecoderLogitsMode::LastStep;
     bool use_lm_head_bias = false;
     ggml_prec lm_head_precision = GGML_PREC_DEFAULT;
+    std::optional<ggml_type> lm_head_input_type;
 };
 
 struct QwenCausalDecoderWeights {

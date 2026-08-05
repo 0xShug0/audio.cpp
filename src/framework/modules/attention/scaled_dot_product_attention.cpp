@@ -5,8 +5,11 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
+#include <vector>
 
 namespace engine::modules {
 namespace {
@@ -79,6 +82,127 @@ core::TensorValue build_explicit(
     auto context = matmul.build(ctx, attn, v_heads);
     ggml_mul_mat_set_prec(context.tensor, precision);
     return TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+}
+
+std::array<int, core::kMaxTensorRank> transpose_last_two_axes(size_t rank) {
+    std::array<int, core::kMaxTensorRank> axes = {0, 1, 2, 3};
+    if (rank < 2) {
+        throw std::runtime_error("ScaledDotProductAttention CPU matmul requires rank >= 2");
+    }
+    std::swap(axes[rank - 2], axes[rank - 1]);
+    return axes;
+}
+
+core::TensorValue cpu_matmul_f32(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & lhs,
+    const core::TensorValue & rhs,
+    ggml_prec precision) {
+    const size_t rank = lhs.shape.rank;
+    auto rhs_t = TransposeModule({transpose_last_two_axes(rank), rank}).build(ctx, rhs);
+    rhs_t = core::wrap_tensor(ggml_cont(ctx.ggml, rhs_t.tensor), rhs_t.shape, rhs_t.type);
+    ggml_tensor * out = ggml_mul_mat(ctx.ggml, rhs_t.tensor, lhs.tensor);
+    ggml_mul_mat_set_prec(out, precision);
+    core::TensorShape out_shape = lhs.shape;
+    out_shape.dims[rank - 1] = rhs.shape.dims[rank - 1];
+    return core::wrap_tensor(out, out_shape, GGML_TYPE_F32);
+}
+
+core::TensorValue build_explicit_cpu_per_head_one(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & q,
+    const core::TensorValue & k,
+    const core::TensorValue & v,
+    int64_t head_dim,
+    float scale,
+    ggml_prec precision,
+    AttentionCausality causality) {
+    if (q.shape.dims[0] != 1 || q.shape.dims[1] != 1 ||
+        k.shape.dims[0] != 1 || k.shape.dims[1] != 1 ||
+        v.shape.dims[0] != 1 || v.shape.dims[1] != 1) {
+        throw std::runtime_error("ScaledDotProductAttention ExplicitCpuPerHead expects one sliced batch/head");
+    }
+    const int64_t query_steps = q.shape.dims[2];
+    const int64_t key_steps = k.shape.dims[2];
+    auto q_2d = core::reshape_tensor(
+        ctx,
+        core::ensure_backend_addressable_layout(ctx, q),
+        core::TensorShape::from_dims({query_steps, head_dim}));
+    auto k_2d = core::reshape_tensor(
+        ctx,
+        core::ensure_backend_addressable_layout(ctx, k),
+        core::TensorShape::from_dims({key_steps, head_dim}));
+    auto v_2d = core::reshape_tensor(
+        ctx,
+        core::ensure_backend_addressable_layout(ctx, v),
+        core::TensorShape::from_dims({key_steps, head_dim}));
+    ggml_tensor * scores_raw = ggml_mul_mat(ctx.ggml, k_2d.tensor, q_2d.tensor);
+    ggml_mul_mat_set_prec(scores_raw, precision);
+    auto scores = core::wrap_tensor(
+        scores_raw,
+        core::TensorShape::from_dims({query_steps, key_steps}),
+        GGML_TYPE_F32);
+    scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, scale), scores.shape, GGML_TYPE_F32);
+    if (causality == AttentionCausality::Causal) {
+        scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
+    }
+    scores = core::wrap_tensor(ggml_cont(ctx.ggml, scores.tensor), scores.shape, scores.type);
+    auto attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
+    auto context = cpu_matmul_f32(ctx, attn, v_2d, precision);
+    return core::reshape_tensor(
+        ctx,
+        core::ensure_backend_addressable_layout(ctx, context),
+        core::TensorShape::from_dims({1, query_steps, 1, head_dim}));
+}
+
+core::TensorValue build_explicit_cpu_per_head(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & q_heads,
+    const core::TensorValue & k_heads,
+    const core::TensorValue & v_heads,
+    const std::optional<core::TensorValue> & attention_mask,
+    float scale,
+    ggml_prec precision,
+    AttentionCausality causality) {
+    if (ctx.backend_type != core::BackendType::Cpu) {
+        throw std::runtime_error("ScaledDotProductAttention ExplicitCpuPerHead requires CPU backend");
+    }
+    if (attention_mask.has_value()) {
+        throw std::runtime_error("ScaledDotProductAttention ExplicitCpuPerHead does not support attention masks");
+    }
+    std::vector<core::TensorValue> batches;
+    batches.reserve(static_cast<size_t>(q_heads.shape.dims[0]));
+    for (int64_t batch = 0; batch < q_heads.shape.dims[0]; ++batch) {
+        const auto q_batch = SliceModule({0, batch, 1}).build(ctx, q_heads);
+        const auto k_batch = SliceModule({0, batch, 1}).build(ctx, k_heads);
+        const auto v_batch = SliceModule({0, batch, 1}).build(ctx, v_heads);
+        std::vector<core::TensorValue> heads;
+        heads.reserve(static_cast<size_t>(q_heads.shape.dims[1]));
+        for (int64_t head = 0; head < q_heads.shape.dims[1]; ++head) {
+            const auto q_head = SliceModule({1, head, 1}).build(ctx, q_batch);
+            const auto k_head = SliceModule({1, head, 1}).build(ctx, k_batch);
+            const auto v_head = SliceModule({1, head, 1}).build(ctx, v_batch);
+            heads.push_back(build_explicit_cpu_per_head_one(
+                ctx,
+                q_head,
+                k_head,
+                v_head,
+                q_heads.shape.dims[3],
+                scale,
+                precision,
+                causality));
+        }
+        auto batch_context = heads.front();
+        for (size_t i = 1; i < heads.size(); ++i) {
+            batch_context = ConcatModule({2}).build(ctx, batch_context, heads[i]);
+        }
+        batches.push_back(batch_context);
+    }
+    auto context = batches.front();
+    for (size_t i = 1; i < batches.size(); ++i) {
+        context = ConcatModule({0}).build(ctx, context, batches[i]);
+    }
+    return core::ensure_backend_addressable_layout(ctx, context);
 }
 
 core::TensorValue build_flash(
@@ -154,6 +278,8 @@ core::TensorValue ScaledDotProductAttentionModule::build(
     switch (config_.lowering) {
         case ScaledDotProductAttentionLowering::Explicit:
             return build_explicit(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
+        case ScaledDotProductAttentionLowering::ExplicitCpuPerHead:
+            return build_explicit_cpu_per_head(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
         case ScaledDotProductAttentionLowering::Flash:
             return build_flash(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
         case ScaledDotProductAttentionLowering::FlashPreserveViews:

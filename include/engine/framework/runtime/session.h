@@ -129,6 +129,7 @@ enum class ArtifactKind {
     StyleEmbedding,
     PromptEmbedding,
     AcousticTokens,
+    Midi,
     TranscriptAlignment,
     DiarizationState,
     VadState,
