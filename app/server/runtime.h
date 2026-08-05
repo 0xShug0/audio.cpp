@@ -25,7 +25,10 @@ namespace minitts::server {
 
 class ServerState final : public IHttpHandler {
 public:
-    ServerState(ServerConfig config, std::filesystem::path request_base);
+    ServerState(
+        ServerConfig config,
+        std::filesystem::path request_base,
+        std::filesystem::path ui_resource_anchor = {});
     ~ServerState() override;
 
     HttpResponse handle(const HttpRequest & request) override;
@@ -75,7 +78,9 @@ private:
     HttpResponse handle_path_status(const std::string & body_text) const;
     HttpResponse handle_ui_upload(const HttpRequest & request);
     HttpResponse handle_model_install(const std::string & body_text);
+    HttpResponse handle_model_remove(const std::string & body_text);
     HttpResponse handle_model_install_status(const HttpRequest & request) const;
+    HttpResponse handle_model_package_sizes();
     HttpResponse handle_ui_asset() const;
     LoadedModel::RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
     void load_voice_presets(LoadedModel & model) const;

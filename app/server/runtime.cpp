@@ -672,11 +672,79 @@ engine::runtime::TaskRequest build_openai_transcription_request(
     return request;
 }
 
+template <typename Predicate>
+std::optional<std::filesystem::path> find_ancestor(
+    std::filesystem::path start,
+    Predicate predicate) {
+    std::error_code ec;
+    start = std::filesystem::absolute(std::move(start), ec).lexically_normal();
+    if (ec) {
+        return std::nullopt;
+    }
+    for (;;) {
+        if (predicate(start)) {
+            return start;
+        }
+        const auto parent = start.parent_path();
+        if (parent.empty() || parent == start) {
+            return std::nullopt;
+        }
+        start = parent;
+    }
+}
+
+template <typename Predicate>
+std::optional<std::filesystem::path> find_from_roots(
+    const std::filesystem::path & request_base,
+    const std::filesystem::path & resource_anchor,
+    Predicate predicate) {
+    if (auto found = find_ancestor(request_base, predicate)) {
+        return found;
+    }
+    if (!resource_anchor.empty()) {
+        return find_ancestor(resource_anchor, predicate);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> find_model_base(
+    const std::filesystem::path & request_base,
+    const std::filesystem::path & resource_anchor) {
+    std::optional<std::filesystem::path> empty_fallback;
+    for (const auto & seed : {request_base, resource_anchor}) {
+        if (seed.empty()) {
+            continue;
+        }
+        auto cursor = std::filesystem::absolute(seed).lexically_normal();
+        for (;;) {
+            const auto models = cursor / "models";
+            std::error_code ec;
+            if (std::filesystem::is_directory(models, ec)) {
+                if (!std::filesystem::is_empty(models, ec)) {
+                    return cursor;
+                }
+                if (!empty_fallback.has_value()) {
+                    empty_fallback = cursor;
+                }
+            }
+            const auto parent = cursor.parent_path();
+            if (parent.empty() || parent == cursor) {
+                break;
+            }
+            cursor = parent;
+        }
+    }
+    return empty_fallback;
+}
+
 }  // namespace
 
-ServerState::ServerState(ServerConfig config, std::filesystem::path request_base)
+ServerState::ServerState(
+    ServerConfig config,
+    std::filesystem::path request_base,
+    std::filesystem::path ui_resource_anchor)
     : config_(std::move(config)),
-      request_base_(std::move(request_base)) {
+      request_base_(std::filesystem::absolute(std::move(request_base)).lexically_normal()) {
     if (config_.backend != engine::core::BackendType::Cuda) {
         std::cerr
             << "audio.cpp is optimized for CUDA. The "
@@ -684,13 +752,25 @@ ServerState::ServerState(ServerConfig config, std::filesystem::path request_base
             << " server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA.\n";
     }
     if (config_.ui_management) {
+        const auto repository_root = find_from_roots(
+            request_base_,
+            ui_resource_anchor,
+            [](const std::filesystem::path & root) {
+                return std::filesystem::is_regular_file(root / "tools" / "model_manager_v2.py") &&
+                    std::filesystem::is_directory(root / "model_specs");
+            }).value_or(request_base_);
+        const auto model_base = find_model_base(request_base_, ui_resource_anchor).value_or(repository_root);
+        request_base_ = model_base;
+        std::cerr
+            << "native WebUI model root: " << (request_base_ / "models") << "\n"
+            << "native WebUI package resources: " << repository_root << "\n";
         upload_root_ = std::filesystem::temp_directory_path() /
             ("audiocpp-ui-" + std::to_string(
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count()));
         std::filesystem::create_directories(upload_root_);
         model_installer_ = std::make_unique<ModelInstaller>(
-            request_base_,
+            repository_root,
             request_base_ / "models");
     }
     load_models();
@@ -757,8 +837,14 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else if (request.method == "POST" && request.path == "/v1/ui/models/install") {
         response = handle_model_install(request.body);
     }
+    else if (request.method == "POST" && request.path == "/v1/ui/models/delete") {
+        response = handle_model_remove(request.body);
+    }
     else if (request.method == "GET" && request.path == "/v1/ui/models/install-status") {
         response = handle_model_install_status(request);
+    }
+    else if (request.method == "GET" && request.path == "/v1/ui/models/package-sizes") {
+        response = handle_model_package_sizes();
     }
     else if (request.method == "POST" && request.path == "/v1/audio/speech") {
         response = handle_speech(request.body);
@@ -975,11 +1061,27 @@ HttpResponse ServerState::handle_model_install(const std::string & body_text) {
         overwrite));
 }
 
+HttpResponse ServerState::handle_model_remove(const std::string & body_text) {
+    if (!config_.ui_management || !model_installer_) {
+        return error_response(403, "UI model removal is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const std::string package_id = engine::io::json::require_string(body, "id");
+    return json_response(model_installer_->remove(package_id));
+}
+
 HttpResponse ServerState::handle_model_install_status(const HttpRequest & request) const {
     if (!config_.ui_management || !model_installer_) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
     return json_response(model_installer_->status(query_param(request.query, "id")));
+}
+
+HttpResponse ServerState::handle_model_package_sizes() {
+    if (!config_.ui_management || !model_installer_) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    return json_response(model_installer_->package_sizes());
 }
 
 HttpResponse ServerState::handle_ui_asset() const {

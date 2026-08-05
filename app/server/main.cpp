@@ -41,6 +41,22 @@ bool has_arg(int argc, char ** argv, const std::string & name) {
     return false;
 }
 
+std::filesystem::path executable_directory(const char * argv0) {
+    if (argv0 == nullptr || *argv0 == '\0') {
+        return std::filesystem::current_path();
+    }
+    std::error_code ec;
+    auto path = std::filesystem::absolute(std::filesystem::path(argv0), ec);
+    if (ec) {
+        return std::filesystem::current_path();
+    }
+    path = path.lexically_normal();
+    if (std::filesystem::is_regular_file(path, ec)) {
+        return path.parent_path();
+    }
+    return std::filesystem::current_path();
+}
+
 void print_help() {
     std::cout
         << "audiocpp_server [--config <server.json>] [--ui] [--host <ip>] [--port <port>] [--backend <backend>]\n"
@@ -66,7 +82,9 @@ void print_help() {
         << "  POST /v1/models/unload           available with --ui-management\n"
         << "  POST /v1/ui/upload               available with --ui-management\n"
         << "  POST /v1/ui/models/install       background package download/preparation\n"
+        << "  POST /v1/ui/models/delete        remove one installed package precision\n"
         << "  GET  /v1/ui/models/install-status[?id=<package>]\n"
+        << "  GET  /v1/ui/models/package-sizes package sizes from metadata-only checks\n"
         << "  GET  /v1/audio/voices?model=<id>\n"
         << "  POST /v1/audio/speech\n"
         << "  POST /v1/audio/transcriptions\n"
@@ -155,7 +173,13 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("--busy-timeout-ms must be >= 0 (0 disables the guard)");
         }
 
-        minitts::server::ServerState state(config, std::filesystem::current_path());
+        const auto ui_resource_anchor = !config_path.has_value()
+            ? executable_directory(argc > 0 ? argv[0] : nullptr)
+            : std::filesystem::path{};
+        minitts::server::ServerState state(
+            config,
+            std::filesystem::current_path(),
+            ui_resource_anchor);
         minitts::server::serve_http(config.host, config.port, state, shutdown_requested, config.max_request_body_bytes);
         return 0;
     } catch (const std::exception & ex) {

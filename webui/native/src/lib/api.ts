@@ -58,6 +58,9 @@ export interface ModelInstallJob {
   state: 'idle' | 'queued' | 'running' | 'complete' | 'failed';
   message: string;
   exit_code: number;
+  downloaded_bytes: number;
+  total_bytes: number;
+  progress_percent: number;
   started_at_ms: number;
   finished_at_ms: number;
 }
@@ -76,9 +79,34 @@ export async function installModelPackage(body: {
   });
 }
 
+export async function deleteModelPackage(id: string): Promise<{ id: string; removed: boolean; message: string }> {
+  return jsonRequest('/v1/ui/models/delete', {
+    method: 'POST',
+    body: JSON.stringify({ id })
+  });
+}
+
 export async function modelInstallJobs(): Promise<ModelInstallJob[]> {
   const response = await jsonRequest<{ data: ModelInstallJob[] }>('/v1/ui/models/install-status');
   return response.data;
+}
+
+export interface ModelPackageSize {
+  id: string;
+  size_bytes: number | null;
+  state: 'pending' | 'ok' | 'gated' | 'unknown' | 'error';
+  message: string;
+  installed: boolean;
+}
+
+export interface ModelPackageSizesResponse {
+  state: 'idle' | 'running' | 'complete' | 'failed';
+  message: string;
+  data: ModelPackageSize[];
+}
+
+export async function modelPackageSizes(): Promise<ModelPackageSizesResponse> {
+  return jsonRequest<ModelPackageSizesResponse>('/v1/ui/models/package-sizes');
 }
 
 export async function uploadWav(blob: Blob, filename: string, signal?: AbortSignal): Promise<string> {

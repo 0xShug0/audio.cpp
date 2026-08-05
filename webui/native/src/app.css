@@ -140,16 +140,34 @@ pre { background: #071220; border: 1px solid var(--line); border-radius: 8px; pa
 .installer-options { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(180px, .4fr) auto; gap: 12px; align-items: end; padding: 15px; margin-bottom: 13px; }
 .installer-options label { margin-top: 0; }
 .overwrite-toggle { margin: 0 4px 11px!important; white-space: nowrap; }
-.model-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-.model-grid article { display: grid; grid-template-columns: 58px 1fr auto; gap: 14px; align-items: center; padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); }
+.model-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; align-items: stretch; }
+.model-grid article { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); }
 .model-grid article.selected { border-color: #3b718c; box-shadow: inset 0 0 0 1px rgba(66,232,213,.18); }
 .model-icon { display: grid; place-items: center; height: 50px; border-radius: 10px; background: #122b45; color: var(--cyan); font-size: 10px; font-weight: 900; letter-spacing: .1em; }
 .model-copy span, .model-actions small { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
 .model-copy h3 { font-size: 15px; margin: 4px 0; }.model-copy p { color: var(--muted); font: 11px ui-monospace, monospace; margin: 0; overflow-wrap: anywhere; }
-.model-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; min-width: 210px; }.model-actions small { grid-column: 1/-1; text-align: right; }
+.model-actions { display: grid; gap: 6px; width: clamp(280px, 17vw, 324px); min-width: 0; }.model-actions small { text-align: right; }
 .model-actions button { padding: 7px; font-size: 11px; }
-.install-status { grid-column: 1/-1; max-width: 250px; color: var(--muted); font-size: 10px; line-height: 1.35; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.install-status strong { color: var(--blue); text-transform: uppercase; }.install-status.complete strong { color: var(--cyan); }.install-status.failed strong { color: var(--danger); }
+.model-open { width: 100%; }
+.package-buttons { display: grid; grid-template-columns: repeat(3, minmax(76px, 1fr)); gap: 5px; }
+.package-choice { position: relative; height: 48px; min-width: 0; }
+.package-install { display: flex; width: 100%; height: 48px; min-width: 0; min-height: 0; padding-top: 4px; padding-bottom: 4px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; white-space: nowrap; }
+.package-install > span:first-child { line-height: 1.1; }
+.package-install.preferred { border-color: #347d8f; color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(66,232,213,.1); }
+.package-install.downloaded { padding-right: 23px; color: var(--muted); white-space: normal; }
+.model-actions .package-delete { position: absolute; top: 3px; right: 3px; z-index: 1; display: grid; width: 18px; height: 18px; min-height: 0; padding: 2px; place-items: center; border-color: transparent; background: transparent; color: #7189a8; }
+.model-actions .package-delete:hover:not(:disabled) { border-color: rgba(239,107,124,.55); background: rgba(239,107,124,.12); color: var(--danger); transform: none; }
+.package-delete svg { width: 12px; height: 12px; fill: currentColor; }
+.package-size { color: var(--muted); font-size: 8px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.install-progress { grid-column: 1/-1; width: 100%; min-width: 0; max-width: 100%; }
+.install-progress-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 9px; }
+.install-progress-head strong { color: var(--blue); text-transform: uppercase; }.install-progress.complete .install-progress-head strong { color: var(--cyan); }.install-progress.failed .install-progress-head strong { color: var(--danger); }
+.install-progress-track { position: relative; height: 6px; margin: 5px 0 4px; overflow: hidden; border: 1px solid #28425f; border-radius: 999px; background: #071220; }
+.install-progress-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #1c9cba, var(--cyan)); transition: width .25s ease; }
+.install-progress.failed .install-progress-track span { background: var(--danger); }.install-progress.complete .install-progress-track span { background: var(--cyan); }
+.install-progress-track.indeterminate span { width: 35%!important; animation: install-scan 1.2s ease-in-out infinite; }
+.install-status { min-width: 0; max-width: 100%; color: var(--muted); font-size: 9px; line-height: 1.35; text-align: left; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+@keyframes install-scan { from { transform: translateX(-110%); } to { transform: translateX(300%); } }
 .log-panel { padding: 20px; }.runtime-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 .runtime-cards div { padding: 16px; background: #081426; border: 1px solid var(--line); border-radius: 10px; }
 .runtime-cards span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; }.runtime-cards strong { display: block; margin-top: 6px; font-size: 21px; text-transform: capitalize; }
@@ -174,7 +192,7 @@ footer { display: flex; justify-content: space-between; max-width: 1600px; margi
 }
 @media (max-width: 520px) {
   .brand strong { font-size: 14px; } nav button { font-size: 12px; padding: 0 7px; }
-  .model-grid article { grid-template-columns: 45px 1fr; }.model-actions { grid-column: 1/-1; min-width: 0; }
+  .model-grid article { grid-template-columns: 45px 1fr; }.model-actions { grid-column: 1/-1; width: 100%; min-width: 0; }
   .installer-options { grid-template-columns: 1fr; }
   .long-text-row, .voice-library { grid-template-columns: 1fr; }.long-text-row > .toggle { margin-top: 12px; }
   footer { display: block; } footer span { display: block; margin-top: 5px; }

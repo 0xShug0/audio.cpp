@@ -3,10 +3,12 @@
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
     base64AudioUrl,
+    deleteModelPackage,
     health,
     installModelPackage,
     loadModel,
     modelInstallJobs,
+    modelPackageSizes,
     models,
     pathStatus,
     runTask,
@@ -14,11 +16,19 @@
     transcription,
     unloadModel,
     uploadWav,
-    type ModelInstallJob
+    type ModelInstallJob,
+    type ModelPackageSize
   } from '$lib/api';
   import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
-  import type { AudioOutput, CatalogEntry, LoadedModel, ParamSpec, ServerHealth } from '$lib/types';
+  import type {
+    AudioOutput,
+    CatalogEntry,
+    InstallPackageChoice,
+    LoadedModel,
+    ParamSpec,
+    ServerHealth
+  } from '$lib/types';
   import {
     deleteVoice as deleteSavedVoice,
     listVoices,
@@ -77,6 +87,10 @@
   let installVariant = '';
   let installOverwrite = false;
   let installPoll: number | null = null;
+  let selectedPackagePaths: Record<string, string> = {};
+  let packageSizes: Record<string, ModelPackageSize> = {};
+  let packageSizeState: 'idle' | 'running' | 'complete' | 'failed' = 'idle';
+  let packageSizePoll: number | null = null;
 
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', tasks: ['tts', 'clon'] },
@@ -110,6 +124,101 @@
     logs = [line, ...logs].slice(0, 200);
   }
 
+  function formatBytes(bytes: number) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+    return `${(bytes / 1024 ** index).toFixed(index < 2 ? 0 : 1)} ${units[index]}`;
+  }
+
+  function installPercent(job: ModelInstallJob) {
+    if (job.state === 'complete') return 100;
+    if (job.progress_percent >= 0) return Math.min(100, Math.max(0, job.progress_percent));
+    return 0;
+  }
+
+  function installProgressLabel(job: ModelInstallJob) {
+    const percent = installPercent(job);
+    if (job.total_bytes > 0) {
+      return `${percent}% · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`;
+    }
+    if (job.downloaded_bytes > 0) return `${formatBytes(job.downloaded_bytes)} downloaded`;
+    if (job.state === 'failed') return 'Download failed';
+    if (job.state === 'complete') return '100% · complete';
+    return job.state === 'queued' ? '0% · queued' : 'Connecting and checking package files…';
+  }
+
+  function entryInstallJobs(entry: CatalogEntry, jobs: Record<string, ModelInstallJob>) {
+    return (entry.install_packages || [])
+      .map((choice) => jobs[choice.id])
+      .filter((job): job is ModelInstallJob => job !== undefined);
+  }
+
+  function displayInstallJob(entry: CatalogEntry, installState: Record<string, ModelInstallJob>) {
+    const jobs = entryInstallJobs(entry, installState);
+    return jobs.find((job) => job.state === 'running' || job.state === 'queued') ||
+      [...jobs].sort((left, right) => right.finished_at_ms - left.finished_at_ms)[0];
+  }
+
+  function entryInstallBusy(entry: CatalogEntry, installState: Record<string, ModelInstallJob>) {
+    return entryInstallJobs(entry, installState).some((job) =>
+      job.state === 'running' || job.state === 'queued');
+  }
+
+  function installButtonLabel(
+    choice: InstallPackageChoice,
+    job: ModelInstallJob | undefined,
+    isInstalled: boolean
+  ) {
+    if (isInstalled) return 'Already downloaded';
+    if (job?.state === 'running') return `${choice.label}…`;
+    if (job?.state === 'queued') return `${choice.label} queued`;
+    return choice.label;
+  }
+
+  function packageSizeLabel(
+    size: ModelPackageSize | undefined,
+    sizeState: 'idle' | 'running' | 'complete' | 'failed'
+  ) {
+    if (size?.size_bytes !== null && size?.size_bytes !== undefined) return formatBytes(size.size_bytes);
+    if (size?.state === 'pending') return 'checking size...';
+    if (size?.state === 'gated') return 'HF access required';
+    if (size?.state === 'error' || size?.state === 'unknown') return 'size unavailable';
+    return sizeState === 'running' ? 'checking size…' : '';
+  }
+
+  async function refreshPackageSizes() {
+    if (!server?.ui_management) return;
+    try {
+      const response = await modelPackageSizes();
+      packageSizeState = response.state;
+      if (response.data.length) {
+        packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
+      }
+      if (response.state === 'running' && packageSizePoll === null) {
+        packageSizePoll = window.setInterval(refreshPackageSizes, 1000);
+      } else if (response.state !== 'running' && packageSizePoll !== null) {
+        window.clearInterval(packageSizePoll);
+        packageSizePoll = null;
+      }
+    } catch (error) {
+      packageSizeState = 'failed';
+      log(`Package sizes unavailable: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  function openModelsPage() {
+    tab = 'models';
+    if (packageSizeState === 'idle') packageSizeState = 'running';
+    refreshPackageSizes();
+  }
+
+  function rememberPackagePath(entry: CatalogEntry, choice: InstallPackageChoice) {
+    selectedPackagePaths = { ...selectedPackagePaths, [entry.id]: choice.path };
+    localStorage.setItem('audiocpp.ui.packagePaths', JSON.stringify(selectedPackagePaths));
+    if (entry.id === selectedId) modelPath = choice.path;
+  }
+
   function resetParams() {
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
     paramSpecs = byId;
@@ -139,7 +248,7 @@
     if (!next) return;
     selectedId = id;
     selected = next;
-    modelPath = next.path;
+    modelPath = selectedPackagePaths[id] || next.path;
     chunkBudget = defaultChunkBudget(next.family);
     localStorage.setItem('audiocpp.ui.model', id);
     resetParams();
@@ -536,12 +645,30 @@
     if (!server?.ui_management) return;
     try {
       const jobs = await modelInstallJobs();
-      installJobs = Object.fromEntries(jobs.map((job) => [job.id, job]));
+      const incoming = Object.fromEntries(jobs.map((job) => {
+        const local = installJobs[job.id];
+        return [job.id, {
+          ...job,
+          total_bytes: job.total_bytes || local?.total_bytes || 0
+        }];
+      }));
+      // Preserve a just-created local job if a status request races the server's
+      // worker registration. This keeps the progress row visible from the click
+      // until the authoritative job appears in a later poll.
+      installJobs = { ...installJobs, ...incoming };
       for (const entry of catalog) {
-        const job = entry.download_id ? installJobs[entry.download_id] : undefined;
-        if (job?.state === 'complete' && entry.id === selectedId) await inspectPath();
+        const completedJobs = entryInstallJobs(entry, installJobs).filter((job) => job.state === 'complete');
+        for (const job of completedJobs) {
+          const known = packageSizes[job.id];
+          if (known && !known.installed) {
+            packageSizes = { ...packageSizes, [job.id]: { ...known, installed: true } };
+          }
+        }
+        const complete = completedJobs.length > 0;
+        if (complete && entry.id === selectedId) await inspectPath();
       }
-      const active = jobs.some((job) => job.state === 'queued' || job.state === 'running');
+      const active = Object.values(installJobs).some((job) =>
+        job.state === 'queued' || job.state === 'running');
       if (active && installPoll === null) {
         installPoll = window.setInterval(refreshInstallJobs, 1500);
       } else if (!active && installPoll !== null) {
@@ -553,35 +680,114 @@
     }
   }
 
-  async function installPackage(entry: CatalogEntry) {
-    if (!entry.download_id) return;
-    const existing = installJobs[entry.download_id];
+  async function installPackage(entry: CatalogEntry, choice: InstallPackageChoice) {
+    if (packageSizes[choice.id]?.installed) return;
+    const existing = installJobs[choice.id];
     if (existing?.state === 'queued' || existing?.state === 'running') return;
-    status = `Starting installation for ${entry.display_name}...`;
+    rememberPackagePath(entry, choice);
+    status = `Starting ${choice.label} installation for ${entry.display_name}...`;
+    const expectedBytes = packageSizes[choice.id]?.size_bytes || 0;
+    installJobs = {
+      ...installJobs,
+      [choice.id]: {
+        id: choice.id,
+        state: 'queued',
+        message: 'Sending installation request…',
+        exit_code: -1,
+        downloaded_bytes: 0,
+        total_bytes: expectedBytes,
+        progress_percent: 0,
+        started_at_ms: 0,
+        finished_at_ms: 0
+      }
+    };
     try {
+      if (installPoll === null) {
+        installPoll = window.setInterval(refreshInstallJobs, 1000);
+      }
       const job = await installModelPackage({
-        id: entry.download_id,
+        id: choice.id,
         source_file: installSourceFile.trim() || undefined,
         output_file: installOutputFile.trim() || undefined,
         source_directory: installSourceDirectory.trim() || undefined,
         variant: installVariant.trim() || undefined,
         overwrite: installOverwrite
       });
-      installJobs = { ...installJobs, [job.id]: job };
+      installJobs = {
+        ...installJobs,
+        [job.id]: { ...job, total_bytes: job.total_bytes || expectedBytes }
+      };
       await refreshInstallJobs();
-      status = `${entry.display_name} installation is running in the background.`;
+      status = `${entry.display_name} ${choice.label} installation is running in the background.`;
       log(status);
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
+      installJobs = {
+        ...installJobs,
+        [choice.id]: {
+          id: choice.id,
+          state: 'failed',
+          message: status,
+          exit_code: -1,
+          downloaded_bytes: 0,
+          total_bytes: 0,
+          progress_percent: -1,
+          started_at_ms: 0,
+          finished_at_ms: Date.now()
+        }
+      };
       log(`Installer failed to start: ${status}`);
     }
   }
 
+  async function removePackage(entry: CatalogEntry, choice: InstallPackageChoice) {
+    if (!packageSizes[choice.id]?.installed) return;
+    const confirmed = window.confirm(
+      `Delete ${entry.display_name} ${choice.label}?\n\nOnly this package precision will be removed.`
+    );
+    if (!confirmed) return;
+    status = `Deleting ${entry.display_name} ${choice.label}...`;
+    try {
+      const result = await deleteModelPackage(choice.id);
+      packageSizes = {
+        ...packageSizes,
+        [choice.id]: { ...packageSizes[choice.id], installed: false }
+      };
+      const nextJobs = { ...installJobs };
+      delete nextJobs[choice.id];
+      installJobs = nextJobs;
+
+      if (selectedPackagePaths[entry.id] === choice.path) {
+        const replacement = (entry.install_packages || []).find((candidate) =>
+          candidate.id !== choice.id && packageSizes[candidate.id]?.installed);
+        const nextPaths = { ...selectedPackagePaths };
+        if (replacement) nextPaths[entry.id] = replacement.path;
+        else delete nextPaths[entry.id];
+        selectedPackagePaths = nextPaths;
+        localStorage.setItem('audiocpp.ui.packagePaths', JSON.stringify(selectedPackagePaths));
+        if (entry.id === selectedId) modelPath = replacement?.path || entry.path;
+      }
+
+      packageSizeState = 'idle';
+      await refreshPackageSizes();
+      status = result.message || `${entry.display_name} ${choice.label} deleted.`;
+      log(status);
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+      log(`Package deletion failed: ${status}`);
+    }
+  }
+
   onMount(async () => {
+    try {
+      selectedPackagePaths = JSON.parse(localStorage.getItem('audiocpp.ui.packagePaths') || '{}');
+    } catch {
+      selectedPackagePaths = {};
+    }
     const stored = localStorage.getItem('audiocpp.ui.model');
     if (stored && catalog.some((entry) => entry.id === stored)) selectedId = stored;
     selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
-    modelPath = selected.path;
+    modelPath = selectedPackagePaths[selected.id] || selected.path;
     resetParams();
     await refresh();
     await inspectPath();
@@ -598,6 +804,7 @@
     liveStream?.getTracks().forEach((track) => track.stop());
     for (const output of outputAudio) URL.revokeObjectURL(output.url);
     if (installPoll !== null) window.clearInterval(installPoll);
+    if (packageSizePoll !== null) window.clearInterval(packageSizePoll);
   });
 </script>
 
@@ -614,7 +821,7 @@
   </div>
   <nav aria-label="Primary navigation">
     <button class:active={tab === 'studio'} on:click={() => tab = 'studio'}>Studio</button>
-    <button class:active={tab === 'models'} on:click={() => tab = 'models'}>Models</button>
+    <button class:active={tab === 'models'} on:click={openModelsPage}>Models</button>
     <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>Runtime</button>
   </nav>
   <div class="server-pill" class:online={server?.status === 'ok'}>
@@ -918,29 +1125,61 @@
     </section>
     <section class="model-grid">
       {#each catalog as entry}
-        {@const installJob = entry.download_id ? installJobs[entry.download_id] : undefined}
+        {@const installJob = displayInstallJob(entry, installJobs)}
+        {@const packageChoices = entry.install_packages || []}
         <article class:selected={entry.id === selectedId}>
           <div class="model-icon">{entry.task.toUpperCase()}</div>
           <div class="model-copy">
             <span>{taskLabels[entry.task] || entry.task}</span>
             <h3>{entry.display_name}</h3>
-            <p>{entry.path}</p>
+            <p>{selectedPackagePaths[entry.id] || entry.path}</p>
           </div>
           <div class="model-actions">
-            <small>{entry.min_vram_gb || '?'} GB</small>
-            <button on:click={() => { chooseModel(entry.id); tab = 'studio'; }}>Open</button>
-            {#if entry.download_id}
-              <button disabled={installJob?.state === 'queued' || installJob?.state === 'running'}
-                on:click={() => installPackage(entry)}>
-                {installJob?.state === 'running' ? 'Installing...' :
-                  installJob?.state === 'queued' ? 'Queued' :
-                  installJob?.state === 'complete' ? 'Install again' :
-                  installJob?.state === 'failed' ? 'Retry install' : 'Install / prepare'}
-              </button>
-              {#if installJob}
-                <div class:failed={installJob.state === 'failed'} class:complete={installJob.state === 'complete'}
-                  class="install-status" title={installJob.message}>
-                  <strong>{installJob.state}</strong> {installJob.message}
+            <small>VRAM ~{entry.min_vram_gb || '?'} GB</small>
+            <button class="model-open" on:click={() => { chooseModel(entry.id); tab = 'studio'; }}>Open</button>
+            {#if packageChoices.length}
+              <div class="package-buttons">
+                {#each packageChoices as choice}
+                  <div class="package-choice">
+                    <button class="package-install"
+                      class:preferred={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
+                      class:downloaded={packageSizes[choice.id]?.installed}
+                      disabled={entryInstallBusy(entry, installJobs) ||
+                        (packageSizeState === 'running' && Object.keys(packageSizes).length === 0) ||
+                        packageSizes[choice.id]?.installed}
+                      title={`${choice.format.toUpperCase()} ${choice.precision}: ${choice.path}`}
+                      on:click={() => installPackage(entry, choice)}>
+                      <span>{installButtonLabel(choice, installJobs[choice.id], packageSizes[choice.id]?.installed || false)}</span>
+                      {#if packageSizeLabel(packageSizes[choice.id], packageSizeState)}
+                        <span class="package-size">{packageSizeLabel(packageSizes[choice.id], packageSizeState)}</span>
+                      {/if}
+                    </button>
+                    {#if packageSizes[choice.id]?.installed}
+                      <button class="package-delete"
+                        title={`Delete ${choice.label}`} aria-label={`Delete ${entry.display_name} ${choice.label}`}
+                        on:click={() => removePackage(entry, choice)}>
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 11H8L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
+                        </svg>
+                      </button>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+              {#if installJob && installJob.state !== 'complete'}
+                <div class:failed={installJob.state === 'failed'}
+                  class="install-progress" title={installJob.message}>
+                  <div class="install-progress-head">
+                    <strong>{installJob.state}</strong>
+                    <span>{installProgressLabel(installJob)}</span>
+                  </div>
+                  <div class:indeterminate={installJob.state === 'running' && installJob.progress_percent < 0}
+                    class="install-progress-track" role="progressbar"
+                    aria-label={`${entry.display_name} download progress`}
+                    aria-valuemin="0" aria-valuemax="100" aria-valuenow={installPercent(installJob)}>
+                    <span style={`width: ${installPercent(installJob)}%`}></span>
+                  </div>
+                  <div class="install-status">{installJob.message}</div>
                 </div>
               {/if}
             {/if}

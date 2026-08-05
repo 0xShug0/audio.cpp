@@ -21,8 +21,10 @@ Build `audiocpp_server` normally, then start the native WebUI host:
 ```
 
 Open **http://127.0.0.1:8080**. With no `--config`, `--ui` enables on-demand model load/unload and
-temporary audio uploads automatically. Relative model paths are resolved from the server's current working
-directory, so start it from the bundle or repository root when the catalog uses `models/...`.
+temporary audio uploads automatically. The standalone UI host searches upward from both the working directory
+and executable location for the nearest `models/` directory and for the package resources (`tools/` plus
+`model_specs/`). Consequently, a development binary can be started directly from `build/.../bin`, while a portable
+bundle continues to use the `models/`, `tools/`, and `model_specs/` directories beside the executable.
 
 The same UI can front an existing server config:
 
@@ -37,7 +39,12 @@ The native UI supports the shared catalog, model-specific controls, file decodin
 cloning, transcription, generic audio tasks, multiple separation outputs, structured results, and request timing.
 It also includes:
 
-- model download/preparation jobs with status reporting on the Models page;
+- model download/preparation jobs with ordered GGUF Q8, GGUF FP16/BF16, and safetensors choices,
+  fast required-file checks that disable choices already downloaded, metadata-only package-size checks,
+  and card-local byte/percentage progress on the Models page;
+- GGUF precision variants can coexist in a shared package directory; the selected button stores the exact
+  GGUF file path, and overwriting one precision does not remove its sibling variants;
+- downloaded choices expose a confirmation-gated trash action that removes only that package's declared files;
 - sentence-aware long-text synthesis and browser-side WAV merging;
 - microphone capture for source and reference audio;
 - a saved voice library backed by browser IndexedDB;
@@ -52,6 +59,8 @@ it falls back to `tools/model_manager_deprecated.py` for legacy preparation work
 Set `AUDIOCPP_PYTHON` when the desired interpreter is not `python` on Windows or `python3` on Unix. Pure inference,
 loading an existing folder, and standalone GGUF operation do not use either helper. The Models page exposes optional
 source directory, source checkpoint, output, variant, and overwrite inputs for specialized preparation workflows.
+Package ids and install directories are resolved from `model_specs/*.json` while the frontend is built, so older
+catalog aliases continue to select the current precision-qualified package id.
 
 ### Frontend development
 

@@ -26,6 +26,8 @@ public:
         const std::string & variant,
         bool overwrite);
     std::string status(const std::string & package_id = {}) const;
+    std::string package_sizes();
+    std::string remove(const std::string & package_id);
 
 private:
     struct State;

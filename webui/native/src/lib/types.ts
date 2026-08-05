@@ -1,5 +1,13 @@
 export type StringMap = Record<string, string>;
 
+export interface InstallPackageChoice {
+  id: string;
+  label: string;
+  path: string;
+  format: string;
+  precision: string;
+}
+
 export interface CatalogEntry {
   id: string;
   display_name: string;
@@ -9,6 +17,7 @@ export interface CatalogEntry {
   task: string;
   mode: string;
   download_id?: string;
+  install_packages?: InstallPackageChoice[];
   min_vram_gb?: number;
   input_hint?: string;
   input_hint_en?: string;

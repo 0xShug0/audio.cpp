@@ -1,5 +1,6 @@
 #include "model_installer.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -94,14 +95,14 @@ std::string python_command() {
 #endif
 }
 
-std::string read_log_tail(const std::filesystem::path & path) {
+std::string read_log_tail_text(const std::filesystem::path & path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         return {};
     }
     input.seekg(0, std::ios::end);
     const auto size = input.tellg();
-    constexpr std::streamoff kTailBytes = 8192;
+    constexpr std::streamoff kTailBytes = 65536;
     if (size > kTailBytes) {
         input.seekg(size - kTailBytes);
     } else {
@@ -109,12 +110,63 @@ std::string read_log_tail(const std::filesystem::path & path) {
     }
     std::ostringstream content;
     content << input.rdbuf();
-    std::string text = content.str();
-    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
-        text.pop_back();
+    return content.str();
+}
+
+struct LogSnapshot {
+    std::string message;
+    uint64_t downloaded_bytes = 0;
+    uint64_t total_bytes = 0;
+    bool has_progress = false;
+};
+
+LogSnapshot inspect_log(const std::filesystem::path & path) {
+    LogSnapshot snapshot;
+    std::istringstream lines(read_log_tail_text(path));
+    std::string line;
+    constexpr std::string_view marker = "AUDIOCPP_PROGRESS ";
+    while (std::getline(lines, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) {
+            continue;
+        }
+        if (line.rfind(marker.data(), 0) != 0) {
+            snapshot.message = line;
+            continue;
+        }
+        uint64_t downloaded = 0;
+        uint64_t total = 0;
+        bool parsed_downloaded = false;
+        std::istringstream fields(line.substr(marker.size()));
+        std::string field;
+        while (fields >> field) {
+            const auto separator = field.find('=');
+            if (separator == std::string::npos) {
+                continue;
+            }
+            try {
+                const auto value = std::stoull(field.substr(separator + 1));
+                const auto name = field.substr(0, separator);
+                if (name == "downloaded") {
+                    downloaded = value;
+                    parsed_downloaded = true;
+                } else if (name == "total") {
+                    total = value;
+                }
+            } catch (const std::exception &) {
+                // A partially written progress line is expected while the worker is
+                // appending to the log. Keep the previous complete marker.
+            }
+        }
+        if (parsed_downloaded) {
+            snapshot.downloaded_bytes = downloaded;
+            snapshot.total_bytes = total;
+            snapshot.has_progress = true;
+        }
     }
-    const auto newline = text.find_last_of("\r\n");
-    return newline == std::string::npos ? text : text.substr(newline + 1);
+    return snapshot;
 }
 
 int64_t now_ms() {
@@ -133,6 +185,8 @@ struct ModelInstaller::State {
         int exit_code = -1;
         int64_t started_at_ms = 0;
         int64_t finished_at_ms = 0;
+        uint64_t downloaded_bytes = 0;
+        uint64_t total_bytes = 0;
     };
 
     std::filesystem::path repository_root;
@@ -140,6 +194,12 @@ struct ModelInstaller::State {
     std::filesystem::path job_root;
     mutable std::mutex mutex;
     std::map<std::string, Job> jobs;
+    std::string size_state = "idle";
+    std::string size_message = "Package sizes have not been checked";
+    std::filesystem::path size_output_path;
+    std::filesystem::path size_error_path;
+    std::filesystem::path installed_output_path;
+    uint64_t size_generation = 0;
 };
 
 ModelInstaller::ModelInstaller(
@@ -151,6 +211,9 @@ ModelInstaller::ModelInstaller(
     state_->job_root = std::filesystem::temp_directory_path() / "audiocpp-model-installer";
     std::filesystem::create_directories(state_->job_root);
     std::filesystem::create_directories(state_->models_root);
+    state_->size_output_path = state_->job_root / "package-sizes.json";
+    state_->size_error_path = state_->job_root / "package-sizes.log";
+    state_->installed_output_path = state_->job_root / "installed-packages.json";
 }
 
 ModelInstaller::~ModelInstaller() = default;
@@ -228,9 +291,12 @@ std::string ModelInstaller::start(
                 job.started_at_ms = now_ms();
             }
 
-            std::string command = python_command() + " " + shell_quote(script.string()) +
+            std::string command = python_command() + " -u " + shell_quote(script.string()) +
                 " install " + shell_quote(package_id) +
                 " --models-root " + shell_quote(shared->models_root.string());
+            if (!legacy_conversion) {
+                command += " --progress";
+            }
             if (overwrite) {
                 command += " --overwrite";
             }
@@ -249,14 +315,16 @@ std::string ModelInstaller::start(
             command += " > " + shell_quote(log_path.string()) + " 2>&1";
 
             const int result = std::system(command.c_str());
-            const std::string last_line = read_log_tail(log_path);
+            const auto log = inspect_log(log_path);
             std::lock_guard<std::mutex> lock(shared->mutex);
             auto & job = shared->jobs.at(package_id);
             job.exit_code = result;
             job.finished_at_ms = now_ms();
             job.state = result == 0 ? "complete" : "failed";
-            job.message = !last_line.empty()
-                ? last_line
+            job.downloaded_bytes = log.downloaded_bytes;
+            job.total_bytes = log.total_bytes;
+            job.message = !log.message.empty()
+                ? log.message
                 : (result == 0 ? "Model installation completed" : "Model installation failed");
         } catch (const std::exception & error) {
             std::lock_guard<std::mutex> lock(shared->mutex);
@@ -275,16 +343,33 @@ std::string ModelInstaller::status(const std::string & package_id) const {
     std::lock_guard<std::mutex> lock(state_->mutex);
     auto job_json = [](const State::Job & job) {
         std::string message = job.message;
+        uint64_t downloaded_bytes = job.downloaded_bytes;
+        uint64_t total_bytes = job.total_bytes;
         if (job.state == "running") {
-            const auto last_line = read_log_tail(job.log_path);
-            if (!last_line.empty()) {
-                message = last_line;
+            const auto log = inspect_log(job.log_path);
+            if (!log.message.empty()) {
+                message = log.message;
             }
+            if (log.has_progress) {
+                downloaded_bytes = log.downloaded_bytes;
+                total_bytes = log.total_bytes;
+            }
+        }
+        int progress_percent = -1;
+        if (job.state == "queued") {
+            progress_percent = 0;
+        } else if (job.state == "complete") {
+            progress_percent = 100;
+        } else if (total_bytes > 0) {
+            progress_percent = static_cast<int>(std::min<uint64_t>(100, downloaded_bytes * 100 / total_bytes));
         }
         return std::string("{\"id\":") + json_quote(job.package_id) +
             ",\"state\":" + json_quote(job.state) +
             ",\"message\":" + json_quote(message) +
             ",\"exit_code\":" + std::to_string(job.exit_code) +
+            ",\"downloaded_bytes\":" + std::to_string(downloaded_bytes) +
+            ",\"total_bytes\":" + std::to_string(total_bytes) +
+            ",\"progress_percent\":" + std::to_string(progress_percent) +
             ",\"started_at_ms\":" + std::to_string(job.started_at_ms) +
             ",\"finished_at_ms\":" + std::to_string(job.finished_at_ms) + "}";
     };
@@ -294,6 +379,7 @@ std::string ModelInstaller::status(const std::string & package_id) const {
         if (found == state_->jobs.end()) {
             return "{\"id\":" + json_quote(package_id) +
                 ",\"state\":\"idle\",\"message\":\"Not started\",\"exit_code\":-1,"
+                "\"downloaded_bytes\":0,\"total_bytes\":0,\"progress_percent\":-1,"
                 "\"started_at_ms\":0,\"finished_at_ms\":0}";
         }
         return job_json(found->second);
@@ -309,6 +395,146 @@ std::string ModelInstaller::status(const std::string & package_id) const {
         result += job_json(item.second);
     }
     return result + "]}";
+}
+
+std::string ModelInstaller::remove(const std::string & package_id) {
+    if (!valid_package_id(package_id)) {
+        throw std::runtime_error("invalid model-manager package id");
+    }
+    const auto script = state_->repository_root / "tools" / "model_manager_v2.py";
+    if (!std::filesystem::is_regular_file(script)) {
+        throw std::runtime_error("model removal helper was not found at " + script.string());
+    }
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        const auto job = state_->jobs.find(package_id);
+        if (job != state_->jobs.end() &&
+            (job->second.state == "queued" || job->second.state == "running")) {
+            throw std::runtime_error("installation is still running for " + package_id);
+        }
+    }
+
+    const auto log_path = state_->job_root / (package_id + "-uninstall.log");
+    std::string command = python_command() + " -u " + shell_quote(script.string()) +
+        " uninstall " + shell_quote(package_id) +
+        " --models-root " + shell_quote(state_->models_root.string()) +
+        " > " + shell_quote(log_path.string()) + " 2>&1";
+    const int result = std::system(command.c_str());
+    std::string message = read_log_tail_text(log_path);
+    while (!message.empty() && std::isspace(static_cast<unsigned char>(message.back()))) {
+        message.pop_back();
+    }
+    if (result != 0) {
+        throw std::runtime_error(message.empty() ? "model package removal failed" : message);
+    }
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        state_->jobs.erase(package_id);
+        ++state_->size_generation;
+        state_->size_state = "idle";
+        state_->size_message = "Package inventory will be refreshed";
+    }
+    return "{\"id\":" + json_quote(package_id) +
+        ",\"removed\":true,\"message\":" +
+        json_quote(message.empty() ? "Model package removed" : message) + "}";
+}
+
+std::string ModelInstaller::package_sizes() {
+    bool start_scan = false;
+    uint64_t scan_generation = 0;
+    std::filesystem::path size_output_path;
+    std::filesystem::path size_error_path;
+    std::filesystem::path installed_output_path;
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        if (state_->size_state == "idle") {
+            scan_generation = ++state_->size_generation;
+            const auto suffix = std::to_string(scan_generation);
+            state_->size_output_path = state_->job_root / ("package-sizes-" + suffix + ".json");
+            state_->size_error_path = state_->job_root / ("package-sizes-" + suffix + ".log");
+            state_->installed_output_path = state_->job_root / ("installed-packages-" + suffix + ".json");
+            size_output_path = state_->size_output_path;
+            size_error_path = state_->size_error_path;
+            installed_output_path = state_->installed_output_path;
+            state_->size_state = "running";
+            state_->size_message = "Checking package sizes";
+            start_scan = true;
+            std::ofstream(state_->size_output_path, std::ios::trunc);
+            std::ofstream(state_->size_error_path, std::ios::trunc);
+            std::ofstream(state_->installed_output_path, std::ios::trunc);
+        }
+    }
+
+    if (start_scan) {
+        const auto script = state_->repository_root / "tools" / "model_manager_v2.py";
+        if (!std::filesystem::is_regular_file(script)) {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            if (state_->size_generation == scan_generation) {
+                state_->size_state = "failed";
+                state_->size_message = "Package size helper was not found at " + script.string();
+            }
+        } else {
+            const auto shared = state_;
+            std::thread([shared, script, scan_generation, size_output_path, size_error_path,
+                         installed_output_path]() {
+                try {
+                    std::string installed_command = python_command() + " -u " + shell_quote(script.string()) +
+                        " installed --json --models-root " + shell_quote(shared->models_root.string()) +
+                        " > " + shell_quote(installed_output_path.string()) +
+                        " 2>> " + shell_quote(size_error_path.string());
+                    (void) std::system(installed_command.c_str());
+                    std::string command = python_command() + " -u " + shell_quote(script.string()) +
+                        " sizes --json --models-root " + shell_quote(shared->models_root.string()) +
+                        " > " + shell_quote(size_output_path.string()) +
+                        " 2> " + shell_quote(size_error_path.string());
+                    const int result = std::system(command.c_str());
+                    std::string output = read_log_tail_text(size_output_path);
+                    while (!output.empty() && std::isspace(static_cast<unsigned char>(output.back()))) {
+                        output.pop_back();
+                    }
+                    const bool valid_output = !output.empty() && output.front() == '[' && output.back() == ']';
+                    std::lock_guard<std::mutex> lock(shared->mutex);
+                    if (shared->size_generation != scan_generation) {
+                        return;
+                    }
+                    if (result == 0 && valid_output) {
+                        shared->size_state = "complete";
+                        shared->size_message = "Package sizes are ready";
+                    } else {
+                        shared->size_state = "failed";
+                        shared->size_message = read_log_tail_text(size_error_path);
+                        if (shared->size_message.empty()) {
+                            shared->size_message = "Package size check failed";
+                        }
+                    }
+                } catch (const std::exception & error) {
+                    std::lock_guard<std::mutex> lock(shared->mutex);
+                    if (shared->size_generation == scan_generation) {
+                        shared->size_state = "failed";
+                        shared->size_message = error.what();
+                    }
+                }
+            }).detach();
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    std::string data = "[]";
+    if (state_->size_state == "complete" || state_->size_state == "running") {
+        const auto & source = state_->size_state == "complete"
+            ? state_->size_output_path
+            : state_->installed_output_path;
+        data = read_log_tail_text(source);
+        while (!data.empty() && std::isspace(static_cast<unsigned char>(data.back()))) {
+            data.pop_back();
+        }
+        if (data.empty() || data.front() != '[' || data.back() != ']') {
+            data = "[]";
+        }
+    }
+    return "{\"state\":" + json_quote(state_->size_state) +
+        ",\"message\":" + json_quote(state_->size_message) +
+        ",\"data\":" + data + "}";
 }
 
 }  // namespace minitts::server
