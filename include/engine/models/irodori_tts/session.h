@@ -73,6 +73,7 @@ private:
   assets::TensorStorageType codec_weight_storage_type_ =
       assets::TensorStorageType::Native;
   bool mem_saver_ = true;
+  std::unique_ptr<engine::core::ExecutionContext> codec_execution_context_;
   std::unique_ptr<IrodoriConditionEncoder> condition_encoder_;
   std::unique_ptr<IrodoriRfSampler> rf_sampler_;
   std::unique_ptr<IrodoriCodec> codec_;
