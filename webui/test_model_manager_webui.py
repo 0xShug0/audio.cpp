@@ -155,14 +155,23 @@ class InstallPlacementTests(unittest.TestCase):
         self._install(package)
         self.assertTrue(os.path.isfile(os.path.join(self.root, "Demo-GGUF", "config.json")))
 
-    def test_existing_target_requires_overwrite(self):
+    def test_complete_existing_package_is_an_idempotent_success(self):
         target = Path(self.root) / "Demo-GGUF"
         target.mkdir()
         (target / "model-q8_0.gguf").write_bytes(b"old")
-        with self.assertRaises(mmw.ManagerError):
-            self._install(_package(), overwrite=False)
+        self._install(_package(), overwrite=False)
+        self.assertEqual((target / "model-q8_0.gguf").read_bytes(), b"old")
+        self.assertEqual(self.calls, [])
         self._install(_package(), overwrite=True)
-        self.assertTrue(os.path.isfile(os.path.join(self.root, "Demo-GGUF", "model-q8_0.gguf")))
+        self.assertEqual((target / "model-q8_0.gguf").read_bytes(), b"gguf")
+
+    def test_partial_existing_package_still_requires_overwrite(self):
+        target = Path(self.root) / "Demo-GGUF"
+        target.mkdir()
+        (target / "model-q8_0.gguf").write_bytes(b"old")
+        package = _package(files=("Demo-GGUF/model-q8_0.gguf", "Demo-GGUF/config.json"))
+        with self.assertRaises(mmw.ManagerError):
+            self._install(package, overwrite=False)
 
     def test_precision_variants_can_share_a_target_directory(self):
         self._install(_package())

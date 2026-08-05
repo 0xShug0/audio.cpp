@@ -235,7 +235,10 @@ def install_package(package: PackageRecord, args: argparse.Namespace) -> None:
         return
     existing_outputs = [output for _remote, output in plan if output.exists()]
     if existing_outputs and not args.overwrite:
-        raise ManagerError(f"package files already exist in: {final_dir} (use --overwrite)")
+        if len(existing_outputs) == len(plan) and all(output.is_file() for output in existing_outputs):
+            print(f"already installed {package.id} -> {final_dir}")
+            return
+        raise ManagerError(f"some package files already exist in: {final_dir} (use --overwrite)")
     models_root.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{package.target_directory.replace('/', '_')}.", dir=models_root))
     try:

@@ -122,6 +122,49 @@ void test_idle_status_and_validation() {
         }
         require(sizes_completed, "the background package size scan completes");
 
+        const auto other_root = make_root();
+        try {
+            std::filesystem::create_directories(other_root / "tools");
+            {
+                std::ofstream script(other_root / "tools" / "model_manager_v2.py", std::ios::binary);
+                script
+                    << "import sys\n"
+                    << "row = '[{\\\"id\\\":\\\"other_q8_0\\\",\\\"size_bytes\\\":50,"
+                       "\\\"state\\\":\\\"ok\\\",\\\"message\\\":\\\"\\\","
+                       "\\\"installed\\\":false}]'\n"
+                    << "print(row, flush=True)\n";
+            }
+            {
+                minitts::server::ModelInstaller other(other_root, other_root / "models");
+                (void) other.package_sizes();
+                bool other_completed = false;
+                for (int attempt = 0; attempt < 100; ++attempt) {
+                    const auto sizes = other.package_sizes();
+                    if (sizes.find("\"state\":\"complete\"") != std::string::npos) {
+                        require(sizes.find("\"id\":\"other_q8_0\"") != std::string::npos,
+                                "a second installer reads its own metadata output");
+                        other_completed = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                }
+                require(other_completed, "the second package size scan completes");
+            }
+            const auto original_sizes = installer.package_sizes();
+            require(original_sizes.find("\"id\":\"demo_q8_0\"") != std::string::npos,
+                    "installer instances keep isolated metadata output files");
+            require(original_sizes.find("\"id\":\"other_q8_0\"") == std::string::npos,
+                    "another installer cannot overwrite a live inventory snapshot");
+        } catch (...) {
+            std::error_code ec;
+            std::filesystem::remove_all(other_root, ec);
+            throw;
+        }
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(other_root, ec);
+        }
+
         bool missing_legacy_helper_reported = false;
         try {
             (void) installer.start("qwen3_asr_0_6b", "checkpoint.bin", "", "", "", false);

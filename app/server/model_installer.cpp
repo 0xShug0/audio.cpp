@@ -7,6 +7,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -174,6 +175,26 @@ int64_t now_ms() {
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
+std::filesystem::path make_job_root() {
+    const auto temporary = std::filesystem::temp_directory_path();
+    std::random_device random;
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        const auto ticks = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        const auto candidate = temporary /
+            ("audiocpp-model-installer-" + std::to_string(ticks) + "-" +
+             std::to_string(static_cast<unsigned long long>(random())));
+        std::error_code error;
+        if (std::filesystem::create_directory(candidate, error)) {
+            return candidate;
+        }
+        if (error) {
+            throw std::runtime_error(
+                "failed to create model installer temporary directory: " + error.message());
+        }
+    }
+    throw std::runtime_error("failed to allocate a unique model installer temporary directory");
+}
+
 }  // namespace
 
 struct ModelInstaller::State {
@@ -200,6 +221,11 @@ struct ModelInstaller::State {
     std::filesystem::path size_error_path;
     std::filesystem::path installed_output_path;
     uint64_t size_generation = 0;
+
+    ~State() {
+        std::error_code error;
+        std::filesystem::remove_all(job_root, error);
+    }
 };
 
 ModelInstaller::ModelInstaller(
@@ -208,8 +234,7 @@ ModelInstaller::ModelInstaller(
     : state_(std::make_shared<State>()) {
     state_->repository_root = std::filesystem::absolute(std::move(repository_root)).lexically_normal();
     state_->models_root = std::filesystem::absolute(std::move(models_root)).lexically_normal();
-    state_->job_root = std::filesystem::temp_directory_path() / "audiocpp-model-installer";
-    std::filesystem::create_directories(state_->job_root);
+    state_->job_root = make_job_root();
     std::filesystem::create_directories(state_->models_root);
     state_->size_output_path = state_->job_root / "package-sizes.json";
     state_->size_error_path = state_->job_root / "package-sizes.log";
