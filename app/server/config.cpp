@@ -282,6 +282,7 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         }
         model.load_options = options_from_object(item.find("load_options"));
         model.session_options = options_from_object(item.find("session_options"));
+        model.default_request_options = options_from_object(item.find("default_request_options"));
         if (const auto * voice_presets = item.find("voice_presets")) {
             if (!voice_presets->is_object()) {
                 throw std::runtime_error("voice_presets for model " + model.id + " must be an object");

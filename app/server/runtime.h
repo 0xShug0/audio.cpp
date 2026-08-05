@@ -75,6 +75,9 @@ private:
     engine::runtime::TaskRequest build_speech_request(
         const LoadedModel & model,
         const engine::io::json::Value & body) const;
+    engine::runtime::TaskRequest apply_default_request_options(
+        const LoadedModel & model,
+        engine::runtime::TaskRequest request) const;
     struct TimedTaskResult;
     // `busy_timeout_ms` on each of these is the per-request override parsed from the
     // request body; nullopt means "use the model's configured ceiling".

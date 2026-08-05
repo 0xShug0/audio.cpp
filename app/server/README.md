@@ -37,6 +37,9 @@ cat > server.json <<'JSON'
       "session_options": {
         "language": "english"
       },
+      "default_request_options": {
+        "speaking_rate": 1.0
+      },
       "default_voice_preset": {
         "voice_id": "alba"
       },
@@ -75,6 +78,8 @@ Set top-level `"lazy_load": true` to register all configured model ids at startu
 
 > [!WARNING]
 > Lazy loading does not unload models after a request. Once a model is first used, the server keeps that model and session in memory for reuse until the server exits.
+
+Set per-model `"default_request_options"` to apply request-option defaults to every request for that model. Values supplied by the actual request body override these defaults.
 
 Set top-level `"max_request_body_bytes"` to bound the largest HTTP request body buffered in host RAM before routing. This protects endpoints that accept JSON or audio uploads from unbounded `Content-Length` claims. The default is `2147483648` bytes (2 GiB). Raise or lower it to match the largest upload your deployment intends to accept. Values above `2^53 - 1` are rejected because this config parser stores JSON numbers as doubles.
 

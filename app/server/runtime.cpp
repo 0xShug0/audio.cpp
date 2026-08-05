@@ -912,6 +912,20 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
     if (has_voice) {
         request.voice = std::move(voice);
     }
+    return apply_default_request_options(model, std::move(request));
+}
+
+engine::runtime::TaskRequest ServerState::apply_default_request_options(
+    const LoadedModel & model,
+    engine::runtime::TaskRequest request) const {
+    if (model.config.default_request_options.empty()) {
+        return request;
+    }
+    auto options = model.config.default_request_options;
+    for (auto & [key, value] : request.options) {
+        options[key] = std::move(value);
+    }
+    request.options = std::move(options);
     return request;
 }
 
@@ -1122,7 +1136,9 @@ HttpResponse ServerState::handle_transcription(const HttpRequest & request) {
 HttpResponse ServerState::handle_transcription_json(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
-    const auto request = build_openai_transcription_request(body, request_base_);
+    const auto request = apply_default_request_options(
+        model,
+        build_openai_transcription_request(body, request_base_));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     if (bool_field(body, "stream", false)) {
         return run_transcription_stream(model, request, busy_timeout_ms);
@@ -1190,7 +1206,9 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
     const auto body = engine::io::json::Value::make_object(std::move(fields));
 
     auto & model = require_model(body);
-    const auto request = build_openai_transcription_request(body, request_base_, &file_part->data);
+    const auto request = apply_default_request_options(
+        model,
+        build_openai_transcription_request(body, request_base_, &file_part->data));
     if (stream) {
         return run_transcription_stream(model, request, busy_timeout_ms);
     }
@@ -1357,6 +1375,7 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
             task_request.options["language"] = language;
             task_request.text_input = engine::runtime::Transcript{std::string(), language};
         }
+        task_request = apply_default_request_options(model, std::move(task_request));
     } catch (const std::runtime_error & ex) {
         // Deliberately runtime_error and not exception: every rejection above is
         // thrown as one, while a genuine server fault inside this block is not.
@@ -1405,9 +1424,11 @@ HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto * request_json = body.find("request");
-    const auto request = minitts::cli::build_request_from_json(
-        request_json != nullptr ? *request_json : body,
-        request_base_);
+    const auto request = apply_default_request_options(
+        model,
+        minitts::cli::build_request_from_json(
+            request_json != nullptr ? *request_json : body,
+            request_base_));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     const auto timed_result = model.task.mode == engine::runtime::RunMode::Streaming
         ? run_streaming_model(model, request, {}, busy_timeout_ms)
@@ -1419,9 +1440,11 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto * request_json = body.find("request");
-    const auto request = minitts::cli::build_request_from_json(
-        request_json != nullptr ? *request_json : body,
-        request_base_);
+    const auto request = apply_default_request_options(
+        model,
+        minitts::cli::build_request_from_json(
+            request_json != nullptr ? *request_json : body,
+            request_base_));
     std::vector<engine::runtime::StreamEvent> events;
     const auto timed_result = run_streaming_model(
         model,

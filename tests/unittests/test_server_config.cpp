@@ -113,6 +113,33 @@ void test_default_preset_name() {
     require(!model.default_voice_preset.has_value(), "named default does not create inline preset");
 }
 
+void test_default_request_options() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "server_default_request_options.json",
+        R"JSON({
+  "models": [
+    {
+      "id": "tts",
+      "family": "omnivoice",
+      "path": "models/OmniVoice",
+      "default_request_options": {
+        "num_inference_steps": 8,
+        "temperature": 0.6,
+        "do_sample": false
+      }
+    }
+  ]
+})JSON");
+
+    const auto config = minitts::server::load_server_config(config_path);
+    const auto & options = config.models.front().default_request_options;
+    require(options.at("num_inference_steps") == "8", "integer default request option parsed");
+    require(options.at("temperature") == "0.6", "float default request option parsed");
+    require(options.at("do_sample") == "false", "bool default request option parsed");
+}
+
 void test_missing_default_preset_name_is_rejected() {
     const auto root = make_temp_root();
     const auto config_path = write_config(
@@ -351,6 +378,7 @@ int main() {
     try {
         test_inline_default_and_named_presets();
         test_default_preset_name();
+        test_default_request_options();
         test_missing_default_preset_name_is_rejected();
         test_duplicate_json_keys_are_rejected();
         test_busy_timeout_defaults_and_overrides();

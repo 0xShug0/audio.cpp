@@ -57,6 +57,7 @@ struct ServerModelConfig {
     std::optional<std::string> weight_id;
     std::unordered_map<std::string, std::string> load_options;
     std::unordered_map<std::string, std::string> session_options;
+    std::unordered_map<std::string, std::string> default_request_options;
     std::unordered_map<std::string, VoicePreset> voice_presets;
     std::optional<VoicePreset> default_voice_preset;
     std::optional<std::string> default_voice_preset_id;
