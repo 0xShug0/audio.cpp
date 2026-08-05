@@ -351,6 +351,11 @@ std::string ModelInstaller::start(
             job.message = !log.message.empty()
                 ? log.message
                 : (result == 0 ? "Model installation completed" : "Model installation failed");
+            if (result == 0) {
+                ++shared->size_generation;
+                shared->size_state = "idle";
+                shared->size_message = "Package inventory will be refreshed";
+            }
         } catch (const std::exception & error) {
             std::lock_guard<std::mutex> lock(shared->mutex);
             auto & job = shared->jobs.at(package_id);

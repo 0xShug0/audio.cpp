@@ -165,6 +165,24 @@ void test_idle_status_and_validation() {
             std::filesystem::remove_all(other_root, ec);
         }
 
+        const auto restarted = installer.start("qwen3_asr_0_6b", "", "", "", "", false);
+        require(restarted.find("\"state\":\"queued\"") != std::string::npos ||
+                restarted.find("\"state\":\"running\"") != std::string::npos,
+                "a completed package can be prepared again");
+        bool repeated_completed = false;
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            const auto current = installer.status("qwen3_asr_0_6b");
+            if (current.find("\"state\":\"complete\"") != std::string::npos) {
+                repeated_completed = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        require(repeated_completed, "the repeated package preparation completes");
+        const auto refreshed_sizes = installer.package_sizes();
+        require(refreshed_sizes.find("\"state\":\"running\"") != std::string::npos,
+                "a successful install invalidates the cached package inventory");
+
         bool missing_legacy_helper_reported = false;
         try {
             (void) installer.start("qwen3_asr_0_6b", "checkpoint.bin", "", "", "", false);

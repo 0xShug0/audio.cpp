@@ -154,7 +154,9 @@ pre { background: #071220; border: 1px solid var(--line); border-radius: 8px; pa
 .package-install { display: flex; width: 100%; height: 48px; min-width: 0; min-height: 0; padding-top: 4px; padding-bottom: 4px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; white-space: nowrap; }
 .package-install > span:first-child { line-height: 1.1; }
 .package-install.preferred { border-color: #347d8f; color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(66,232,213,.1); }
-.package-install.downloaded { padding-right: 23px; color: var(--muted); white-space: normal; }
+.package-install.downloaded { padding-right: 23px; border-color: #345873; background: #102238; color: var(--blue); white-space: normal; }
+.package-install.downloaded:hover:not(:disabled) { border-color: #4384a3; background: #142b43; }
+.package-install.downloaded.preferred { border-color: #347d8f; color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(66,232,213,.16); }
 .model-actions .package-delete { position: absolute; top: 3px; right: 3px; z-index: 1; display: grid; width: 18px; height: 18px; min-height: 0; padding: 2px; place-items: center; border-color: transparent; background: transparent; color: #7189a8; }
 .model-actions .package-delete:hover:not(:disabled) { border-color: rgba(239,107,124,.55); background: rgba(239,107,124,.12); color: var(--danger); transform: none; }
 .package-delete svg { width: 12px; height: 12px; fill: currentColor; }

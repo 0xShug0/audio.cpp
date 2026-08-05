@@ -91,6 +91,7 @@
   let packageSizes: Record<string, ModelPackageSize> = {};
   let packageSizeState: 'idle' | 'running' | 'complete' | 'failed' = 'idle';
   let packageSizePoll: number | null = null;
+  let refreshedInstallFinishes: Record<string, number> = {};
 
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', tasks: ['tts', 'clon'] },
@@ -167,10 +168,8 @@
 
   function installButtonLabel(
     choice: InstallPackageChoice,
-    job: ModelInstallJob | undefined,
-    isInstalled: boolean
+    job: ModelInstallJob | undefined
   ) {
-    if (isInstalled) return 'Already downloaded';
     if (job?.state === 'running') return `${choice.label}…`;
     if (job?.state === 'queued') return `${choice.label} queued`;
     return choice.label;
@@ -178,9 +177,14 @@
 
   function packageSizeLabel(
     size: ModelPackageSize | undefined,
-    sizeState: 'idle' | 'running' | 'complete' | 'failed'
+    sizeState: 'idle' | 'running' | 'complete' | 'failed',
+    selected: boolean
   ) {
-    if (size?.size_bytes !== null && size?.size_bytes !== undefined) return formatBytes(size.size_bytes);
+    const bytes = size?.size_bytes !== null && size?.size_bytes !== undefined
+      ? formatBytes(size.size_bytes)
+      : '';
+    if (size?.installed) return `${selected ? 'Selected' : 'Downloaded'}${bytes ? ` · ${bytes}` : ''}`;
+    if (bytes) return bytes;
     if (size?.state === 'pending') return 'checking size...';
     if (size?.state === 'gated') return 'HF access required';
     if (size?.state === 'error' || size?.state === 'unknown') return 'size unavailable';
@@ -656,6 +660,7 @@
       // worker registration. This keeps the progress row visible from the click
       // until the authoritative job appears in a later poll.
       installJobs = { ...installJobs, ...incoming };
+      let refreshInventory = false;
       for (const entry of catalog) {
         const completedJobs = entryInstallJobs(entry, installJobs).filter((job) => job.state === 'complete');
         for (const job of completedJobs) {
@@ -663,9 +668,20 @@
           if (known && !known.installed) {
             packageSizes = { ...packageSizes, [job.id]: { ...known, installed: true } };
           }
+          if (job.finished_at_ms > (refreshedInstallFinishes[job.id] || 0)) {
+            refreshedInstallFinishes = {
+              ...refreshedInstallFinishes,
+              [job.id]: job.finished_at_ms
+            };
+            refreshInventory = true;
+          }
         }
         const complete = completedJobs.length > 0;
         if (complete && entry.id === selectedId) await inspectPath();
+      }
+      if (refreshInventory) {
+        packageSizeState = 'idle';
+        await refreshPackageSizes();
       }
       const active = Object.values(installJobs).some((job) =>
         job.state === 'queued' || job.state === 'running');
@@ -738,6 +754,16 @@
       };
       log(`Installer failed to start: ${status}`);
     }
+  }
+
+  function useOrInstallPackage(entry: CatalogEntry, choice: InstallPackageChoice) {
+    if (packageSizes[choice.id]?.installed) {
+      rememberPackagePath(entry, choice);
+      status = `${entry.display_name} will use ${choice.label}. Press Open to continue.`;
+      log(status);
+      return;
+    }
+    installPackage(entry, choice);
   }
 
   async function removePackage(entry: CatalogEntry, choice: InstallPackageChoice) {
@@ -1144,14 +1170,16 @@
                     <button class="package-install"
                       class:preferred={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
                       class:downloaded={packageSizes[choice.id]?.installed}
+                      aria-pressed={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
                       disabled={entryInstallBusy(entry, installJobs) ||
-                        (packageSizeState === 'running' && Object.keys(packageSizes).length === 0) ||
-                        packageSizes[choice.id]?.installed}
+                        (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
                       title={`${choice.format.toUpperCase()} ${choice.precision}: ${choice.path}`}
-                      on:click={() => installPackage(entry, choice)}>
-                      <span>{installButtonLabel(choice, installJobs[choice.id], packageSizes[choice.id]?.installed || false)}</span>
-                      {#if packageSizeLabel(packageSizes[choice.id], packageSizeState)}
-                        <span class="package-size">{packageSizeLabel(packageSizes[choice.id], packageSizeState)}</span>
+                      on:click={() => useOrInstallPackage(entry, choice)}>
+                      <span>{installButtonLabel(choice, installJobs[choice.id])}</span>
+                      {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
+                        choice.path === (selectedPackagePaths[entry.id] || entry.path))}
+                        <span class="package-size">{packageSizeLabel(packageSizes[choice.id], packageSizeState,
+                          choice.path === (selectedPackagePaths[entry.id] || entry.path))}</span>
                       {/if}
                     </button>
                     {#if packageSizes[choice.id]?.installed}
