@@ -29,6 +29,11 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr const char *kFamily = "irodori_tts";
 
+enum class IrodoriCodecBackend {
+  Same,
+  Cpu,
+};
+
 std::shared_ptr<const IrodoriTTSAssets>
 require_assets(std::shared_ptr<const IrodoriTTSAssets> assets) {
   if (assets == nullptr) {
@@ -43,6 +48,20 @@ std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
     throw std::runtime_error("Irodori-TTS session requires a model contract");
   }
   return contract;
+}
+
+IrodoriCodecBackend parse_codec_backend(const runtime::SessionOptions & options) {
+  if (const auto value =
+          runtime::find_option(options.options, {"irodori_tts.codec_backend"})) {
+    if (*value == "same") {
+      return IrodoriCodecBackend::Same;
+    }
+    if (*value == "cpu") {
+      return IrodoriCodecBackend::Cpu;
+    }
+    throw std::runtime_error("Invalid irodori_tts.codec_backend: " + *value);
+  }
+  return IrodoriCodecBackend::Same;
 }
 
 runtime::SessionOptions normalize_session_options(runtime::SessionOptions options) {
@@ -60,8 +79,15 @@ runtime::SessionOptions require_supported_session_options(
     const std::shared_ptr<const engine::model_spec::ModelContract> &contract) {
   options = normalize_session_options(std::move(options));
   const auto checked_contract = require_contract(contract);
+  auto validation_options = options;
+  // Older standalone GGUF packages embed a v1 contract that predates this
+  // workaround option; keep them usable while still validating the value below.
+  if (checked_contract->session_option_keys.find("irodori_tts.codec_backend") ==
+      checked_contract->session_option_keys.end()) {
+    validation_options.options.erase("irodori_tts.codec_backend");
+  }
   runtime::validate_spec_backed_session_options(
-      options, *checked_contract, kFamily, "Irodori-TTS");
+      validation_options, *checked_contract, kFamily, "Irodori-TTS");
   return options;
 }
 
@@ -376,6 +402,16 @@ IrodoriTTSSession::IrodoriTTSSession(
     throw std::runtime_error(
         "Irodori-TTS supports only TTS, voice-cloning, and voice-design offline tasks");
   }
+  const auto codec_backend = parse_codec_backend(this->options());
+  engine::core::ExecutionContext * codec_execution = &execution_context();
+  if (codec_backend == IrodoriCodecBackend::Cpu) {
+    auto codec_backend_config = this->options().backend;
+    codec_backend_config.type = engine::core::BackendType::Cpu;
+    codec_backend_config.device = 0;
+    codec_execution_context_ =
+        std::make_unique<engine::core::ExecutionContext>(codec_backend_config);
+    codec_execution = codec_execution_context_.get();
+  }
   condition_encoder_ = std::make_unique<IrodoriConditionEncoder>(
       assets_, execution_context(), condition_graph_arena_bytes_,
       condition_weight_context_bytes_, weight_storage_type_);
@@ -383,7 +419,7 @@ IrodoriTTSSession::IrodoriTTSSession(
       assets_, execution_context(), rf_graph_arena_bytes_,
       rf_weight_context_bytes_, weight_storage_type_, mem_saver_);
   codec_ = std::make_unique<IrodoriCodec>(
-      assets_, execution_context(), codec_graph_arena_bytes_,
+      assets_, *codec_execution, codec_graph_arena_bytes_,
       codec_weight_context_bytes_, codec_weight_storage_type_);
   assets_->model_weights->release_storage();
   assets_->codec_weights->release_storage();
@@ -397,6 +433,10 @@ IrodoriTTSSession::IrodoriTTSSession(
                           assets_->config.max_text_len);
   debug::trace_log_scalar("irodori_tts.config.max_caption_len",
                           assets_->config.max_caption_len);
+  debug::trace_log_scalar(
+      "irodori_tts.codec.backend",
+      std::string_view(codec_backend == IrodoriCodecBackend::Cpu ? "cpu"
+                                                                  : "same"));
 }
 
 IrodoriTTSSession::~IrodoriTTSSession() = default;

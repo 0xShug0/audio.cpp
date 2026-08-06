@@ -195,6 +195,17 @@
         "default": "native"
       },
       {
+        "name": "codec_backend",
+        "type": "enum",
+        "description": "DACVAE codec execution backend. Use cpu as an opt-in workaround for backend-specific codec decoder issues; default same.",
+        "values": [
+          "same",
+          "cpu"
+        ],
+        "required": false,
+        "default": "same"
+      },
+      {
         "name": "condition_graph_arena_mb",
         "type": "int",
         "description": "Condition encoder graph arena size in MiB; default 256.",
