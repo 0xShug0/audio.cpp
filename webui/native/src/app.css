@@ -75,6 +75,7 @@ label span { color: var(--muted); font-weight: 400; }
 input, textarea, select { width: 100%; color: #edf5ff; background: #081426; border: 1px solid #2a405f; border-radius: 7px; padding: 7px 9px; outline: none; transition: border .15s, box-shadow .15s; font-size: 13px; }
 textarea { resize: vertical; line-height: 1.4; }
 input:focus, textarea:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(106,168,255,.12); }
+select option:disabled { color: #45566f; background: #091423; }
 input.file { padding: 6px; color: var(--muted); }
 input.file::file-selector-button { border: 0; border-radius: 5px; color: #07101f; background: #a8c8f6; padding: 5px 8px; margin-right: 8px; cursor: pointer; font-weight: 700; }
 .path-state { display: flex; justify-content: space-between; gap: 5px; color: var(--muted); font-size: 10px; padding: 6px 2px 1px; }
@@ -91,6 +92,7 @@ button.primary, button.run { color: #041619; background: linear-gradient(135deg,
 .section-title h2 { font-size: 17px; margin: 2px 0 0; color: #f3f7ff; }
 .task-chip { border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; color: var(--muted)!important; letter-spacing: .08em!important; text-transform: uppercase; }
 .field-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 12px; }
+.reference-input-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; }
 .long-text-row { display: grid; grid-template-columns: 1fr 150px; gap: 10px; align-items: end; margin-top: 2px; }
 .long-text-row > .toggle { margin: 0 0 8px; }
 .media-actions { display: flex; align-items: center; gap: 7px; margin-top: 6px; }
@@ -126,6 +128,8 @@ details > .code { border: 0; border-radius: 0; }
 kbd { font: 9px ui-monospace, monospace; padding: 2px 4px; border: 1px solid rgba(0,0,0,.25); border-radius: 4px; }
 .status { color: var(--muted); font-size: 12px; padding-left: 8px; overflow-wrap: anywhere; }
 .status.busy { color: var(--cyan); }
+.status.warning { color: #ff9aaa; font-weight: 600; }
+.status.error { color: var(--danger); font-weight: 600; }
 .empty-output { min-height: 315px; display: grid; place-content: center; text-align: center; color: var(--muted); }
 .empty-output .wave { font-size: 62px; line-height: .7; color: #24446b; }
 .audio-list { display: grid; gap: 12px; }
@@ -154,8 +158,8 @@ pre { background: #071220; border: 1px solid var(--line); border-radius: 8px; pa
 .package-install { display: flex; width: 100%; height: 48px; min-width: 0; min-height: 0; padding-top: 4px; padding-bottom: 4px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; white-space: nowrap; }
 .package-install > span:first-child { line-height: 1.1; }
 .package-install.preferred { border-color: #347d8f; color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(66,232,213,.1); }
-.package-install.downloaded { padding-right: 23px; border-color: #345873; background: #102238; color: var(--blue); white-space: normal; }
-.package-install.downloaded:hover:not(:disabled) { border-color: #4384a3; background: #142b43; }
+.package-install.downloaded { padding-right: 23px; border-color: #50708b; background: color-mix(in srgb, #102238 80%, white 20%); color: #9dc5ff; white-space: normal; }
+.package-install.downloaded:hover:not(:disabled) { border-color: #6398b2; background: color-mix(in srgb, #142b43 76%, white 24%); }
 .package-install.downloaded.preferred { border-color: #347d8f; color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(66,232,213,.16); }
 .model-actions .package-delete { position: absolute; top: 3px; right: 3px; z-index: 1; display: grid; width: 18px; height: 18px; min-height: 0; padding: 2px; place-items: center; border-color: transparent; background: transparent; color: #7189a8; }
 .model-actions .package-delete:hover:not(:disabled) { border-color: rgba(239,107,124,.55); background: rgba(239,107,124,.12); color: var(--danger); transform: none; }
@@ -196,6 +200,6 @@ footer { display: flex; justify-content: space-between; max-width: 1600px; margi
   .brand strong { font-size: 14px; } nav button { font-size: 12px; padding: 0 7px; }
   .model-grid article { grid-template-columns: 45px 1fr; }.model-actions { grid-column: 1/-1; width: 100%; min-width: 0; }
   .installer-options { grid-template-columns: 1fr; }
-  .long-text-row, .voice-library { grid-template-columns: 1fr; }.long-text-row > .toggle { margin-top: 12px; }
+  .long-text-row, .voice-library, .reference-input-grid { grid-template-columns: 1fr; }.long-text-row > .toggle { margin-top: 12px; }
   footer { display: block; } footer span { display: block; margin-top: 5px; }
 }

@@ -47,6 +47,8 @@
   let loadingModel = false;
   let running = false;
   let status = 'Ready';
+  let warningStatus = '';
+  let errorStatus = '';
   let text = '';
   let language = '';
   let context = '';
@@ -54,10 +56,12 @@
   let instructions = '';
   let lyrics = '';
   let duration = 30;
-  let seed = -1;
+  let seed = 1234;
   let maxTokens = 1024;
   let sourceFile: File | null = null;
   let voiceFile: File | null = null;
+  let referenceTextFile: File | null = null;
+  let referenceTextInput: HTMLInputElement | null = null;
   let advancedJson = '{}';
   let advancedValues: Record<string, unknown> = {};
   let paramSpecs: ParamSpec[] = [];
@@ -91,6 +95,7 @@
   let packageSizes: Record<string, ModelPackageSize> = {};
   let packageSizeState: 'idle' | 'running' | 'complete' | 'failed' = 'idle';
   let packageSizePoll: number | null = null;
+  let packageSizeRefreshInFlight = false;
   let refreshedInstallFinishes: Record<string, number> = {};
 
   const workflowTabs = [
@@ -105,6 +110,8 @@
 
   type WorkflowId = typeof workflowTabs[number]['id'];
 
+  class StatusWarning extends Error {}
+
   $: selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
   $: activeWorkflow = (workflowTabs.find((workflow) =>
     workflow.tasks.some((task) => task === selected?.task))?.id || 'tts') as WorkflowId;
@@ -116,9 +123,23 @@
   $: acceptsSource = needsSource || selected?.task === 'gen';
   $: needsVoice = ['clon', 'vc', 'svc'].includes(selected?.task) ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
+  $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
+    !selected?.id.includes('custom');
+  $: referenceVoiceRequired = ['clon', 'vc', 'svc'].includes(selected?.task) ||
+    isQwenBase || (selected?.task === 'tts' && selected?.family === 'pocket_tts');
+  $: referenceTextRequired = Boolean(voiceFile) && isQwenBase;
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt'].includes(selected?.family);
+  $: modelInventoryLoading = server === null ||
+    (Boolean(server.ui_management) && Object.keys(packageSizes).length === 0 && packageSizeState !== 'failed');
+  $: selectableModelIds = new Set(catalog.filter((entry) => {
+    if (loadedModels.some((model) => model.id === entry.id && model.loaded)) return true;
+    if (entry.id === selectedId && installed === true) return true;
+    const choices = entry.install_packages || [];
+    if (!choices.length || choices.some((choice) => packageSizes[choice.id] === undefined)) return true;
+    return choices.some((choice) => packageSizes[choice.id]?.installed);
+  }).map((entry) => entry.id));
 
   function log(message: string) {
     const line = `${new Date().toLocaleTimeString()}  ${message}`;
@@ -130,6 +151,57 @@
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
     return `${(bytes / 1024 ** index).toFixed(index < 2 ? 0 : 1)} ${units[index]}`;
+  }
+
+  function resolveRequestSeed(value: number) {
+    if (!Number.isInteger(value) || value < -1 || value > 0xffffffff) {
+      throw new Error('Seed must be -1 or an unsigned 32-bit integer (0 to 4294967295).');
+    }
+    if (value >= 0) return value;
+    const random = new Uint32Array(1);
+    globalThis.crypto.getRandomValues(random);
+    return random[0];
+  }
+
+  function chunkSeed(base: number, index: number) {
+    return (base + index) % 0x100000000;
+  }
+
+  function fileStem(name: string) {
+    return name.replace(/\.[^.]+$/, '').trim().toLowerCase();
+  }
+
+  function chooseVoiceReference(file: File | null) {
+    const changed = Boolean(voiceFile && file && voiceFile.name !== file.name);
+    voiceFile = file;
+    if (changed) {
+      referenceTextFile = null;
+      referenceText = '';
+      if (referenceTextInput) referenceTextInput.value = '';
+      status = 'Reference voice changed. Choose or enter its matching transcript.';
+      warningStatus = status;
+    }
+  }
+
+  async function chooseReferenceText(file: File | null) {
+    referenceTextFile = file;
+    if (!file) return;
+    try {
+      const transcript = (await file.text()).replace(/^\uFEFF/, '').trim();
+      if (!transcript) throw new Error('The selected reference text file is empty.');
+      referenceText = transcript;
+      const matchesVoice = !voiceFile || fileStem(file.name) === fileStem(voiceFile.name);
+      status = matchesVoice
+        ? `Loaded reference transcript from ${file.name}.`
+        : `Loaded ${file.name}. Its name does not match ${voiceFile?.name}; verify that it is the correct transcript.`;
+      warningStatus = matchesVoice ? '' : status;
+    } catch (error) {
+      referenceTextFile = null;
+      referenceText = '';
+      if (referenceTextInput) referenceTextInput.value = '';
+      status = error instanceof Error ? error.message : String(error);
+      warningStatus = '';
+    }
   }
 
   function installPercent(job: ModelInstallJob) {
@@ -166,6 +238,10 @@
       job.state === 'running' || job.state === 'queued');
   }
 
+  function entrySelectable(entry: CatalogEntry) {
+    return selectableModelIds.has(entry.id);
+  }
+
   function installButtonLabel(
     choice: InstallPackageChoice,
     job: ModelInstallJob | undefined
@@ -192,22 +268,26 @@
   }
 
   async function refreshPackageSizes() {
-    if (!server?.ui_management) return;
+    if (!server?.ui_management || packageSizeRefreshInFlight) return;
+    packageSizeRefreshInFlight = true;
     try {
       const response = await modelPackageSizes();
       packageSizeState = response.state;
       if (response.data.length) {
         packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
       }
-      if (response.state === 'running' && packageSizePoll === null) {
+      const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
+      if (inventoryPending && packageSizePoll === null) {
         packageSizePoll = window.setInterval(refreshPackageSizes, 1000);
-      } else if (response.state !== 'running' && packageSizePoll !== null) {
+      } else if (!inventoryPending && packageSizePoll !== null) {
         window.clearInterval(packageSizePoll);
         packageSizePoll = null;
       }
     } catch (error) {
       packageSizeState = 'failed';
       log(`Package sizes unavailable: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      packageSizeRefreshInFlight = false;
     }
   }
 
@@ -249,7 +329,7 @@
 
   function chooseModel(id: string) {
     const next = catalog.find((entry) => entry.id === id);
-    if (!next) return;
+    if (!next || !entrySelectable(next)) return;
     selectedId = id;
     selected = next;
     modelPath = selectedPackagePaths[id] || next.path;
@@ -269,9 +349,13 @@
   async function doLoad(modeOverride?: string) {
     if (!server?.ui_management) {
       status = 'This server was not started with UI management enabled.';
+      warningStatus = status;
+      errorStatus = '';
       return;
     }
     loadingModel = true;
+    warningStatus = '';
+    errorStatus = '';
     status = `Loading ${selected.display_name}…`;
     log(status);
     try {
@@ -286,9 +370,11 @@
       });
       await refresh();
       status = `${selected.display_name} is resident and ready.`;
+      errorStatus = '';
       log(status);
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
+      errorStatus = status;
       log(`Load failed: ${status}`);
     } finally {
       loadingModel = false;
@@ -528,20 +614,35 @@
 
   async function run() {
     if (running) return;
+    if (!isLoaded && installed === false) {
+      status = `${selected.display_name} is not downloaded. Install a model package from the Models tab first.`;
+      warningStatus = status;
+      errorStatus = '';
+      return;
+    }
     clearOutput();
     running = true;
     aborter = new AbortController();
     const started = performance.now();
+    warningStatus = '';
+    errorStatus = '';
     status = `Running ${taskLabels[selected.task] || selected.task}…`;
     log(status);
     try {
+      const resolvedSeed = resolveRequestSeed(seed);
+      if (referenceVoiceRequired && !voiceFile) {
+        throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires a reference voice.`);
+      }
+      if (referenceTextRequired && !referenceText.trim()) {
+        throw new StatusWarning('Qwen3-TTS Base voice cloning requires a reference transcript. Choose a matching .txt file or enter the transcript.');
+      }
       await ensureLoaded();
       const options = requestOptions();
       const audio = acceptsSource ? await stagedPath(sourceFile) : undefined;
       const voiceRef = needsVoice ? await stagedPath(voiceFile) : undefined;
 
       if (['tts', 'clon', 'vdes'].includes(selected.task)) {
-        if (!text.trim()) throw new Error('Enter text to generate.');
+        if (!text.trim()) throw new StatusWarning('Enter text to generate.');
         const chunks = longText && selected.task !== 'vdes'
           ? splitTtsChunks(text, Math.max(40, chunkBudget))
           : [text];
@@ -555,7 +656,7 @@
             model: selected.id,
             input: chunks[index],
             language,
-            seed: seed < 0 ? seed : seed + index,
+            seed: chunkSeed(resolvedSeed, index),
             max_tokens: maxTokens,
             options
           };
@@ -574,13 +675,14 @@
         const merged = await concatenateAudioBlobs(audioChunks);
         outputAudio = [{ id: chunks.length > 1 ? 'merged' : 'output', url: URL.createObjectURL(merged) }];
         outputJson = JSON.stringify({
+          seed: resolvedSeed,
           chunks: chunks.length,
           characters: text.length,
           chunk_budget: chunkBudget,
           timings
         }, null, 2);
       } else if (selected.task === 'asr') {
-        if (!audio) throw new Error('Choose an audio file.');
+        if (!audio) throw new StatusWarning('Choose an audio file.');
         const result = await transcription({
           model: selected.id,
           audio,
@@ -591,13 +693,13 @@
         outputText = String(result.text || '');
         outputJson = JSON.stringify(result, null, 2);
       } else {
-        if (needsSource && !audio) throw new Error('Choose a source audio file.');
+        if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = {
           text,
           language,
           lyrics,
           duration_seconds: duration,
-          seed,
+          seed: resolvedSeed,
           max_tokens: maxTokens,
           options
         };
@@ -619,13 +721,19 @@
           key === 'audio' && typeof value === 'string' ? `<base64 audio: ${value.length} chars>` : value, 2);
       }
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+      warningStatus = '';
+      errorStatus = '';
       status = `Complete in ${elapsed}s.`;
       log(status);
     } catch (error) {
       if ((error as Error)?.name === 'AbortError') {
         status = 'Cancelled.';
+        warningStatus = '';
+        errorStatus = '';
       } else {
         status = error instanceof Error ? error.message : String(error);
+        warningStatus = error instanceof StatusWarning ? status : '';
+        errorStatus = error instanceof StatusWarning ? '' : status;
         log(`Request failed: ${status}`);
       }
     } finally {
@@ -816,6 +924,7 @@
     modelPath = selectedPackagePaths[selected.id] || selected.path;
     resetParams();
     await refresh();
+    await refreshPackageSizes();
     await inspectPath();
     await refreshVoices();
     await refreshInstallJobs();
@@ -883,12 +992,17 @@
     <div class="studio-grid">
       <aside class="panel model-rail">
         <label for="model">Model</label>
-        <select id="model" bind:value={selectedId} on:change={(event) => chooseModel(event.currentTarget.value)}>
+        <select id="model" bind:value={selectedId} disabled={modelInventoryLoading}
+          on:change={(event) => chooseModel(event.currentTarget.value)}>
           {#each activeWorkflowSpec.tasks as task}
             {@const entries = workflowModels.filter((entry) => entry.task === task)}
             {#if entries.length}
               <optgroup label={taskLabels[task]}>
-                {#each entries as entry}<option value={entry.id}>{entry.display_name}</option>{/each}
+                {#each entries as entry}
+                  <option value={entry.id} disabled={!selectableModelIds.has(entry.id)}>
+                    {entry.display_name}{selectableModelIds.has(entry.id) ? '' : ' — not downloaded'}
+                  </option>
+                {/each}
               </optgroup>
             {/if}
           {/each}
@@ -904,7 +1018,7 @@
         </div>
 
         <div class="button-row">
-          <button class="primary" disabled={loadingModel || isLoaded} on:click={() => doLoad()}>
+          <button class="primary" disabled={loadingModel || isLoaded || installed === false} on:click={() => doLoad()}>
             {loadingModel ? 'Loading…' : isLoaded ? 'Loaded' : 'Load model'}
           </button>
           <button disabled={loadingModel || !isLoaded} on:click={doUnload}>Unload</button>
@@ -964,7 +1078,7 @@
           </div>
           <div>
             <label for="seed">Seed <span>-1 = random</span></label>
-            <input id="seed" type="number" bind:value={seed} />
+            <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
           </div>
           <div>
             <label for="tokens">Maximum tokens</label>
@@ -1009,9 +1123,19 @@
         {/if}
 
         {#if needsVoice}
-          <label for="voice">Reference voice <span>{selected.task === 'tts' ? 'optional' : 'required'}</span></label>
-          <input id="voice" class="file" type="file" accept="audio/*"
-            on:change={(event) => voiceFile = event.currentTarget.files?.[0] || null} />
+          <div class="reference-input-grid">
+            <div>
+              <label for="voice">Reference voice <span>{referenceVoiceRequired ? 'required' : 'optional'}</span></label>
+              <input id="voice" class="file" type="file" accept="audio/*"
+                on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
+            </div>
+            <div>
+              <label for="reference-file">Reference text <span>.txt</span></label>
+              <input id="reference-file" class="file" type="file" accept=".txt,text/plain"
+                bind:this={referenceTextInput}
+                on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
+            </div>
+          </div>
           <div class="media-actions">
             {#if recordingTarget === 'voice'}
               <button class="danger" type="button" on:click={stopRecording}>Stop recording</button>
@@ -1022,8 +1146,11 @@
               {#if voiceFile}<span>{voiceFile.name}</span>{/if}
             {/if}
           </div>
-          <label for="reference">Reference transcript <span>recommended for cloning</span></label>
-          <textarea id="reference" rows="2" bind:value={referenceText}></textarea>
+          <label for="reference">Reference transcript
+            <span>{referenceTextRequired ? 'required for this voice clone' : 'recommended for cloning'}</span>
+          </label>
+          <textarea id="reference" rows="2" bind:value={referenceText}
+            placeholder="Type the exact words spoken in the reference audio, or load a matching .txt file above."></textarea>
           <div class="voice-library">
             <div>
               <label for="saved-voice">Saved voices <span>stored only in this browser</span></label>
@@ -1092,12 +1219,15 @@
         </details>
 
         <div class="runbar">
-          <button class="run" disabled={running} on:click={run}>
+          <button class="run" disabled={running || (!isLoaded && installed === false)} on:click={run}
+            title={!isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
             <span>{running ? 'Working…' : 'Run'}</span>
             <kbd>Ctrl ↵</kbd>
           </button>
           <button disabled={!running} on:click={cancel}>Cancel</button>
-          <div class="status" class:busy={running}>{status}</div>
+          <div class="status" class:busy={running}
+            class:warning={!running && status === warningStatus}
+            class:error={!running && status === errorStatus}>{status}</div>
         </div>
       </section>
 
