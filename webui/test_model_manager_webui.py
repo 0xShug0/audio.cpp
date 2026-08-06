@@ -10,6 +10,8 @@ import shutil
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,6 +67,37 @@ class SpecPackageTests(unittest.TestCase):
         with self.assertRaises(mmw.ManagerError):
             mmw.ensure_hf_package(package)
 
+    def test_package_size_record_sums_metadata_without_downloading(self):
+        original = mmw.check_remote_file
+        self.addCleanup(setattr, mmw, "check_remote_file", original)
+        mmw.check_remote_file = lambda _package, remote: 10 if remote == "a" else 15
+        row = mmw.package_size_record(_package(files=("a", "b")))
+        self.assertEqual(row["state"], "ok")
+        self.assertEqual(row["size_bytes"], 25)
+
+    def test_gated_package_size_is_reported_without_failing_the_scan(self):
+        original = mmw.check_remote_file
+        self.addCleanup(setattr, mmw, "check_remote_file", original)
+        mmw.check_remote_file = lambda _package, _remote: None
+        row = mmw.package_size_record(_package(download={
+            "kind": "huggingface_snapshot", "repo": "gated/demo", "gated": True}))
+        self.assertEqual(row["state"], "gated")
+        self.assertIsNone(row["size_bytes"])
+
+    def test_package_status_requires_every_file_before_reporting_installed(self):
+        root = Path(tempfile.mkdtemp(prefix="audiocpp_package_status_test_"))
+        self.addCleanup(shutil.rmtree, root, True)
+        package = _package(files=("Demo-GGUF/model-q8_0.gguf", "Demo-GGUF/config.json"))
+        target = root / "Demo-GGUF"
+        target.mkdir()
+        (target / "model-q8_0.gguf").write_bytes(b"gguf")
+        original = mmw.check_remote_file
+        self.addCleanup(setattr, mmw, "check_remote_file", original)
+        mmw.check_remote_file = lambda _package, _remote: 4
+        self.assertFalse(mmw.package_size_record(package, root)["installed"])
+        (target / "config.json").write_text("{}", encoding="utf-8")
+        self.assertTrue(mmw.package_size_record(package, root)["installed"])
+
 
 class InstallPlacementTests(unittest.TestCase):
     def setUp(self):
@@ -74,21 +107,27 @@ class InstallPlacementTests(unittest.TestCase):
         original = mmw.download_file
         self.addCleanup(setattr, mmw, "download_file", original)
 
-        def fake_download(package, remote_path, output_path):
+        def fake_download(package, remote_path, output_path, progress=None):
             self.calls.append((remote_path, output_path.name))
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(b"gguf")
+            if progress is not None:
+                progress(4, 4)
 
         mmw.download_file = fake_download
 
-    def _install(self, package, overwrite=False):
+    def _install(self, package, overwrite=False, progress=False):
         args = SimpleNamespace(
             models_root=self.root,
             overwrite=overwrite,
             check=False,
             dry_run=False,
+            progress=progress,
         )
         mmw.install_package(package, args)
+
+    def _uninstall(self, package):
+        mmw.uninstall_package(package, SimpleNamespace(models_root=self.root))
 
     def test_strip_prefix_file_lands_at_its_installed_path(self):
         self._install(_package())
@@ -102,17 +141,87 @@ class InstallPlacementTests(unittest.TestCase):
         self._install(package)
         self.assertTrue(os.path.isfile(os.path.join(self.root, "Demo-GGUF", "tokenizer", "config.json")))
 
+    def test_nested_target_directory_creates_its_parent_before_atomic_rename(self):
+        package = _package(
+            target_directory="Demo-GGUF/english",
+            files=("Demo-GGUF/english/model-q8_0.gguf",),
+            strip_prefix="Demo-GGUF/english")
+        self._install(package)
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.root, "Demo-GGUF", "english", "model-q8_0.gguf")))
+
     def test_packages_without_a_strip_prefix_are_unchanged(self):
         package = _package(files=("config.json",), strip_prefix="")
         self._install(package)
         self.assertTrue(os.path.isfile(os.path.join(self.root, "Demo-GGUF", "config.json")))
 
-    def test_existing_target_requires_overwrite(self):
-        os.makedirs(os.path.join(self.root, "Demo-GGUF"))
-        with self.assertRaises(mmw.ManagerError):
-            self._install(_package(), overwrite=False)
+    def test_complete_existing_package_is_an_idempotent_success(self):
+        target = Path(self.root) / "Demo-GGUF"
+        target.mkdir()
+        (target / "model-q8_0.gguf").write_bytes(b"old")
+        self._install(_package(), overwrite=False)
+        self.assertEqual((target / "model-q8_0.gguf").read_bytes(), b"old")
+        self.assertEqual(self.calls, [])
         self._install(_package(), overwrite=True)
-        self.assertTrue(os.path.isfile(os.path.join(self.root, "Demo-GGUF", "model-q8_0.gguf")))
+        self.assertEqual((target / "model-q8_0.gguf").read_bytes(), b"gguf")
+
+    def test_partial_existing_package_still_requires_overwrite(self):
+        target = Path(self.root) / "Demo-GGUF"
+        target.mkdir()
+        (target / "model-q8_0.gguf").write_bytes(b"old")
+        package = _package(files=("Demo-GGUF/model-q8_0.gguf", "Demo-GGUF/config.json"))
+        with self.assertRaises(mmw.ManagerError):
+            self._install(package, overwrite=False)
+
+    def test_precision_variants_can_share_a_target_directory(self):
+        self._install(_package())
+        self._install(_package(
+            id="demo_f16",
+            precision="f16",
+            files=("Demo-GGUF/model-f16.gguf",),
+        ))
+        target = Path(self.root) / "Demo-GGUF"
+        self.assertTrue((target / "model-q8_0.gguf").is_file())
+        self.assertTrue((target / "model-f16.gguf").is_file())
+
+    def test_overwrite_preserves_other_precision_variants(self):
+        target = Path(self.root) / "Demo-GGUF"
+        target.mkdir()
+        (target / "model-q8_0.gguf").write_bytes(b"q8")
+        (target / "model-f16.gguf").write_bytes(b"old")
+        self._install(_package(
+            id="demo_f16",
+            precision="f16",
+            files=("Demo-GGUF/model-f16.gguf",),
+        ), overwrite=True)
+        self.assertEqual((target / "model-q8_0.gguf").read_bytes(), b"q8")
+        self.assertEqual((target / "model-f16.gguf").read_bytes(), b"gguf")
+
+    def test_uninstall_removes_only_selected_precision(self):
+        q8 = _package()
+        f16 = _package(id="demo_f16", precision="f16", files=("Demo-GGUF/model-f16.gguf",))
+        self._install(q8)
+        self._install(f16)
+        self._uninstall(q8)
+        target = Path(self.root) / "Demo-GGUF"
+        self.assertFalse((target / "model-q8_0.gguf").exists())
+        self.assertTrue((target / "model-f16.gguf").is_file())
+
+    def test_uninstall_last_package_removes_empty_target(self):
+        package = _package()
+        self._install(package)
+        self._uninstall(package)
+        self.assertFalse((Path(self.root) / "Demo-GGUF").exists())
+
+    def test_progress_mode_emits_downloaded_and_total_bytes(self):
+        original = mmw.check_remote_file
+        self.addCleanup(setattr, mmw, "check_remote_file", original)
+        mmw.check_remote_file = lambda _package, _remote: 4
+        output = StringIO()
+        with redirect_stdout(output):
+            self._install(_package(), progress=True)
+        self.assertIn("AUDIOCPP_PROGRESS downloaded=0 total=4", output.getvalue())
+        self.assertIn("AUDIOCPP_PROGRESS downloaded=4 total=4", output.getvalue())
 
 
 if __name__ == "__main__":

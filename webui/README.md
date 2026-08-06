@@ -1,9 +1,90 @@
-# audio.cpp WebUI Launcher Guide
+# audio.cpp WebUI Guide
 
 > **语言 / Language:** **English** · [中文](README.zh.md)
 
-The `webui/` directory holds the Python dependencies, launch scripts, and model-download wrappers needed to run the WebUI.
-The launch scripts can be **double-clicked** or invoked from a command line / PowerShell.
+audio.cpp now has two browser interfaces:
+
+- **Native WebUI (recommended):** a SvelteKit/TypeScript single-page app embedded directly in
+  `audiocpp_server`. It needs no Python or frontend files at runtime.
+- **Legacy Gradio WebUI:** the original Python interface and helper workflows in this directory.
+
+## Native embedded WebUI
+
+Build `audiocpp_server` normally, then start the native WebUI host:
+
+```powershell
+.\build\windows-cuda-release\bin\audiocpp_server.exe --ui --backend cuda
+```
+
+```bash
+./build/bin/audiocpp_server --ui --backend cuda
+```
+
+Open **http://127.0.0.1:8080**. With no `--config`, `--ui` enables on-demand model load/unload and
+temporary audio uploads automatically. By default, model packages are stored in the `models/` directory beside
+`audiocpp_server`. The Models page has a **Models folder** setting and native **Browse** dialog when another
+location is preferred; **Apply** switches downloads, installed-package detection, deletion, and Studio model paths together, while **Use default**
+returns to the binary-local directory. The selected custom location is remembered in that browser.
+
+The standalone UI host still searches upward from the working directory and executable location for package
+resources (`tools/` plus `model_specs/`), so a development binary can be started directly from `build/.../bin`.
+
+The same UI can front an existing server config:
+
+```bash
+audiocpp_server --config server.json
+```
+
+Configured models keep their existing eager/lazy behavior. Add `--ui-management` to allow the UI to load,
+switch, and unload catalog models. Use `--no-ui` to retain an API-only server.
+
+The native UI supports the shared catalog, model-specific controls, file decoding in the browser, TTS and voice
+cloning, transcription, generic audio tasks, multiple separation outputs, structured results, and request timing.
+It also includes:
+
+- model download/preparation jobs with ordered GGUF Q8, GGUF FP16/BF16, and safetensors choices,
+  fast required-file checks that disable choices already downloaded, metadata-only package-size checks,
+  and card-local byte/percentage progress on the Models page;
+- GGUF precision variants can coexist in a shared package directory; the selected button stores the exact
+  GGUF file path, and overwriting one precision does not remove its sibling variants;
+- downloaded choices expose a confirmation-gated trash action that removes only that package's declared files;
+- sentence-aware long-text synthesis and browser-side WAV merging;
+- microphone capture for source and reference audio;
+- a saved voice library backed by browser IndexedDB;
+- four-second near-live microphone transcription for streaming-capable ASR models.
+
+Uploaded request files are placed in a per-process temporary directory and deleted when the server exits. Saved
+voices stay in the browser profile and are not uploaded until selected for a request.
+
+The server and embedded interface need no Python at runtime. The **Install / prepare** action invokes
+`tools/model_manager_v2.py` for normal spec-backed downloads. When source/output/variant converter inputs are supplied,
+it falls back to `tools/model_manager_deprecated.py` for legacy preparation workflows that have not migrated yet.
+Set `AUDIOCPP_PYTHON` when the desired interpreter is not `python` on Windows or `python3` on Unix. Pure inference,
+loading an existing folder, and standalone GGUF operation do not use either helper. The Models page exposes optional
+source directory, source checkpoint, output, variant, and overwrite inputs for specialized preparation workflows.
+Package ids and install directories are resolved from `model_specs/*.json` while the frontend is built, so older
+catalog aliases continue to select the current precision-qualified package id.
+
+### Frontend development
+
+Node.js is only needed to modify the frontend, never to run the compiled server:
+
+```bash
+cd webui/native
+npm ci
+npm run check
+npm run build
+```
+
+The build creates the single-file `webui/native/dist/index.html`. CMake converts that file to an embedded byte
+array when configuring `audiocpp_server`; rerun CMake/build after changing it. For live frontend development,
+run `npm run dev`; Vite proxies `/health` and `/v1` to a server on port 8080.
+
+## Legacy Gradio WebUI
+
+The Gradio interface remains for compatibility and translated legacy workflows. It is no longer required for the
+model installer, long-text synthesis, saved voices, or microphone input described above. The remaining sections
+describe that interface. Its launch scripts can be **double-clicked** or invoked from a command line or PowerShell.
 
 | Script | Purpose | Typical command |
 |---|---|---|

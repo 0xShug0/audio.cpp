@@ -1,0 +1,12 @@
+#pragma once
+
+#include <cstddef>
+
+namespace minitts::server {
+
+inline constexpr unsigned char kAudioCppUiHtml[] = {
+@AUDIOCPP_UI_BYTES@
+};
+inline constexpr std::size_t kAudioCppUiHtmlSize = sizeof(kAudioCppUiHtml);
+
+}  // namespace minitts::server
