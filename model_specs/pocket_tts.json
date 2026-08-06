@@ -198,7 +198,8 @@
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "kyutai/pocket-tts"
+        "repo": "kyutai/pocket-tts",
+        "gated": true
       }
     }
   ],

@@ -67,6 +67,8 @@ struct ServerConfig {
     std::string host = "127.0.0.1";
     int port = 8080;
     std::string cors_origins = "";
+    bool ui_enabled = true;
+    bool ui_management = false;
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
     int device = 0;
     int threads = 1;

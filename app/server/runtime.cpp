@@ -1,6 +1,7 @@
 #include "runtime.h"
 
 #include "multipart.h"
+#include "ui_assets.h"
 
 #include "../cli/request.h"
 #include "../streaming/pcm_source.h"
@@ -24,6 +25,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 
@@ -55,6 +57,47 @@ std::string json_quote(std::string_view value) {
 
 std::filesystem::path resolve_path(const std::filesystem::path & base, const std::filesystem::path & path) {
     return path.is_absolute() ? path : base / path;
+}
+
+std::unordered_map<std::string, std::string> options_from_object(const Value * value);
+
+std::string safe_upload_name(std::string value) {
+    value = std::filesystem::path(value).filename().string();
+    for (char & ch : value) {
+        const auto uch = static_cast<unsigned char>(ch);
+        if (!(std::isalnum(uch) || ch == '.' || ch == '-' || ch == '_')) {
+            ch = '_';
+        }
+    }
+    if (value.empty() || value == "." || value == "..") {
+        value = "audio.wav";
+    }
+    return value;
+}
+
+ServerModelConfig model_config_from_json(
+    const Value & body,
+    const std::filesystem::path & request_base,
+    bool lazy) {
+    ServerModelConfig model;
+    model.id = engine::io::json::require_string(body, "id");
+    model.path = resolve_path(request_base, engine::io::json::require_string(body, "path"));
+    model.family = engine::io::json::require_string(body, "family");
+    model.task = engine::io::json::optional_string(body, "task", model.task);
+    model.mode = engine::io::json::optional_string(body, "mode", model.mode);
+    model.lazy = lazy;
+    if (const auto * value = body.find("model_spec_override")) {
+        model.model_spec_override = resolve_path(request_base, value->as_string());
+    }
+    if (const auto * value = body.find("config")) {
+        model.config_id = value->as_string();
+    }
+    if (const auto * value = body.find("weight")) {
+        model.weight_id = value->as_string();
+    }
+    model.load_options = options_from_object(body.find("load_options"));
+    model.session_options = options_from_object(body.find("session_options"));
+    return model;
 }
 
 // Minimal application/x-www-form-urlencoded query string lookup, e.g.
@@ -629,18 +672,90 @@ engine::runtime::TaskRequest build_openai_transcription_request(
     return request;
 }
 
+template <typename Predicate>
+std::optional<std::filesystem::path> find_ancestor(
+    std::filesystem::path start,
+    Predicate predicate) {
+    std::error_code ec;
+    start = std::filesystem::absolute(std::move(start), ec).lexically_normal();
+    if (ec) {
+        return std::nullopt;
+    }
+    for (;;) {
+        if (predicate(start)) {
+            return start;
+        }
+        const auto parent = start.parent_path();
+        if (parent.empty() || parent == start) {
+            return std::nullopt;
+        }
+        start = parent;
+    }
+}
+
+template <typename Predicate>
+std::optional<std::filesystem::path> find_from_roots(
+    const std::filesystem::path & request_base,
+    const std::filesystem::path & resource_anchor,
+    Predicate predicate) {
+    if (auto found = find_ancestor(request_base, predicate)) {
+        return found;
+    }
+    if (!resource_anchor.empty()) {
+        return find_ancestor(resource_anchor, predicate);
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
-ServerState::ServerState(ServerConfig config, std::filesystem::path request_base)
+ServerState::ServerState(
+    ServerConfig config,
+    std::filesystem::path request_base,
+    std::filesystem::path ui_resource_anchor)
     : config_(std::move(config)),
-      request_base_(std::move(request_base)) {
+      request_base_(std::filesystem::absolute(std::move(request_base)).lexically_normal()) {
     if (config_.backend != engine::core::BackendType::Cuda) {
         std::cerr
             << "audio.cpp is optimized for CUDA. The "
             << backend_name(config_.backend)
             << " server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA.\n";
     }
+    if (config_.ui_management) {
+        repository_root_ = find_from_roots(
+            request_base_,
+            ui_resource_anchor,
+            [](const std::filesystem::path & root) {
+                return std::filesystem::is_regular_file(root / "tools" / "model_manager_v2.py") &&
+                    std::filesystem::is_directory(root / "model_specs");
+            }).value_or(request_base_);
+        const auto binary_directory = ui_resource_anchor.empty()
+            ? request_base_
+            : std::filesystem::absolute(ui_resource_anchor).lexically_normal();
+        default_models_root_ = (binary_directory / "models").lexically_normal();
+        models_root_ = default_models_root_;
+        request_base_ = binary_directory;
+        std::filesystem::create_directories(models_root_);
+        std::cerr
+            << "native WebUI model root: " << models_root_ << "\n"
+            << "native WebUI package resources: " << repository_root_ << "\n";
+        upload_root_ = std::filesystem::temp_directory_path() /
+            ("audiocpp-ui-" + std::to_string(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count()));
+        std::filesystem::create_directories(upload_root_);
+        model_installer_ = std::make_unique<ModelInstaller>(
+            repository_root_,
+            models_root_);
+    }
     load_models();
+}
+
+ServerState::~ServerState() {
+    if (!upload_root_.empty()) {
+        std::error_code ec;
+        std::filesystem::remove_all(upload_root_, ec);
+    }
 }
 
 HttpResponse ServerState::handle(const HttpRequest & request) {
@@ -648,18 +763,32 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
   const std::string allowed_origin = get_allowed_origin(request);
   try {
     log_request_body_if_enabled(config_, request);
-    if (request.method == "OPTIONS" && !allowed_origin.empty()) {
+    if (request.method == "OPTIONS" && (!allowed_origin.empty() || config_.ui_enabled)) {
         response.status = 204;
         response.content_type = "text/plain";
         response.headers["Access-Control-Allow-Headers"] = "*";
         response.headers["Access-Control-Allow-Methods"] = "GET, POST";
     }
+    else if (request.method == "GET" && (request.path == "/" || request.path == "/index.html")) {
+        response = handle_ui_asset();
+    }
+    else if (request.method == "GET" && request.path == "/favicon.ico") {
+        response.status = 204;
+        response.content_type = "image/x-icon";
+    }
     else if (request.method == "GET" && request.path == "/health") {
+        size_t model_count = 0;
+        {
+            std::lock_guard<std::mutex> lock(models_mutex_);
+            model_count = models_.size();
+        }
         response = json_response(
             "{\"status\":\"ok\",\"backend\":\"" +
             std::string(backend_name(config_.backend)) +
             "\",\"models\":" +
-            std::to_string(models_.size()) +
+            std::to_string(model_count) +
+            ",\"ui\":" + (config_.ui_enabled ? "true" : "false") +
+            ",\"ui_management\":" + (config_.ui_management ? "true" : "false") +
             "}");
     }
     else if (request.method == "GET" && request.path == "/v1/models") {
@@ -667,6 +796,39 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     }
     else if (request.method == "GET" && request.path == "/v1/audio/voices") {
         response = handle_voices(request);
+    }
+    else if (request.method == "POST" && request.path == "/v1/models/load") {
+        response = handle_model_load(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/models/unload") {
+        response = handle_model_unload(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/path-status") {
+        response = handle_path_status(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/upload") {
+        response = handle_ui_upload(request);
+    }
+    else if (request.method == "GET" && request.path == "/v1/ui/models-root") {
+        response = handle_models_root_get();
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/models-root") {
+        response = handle_models_root_set(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/browse-directories") {
+        response = handle_directory_browser(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/models/install") {
+        response = handle_model_install(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/models/delete") {
+        response = handle_model_remove(request.body);
+    }
+    else if (request.method == "GET" && request.path == "/v1/ui/models/install-status") {
+        response = handle_model_install_status(request);
+    }
+    else if (request.method == "GET" && request.path == "/v1/ui/models/package-sizes") {
+        response = handle_model_package_sizes();
     }
     else if (request.method == "POST" && request.path == "/v1/audio/speech") {
         response = handle_speech(request.body);
@@ -703,21 +865,403 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
 
 void ServerState::load_models() {
     for (auto & config : config_.models) {
-        auto loaded = std::make_unique<LoadedModel>();
-        loaded->config = std::move(config);
-        loaded->task = engine::runtime::TaskSpec{
-            engine::runtime::parse_voice_task_kind(loaded->config.task),
-            engine::runtime::parse_run_mode(loaded->config.mode),
-        };
+        auto loaded = make_model(std::move(config));
         if (!model_index_.emplace(loaded->config.id, models_.size()).second) {
             throw std::runtime_error("duplicate server model id: " + loaded->config.id);
         }
-        load_voice_presets(*loaded);
         if (!loaded->config.lazy) {
             ensure_model_loaded_locked(*loaded);
         }
         models_.push_back(std::move(loaded));
     }
+}
+
+std::unique_ptr<ServerState::LoadedModel> ServerState::make_model(ServerModelConfig config) {
+    auto loaded = std::make_unique<LoadedModel>();
+    loaded->config = std::move(config);
+    loaded->task = engine::runtime::TaskSpec{
+        engine::runtime::parse_voice_task_kind(loaded->config.task),
+        engine::runtime::parse_run_mode(loaded->config.mode),
+    };
+    load_voice_presets(*loaded);
+    return loaded;
+}
+
+HttpResponse ServerState::handle_model_load(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "dynamic model management is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    auto requested = model_config_from_json(body, request_base_, false);
+    requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
+
+    LoadedModel * existing = nullptr;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        const auto found = model_index_.find(requested.id);
+        if (found != model_index_.end()) {
+            existing = models_.at(found->second).get();
+        }
+    }
+
+    if (existing != nullptr) {
+        BusyGuard::Lock run_lock = acquire_model_run(*existing, std::nullopt);
+        std::unique_lock<std::shared_mutex> metadata_lock(existing->metadata_mutex);
+        const bool changed =
+            existing->config.path != requested.path ||
+            existing->config.family != requested.family ||
+            existing->config.task != requested.task ||
+            existing->config.mode != requested.mode ||
+            existing->config.load_options != requested.load_options ||
+            existing->config.session_options != requested.session_options ||
+            existing->config.model_spec_override != requested.model_spec_override;
+        if (changed) {
+            existing->streaming = nullptr;
+            existing->offline = nullptr;
+            existing->session.reset();
+            existing->model.reset();
+            existing->loaded.store(false);
+            existing->voice_presets.clear();
+            existing->default_voice_preset.reset();
+            existing->config = std::move(requested);
+            existing->task = engine::runtime::TaskSpec{
+                engine::runtime::parse_voice_task_kind(existing->config.task),
+                engine::runtime::parse_run_mode(existing->config.mode),
+            };
+            load_voice_presets(*existing);
+        }
+        ensure_model_loaded_locked(*existing);
+        return json_response(
+            "{\"id\":" + json_quote(existing->config.id) +
+            ",\"loaded\":true,\"reconfigured\":" + (changed ? "true" : "false") + "}");
+    }
+
+    auto loaded = make_model(std::move(requested));
+    ensure_model_loaded_locked(*loaded);
+    const std::string id = loaded->config.id;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        if (model_index_.find(id) != model_index_.end()) {
+            throw std::runtime_error("model id was registered concurrently: " + id);
+        }
+        model_index_.emplace(id, models_.size());
+        models_.push_back(std::move(loaded));
+    }
+    return json_response("{\"id\":" + json_quote(id) + ",\"loaded\":true,\"reconfigured\":false}");
+}
+
+std::filesystem::path ServerState::resolve_ui_model_path(const std::filesystem::path & path) const {
+    if (path.is_absolute()) {
+        return path;
+    }
+
+    const auto relative = path.lexically_normal();
+    const auto generic = relative.generic_string();
+    if (!repository_root_.empty() &&
+        (generic == "assets/framework" || generic.rfind("assets/framework/", 0) == 0)) {
+        return (repository_root_ / relative).lexically_normal();
+    }
+    return (request_base_ / relative).lexically_normal();
+}
+
+HttpResponse ServerState::handle_model_unload(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "dynamic model management is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const std::string id = engine::io::json::require_string(body, "id");
+    LoadedModel * model = nullptr;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        const auto found = model_index_.find(id);
+        if (found == model_index_.end()) {
+            return error_response(404, "unknown model id: " + id, "not_found");
+        }
+        model = models_.at(found->second).get();
+    }
+    BusyGuard::Lock run_lock = acquire_model_run(*model, std::nullopt);
+    model->streaming = nullptr;
+    model->offline = nullptr;
+    model->session.reset();
+    model->model.reset();
+    model->loaded.store(false);
+    return json_response("{\"id\":" + json_quote(id) + ",\"loaded\":false}");
+}
+
+HttpResponse ServerState::handle_path_status(const std::string & body_text) const {
+    if (!config_.ui_management) {
+        return error_response(403, "UI path inspection is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const auto path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+    const bool directory = exists && std::filesystem::is_directory(path, ec);
+    const bool regular_file = exists && std::filesystem::is_regular_file(path, ec);
+    return json_response(
+        "{\"path\":" + json_quote(path.string()) +
+        ",\"exists\":" + (exists ? "true" : "false") +
+        ",\"directory\":" + (directory ? "true" : "false") +
+        ",\"file\":" + (regular_file ? "true" : "false") + "}");
+}
+
+HttpResponse ServerState::handle_ui_upload(const HttpRequest & request) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI uploads are disabled", "forbidden");
+    }
+    if (request.body.empty()) {
+        return error_response(400, "upload body is empty", "invalid_request_error");
+    }
+    constexpr size_t kMaxUploadBytes = size_t{2} * 1024 * 1024 * 1024;
+    if (request.body.size() > kMaxUploadBytes) {
+        return error_response(413, "upload exceeds the 2 GiB limit", "invalid_request_error");
+    }
+    std::string filename = "audio.wav";
+    if (const auto it = request.headers.find("x-audiocpp-filename"); it != request.headers.end()) {
+        filename = safe_upload_name(it->second);
+    }
+    const auto id = next_upload_id_.fetch_add(1);
+    const auto path = upload_root_ / (std::to_string(id) + "-" + filename);
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error("could not create temporary upload: " + path.string());
+    }
+    out.write(request.body.data(), static_cast<std::streamsize>(request.body.size()));
+    if (!out) {
+        throw std::runtime_error("could not write temporary upload: " + path.string());
+    }
+    return json_response(
+        "{\"path\":" + json_quote(path.string()) +
+        ",\"bytes\":" + std::to_string(request.body.size()) + "}");
+}
+
+HttpResponse ServerState::handle_model_install(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const std::string package_id = engine::io::json::require_string(body, "id");
+    const std::string source_directory =
+        engine::io::json::optional_string(body, "source_directory", "");
+    const std::string source_file =
+        engine::io::json::optional_string(body, "source_file", "");
+    const std::string output_file =
+        engine::io::json::optional_string(body, "output_file", "");
+    const std::string variant =
+        engine::io::json::optional_string(body, "variant", "");
+    const bool overwrite =
+        engine::io::json::optional_bool(body, "overwrite", false);
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    return json_response(model_installer_->start(
+        package_id,
+        source_file,
+        output_file,
+        source_directory,
+        variant,
+        overwrite));
+}
+
+HttpResponse ServerState::handle_model_remove(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model removal is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const std::string package_id = engine::io::json::require_string(body, "id");
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model removal is disabled", "forbidden");
+    }
+    return json_response(model_installer_->remove(package_id));
+}
+
+HttpResponse ServerState::handle_model_install_status(const HttpRequest & request) const {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    return json_response(model_installer_->status(query_param(request.query, "id")));
+}
+
+HttpResponse ServerState::handle_model_package_sizes() {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    return json_response(model_installer_->package_sizes());
+}
+
+HttpResponse ServerState::handle_models_root_get() const {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model management is disabled", "forbidden");
+    }
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model management is disabled", "forbidden");
+    }
+    return json_response(
+        "{\"models_root\":" + json_quote(models_root_.string()) +
+        ",\"default_models_root\":" + json_quote(default_models_root_.string()) +
+        ",\"is_default\":" + (models_root_ == default_models_root_ ? "true" : "false") + "}");
+}
+
+HttpResponse ServerState::handle_models_root_set(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model management is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const auto requested_text = engine::io::json::optional_string(body, "path", "");
+    auto requested = requested_text.empty()
+        ? default_models_root_
+        : std::filesystem::path(requested_text);
+    if (requested.is_relative()) {
+        requested = request_base_ / requested;
+    }
+    requested = std::filesystem::absolute(requested).lexically_normal();
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model management is disabled", "forbidden");
+    }
+    if (requested == models_root_) {
+        return json_response(
+            "{\"models_root\":" + json_quote(models_root_.string()) +
+            ",\"default_models_root\":" + json_quote(default_models_root_.string()) +
+            ",\"is_default\":" + (models_root_ == default_models_root_ ? "true" : "false") + "}");
+    }
+    if (model_installer_->has_active_jobs()) {
+        return error_response(
+            409,
+            "cannot change the models folder while a package download is running",
+            "model_install_active");
+    }
+
+    std::error_code error;
+    if (std::filesystem::exists(requested, error) && !std::filesystem::is_directory(requested, error)) {
+        return error_response(400, "models folder path is not a directory: " + requested.string(), "invalid_request_error");
+    }
+    std::filesystem::create_directories(requested, error);
+    if (error) {
+        return error_response(
+            400,
+            "could not create models folder '" + requested.string() + "': " + error.message(),
+            "invalid_request_error");
+    }
+
+    models_root_ = requested;
+    model_installer_ = std::make_unique<ModelInstaller>(repository_root_, models_root_);
+    std::cerr << "native WebUI model root changed to: " << models_root_ << "\n";
+    return json_response(
+        "{\"models_root\":" + json_quote(models_root_.string()) +
+        ",\"default_models_root\":" + json_quote(default_models_root_.string()) +
+        ",\"is_default\":" + (models_root_ == default_models_root_ ? "true" : "false") + "}");
+}
+
+HttpResponse ServerState::handle_directory_browser(const std::string & body_text) const {
+    if (!config_.ui_management) {
+        return error_response(403, "UI directory browsing is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const auto requested_text = engine::io::json::optional_string(body, "path", "");
+
+    std::filesystem::path current;
+    {
+        std::lock_guard<std::mutex> lock(model_installer_mutex_);
+        current = requested_text.empty() ? models_root_ : std::filesystem::path(requested_text);
+    }
+    if (current.is_relative()) {
+        current = request_base_ / current;
+    }
+    current = std::filesystem::absolute(current).lexically_normal();
+
+    std::error_code error;
+    if (!std::filesystem::is_directory(current, error)) {
+        return error_response(
+            400,
+            "folder is not accessible: " + current.string(),
+            "invalid_request_error");
+    }
+
+    std::vector<std::filesystem::path> roots;
+#ifdef _WIN32
+    for (char drive = 'A'; drive <= 'Z'; ++drive) {
+        const auto root = std::filesystem::path(std::string(1, drive) + ":\\");
+        error.clear();
+        if (std::filesystem::is_directory(root, error)) {
+            roots.push_back(root);
+        }
+    }
+#else
+    roots.emplace_back("/");
+#endif
+
+    struct DirectoryEntry {
+        std::string name;
+        std::filesystem::path path;
+    };
+    std::vector<DirectoryEntry> directories;
+    error.clear();
+    std::filesystem::directory_iterator iterator(
+        current,
+        std::filesystem::directory_options::skip_permission_denied,
+        error);
+    const std::filesystem::directory_iterator end;
+    while (!error && iterator != end) {
+        std::error_code entry_error;
+        if (iterator->is_directory(entry_error)) {
+            directories.push_back(DirectoryEntry{
+                iterator->path().filename().string(),
+                iterator->path().lexically_normal(),
+            });
+        }
+        iterator.increment(error);
+    }
+    std::sort(directories.begin(), directories.end(), [](const auto & left, const auto & right) {
+        return left.name < right.name;
+    });
+
+    auto parent = current.parent_path();
+    if (parent == current) {
+        parent.clear();
+    }
+    std::string response =
+        "{\"current\":" + json_quote(current.string()) +
+        ",\"parent\":" + json_quote(parent.string()) +
+        ",\"roots\":[";
+    for (size_t index = 0; index < roots.size(); ++index) {
+        if (index > 0) response += ",";
+        response += json_quote(roots[index].string());
+    }
+    response += "],\"directories\":[";
+    for (size_t index = 0; index < directories.size(); ++index) {
+        if (index > 0) response += ",";
+        response += "{\"name\":" + json_quote(directories[index].name) +
+            ",\"path\":" + json_quote(directories[index].path.string()) + "}";
+    }
+    return json_response(response + "]}");
+}
+
+HttpResponse ServerState::handle_ui_asset() const {
+    if (!config_.ui_enabled) {
+        return error_response(404, "WebUI is disabled", "not_found");
+    }
+    HttpResponse response;
+    response.status = 200;
+    response.content_type = "text/html; charset=utf-8";
+    const auto html = embedded_ui_html();
+    response.body.assign(html.data(), html.size());
+    response.headers["Cache-Control"] = "no-cache";
+    response.headers["Content-Security-Policy"] =
+        "default-src 'self' 'unsafe-inline' blob: data:; connect-src 'self'; media-src 'self' blob: data:";
+    response.headers["X-Content-Type-Options"] = "nosniff";
+    return response;
 }
 
 ServerState::LoadedModel::RuntimeVoicePreset ServerState::load_runtime_voice_preset(
@@ -807,6 +1351,7 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
     model.session = std::move(session);
     model.offline = offline;
     model.streaming = streaming;
+    model.loaded.store(true);
 }
 
 LiveIngestLimits ServerState::live_ingest_limits(const HttpRequest & request) const {
@@ -823,6 +1368,7 @@ LiveIngestLimits ServerState::live_ingest_limits(const HttpRequest & request) co
 
 ServerState::LoadedModel & ServerState::require_model(const Value & body) {
     const std::string id = engine::io::json::require_string(body, "model");
+    std::lock_guard<std::mutex> state_lock(models_mutex_);
     const auto it = model_index_.find(id);
     if (it == model_index_.end()) {
         throw std::runtime_error("unknown model id: " + id);
@@ -850,6 +1396,7 @@ const ServerState::LoadedModel::RuntimeVoicePreset * ServerState::select_voice_p
 }
 
 engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel & model, const Value & body) const {
+    std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
     engine::runtime::TaskRequest request;
     request.text_input = engine::runtime::Transcript{
         engine::io::json::require_string(body, "input"),
@@ -935,16 +1482,24 @@ struct ServerState::TimedTaskResult {
     std::optional<double> ttft_ms;
 };
 
-int ServerState::model_busy_timeout_ceiling(const LoadedModel & model) const {
-    return model.config.busy_timeout_ms.value_or(config_.busy_timeout_ms);
+engine::runtime::RunMode ServerState::model_run_mode(const LoadedModel & model) const {
+    std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+    return model.task.mode;
 }
 
 BusyGuard::Lock ServerState::acquire_model_run(
     LoadedModel & model,
     std::optional<int> request_timeout_ms) {
-    const int timeout_ms =
-        resolve_busy_timeout_ms(model_busy_timeout_ceiling(model), request_timeout_ms);
-    return model.busy.acquire(timeout_ms, model.config.id);
+    int timeout_ms = 0;
+    std::string model_id;
+    {
+        std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+        timeout_ms = resolve_busy_timeout_ms(
+            model.config.busy_timeout_ms.value_or(config_.busy_timeout_ms),
+            request_timeout_ms);
+        model_id = model.config.id;
+    }
+    return model.busy.acquire(timeout_ms, model_id);
 }
 
 ServerState::TimedTaskResult ServerState::run_model(
@@ -1024,7 +1579,7 @@ HttpResponse ServerState::handle_speech(const std::string & body_text) {
         return handle_speech_stream(model, request, body);
     }
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
-    const auto timed_result = model.task.mode == engine::runtime::RunMode::Streaming
+    const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
         ? run_streaming_model(model, request, {}, busy_timeout_ms)
         : run_model(model, request, busy_timeout_ms);
     const auto & audio = select_audio_output(timed_result.result);
@@ -1047,7 +1602,7 @@ HttpResponse ServerState::handle_speech_stream(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
     const Value & body) {
-    if (model.task.mode != engine::runtime::RunMode::Streaming) {
+    if (model_run_mode(model) != engine::runtime::RunMode::Streaming) {
         throw std::runtime_error("speech streaming requires a model configured with mode=streaming");
     }
     const auto stream_format = engine::io::json::optional_string(body, "stream_format", "sse");
@@ -1219,7 +1774,7 @@ HttpResponse ServerState::run_transcription(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
     std::optional<int> busy_timeout_ms) {
-    const auto timed_result = model.task.mode == engine::runtime::RunMode::Streaming
+    const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
         ? run_streaming_model(model, request, {}, busy_timeout_ms)
         : run_model(model, request, busy_timeout_ms);
     const auto & result = timed_result.result;
@@ -1238,7 +1793,7 @@ HttpResponse ServerState::run_transcription_stream(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
     std::optional<int> busy_timeout_ms) {
-    if (model.task.mode != engine::runtime::RunMode::Streaming) {
+    if (model_run_mode(model) != engine::runtime::RunMode::Streaming) {
         throw std::runtime_error("transcription stream=true requires a model configured with mode=streaming");
     }
     LoadedModel * model_ptr = &model;
@@ -1430,7 +1985,7 @@ HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
             request_json != nullptr ? *request_json : body,
             request_base_));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
-    const auto timed_result = model.task.mode == engine::runtime::RunMode::Streaming
+    const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
         ? run_streaming_model(model, request, {}, busy_timeout_ms)
         : run_model(model, request, busy_timeout_ms);
     return json_response(task_result_json(timed_result.result, timed_result.wall_ms));
@@ -1472,6 +2027,7 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
 // potentially Open WebUI) that call GET /v1/audio/voices?model=<id> to populate a voice picker
 // instead of guessing generic names like "alloy"/"nova".
 HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
+    std::lock_guard<std::mutex> state_lock(models_mutex_);
     const std::string model_id = query_param(request.query, "model");
     std::vector<std::string> voices;
 
@@ -1485,11 +2041,13 @@ HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
         model_idx = 0;
     }
     if (model_idx != SIZE_MAX) {
-        for (const auto & [name, preset] : models_.at(model_idx)->voice_presets) {
+        const auto & model = *models_.at(model_idx);
+        std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+        for (const auto & [name, preset] : model.voice_presets) {
             (void) preset;
             voices.push_back(name);
         }
-        const auto embeddings_dir = models_.at(model_idx)->config.path / "embeddings";
+        const auto embeddings_dir = model.config.path / "embeddings";
         std::error_code ec;
         if (std::filesystem::is_directory(embeddings_dir, ec)) {
             for (const auto & entry : std::filesystem::directory_iterator(embeddings_dir, ec)) {
@@ -1515,6 +2073,7 @@ HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
 }
 
 std::string ServerState::models_json() const {
+    std::lock_guard<std::mutex> state_lock(models_mutex_);
     std::ostringstream out;
     out << "{\"object\":\"list\",\"data\":[";
     for (size_t i = 0; i < models_.size(); ++i) {
@@ -1522,12 +2081,15 @@ std::string ServerState::models_json() const {
             out << ",";
         }
         const auto & model = *models_[i];
+        std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
         out << "{\"id\":" << json_quote(model.config.id)
             << ",\"object\":\"model\""
             << ",\"owned_by\":\"engine\""
             << ",\"family\":" << json_quote(model.config.family)
             << ",\"task\":" << json_quote(engine::runtime::to_string(model.task.task))
             << ",\"mode\":" << json_quote(engine::runtime::to_string(model.task.mode))
+            << ",\"loaded\":" << (model.loaded.load() ? "true" : "false")
+            << ",\"path\":" << json_quote(model.config.path.string())
             << "}";
     }
     out << "]}";

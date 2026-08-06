@@ -150,9 +150,24 @@ package notes.
 ## WebUI
 ![Maintained by contributors](https://img.shields.io/badge/maintained%20by-contributors-brightgreen)
 
-audio.cpp includes a Gradio WebUI for trying local models from the browser, managing downloads, and running common TTS/ASR/audio workflows without writing CLI commands.
+`audiocpp_server` includes an embedded SvelteKit/TypeScript WebUI for running local TTS, cloning, ASR,
+generation, conversion, separation, VAD, diarization, and alignment workflows. The production UI is compiled
+into the server binary, so using it requires neither Python nor separate frontend files:
 
-The WebUI lives in [webui/](webui/). See [webui/README.md](webui/README.md) for setup, launch commands, and model-download notes.
+```bash
+audiocpp_server --ui --backend cuda
+```
+
+Open `http://127.0.0.1:8080`. Starting with `--ui` and no server config enables on-demand model
+load/unload and temporary browser uploads. Existing static server configurations also expose the UI by default;
+add `--ui-management` when that instance should permit model switching.
+
+The native UI also exposes background model download/preparation, long-text split-and-merge synthesis, a
+browser-local saved voice library, microphone recording, and near-live ASR input. Some model preparation jobs invoke
+the repository's Python model manager because those packages require Hugging Face download or checkpoint conversion;
+model inference and the embedded UI remain Python-free. The previous Python/Gradio interface remains available for
+compatibility. See [webui/README.md](webui/README.md) for native and legacy launch commands, model notes, and frontend
+development instructions.
 
 Huge thanks to [@kigner](https://github.com/kigner) for the original [audio.cpp-webui](https://github.com/kigner/audio.cpp-webui), and to [@patrickjchen](https://github.com/patrickjchen) for porting and integrating it into audio.cpp.
 

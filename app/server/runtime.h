@@ -3,6 +3,7 @@
 #include "busy_guard.h"
 #include "config.h"
 #include "http.h"
+#include "model_installer.h"
 
 #include "../streaming/streaming.h"
 
@@ -16,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -23,7 +25,11 @@ namespace minitts::server {
 
 class ServerState final : public IHttpHandler {
 public:
-    ServerState(ServerConfig config, std::filesystem::path request_base);
+    ServerState(
+        ServerConfig config,
+        std::filesystem::path request_base,
+        std::filesystem::path ui_resource_anchor = {});
+    ~ServerState() override;
 
     HttpResponse handle(const HttpRequest & request) override;
 
@@ -47,6 +53,8 @@ private:
         std::unique_ptr<engine::runtime::IVoiceTaskSession> session;
         engine::runtime::IOfflineVoiceTaskSession * offline = nullptr;
         engine::runtime::IStreamingVoiceTaskSession * streaming = nullptr;
+        std::atomic<bool> loaded{false};
+        mutable std::shared_mutex metadata_mutex;
         std::unordered_map<std::string, RuntimeVoicePreset> voice_presets;
         std::optional<RuntimeVoicePreset> default_voice_preset;
         // Serializes runs on this model and bounds how long a caller waits for its
@@ -61,9 +69,23 @@ private:
 
     // Server policy for this model: its own busy_timeout_ms if set, else the
     // top-level config value.
-    int model_busy_timeout_ceiling(const LoadedModel & model) const;
+    engine::runtime::RunMode model_run_mode(const LoadedModel & model) const;
 
     void load_models();
+    std::unique_ptr<LoadedModel> make_model(ServerModelConfig config);
+    std::filesystem::path resolve_ui_model_path(const std::filesystem::path & path) const;
+    HttpResponse handle_model_load(const std::string & body_text);
+    HttpResponse handle_model_unload(const std::string & body_text);
+    HttpResponse handle_path_status(const std::string & body_text) const;
+    HttpResponse handle_ui_upload(const HttpRequest & request);
+    HttpResponse handle_model_install(const std::string & body_text);
+    HttpResponse handle_model_remove(const std::string & body_text);
+    HttpResponse handle_model_install_status(const HttpRequest & request) const;
+    HttpResponse handle_model_package_sizes();
+    HttpResponse handle_models_root_get() const;
+    HttpResponse handle_models_root_set(const std::string & body_text);
+    HttpResponse handle_directory_browser(const std::string & body_text) const;
+    HttpResponse handle_ui_asset() const;
     LoadedModel::RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
     void load_voice_presets(LoadedModel & model) const;
     void ensure_model_loaded_locked(LoadedModel & model);
@@ -132,6 +154,14 @@ private:
     std::filesystem::path request_base_;
     std::vector<std::unique_ptr<LoadedModel>> models_;
     std::unordered_map<std::string, size_t> model_index_;
+    mutable std::mutex models_mutex_;
+    std::filesystem::path upload_root_;
+    std::filesystem::path repository_root_;
+    std::filesystem::path default_models_root_;
+    std::filesystem::path models_root_;
+    mutable std::mutex model_installer_mutex_;
+    std::unique_ptr<ModelInstaller> model_installer_;
+    std::atomic<uint64_t> next_upload_id_{1};
 };
 
 }  // namespace minitts::server

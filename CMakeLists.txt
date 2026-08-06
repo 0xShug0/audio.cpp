@@ -1231,12 +1231,29 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_cli PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+set(AUDIOCPP_UI_DIST "${CMAKE_CURRENT_SOURCE_DIR}/webui/native/dist/index.html")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${AUDIOCPP_UI_DIST}")
+if (EXISTS "${AUDIOCPP_UI_DIST}")
+    file(READ "${AUDIOCPP_UI_DIST}" AUDIOCPP_UI_HEX HEX)
+else()
+    string(HEX "<!doctype html><title>audio.cpp</title><p>Embedded WebUI assets are unavailable.</p>" AUDIOCPP_UI_HEX)
+endif()
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," AUDIOCPP_UI_BYTES "${AUDIOCPP_UI_HEX}")
+string(REPLACE "," ",\n" AUDIOCPP_UI_BYTES "${AUDIOCPP_UI_BYTES}")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/app/server/audiocpp_ui_asset.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/audiocpp_ui_asset.h"
+    @ONLY
+)
+
 add_executable(audiocpp_server
     app/server/main.cpp
     app/server/config.cpp
     app/server/http.cpp
+    app/server/model_installer.cpp
     app/server/multipart.cpp
     app/server/runtime.cpp
+    app/server/ui_assets.cpp
     app/cli/args.cpp
     app/cli/request.cpp
     app/streaming/pcm_source.cpp
@@ -1244,6 +1261,7 @@ add_executable(audiocpp_server
 )
 
 target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
+target_include_directories(audiocpp_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 if (WIN32)
     target_link_libraries(audiocpp_server PRIVATE ws2_32)
 endif()
@@ -2045,6 +2063,18 @@ if (ENGINE_BUILD_TESTS)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(parakeet_parity_dump PRIVATE OpenMP::OpenMP_CXX)
     endif()
+
+    add_executable(server_model_installer_test
+        tests/unittests/test_server_model_installer.cpp
+        app/server/model_installer.cpp
+    )
+    target_include_directories(server_model_installer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+    target_link_libraries(server_model_installer_test PRIVATE Threads::Threads)
+
+    add_test(
+        NAME server_model_installer_test
+        COMMAND server_model_installer_test
+    )
 endif()
 
 if (ENGINE_BUILD_EXAMPLES)
