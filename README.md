@@ -5,6 +5,9 @@
 Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
 
 > [!IMPORTANT]
+> **2026-08-06 - Official UI preview:** the official audio.cpp UI is currently under active testing on the [dev branch](https://github.com/0xShug0/audio.cpp/tree/dev). Please try it, report issues, and share feedback so the workflow can be polished before it becomes the default release experience.
+
+> [!IMPORTANT]
 > **CUDA performance headline:** multiple TTS paths already run **1.8x to up to 8x faster than their Python reference paths** while cutting end-to-end latency by **45%-85%**.
 >
 > **GGUF performance:** all released model families support GGUF loading, and tested Q8 packages can run up to **1.53x faster** while reducing peak VRAM by up to about **37%** on routes such as Higgs Audio, Fish Audio, and Voxtral. See the [GGUF guide](docs/gguf.md) for support status and the [Q8 performance report](docs/reports/gguf_q8_performance.md) for 16-bit vs Q8 measurements.
