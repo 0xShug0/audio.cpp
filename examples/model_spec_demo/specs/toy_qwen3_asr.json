@@ -38,27 +38,55 @@
           "en",
           "zh"
         ],
+        "required": false,
         "default": "auto",
         "description": "Recognition language."
       },
       {
         "name": "return_timestamps",
         "type": "bool",
+        "required": false,
         "default": false,
         "description": "Return token timestamps when supported."
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto",
+        "description": "Audio chunking mode."
       }
     ],
     "session": [
       {
-        "name": "toy_qwen3_asr.lookahead",
+        "name": "lookahead",
         "type": "int",
+        "required": false,
         "default": 3,
-        "description": "Toy decoder lookahead."
+        "description": "Toy decoder lookahead. Public key: toy_qwen3_asr.lookahead."
+      },
+      {
+        "name": "forced_aligner",
+        "type": "path",
+        "required": false,
+        "description": "Optional forced aligner model path. Public key: toy_qwen3_asr.forced_aligner."
+      },
+      {
+        "name": "vad",
+        "type": "path",
+        "required": false,
+        "description": "Optional Silero VAD path. Public key: toy_qwen3_asr.vad."
       }
     ],
     "load": [
       {
-        "name": "toy_qwen3_asr.weight_type",
+        "name": "weight_type",
         "type": "enum",
         "values": [
           "native",
@@ -67,8 +95,9 @@
           "bf16",
           "q8_0"
         ],
+        "required": false,
         "default": "native",
-        "description": "Toy weight storage type."
+        "description": "Toy weight storage type. Public key: toy_qwen3_asr.weight_type."
       }
     ]
   },

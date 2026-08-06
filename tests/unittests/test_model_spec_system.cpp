@@ -91,7 +91,46 @@ std::string schema_v1_spec_text(const std::string & dependencies) {
   "languages": ["en"],
   "runtime": {"tags": ["gguf"]},
   "capabilities": {"tts": ["long_form"]},
-  "options": {"request": [], "session": [], "load": []},
+  "options": {
+    "request": [
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "Return timestamps when supported."
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "values": ["auto", "fixed", "vad", "none"],
+        "required": false,
+        "default": "auto",
+        "description": "Audio chunking mode."
+      },
+      {
+        "name": "vad_path",
+        "type": "path",
+        "required": false,
+        "description": "Optional request-scoped VAD path."
+      }
+    ],
+    "session": [
+      {
+        "name": "peer_model_path",
+        "type": "path",
+        "required": false,
+        "description": "Peer model path."
+      },
+      {
+        "name": "vad_path",
+        "type": "path",
+        "required": false,
+        "description": "Session-scoped VAD path."
+      }
+    ],
+    "load": []
+  },
   "packages": [
     {
       "id": "toy_model_q8",
@@ -343,6 +382,59 @@ void test_legacy_dependencies_schema() {
           }
         ])JSON"),
         "missing required field 'path'");
+    // Dependency options must be declared under options.<scope>.
+    expect_rejects(
+        "undeclared_dependency_option",
+        schema_v1_spec_text(R"JSON([
+          {
+            "kind": "model",
+            "family": "peer_model",
+            "scope": "session",
+            "option": "missing_peer_path",
+            "required": true
+          }
+        ])JSON"),
+        "is not declared in options.session");
+    // required_when option keys must refer to declared options in that scope.
+    expect_rejects(
+        "undeclared_required_when_option",
+        schema_v1_spec_text(R"JSON([
+          {
+            "kind": "model",
+            "family": "peer_model",
+            "scope": "session",
+            "option": "peer_model_path",
+            "required": false,
+            "required_when": [
+              {
+                "scope": "request",
+                "option_key": "unknown_trigger",
+                "equals": true
+              }
+            ]
+          }
+        ])JSON"),
+        "is not declared in options.request");
+    // Session-scoped required_when keys use the public <family>.<name> form.
+    expect_rejects(
+        "required_when_session_local_name",
+        schema_v1_spec_text(R"JSON([
+          {
+            "kind": "model",
+            "family": "peer_model",
+            "scope": "session",
+            "option": "peer_model_path",
+            "required": false,
+            "required_when": [
+              {
+                "scope": "session",
+                "option_key": "peer_model_path",
+                "equals": "/tmp/peer"
+              }
+            ]
+          }
+        ])JSON"),
+        "is not declared in options.session");
 }
 
 void test_typed_schema_renamed_dependencies() {
@@ -363,8 +455,30 @@ void test_typed_schema_renamed_dependencies() {
     "asr": ["word_timestamps"]
   },
   "options": {
-    "request": [],
-    "session": [],
+    "request": [
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "Return word timestamps."
+      },
+      {
+        "name": "audio_chunk_seconds",
+        "type": "float",
+        "required": false,
+        "default": 15,
+        "description": "Audio chunk duration in seconds."
+      }
+    ],
+    "session": [
+      {
+        "name": "aligner_path",
+        "type": "path",
+        "required": false,
+        "description": "Forced aligner model path."
+      }
+    ],
     "load": []
   },
   "packages": [
