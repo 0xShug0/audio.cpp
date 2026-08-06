@@ -83,6 +83,9 @@ void print_help() {
         << "  POST /v1/ui/upload               available with --ui-management\n"
         << "  POST /v1/ui/models/install       background package download/preparation\n"
         << "  POST /v1/ui/models/delete        remove one installed package precision\n"
+        << "  GET  /v1/ui/models-root          current and binary-local default models folders\n"
+        << "  POST /v1/ui/models-root          select a models folder (empty path restores default)\n"
+        << "  POST /v1/ui/browse-directories   list local folders for the native folder picker\n"
         << "  GET  /v1/ui/models/install-status[?id=<package>]\n"
         << "  GET  /v1/ui/models/package-sizes package sizes from metadata-only checks\n"
         << "  GET  /v1/audio/voices?model=<id>\n"
@@ -173,9 +176,7 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("--busy-timeout-ms must be >= 0 (0 disables the guard)");
         }
 
-        const auto ui_resource_anchor = !config_path.has_value()
-            ? executable_directory(argc > 0 ? argv[0] : nullptr)
-            : std::filesystem::path{};
+        const auto ui_resource_anchor = executable_directory(argc > 0 ? argv[0] : nullptr);
         minitts::server::ServerState state(
             config,
             std::filesystem::current_path(),

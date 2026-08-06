@@ -28,6 +28,7 @@ public:
     std::string status(const std::string & package_id = {}) const;
     std::string package_sizes();
     std::string remove(const std::string & package_id);
+    bool has_active_jobs() const;
 
 private:
     struct State;

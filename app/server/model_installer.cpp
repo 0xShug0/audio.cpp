@@ -243,6 +243,17 @@ ModelInstaller::ModelInstaller(
 
 ModelInstaller::~ModelInstaller() = default;
 
+bool ModelInstaller::has_active_jobs() const {
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    for (const auto & [id, job] : state_->jobs) {
+        (void) id;
+        if (job.state == "queued" || job.state == "running") {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string ModelInstaller::start(
     const std::string & package_id,
     const std::string & source_file,

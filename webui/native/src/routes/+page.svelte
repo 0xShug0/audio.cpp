@@ -3,7 +3,9 @@
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
     base64AudioUrl,
+    browseDirectories,
     deleteModelPackage,
+    getModelsRoot,
     health,
     installModelPackage,
     loadModel,
@@ -12,12 +14,14 @@
     models,
     pathStatus,
     runTask,
+    setModelsRoot,
     speech,
     transcription,
     unloadModel,
     uploadWav,
     type ModelInstallJob,
-    type ModelPackageSize
+    type ModelPackageSize,
+    type DirectoryBrowserResponse
   } from '$lib/api';
   import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
@@ -85,11 +89,15 @@
   let liveQueue: Promise<void> = Promise.resolve();
   let liveChunkNumber = 0;
   let installJobs: Record<string, ModelInstallJob> = {};
-  let installSourceDirectory = '';
-  let installSourceFile = '';
-  let installOutputFile = '';
-  let installVariant = '';
-  let installOverwrite = false;
+  let modelsFolder = '';
+  let modelsFolderInput = '';
+  let defaultModelsFolder = '';
+  let modelsFolderIsDefault = true;
+  let applyingModelsFolder = false;
+  let folderBrowserOpen = false;
+  let folderBrowserLoading = false;
+  let folderBrowserError = '';
+  let folderBrowser: DirectoryBrowserResponse | null = null;
   let installPoll: number | null = null;
   let selectedPackagePaths: Record<string, string> = {};
   let packageSizes: Record<string, ModelPackageSize> = {};
@@ -151,6 +159,20 @@
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
     return `${(bytes / 1024 ** index).toFixed(index < 2 ? 0 : 1)} ${units[index]}`;
+  }
+
+  function resolveCatalogPath(path: string) {
+    if (!modelsFolder) return path;
+    const normalized = path.replace(/\\/g, '/');
+    if (normalized === 'models') return modelsFolder;
+    if (!normalized.startsWith('models/')) return path;
+    const relative = normalized.slice('models/'.length);
+    const separator = modelsFolder.includes('\\') ? '\\' : '/';
+    return `${modelsFolder.replace(/[\\/]+$/, '')}${separator}${relative.replace(/\//g, separator)}`;
+  }
+
+  function selectedModelPath(entry: CatalogEntry) {
+    return resolveCatalogPath(selectedPackagePaths[entry.id] || entry.path);
   }
 
   function resolveRequestSeed(value: number) {
@@ -300,7 +322,90 @@
   function rememberPackagePath(entry: CatalogEntry, choice: InstallPackageChoice) {
     selectedPackagePaths = { ...selectedPackagePaths, [entry.id]: choice.path };
     localStorage.setItem('audiocpp.ui.packagePaths', JSON.stringify(selectedPackagePaths));
-    if (entry.id === selectedId) modelPath = choice.path;
+    if (entry.id === selectedId) modelPath = resolveCatalogPath(choice.path);
+  }
+
+  function acceptModelsRoot(root: Awaited<ReturnType<typeof getModelsRoot>>) {
+    modelsFolder = root.models_root;
+    modelsFolderInput = root.models_root;
+    defaultModelsFolder = root.default_models_root;
+    modelsFolderIsDefault = root.is_default;
+    modelPath = selectedModelPath(selected);
+  }
+
+  function clearModelSelection() {
+    selectedId = '';
+    modelPath = '';
+    installed = null;
+    paramSpecs = [];
+    advancedValues = {};
+    advancedJson = '{}';
+    localStorage.removeItem('audiocpp.ui.model');
+    clearOutput();
+  }
+
+  function clearUnavailableModelSelection(ignoreResident = false) {
+    if (!selectedId || (!ignoreResident && isLoaded) || installed !== false) return false;
+    clearModelSelection();
+    return true;
+  }
+
+  async function applyModelsFolder(useDefault = false) {
+    if (!server?.ui_management || applyingModelsFolder) return;
+    applyingModelsFolder = true;
+    warningStatus = '';
+    errorStatus = '';
+    status = useDefault ? 'Restoring the default models folderâ€¦' : 'Changing models folderâ€¦';
+    try {
+      const root = await setModelsRoot(useDefault ? '' : modelsFolderInput.trim());
+      acceptModelsRoot(root);
+      if (root.is_default) localStorage.removeItem('audiocpp.ui.modelsFolder');
+      else localStorage.setItem('audiocpp.ui.modelsFolder', root.models_root);
+      installJobs = {};
+      packageSizes = {};
+      packageSizeState = 'idle';
+      refreshedInstallFinishes = {};
+      if (installPoll !== null) {
+        window.clearInterval(installPoll);
+        installPoll = null;
+      }
+      if (packageSizePoll !== null) {
+        window.clearInterval(packageSizePoll);
+        packageSizePoll = null;
+      }
+      await refreshPackageSizes();
+      await inspectPath();
+      const selectionCleared = clearUnavailableModelSelection();
+      status = selectionCleared
+        ? `Models folder: ${root.models_root}. No installed model is selected.`
+        : `Models folder: ${root.models_root}`;
+      log(status);
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+      errorStatus = status;
+      log(`Models folder change failed: ${status}`);
+    } finally {
+      applyingModelsFolder = false;
+    }
+  }
+
+  async function openFolderBrowser(path = '') {
+    folderBrowserOpen = true;
+    folderBrowserLoading = true;
+    folderBrowserError = '';
+    try {
+      folderBrowser = await browseDirectories(path || modelsFolderInput.trim() || modelsFolder);
+    } catch (error) {
+      folderBrowserError = error instanceof Error ? error.message : String(error);
+    } finally {
+      folderBrowserLoading = false;
+    }
+  }
+
+  function selectBrowsedFolder() {
+    if (!folderBrowser) return;
+    modelsFolderInput = folderBrowser.current;
+    folderBrowserOpen = false;
   }
 
   function resetParams() {
@@ -319,6 +424,10 @@
   }
 
   async function inspectPath() {
+    if (!selectedId || !modelPath.trim()) {
+      installed = null;
+      return;
+    }
     installed = null;
     try {
       installed = (await pathStatus(modelPath)).exists;
@@ -328,11 +437,16 @@
   }
 
   function chooseModel(id: string) {
+    if (!id) {
+      clearModelSelection();
+      status = 'No model selected. Choose an installed model or download one from the Models tab.';
+      return;
+    }
     const next = catalog.find((entry) => entry.id === id);
     if (!next || !entrySelectable(next)) return;
     selectedId = id;
     selected = next;
-    modelPath = selectedPackagePaths[id] || next.path;
+    modelPath = selectedModelPath(next);
     chunkBudget = defaultChunkBudget(next.family);
     localStorage.setItem('audiocpp.ui.model', id);
     resetParams();
@@ -347,6 +461,12 @@
   }
 
   async function doLoad(modeOverride?: string) {
+    if (!selectedId) {
+      status = 'Choose an installed model before loading.';
+      warningStatus = status;
+      errorStatus = '';
+      return;
+    }
     if (!server?.ui_management) {
       status = 'This server was not started with UI management enabled.';
       warningStatus = status;
@@ -382,11 +502,16 @@
   }
 
   async function doUnload() {
+    if (!selectedId) return;
+    const modelName = selected.display_name;
     loadingModel = true;
     try {
       await unloadModel(selected.id);
       await refresh();
-      status = `${selected.display_name} unloaded.`;
+      const selectionCleared = clearUnavailableModelSelection(true);
+      status = selectionCleared
+        ? `${modelName} unloaded. No installed model is selected.`
+        : `${modelName} unloaded.`;
       log(status);
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
@@ -614,6 +739,12 @@
 
   async function run() {
     if (running) return;
+    if (!selectedId) {
+      status = 'Choose an installed model before running a request.';
+      warningStatus = status;
+      errorStatus = '';
+      return;
+    }
     if (!isLoaded && installed === false) {
       status = `${selected.display_name} is not downloaded. Install a model package from the Models tab first.`;
       warningStatus = status;
@@ -747,6 +878,10 @@
   }
 
   function handleShortcut(event: KeyboardEvent) {
+    if (event.key === 'Escape' && folderBrowserOpen) {
+      folderBrowserOpen = false;
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !running) {
       event.preventDefault();
       run();
@@ -829,14 +964,7 @@
       if (installPoll === null) {
         installPoll = window.setInterval(refreshInstallJobs, 1000);
       }
-      const job = await installModelPackage({
-        id: choice.id,
-        source_file: installSourceFile.trim() || undefined,
-        output_file: installOutputFile.trim() || undefined,
-        source_directory: installSourceDirectory.trim() || undefined,
-        variant: installVariant.trim() || undefined,
-        overwrite: installOverwrite
-      });
+      const job = await installModelPackage({ id: choice.id });
       installJobs = {
         ...installJobs,
         [job.id]: { ...job, total_bytes: job.total_bytes || expectedBytes }
@@ -899,11 +1027,15 @@
         else delete nextPaths[entry.id];
         selectedPackagePaths = nextPaths;
         localStorage.setItem('audiocpp.ui.packagePaths', JSON.stringify(selectedPackagePaths));
-        if (entry.id === selectedId) modelPath = replacement?.path || entry.path;
+        if (entry.id === selectedId) modelPath = resolveCatalogPath(replacement?.path || entry.path);
       }
 
       packageSizeState = 'idle';
       await refreshPackageSizes();
+      if (entry.id === selectedId) {
+        await inspectPath();
+        clearUnavailableModelSelection();
+      }
       status = result.message || `${entry.display_name} ${choice.label} deleted.`;
       log(status);
     } catch (error) {
@@ -921,11 +1053,28 @@
     const stored = localStorage.getItem('audiocpp.ui.model');
     if (stored && catalog.some((entry) => entry.id === stored)) selectedId = stored;
     selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
-    modelPath = selectedPackagePaths[selected.id] || selected.path;
     resetParams();
     await refresh();
+    if (server?.ui_management) {
+      try {
+        let root = await getModelsRoot();
+        const storedModelsFolder = localStorage.getItem('audiocpp.ui.modelsFolder');
+        if (storedModelsFolder && storedModelsFolder !== root.models_root) {
+          root = await setModelsRoot(storedModelsFolder);
+        }
+        acceptModelsRoot(root);
+      } catch (error) {
+        status = error instanceof Error ? error.message : String(error);
+        errorStatus = status;
+        log(`Models folder unavailable: ${status}`);
+      }
+    }
+    modelPath = selectedModelPath(selected);
     await refreshPackageSizes();
     await inspectPath();
+    if (clearUnavailableModelSelection()) {
+      status = 'No installed model is selected. Choose a downloaded model or install one from the Models tab.';
+    }
     await refreshVoices();
     await refreshInstallJobs();
   });
@@ -979,13 +1128,13 @@
     <section class="hero">
       <div>
         <p class="eyebrow">LOCAL AUDIO INTELLIGENCE</p>
-        <h1>{taskLabels[selected?.task] || 'Audio studio'}</h1>
+        <h1>{selectedId ? taskLabels[selected?.task] : 'Audio studio'}</h1>
         <p>One native server, one embedded interface, no Python between your browser and the model.</p>
       </div>
       <div class="hero-stat">
         <span>Model</span>
-        <strong>{selected?.display_name}</strong>
-        <small class:ready={isLoaded}>{isLoaded ? 'Resident' : installed === false ? 'Not installed' : 'Available'}</small>
+        <strong>{selectedId ? selected.display_name : 'No model selected'}</strong>
+        <small class:ready={isLoaded}>{selectedId ? (isLoaded ? 'Resident' : installed === false ? 'Not installed' : 'Available') : 'Choose an installed model'}</small>
       </div>
     </section>
 
@@ -994,6 +1143,7 @@
         <label for="model">Model</label>
         <select id="model" bind:value={selectedId} disabled={modelInventoryLoading}
           on:change={(event) => chooseModel(event.currentTarget.value)}>
+          <option value="">No model selected</option>
           {#each activeWorkflowSpec.tasks as task}
             {@const entries = workflowModels.filter((entry) => entry.task === task)}
             {#if entries.length}
@@ -1009,27 +1159,28 @@
         </select>
 
         <label for="path">Model path</label>
-        <input id="path" bind:value={modelPath} on:change={inspectPath} />
+        <input id="path" bind:value={modelPath} on:change={inspectPath} disabled={!selectedId} />
         <div class="path-state">
           <span class:good={installed === true} class:bad={installed === false}>
-            {installed === true ? 'Path found' : installed === false ? 'Path missing' : 'Path not inspected'}
+            {!selectedId ? 'No model selected' : installed === true ? 'Path found' : installed === false ? 'Path missing' : 'Path not inspected'}
           </span>
-          <span>{selected?.min_vram_gb || '?'} GB estimated VRAM</span>
+          <span>{selectedId ? `${selected?.min_vram_gb || '?'} GB estimated VRAM` : 'VRAM —'}</span>
         </div>
 
         <div class="button-row">
-          <button class="primary" disabled={loadingModel || isLoaded || installed === false} on:click={() => doLoad()}>
+          <button class="primary" disabled={!selectedId || loadingModel || isLoaded || installed === false} on:click={() => doLoad()}>
             {loadingModel ? 'Loading…' : isLoaded ? 'Loaded' : 'Load model'}
           </button>
           <button disabled={loadingModel || !isLoaded} on:click={doUnload}>Unload</button>
         </div>
 
-        {#if selected?.input_hint_en || selected?.input_hint}
+        {#if selectedId && (selected?.input_hint_en || selected?.input_hint)}
           <div class="hint">{selected.input_hint_en || selected.input_hint}</div>
         {/if}
       </aside>
 
       <section class="panel controls">
+        {#if selectedId}
         <div class="section-title">
           <div><span>REQUEST</span><h2>Input & controls</h2></div>
           <span class="task-chip">{selected?.task}</span>
@@ -1219,8 +1370,8 @@
         </details>
 
         <div class="runbar">
-          <button class="run" disabled={running || (!isLoaded && installed === false)} on:click={run}
-            title={!isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
+          <button class="run" disabled={!selectedId || running || (!isLoaded && installed === false)} on:click={run}
+            title={!selectedId ? 'Choose an installed model first' : !isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
             <span>{running ? 'Working…' : 'Run'}</span>
             <kbd>Ctrl ↵</kbd>
           </button>
@@ -1229,6 +1380,14 @@
             class:warning={!running && status === warningStatus}
             class:error={!running && status === errorStatus}>{status}</div>
         </div>
+        {:else}
+          <div class="section-title">
+            <div><span>REQUEST</span><h2>No model selected</h2></div>
+          </div>
+          <div class="empty-output">
+            <p>Choose a downloaded model from the Model menu, or install one from the Models tab.</p>
+          </div>
+        {/if}
       </section>
 
       <section class="panel output">
@@ -1255,29 +1414,20 @@
   {:else if tab === 'models'}
     <section class="page-head">
       <p class="eyebrow">MODEL LIBRARY</p><h1>Local packages</h1>
-      <p>Download and prepare packages without leaving the native interface. Normal downloads use model_manager_v2; specialized converter inputs use the deprecated manager until those workflows migrate.</p>
+      <p>Download and manage model packages without leaving the native interface.</p>
     </section>
-    <section class="panel installer-options">
-      <div>
-        <label for="install-source">Preparation source directory <span>optional, for local converter inputs</span></label>
-        <input id="install-source" bind:value={installSourceDirectory} placeholder="Path to an existing checkpoint directory" />
+    <section class="panel models-folder-options">
+      <div class="models-folder-field">
+        <label for="models-folder">Models folder <span>downloads, local detection, and model loading</span></label>
+        <input id="models-folder" bind:value={modelsFolderInput}
+          placeholder={defaultModelsFolder || 'models folder beside audiocpp_server'} />
+        {#if defaultModelsFolder}<small>Default: {defaultModelsFolder}</small>{/if}
       </div>
-      <div>
-        <label for="install-source-file">Source checkpoint <span>optional utility input</span></label>
-        <input id="install-source-file" bind:value={installSourceFile} placeholder="Path to a source checkpoint" />
-      </div>
-      <div>
-        <label for="install-output-file">Converted output <span>optional utility output</span></label>
-        <input id="install-output-file" bind:value={installOutputFile} placeholder="Path to converted output" />
-      </div>
-      <div>
-        <label for="install-variant">Variant <span>optional, e.g. htdemucs</span></label>
-        <input id="install-variant" bind:value={installVariant} />
-      </div>
-      <label class="toggle overwrite-toggle">
-        <input type="checkbox" bind:checked={installOverwrite} />
-        <span></span>Overwrite an existing package
-      </label>
+      <button disabled={applyingModelsFolder} on:click={() => openFolderBrowser()}>Browse</button>
+      <button disabled={applyingModelsFolder || !modelsFolderInput.trim() || modelsFolderInput.trim() === modelsFolder}
+        on:click={() => applyModelsFolder(false)}>{applyingModelsFolder ? 'Applyingâ€¦' : 'Apply'}</button>
+      <button disabled={applyingModelsFolder || modelsFolderIsDefault}
+        on:click={() => applyModelsFolder(true)}>Use default</button>
     </section>
     <section class="model-grid">
       {#each catalog as entry}
@@ -1288,7 +1438,7 @@
           <div class="model-copy">
             <span>{taskLabels[entry.task] || entry.task}</span>
             <h3>{entry.display_name}</h3>
-            <p>{selectedPackagePaths[entry.id] || entry.path}</p>
+            <p>{selectedModelPath(entry)}</p>
           </div>
           <div class="model-actions">
             <small>VRAM ~{entry.min_vram_gb || '?'} GB</small>
@@ -1303,7 +1453,7 @@
                       aria-pressed={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
                       disabled={entryInstallBusy(entry, installJobs) ||
                         (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
-                      title={`${choice.format.toUpperCase()} ${choice.precision}: ${choice.path}`}
+                      title={`${choice.format.toUpperCase()} ${choice.precision}: ${resolveCatalogPath(choice.path)}`}
                       on:click={() => useOrInstallPackage(entry, choice)}>
                       <span>{installButtonLabel(choice, installJobs[choice.id])}</span>
                       {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
@@ -1358,5 +1508,50 @@
     </section>
   {/if}
 </main>
+
+{#if folderBrowserOpen}
+  <div class="folder-browser-backdrop">
+    <div class="panel folder-browser-dialog" role="dialog" aria-modal="true" aria-labelledby="folder-browser-title">
+      <header>
+        <div><span>MODELS FOLDER</span><h2 id="folder-browser-title">Choose a folder</h2></div>
+        <button aria-label="Close folder browser" title="Close" on:click={() => folderBrowserOpen = false}>Close</button>
+      </header>
+      <div class="folder-browser-location">{folderBrowser?.current || 'Loading...'}</div>
+      {#if folderBrowser?.roots.length}
+        <div class="folder-browser-roots">
+          {#each folderBrowser.roots as root}
+            <button on:click={() => openFolderBrowser(root)}>{root}</button>
+          {/each}
+        </div>
+      {/if}
+      <div class="folder-browser-toolbar">
+        <button disabled={!folderBrowser?.parent || folderBrowserLoading}
+          on:click={() => openFolderBrowser(folderBrowser?.parent || '')}>Up one level</button>
+        <button disabled={folderBrowserLoading}
+          on:click={() => openFolderBrowser(folderBrowser?.current || '')}>Refresh</button>
+      </div>
+      {#if folderBrowserError}
+        <div class="folder-browser-error">{folderBrowserError}</div>
+      {:else if folderBrowserLoading}
+        <div class="folder-browser-empty">Loading folders...</div>
+      {:else if folderBrowser?.directories.length}
+        <div class="folder-browser-list">
+          {#each folderBrowser.directories as directory}
+            <button title={directory.path} on:click={() => openFolderBrowser(directory.path)}>
+              <span class="folder-icon">&gt;</span><span>{directory.name}</span>
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <div class="folder-browser-empty">This folder has no subfolders.</div>
+      {/if}
+      <footer>
+        <button on:click={() => folderBrowserOpen = false}>Cancel</button>
+        <button class="primary" disabled={!folderBrowser || folderBrowserLoading}
+          on:click={selectBrowsedFolder}>Select this folder</button>
+      </footer>
+    </div>
+  </div>
+{/if}
 
 <footer><span>audio.cpp native WebUI</span><span>SvelteKit · embedded in audiocpp_server</span></footer>

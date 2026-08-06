@@ -81,6 +81,9 @@ private:
     HttpResponse handle_model_remove(const std::string & body_text);
     HttpResponse handle_model_install_status(const HttpRequest & request) const;
     HttpResponse handle_model_package_sizes();
+    HttpResponse handle_models_root_get() const;
+    HttpResponse handle_models_root_set(const std::string & body_text);
+    HttpResponse handle_directory_browser(const std::string & body_text) const;
     HttpResponse handle_ui_asset() const;
     LoadedModel::RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
     void load_voice_presets(LoadedModel & model) const;
@@ -152,6 +155,10 @@ private:
     std::unordered_map<std::string, size_t> model_index_;
     mutable std::mutex models_mutex_;
     std::filesystem::path upload_root_;
+    std::filesystem::path repository_root_;
+    std::filesystem::path default_models_root_;
+    std::filesystem::path models_root_;
+    mutable std::mutex model_installer_mutex_;
     std::unique_ptr<ModelInstaller> model_installer_;
     std::atomic<uint64_t> next_upload_id_{1};
 };

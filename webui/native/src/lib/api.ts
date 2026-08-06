@@ -65,14 +65,7 @@ export interface ModelInstallJob {
   finished_at_ms: number;
 }
 
-export async function installModelPackage(body: {
-  id: string;
-  source_file?: string;
-  output_file?: string;
-  source_directory?: string;
-  variant?: string;
-  overwrite?: boolean;
-}): Promise<ModelInstallJob> {
+export async function installModelPackage(body: { id: string }): Promise<ModelInstallJob> {
   return jsonRequest('/v1/ui/models/install', {
     method: 'POST',
     body: JSON.stringify(body)
@@ -107,6 +100,37 @@ export interface ModelPackageSizesResponse {
 
 export async function modelPackageSizes(): Promise<ModelPackageSizesResponse> {
   return jsonRequest<ModelPackageSizesResponse>('/v1/ui/models/package-sizes');
+}
+
+export interface ModelsRootResponse {
+  models_root: string;
+  default_models_root: string;
+  is_default: boolean;
+}
+
+export async function getModelsRoot(): Promise<ModelsRootResponse> {
+  return jsonRequest<ModelsRootResponse>('/v1/ui/models-root');
+}
+
+export async function setModelsRoot(path = ''): Promise<ModelsRootResponse> {
+  return jsonRequest<ModelsRootResponse>('/v1/ui/models-root', {
+    method: 'POST',
+    body: JSON.stringify({ path })
+  });
+}
+
+export interface DirectoryBrowserResponse {
+  current: string;
+  parent: string;
+  roots: string[];
+  directories: Array<{ name: string; path: string }>;
+}
+
+export async function browseDirectories(path = ''): Promise<DirectoryBrowserResponse> {
+  return jsonRequest<DirectoryBrowserResponse>('/v1/ui/browse-directories', {
+    method: 'POST',
+    body: JSON.stringify({ path })
+  });
 }
 
 export async function uploadWav(blob: Blob, filename: string, signal?: AbortSignal): Promise<string> {

@@ -707,36 +707,6 @@ std::optional<std::filesystem::path> find_from_roots(
     return std::nullopt;
 }
 
-std::optional<std::filesystem::path> find_model_base(
-    const std::filesystem::path & request_base,
-    const std::filesystem::path & resource_anchor) {
-    std::optional<std::filesystem::path> empty_fallback;
-    for (const auto & seed : {request_base, resource_anchor}) {
-        if (seed.empty()) {
-            continue;
-        }
-        auto cursor = std::filesystem::absolute(seed).lexically_normal();
-        for (;;) {
-            const auto models = cursor / "models";
-            std::error_code ec;
-            if (std::filesystem::is_directory(models, ec)) {
-                if (!std::filesystem::is_empty(models, ec)) {
-                    return cursor;
-                }
-                if (!empty_fallback.has_value()) {
-                    empty_fallback = cursor;
-                }
-            }
-            const auto parent = cursor.parent_path();
-            if (parent.empty() || parent == cursor) {
-                break;
-            }
-            cursor = parent;
-        }
-    }
-    return empty_fallback;
-}
-
 }  // namespace
 
 ServerState::ServerState(
@@ -752,26 +722,31 @@ ServerState::ServerState(
             << " server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA.\n";
     }
     if (config_.ui_management) {
-        const auto repository_root = find_from_roots(
+        repository_root_ = find_from_roots(
             request_base_,
             ui_resource_anchor,
             [](const std::filesystem::path & root) {
                 return std::filesystem::is_regular_file(root / "tools" / "model_manager_v2.py") &&
                     std::filesystem::is_directory(root / "model_specs");
             }).value_or(request_base_);
-        const auto model_base = find_model_base(request_base_, ui_resource_anchor).value_or(repository_root);
-        request_base_ = model_base;
+        const auto binary_directory = ui_resource_anchor.empty()
+            ? request_base_
+            : std::filesystem::absolute(ui_resource_anchor).lexically_normal();
+        default_models_root_ = (binary_directory / "models").lexically_normal();
+        models_root_ = default_models_root_;
+        request_base_ = binary_directory;
+        std::filesystem::create_directories(models_root_);
         std::cerr
-            << "native WebUI model root: " << (request_base_ / "models") << "\n"
-            << "native WebUI package resources: " << repository_root << "\n";
+            << "native WebUI model root: " << models_root_ << "\n"
+            << "native WebUI package resources: " << repository_root_ << "\n";
         upload_root_ = std::filesystem::temp_directory_path() /
             ("audiocpp-ui-" + std::to_string(
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count()));
         std::filesystem::create_directories(upload_root_);
         model_installer_ = std::make_unique<ModelInstaller>(
-            repository_root,
-            request_base_ / "models");
+            repository_root_,
+            models_root_);
     }
     load_models();
 }
@@ -833,6 +808,15 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     }
     else if (request.method == "POST" && request.path == "/v1/ui/upload") {
         response = handle_ui_upload(request);
+    }
+    else if (request.method == "GET" && request.path == "/v1/ui/models-root") {
+        response = handle_models_root_get();
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/models-root") {
+        response = handle_models_root_set(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/browse-directories") {
+        response = handle_directory_browser(request.body);
     }
     else if (request.method == "POST" && request.path == "/v1/ui/models/install") {
         response = handle_model_install(request.body);
@@ -1037,7 +1021,7 @@ HttpResponse ServerState::handle_ui_upload(const HttpRequest & request) {
 }
 
 HttpResponse ServerState::handle_model_install(const std::string & body_text) {
-    if (!config_.ui_management || !model_installer_) {
+    if (!config_.ui_management) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
     const auto body = engine::io::json::parse(body_text);
@@ -1052,6 +1036,10 @@ HttpResponse ServerState::handle_model_install(const std::string & body_text) {
         engine::io::json::optional_string(body, "variant", "");
     const bool overwrite =
         engine::io::json::optional_bool(body, "overwrite", false);
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
     return json_response(model_installer_->start(
         package_id,
         source_file,
@@ -1062,26 +1050,187 @@ HttpResponse ServerState::handle_model_install(const std::string & body_text) {
 }
 
 HttpResponse ServerState::handle_model_remove(const std::string & body_text) {
-    if (!config_.ui_management || !model_installer_) {
+    if (!config_.ui_management) {
         return error_response(403, "UI model removal is disabled", "forbidden");
     }
     const auto body = engine::io::json::parse(body_text);
     const std::string package_id = engine::io::json::require_string(body, "id");
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model removal is disabled", "forbidden");
+    }
     return json_response(model_installer_->remove(package_id));
 }
 
 HttpResponse ServerState::handle_model_install_status(const HttpRequest & request) const {
-    if (!config_.ui_management || !model_installer_) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
     return json_response(model_installer_->status(query_param(request.query, "id")));
 }
 
 HttpResponse ServerState::handle_model_package_sizes() {
-    if (!config_.ui_management || !model_installer_) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
     return json_response(model_installer_->package_sizes());
+}
+
+HttpResponse ServerState::handle_models_root_get() const {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model management is disabled", "forbidden");
+    }
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model management is disabled", "forbidden");
+    }
+    return json_response(
+        "{\"models_root\":" + json_quote(models_root_.string()) +
+        ",\"default_models_root\":" + json_quote(default_models_root_.string()) +
+        ",\"is_default\":" + (models_root_ == default_models_root_ ? "true" : "false") + "}");
+}
+
+HttpResponse ServerState::handle_models_root_set(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model management is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const auto requested_text = engine::io::json::optional_string(body, "path", "");
+    auto requested = requested_text.empty()
+        ? default_models_root_
+        : std::filesystem::path(requested_text);
+    if (requested.is_relative()) {
+        requested = request_base_ / requested;
+    }
+    requested = std::filesystem::absolute(requested).lexically_normal();
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model management is disabled", "forbidden");
+    }
+    if (requested == models_root_) {
+        return json_response(
+            "{\"models_root\":" + json_quote(models_root_.string()) +
+            ",\"default_models_root\":" + json_quote(default_models_root_.string()) +
+            ",\"is_default\":" + (models_root_ == default_models_root_ ? "true" : "false") + "}");
+    }
+    if (model_installer_->has_active_jobs()) {
+        return error_response(
+            409,
+            "cannot change the models folder while a package download is running",
+            "model_install_active");
+    }
+
+    std::error_code error;
+    if (std::filesystem::exists(requested, error) && !std::filesystem::is_directory(requested, error)) {
+        return error_response(400, "models folder path is not a directory: " + requested.string(), "invalid_request_error");
+    }
+    std::filesystem::create_directories(requested, error);
+    if (error) {
+        return error_response(
+            400,
+            "could not create models folder '" + requested.string() + "': " + error.message(),
+            "invalid_request_error");
+    }
+
+    models_root_ = requested;
+    model_installer_ = std::make_unique<ModelInstaller>(repository_root_, models_root_);
+    std::cerr << "native WebUI model root changed to: " << models_root_ << "\n";
+    return json_response(
+        "{\"models_root\":" + json_quote(models_root_.string()) +
+        ",\"default_models_root\":" + json_quote(default_models_root_.string()) +
+        ",\"is_default\":" + (models_root_ == default_models_root_ ? "true" : "false") + "}");
+}
+
+HttpResponse ServerState::handle_directory_browser(const std::string & body_text) const {
+    if (!config_.ui_management) {
+        return error_response(403, "UI directory browsing is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const auto requested_text = engine::io::json::optional_string(body, "path", "");
+
+    std::filesystem::path current;
+    {
+        std::lock_guard<std::mutex> lock(model_installer_mutex_);
+        current = requested_text.empty() ? models_root_ : std::filesystem::path(requested_text);
+    }
+    if (current.is_relative()) {
+        current = request_base_ / current;
+    }
+    current = std::filesystem::absolute(current).lexically_normal();
+
+    std::error_code error;
+    if (!std::filesystem::is_directory(current, error)) {
+        return error_response(
+            400,
+            "folder is not accessible: " + current.string(),
+            "invalid_request_error");
+    }
+
+    std::vector<std::filesystem::path> roots;
+#ifdef _WIN32
+    for (char drive = 'A'; drive <= 'Z'; ++drive) {
+        const auto root = std::filesystem::path(std::string(1, drive) + ":\\");
+        error.clear();
+        if (std::filesystem::is_directory(root, error)) {
+            roots.push_back(root);
+        }
+    }
+#else
+    roots.emplace_back("/");
+#endif
+
+    struct DirectoryEntry {
+        std::string name;
+        std::filesystem::path path;
+    };
+    std::vector<DirectoryEntry> directories;
+    error.clear();
+    std::filesystem::directory_iterator iterator(
+        current,
+        std::filesystem::directory_options::skip_permission_denied,
+        error);
+    const std::filesystem::directory_iterator end;
+    while (!error && iterator != end) {
+        std::error_code entry_error;
+        if (iterator->is_directory(entry_error)) {
+            directories.push_back(DirectoryEntry{
+                iterator->path().filename().string(),
+                iterator->path().lexically_normal(),
+            });
+        }
+        iterator.increment(error);
+    }
+    std::sort(directories.begin(), directories.end(), [](const auto & left, const auto & right) {
+        return left.name < right.name;
+    });
+
+    auto parent = current.parent_path();
+    if (parent == current) {
+        parent.clear();
+    }
+    std::string response =
+        "{\"current\":" + json_quote(current.string()) +
+        ",\"parent\":" + json_quote(parent.string()) +
+        ",\"roots\":[";
+    for (size_t index = 0; index < roots.size(); ++index) {
+        if (index > 0) response += ",";
+        response += json_quote(roots[index].string());
+    }
+    response += "],\"directories\":[";
+    for (size_t index = 0; index < directories.size(); ++index) {
+        if (index > 0) response += ",";
+        response += "{\"name\":" + json_quote(directories[index].name) +
+            ",\"path\":" + json_quote(directories[index].path.string()) + "}";
+    }
+    return json_response(response + "]}");
 }
 
 HttpResponse ServerState::handle_ui_asset() const {

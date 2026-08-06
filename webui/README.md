@@ -21,10 +21,13 @@ Build `audiocpp_server` normally, then start the native WebUI host:
 ```
 
 Open **http://127.0.0.1:8080**. With no `--config`, `--ui` enables on-demand model load/unload and
-temporary audio uploads automatically. The standalone UI host searches upward from both the working directory
-and executable location for the nearest `models/` directory and for the package resources (`tools/` plus
-`model_specs/`). Consequently, a development binary can be started directly from `build/.../bin`, while a portable
-bundle continues to use the `models/`, `tools/`, and `model_specs/` directories beside the executable.
+temporary audio uploads automatically. By default, model packages are stored in the `models/` directory beside
+`audiocpp_server`. The Models page has a **Models folder** setting and native **Browse** dialog when another
+location is preferred; **Apply** switches downloads, installed-package detection, deletion, and Studio model paths together, while **Use default**
+returns to the binary-local directory. The selected custom location is remembered in that browser.
+
+The standalone UI host still searches upward from the working directory and executable location for package
+resources (`tools/` plus `model_specs/`), so a development binary can be started directly from `build/.../bin`.
 
 The same UI can front an existing server config:
 
