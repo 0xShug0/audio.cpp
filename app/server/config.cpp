@@ -240,6 +240,12 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
     if (const auto * value = root.find("model_spec_override")) {
         config.model_spec_override = resolve_path(base, value->as_string());
     }
+    if (const auto * value = root.find("voice_dir")) {
+        if (!value->is_string()) {
+            throw std::runtime_error("server voice_dir must be a string");
+        }
+        config.voice_dir = resolve_path(base, value->as_string());
+    }
     if (config.port <= 0 || config.port > 65535) {
         throw std::runtime_error("server port must be in 1..65535");
     }
