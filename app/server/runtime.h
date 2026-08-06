@@ -73,6 +73,7 @@ private:
 
     void load_models();
     std::unique_ptr<LoadedModel> make_model(ServerModelConfig config);
+    std::filesystem::path resolve_ui_model_path(const std::filesystem::path & path) const;
     HttpResponse handle_model_load(const std::string & body_text);
     HttpResponse handle_model_unload(const std::string & body_text);
     HttpResponse handle_path_status(const std::string & body_text) const;

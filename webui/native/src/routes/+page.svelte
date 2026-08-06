@@ -118,11 +118,12 @@
 
   type WorkflowId = typeof workflowTabs[number]['id'];
 
+  let activeWorkflow: WorkflowId = 'tts';
+  let workflowSelections: Partial<Record<WorkflowId, string>> = {};
+
   class StatusWarning extends Error {}
 
   $: selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
-  $: activeWorkflow = (workflowTabs.find((workflow) =>
-    workflow.tasks.some((task) => task === selected?.task))?.id || 'tts') as WorkflowId;
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
   $: workflowModels = catalog.filter((entry) =>
     activeWorkflowSpec.tasks.some((task) => task === entry.task));
@@ -173,6 +174,54 @@
 
   function selectedModelPath(entry: CatalogEntry) {
     return resolveCatalogPath(selectedPackagePaths[entry.id] || entry.path);
+  }
+
+  function comparablePath(path: string) {
+    return path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+  }
+
+  function residentModel(entry: CatalogEntry, models = loadedModels) {
+    return models.find((model) => model.id === entry.id && model.loaded);
+  }
+
+  function packageIsResident(entry: CatalogEntry, choice: InstallPackageChoice, models = loadedModels) {
+    const resident = residentModel(entry, models);
+    const selectedChoicePath = selectedPackagePaths[entry.id] || entry.path;
+    const expectedPath = entry.id === selectedId && choice.path === selectedChoicePath
+      ? modelPath
+      : resolveCatalogPath(choice.path);
+    return Boolean(resident && comparablePath(resident.path) === comparablePath(expectedPath));
+  }
+
+  function packageIsAvailable(
+    entry: CatalogEntry,
+    choice: InstallPackageChoice,
+    models = loadedModels,
+    sizes = packageSizes
+  ) {
+    return packageIsResident(entry, choice, models) || sizes[choice.id]?.installed === true;
+  }
+
+  function studioPackageSlots(entry: CatalogEntry) {
+    const choices = entry.install_packages || [];
+    return [
+      {
+        key: 'q8',
+        label: 'GGUF Q8',
+        choice: choices.find((choice) => choice.format === 'gguf' && ['q8', 'q8_0'].includes(choice.precision))
+      },
+      {
+        key: 'fp16',
+        label: 'GGUF FP16',
+        choice: choices.find((choice) => choice.format === 'gguf' &&
+          ['f16', 'fp16', 'bf16'].includes(choice.precision))
+      },
+      {
+        key: 'safetensors',
+        label: 'Safetensors',
+        choice: choices.find((choice) => choice.format === 'safetensors')
+      }
+    ];
   }
 
   function resolveRequestSeed(value: number) {
@@ -262,6 +311,10 @@
 
   function entrySelectable(entry: CatalogEntry) {
     return selectableModelIds.has(entry.id);
+  }
+
+  function workflowForTask(task: string | undefined): WorkflowId {
+    return (workflowTabs.find((workflow) => workflow.tasks.some((candidate) => candidate === task))?.id || 'tts') as WorkflowId;
   }
 
   function installButtonLabel(
@@ -446,6 +499,8 @@
     if (!next || !entrySelectable(next)) return;
     selectedId = id;
     selected = next;
+    activeWorkflow = workflowForTask(next.task);
+    workflowSelections = { ...workflowSelections, [activeWorkflow]: id };
     modelPath = selectedModelPath(next);
     chunkBudget = defaultChunkBudget(next.family);
     localStorage.setItem('audiocpp.ui.model', id);
@@ -455,9 +510,24 @@
 
   function chooseWorkflow(id: WorkflowId) {
     const workflow = workflowTabs.find((entry) => entry.id === id);
-    if (!workflow || workflow.tasks.some((task) => task === selected?.task)) return;
-    const next = catalog.find((entry) => workflow.tasks.some((task) => task === entry.task));
-    if (next) chooseModel(next.id);
+    if (!workflow) return;
+    activeWorkflow = id;
+    if (selectedId && workflow.tasks.some((task) => task === selected?.task)) return;
+
+    const rememberedId = workflowSelections[id];
+    const remembered = rememberedId
+      ? catalog.find((entry) => entry.id === rememberedId &&
+          workflow.tasks.some((task) => task === entry.task) && entrySelectable(entry))
+      : undefined;
+    const next = remembered || catalog.find((entry) =>
+      workflow.tasks.some((task) => task === entry.task) && entrySelectable(entry));
+    if (next) {
+      chooseModel(next.id);
+      return;
+    }
+
+    clearModelSelection();
+    status = `No installed models are available for ${workflow.label}. Install one from the Models tab.`;
   }
 
   async function doLoad(modeOverride?: string) {
@@ -520,9 +590,34 @@
     }
   }
 
+  async function toggleStudioPackage(choice: InstallPackageChoice) {
+    if (loadingModel || !packageIsAvailable(selected, choice)) return;
+    if (packageIsResident(selected, choice)) {
+      await doUnload();
+      return;
+    }
+
+    rememberPackagePath(selected, choice);
+    await inspectPath();
+    if (installed !== true) {
+      status = `${selected.display_name} ${choice.label} is not available at the expected path.`;
+      errorStatus = status;
+      return;
+    }
+    await doLoad();
+  }
+
+  async function toggleSingleModel() {
+    if (loadingModel || !selectedId || installed === false) return;
+    if (isLoaded) await doUnload();
+    else await doLoad();
+  }
+
   async function stagedPath(file: File | null): Promise<string | undefined> {
     if (!file) return undefined;
-    const targetSampleRate = ['asr', 'vad', 'diar', 'align'].includes(selected.task) ? 16000 : undefined;
+    const targetSampleRate = selected.task === 'sep'
+      ? 44100
+      : ['asr', 'vad', 'diar', 'align'].includes(selected.task) ? 16000 : undefined;
     const wav = await browserDecodeToWav(file, targetSampleRate);
     return uploadWav(wav, file.name.replace(/\.[^.]+$/, '') + '.wav', aborter?.signal);
   }
@@ -825,15 +920,18 @@
         outputJson = JSON.stringify(result, null, 2);
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
-        const request: Record<string, unknown> = {
-          text,
-          language,
-          lyrics,
-          duration_seconds: duration,
-          seed: resolvedSeed,
-          max_tokens: maxTokens,
-          options
-        };
+        const request: Record<string, unknown> = { options };
+        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim()) request.text = text;
+        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim()) request.language = language;
+        if (selected.task === 'gen') {
+          if (lyrics.trim()) request.lyrics = lyrics;
+          request.duration_seconds = duration;
+          request.seed = resolvedSeed;
+          request.max_tokens = maxTokens;
+        } else if (selected.task === 's2s') {
+          request.seed = resolvedSeed;
+          request.max_tokens = maxTokens;
+        }
         if (audio) request.audio = audio;
         if (voiceRef) request.voice_ref = voiceRef;
         if (referenceText.trim()) request.reference_text = referenceText;
@@ -1053,6 +1151,8 @@
     const stored = localStorage.getItem('audiocpp.ui.model');
     if (stored && catalog.some((entry) => entry.id === stored)) selectedId = stored;
     selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
+    activeWorkflow = workflowForTask(selected.task);
+    if (selectedId) workflowSelections = { ...workflowSelections, [activeWorkflow]: selectedId };
     resetParams();
     await refresh();
     if (server?.ui_management) {
@@ -1158,8 +1258,6 @@
           {/each}
         </select>
 
-        <label for="path">Model path</label>
-        <input id="path" bind:value={modelPath} on:change={inspectPath} disabled={!selectedId} />
         <div class="path-state">
           <span class:good={installed === true} class:bad={installed === false}>
             {!selectedId ? 'No model selected' : installed === true ? 'Path found' : installed === false ? 'Path missing' : 'Path not inspected'}
@@ -1167,12 +1265,29 @@
           <span>{selectedId ? `${selected?.min_vram_gb || '?'} GB estimated VRAM` : 'VRAM —'}</span>
         </div>
 
-        <div class="button-row">
-          <button class="primary" disabled={!selectedId || loadingModel || isLoaded || installed === false} on:click={() => doLoad()}>
-            {loadingModel ? 'Loading…' : isLoaded ? 'Loaded' : 'Load model'}
+        {#if selectedId && (selected.install_packages || []).length}
+          <div class="studio-package-buttons" aria-label="Model format">
+            {#each studioPackageSlots(selected) as slot}
+              {@const choice = slot.choice}
+              {@const available = Boolean(choice && packageIsAvailable(selected, choice, loadedModels, packageSizes))}
+              {@const resident = Boolean(choice && packageIsResident(selected, choice, loadedModels))}
+              <button class:resident class:selected-package={Boolean(choice &&
+                  choice.path === (selectedPackagePaths[selected.id] || selected.path))}
+                disabled={loadingModel || !available}
+                title={resident ? `Unload ${choice?.label}` : available ? `Load ${choice?.label}` :
+                  `${choice?.label || slot.label} is not downloaded`}
+                on:click={() => choice && toggleStudioPackage(choice)}>
+                {choice?.label || slot.label}
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <button class="single-model-toggle" class:resident={isLoaded}
+            disabled={!selectedId || loadingModel || installed === false}
+            title={isLoaded ? 'Unload model' : 'Load model'} on:click={toggleSingleModel}>
+            {loadingModel ? 'Working…' : isLoaded ? 'Bundled · loaded' : 'Load model'}
           </button>
-          <button disabled={loadingModel || !isLoaded} on:click={doUnload}>Unload</button>
-        </div>
+        {/if}
 
         {#if selectedId && (selected?.input_hint_en || selected?.input_hint)}
           <div class="hint">{selected.input_hint_en || selected.input_hint}</div>
@@ -1223,18 +1338,22 @@
         {/if}
 
         <div class="field-grid">
-          <div>
-            <label for="language">Language <span>blank = auto</span></label>
-            <input id="language" bind:value={language} placeholder="auto" />
-          </div>
-          <div>
-            <label for="seed">Seed <span>-1 = random</span></label>
-            <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
-          </div>
-          <div>
-            <label for="tokens">Maximum tokens</label>
-            <input id="tokens" type="number" min="1" bind:value={maxTokens} />
-          </div>
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task)}
+            <div>
+              <label for="language">Language <span>blank = auto</span></label>
+              <input id="language" bind:value={language} placeholder="auto" />
+            </div>
+          {/if}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task)}
+            <div>
+              <label for="seed">Seed <span>-1 = random</span></label>
+              <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
+            </div>
+            <div>
+              <label for="tokens">Maximum tokens</label>
+              <input id="tokens" type="number" min="1" bind:value={maxTokens} />
+            </div>
+          {/if}
           {#if selected.task === 'gen'}
             <div>
               <label for="duration">Duration seconds</label>
@@ -1442,7 +1561,6 @@
           </div>
           <div class="model-actions">
             <small>VRAM ~{entry.min_vram_gb || '?'} GB</small>
-            <button class="model-open" on:click={() => { chooseModel(entry.id); tab = 'studio'; }}>Open</button>
             {#if packageChoices.length}
               <div class="package-buttons">
                 {#each packageChoices as choice}

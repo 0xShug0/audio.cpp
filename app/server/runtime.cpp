@@ -893,6 +893,7 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
     }
     const auto body = engine::io::json::parse(body_text);
     auto requested = model_config_from_json(body, request_base_, false);
+    requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
 
     LoadedModel * existing = nullptr;
     {
@@ -949,6 +950,20 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
     return json_response("{\"id\":" + json_quote(id) + ",\"loaded\":true,\"reconfigured\":false}");
 }
 
+std::filesystem::path ServerState::resolve_ui_model_path(const std::filesystem::path & path) const {
+    if (path.is_absolute()) {
+        return path;
+    }
+
+    const auto relative = path.lexically_normal();
+    const auto generic = relative.generic_string();
+    if (!repository_root_.empty() &&
+        (generic == "assets/framework" || generic.rfind("assets/framework/", 0) == 0)) {
+        return (repository_root_ / relative).lexically_normal();
+    }
+    return (request_base_ / relative).lexically_normal();
+}
+
 HttpResponse ServerState::handle_model_unload(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "dynamic model management is disabled", "forbidden");
@@ -978,7 +993,7 @@ HttpResponse ServerState::handle_path_status(const std::string & body_text) cons
         return error_response(403, "UI path inspection is disabled", "forbidden");
     }
     const auto body = engine::io::json::parse(body_text);
-    const auto path = resolve_path(request_base_, engine::io::json::require_string(body, "path"));
+    const auto path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
     std::error_code ec;
     const bool exists = std::filesystem::exists(path, ec);
     const bool directory = exists && std::filesystem::is_directory(path, ec);
