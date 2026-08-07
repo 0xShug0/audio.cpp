@@ -341,6 +341,39 @@ void validate_option(
     (void) require_spec_string(require_spec_field(value, "description", path), std::string(path) + ".description");
 }
 
+struct DeclaredOptions {
+    // Local option names keyed by scope (dependencies[].option looks here).
+    std::unordered_map<std::string, std::unordered_set<std::string>> local_by_scope;
+    // Public option keys keyed by scope (required_when.option_key looks here).
+    std::unordered_map<std::string, std::unordered_set<std::string>> public_by_scope;
+};
+
+DeclaredOptions collect_declared_options(const json::Value & value, const std::string & family, std::string_view path) {
+    DeclaredOptions declared;
+    require_spec_object(value, path);
+    for (const std::string scope : {"request", "session", "load"}) {
+        const auto child_path = std::string(path) + "." + scope;
+        const auto & rows = require_spec_array(require_spec_field(value, scope, path), child_path);
+        auto & locals = declared.local_by_scope[scope];
+        auto & publics = declared.public_by_scope[scope];
+        for (size_t index = 0; index < rows.size(); ++index) {
+            const auto & row = rows[index];
+            require_spec_object(row, child_path + "[" + std::to_string(index) + "]");
+            const auto name = require_spec_string(
+                require_spec_field(row, "name", child_path + "[" + std::to_string(index) + "]"),
+                child_path + "[" + std::to_string(index) + "].name");
+            if (scope == "request") {
+                locals.insert(name);
+                publics.insert(name);
+            } else {
+                locals.insert(name);
+                publics.insert(family + "." + name);
+            }
+        }
+    }
+    return declared;
+}
+
 void validate_options(const json::Value & value, const std::string & family, std::string_view path) {
     require_spec_object(value, path);
     for (const std::string scope : {"request", "session", "load"}) {
@@ -538,7 +571,11 @@ std::unordered_set<std::string> validate_packages(
     return package_ids;
 }
 
-void validate_dependencies(const json::Value & value, const std::string & family, std::string_view path) {
+void validate_dependencies(
+    const json::Value & value,
+    const std::string & family,
+    const DeclaredOptions & declared,
+    std::string_view path) {
     const auto & dependencies = require_spec_array(value, path);
     for (size_t index = 0; index < dependencies.size(); ++index) {
         const auto item_path = std::string(path) + "[" + std::to_string(index) + "]";
@@ -554,6 +591,11 @@ void validate_dependencies(const json::Value & value, const std::string & family
             fail(item_path + ".option", "dependency option must be local; the public key is derived as " + family + ".<option>");
         }
         validate_request_option_name(family + "." + option, family, item_path + ".option");
+        const auto local_it = declared.local_by_scope.find(scope);
+        if (local_it == declared.local_by_scope.end() || local_it->second.find(option) == local_it->second.end()) {
+            fail(item_path + ".option",
+                 "dependency option '" + option + "' is not declared in options." + scope);
+        }
         const auto required = require_spec_bool(require_spec_field(dependency, "required", item_path), item_path + ".required");
         if (dependency.find("required_for") != nullptr) {
             fail(item_path + ".required_for", "use typed required_when conditions");
@@ -582,6 +624,13 @@ void validate_dependencies(const json::Value & value, const std::string & family
                     require_spec_field(condition, "option_key", condition_path),
                     condition_path + ".option_key");
                 validate_request_option_name(option_key, family, condition_path + ".option_key");
+                const auto public_it = declared.public_by_scope.find(condition_scope);
+                if (public_it == declared.public_by_scope.end() ||
+                    public_it->second.find(option_key) == public_it->second.end()) {
+                    fail(condition_path + ".option_key",
+                         "required_when option_key '" + option_key +
+                             "' is not declared in options." + condition_scope);
+                }
                 const auto & equals = require_spec_field(condition, "equals", condition_path);
                 if (!equals.is_bool() && !equals.is_number() && !equals.is_string()) {
                     fail(condition_path + ".equals", "expected bool, number, or string");
@@ -635,7 +684,10 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
         require_spec_field(spec, "languages", source_name), nullptr, std::string(source_name) + ".languages", "language");
     validate_runtime(require_spec_field(spec, "runtime", source_name), std::string(source_name) + ".runtime");
     validate_capabilities(require_spec_field(spec, "capabilities", source_name), task_ids, std::string(source_name) + ".capabilities");
-    validate_options(require_spec_field(spec, "options", source_name), family, std::string(source_name) + ".options");
+    const auto & options_field = require_spec_field(spec, "options", source_name);
+    validate_options(options_field, family, std::string(source_name) + ".options");
+    const auto declared_options =
+        collect_declared_options(options_field, family, std::string(source_name) + ".options");
 
     const bool has_default_download =
         has_spec_field(spec, "package_defaults") && has_spec_field(*spec.find("package_defaults"), "download");
@@ -646,7 +698,11 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
     const auto packages_path = std::string(source_name) + ".packages";
     const auto & packages_field = require_spec_field(spec, "packages", source_name);
     const auto package_ids = validate_packages(packages_field, packages_path, has_default_download);
-    validate_dependencies(require_spec_field(spec, "dependencies", source_name), family, std::string(source_name) + ".dependencies");
+    validate_dependencies(
+        require_spec_field(spec, "dependencies", source_name),
+        family,
+        declared_options,
+        std::string(source_name) + ".dependencies");
     validate_ui(require_spec_field(spec, "ui", source_name), package_ids, std::string(source_name) + ".ui");
 
     const auto sources_path = std::string(source_name) + ".sources";
