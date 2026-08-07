@@ -1456,7 +1456,7 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
     add_option_from_json(request.options, body, "guidance_scale", "guidance_scale");
     add_option_from_json(request.options, body, "num_inference_steps", "num_inference_steps");
     if (const auto * value = body.find("instructions")) {
-        request.options["instruct"] = value->as_string();
+        request.options["instruction"] = value->as_string();
     }
 
     bool voice_field_is_preset = false;

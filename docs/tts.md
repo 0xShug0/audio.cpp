@@ -548,7 +548,7 @@ audiocpp_cli --task tts --family index_tts2 --model /path/to/IndexTTS-2 --backen
 
 ## Irodori-TTS
 
-Irodori-TTS is Japanese TTS under `--family irodori_tts`. v4 Small is the preferred GGUF-first package and supports no-reference speech, reference-conditioned speech, and caption-based voice design in one checkpoint. The older 500M v3 and 600M v3 VoiceDesign packages remain supported for existing users. See [Irodori-TTS](models/irodori_tts.md) for v3/v4 differences, GGUF variants, options, and compatibility aliases.
+Irodori-TTS is Japanese TTS under `--family irodori_tts`. v4 Small is the preferred GGUF-first package and supports no-reference speech, reference-conditioned speech, and instruction-based voice design in one checkpoint. The older 500M v3 and 600M v3 VoiceDesign packages remain supported for existing users. See [Irodori-TTS](models/irodori_tts.md) for v3/v4 differences, GGUF variants, options, and compatibility aliases.
 
 ## OuteTTS
 
