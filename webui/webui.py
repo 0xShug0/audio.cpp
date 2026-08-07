@@ -2128,7 +2128,7 @@ def _write_temp_config(entry):
         if entry.get(key) is not None:
             model[key] = entry[key]
     cfg = {"host": HOST, "port": PORT, "backend": SERVER_BACKEND, "device": DEVICE,
-           "threads": THREADS, "models": [model]}
+           "threads": THREADS, "voice_dir": VOICE_DIR, "models": [model]}
     fd, path = tempfile.mkstemp(prefix="audiocpp_webui_cfg_", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(cfg, f)
@@ -2438,6 +2438,15 @@ curl {SERVER}/v1/audio/speech -H "Content-Type: application/json" -o out.wav \\
   -d '{{"model":"qwen3-tts","input":"Hello from audio.cpp."}}'
 ```
 
+Built-in voices from this WebUI's voice folder can be cloned by name: pass the voice
+basename as `"voice"`, e.g. `"voice": "demo_01_man"` loads `voice/demo_01_man.wav` and its transcript
+from `voice/prompt_text` automatically.
+
+```bash
+curl {SERVER}/v1/audio/speech -H "Content-Type: application/json" -o out.wav \\
+  -d '{{"model":"qwen3-tts","input":"Hello from audio.cpp.","voice":"jenny"}}'
+```
+
 The server stays running while the WebUI command window is open.
 """
     content = f"""
@@ -2458,6 +2467,9 @@ curl {SERVER}/v1/audio/speech -H "Content-Type: application/json" -o out.wav \\
 - **ASR 请求示例**：`-d '{{"model": "qwen3-asr", "audio": "D:/audio/in.wav"}}'`；
   可选 `"language"`（强制语种，如 `"Chinese"`）和 `"context"`（人名/术语偏置提示），仅 qwen3-asr 生效。
   注意 `voice_ref` / `audio` 填的都是 **server 所在机器上的文件路径**（不是浏览器上传）。
+- **按名字克隆内置音色**：本 WebUI voice 文件夹里的内置音色可以只填 `"voice": "<名字>"` 克隆，
+  例如 `"voice": "jenny"` 会自动加载 `voice/jenny.wav` 并从 `voice/prompt_text` 取参考文本：
+  `-d '{{"model": "qwen3-tts", "input": "你好，audio.cpp。", "voice": "jenny"}}'`。
 - **音乐生成（gen 模型）**：走通用路由 `POST {SERVER}/v1/tasks/run`，body 形如
   `{{"model": "ace-step", "request": {{"text": "提示词", "lyrics": "歌词", "duration_seconds": 30,
   "options": {{"tags": "pop,bright"}}}}}}`，响应 JSON 的 `audio` 字段是 base64 WAV。

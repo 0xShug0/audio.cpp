@@ -59,6 +59,48 @@ std::filesystem::path resolve_path(const std::filesystem::path & base, const std
     return path.is_absolute() ? path : base / path;
 }
 
+// Looks up `<voice_name>` in `<voice_dir>/prompt_text`, a mapping file with one
+// `<basename>|<transcript>` line per built-in voice (same format the webui uses).
+std::optional<std::string> load_voice_library_text(
+    const std::filesystem::path & voice_dir, const std::string & voice_name) {
+    std::ifstream f(voice_dir / "prompt_text");
+    std::string line;
+    while (std::getline(f, line)) {
+        const auto sep = line.find('|');
+        if (sep == std::string::npos) continue;
+        std::string name = line.substr(0, sep);
+        // trim trailing whitespace from name
+        while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) {
+            name.pop_back();
+        }
+        if (name == voice_name) {
+            return line.substr(sep + 1);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> resolve_voice_library_wav(
+    const std::filesystem::path & voice_dir,
+    const std::string & voice_name) {
+    const std::filesystem::path name_path(voice_name);
+    if (voice_name.empty() ||
+        name_path.has_root_name() ||
+        name_path.has_root_directory() ||
+        name_path.has_parent_path() ||
+        name_path.filename().string() != voice_name ||
+        voice_name == "." ||
+        voice_name == "..") {
+        return std::nullopt;
+    }
+    const auto wav = voice_dir / (voice_name + ".wav");
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(wav, ec)) {
+        return std::nullopt;
+    }
+    return wav;
+}
+
 std::unordered_map<std::string, std::string> options_from_object(const Value * value);
 
 std::string safe_upload_name(std::string value) {
@@ -1439,12 +1481,35 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
             request.options["reference_text"] = *preset->reference_text;
         }
     }
+    const bool has_explicit_voice_ref = body.find("voice_ref") != nullptr;
     if (const auto * value = body.find("voice"); value != nullptr && !voice_field_is_preset) {
-        if (!voice.speaker.has_value()) {
-            voice.speaker = engine::runtime::VoiceReference{};
+        // Voice library: "voice" may name a wav in the configured voice_dir. When it
+        // does, that audio becomes the cloning reference and the transcript from
+        // prompt_text is injected unless the request already sets reference_text.
+        bool voice_library_resolved = false;
+        if (config_.voice_dir.has_value() && !has_explicit_voice_ref) {
+            const std::string voice_name = value->as_string();
+            if (const auto wav = resolve_voice_library_wav(*config_.voice_dir, voice_name)) {
+                voice.speaker = engine::runtime::VoiceReference{};
+                voice.speaker->audio = minitts::cli::read_audio_buffer(*wav);
+                has_voice = true;
+                voice_library_resolved = true;
+                if (request.options.find("reference_text") == request.options.end()) {
+                    auto text = load_voice_library_text(*config_.voice_dir, voice_name);
+                    if (text.has_value()) {
+                        request.options["reference_text"] = *text;
+                    }
+                }
+            }
         }
-        voice.speaker->cached_voice_id = value->as_string();
-        has_voice = true;
+        // Names that do not resolve to a wav keep the cached_voice_id behavior.
+        if (!voice_library_resolved) {
+            if (!voice.speaker.has_value()) {
+                voice.speaker = engine::runtime::VoiceReference{};
+            }
+            voice.speaker->cached_voice_id = value->as_string();
+            has_voice = true;
+        }
     }
     if (const auto * value = body.find("voice_ref")) {
         if (!voice.speaker.has_value()) {
@@ -2052,6 +2117,16 @@ HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
         if (std::filesystem::is_directory(embeddings_dir, ec)) {
             for (const auto & entry : std::filesystem::directory_iterator(embeddings_dir, ec)) {
                 if (entry.is_regular_file() && entry.path().extension() == ".safetensors") {
+                    voices.push_back(entry.path().stem().string());
+                }
+            }
+        }
+    }
+    if (config_.voice_dir.has_value()) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(*config_.voice_dir, ec)) {
+            for (const auto & entry : std::filesystem::directory_iterator(*config_.voice_dir, ec)) {
+                if (entry.is_regular_file() && entry.path().extension() == ".wav") {
                     voices.push_back(entry.path().stem().string());
                 }
             }

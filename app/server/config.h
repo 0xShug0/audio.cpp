@@ -87,6 +87,10 @@ struct ServerConfig {
     // in LiveIngestLimits; a model entry may override any subset of them.
     LiveIngestLimits live_ingest;
     std::optional<std::filesystem::path> model_spec_override;
+    // Voice library shared across all TTS models: *.wav files plus a `prompt_text`
+    // mapping file (<basename>|<transcript>). A request `voice` name that is not a
+    // model preset resolves to <voice_dir>/<name>.wav as the cloning reference.
+    std::optional<std::filesystem::path> voice_dir;
     std::vector<ServerModelConfig> models;
 };
 
