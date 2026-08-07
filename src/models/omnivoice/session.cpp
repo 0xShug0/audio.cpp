@@ -278,7 +278,9 @@ void OmniVoiceSession::prepare(const runtime::SessionPreparationRequest & reques
     if (const auto reference_text = request_option(request.options, "reference_text"); reference_text.has_value()) {
         session_defaults_.reference_text = std::move(reference_text);
     }
-    if (const auto instruct = request_option(request.options, "instruct"); instruct.has_value()) {
+    if (const auto instruct = request_option(request.options, "instruction"); instruct.has_value()) {
+        session_defaults_.instruct = std::move(instruct);
+    } else if (const auto instruct = request_option(request.options, "instruct"); instruct.has_value()) {
         session_defaults_.instruct = std::move(instruct);
     } else if (request.voice.has_value() && request.voice->style.has_value()) {
         const auto it = request.voice->style->tags.find("instruct");
@@ -645,6 +647,9 @@ std::optional<std::string> OmniVoiceSession::resolve_reference_text(const runtim
 }
 
 std::optional<std::string> OmniVoiceSession::resolve_instruct(const runtime::TaskRequest & request) const {
+    if (const auto value = request_option(request.options, "instruction"); value.has_value()) {
+        return value;
+    }
     if (const auto value = request_option(request.options, "instruct"); value.has_value()) {
         return value;
     }

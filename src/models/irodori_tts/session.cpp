@@ -96,6 +96,7 @@ std::unordered_map<std::string, std::string> normalize_request_options(
   return runtime::apply_option_v1_compatibility(
       std::move(options),
       {
+          {"caption", "instruction"},
           {"duration_seconds", "duration_sec"},
           {"min_seconds", "min_duration_sec"},
           {"max_seconds", "max_duration_sec"},
@@ -467,8 +468,18 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   require_prepared("Irodori-TTS run");
   auto normalized_request = request;
   normalized_request.options = normalize_request_options(request.options);
+  auto validation_options = normalized_request.options;
+  // Older standalone GGUF packages may embed a v1 contract that still advertised
+  // caption. Generate with the normalized instruction key, but keep those
+  // packages usable while unknown request options remain rejected.
+  if (contract_->request_option_keys.find("instruction") ==
+          contract_->request_option_keys.end() &&
+      contract_->request_option_keys.find("caption") !=
+          contract_->request_option_keys.end()) {
+    validation_options.erase("instruction");
+  }
   runtime::validate_spec_backed_request_options(
-      normalized_request.options, *contract_, "Irodori-TTS");
+      validation_options, *contract_, "Irodori-TTS");
   const auto wall_start = Clock::now();
   const int64_t text_chunk_size =
       engine::text::parse_text_chunk_size_override(normalized_request.options)
@@ -912,7 +923,7 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
     throw std::runtime_error(
         "Irodori-TTS text became empty after normalization");
   }
-  if (const auto caption = runtime::find_option(request.options, {"caption"})) {
+  if (const auto caption = runtime::find_option(request.options, {"instruction"})) {
     out.caption = *caption;
   }
   out.no_ref = true;
