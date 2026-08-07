@@ -395,6 +395,19 @@ static vk_device_architecture get_device_architecture(const vk::PhysicalDevice& 
     return vk_device_architecture::OTHER;
 }
 
+// Workaround for the AMD proprietary driver advertising
+// integerDotProduct4x8BitPackedSignedAccelerated on GPUs without native dot4
+// hardware (GCN/RDNA1/RDNA2): the emulated integer dot product path silently
+// produces incorrect quantized matmul results
+// (https://github.com/0xShug0/audio.cpp/issues/192). RADV reports
+// accelerated=false on the same hardware, and RDNA3+ has native dot4 support.
+static bool ggml_vk_amd_proprietary_emulated_int_dot(uint32_t vendor_id, vk::DriverId driver_id, vk_device_architecture architecture) {
+    return vendor_id == VK_VENDOR_ID_AMD && driver_id == vk::DriverId::eAmdProprietary &&
+           (architecture == vk_device_architecture::AMD_GCN ||
+            architecture == vk_device_architecture::AMD_RDNA1 ||
+            architecture == vk_device_architecture::AMD_RDNA2);
+}
+
 enum vk_conv_shapes {
     CONV_SHAPE_128x128,
     CONV_SHAPE_64x32,
@@ -5286,6 +5299,10 @@ static vk_device ggml_vk_get_device(size_t idx) {
 
         device->integer_dot_product = device->integer_dot_product && shader_integer_dot_product_props.integerDotProduct4x8BitPackedSignedAccelerated;
 
+        if (ggml_vk_amd_proprietary_emulated_int_dot(device->vendor_id, device->driver_id, device->architecture)) {
+            device->integer_dot_product = false;
+        }
+
         device->min_imported_host_pointer_alignment = external_memory_host_props.minImportedHostPointerAlignment;
 
         device->max_workgroup_size_log2 = uint32_t(log2f(float(device->properties.limits.maxComputeWorkGroupInvocations)));
@@ -5947,6 +5964,10 @@ static void ggml_vk_print_gpu_info(size_t idx) {
     integer_dot_product = integer_dot_product
                        && shader_integer_dot_product_props.integerDotProduct4x8BitPackedSignedAccelerated
                        && shader_integer_dot_product_features.shaderIntegerDotProduct;
+
+    if (ggml_vk_amd_proprietary_emulated_int_dot(props2.properties.vendorID, driver_props.driverID, device_architecture)) {
+        integer_dot_product = false;
+    }
 
     coopmat_support = coopmat_support
 #if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
