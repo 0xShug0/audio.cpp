@@ -79,6 +79,8 @@ private:
     HttpResponse handle_path_status(const std::string & body_text) const;
     HttpResponse handle_ui_upload(const HttpRequest & request);
     HttpResponse handle_model_install(const std::string & body_text);
+    HttpResponse handle_model_install_stop(const std::string & body_text);
+    HttpResponse handle_model_clean_partial(const std::string & body_text);
     HttpResponse handle_model_remove(const std::string & body_text);
     HttpResponse handle_model_install_status(const HttpRequest & request) const;
     HttpResponse handle_model_package_sizes();

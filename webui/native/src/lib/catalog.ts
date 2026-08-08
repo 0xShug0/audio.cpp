@@ -16,6 +16,13 @@ interface PackageEntry {
 interface PackageSpec {
   family: string;
   packages?: Array<Omit<PackageEntry, 'family'>>;
+  options?: {
+    request?: Array<{ name: string }>;
+  };
+  ui?: {
+    builtin_voices?: string[];
+    default_voice?: string;
+  };
 }
 
 const specModules = import.meta.glob('../../../../model_specs/*.json', {
@@ -29,6 +36,8 @@ const specModules = import.meta.glob('../../../../model_specs/*.json', {
 const packages: PackageEntry[] = Object.values(specModules).flatMap((spec) =>
   (spec.packages || []).map((entry) => ({ ...entry, family: spec.family }))
 );
+
+const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.family, spec]));
 
 const cleanPath = (value: string) => value
   .replace(/\\/g, '/')
@@ -124,12 +133,16 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
 export const catalog = (rawCatalog.models as CatalogEntry[]).map((entry) => {
   const choices = installChoices(entry);
   const installPackage = choices[0];
+  const spec = specsByFamily.get(entry.family);
   return {
     ...entry,
     display_name: entry.display_name_en || entry.display_name,
     download_id: installPackage?.id || entry.download_id,
     install_packages: choices,
-    path: installPackage?.path || entry.path
+    path: installPackage?.path || entry.path,
+    request_options: spec?.options?.request?.map((option) => option.name),
+    builtin_voices: spec?.ui?.builtin_voices,
+    default_voice: spec?.ui?.default_voice
   };
 });
 

@@ -24,6 +24,9 @@ export interface CatalogEntry {
   default_options?: Record<string, unknown>;
   load_options?: StringMap;
   session_options?: StringMap;
+  request_options?: string[];
+  builtin_voices?: string[];
+  default_voice?: string;
 }
 
 export interface ParamSpec {

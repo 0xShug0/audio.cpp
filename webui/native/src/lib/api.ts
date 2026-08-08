@@ -55,7 +55,7 @@ export async function pathStatus(path: string): Promise<{ exists: boolean; direc
 
 export interface ModelInstallJob {
   id: string;
-  state: 'idle' | 'queued' | 'running' | 'complete' | 'failed';
+  state: 'idle' | 'queued' | 'running' | 'cancelling' | 'cancelled' | 'complete' | 'failed';
   message: string;
   exit_code: number;
   downloaded_bytes: number;
@@ -65,10 +65,24 @@ export interface ModelInstallJob {
   finished_at_ms: number;
 }
 
-export async function installModelPackage(body: { id: string }): Promise<ModelInstallJob> {
+export async function installModelPackage(body: { id: string; overwrite?: boolean }): Promise<ModelInstallJob> {
   return jsonRequest('/v1/ui/models/install', {
     method: 'POST',
     body: JSON.stringify(body)
+  });
+}
+
+export async function stopModelInstall(id: string): Promise<ModelInstallJob> {
+  return jsonRequest('/v1/ui/models/install/stop', {
+    method: 'POST',
+    body: JSON.stringify({ id })
+  });
+}
+
+export async function cleanPartialModelInstall(id: string): Promise<{ id: string; cleaned: boolean; message: string }> {
+  return jsonRequest('/v1/ui/models/clean-partial', {
+    method: 'POST',
+    body: JSON.stringify({ id })
   });
 }
 
@@ -90,6 +104,9 @@ export interface ModelPackageSize {
   state: 'pending' | 'ok' | 'gated' | 'unknown' | 'error';
   message: string;
   installed: boolean;
+  version_state: 'not_installed' | 'unknown' | 'up_to_date' | 'update_available';
+  local_revision: string;
+  remote_revision: string;
 }
 
 export interface ModelPackageSizesResponse {
@@ -131,6 +148,12 @@ export async function browseDirectories(path = ''): Promise<DirectoryBrowserResp
     method: 'POST',
     body: JSON.stringify({ path })
   });
+}
+
+export async function availableVoices(model = ''): Promise<string[]> {
+  const query = model ? `?model=${encodeURIComponent(model)}` : '';
+  const response = await jsonRequest<{ voices: string[] }>(`/v1/audio/voices${query}`);
+  return response.voices;
 }
 
 export async function uploadWav(blob: Blob, filename: string, signal?: AbortSignal): Promise<string> {

@@ -82,6 +82,8 @@ void print_help() {
         << "  POST /v1/models/unload           available with --ui-management\n"
         << "  POST /v1/ui/upload               available with --ui-management\n"
         << "  POST /v1/ui/models/install       background package download/preparation\n"
+        << "  POST /v1/ui/models/install/stop  stop one active package download\n"
+        << "  POST /v1/ui/models/clean-partial remove abandoned package staging files\n"
         << "  POST /v1/ui/models/delete        remove one installed package precision\n"
         << "  GET  /v1/ui/models-root          current and binary-local default models folders\n"
         << "  POST /v1/ui/models-root          select a models folder (empty path restores default)\n"

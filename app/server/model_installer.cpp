@@ -203,6 +203,8 @@ struct ModelInstaller::State {
         std::string state = "queued";
         std::string message;
         std::filesystem::path log_path;
+        std::filesystem::path cancel_path;
+        bool cancel_requested = false;
         int exit_code = -1;
         int64_t started_at_ms = 0;
         int64_t finished_at_ms = 0;
@@ -247,7 +249,7 @@ bool ModelInstaller::has_active_jobs() const {
     std::lock_guard<std::mutex> lock(state_->mutex);
     for (const auto & [id, job] : state_->jobs) {
         (void) id;
-        if (job.state == "queued" || job.state == "running") {
+        if (job.state == "queued" || job.state == "running" || job.state == "cancelling") {
             return true;
         }
     }
@@ -301,29 +303,38 @@ std::string ModelInstaller::start(
     const auto output_file_path = resolve_optional_path(output_file);
 
     const auto log_path = state_->job_root / (package_id + ".log");
+    const auto cancel_path = state_->job_root / (package_id + ".cancel");
+    {
+        std::error_code error;
+        std::filesystem::remove(cancel_path, error);
+    }
     {
         std::lock_guard<std::mutex> lock(state_->mutex);
         const auto existing = state_->jobs.find(package_id);
         if (existing != state_->jobs.end() &&
-            (existing->second.state == "queued" || existing->second.state == "running")) {
+            (existing->second.state == "queued" || existing->second.state == "running" ||
+             existing->second.state == "cancelling")) {
             throw std::runtime_error("installation is already running for " + package_id);
         }
         State::Job job;
         job.package_id = package_id;
         job.message = "Waiting for model preparation worker";
         job.log_path = log_path;
+        job.cancel_path = cancel_path;
         state_->jobs[package_id] = std::move(job);
     }
 
     const auto shared = state_;
     std::thread([shared, package_id, source_file_path, output_file_path, source_path, variant, overwrite,
-                 legacy_conversion, script, log_path]() {
+                 legacy_conversion, script, log_path, cancel_path]() {
         try {
             {
                 std::lock_guard<std::mutex> lock(shared->mutex);
                 auto & job = shared->jobs.at(package_id);
-                job.state = "running";
-                job.message = "Downloading and preparing model files";
+                if (!job.cancel_requested) {
+                    job.state = "running";
+                    job.message = "Downloading and preparing model files";
+                }
                 job.started_at_ms = now_ms();
             }
 
@@ -331,7 +342,7 @@ std::string ModelInstaller::start(
                 " install " + shell_quote(package_id) +
                 " --models-root " + shell_quote(shared->models_root.string());
             if (!legacy_conversion) {
-                command += " --progress";
+                command += " --progress --cancel-file " + shell_quote(cancel_path.string());
             }
             if (overwrite) {
                 command += " --overwrite";
@@ -356,12 +367,14 @@ std::string ModelInstaller::start(
             auto & job = shared->jobs.at(package_id);
             job.exit_code = result;
             job.finished_at_ms = now_ms();
-            job.state = result == 0 ? "complete" : "failed";
+            const bool cancelled = job.cancel_requested || std::filesystem::is_regular_file(cancel_path);
+            job.state = cancelled ? "cancelled" : result == 0 ? "complete" : "failed";
             job.downloaded_bytes = log.downloaded_bytes;
             job.total_bytes = log.total_bytes;
             job.message = !log.message.empty()
                 ? log.message
-                : (result == 0 ? "Model installation completed" : "Model installation failed");
+                : (cancelled ? "Download stopped; completed staging files were removed"
+                             : result == 0 ? "Model installation completed" : "Model installation failed");
             if (result == 0) {
                 ++shared->size_generation;
                 shared->size_state = "idle";
@@ -370,8 +383,10 @@ std::string ModelInstaller::start(
         } catch (const std::exception & error) {
             std::lock_guard<std::mutex> lock(shared->mutex);
             auto & job = shared->jobs.at(package_id);
-            job.state = "failed";
-            job.message = error.what();
+            job.state = job.cancel_requested ? "cancelled" : "failed";
+            job.message = job.cancel_requested
+                ? "Download stopped; completed staging files were removed"
+                : error.what();
             job.exit_code = -1;
             job.finished_at_ms = now_ms();
         }
@@ -386,7 +401,7 @@ std::string ModelInstaller::status(const std::string & package_id) const {
         std::string message = job.message;
         uint64_t downloaded_bytes = job.downloaded_bytes;
         uint64_t total_bytes = job.total_bytes;
-        if (job.state == "running") {
+        if (job.state == "running" || job.state == "cancelling") {
             const auto log = inspect_log(job.log_path);
             if (!log.message.empty()) {
                 message = log.message;
@@ -438,6 +453,80 @@ std::string ModelInstaller::status(const std::string & package_id) const {
     return result + "]}";
 }
 
+std::string ModelInstaller::stop(const std::string & package_id) {
+    if (!valid_package_id(package_id)) {
+        throw std::runtime_error("invalid model-manager package id");
+    }
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        const auto found = state_->jobs.find(package_id);
+        if (found == state_->jobs.end()) {
+            throw std::runtime_error("no installation job exists for " + package_id);
+        }
+        auto & job = found->second;
+        if (job.state != "queued" && job.state != "running" && job.state != "cancelling") {
+            throw std::runtime_error("installation is not running for " + package_id);
+        }
+        std::ofstream marker(job.cancel_path, std::ios::binary | std::ios::trunc);
+        if (!marker) {
+            throw std::runtime_error("could not create download cancellation marker");
+        }
+        marker << "cancel\n";
+        job.cancel_requested = true;
+        job.state = "cancelling";
+        job.message = "Stopping download and removing its staging files";
+    }
+    return status(package_id);
+}
+
+std::string ModelInstaller::clean_partial(const std::string & package_id) {
+    if (!valid_package_id(package_id)) {
+        throw std::runtime_error("invalid model-manager package id");
+    }
+    const auto script = state_->repository_root / "tools" / "model_manager_v2.py";
+    if (!std::filesystem::is_regular_file(script)) {
+        throw std::runtime_error("model cleanup helper was not found at " + script.string());
+    }
+    std::filesystem::path cancel_path;
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        const auto found = state_->jobs.find(package_id);
+        if (found != state_->jobs.end() &&
+            (found->second.state == "queued" || found->second.state == "running" ||
+             found->second.state == "cancelling")) {
+            throw std::runtime_error("stop the active installation before cleaning partial files for " + package_id);
+        }
+        if (found != state_->jobs.end()) {
+            cancel_path = found->second.cancel_path;
+        }
+    }
+
+    const auto log_path = state_->job_root / (package_id + "-clean-partial.log");
+    std::string command = python_command() + " -u " + shell_quote(script.string()) +
+        " clean-partial " + shell_quote(package_id) +
+        " --models-root " + shell_quote(state_->models_root.string()) +
+        " > " + shell_quote(log_path.string()) + " 2>&1";
+    const int result = std::system(command.c_str());
+    std::string message = read_log_tail_text(log_path);
+    while (!message.empty() && std::isspace(static_cast<unsigned char>(message.back()))) {
+        message.pop_back();
+    }
+    if (result != 0) {
+        throw std::runtime_error(message.empty() ? "partial download cleanup failed" : message);
+    }
+    if (!cancel_path.empty()) {
+        std::error_code error;
+        std::filesystem::remove(cancel_path, error);
+    }
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        state_->jobs.erase(package_id);
+    }
+    return "{\"id\":" + json_quote(package_id) +
+        ",\"cleaned\":true,\"message\":" +
+        json_quote(message.empty() ? "Partial download files cleaned" : message) + "}";
+}
+
 std::string ModelInstaller::remove(const std::string & package_id) {
     if (!valid_package_id(package_id)) {
         throw std::runtime_error("invalid model-manager package id");
@@ -450,7 +539,8 @@ std::string ModelInstaller::remove(const std::string & package_id) {
         std::lock_guard<std::mutex> lock(state_->mutex);
         const auto job = state_->jobs.find(package_id);
         if (job != state_->jobs.end() &&
-            (job->second.state == "queued" || job->second.state == "running")) {
+            (job->second.state == "queued" || job->second.state == "running" ||
+             job->second.state == "cancelling")) {
             throw std::runtime_error("installation is still running for " + package_id);
         }
     }

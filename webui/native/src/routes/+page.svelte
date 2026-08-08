@@ -3,7 +3,9 @@
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
     base64AudioUrl,
+    availableVoices,
     browseDirectories,
+    cleanPartialModelInstall,
     deleteModelPackage,
     getModelsRoot,
     health,
@@ -16,6 +18,7 @@
     runTask,
     setModelsRoot,
     speech,
+    stopModelInstall,
     transcription,
     unloadModel,
     uploadWav,
@@ -105,6 +108,9 @@
   let packageSizePoll: number | null = null;
   let packageSizeRefreshInFlight = false;
   let refreshedInstallFinishes: Record<string, number> = {};
+  let quickStartVoices: string[] = [];
+  let bundledVoices: string[] = [];
+  let quickStartVoice = '';
 
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', tasks: ['tts', 'clon'] },
@@ -118,6 +124,35 @@
 
   type WorkflowId = typeof workflowTabs[number]['id'];
 
+  interface ModelGroup {
+    family: string;
+    label: string;
+    entries: CatalogEntry[];
+  }
+
+  const familyLabels: Record<string, string> = {
+    qwen3_tts: 'Qwen3-TTS',
+    irodori_tts: 'Irodori-TTS',
+    chatterbox: 'Chatterbox',
+    stable_audio: 'Stable Audio 3',
+    qwen3_asr: 'Qwen3-ASR',
+    vevo2: 'Vevo2',
+    seed_vc: 'Seed-VC'
+  };
+
+  const modelGroups: ModelGroup[] = Array.from(
+    catalog.reduce((groups, entry) => {
+      const existing = groups.get(entry.family) || [];
+      existing.push(entry);
+      groups.set(entry.family, existing);
+      return groups;
+    }, new Map<string, CatalogEntry[]>())
+  ).map(([family, entries]) => ({
+    family,
+    entries,
+    label: entries.length > 1 ? (familyLabels[family] || entries[0].display_name) : entries[0].display_name
+  }));
+
   let activeWorkflow: WorkflowId = 'tts';
   let workflowSelections: Partial<Record<WorkflowId, string>> = {};
 
@@ -130,13 +165,14 @@
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded);
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align'].includes(selected?.task);
   $: acceptsSource = needsSource || selected?.task === 'gen';
-  $: needsVoice = ['clon', 'vc', 'svc'].includes(selected?.task) ||
+  $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: referenceVoiceRequired = ['clon', 'vc', 'svc'].includes(selected?.task) ||
-    isQwenBase || (selected?.task === 'tts' && selected?.family === 'pocket_tts');
+  $: referenceVoiceRequired = !quickStartVoice && (
+    (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: referenceTextRequired = Boolean(voiceFile) && isQwenBase;
+  $: quickStartVoices = Array.from(new Set([...(selected?.builtin_voices || []), ...bundledVoices]));
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt'].includes(selected?.family);
@@ -298,15 +334,48 @@
       .filter((job): job is ModelInstallJob => job !== undefined);
   }
 
+  function uniquePackagesForEntry(group: ModelGroup, entry: CatalogEntry) {
+    const index = group.entries.findIndex((candidate) => candidate.id === entry.id);
+    const previousIds = new Set(group.entries.slice(0, Math.max(0, index))
+      .flatMap((candidate) => (candidate.install_packages || []).map((choice) => choice.id)));
+    return (entry.install_packages || []).filter((choice) => !previousIds.has(choice.id));
+  }
+
+  function displayInstallJobForChoices(
+    choices: InstallPackageChoice[],
+    installState: Record<string, ModelInstallJob>
+  ) {
+    const jobs = choices.map((choice) => installState[choice.id])
+      .filter((job): job is ModelInstallJob => job !== undefined);
+    return jobs.find((job) => ['running', 'queued', 'cancelling'].includes(job.state)) ||
+      [...jobs].sort((left, right) => right.finished_at_ms - left.finished_at_ms)[0];
+  }
+
   function displayInstallJob(entry: CatalogEntry, installState: Record<string, ModelInstallJob>) {
     const jobs = entryInstallJobs(entry, installState);
-    return jobs.find((job) => job.state === 'running' || job.state === 'queued') ||
+    return jobs.find((job) => job.state === 'running' || job.state === 'queued' || job.state === 'cancelling') ||
       [...jobs].sort((left, right) => right.finished_at_ms - left.finished_at_ms)[0];
   }
 
   function entryInstallBusy(entry: CatalogEntry, installState: Record<string, ModelInstallJob>) {
     return entryInstallJobs(entry, installState).some((job) =>
-      job.state === 'running' || job.state === 'queued');
+      job.state === 'running' || job.state === 'queued' || job.state === 'cancelling');
+  }
+
+  function groupInstallBusy(group: ModelGroup, installState: Record<string, ModelInstallJob>) {
+    return group.entries.some((entry) => entryInstallBusy(entry, installState));
+  }
+
+  function supportsMaxTokens(entry: CatalogEntry) {
+    if (entry.request_options !== undefined) return entry.request_options.includes('max_tokens');
+    return ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(entry.task);
+  }
+
+  function packageVersionLabel(size: ModelPackageSize | undefined) {
+    if (!size?.installed) return '';
+    if (size.version_state === 'up_to_date') return 'Up to date';
+    if (size.version_state === 'update_available') return 'Update available';
+    return 'Version unknown';
   }
 
   function entrySelectable(entry: CatalogEntry) {
@@ -323,6 +392,7 @@
   ) {
     if (job?.state === 'running') return `${choice.label}…`;
     if (job?.state === 'queued') return `${choice.label} queued`;
+    if (job?.state === 'cancelling') return `${choice.label} stopping`;
     return choice.label;
   }
 
@@ -334,7 +404,10 @@
     const bytes = size?.size_bytes !== null && size?.size_bytes !== undefined
       ? formatBytes(size.size_bytes)
       : '';
-    if (size?.installed) return `${selected ? 'Selected' : 'Downloaded'}${bytes ? ` · ${bytes}` : ''}`;
+    if (size?.installed) {
+      const version = packageVersionLabel(size);
+      return `${selected ? 'Selected' : 'Downloaded'}${version ? ` · ${version}` : ''}${bytes ? ` · ${bytes}` : ''}`;
+    }
     if (bytes) return bytes;
     if (size?.state === 'pending') return 'checking size...';
     if (size?.state === 'gated') return 'HF access required';
@@ -388,6 +461,7 @@
 
   function clearModelSelection() {
     selectedId = '';
+    quickStartVoice = '';
     modelPath = '';
     installed = null;
     paramSpecs = [];
@@ -499,6 +573,7 @@
     if (!next || !entrySelectable(next)) return;
     selectedId = id;
     selected = next;
+    quickStartVoice = next.default_voice || '';
     activeWorkflow = workflowForTask(next.task);
     workflowSelections = { ...workflowSelections, [activeWorkflow]: id };
     modelPath = selectedModelPath(next);
@@ -719,6 +794,14 @@
     }
   }
 
+  async function refreshBundledVoices() {
+    try {
+      bundledVoices = await availableVoices();
+    } catch (error) {
+      log(`Quick-start voices unavailable: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
   async function storeCurrentVoice() {
     if (!voiceFile) {
       status = 'Choose or record a voice reference first.';
@@ -883,10 +966,11 @@
             input: chunks[index],
             language,
             seed: chunkSeed(resolvedSeed, index),
-            max_tokens: maxTokens,
             options
           };
+          if (supportsMaxTokens(selected)) body.max_tokens = maxTokens;
           if (voiceRef) body.voice_ref = voiceRef;
+          else if (quickStartVoice) body.voice = quickStartVoice;
           if (referenceText.trim()) body.reference_text = referenceText;
           if (selected.task === 'vdes' && instructions.trim()) body.instructions = instructions;
           const result = await speech(body, aborter.signal);
@@ -1025,7 +1109,7 @@
         await refreshPackageSizes();
       }
       const active = Object.values(installJobs).some((job) =>
-        job.state === 'queued' || job.state === 'running');
+        job.state === 'queued' || job.state === 'running' || job.state === 'cancelling');
       if (active && installPoll === null) {
         installPoll = window.setInterval(refreshInstallJobs, 1500);
       } else if (!active && installPoll !== null) {
@@ -1037,10 +1121,17 @@
     }
   }
 
-  async function installPackage(entry: CatalogEntry, choice: InstallPackageChoice) {
-    if (packageSizes[choice.id]?.installed) return;
+  async function installPackage(entry: CatalogEntry, choice: InstallPackageChoice, overwrite = false) {
+    if (packageSizes[choice.id]?.installed && !overwrite) return;
     const existing = installJobs[choice.id];
-    if (existing?.state === 'queued' || existing?.state === 'running') return;
+    if (existing && ['queued', 'running', 'cancelling'].includes(existing.state)) return;
+    const expectedSize = packageSizes[choice.id]?.size_bytes;
+    const verb = overwrite ? 'Update' : 'Download';
+    const confirmed = window.confirm(
+      `${verb} ${entry.display_name} ${choice.label}` +
+      `${expectedSize ? ` (${formatBytes(expectedSize)})` : ''}?`
+    );
+    if (!confirmed) return;
     rememberPackagePath(entry, choice);
     status = `Starting ${choice.label} installation for ${entry.display_name}...`;
     const expectedBytes = packageSizes[choice.id]?.size_bytes || 0;
@@ -1062,7 +1153,7 @@
       if (installPoll === null) {
         installPoll = window.setInterval(refreshInstallJobs, 1000);
       }
-      const job = await installModelPackage({ id: choice.id });
+      const job = await installModelPackage({ id: choice.id, overwrite });
       installJobs = {
         ...installJobs,
         [job.id]: { ...job, total_bytes: job.total_bytes || expectedBytes }
@@ -1093,11 +1184,42 @@
   function useOrInstallPackage(entry: CatalogEntry, choice: InstallPackageChoice) {
     if (packageSizes[choice.id]?.installed) {
       rememberPackagePath(entry, choice);
-      status = `${entry.display_name} will use ${choice.label}. Press Open to continue.`;
+      status = `${entry.display_name} will use ${choice.label}. It is available in Studio.`;
       log(status);
       return;
     }
     installPackage(entry, choice);
+  }
+
+  async function stopPackageDownload(entry: CatalogEntry, job: ModelInstallJob) {
+    if (!['queued', 'running', 'cancelling'].includes(job.state)) return;
+    status = `Stopping ${entry.display_name} download...`;
+    try {
+      const stopped = await stopModelInstall(job.id);
+      installJobs = { ...installJobs, [stopped.id]: stopped };
+      if (installPoll === null) installPoll = window.setInterval(refreshInstallJobs, 500);
+      status = `${entry.display_name} download is stopping. Staging files will be removed automatically.`;
+      log(status);
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+      errorStatus = status;
+    }
+  }
+
+  async function cleanPartialDownload(entry: CatalogEntry, job: ModelInstallJob) {
+    if (['queued', 'running', 'cancelling'].includes(job.state)) return;
+    status = `Cleaning partial ${entry.display_name} download...`;
+    try {
+      const result = await cleanPartialModelInstall(job.id);
+      const nextJobs = { ...installJobs };
+      delete nextJobs[job.id];
+      installJobs = nextJobs;
+      status = result.message;
+      log(status);
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+      errorStatus = status;
+    }
   }
 
   async function removePackage(entry: CatalogEntry, choice: InstallPackageChoice) {
@@ -1151,6 +1273,7 @@
     const stored = localStorage.getItem('audiocpp.ui.model');
     if (stored && catalog.some((entry) => entry.id === stored)) selectedId = stored;
     selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
+    quickStartVoice = selected.default_voice || '';
     activeWorkflow = workflowForTask(selected.task);
     if (selectedId) workflowSelections = { ...workflowSelections, [activeWorkflow]: selectedId };
     resetParams();
@@ -1176,6 +1299,7 @@
       status = 'No installed model is selected. Choose a downloaded model or install one from the Models tab.';
     }
     await refreshVoices();
+    await refreshBundledVoices();
     await refreshInstallJobs();
   });
 
@@ -1349,6 +1473,8 @@
               <label for="seed">Seed <span>-1 = random</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
             </div>
+          {/if}
+          {#if supportsMaxTokens(selected)}
             <div>
               <label for="tokens">Maximum tokens</label>
               <input id="tokens" type="number" min="1" bind:value={maxTokens} />
@@ -1393,6 +1519,20 @@
         {/if}
 
         {#if needsVoice}
+          {#if quickStartVoices.length}
+            <label for="quick-start-voice">Quick-start voice <span>preset or bundled reference</span></label>
+            <select id="quick-start-voice" bind:value={quickStartVoice}>
+              <option value="">Use a reference audio file below</option>
+              {#each quickStartVoices as voice}<option value={voice}>{voice}</option>{/each}
+            </select>
+            {#if quickStartVoice}
+              <div class="quick-voice-note">
+                {selected?.builtin_voices?.includes(quickStartVoice)
+                  ? 'This model voice is built into the package; no reference audio is required.'
+                  : 'The bundled reference audio and its matching transcript are supplied automatically.'}
+              </div>
+            {/if}
+          {/if}
           <div class="reference-input-grid">
             <div>
               <label for="voice">Reference voice <span>{referenceVoiceRequired ? 'required' : 'optional'}</span></label>
@@ -1421,6 +1561,11 @@
           </label>
           <textarea id="reference" rows="2" bind:value={referenceText}
             placeholder="Type the exact words spoken in the reference audio, or load a matching .txt file above."></textarea>
+          <!--
+            Saved voices keep a named reference recording and transcript for reuse. They are persisted only
+            in this browser's IndexedDB, are never uploaded until the user runs a request, do not sync to
+            another browser/device, and are removed if this site's browser data is cleared.
+          -->
           <div class="voice-library">
             <div>
               <label for="saved-voice">Saved voices <span>stored only in this browser</span></label>
@@ -1549,66 +1694,97 @@
         on:click={() => applyModelsFolder(true)}>Use default</button>
     </section>
     <section class="model-grid">
-      {#each catalog as entry}
-        {@const installJob = displayInstallJob(entry, installJobs)}
-        {@const packageChoices = entry.install_packages || []}
-        <article class:selected={entry.id === selectedId}>
-          <div class="model-icon">{entry.task.toUpperCase()}</div>
-          <div class="model-copy">
-            <span>{taskLabels[entry.task] || entry.task}</span>
-            <h3>{entry.display_name}</h3>
-            <p>{selectedModelPath(entry)}</p>
+      {#each modelGroups as group}
+        <article class="model-family-card" class:selected={group.entries.some((entry) => entry.id === selectedId)}>
+          <div class="model-icon">{group.entries[0].task.toUpperCase()}</div>
+          <div class="model-copy family-copy">
+            <span>{group.entries.length} {group.entries.length === 1 ? 'model' : 'variants'}</span>
+            <h3>{group.label}</h3>
+            <p>{group.entries.map((entry) => taskLabels[entry.task] || entry.task).filter((value, index, all) => all.indexOf(value) === index).join(' · ')}</p>
           </div>
-          <div class="model-actions">
-            <small>VRAM ~{entry.min_vram_gb || '?'} GB</small>
-            {#if packageChoices.length}
-              <div class="package-buttons">
-                {#each packageChoices as choice}
-                  <div class="package-choice">
-                    <button class="package-install"
-                      class:preferred={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
-                      class:downloaded={packageSizes[choice.id]?.installed}
-                      aria-pressed={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
-                      disabled={entryInstallBusy(entry, installJobs) ||
-                        (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
-                      title={`${choice.format.toUpperCase()} ${choice.precision}: ${resolveCatalogPath(choice.path)}`}
-                      on:click={() => useOrInstallPackage(entry, choice)}>
-                      <span>{installButtonLabel(choice, installJobs[choice.id])}</span>
-                      {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
-                        choice.path === (selectedPackagePaths[entry.id] || entry.path))}
-                        <span class="package-size">{packageSizeLabel(packageSizes[choice.id], packageSizeState,
-                          choice.path === (selectedPackagePaths[entry.id] || entry.path))}</span>
-                      {/if}
-                    </button>
-                    {#if packageSizes[choice.id]?.installed}
-                      <button class="package-delete"
-                        title={`Delete ${choice.label}`} aria-label={`Delete ${entry.display_name} ${choice.label}`}
-                        on:click={() => removePackage(entry, choice)}>
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 11H8L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
-                        </svg>
-                      </button>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-              {#if installJob && installJob.state !== 'complete'}
-                <div class:failed={installJob.state === 'failed'}
-                  class="install-progress" title={installJob.message}>
-                  <div class="install-progress-head">
-                    <strong>{installJob.state}</strong>
-                    <span>{installProgressLabel(installJob)}</span>
-                  </div>
-                  <div class:indeterminate={installJob.state === 'running' && installJob.progress_percent < 0}
-                    class="install-progress-track" role="progressbar"
-                    aria-label={`${entry.display_name} download progress`}
-                    aria-valuemin="0" aria-valuemax="100" aria-valuenow={installPercent(installJob)}>
-                    <span style={`width: ${installPercent(installJob)}%`}></span>
-                  </div>
-                  <div class="install-status">{installJob.message}</div>
+          <div class="model-variant-list">
+            {#each group.entries as entry}
+              {@const packageChoices = uniquePackagesForEntry(group, entry)}
+              {@const installJob = displayInstallJobForChoices(packageChoices, installJobs)}
+              <section class="model-variant" class:selected-variant={entry.id === selectedId}>
+                <div class="variant-copy">
+                  <strong>{entry.display_name}</strong>
+                  <span>{taskLabels[entry.task] || entry.task} · VRAM ~{entry.min_vram_gb || '?'} GB</span>
                 </div>
-              {/if}
-            {/if}
+                <div class="model-actions">
+                  {#if packageChoices.length}
+                    <div class="package-buttons">
+                      {#each packageChoices as choice}
+                        <div class="package-choice">
+                          <button class="package-install"
+                            class:preferred={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
+                            class:downloaded={packageSizes[choice.id]?.installed}
+                            aria-pressed={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
+                            disabled={groupInstallBusy(group, installJobs) ||
+                              (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
+                            title={`${choice.format.toUpperCase()} ${choice.precision}: ${resolveCatalogPath(choice.path)}`}
+                            on:click={() => useOrInstallPackage(entry, choice)}>
+                            <span>{installButtonLabel(choice, installJobs[choice.id])}</span>
+                            {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
+                              choice.path === (selectedPackagePaths[entry.id] || entry.path))}
+                              <span class="package-size">{packageSizeLabel(packageSizes[choice.id], packageSizeState,
+                                choice.path === (selectedPackagePaths[entry.id] || entry.path))}</span>
+                            {/if}
+                          </button>
+                          {#if packageSizes[choice.id]?.installed &&
+                            ['update_available', 'unknown'].includes(packageSizes[choice.id]?.version_state)}
+                            <button class="package-update"
+                              title={packageSizes[choice.id]?.version_state === 'update_available'
+                                ? `Update ${choice.label}` : `Reinstall ${choice.label} to record its version`}
+                              aria-label={`${packageSizes[choice.id]?.version_state === 'update_available' ? 'Update' : 'Reinstall'} ${entry.display_name} ${choice.label}`}
+                              disabled={groupInstallBusy(group, installJobs)}
+                              on:click={() => installPackage(entry, choice, true)}>
+                              {packageSizes[choice.id]?.version_state === 'update_available' ? 'Update' : 'Reinstall'}
+                            </button>
+                          {/if}
+                          {#if packageSizes[choice.id]?.installed}
+                            <button class="package-delete"
+                              title={`Delete ${choice.label}`} aria-label={`Delete ${entry.display_name} ${choice.label}`}
+                              on:click={() => removePackage(entry, choice)}>
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 11H8L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
+                              </svg>
+                            </button>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                    {#if installJob && installJob.state !== 'complete'}
+                      <div class:failed={installJob.state === 'failed'}
+                        class:cancelled={installJob.state === 'cancelled'}
+                        class="install-progress" title={installJob.message}>
+                        <div class="install-progress-head">
+                          <strong>{installJob.state}</strong>
+                          <span>{installProgressLabel(installJob)}</span>
+                        </div>
+                        <div class:indeterminate={['running', 'cancelling'].includes(installJob.state) && installJob.progress_percent < 0}
+                          class="install-progress-track" role="progressbar"
+                          aria-label={`${entry.display_name} download progress`}
+                          aria-valuemin="0" aria-valuemax="100" aria-valuenow={installPercent(installJob)}>
+                          <span style={`width: ${installPercent(installJob)}%`}></span>
+                        </div>
+                        <div class="install-status">{installJob.message}</div>
+                        <div class="install-actions">
+                          {#if ['queued', 'running', 'cancelling'].includes(installJob.state)}
+                            <button class="danger" disabled={installJob.state === 'cancelling'}
+                              on:click={() => stopPackageDownload(entry, installJob)}>Stop download</button>
+                          {:else if ['failed', 'cancelled'].includes(installJob.state)}
+                            <button on:click={() => cleanPartialDownload(entry, installJob)}>Clean partial download</button>
+                          {/if}
+                        </div>
+                      </div>
+                    {/if}
+                  {:else if (entry.install_packages || []).length}
+                    <div class="shared-package-note">Uses the shared {group.label} package shown above.</div>
+                  {/if}
+                </div>
+              </section>
+            {/each}
           </div>
         </article>
       {/each}

@@ -771,6 +771,12 @@ ServerState::ServerState(
                 return std::filesystem::is_regular_file(root / "tools" / "model_manager_v2.py") &&
                     std::filesystem::is_directory(root / "model_specs");
             }).value_or(request_base_);
+        if (!config_.voice_dir.has_value()) {
+            const auto bundled_voices = repository_root_ / "webui" / "voice";
+            if (std::filesystem::is_directory(bundled_voices)) {
+                config_.voice_dir = bundled_voices;
+            }
+        }
         const auto binary_directory = ui_resource_anchor.empty()
             ? request_base_
             : std::filesystem::absolute(ui_resource_anchor).lexically_normal();
@@ -862,6 +868,12 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     }
     else if (request.method == "POST" && request.path == "/v1/ui/models/install") {
         response = handle_model_install(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/models/install/stop") {
+        response = handle_model_install_stop(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/models/clean-partial") {
+        response = handle_model_clean_partial(request.body);
     }
     else if (request.method == "POST" && request.path == "/v1/ui/models/delete") {
         response = handle_model_remove(request.body);
@@ -1117,6 +1129,32 @@ HttpResponse ServerState::handle_model_remove(const std::string & body_text) {
         return error_response(403, "UI model removal is disabled", "forbidden");
     }
     return json_response(model_installer_->remove(package_id));
+}
+
+HttpResponse ServerState::handle_model_install_stop(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const std::string package_id = engine::io::json::require_string(body, "id");
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    return json_response(model_installer_->stop(package_id));
+}
+
+HttpResponse ServerState::handle_model_clean_partial(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model cleanup is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const std::string package_id = engine::io::json::require_string(body, "id");
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model cleanup is disabled", "forbidden");
+    }
+    return json_response(model_installer_->clean_partial(package_id));
 }
 
 HttpResponse ServerState::handle_model_install_status(const HttpRequest & request) const {

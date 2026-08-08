@@ -65,6 +65,9 @@ void test_idle_status_and_validation() {
                 << "if len(sys.argv) > 1 and sys.argv[1] == 'uninstall':\n"
                 << " print('removed test package', flush=True)\n"
                 << " raise SystemExit(0)\n"
+                << "if len(sys.argv) > 1 and sys.argv[1] == 'clean-partial':\n"
+                << " print('cleaned partial test package', flush=True)\n"
+                << " raise SystemExit(0)\n"
                 << "print('preparing package', flush=True)\n"
                 << "print('AUDIOCPP_PROGRESS downloaded=25 total=100', flush=True)\n"
                 << "time.sleep(0.35)\n"
@@ -95,6 +98,27 @@ void test_idle_status_and_validation() {
         }
         require(observed_progress, "running progress markers are exposed through status JSON");
         require(completed, "the background test installation completes");
+
+        (void) installer.start("cancel_demo", "", "", "", "", false);
+        const auto stopping = installer.stop("cancel_demo");
+        require(stopping.find("\"state\":\"cancelling\"") != std::string::npos ||
+                stopping.find("\"state\":\"cancelled\"") != std::string::npos,
+                "an active package download can be stopped");
+        bool cancelled = false;
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            const auto current = installer.status("cancel_demo");
+            if (current.find("\"state\":\"cancelled\"") != std::string::npos) {
+                cancelled = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        require(cancelled, "a stopped package reaches the cancelled state");
+        const auto cleaned = installer.clean_partial("cancel_demo");
+        require(cleaned.find("\"cleaned\":true") != std::string::npos,
+                "cancelled package staging files can be cleaned explicitly");
+        require(cleaned.find("cleaned partial test package") != std::string::npos,
+                "partial cleanup reports the manager result");
 
         const auto initial_sizes = installer.package_sizes();
         require(initial_sizes.find("\"state\":\"running\"") != std::string::npos,

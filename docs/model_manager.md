@@ -37,6 +37,10 @@ need `torch`, `safetensors`, `PyYAML`, or model-specific conversion inputs.
 - `info` shows the target layout, required files, and install source for one package
 - `info <package> --json` prints machine-readable package details
 - `install` downloads or converts one package into a models root
+- `installed --json` reports package-file presence without network access
+- `sizes --json` reports remote sizes plus local/remote revision status
+- `uninstall` removes only files declared by one package precision
+- `clean-partial` removes abandoned staging directories left by an interrupted process
 
 The runtime loader catalog is also available from:
 
@@ -75,6 +79,27 @@ Overwrite an existing install:
 ```bash
 python3 tools/model_manager_v2.py install pocket_tts --overwrite
 ```
+
+Successful installs write a small `.audiocpp-package-<id>.json` manifest beside
+the package files. It records the resolved Hugging Face commit and enables the
+native WebUI to report whether the local package is current. Packages installed
+before this metadata existed remain usable and show `Version unknown` until they
+are reinstalled once.
+
+Clean staging directories left by a process or machine interruption:
+
+```bash
+python3 tools/model_manager_v2.py clean-partial pocket_tts --models-root models
+```
+
+The native WebUI can stop an active download cooperatively. Its worker checks a
+cancellation marker between download chunks and deletes its staging directory
+before reporting the job as cancelled.
+
+Package variants may declare an identical sidecar at the same destination. The
+manager downloads that file once, reuses it when installing a sibling precision,
+and keeps it until the last package that declares it is removed. PocketTTS uses
+this for the public `alba` preset shared by its English Q8 and BF16 packages.
 
 Install a converter-style package that needs a source file:
 
