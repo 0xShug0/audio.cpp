@@ -171,6 +171,14 @@ runtime::TaskResult Qwen3ForcedAlignerSession::run_single(const runtime::TaskReq
         throw std::runtime_error("Qwen3 forced aligner run() requires transcript text and language");
     }
     const auto wall_start = Clock::now();
+    if (!has_alignable_words(request.text_input->text, request.text_input->language)) {
+        runtime::TaskResult result;
+        result.text_output = runtime::Transcript{request.text_input->text, request.text_input->language};
+        const auto wall_end = Clock::now();
+        debug::trace_log_scalar("qwen3_forced_aligner.alignable_words", 0);
+        debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, wall_end));
+        return result;
+    }
     const auto frontend_start = Clock::now();
     const auto features = frontend_.extract(*request.audio_input);
     const auto frontend_end = Clock::now();

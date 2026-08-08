@@ -385,7 +385,8 @@ runtime::TaskResult Qwen3ASRSession::run_single(const Qwen3ASRRequest & asr_requ
     result.text_output = runtime::Transcript{decoded.text, decoded.language};
     result.word_timestamps = decoded.word_timestamps;
     if (asr_request.generation.return_timestamps) {
-        if (!decoded.text.empty()) {
+        if (!decoded.text.empty() &&
+            engine::models::qwen3_forced_aligner::has_alignable_words(decoded.text, decoded.language)) {
             if (decoded.language.empty()) {
                 throw std::runtime_error("Qwen3 ASR timestamp output requires a requested or detected language");
             }

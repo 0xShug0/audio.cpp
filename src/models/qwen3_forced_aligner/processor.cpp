@@ -169,6 +169,26 @@ std::string lower_ascii(std::string value) {
     return value;
 }
 
+}  // namespace
+
+std::vector<std::string> tokenize_alignable_words(
+    const std::string & text,
+    const std::string & language) {
+    const auto normalized_language = lower_ascii(language);
+    if (normalized_language == "chinese" || normalized_language == "cantonese") {
+        return tokenize_chinese_mixed(text);
+    }
+    return tokenize_space_language(text);
+}
+
+bool has_alignable_words(
+    const std::string & text,
+    const std::string & language) {
+    return !tokenize_alignable_words(text, language).empty();
+}
+
+namespace {
+
 std::vector<int64_t> fix_timestamp(const std::vector<int64_t> & data) {
     const size_t n = data.size();
     if (n == 0) {
@@ -266,13 +286,7 @@ ForcedAlignPrompt Qwen3ForcedAlignProcessor::build_prompt(
     const std::string & text,
     const std::string & language,
     int64_t audio_feature_tokens) const {
-    const auto normalized_language = lower_ascii(language);
-    std::vector<std::string> words;
-    if (normalized_language == "chinese" || normalized_language == "cantonese") {
-        words = tokenize_chinese_mixed(text);
-    } else {
-        words = tokenize_space_language(text);
-    }
+    auto words = tokenize_alignable_words(text, language);
     if (words.empty()) {
         throw std::runtime_error("Qwen3 forced aligner requires non-empty normalized text");
     }

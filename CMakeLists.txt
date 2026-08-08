@@ -1703,6 +1703,14 @@ if (ENGINE_BUILD_TESTS)
         COMMAND model_spec_system_test
     )
 
+    add_engine_unittest(qwen3_forced_aligner_processor_test tests/unittests/test_qwen3_forced_aligner_processor.cpp)
+    target_include_directories(qwen3_forced_aligner_processor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME qwen3_forced_aligner_processor_test
+        COMMAND qwen3_forced_aligner_processor_test
+    )
+
     add_engine_unittest(fun_asr_nano_assets_test tests/unittests/test_fun_asr_nano_assets.cpp)
     target_sources(fun_asr_nano_assets_test PRIVATE src/models/fun_asr_nano/assets.cpp)
     target_include_directories(fun_asr_nano_assets_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)

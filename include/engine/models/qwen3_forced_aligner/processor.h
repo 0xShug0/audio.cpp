@@ -10,6 +10,14 @@
 
 namespace engine::models::qwen3_forced_aligner {
 
+std::vector<std::string> tokenize_alignable_words(
+    const std::string & text,
+    const std::string & language);
+
+bool has_alignable_words(
+    const std::string & text,
+    const std::string & language);
+
 struct ForcedAlignPrompt {
     engine::models::qwen3_asr::Qwen3ASRPrompt prompt;
     std::vector<std::string> words;
