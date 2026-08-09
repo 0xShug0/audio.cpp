@@ -27,6 +27,7 @@
     type DirectoryBrowserResponse
   } from '$lib/api';
   import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
+  import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import type {
     AudioOutput,
@@ -112,6 +113,9 @@
   let quickStartVoices: string[] = [];
   let bundledVoices: string[] = [];
   let quickStartVoice = '';
+  let uiLanguage = 'en';
+  let tr = createTranslator(uiLanguage);
+  $: tr = createTranslator(uiLanguage);
 
   const demoVoiceSources: Record<string, string> = {
     demo_1_man: 'demo_1_man',
@@ -119,6 +123,22 @@
     demo_3_woman: 'demo_3_woman',
     demo_4_woman: 'demo_4_woman'
   };
+
+  function chooseUiLanguage(code: string) {
+    uiLanguage = resolveUiLanguage([code]);
+    localStorage.setItem('audiocpp.ui.language', uiLanguage);
+    document.documentElement.lang = uiLanguage;
+  }
+
+  function workflowLabel(id: string, fallback: string, translate = tr) {
+    const translationId = id === 'conversion' ? 'vc' : id === 'separation' ? 'sep' : id;
+    return translate(`workflow.${translationId}`, {}, fallback);
+  }
+
+  function localizedTaskLabel(task: string | undefined, translate = tr) {
+    if (!task) return translate('studio.title');
+    return translate(`task.${task}`, {}, taskLabels[task] || task);
+  }
 
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
@@ -420,11 +440,11 @@
     return ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(entry.task);
   }
 
-  function packageVersionLabel(size: ModelPackageSize | undefined) {
+  function packageVersionLabel(size: ModelPackageSize | undefined, translate = tr) {
     if (!size?.installed) return '';
-    if (size.version_state === 'up_to_date') return 'Up to date';
-    if (size.version_state === 'update_available') return 'Update available';
-    return 'Version unknown';
+    if (size.version_state === 'up_to_date') return translate('models.upToDate');
+    if (size.version_state === 'update_available') return translate('models.updateAvailable');
+    return translate('models.versionUnknown');
   }
 
   function entrySelectable(entry: CatalogEntry) {
@@ -437,31 +457,37 @@
 
   function installButtonLabel(
     choice: InstallPackageChoice,
-    job: ModelInstallJob | undefined
+    job: ModelInstallJob | undefined,
+    translate = tr
   ) {
     if (job?.state === 'running') return `${choice.label}…`;
-    if (job?.state === 'queued') return `${choice.label} queued`;
-    if (job?.state === 'cancelling') return `${choice.label} stopping`;
+    if (job?.state === 'queued') return `${choice.label} ${translate('models.queued')}`;
+    if (job?.state === 'cancelling') return `${choice.label} ${translate('models.stopping')}`;
     return choice.label;
   }
 
   function packageSizeLabel(
     size: ModelPackageSize | undefined,
     sizeState: 'idle' | 'running' | 'complete' | 'failed',
-    selected: boolean
+    selected: boolean,
+    translate = tr
   ) {
     const bytes = size?.size_bytes !== null && size?.size_bytes !== undefined
       ? formatBytes(size.size_bytes)
       : '';
     if (size?.installed) {
-      const version = packageVersionLabel(size);
-      return `${selected ? 'Selected' : 'Downloaded'}${version ? ` · ${version}` : ''}${bytes ? ` · ${bytes}` : ''}`;
+      const version = packageVersionLabel(size, translate);
+      return `${selected ? translate('models.selected') : translate('models.downloaded')}${version ? ` · ${version}` : ''}${bytes ? ` · ${bytes}` : ''}`;
     }
     if (bytes) return bytes;
-    if (size?.state === 'pending') return 'checking size...';
-    if (size?.state === 'gated') return 'HF access required';
-    if (size?.state === 'error' || size?.state === 'unknown') return 'size unavailable';
-    return sizeState === 'running' ? 'checking size…' : '';
+    if (size?.state === 'pending') return translate('models.checkingSize');
+    if (size?.state === 'gated') return translate('models.hfAccess');
+    if (size?.state === 'error' || size?.state === 'unknown') return translate('models.sizeUnavailable');
+    return sizeState === 'running' ? translate('models.checkingSize') : '';
+  }
+
+  function localizedStatus(value: string, translate = tr) {
+    return value === 'Ready' ? translate('status.ready') : value;
   }
 
   async function refreshPackageSizes() {
@@ -1420,6 +1446,9 @@
   }
 
   onMount(async () => {
+    const savedLanguage = localStorage.getItem('audiocpp.ui.language');
+    uiLanguage = resolveUiLanguage(savedLanguage ? [savedLanguage] : navigator.languages);
+    document.documentElement.lang = uiLanguage;
     try {
       selectedPackageIds = JSON.parse(localStorage.getItem('audiocpp.ui.packageIds') || '{}');
     } catch {
@@ -1482,14 +1511,23 @@
     <div class="mark">A</div>
     <div>
       <strong>audio.cpp</strong>
-      <span>Native Studio</span>
+      <span>{tr('app.nativeStudio')}</span>
     </div>
   </div>
-  <nav aria-label="Primary navigation">
-    <button class:active={tab === 'studio'} on:click={openStudioPage}>Studio</button>
-    <button class:active={tab === 'models'} on:click={openModelsPage}>Models</button>
-    <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>Runtime</button>
+  <nav aria-label={tr('nav.primary')}>
+    <button class:active={tab === 'studio'} on:click={openStudioPage}>{tr('nav.studio')}</button>
+    <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
+    <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>{tr('nav.runtime')}</button>
   </nav>
+  <label class="language-picker">
+    <span>{tr('language.label')}</span>
+    <select value={uiLanguage} aria-label={tr('language.label')}
+      on:change={(event) => chooseUiLanguage(event.currentTarget.value)}>
+      {#each uiLanguages as language}
+        <option value={language.code}>{language.name}</option>
+      {/each}
+    </select>
+  </label>
   <div class="server-pill" class:online={server?.status === 'ok'}>
     <i></i>{server?.backend || 'offline'}
   </div>
@@ -1497,11 +1535,11 @@
 
 <main>
   {#if tab === 'studio'}
-    <nav class="workflow-tabs" aria-label="Audio workflows">
+    <nav class="workflow-tabs" aria-label={tr('nav.workflows')}>
       {#each workflowTabs as workflow}
         <button class:active={activeWorkflow === workflow.id}
           on:click={() => chooseWorkflow(workflow.id)}>
-          {workflow.label}
+          {workflowLabel(workflow.id, workflow.label, tr)}
           <small>{catalog.filter((entry) => workflow.tasks.some((task) => task === entry.task)).length}</small>
         </button>
       {/each}
@@ -1509,30 +1547,30 @@
 
     <section class="hero">
       <div>
-        <p class="eyebrow">LOCAL AUDIO INTELLIGENCE</p>
-        <h1>{selectedId ? taskLabels[selected?.task] : 'Audio studio'}</h1>
-        <p>One native server, one embedded interface, no Python between your browser and the model.</p>
+        <p class="eyebrow">{tr('studio.eyebrow')}</p>
+        <h1>{selectedId ? localizedTaskLabel(selected?.task, tr) : tr('studio.title')}</h1>
+        <p>{tr('studio.subtitle')}</p>
       </div>
       <div class="hero-stat">
-        <span>Model</span>
-        <strong>{selectedId ? selected.display_name : 'No model selected'}</strong>
-        <small class:ready={isLoaded}>{selectedId ? (isLoaded ? 'Resident' : installed === false ? 'Not installed' : 'Available') : 'Choose an installed model'}</small>
+        <span>{tr('studio.model')}</span>
+        <strong>{selectedId ? selected.display_name : tr('studio.noModel')}</strong>
+        <small class:ready={isLoaded}>{selectedId ? (isLoaded ? tr('studio.resident') : installed === false ? tr('studio.notInstalled') : tr('studio.available')) : tr('studio.chooseInstalled')}</small>
       </div>
     </section>
 
     <div class="studio-grid">
       <aside class="panel model-rail">
-        <label for="model">Model</label>
+        <label for="model">{tr('studio.model')}</label>
         <select id="model" bind:value={selectedId} disabled={modelInventoryLoading}
           on:change={(event) => chooseModel(event.currentTarget.value)}>
-          <option value="">No model selected</option>
+          <option value="">{tr('studio.noModel')}</option>
           {#each activeWorkflowSpec.tasks as task}
             {@const entries = workflowModels.filter((entry) => entry.task === task)}
             {#if entries.length}
-              <optgroup label={taskLabels[task]}>
+              <optgroup label={localizedTaskLabel(task, tr)}>
                 {#each entries as entry}
                   <option value={entry.id} disabled={!selectableModelIds.has(entry.id)}>
-                    {entry.display_name}{selectableModelIds.has(entry.id) ? '' : ' — not downloaded'}
+                    {entry.display_name}{selectableModelIds.has(entry.id) ? '' : ` — ${tr('studio.notDownloaded')}`}
                   </option>
                 {/each}
               </optgroup>
@@ -1542,9 +1580,9 @@
 
         <div class="path-state">
           <span class:good={installed === true} class:bad={installed === false}>
-            {!selectedId ? 'No model selected' : installed === true ? 'Path found' : installed === false ? 'Path missing' : 'Path not inspected'}
+            {!selectedId ? tr('studio.noModel') : installed === true ? tr('studio.pathFound') : installed === false ? tr('studio.pathMissing') : tr('studio.pathUnknown')}
           </span>
-          <span>{selectedId ? `${selected?.min_vram_gb || '?'} GB estimated VRAM` : 'VRAM —'}</span>
+          <span>{selectedId ? tr('studio.estimatedVram', { value: selected?.min_vram_gb || '?' }) : tr('studio.vram')}</span>
         </div>
 
         {#if selectedId && (selected.install_packages || []).length}
@@ -1566,8 +1604,8 @@
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
             disabled={!selectedId || loadingModel || installed === false}
-            title={isLoaded ? 'Unload model' : 'Load model'} on:click={toggleSingleModel}>
-            {loadingModel ? 'Working…' : isLoaded ? 'Bundled · loaded' : 'Load model'}
+            title={isLoaded ? tr('studio.unload') : tr('studio.load')} on:click={toggleSingleModel}>
+            {loadingModel ? tr('studio.working') : isLoaded ? tr('studio.bundledLoaded') : tr('studio.load')}
           </button>
         {/if}
 
@@ -1579,24 +1617,24 @@
       <section class="panel controls">
         {#if selectedId}
         <div class="section-title">
-          <div><span>REQUEST</span><h2>Input & controls</h2></div>
+          <div><span>{tr('request.label')}</span><h2>{tr('request.title')}</h2></div>
           <span class="task-chip">{selected?.task}</span>
         </div>
 
         {#if showsText}
-          <label for="text">{selected.task === 'gen' ? 'Prompt' : selected.task === 'align' ? 'Alignment text' : 'Text'}</label>
+          <label for="text">{selected.task === 'gen' ? tr('request.prompt') : selected.task === 'align' ? tr('request.alignmentText') : tr('request.text')}</label>
           <textarea id="text" rows={selected.task === 'gen' ? 3 : 4} bind:value={text}
-            placeholder={selected.task === 'gen' ? 'Describe the sound or music…' : 'Enter the text…'}></textarea>
+            placeholder={selected.task === 'gen' ? tr('request.soundPlaceholder') : tr('request.textPlaceholder')}></textarea>
         {/if}
 
         {#if ['tts', 'clon'].includes(selected.task)}
           <div class="long-text-row">
             <label class="toggle">
               <input type="checkbox" bind:checked={longText} />
-              <span></span>Split and merge long text
+              <span></span>{tr('request.splitLongText')}
             </label>
             <div>
-              <label for="chunk-budget">Characters per chunk</label>
+              <label for="chunk-budget">{tr('request.charactersPerChunk')}</label>
               <input id="chunk-budget" type="number" min="40" max="10000" bind:value={chunkBudget}
                 disabled={!longText} />
             </div>
@@ -1604,73 +1642,74 @@
         {/if}
 
         {#if selected.task === 'gen'}
-          <label for="lyrics">Lyrics <span>optional</span></label>
+          <label for="lyrics">{tr('request.lyrics')} <span>{tr('request.optional')}</span></label>
           <textarea id="lyrics" rows="3" bind:value={lyrics} placeholder="[Verse]…"></textarea>
         {/if}
 
         {#if selected.task === 'asr'}
-          <label for="context">Context prompt <span>optional terminology or names</span></label>
+          <label for="context">{tr('request.context')} <span>{tr('request.contextHint')}</span></label>
           <textarea id="context" rows="2" bind:value={context}></textarea>
         {/if}
 
         {#if selected.task === 'vdes'}
-          <label for="instructions">Voice description</label>
+          <label for="instructions">{tr('request.voiceDescription')}</label>
           <textarea id="instructions" rows="2" bind:value={instructions}
-            placeholder="A warm, calm voice with measured pacing…"></textarea>
+            placeholder={tr('request.voiceDescriptionPlaceholder')}></textarea>
         {/if}
 
         <div class="field-grid">
           {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task)}
             <div>
-              <label for="language">Language <span>blank = auto</span></label>
+              <label for="language">{tr('request.language')} <span>{tr('request.autoLanguage')}</span></label>
               <input id="language" bind:value={language} placeholder="auto" />
             </div>
           {/if}
           {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task)}
             <div>
-              <label for="seed">Seed <span>-1 = random</span></label>
+              <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
             </div>
           {/if}
           {#if supportsMaxTokens(selected)}
             <div>
-              <label for="tokens">Maximum tokens</label>
+              <label for="tokens">{tr('request.maxTokens')}</label>
               <input id="tokens" type="number" min="1" bind:value={maxTokens} />
             </div>
           {/if}
           {#if selected.task === 'gen'}
             <div>
-              <label for="duration">Duration seconds</label>
+              <label for="duration">{tr('request.duration')}</label>
               <input id="duration" type="number" min="1" bind:value={duration} />
             </div>
           {/if}
         </div>
 
         {#if acceptsSource}
-          <label for="source">Source audio {needsSource ? '' : '(optional)'}</label>
-          <input id="source" class="file" type="file" accept="audio/*"
+          <label for="source">{tr('request.sourceAudio')} {needsSource ? '' : `(${tr('request.optional')})`}</label>
+          <input id="source" class="file file-native" type="file" accept="audio/*"
             on:change={(event) => sourceFile = event.currentTarget.files?.[0] || null} />
+          <label class="file-picker" for="source"><strong>{tr('file.choose')}</strong><span>{sourceFile?.name || tr('file.none')}</span></label>
           <div class="media-actions">
             {#if recordingTarget === 'source'}
-              <button class="danger" type="button" on:click={stopRecording}>Stop recording</button>
-              <span class="recording-dot">Recording microphone</span>
+              <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
+              <span class="recording-dot">{tr('request.recordingMicrophone')}</span>
             {:else}
               <button type="button" disabled={Boolean(recorder) || liveRecording}
-                on:click={() => startRecording('source')}>Record microphone</button>
+                on:click={() => startRecording('source')}>{tr('request.recordMicrophone')}</button>
               {#if sourceFile}<span>{sourceFile.name}</span>{/if}
             {/if}
           </div>
           {#if supportsLiveAsr}
             <div class="live-card">
               <div>
-                <strong>Live microphone transcription</strong>
-                <small>Processes consecutive four-second requests using the model's streaming mode.</small>
+                <strong>{tr('request.liveTitle')}</strong>
+                <small>{tr('request.liveDescription')}</small>
               </div>
               {#if liveRecording}
-                <button class="danger" type="button" on:click={stopLiveTranscription}>Stop live</button>
+                <button class="danger" type="button" on:click={stopLiveTranscription}>{tr('request.stopLive')}</button>
               {:else}
                 <button type="button" disabled={running || Boolean(recorder)}
-                  on:click={startLiveTranscription}>Start live</button>
+                  on:click={startLiveTranscription}>{tr('request.startLive')}</button>
               {/if}
             </div>
           {/if}
@@ -1678,47 +1717,49 @@
 
         {#if needsVoice}
           {#if quickStartVoices.length}
-            <label for="quick-start-voice">Quick-start voice presets (demo voices)</label>
+            <label for="quick-start-voice">{tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
-              <option value="">Use a reference audio file below</option>
+              <option value="">{tr('voice.useReference')}</option>
               {#each quickStartVoices as voice}<option value={voice}>{voice}</option>{/each}
             </select>
             {#if quickStartVoice}
               <div class="quick-voice-note">
-                The bundled reference audio and its matching transcript are supplied automatically.
+                {tr('voice.bundledNote')}
               </div>
             {/if}
           {/if}
           <div class="reference-input-grid">
             <div>
-              <label for="voice">Reference voice <span>{referenceVoiceRequired ? 'required' : 'optional'}</span></label>
-              <input id="voice" class="file" type="file" accept="audio/*"
+              <label for="voice">{tr('voice.reference')} <span>{referenceVoiceRequired ? tr('voice.required') : tr('voice.optional')}</span></label>
+              <input id="voice" class="file file-native" type="file" accept="audio/*"
                 bind:this={voiceInput}
                 on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
+              <label class="file-picker" for="voice"><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
             </div>
             <div>
-              <label for="reference-file">Reference text <span>.txt</span></label>
-              <input id="reference-file" class="file" type="file" accept=".txt,text/plain"
+              <label for="reference-file">{tr('voice.referenceText')} <span>.txt</span></label>
+              <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
                 bind:this={referenceTextInput}
                 on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
+              <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
             </div>
           </div>
           <div class="media-actions">
             {#if recordingTarget === 'voice'}
-              <button class="danger" type="button" on:click={stopRecording}>Stop recording</button>
-              <span class="recording-dot">Recording voice reference</span>
+              <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
+              <span class="recording-dot">{tr('voice.recording')}</span>
             {:else}
               <button type="button" disabled={Boolean(recorder) || liveRecording}
-                on:click={() => startRecording('voice')}>Record microphone</button>
+                on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
               {#if voiceFile}<span>{voiceFile.name}</span>{/if}
             {/if}
           </div>
-          <label for="reference">Reference transcript
-            <span>{referenceTextRequired ? 'required for this voice clone' : 'recommended for cloning'}</span>
+          <label for="reference">{tr('voice.transcript')}
+            <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
           </label>
           <textarea id="reference" rows="2" bind:value={referenceText}
-            placeholder="Type the exact words spoken in the reference audio, or load a matching .txt file above."></textarea>
+            placeholder={tr('voice.transcriptPlaceholder')}></textarea>
           <!--
             Saved voices keep a named reference recording and transcript for reuse. They are persisted only
             in this browser's IndexedDB, are never uploaded until the user runs a request, do not sync to
@@ -1726,28 +1767,28 @@
           -->
           <div class="voice-library">
             <div>
-              <label for="saved-voice">Saved voices <span>stored only in this browser</span></label>
+              <label for="saved-voice">{tr('voice.saved')} <span>{tr('voice.browserOnly')}</span></label>
               <select id="saved-voice" value={savedVoiceId}
                 on:change={(event) => chooseSavedVoice(event.currentTarget.value)}>
-                <option value="">Choose a saved voice...</option>
+                <option value="">{tr('voice.chooseSaved')}</option>
                 {#each savedVoices as voice}<option value={voice.id}>{voice.name}</option>{/each}
               </select>
             </div>
             <div>
-              <label for="voice-name">Library name</label>
-              <input id="voice-name" bind:value={voiceName} placeholder="My reference voice" />
+              <label for="voice-name">{tr('voice.libraryName')}</label>
+              <input id="voice-name" bind:value={voiceName} placeholder={tr('voice.namePlaceholder')} />
             </div>
             <div class="library-actions">
-              <button type="button" disabled={!voiceFile} on:click={storeCurrentVoice}>Save voice</button>
+              <button type="button" disabled={!voiceFile} on:click={storeCurrentVoice}>{tr('voice.save')}</button>
               <button class="danger" type="button" disabled={!savedVoiceId}
-                on:click={removeCurrentVoice}>Delete</button>
+                on:click={removeCurrentVoice}>{tr('common.delete')}</button>
             </div>
           </div>
         {/if}
 
         {#if paramSpecs.length}
           <details>
-            <summary>Model parameters <span>{paramSpecs.length}</span></summary>
+            <summary>{tr('options.modelParameters')} <span>{paramSpecs.length}</span></summary>
             <div class="parameter-grid">
               {#each paramSpecs as spec}
                 <div class:wide={spec.type === 'text'}>
@@ -1757,7 +1798,7 @@
                       <input id={'param-' + spec.name} type="checkbox"
                         checked={Boolean(advancedValues[spec.name])}
                         on:change={(event) => advancedValues = {...advancedValues, [spec.name]: event.currentTarget.checked}} />
-                      <span></span>{advancedValues[spec.name] ? 'Enabled' : 'Disabled'}
+                      <span></span>{advancedValues[spec.name] ? tr('common.enabled') : tr('common.disabled')}
                     </label>
                   {:else if spec.type === 'choice'}
                     <select id={'param-' + spec.name} value={String(advancedValues[spec.name] ?? '')}
@@ -1787,47 +1828,47 @@
         {/if}
 
         <details>
-          <summary>Additional options <span>JSON</span></summary>
+          <summary>{tr('options.additional')} <span>JSON</span></summary>
           <textarea class="code" rows="3" bind:value={advancedJson}></textarea>
         </details>
 
         <div class="runbar">
           <button class="run" disabled={!selectedId || running || (!isLoaded && installed === false)} on:click={run}
             title={!selectedId ? 'Choose an installed model first' : !isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
-            <span>{running ? 'Working…' : 'Run'}</span>
+            <span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>
           </button>
-          <button disabled={!running} on:click={cancel}>Cancel</button>
+          <button disabled={!running} on:click={cancel}>{tr('run.cancel')}</button>
           <div class="status" class:busy={running}
             class:warning={!running && status === warningStatus}
-            class:error={!running && status === errorStatus}>{status}</div>
+            class:error={!running && status === errorStatus}>{localizedStatus(status, tr)}</div>
         </div>
         {:else}
           <div class="section-title">
-            <div><span>REQUEST</span><h2>No model selected</h2></div>
+            <div><span>{tr('request.label')}</span><h2>{tr('studio.noModel')}</h2></div>
           </div>
           <div class="empty-output">
-            <p>Choose a downloaded model from the Model menu, or install one from the Models tab.</p>
+            <p>{tr('studio.chooseInstalled')}</p>
           </div>
         {/if}
       </section>
 
       <section class="panel output">
         <div class="section-title">
-          <div><span>RESULT</span><h2>Output</h2></div>
-          {#if outputAudio.length}<span class="task-chip">{outputAudio.length} track{outputAudio.length === 1 ? '' : 's'}</span>{/if}
+          <div><span>{tr('result.label')}</span><h2>{tr('result.title')}</h2></div>
+          {#if outputAudio.length}<span class="task-chip">{outputAudio.length} {outputAudio.length === 1 ? tr('result.track') : tr('result.tracks')}</span>{/if}
         </div>
         {#if outputAudio.length}
           <div class="audio-list">
             {#each outputAudio as output}
               <article>
-                <div><strong>{output.id}</strong><a href={output.url} download={`${selected.id}-${output.id}.wav`}>Save WAV</a></div>
+                <div><strong>{output.id}</strong><a href={output.url} download={`${selected.id}-${output.id}.wav`}>{tr('result.saveWav')}</a></div>
                 <audio controls src={output.url}></audio>
               </article>
             {/each}
           </div>
         {:else}
-          <div class="empty-output"><div class="wave">∿</div><p>Generated audio and structured results appear here.</p></div>
+          <div class="empty-output"><div class="wave">∿</div><p>{tr('result.empty')}</p></div>
         {/if}
         {#if outputText}<textarea class="transcript" readonly rows="7" value={outputText}></textarea>{/if}
         {#if outputJson}<pre>{outputJson}</pre>{/if}
@@ -1835,31 +1876,31 @@
     </div>
   {:else if tab === 'models'}
     <section class="page-head">
-      <p class="eyebrow">MODEL LIBRARY</p><h1>Local packages</h1>
-      <p>Download and manage model packages without leaving the native interface.</p>
+      <p class="eyebrow">{tr('models.eyebrow')}</p><h1>{tr('models.title')}</h1>
+      <p>{tr('models.subtitle')}</p>
     </section>
     <section class="panel models-folder-options">
       <div class="models-folder-controls">
       <div class="models-folder-field">
-        <label for="models-folder">Models folder <span>downloads, local detection, and model loading</span></label>
+        <label for="models-folder">{tr('models.folder')} <span>{tr('models.folderHint')}</span></label>
         <input id="models-folder" bind:value={modelsFolderInput}
-          placeholder={defaultModelsFolder || 'models folder beside audiocpp_server'} />
-        {#if defaultModelsFolder}<small>Default: {defaultModelsFolder}</small>{/if}
+          placeholder={defaultModelsFolder || tr('models.folderPlaceholder')} />
+        {#if defaultModelsFolder}<small>{tr('models.default')}: {defaultModelsFolder}</small>{/if}
       </div>
-      <button disabled={applyingModelsFolder} on:click={() => openFolderBrowser()}>Browse</button>
+      <button disabled={applyingModelsFolder} on:click={() => openFolderBrowser()}>{tr('common.browse')}</button>
       <button disabled={applyingModelsFolder || !modelsFolderInput.trim() || modelsFolderInput.trim() === modelsFolder}
-        on:click={() => applyModelsFolder(false)}>{applyingModelsFolder ? 'Applyingâ€¦' : 'Apply'}</button>
+        on:click={() => applyModelsFolder(false)}>{applyingModelsFolder ? tr('common.applying') : tr('common.apply')}</button>
       <button disabled={applyingModelsFolder || modelsFolderIsDefault}
-        on:click={() => applyModelsFolder(true)}>Use default</button>
+        on:click={() => applyModelsFolder(true)}>{tr('models.useDefault')}</button>
       </div>
       <fieldset class="model-type-filters">
-        <legend>Show model types</legend>
+        <legend>{tr('models.showTypes')}</legend>
         <div>
           {#each workflowTabs as workflow}
             <label>
               <input type="checkbox" checked={modelWorkflowFilters.includes(workflow.id)}
                 on:change={(event) => toggleModelWorkflowFilter(workflow.id, event.currentTarget.checked)} />
-              <span>{workflow.filterLabel}</span>
+              <span>{workflowLabel(workflow.id, workflow.filterLabel, tr)}</span>
             </label>
           {/each}
         </div>
@@ -1874,9 +1915,9 @@
           class:selected={group.entries.some((entry) => entry.id === selectedId)}>
           <div class="model-icon">{group.entries[0].task.toUpperCase()}</div>
           <div class="model-copy family-copy">
-            <span>{group.entries.length} {group.entries.length === 1 ? 'model' : 'variants'}</span>
+            <span>{group.entries.length} {group.entries.length === 1 ? tr('models.model') : tr('models.variants')}</span>
             <h3>{group.label}</h3>
-            <p>{group.entries.map((entry) => taskLabels[entry.task] || entry.task).filter((value, index, all) => all.indexOf(value) === index).join(' · ')}</p>
+            <p>{group.entries.map((entry) => localizedTaskLabel(entry.task, tr)).filter((value, index, all) => all.indexOf(value) === index).join(' · ')}</p>
           </div>
           <div class="model-variant-list">
             {#each group.entries as entry}
@@ -1885,7 +1926,7 @@
               <section class="model-variant" class:selected-variant={entry.id === selectedId}>
                 <div class="variant-copy">
                   <strong>{entry.display_name}</strong>
-                  <span>{taskLabels[entry.task] || entry.task} · VRAM ~{entry.min_vram_gb || '?'} GB</span>
+                  <span>{localizedTaskLabel(entry.task, tr)} · VRAM ~{entry.min_vram_gb || '?'} GB</span>
                 </div>
                 <div class="model-actions">
                   {#if packageChoices.length}
@@ -1900,11 +1941,11 @@
                               (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
                             title={`${choice.format.toUpperCase()} ${choice.precision}: ${resolveCatalogPath(choice.path)}`}
                             on:click={() => useOrInstallPackage(entry, choice)}>
-                            <span>{installButtonLabel(choice, installJobs[choice.id])}</span>
+                            <span>{installButtonLabel(choice, installJobs[choice.id], tr)}</span>
                             {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
-                              packageIsSelected(entry, choice))}
+                              packageIsSelected(entry, choice), tr)}
                               <span class="package-size">{packageSizeLabel(packageSizes[choice.id], packageSizeState,
-                                packageIsSelected(entry, choice))}</span>
+                                packageIsSelected(entry, choice), tr)}</span>
                             {/if}
                           </button>
                           {#if packageSizes[choice.id]?.installed &&
@@ -1915,7 +1956,7 @@
                               aria-label={`${packageSizes[choice.id]?.version_state === 'update_available' ? 'Update' : 'Reinstall'} ${entry.display_name} ${choice.label}`}
                               disabled={groupInstallBusy(group, installJobs)}
                               on:click={() => installPackage(entry, choice, true)}>
-                              {packageSizes[choice.id]?.version_state === 'update_available' ? 'Update' : 'Reinstall'}
+                              {packageSizes[choice.id]?.version_state === 'update_available' ? tr('models.update') : tr('models.reinstall')}
                             </button>
                           {/if}
                           {#if packageSizes[choice.id]?.installed}
@@ -1949,15 +1990,15 @@
                         <div class="install-actions">
                           {#if ['queued', 'running', 'cancelling'].includes(installJob.state)}
                             <button class="danger" disabled={installJob.state === 'cancelling'}
-                              on:click={() => stopPackageDownload(entry, installJob)}>Stop download</button>
+                              on:click={() => stopPackageDownload(entry, installJob)}>{tr('models.stopDownload')}</button>
                           {:else if ['failed', 'cancelled'].includes(installJob.state)}
-                            <button on:click={() => cleanPartialDownload(entry, installJob)}>Clean partial download</button>
+                            <button on:click={() => cleanPartialDownload(entry, installJob)}>{tr('models.cleanPartial')}</button>
                           {/if}
                         </div>
                       </div>
                     {/if}
                   {:else if (entry.install_packages || []).length}
-                    <div class="shared-package-note">Uses the shared {group.label} package shown above.</div>
+                    <div class="shared-package-note">{tr('models.sharedPackage', { name: group.label })}</div>
                   {/if}
                 </div>
               </section>
@@ -1970,15 +2011,15 @@
       {/each}
     </section>
   {:else}
-    <section class="page-head"><p class="eyebrow">RUNTIME</p><h1>Session log</h1><p>Browser-side lifecycle and request events.</p></section>
+    <section class="page-head"><p class="eyebrow">{tr('runtime.eyebrow')}</p><h1>{tr('runtime.title')}</h1><p>{tr('runtime.subtitle')}</p></section>
     <section class="panel log-panel">
       <div class="runtime-cards">
-        <div><span>Status</span><strong>{server?.status || 'offline'}</strong></div>
-        <div><span>Backend</span><strong>{server?.backend || '—'}</strong></div>
-        <div><span>Registered</span><strong>{loadedModels.length}</strong></div>
-        <div><span>Resident</span><strong>{loadedModels.filter((model) => model.loaded).length}</strong></div>
+        <div><span>{tr('runtime.status')}</span><strong>{server?.status || 'offline'}</strong></div>
+        <div><span>{tr('runtime.backend')}</span><strong>{server?.backend || '—'}</strong></div>
+        <div><span>{tr('runtime.registered')}</span><strong>{loadedModels.length}</strong></div>
+        <div><span>{tr('runtime.resident')}</span><strong>{loadedModels.filter((model) => model.loaded).length}</strong></div>
       </div>
-      <pre class="logs">{logs.length ? logs.join('\n') : 'No events yet.'}</pre>
+      <pre class="logs">{logs.length ? logs.join('\n') : tr('runtime.noEvents')}</pre>
     </section>
   {/if}
 </main>
@@ -1987,10 +2028,10 @@
   <div class="folder-browser-backdrop">
     <div class="panel folder-browser-dialog" role="dialog" aria-modal="true" aria-labelledby="folder-browser-title">
       <header>
-        <div><span>MODELS FOLDER</span><h2 id="folder-browser-title">Choose a folder</h2></div>
-        <button aria-label="Close folder browser" title="Close" on:click={() => folderBrowserOpen = false}>Close</button>
+        <div><span>{tr('folder.eyebrow')}</span><h2 id="folder-browser-title">{tr('folder.title')}</h2></div>
+        <button aria-label={tr('folder.closeLabel')} title={tr('common.close')} on:click={() => folderBrowserOpen = false}>{tr('common.close')}</button>
       </header>
-      <div class="folder-browser-location">{folderBrowser?.current || 'Loading...'}</div>
+      <div class="folder-browser-location">{folderBrowser?.current || tr('folder.loading')}</div>
       {#if folderBrowser?.roots.length}
         <div class="folder-browser-roots">
           {#each folderBrowser.roots as root}
@@ -2000,14 +2041,14 @@
       {/if}
       <div class="folder-browser-toolbar">
         <button disabled={!folderBrowser?.parent || folderBrowserLoading}
-          on:click={() => openFolderBrowser(folderBrowser?.parent || '')}>Up one level</button>
+          on:click={() => openFolderBrowser(folderBrowser?.parent || '')}>{tr('folder.up')}</button>
         <button disabled={folderBrowserLoading}
-          on:click={() => openFolderBrowser(folderBrowser?.current || '')}>Refresh</button>
+          on:click={() => openFolderBrowser(folderBrowser?.current || '')}>{tr('common.refresh')}</button>
       </div>
       {#if folderBrowserError}
         <div class="folder-browser-error">{folderBrowserError}</div>
       {:else if folderBrowserLoading}
-        <div class="folder-browser-empty">Loading folders...</div>
+        <div class="folder-browser-empty">{tr('folder.loadingFolders')}</div>
       {:else if folderBrowser?.directories.length}
         <div class="folder-browser-list">
           {#each folderBrowser.directories as directory}
@@ -2017,15 +2058,15 @@
           {/each}
         </div>
       {:else}
-        <div class="folder-browser-empty">This folder has no subfolders.</div>
+        <div class="folder-browser-empty">{tr('folder.empty')}</div>
       {/if}
       <footer>
-        <button on:click={() => folderBrowserOpen = false}>Cancel</button>
+        <button on:click={() => folderBrowserOpen = false}>{tr('common.cancel')}</button>
         <button class="primary" disabled={!folderBrowser || folderBrowserLoading}
-          on:click={selectBrowsedFolder}>Select this folder</button>
+          on:click={selectBrowsedFolder}>{tr('folder.select')}</button>
       </footer>
     </div>
   </div>
 {/if}
 
-<footer><span>audio.cpp native WebUI</span><span>SvelteKit · embedded in audiocpp_server</span></footer>
+<footer><span>audio.cpp native WebUI</span><span>{tr('footer.embedded')}</span></footer>

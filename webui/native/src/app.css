@@ -34,7 +34,9 @@ nav { display: flex; height: 100%; }
 nav button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 0 16px; color: var(--muted); cursor: pointer; }
 nav button:hover, nav button.active { color: white; }
 nav button.active { border-color: var(--cyan); }
-.server-pill { margin-left: auto; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.language-picker { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.language-picker select { min-width: 112px; height: 30px; padding: 0 28px 0 10px; border: 1px solid var(--line); border-radius: 8px; background: #0a1729; color: #dce8fa; cursor: pointer; }
+.server-pill { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
 .server-pill i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #64748b; margin-right: 7px; }
 .server-pill.online i { background: var(--cyan); box-shadow: 0 0 12px var(--cyan); }
 
@@ -78,6 +80,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--blue); box-shado
 select option:disabled { color: #45566f; background: #091423; }
 input.file { padding: 6px; color: var(--muted); }
 input.file::file-selector-button { border: 0; border-radius: 5px; color: #07101f; background: #a8c8f6; padding: 5px 8px; margin-right: 8px; cursor: pointer; font-weight: 700; }
+.file-native { position: absolute; width: 1px !important; height: 1px; padding: 0 !important; opacity: 0; pointer-events: none; }
+.file-picker { min-height: 38px; display: flex; align-items: center; gap: 10px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: #081426; cursor: pointer; overflow: hidden; }
+.file-picker strong { flex: 0 0 auto; padding: 5px 8px; border-radius: 5px; color: #07101f; background: #a8c8f6; font-size: 11px; }
+.file-picker span { min-width: 0; overflow: hidden; color: var(--muted); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.file-picker:hover { border-color: #3d718f; }
 .path-state { display: flex; justify-content: space-between; gap: 5px; color: var(--muted); font-size: 10px; padding: 6px 2px 1px; }
 .path-state .good { color: var(--cyan); }.path-state .bad { color: var(--danger); }
 .button-row { display: flex; gap: 7px; margin-top: 11px; }
@@ -227,7 +234,7 @@ footer { display: flex; justify-content: space-between; max-width: 1600px; margi
 }
 @media (max-width: 820px) {
   .topbar { padding: 0 14px; gap: 8px; }.brand { min-width: auto; }.brand span { display: none; }
-  nav { margin-left: auto; } nav button { padding: 0 10px; }.server-pill { display: none; }
+  nav { margin-left: auto; } nav button { padding: 0 10px; }.language-picker { margin-left: 0; }.language-picker span, .server-pill { display: none; }
   main { padding: 22px 12px 40px; }.workflow-tabs { margin-bottom: 22px; }.hero { align-items: start; flex-direction: column; }.hero-stat { width: 100%; }
   .studio-grid { grid-template-columns: 1fr; }.output { grid-column: auto; }.field-grid, .parameter-grid { grid-template-columns: 1fr; }
   .voice-library { grid-template-columns: 1fr 1fr; }.library-actions { grid-column: 1/-1; }
@@ -236,7 +243,7 @@ footer { display: flex; justify-content: space-between; max-width: 1600px; margi
   .models-folder-options { grid-template-columns: 1fr; }.model-type-filters > div { height: auto; }
 }
 @media (max-width: 520px) {
-  .brand strong { font-size: 14px; } nav button { font-size: 12px; padding: 0 7px; }
+  .brand strong { font-size: 14px; } nav button { font-size: 12px; padding: 0 7px; }.language-picker select { min-width: 82px; max-width: 96px; }
   .model-grid article { grid-template-columns: 45px 1fr; }.model-variant { grid-template-columns: 1fr; }.model-actions { grid-column: 1/-1; width: 100%; min-width: 0; }
   .models-folder-controls { grid-template-columns: repeat(3, 1fr); }
   .models-folder-field { grid-column: 1/-1; }
