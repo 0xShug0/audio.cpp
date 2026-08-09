@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,10 @@ class ManagerError(RuntimeError):
     pass
 
 
+class InstallCancelled(ManagerError):
+    pass
+
+
 @dataclass(frozen=True)
 class PackageRecord:
     family: str
@@ -36,6 +41,13 @@ class PackageRecord:
     strip_prefix: str
     download: dict[str, Any]
     default: bool
+
+
+@dataclass(frozen=True)
+class RemoteFileInfo:
+    size: int | None
+    revision: str
+    etag: str
 
 
 def huggingface_token() -> str | None:
@@ -123,9 +135,11 @@ def flatten_packages(specs: list[dict[str, Any]]) -> list[PackageRecord]:
 
 
 def select_package(records: list[PackageRecord], args: argparse.Namespace) -> PackageRecord:
+    format_filter = getattr(args, "format", None)
+    precision_filter = getattr(args, "precision", None)
     exact = [record for record in records if record.id == args.package]
     if exact:
-        if args.format or args.precision:
+        if format_filter or precision_filter:
             raise ManagerError("format/precision filters are only used when selecting by family")
         return exact[0]
 
@@ -133,10 +147,10 @@ def select_package(records: list[PackageRecord], args: argparse.Namespace) -> Pa
     if not family:
         raise ManagerError(f"unknown package or family: {args.package}")
     candidates = family
-    if args.format:
-        candidates = [record for record in candidates if record.format == args.format]
-    if args.precision:
-        candidates = [record for record in candidates if record.precision == args.precision]
+    if format_filter:
+        candidates = [record for record in candidates if record.format == format_filter]
+    if precision_filter:
+        candidates = [record for record in candidates if record.precision == precision_filter]
     if not candidates:
         raise ManagerError(f"no package for family '{args.package}' matches the requested filters")
     default_candidates = [record for record in candidates if record.default]
@@ -152,21 +166,35 @@ def hf_url(repo: str, revision: str, remote_path: str) -> str:
     return f"https://huggingface.co/{repo}/resolve/{quote(revision, safe='')}/{quote_repo_path(remote_path)}"
 
 
-def check_remote_file(package: PackageRecord, remote_path: str) -> int | None:
+def check_remote_file(package: PackageRecord, remote_path: str) -> RemoteFileInfo:
     repo = package.download["repo"]
     revision = package.download.get("revision", "main")
     request = Request(hf_url(repo, revision, remote_path), headers=http_headers(), method="HEAD")
     try:
         with urlopen(request, timeout=60) as response:
             size = response.headers.get("Content-Length")
-            return int(size) if size else None
+            return RemoteFileInfo(
+                size=int(size) if size else None,
+                revision=response.headers.get("X-Repo-Commit", ""),
+                etag=response.headers.get("ETag", "").strip('"'),
+            )
     except HTTPError as error:
         if package.download.get("gated") is True and error.code in (401, 403):
-            return None
+            return RemoteFileInfo(size=None, revision="", etag="")
         raise ManagerError(f"remote file is not accessible: {repo}/{remote_path} ({error.code})") from error
 
 
-def download_file(package: PackageRecord, remote_path: str, output_path: Path, progress=None) -> None:
+def cancellation_requested(cancel_file: Path | None) -> bool:
+    return cancel_file is not None and cancel_file.is_file()
+
+
+def download_file(
+    package: PackageRecord,
+    remote_path: str,
+    output_path: Path,
+    progress=None,
+    cancel_file: Path | None = None,
+) -> None:
     repo = package.download["repo"]
     revision = package.download.get("revision", "main")
     request = Request(hf_url(repo, revision, remote_path), headers=http_headers())
@@ -179,6 +207,8 @@ def download_file(package: PackageRecord, remote_path: str, output_path: Path, p
             last_report = 0
             with output_path.open("wb") as handle:
                 while True:
+                    if cancellation_requested(cancel_file):
+                        raise InstallCancelled("download cancelled by user")
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
@@ -189,6 +219,8 @@ def download_file(package: PackageRecord, remote_path: str, output_path: Path, p
                         last_report = total
             if progress is not None:
                 progress(total, expected)
+            if cancellation_requested(cancel_file):
+                raise InstallCancelled("download cancelled by user")
             if expected is not None and total != expected:
                 raise ManagerError(f"downloaded size mismatch for {output_path}: {total} != {expected}")
     except HTTPError as error:
@@ -210,7 +242,74 @@ def ensure_hf_package(package: PackageRecord) -> None:
         raise ManagerError(f"{package.id} has no Hugging Face repo")
 
 
-def install_package(package: PackageRecord, args: argparse.Namespace) -> None:
+def package_manifest_path(package: PackageRecord, models_root: Path) -> Path:
+    target_dir = validate_relative_path(package.target_directory, "target_directory")
+    return models_root / target_dir / f".audiocpp-package-{package.id}.json"
+
+
+def read_package_manifest(package: PackageRecord, models_root: Path | None) -> dict[str, Any] | None:
+    if models_root is None:
+        return None
+    path = package_manifest_path(package, models_root)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def write_package_manifest(
+    package: PackageRecord,
+    models_root: Path,
+    resolved_revision: str,
+    remote_files: dict[str, RemoteFileInfo],
+) -> None:
+    path = package_manifest_path(package, models_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "package_id": package.id,
+        "repo": package.download.get("repo", ""),
+        "requested_revision": package.download.get("revision", "main"),
+        "resolved_revision": resolved_revision,
+        "installed_at_unix": int(time.time()),
+        "files": {
+            name: {"size": info.size, "etag": info.etag}
+            for name, info in remote_files.items()
+        },
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def reusable_package_outputs(
+    package: PackageRecord,
+    records: list[PackageRecord],
+    models_root: Path,
+) -> set[Path]:
+    """Return files safely shared with another completely installed package."""
+    target_dir = validate_relative_path(package.target_directory, "target_directory")
+    final_dir = models_root / target_dir
+    requested = {
+        (remote, final_dir / stripped_path(remote, package.strip_prefix))
+        for remote in package.files
+    }
+    reusable: set[Path] = set()
+    for other in records:
+        if other.id == package.id or other.download != package.download:
+            continue
+        if not package_is_installed(other, models_root):
+            continue
+        other_dir = models_root / validate_relative_path(other.target_directory, "target_directory")
+        for remote in other.files:
+            output = other_dir / stripped_path(remote, other.strip_prefix)
+            if (remote, output) in requested:
+                reusable.add(output)
+    return reusable
+
+
+def install_package(package: PackageRecord, records: list[PackageRecord], args: argparse.Namespace) -> None:
     ensure_hf_package(package)
     target_dir = validate_relative_path(package.target_directory, "target_directory")
     models_root = Path(args.models_root)
@@ -222,11 +321,11 @@ def install_package(package: PackageRecord, args: argparse.Namespace) -> None:
     print(f"target {final_dir}")
     for remote, output in plan:
         if args.check:
-            size = check_remote_file(package, remote)
-            if size is None and package.download.get("gated") is True:
+            info = check_remote_file(package, remote)
+            if info.size is None and package.download.get("gated") is True:
                 suffix = " gated_access_required"
             else:
-                suffix = f" size={size}" if size is not None else ""
+                suffix = f" size={info.size}" if info.size is not None else ""
             print(f"check {remote}{suffix}")
         else:
             print(f"file remote={remote} local={output.relative_to(models_root)}")
@@ -238,14 +337,24 @@ def install_package(package: PackageRecord, args: argparse.Namespace) -> None:
         if len(existing_outputs) == len(plan) and all(output.is_file() for output in existing_outputs):
             print(f"already installed {package.id} -> {final_dir}")
             return
-        raise ManagerError(f"some package files already exist in: {final_dir} (use --overwrite)")
+        reusable = reusable_package_outputs(package, records, models_root)
+        conflicts = [output for output in existing_outputs if output not in reusable]
+        if conflicts:
+            raise ManagerError(f"some package files already exist in: {final_dir} (use --overwrite)")
+        plan = [(remote, output) for remote, output in plan if output not in reusable]
     models_root.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{package.target_directory.replace('/', '_')}.", dir=models_root))
+    cancel_file = Path(args.cancel_file) if getattr(args, "cancel_file", "") else None
     try:
+        if cancellation_requested(cancel_file):
+            raise InstallCancelled("download cancelled by user")
         progress_enabled = bool(getattr(args, "progress", False))
-        expected_sizes: list[int | None] = []
+        remote_files: dict[str, RemoteFileInfo] = {}
         if progress_enabled:
-            expected_sizes = [check_remote_file(package, remote) for remote, _output in plan]
+            remote_files = {remote: check_remote_file(package, remote) for remote, _output in plan}
+        elif plan:
+            remote_files[plan[0][0]] = check_remote_file(package, plan[0][0])
+        expected_sizes = [remote_files[remote].size for remote, _output in plan] if progress_enabled else []
         total_expected = sum(size for size in expected_sizes if size is not None)
         if any(size is None for size in expected_sizes):
             total_expected = 0
@@ -267,11 +376,14 @@ def install_package(package: PackageRecord, args: argparse.Namespace) -> None:
                     remote,
                     destination,
                     lambda file_bytes, _expected, base=completed: emit_progress(base + file_bytes),
+                    cancel_file,
                 )
                 completed += destination.stat().st_size
                 emit_progress(completed)
             else:
-                download_file(package, remote, destination)
+                download_file(package, remote, destination, cancel_file=cancel_file)
+        if cancellation_requested(cancel_file):
+            raise InstallCancelled("download cancelled by user")
         if not final_dir.exists():
             final_dir.parent.mkdir(parents=True, exist_ok=True)
             staging.rename(final_dir)
@@ -289,23 +401,32 @@ def install_package(package: PackageRecord, args: argparse.Namespace) -> None:
                     destination.unlink()
                 staged_file.replace(destination)
             shutil.rmtree(staging)
+        resolved_revision = next(
+            (info.revision for info in remote_files.values() if info.revision),
+            package.download.get("revision", "main"),
+        )
+        write_package_manifest(package, models_root, resolved_revision, remote_files)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
     print(f"installed {package.id} -> {final_dir}")
 
 
-def uninstall_package(package: PackageRecord, args: argparse.Namespace) -> None:
+def uninstall_package(package: PackageRecord, records: list[PackageRecord], args: argparse.Namespace) -> None:
     target_dir = validate_relative_path(package.target_directory, "target_directory")
     models_root = Path(args.models_root)
     final_dir = models_root / target_dir
     package_files = [final_dir / stripped_path(remote, package.strip_prefix) for remote in package.files]
+    manifest_path = package_manifest_path(package, models_root)
     existing = [path for path in package_files if path.is_file() or path.is_symlink()]
     if not existing:
         raise ManagerError(f"package is not installed: {package.id}")
 
+    reusable = reusable_package_outputs(package, records, models_root)
     for path in existing:
-        path.unlink()
+        if path not in reusable:
+            path.unlink()
+    manifest_path.unlink(missing_ok=True)
 
     # Remove only directories made empty by this package. Other precision
     # variants and unrelated files in the shared target remain untouched.
@@ -321,6 +442,23 @@ def uninstall_package(package: PackageRecord, args: argparse.Namespace) -> None:
         except OSError:
             pass
     print(f"removed {package.id} -> {final_dir}")
+
+
+def clean_partial_package(package: PackageRecord, args: argparse.Namespace) -> None:
+    models_root = Path(args.models_root).resolve()
+    models_root.mkdir(parents=True, exist_ok=True)
+    prefix = f".{package.target_directory.replace('/', '_')}."
+    removed = 0
+    for candidate in models_root.glob(prefix + "*"):
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(models_root)
+        except ValueError as error:
+            raise ManagerError(f"refusing to clean staging path outside models root: {resolved}") from error
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
+            removed += 1
+    print(f"cleaned {removed} partial download director{'y' if removed == 1 else 'ies'} for {package.id}")
 
 
 def command_list(records: list[PackageRecord], args: argparse.Namespace) -> None:
@@ -392,12 +530,25 @@ def package_size_record(package: PackageRecord, models_root: Path | None = None)
         ensure_hf_package(package)
         total = 0
         unknown = False
+        remote_revision = ""
         for remote_path in package.files:
-            size = check_remote_file(package, remote_path)
-            if size is None:
+            info = check_remote_file(package, remote_path)
+            if info.size is None:
                 unknown = True
             else:
-                total += size
+                total += info.size
+            if not remote_revision and info.revision:
+                remote_revision = info.revision
+        manifest = read_package_manifest(package, models_root)
+        local_revision = str(manifest.get("resolved_revision", "")) if manifest else ""
+        if not installed:
+            version_state = "not_installed"
+        elif not local_revision or not remote_revision:
+            version_state = "unknown"
+        elif local_revision == remote_revision:
+            version_state = "up_to_date"
+        else:
+            version_state = "update_available"
         state = "gated" if unknown and package.download.get("gated") is True else "unknown" if unknown else "ok"
         return {
             "id": package.id,
@@ -405,6 +556,9 @@ def package_size_record(package: PackageRecord, models_root: Path | None = None)
             "state": state,
             "message": "Hugging Face access and a valid token are required" if state == "gated" else "",
             "installed": installed,
+            "version_state": version_state,
+            "local_revision": local_revision,
+            "remote_revision": remote_revision,
         }
     except ManagerError as error:
         return {
@@ -413,6 +567,9 @@ def package_size_record(package: PackageRecord, models_root: Path | None = None)
             "state": "error",
             "message": str(error),
             "installed": installed,
+            "version_state": "unknown" if installed else "not_installed",
+            "local_revision": "",
+            "remote_revision": "",
         }
 
 
@@ -439,6 +596,9 @@ def command_installed(records: list[PackageRecord], args: argparse.Namespace) ->
             "state": "pending",
             "message": "",
             "installed": package_is_installed(package, models_root),
+            "version_state": "unknown" if package_is_installed(package, models_root) else "not_installed",
+            "local_revision": "",
+            "remote_revision": "",
         }
         for package in records
     ]
@@ -475,12 +635,17 @@ def make_parser() -> argparse.ArgumentParser:
     uninstall_parser.add_argument("--precision")
     uninstall_parser.add_argument("--models-root", default="models")
 
+    clean_parser = sub.add_parser("clean-partial", help="remove abandoned staging downloads for one package")
+    clean_parser.add_argument("package", help="package id or family")
+    clean_parser.add_argument("--models-root", default="models")
+
     install_parser = sub.add_parser("install", help="install one Hugging Face snapshot package")
     install_parser.add_argument("package", help="package id or family")
     install_parser.add_argument("--format")
     install_parser.add_argument("--precision")
     install_parser.add_argument("--models-root", default="models")
     install_parser.add_argument("--overwrite", action="store_true")
+    install_parser.add_argument("--cancel-file", default="", help=argparse.SUPPRESS)
     install_parser.add_argument("--dry-run", action="store_true")
     install_parser.add_argument("--check", action="store_true", help="check remote files without downloading")
     install_parser.add_argument(
@@ -505,9 +670,11 @@ def main() -> int:
         elif args.command == "installed":
             command_installed(records, args)
         elif args.command == "uninstall":
-            uninstall_package(select_package(records, args), args)
+            uninstall_package(select_package(records, args), records, args)
+        elif args.command == "clean-partial":
+            clean_partial_package(select_package(records, args), args)
         elif args.command == "install":
-            install_package(select_package(records, args), args)
+            install_package(select_package(records, args), records, args)
         else:
             raise ManagerError(f"unknown command: {args.command}")
         return 0

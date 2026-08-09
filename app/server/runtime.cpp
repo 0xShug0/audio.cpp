@@ -36,6 +36,31 @@ using engine::io::json::Value;
 
 using Clock = std::chrono::steady_clock;
 
+void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
+    std::filesystem::create_directories(voice_dir);
+    for (const auto & voice : embedded_demo_voices()) {
+        std::ofstream wav(
+            voice_dir / (std::string(voice.name) + ".wav"),
+            std::ios::binary | std::ios::trunc);
+        if (!wav) {
+            throw std::runtime_error("failed to create embedded demo voice: " + std::string(voice.name));
+        }
+        wav.write(voice.wav_bytes.data(), static_cast<std::streamsize>(voice.wav_bytes.size()));
+        if (!wav) {
+            throw std::runtime_error("failed to write embedded demo voice: " + std::string(voice.name));
+        }
+    }
+    const auto prompt_text = embedded_demo_voice_prompt_text();
+    std::ofstream prompts(voice_dir / "prompt_text", std::ios::binary | std::ios::trunc);
+    if (!prompts) {
+        throw std::runtime_error("failed to create embedded demo voice prompt_text");
+    }
+    prompts.write(prompt_text.data(), static_cast<std::streamsize>(prompt_text.size()));
+    if (!prompts) {
+        throw std::runtime_error("failed to write embedded demo voice prompt_text");
+    }
+}
+
 // Per-request override for the busy timeout. Absent means "use the model's
 // configured ceiling"; a value is clamped to that ceiling by resolve_busy_timeout_ms
 // so a client can shorten its own wait but never weaken the guard.
@@ -786,6 +811,11 @@ ServerState::ServerState(
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count()));
         std::filesystem::create_directories(upload_root_);
+        if (!config_.voice_dir.has_value()) {
+            const auto embedded_voices = upload_root_ / "demo_voices";
+            materialize_embedded_demo_voices(embedded_voices);
+            config_.voice_dir = embedded_voices;
+        }
         model_installer_ = std::make_unique<ModelInstaller>(
             repository_root_,
             models_root_);
@@ -862,6 +892,12 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     }
     else if (request.method == "POST" && request.path == "/v1/ui/models/install") {
         response = handle_model_install(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/models/install/stop") {
+        response = handle_model_install_stop(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/ui/models/clean-partial") {
+        response = handle_model_clean_partial(request.body);
     }
     else if (request.method == "POST" && request.path == "/v1/ui/models/delete") {
         response = handle_model_remove(request.body);
@@ -1117,6 +1153,32 @@ HttpResponse ServerState::handle_model_remove(const std::string & body_text) {
         return error_response(403, "UI model removal is disabled", "forbidden");
     }
     return json_response(model_installer_->remove(package_id));
+}
+
+HttpResponse ServerState::handle_model_install_stop(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const std::string package_id = engine::io::json::require_string(body, "id");
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model installation is disabled", "forbidden");
+    }
+    return json_response(model_installer_->stop(package_id));
+}
+
+HttpResponse ServerState::handle_model_clean_partial(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "UI model cleanup is disabled", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const std::string package_id = engine::io::json::require_string(body, "id");
+    std::lock_guard<std::mutex> lock(model_installer_mutex_);
+    if (!model_installer_) {
+        return error_response(403, "UI model cleanup is disabled", "forbidden");
+    }
+    return json_response(model_installer_->clean_partial(package_id));
 }
 
 HttpResponse ServerState::handle_model_install_status(const HttpRequest & request) const {

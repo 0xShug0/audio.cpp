@@ -16,6 +16,13 @@ interface PackageEntry {
 interface PackageSpec {
   family: string;
   packages?: Array<Omit<PackageEntry, 'family'>>;
+  options?: {
+    request?: Array<{ name: string }>;
+  };
+  ui?: {
+    builtin_voices?: string[];
+    default_voice?: string;
+  };
 }
 
 const specModules = import.meta.glob('../../../../model_specs/*.json', {
@@ -29,6 +36,21 @@ const specModules = import.meta.glob('../../../../model_specs/*.json', {
 const packages: PackageEntry[] = Object.values(specModules).flatMap((spec) =>
   (spec.packages || []).map((entry) => ({ ...entry, family: spec.family }))
 );
+
+const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.family, spec]));
+
+const hanCharacters = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u;
+
+function englishUiText(preferred?: string, fallback?: string): string {
+  for (const value of [preferred, fallback]) {
+    if (value && !hanCharacters.test(value)) return value;
+  }
+  return '';
+}
+
+function parameterLabel(name: string, preferred?: string, fallback?: string): string {
+  return englishUiText(preferred, fallback) || name.replace(/_/g, ' ');
+}
 
 const cleanPath = (value: string) => value
   .replace(/\\/g, '/')
@@ -89,10 +111,13 @@ function packageLabel(entry: PackageEntry): string {
 }
 
 function packageModelPath(entry: PackageEntry): string {
-  if (entry.format !== 'gguf' || entry.files?.length !== 1) {
+  const modelFile = entry.format === 'gguf'
+    ? entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'))
+    : undefined;
+  if (!modelFile) {
     return `models/${entry.target_directory}`;
   }
-  let relative = entry.files[0].replace(/\\/g, '/');
+  let relative = modelFile.replace(/\\/g, '/');
   const prefix = (entry.strip_prefix || '').replace(/\\/g, '/').replace(/\/$/, '');
   if (prefix && relative.startsWith(`${prefix}/`)) relative = relative.slice(prefix.length + 1);
   return `models/${entry.target_directory}/${relative}`.replace(/\/+/g, '/');
@@ -124,16 +149,33 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
 export const catalog = (rawCatalog.models as CatalogEntry[]).map((entry) => {
   const choices = installChoices(entry);
   const installPackage = choices[0];
+  const spec = specsByFamily.get(entry.family);
   return {
     ...entry,
-    display_name: entry.display_name_en || entry.display_name,
+    display_name: englishUiText(entry.display_name_en, entry.display_name) || entry.id,
+    input_hint: englishUiText(entry.input_hint_en, entry.input_hint),
     download_id: installPackage?.id || entry.download_id,
     install_packages: choices,
-    path: installPackage?.path || entry.path
+    path: installPackage?.path || entry.path,
+    request_options: spec?.options?.request?.map((option) => option.name),
+    builtin_voices: spec?.ui?.builtin_voices,
+    default_voice: spec?.ui?.default_voice
   };
 });
 
-export const parameterCatalog = rawParams as unknown as Record<string, ParamSpec[]>;
+export const parameterCatalog = Object.fromEntries(
+  Object.entries(rawParams as unknown as Record<string, ParamSpec[] | string>)
+    .filter((entry): entry is [string, ParamSpec[]] => Array.isArray(entry[1]))
+    .map(([family, specs]) => [
+      family,
+      specs.map((spec) => ({
+        ...spec,
+        label: parameterLabel(spec.name, spec.label_en, spec.label),
+        placeholder: englishUiText(spec.placeholder_en, spec.placeholder),
+        info: englishUiText(spec.info_en, spec.info)
+      }))
+    ])
+) as Record<string, ParamSpec[]>;
 
 export const taskLabels: Record<string, string> = {
   tts: 'Text to speech',

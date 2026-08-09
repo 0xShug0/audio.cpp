@@ -42,19 +42,25 @@ The native UI supports the shared catalog, model-specific controls, file decodin
 cloning, transcription, generic audio tasks, multiple separation outputs, structured results, and request timing.
 It also includes:
 
-- model download/preparation jobs with ordered GGUF Q8, GGUF FP16/BF16, and safetensors choices,
-  fast required-file checks that disable choices already downloaded, metadata-only package-size checks,
-  and card-local byte/percentage progress on the Models page;
+- model download/preparation jobs with a confirmation step, ordered GGUF Q8, GGUF FP16/BF16, and
+  safetensors choices, fast required-file checks, metadata-only package-size checks, card-local
+  byte/percentage progress, **Stop download**, and safe cleanup of abandoned staging directories;
+- one Models card per family, with task/checkpoint variants nested inside it and shared packages such as
+  Vevo2 shown only once;
+- installed packages record their resolved Hugging Face revision, so the Models page reports **Up to date**,
+  **Update available**, or **Version unknown** for packages installed before revision tracking was added;
 - GGUF precision variants can coexist in a shared package directory; the selected button stores the exact
   GGUF file path, and overwriting one precision does not remove its sibling variants;
 - downloaded choices expose a confirmation-gated trash action that removes only that package's declared files;
 - sentence-aware long-text synthesis and browser-side WAV merging;
 - microphone capture for source and reference audio;
-- a saved voice library backed by browser IndexedDB;
+- bundled quick-start reference voices (including their matching transcripts), model-native preset voices such
+  as PocketTTS `alba`, and a saved voice library backed by browser IndexedDB;
 - four-second near-live microphone transcription for streaming-capable ASR models.
 
 Uploaded request files are placed in a per-process temporary directory and deleted when the server exits. Saved
-voices stay in the browser profile and are not uploaded until selected for a request.
+voices stay only in that browser profile: they do not sync to another browser or device, are not uploaded until
+selected for a request, and are removed if the site's browser data is cleared.
 
 The server and embedded interface need no Python at runtime. The **Install / prepare** action invokes
 `tools/model_manager_v2.py` for normal spec-backed downloads. When source/output/variant converter inputs are supplied,

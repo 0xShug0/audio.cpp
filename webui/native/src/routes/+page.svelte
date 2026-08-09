@@ -3,7 +3,9 @@
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
     base64AudioUrl,
+    availableVoices,
     browseDirectories,
+    cleanPartialModelInstall,
     deleteModelPackage,
     getModelsRoot,
     health,
@@ -16,6 +18,7 @@
     runTask,
     setModelsRoot,
     speech,
+    stopModelInstall,
     transcription,
     unloadModel,
     uploadWav,
@@ -24,6 +27,7 @@
     type DirectoryBrowserResponse
   } from '$lib/api';
   import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
+  import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import type {
     AudioOutput,
@@ -64,6 +68,7 @@
   let maxTokens = 1024;
   let sourceFile: File | null = null;
   let voiceFile: File | null = null;
+  let voiceInput: HTMLInputElement | null = null;
   let referenceTextFile: File | null = null;
   let referenceTextInput: HTMLInputElement | null = null;
   let advancedJson = '{}';
@@ -99,27 +104,90 @@
   let folderBrowserError = '';
   let folderBrowser: DirectoryBrowserResponse | null = null;
   let installPoll: number | null = null;
-  let selectedPackagePaths: Record<string, string> = {};
+  let selectedPackageIds: Record<string, string> = {};
   let packageSizes: Record<string, ModelPackageSize> = {};
   let packageSizeState: 'idle' | 'running' | 'complete' | 'failed' = 'idle';
   let packageSizePoll: number | null = null;
   let packageSizeRefreshInFlight = false;
   let refreshedInstallFinishes: Record<string, number> = {};
+  let quickStartVoices: string[] = [];
+  let bundledVoices: string[] = [];
+  let quickStartVoice = '';
+  let uiLanguage = 'en';
+  let tr = createTranslator(uiLanguage);
+  $: tr = createTranslator(uiLanguage);
+
+  const demoVoiceSources: Record<string, string> = {
+    demo_1_man: 'demo_1_man',
+    demo_2_man: 'demo_2_man',
+    demo_3_woman: 'demo_3_woman',
+    demo_4_woman: 'demo_4_woman'
+  };
+
+  function chooseUiLanguage(code: string) {
+    uiLanguage = resolveUiLanguage([code]);
+    localStorage.setItem('audiocpp.ui.language', uiLanguage);
+    document.documentElement.lang = uiLanguage;
+  }
+
+  function workflowLabel(id: string, fallback: string, translate = tr) {
+    const translationId = id === 'conversion' ? 'vc' : id === 'separation' ? 'sep' : id;
+    return translate(`workflow.${translationId}`, {}, fallback);
+  }
+
+  function localizedTaskLabel(task: string | undefined, translate = tr) {
+    if (!task) return translate('studio.title');
+    return translate(`task.${task}`, {}, taskLabels[task] || task);
+  }
 
   const workflowTabs = [
-    { id: 'tts', label: 'Text to speech', tasks: ['tts', 'clon'] },
-    { id: 'asr', label: 'ASR / Transcription', tasks: ['asr'] },
-    { id: 'music', label: 'Music generation', tasks: ['gen'] },
-    { id: 'conversion', label: 'Voice conversion', tasks: ['vc', 'svc', 's2s'] },
-    { id: 'separation', label: 'Source separation', tasks: ['sep'] },
-    { id: 'analysis', label: 'Audio analysis', tasks: ['vad', 'diar', 'align', 'spk'] },
-    { id: 'design', label: 'Voice design', tasks: ['vdes'] }
+    { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
+    { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
+    { id: 'music', label: 'Music generation', filterLabel: 'Music', tasks: ['gen'] },
+    { id: 'conversion', label: 'Voice conversion', filterLabel: 'Voice conversion', tasks: ['vc', 'svc', 's2s'] },
+    { id: 'separation', label: 'Source separation', filterLabel: 'Separation', tasks: ['sep'] },
+    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk'] },
+    { id: 'design', label: 'Voice design', filterLabel: 'Voice design', tasks: ['vdes'] }
   ] as const;
 
   type WorkflowId = typeof workflowTabs[number]['id'];
 
+  interface ModelGroup {
+    family: string;
+    label: string;
+    entries: CatalogEntry[];
+  }
+
+  const familyLabels: Record<string, string> = {
+    qwen3_tts: 'Qwen3-TTS',
+    irodori_tts: 'Irodori-TTS',
+    chatterbox: 'Chatterbox',
+    stable_audio: 'Stable Audio 3',
+    qwen3_asr: 'Qwen3-ASR',
+    vevo2: 'Vevo2',
+    seed_vc: 'Seed-VC'
+  };
+
+  function compareModelNames(left: string, right: string) {
+    return left.localeCompare(right, 'en', { sensitivity: 'base', numeric: true });
+  }
+
+  const modelGroups: ModelGroup[] = Array.from(
+    catalog.reduce((groups, entry) => {
+      const existing = groups.get(entry.family) || [];
+      existing.push(entry);
+      groups.set(entry.family, existing);
+      return groups;
+    }, new Map<string, CatalogEntry[]>())
+  ).map(([family, entries]) => ({
+    family,
+    entries: [...entries].sort((left, right) => compareModelNames(left.display_name, right.display_name)),
+    label: entries.length > 1 ? (familyLabels[family] || entries[0].display_name) : entries[0].display_name
+  })).sort((left, right) => compareModelNames(left.label, right.label));
+
   let activeWorkflow: WorkflowId = 'tts';
   let workflowSelections: Partial<Record<WorkflowId, string>> = {};
+  let modelWorkflowFilters: WorkflowId[] = workflowTabs.map((workflow) => workflow.id);
 
   class StatusWarning extends Error {}
 
@@ -127,16 +195,26 @@
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
   $: workflowModels = catalog.filter((entry) =>
     activeWorkflowSpec.tasks.some((task) => task === entry.task));
+  $: filteredModelGroups = modelGroups.map((group) => ({
+    ...group,
+    entries: group.entries.filter((entry) => {
+      const workflow = workflowTabs.find((candidate) => candidate.tasks.some((task) => task === entry.task));
+      return Boolean(workflow && modelWorkflowFilters.includes(workflow.id));
+    })
+  })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded);
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align'].includes(selected?.task);
   $: acceptsSource = needsSource || selected?.task === 'gen';
-  $: needsVoice = ['clon', 'vc', 'svc'].includes(selected?.task) ||
+  $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: referenceVoiceRequired = ['clon', 'vc', 'svc'].includes(selected?.task) ||
-    isQwenBase || (selected?.task === 'tts' && selected?.family === 'pocket_tts');
+  $: referenceVoiceRequired = !quickStartVoice && (
+    (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: referenceTextRequired = Boolean(voiceFile) && isQwenBase;
+  $: quickStartVoices = Object.entries(demoVoiceSources)
+    .filter(([, source]) => bundledVoices.includes(source))
+    .map(([voice]) => voice);
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt'].includes(selected?.family);
@@ -172,8 +250,17 @@
     return `${modelsFolder.replace(/[\\/]+$/, '')}${separator}${relative.replace(/\//g, separator)}`;
   }
 
+  function selectedPackageChoice(entry: CatalogEntry) {
+    const choices = entry.install_packages || [];
+    return choices.find((choice) => choice.id === selectedPackageIds[entry.id]) || choices[0];
+  }
+
+  function packageIsSelected(entry: CatalogEntry, choice: InstallPackageChoice) {
+    return selectedPackageChoice(entry)?.id === choice.id;
+  }
+
   function selectedModelPath(entry: CatalogEntry) {
-    return resolveCatalogPath(selectedPackagePaths[entry.id] || entry.path);
+    return resolveCatalogPath(selectedPackageChoice(entry)?.path || entry.path);
   }
 
   function comparablePath(path: string) {
@@ -186,8 +273,8 @@
 
   function packageIsResident(entry: CatalogEntry, choice: InstallPackageChoice, models = loadedModels) {
     const resident = residentModel(entry, models);
-    const selectedChoicePath = selectedPackagePaths[entry.id] || entry.path;
-    const expectedPath = entry.id === selectedId && choice.path === selectedChoicePath
+    const selectedChoice = selectedPackageChoice(entry);
+    const expectedPath = entry.id === selectedId && choice.id === selectedChoice?.id
       ? modelPath
       : resolveCatalogPath(choice.path);
     return Boolean(resident && comparablePath(resident.path) === comparablePath(expectedPath));
@@ -243,7 +330,12 @@
   }
 
   function chooseVoiceReference(file: File | null) {
-    const changed = Boolean(voiceFile && file && voiceFile.name !== file.name);
+    const changed = Boolean(file && (quickStartVoice || savedVoiceId ||
+      (voiceFile && voiceFile.name !== file.name)));
+    if (file) {
+      quickStartVoice = '';
+      savedVoiceId = '';
+    }
     voiceFile = file;
     if (changed) {
       referenceTextFile = null;
@@ -252,6 +344,18 @@
       status = 'Reference voice changed. Choose or enter its matching transcript.';
       warningStatus = status;
     }
+  }
+
+  function chooseQuickStartVoice(voice: string) {
+    quickStartVoice = voice;
+    if (!voice) return;
+    savedVoiceId = '';
+    voiceFile = null;
+    voiceName = '';
+    referenceTextFile = null;
+    referenceText = '';
+    if (voiceInput) voiceInput.value = '';
+    if (referenceTextInput) referenceTextInput.value = '';
   }
 
   async function chooseReferenceText(file: File | null) {
@@ -276,7 +380,7 @@
   }
 
   function installPercent(job: ModelInstallJob) {
-    if (job.state === 'complete') return 100;
+    if (job.state === 'complete' || job.state === 'cleaned') return 100;
     if (job.progress_percent >= 0) return Math.min(100, Math.max(0, job.progress_percent));
     return 0;
   }
@@ -288,6 +392,7 @@
     }
     if (job.downloaded_bytes > 0) return `${formatBytes(job.downloaded_bytes)} downloaded`;
     if (job.state === 'failed') return 'Download failed';
+    if (job.state === 'cleaned') return 'Partial files cleaned';
     if (job.state === 'complete') return '100% · complete';
     return job.state === 'queued' ? '0% · queued' : 'Connecting and checking package files…';
   }
@@ -298,15 +403,48 @@
       .filter((job): job is ModelInstallJob => job !== undefined);
   }
 
+  function uniquePackagesForEntry(group: ModelGroup, entry: CatalogEntry) {
+    const index = group.entries.findIndex((candidate) => candidate.id === entry.id);
+    const previousIds = new Set(group.entries.slice(0, Math.max(0, index))
+      .flatMap((candidate) => (candidate.install_packages || []).map((choice) => choice.id)));
+    return (entry.install_packages || []).filter((choice) => !previousIds.has(choice.id));
+  }
+
+  function displayInstallJobForChoices(
+    choices: InstallPackageChoice[],
+    installState: Record<string, ModelInstallJob>
+  ) {
+    const jobs = choices.map((choice) => installState[choice.id])
+      .filter((job): job is ModelInstallJob => job !== undefined);
+    return jobs.find((job) => ['running', 'queued', 'cancelling'].includes(job.state)) ||
+      [...jobs].sort((left, right) => right.finished_at_ms - left.finished_at_ms)[0];
+  }
+
   function displayInstallJob(entry: CatalogEntry, installState: Record<string, ModelInstallJob>) {
     const jobs = entryInstallJobs(entry, installState);
-    return jobs.find((job) => job.state === 'running' || job.state === 'queued') ||
+    return jobs.find((job) => job.state === 'running' || job.state === 'queued' || job.state === 'cancelling') ||
       [...jobs].sort((left, right) => right.finished_at_ms - left.finished_at_ms)[0];
   }
 
   function entryInstallBusy(entry: CatalogEntry, installState: Record<string, ModelInstallJob>) {
     return entryInstallJobs(entry, installState).some((job) =>
-      job.state === 'running' || job.state === 'queued');
+      job.state === 'running' || job.state === 'queued' || job.state === 'cancelling');
+  }
+
+  function groupInstallBusy(group: ModelGroup, installState: Record<string, ModelInstallJob>) {
+    return group.entries.some((entry) => entryInstallBusy(entry, installState));
+  }
+
+  function supportsMaxTokens(entry: CatalogEntry) {
+    if (entry.request_options !== undefined) return entry.request_options.includes('max_tokens');
+    return ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(entry.task);
+  }
+
+  function packageVersionLabel(size: ModelPackageSize | undefined, translate = tr) {
+    if (!size?.installed) return '';
+    if (size.version_state === 'up_to_date') return translate('models.upToDate');
+    if (size.version_state === 'update_available') return translate('models.updateAvailable');
+    return translate('models.versionUnknown');
   }
 
   function entrySelectable(entry: CatalogEntry) {
@@ -319,27 +457,37 @@
 
   function installButtonLabel(
     choice: InstallPackageChoice,
-    job: ModelInstallJob | undefined
+    job: ModelInstallJob | undefined,
+    translate = tr
   ) {
     if (job?.state === 'running') return `${choice.label}…`;
-    if (job?.state === 'queued') return `${choice.label} queued`;
+    if (job?.state === 'queued') return `${choice.label} ${translate('models.queued')}`;
+    if (job?.state === 'cancelling') return `${choice.label} ${translate('models.stopping')}`;
     return choice.label;
   }
 
   function packageSizeLabel(
     size: ModelPackageSize | undefined,
     sizeState: 'idle' | 'running' | 'complete' | 'failed',
-    selected: boolean
+    selected: boolean,
+    translate = tr
   ) {
     const bytes = size?.size_bytes !== null && size?.size_bytes !== undefined
       ? formatBytes(size.size_bytes)
       : '';
-    if (size?.installed) return `${selected ? 'Selected' : 'Downloaded'}${bytes ? ` · ${bytes}` : ''}`;
+    if (size?.installed) {
+      const version = packageVersionLabel(size, translate);
+      return `${selected ? translate('models.selected') : translate('models.downloaded')}${version ? ` · ${version}` : ''}${bytes ? ` · ${bytes}` : ''}`;
+    }
     if (bytes) return bytes;
-    if (size?.state === 'pending') return 'checking size...';
-    if (size?.state === 'gated') return 'HF access required';
-    if (size?.state === 'error' || size?.state === 'unknown') return 'size unavailable';
-    return sizeState === 'running' ? 'checking size…' : '';
+    if (size?.state === 'pending') return translate('models.checkingSize');
+    if (size?.state === 'gated') return translate('models.hfAccess');
+    if (size?.state === 'error' || size?.state === 'unknown') return translate('models.sizeUnavailable');
+    return sizeState === 'running' ? translate('models.checkingSize') : '';
+  }
+
+  function localizedStatus(value: string, translate = tr) {
+    return value === 'Ready' ? translate('status.ready') : value;
   }
 
   async function refreshPackageSizes() {
@@ -350,6 +498,7 @@
       packageSizeState = response.state;
       if (response.data.length) {
         packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
+        if (response.state === 'complete') reconcileSelectedPackageChoices(packageSizes);
       }
       const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
       if (inventoryPending && packageSizePoll === null) {
@@ -372,10 +521,65 @@
     refreshPackageSizes();
   }
 
-  function rememberPackagePath(entry: CatalogEntry, choice: InstallPackageChoice) {
-    selectedPackagePaths = { ...selectedPackagePaths, [entry.id]: choice.path };
-    localStorage.setItem('audiocpp.ui.packagePaths', JSON.stringify(selectedPackagePaths));
+  function rememberPackageChoice(entry: CatalogEntry, choice: InstallPackageChoice) {
+    selectedPackageIds = { ...selectedPackageIds, [entry.id]: choice.id };
+    localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
     if (entry.id === selectedId) modelPath = resolveCatalogPath(choice.path);
+  }
+
+  function reconcileSelectedPackageChoices(sizes = packageSizes) {
+    const nextIds = { ...selectedPackageIds };
+    let changed = false;
+
+    for (const entry of catalog) {
+      const choices = entry.install_packages || [];
+      if (!choices.length) continue;
+      const current = choices.find((choice) => choice.id === nextIds[entry.id]);
+      const currentJob = current ? installJobs[current.id] : undefined;
+      const currentBusy = currentJob && ['queued', 'running', 'cancelling'].includes(currentJob.state);
+      if (currentBusy || (current && sizes[current.id]?.installed)) continue;
+
+      const replacement = choices.find((choice) => sizes[choice.id]?.installed);
+      if (replacement) {
+        if (nextIds[entry.id] !== replacement.id) {
+          nextIds[entry.id] = replacement.id;
+          changed = true;
+        }
+      } else if (nextIds[entry.id] !== undefined) {
+        delete nextIds[entry.id];
+        changed = true;
+      }
+    }
+
+    if (!changed) return false;
+    selectedPackageIds = nextIds;
+    localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
+    if (selectedId) modelPath = selectedModelPath(selected);
+    return true;
+  }
+
+  async function unloadRemovedResidentPackages(sizes = packageSizes) {
+    const staleEntries = catalog.filter((entry) => {
+      const resident = residentModel(entry);
+      if (!resident) return false;
+      const residentPath = comparablePath(resident.path);
+      const residentChoice = (entry.install_packages || []).find((choice) =>
+        comparablePath(resolveCatalogPath(choice.path)) === residentPath);
+      return Boolean(residentChoice && sizes[residentChoice.id]?.installed === false);
+    });
+    if (!staleEntries.length) return false;
+
+    for (const entry of staleEntries) await unloadModel(entry.id);
+    await refresh();
+    return true;
+  }
+
+  async function openStudioPage() {
+    tab = 'studio';
+    await Promise.all([refreshPackageSizes(), refresh()]);
+    await unloadRemovedResidentPackages();
+    const selectionChanged = reconcileSelectedPackageChoices();
+    if (selectionChanged && selectedId) await inspectPath();
   }
 
   function acceptModelsRoot(root: Awaited<ReturnType<typeof getModelsRoot>>) {
@@ -388,6 +592,7 @@
 
   function clearModelSelection() {
     selectedId = '';
+    quickStartVoice = '';
     modelPath = '';
     installed = null;
     paramSpecs = [];
@@ -499,6 +704,7 @@
     if (!next || !entrySelectable(next)) return;
     selectedId = id;
     selected = next;
+    quickStartVoice = '';
     activeWorkflow = workflowForTask(next.task);
     workflowSelections = { ...workflowSelections, [activeWorkflow]: id };
     modelPath = selectedModelPath(next);
@@ -528,6 +734,12 @@
 
     clearModelSelection();
     status = `No installed models are available for ${workflow.label}. Install one from the Models tab.`;
+  }
+
+  function toggleModelWorkflowFilter(id: WorkflowId, enabled: boolean) {
+    modelWorkflowFilters = enabled
+      ? [...modelWorkflowFilters, id].filter((value, index, all) => all.indexOf(value) === index)
+      : modelWorkflowFilters.filter((value) => value !== id);
   }
 
   async function doLoad(modeOverride?: string) {
@@ -597,7 +809,7 @@
       return;
     }
 
-    rememberPackagePath(selected, choice);
+    rememberPackageChoice(selected, choice);
     await inspectPath();
     if (installed !== true) {
       status = `${selected.display_name} ${choice.label} is not available at the expected path.`;
@@ -689,7 +901,12 @@
         const blob = new Blob(chunks, { type: recorder?.mimeType || mimeType || 'audio/webm' });
         const file = new File([blob], `recording-${Date.now()}.webm`, { type: blob.type });
         if (target === 'source') sourceFile = file;
-        else voiceFile = file;
+        else {
+          quickStartVoice = '';
+          savedVoiceId = '';
+          voiceFile = file;
+          if (voiceInput) voiceInput.value = '';
+        }
         recordingStream?.getTracks().forEach((track) => track.stop());
         recordingStream = null;
         recorder = null;
@@ -719,6 +936,14 @@
     }
   }
 
+  async function refreshBundledVoices() {
+    try {
+      bundledVoices = await availableVoices();
+    } catch (error) {
+      log(`Quick-start voices unavailable: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
   async function storeCurrentVoice() {
     if (!voiceFile) {
       status = 'Choose or record a voice reference first.';
@@ -744,7 +969,11 @@
     savedVoiceId = id;
     const voice = savedVoices.find((entry) => entry.id === id);
     if (!voice) return;
+    quickStartVoice = '';
     voiceFile = new File([voice.audio], `${voice.name}.wav`, { type: 'audio/wav' });
+    referenceTextFile = null;
+    if (voiceInput) voiceInput.value = '';
+    if (referenceTextInput) referenceTextInput.value = '';
     referenceText = voice.transcript;
     voiceName = voice.name;
     status = `Selected saved voice “${voice.name}”.`;
@@ -883,10 +1112,11 @@
             input: chunks[index],
             language,
             seed: chunkSeed(resolvedSeed, index),
-            max_tokens: maxTokens,
             options
           };
+          if (supportsMaxTokens(selected)) body.max_tokens = maxTokens;
           if (voiceRef) body.voice_ref = voiceRef;
+          else if (quickStartVoice) body.voice = demoVoiceSources[quickStartVoice] || quickStartVoice;
           if (referenceText.trim()) body.reference_text = referenceText;
           if (selected.task === 'vdes' && instructions.trim()) body.instructions = instructions;
           const result = await speech(body, aborter.signal);
@@ -1025,7 +1255,7 @@
         await refreshPackageSizes();
       }
       const active = Object.values(installJobs).some((job) =>
-        job.state === 'queued' || job.state === 'running');
+        job.state === 'queued' || job.state === 'running' || job.state === 'cancelling');
       if (active && installPoll === null) {
         installPoll = window.setInterval(refreshInstallJobs, 1500);
       } else if (!active && installPoll !== null) {
@@ -1037,11 +1267,18 @@
     }
   }
 
-  async function installPackage(entry: CatalogEntry, choice: InstallPackageChoice) {
-    if (packageSizes[choice.id]?.installed) return;
+  async function installPackage(entry: CatalogEntry, choice: InstallPackageChoice, overwrite = false) {
+    if (packageSizes[choice.id]?.installed && !overwrite) return;
     const existing = installJobs[choice.id];
-    if (existing?.state === 'queued' || existing?.state === 'running') return;
-    rememberPackagePath(entry, choice);
+    if (existing && ['queued', 'running', 'cancelling'].includes(existing.state)) return;
+    const expectedSize = packageSizes[choice.id]?.size_bytes;
+    const verb = overwrite ? 'Update' : 'Download';
+    const confirmed = window.confirm(
+      `${verb} ${entry.display_name} ${choice.label}` +
+      `${expectedSize ? ` (${formatBytes(expectedSize)})` : ''}?`
+    );
+    if (!confirmed) return;
+    rememberPackageChoice(entry, choice);
     status = `Starting ${choice.label} installation for ${entry.display_name}...`;
     const expectedBytes = packageSizes[choice.id]?.size_bytes || 0;
     installJobs = {
@@ -1062,7 +1299,7 @@
       if (installPoll === null) {
         installPoll = window.setInterval(refreshInstallJobs, 1000);
       }
-      const job = await installModelPackage({ id: choice.id });
+      const job = await installModelPackage({ id: choice.id, overwrite });
       installJobs = {
         ...installJobs,
         [job.id]: { ...job, total_bytes: job.total_bytes || expectedBytes }
@@ -1092,12 +1329,70 @@
 
   function useOrInstallPackage(entry: CatalogEntry, choice: InstallPackageChoice) {
     if (packageSizes[choice.id]?.installed) {
-      rememberPackagePath(entry, choice);
-      status = `${entry.display_name} will use ${choice.label}. Press Open to continue.`;
+      rememberPackageChoice(entry, choice);
+      status = `${entry.display_name} will use ${choice.label}. It is available in Studio.`;
       log(status);
       return;
     }
     installPackage(entry, choice);
+  }
+
+  async function stopPackageDownload(entry: CatalogEntry, job: ModelInstallJob) {
+    if (!['queued', 'running', 'cancelling'].includes(job.state)) return;
+    status = `Stopping ${entry.display_name} download...`;
+    try {
+      const stopped = await stopModelInstall(job.id);
+      installJobs = { ...installJobs, [stopped.id]: stopped };
+      if (installPoll === null) installPoll = window.setInterval(refreshInstallJobs, 500);
+      status = `${entry.display_name} download is stopping. Staging files will be removed automatically.`;
+      log(status);
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+      errorStatus = status;
+      installJobs = {
+        ...installJobs,
+        [job.id]: {
+          ...job,
+          state: 'failed',
+          message: status,
+          finished_at_ms: Date.now()
+        }
+      };
+    }
+  }
+
+  async function cleanPartialDownload(entry: CatalogEntry, job: ModelInstallJob) {
+    if (['queued', 'running', 'cancelling'].includes(job.state)) return;
+    status = `Cleaning partial ${entry.display_name} download...`;
+    try {
+      const result = await cleanPartialModelInstall(job.id);
+      installJobs = {
+        ...installJobs,
+        [job.id]: {
+          ...job,
+          state: 'cleaned',
+          message: result.message,
+          downloaded_bytes: 0,
+          total_bytes: 0,
+          progress_percent: 100,
+          finished_at_ms: Date.now()
+        }
+      };
+      status = result.message;
+      log(status);
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+      errorStatus = status;
+      installJobs = {
+        ...installJobs,
+        [job.id]: {
+          ...job,
+          state: 'failed',
+          message: status,
+          finished_at_ms: Date.now()
+        }
+      };
+    }
   }
 
   async function removePackage(entry: CatalogEntry, choice: InstallPackageChoice) {
@@ -1108,6 +1403,11 @@
     if (!confirmed) return;
     status = `Deleting ${entry.display_name} ${choice.label}...`;
     try {
+      if (packageIsResident(entry, choice)) {
+        status = `Unloading ${entry.display_name} ${choice.label} before deletion...`;
+        await unloadModel(entry.id);
+        await refresh();
+      }
       const result = await deleteModelPackage(choice.id);
       packageSizes = {
         ...packageSizes,
@@ -1117,16 +1417,19 @@
       delete nextJobs[choice.id];
       installJobs = nextJobs;
 
-      if (selectedPackagePaths[entry.id] === choice.path) {
+      if (packageIsSelected(entry, choice)) {
         const replacement = (entry.install_packages || []).find((candidate) =>
           candidate.id !== choice.id && packageSizes[candidate.id]?.installed);
-        const nextPaths = { ...selectedPackagePaths };
-        if (replacement) nextPaths[entry.id] = replacement.path;
-        else delete nextPaths[entry.id];
-        selectedPackagePaths = nextPaths;
-        localStorage.setItem('audiocpp.ui.packagePaths', JSON.stringify(selectedPackagePaths));
+        const nextIds = { ...selectedPackageIds };
+        if (replacement) nextIds[entry.id] = replacement.id;
+        else delete nextIds[entry.id];
+        selectedPackageIds = nextIds;
+        localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
         if (entry.id === selectedId) modelPath = resolveCatalogPath(replacement?.path || entry.path);
       }
+      // Keep Studio synchronized even when its saved preference was stale or the
+      // removed package shared a directory with another precision.
+      reconcileSelectedPackageChoices(packageSizes);
 
       packageSizeState = 'idle';
       await refreshPackageSizes();
@@ -1143,14 +1446,21 @@
   }
 
   onMount(async () => {
+    const savedLanguage = localStorage.getItem('audiocpp.ui.language');
+    uiLanguage = resolveUiLanguage(savedLanguage ? [savedLanguage] : navigator.languages);
+    document.documentElement.lang = uiLanguage;
     try {
-      selectedPackagePaths = JSON.parse(localStorage.getItem('audiocpp.ui.packagePaths') || '{}');
+      selectedPackageIds = JSON.parse(localStorage.getItem('audiocpp.ui.packageIds') || '{}');
     } catch {
-      selectedPackagePaths = {};
+      selectedPackageIds = {};
     }
+    // Path-based preferences could select several packages sharing one directory.
+    // Package IDs are unambiguous; discard the legacy preference after migration.
+    localStorage.removeItem('audiocpp.ui.packagePaths');
     const stored = localStorage.getItem('audiocpp.ui.model');
     if (stored && catalog.some((entry) => entry.id === stored)) selectedId = stored;
     selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
+    quickStartVoice = '';
     activeWorkflow = workflowForTask(selected.task);
     if (selectedId) workflowSelections = { ...workflowSelections, [activeWorkflow]: selectedId };
     resetParams();
@@ -1176,6 +1486,7 @@
       status = 'No installed model is selected. Choose a downloaded model or install one from the Models tab.';
     }
     await refreshVoices();
+    await refreshBundledVoices();
     await refreshInstallJobs();
   });
 
@@ -1200,14 +1511,23 @@
     <div class="mark">A</div>
     <div>
       <strong>audio.cpp</strong>
-      <span>Native Studio</span>
+      <span>{tr('app.nativeStudio')}</span>
     </div>
   </div>
-  <nav aria-label="Primary navigation">
-    <button class:active={tab === 'studio'} on:click={() => tab = 'studio'}>Studio</button>
-    <button class:active={tab === 'models'} on:click={openModelsPage}>Models</button>
-    <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>Runtime</button>
+  <nav aria-label={tr('nav.primary')}>
+    <button class:active={tab === 'studio'} on:click={openStudioPage}>{tr('nav.studio')}</button>
+    <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
+    <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>{tr('nav.runtime')}</button>
   </nav>
+  <label class="language-picker">
+    <span>{tr('language.label')}</span>
+    <select value={uiLanguage} aria-label={tr('language.label')}
+      on:change={(event) => chooseUiLanguage(event.currentTarget.value)}>
+      {#each uiLanguages as language}
+        <option value={language.code}>{language.name}</option>
+      {/each}
+    </select>
+  </label>
   <div class="server-pill" class:online={server?.status === 'ok'}>
     <i></i>{server?.backend || 'offline'}
   </div>
@@ -1215,11 +1535,11 @@
 
 <main>
   {#if tab === 'studio'}
-    <nav class="workflow-tabs" aria-label="Audio workflows">
+    <nav class="workflow-tabs" aria-label={tr('nav.workflows')}>
       {#each workflowTabs as workflow}
         <button class:active={activeWorkflow === workflow.id}
           on:click={() => chooseWorkflow(workflow.id)}>
-          {workflow.label}
+          {workflowLabel(workflow.id, workflow.label, tr)}
           <small>{catalog.filter((entry) => workflow.tasks.some((task) => task === entry.task)).length}</small>
         </button>
       {/each}
@@ -1227,30 +1547,30 @@
 
     <section class="hero">
       <div>
-        <p class="eyebrow">LOCAL AUDIO INTELLIGENCE</p>
-        <h1>{selectedId ? taskLabels[selected?.task] : 'Audio studio'}</h1>
-        <p>One native server, one embedded interface, no Python between your browser and the model.</p>
+        <p class="eyebrow">{tr('studio.eyebrow')}</p>
+        <h1>{selectedId ? localizedTaskLabel(selected?.task, tr) : tr('studio.title')}</h1>
+        <p>{tr('studio.subtitle')}</p>
       </div>
       <div class="hero-stat">
-        <span>Model</span>
-        <strong>{selectedId ? selected.display_name : 'No model selected'}</strong>
-        <small class:ready={isLoaded}>{selectedId ? (isLoaded ? 'Resident' : installed === false ? 'Not installed' : 'Available') : 'Choose an installed model'}</small>
+        <span>{tr('studio.model')}</span>
+        <strong>{selectedId ? selected.display_name : tr('studio.noModel')}</strong>
+        <small class:ready={isLoaded}>{selectedId ? (isLoaded ? tr('studio.resident') : installed === false ? tr('studio.notInstalled') : tr('studio.available')) : tr('studio.chooseInstalled')}</small>
       </div>
     </section>
 
     <div class="studio-grid">
       <aside class="panel model-rail">
-        <label for="model">Model</label>
+        <label for="model">{tr('studio.model')}</label>
         <select id="model" bind:value={selectedId} disabled={modelInventoryLoading}
           on:change={(event) => chooseModel(event.currentTarget.value)}>
-          <option value="">No model selected</option>
+          <option value="">{tr('studio.noModel')}</option>
           {#each activeWorkflowSpec.tasks as task}
             {@const entries = workflowModels.filter((entry) => entry.task === task)}
             {#if entries.length}
-              <optgroup label={taskLabels[task]}>
+              <optgroup label={localizedTaskLabel(task, tr)}>
                 {#each entries as entry}
                   <option value={entry.id} disabled={!selectableModelIds.has(entry.id)}>
-                    {entry.display_name}{selectableModelIds.has(entry.id) ? '' : ' — not downloaded'}
+                    {entry.display_name}{selectableModelIds.has(entry.id) ? '' : ` — ${tr('studio.notDownloaded')}`}
                   </option>
                 {/each}
               </optgroup>
@@ -1260,9 +1580,9 @@
 
         <div class="path-state">
           <span class:good={installed === true} class:bad={installed === false}>
-            {!selectedId ? 'No model selected' : installed === true ? 'Path found' : installed === false ? 'Path missing' : 'Path not inspected'}
+            {!selectedId ? tr('studio.noModel') : installed === true ? tr('studio.pathFound') : installed === false ? tr('studio.pathMissing') : tr('studio.pathUnknown')}
           </span>
-          <span>{selectedId ? `${selected?.min_vram_gb || '?'} GB estimated VRAM` : 'VRAM —'}</span>
+          <span>{selectedId ? tr('studio.estimatedVram', { value: selected?.min_vram_gb || '?' }) : tr('studio.vram')}</span>
         </div>
 
         {#if selectedId && (selected.install_packages || []).length}
@@ -1271,8 +1591,8 @@
               {@const choice = slot.choice}
               {@const available = Boolean(choice && packageIsAvailable(selected, choice, loadedModels, packageSizes))}
               {@const resident = Boolean(choice && packageIsResident(selected, choice, loadedModels))}
-              <button class:resident class:selected-package={Boolean(choice &&
-                  choice.path === (selectedPackagePaths[selected.id] || selected.path))}
+              <button class:resident class:selected-package={Boolean(choice && available &&
+                  packageIsSelected(selected, choice))}
                 disabled={loadingModel || !available}
                 title={resident ? `Unload ${choice?.label}` : available ? `Load ${choice?.label}` :
                   `${choice?.label || slot.label} is not downloaded`}
@@ -1284,8 +1604,8 @@
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
             disabled={!selectedId || loadingModel || installed === false}
-            title={isLoaded ? 'Unload model' : 'Load model'} on:click={toggleSingleModel}>
-            {loadingModel ? 'Working…' : isLoaded ? 'Bundled · loaded' : 'Load model'}
+            title={isLoaded ? tr('studio.unload') : tr('studio.load')} on:click={toggleSingleModel}>
+            {loadingModel ? tr('studio.working') : isLoaded ? tr('studio.bundledLoaded') : tr('studio.load')}
           </button>
         {/if}
 
@@ -1297,24 +1617,24 @@
       <section class="panel controls">
         {#if selectedId}
         <div class="section-title">
-          <div><span>REQUEST</span><h2>Input & controls</h2></div>
+          <div><span>{tr('request.label')}</span><h2>{tr('request.title')}</h2></div>
           <span class="task-chip">{selected?.task}</span>
         </div>
 
         {#if showsText}
-          <label for="text">{selected.task === 'gen' ? 'Prompt' : selected.task === 'align' ? 'Alignment text' : 'Text'}</label>
+          <label for="text">{selected.task === 'gen' ? tr('request.prompt') : selected.task === 'align' ? tr('request.alignmentText') : tr('request.text')}</label>
           <textarea id="text" rows={selected.task === 'gen' ? 3 : 4} bind:value={text}
-            placeholder={selected.task === 'gen' ? 'Describe the sound or music…' : 'Enter the text…'}></textarea>
+            placeholder={selected.task === 'gen' ? tr('request.soundPlaceholder') : tr('request.textPlaceholder')}></textarea>
         {/if}
 
         {#if ['tts', 'clon'].includes(selected.task)}
           <div class="long-text-row">
             <label class="toggle">
               <input type="checkbox" bind:checked={longText} />
-              <span></span>Split and merge long text
+              <span></span>{tr('request.splitLongText')}
             </label>
             <div>
-              <label for="chunk-budget">Characters per chunk</label>
+              <label for="chunk-budget">{tr('request.charactersPerChunk')}</label>
               <input id="chunk-budget" type="number" min="40" max="10000" bind:value={chunkBudget}
                 disabled={!longText} />
             </div>
@@ -1322,129 +1642,153 @@
         {/if}
 
         {#if selected.task === 'gen'}
-          <label for="lyrics">Lyrics <span>optional</span></label>
+          <label for="lyrics">{tr('request.lyrics')} <span>{tr('request.optional')}</span></label>
           <textarea id="lyrics" rows="3" bind:value={lyrics} placeholder="[Verse]…"></textarea>
         {/if}
 
         {#if selected.task === 'asr'}
-          <label for="context">Context prompt <span>optional terminology or names</span></label>
+          <label for="context">{tr('request.context')} <span>{tr('request.contextHint')}</span></label>
           <textarea id="context" rows="2" bind:value={context}></textarea>
         {/if}
 
         {#if selected.task === 'vdes'}
-          <label for="instructions">Voice description</label>
+          <label for="instructions">{tr('request.voiceDescription')}</label>
           <textarea id="instructions" rows="2" bind:value={instructions}
-            placeholder="A warm, calm voice with measured pacing…"></textarea>
+            placeholder={tr('request.voiceDescriptionPlaceholder')}></textarea>
         {/if}
 
         <div class="field-grid">
           {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task)}
             <div>
-              <label for="language">Language <span>blank = auto</span></label>
+              <label for="language">{tr('request.language')} <span>{tr('request.autoLanguage')}</span></label>
               <input id="language" bind:value={language} placeholder="auto" />
             </div>
           {/if}
           {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task)}
             <div>
-              <label for="seed">Seed <span>-1 = random</span></label>
+              <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
             </div>
+          {/if}
+          {#if supportsMaxTokens(selected)}
             <div>
-              <label for="tokens">Maximum tokens</label>
+              <label for="tokens">{tr('request.maxTokens')}</label>
               <input id="tokens" type="number" min="1" bind:value={maxTokens} />
             </div>
           {/if}
           {#if selected.task === 'gen'}
             <div>
-              <label for="duration">Duration seconds</label>
+              <label for="duration">{tr('request.duration')}</label>
               <input id="duration" type="number" min="1" bind:value={duration} />
             </div>
           {/if}
         </div>
 
         {#if acceptsSource}
-          <label for="source">Source audio {needsSource ? '' : '(optional)'}</label>
-          <input id="source" class="file" type="file" accept="audio/*"
+          <label for="source">{tr('request.sourceAudio')} {needsSource ? '' : `(${tr('request.optional')})`}</label>
+          <input id="source" class="file file-native" type="file" accept="audio/*"
             on:change={(event) => sourceFile = event.currentTarget.files?.[0] || null} />
+          <label class="file-picker" for="source"><strong>{tr('file.choose')}</strong><span>{sourceFile?.name || tr('file.none')}</span></label>
           <div class="media-actions">
             {#if recordingTarget === 'source'}
-              <button class="danger" type="button" on:click={stopRecording}>Stop recording</button>
-              <span class="recording-dot">Recording microphone</span>
+              <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
+              <span class="recording-dot">{tr('request.recordingMicrophone')}</span>
             {:else}
               <button type="button" disabled={Boolean(recorder) || liveRecording}
-                on:click={() => startRecording('source')}>Record microphone</button>
+                on:click={() => startRecording('source')}>{tr('request.recordMicrophone')}</button>
               {#if sourceFile}<span>{sourceFile.name}</span>{/if}
             {/if}
           </div>
           {#if supportsLiveAsr}
             <div class="live-card">
               <div>
-                <strong>Live microphone transcription</strong>
-                <small>Processes consecutive four-second requests using the model's streaming mode.</small>
+                <strong>{tr('request.liveTitle')}</strong>
+                <small>{tr('request.liveDescription')}</small>
               </div>
               {#if liveRecording}
-                <button class="danger" type="button" on:click={stopLiveTranscription}>Stop live</button>
+                <button class="danger" type="button" on:click={stopLiveTranscription}>{tr('request.stopLive')}</button>
               {:else}
                 <button type="button" disabled={running || Boolean(recorder)}
-                  on:click={startLiveTranscription}>Start live</button>
+                  on:click={startLiveTranscription}>{tr('request.startLive')}</button>
               {/if}
             </div>
           {/if}
         {/if}
 
         {#if needsVoice}
+          {#if quickStartVoices.length}
+            <label for="quick-start-voice">{tr('voice.quickStart')}</label>
+            <select id="quick-start-voice" value={quickStartVoice}
+              on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
+              <option value="">{tr('voice.useReference')}</option>
+              {#each quickStartVoices as voice}<option value={voice}>{voice}</option>{/each}
+            </select>
+            {#if quickStartVoice}
+              <div class="quick-voice-note">
+                {tr('voice.bundledNote')}
+              </div>
+            {/if}
+          {/if}
           <div class="reference-input-grid">
             <div>
-              <label for="voice">Reference voice <span>{referenceVoiceRequired ? 'required' : 'optional'}</span></label>
-              <input id="voice" class="file" type="file" accept="audio/*"
+              <label for="voice">{tr('voice.reference')} <span>{referenceVoiceRequired ? tr('voice.required') : tr('voice.optional')}</span></label>
+              <input id="voice" class="file file-native" type="file" accept="audio/*"
+                bind:this={voiceInput}
                 on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
+              <label class="file-picker" for="voice"><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
             </div>
             <div>
-              <label for="reference-file">Reference text <span>.txt</span></label>
-              <input id="reference-file" class="file" type="file" accept=".txt,text/plain"
+              <label for="reference-file">{tr('voice.referenceText')} <span>.txt</span></label>
+              <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
                 bind:this={referenceTextInput}
                 on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
+              <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
             </div>
           </div>
           <div class="media-actions">
             {#if recordingTarget === 'voice'}
-              <button class="danger" type="button" on:click={stopRecording}>Stop recording</button>
-              <span class="recording-dot">Recording voice reference</span>
+              <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
+              <span class="recording-dot">{tr('voice.recording')}</span>
             {:else}
               <button type="button" disabled={Boolean(recorder) || liveRecording}
-                on:click={() => startRecording('voice')}>Record microphone</button>
+                on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
               {#if voiceFile}<span>{voiceFile.name}</span>{/if}
             {/if}
           </div>
-          <label for="reference">Reference transcript
-            <span>{referenceTextRequired ? 'required for this voice clone' : 'recommended for cloning'}</span>
+          <label for="reference">{tr('voice.transcript')}
+            <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
           </label>
           <textarea id="reference" rows="2" bind:value={referenceText}
-            placeholder="Type the exact words spoken in the reference audio, or load a matching .txt file above."></textarea>
+            placeholder={tr('voice.transcriptPlaceholder')}></textarea>
+          <!--
+            Saved voices keep a named reference recording and transcript for reuse. They are persisted only
+            in this browser's IndexedDB, are never uploaded until the user runs a request, do not sync to
+            another browser/device, and are removed if this site's browser data is cleared.
+          -->
           <div class="voice-library">
             <div>
-              <label for="saved-voice">Saved voices <span>stored only in this browser</span></label>
+              <label for="saved-voice">{tr('voice.saved')} <span>{tr('voice.browserOnly')}</span></label>
               <select id="saved-voice" value={savedVoiceId}
                 on:change={(event) => chooseSavedVoice(event.currentTarget.value)}>
-                <option value="">Choose a saved voice...</option>
+                <option value="">{tr('voice.chooseSaved')}</option>
                 {#each savedVoices as voice}<option value={voice.id}>{voice.name}</option>{/each}
               </select>
             </div>
             <div>
-              <label for="voice-name">Library name</label>
-              <input id="voice-name" bind:value={voiceName} placeholder="My reference voice" />
+              <label for="voice-name">{tr('voice.libraryName')}</label>
+              <input id="voice-name" bind:value={voiceName} placeholder={tr('voice.namePlaceholder')} />
             </div>
             <div class="library-actions">
-              <button type="button" disabled={!voiceFile} on:click={storeCurrentVoice}>Save voice</button>
+              <button type="button" disabled={!voiceFile} on:click={storeCurrentVoice}>{tr('voice.save')}</button>
               <button class="danger" type="button" disabled={!savedVoiceId}
-                on:click={removeCurrentVoice}>Delete</button>
+                on:click={removeCurrentVoice}>{tr('common.delete')}</button>
             </div>
           </div>
         {/if}
 
         {#if paramSpecs.length}
           <details>
-            <summary>Model parameters <span>{paramSpecs.length}</span></summary>
+            <summary>{tr('options.modelParameters')} <span>{paramSpecs.length}</span></summary>
             <div class="parameter-grid">
               {#each paramSpecs as spec}
                 <div class:wide={spec.type === 'text'}>
@@ -1454,7 +1798,7 @@
                       <input id={'param-' + spec.name} type="checkbox"
                         checked={Boolean(advancedValues[spec.name])}
                         on:change={(event) => advancedValues = {...advancedValues, [spec.name]: event.currentTarget.checked}} />
-                      <span></span>{advancedValues[spec.name] ? 'Enabled' : 'Disabled'}
+                      <span></span>{advancedValues[spec.name] ? tr('common.enabled') : tr('common.disabled')}
                     </label>
                   {:else if spec.type === 'choice'}
                     <select id={'param-' + spec.name} value={String(advancedValues[spec.name] ?? '')}
@@ -1484,47 +1828,47 @@
         {/if}
 
         <details>
-          <summary>Additional options <span>JSON</span></summary>
+          <summary>{tr('options.additional')} <span>JSON</span></summary>
           <textarea class="code" rows="3" bind:value={advancedJson}></textarea>
         </details>
 
         <div class="runbar">
           <button class="run" disabled={!selectedId || running || (!isLoaded && installed === false)} on:click={run}
             title={!selectedId ? 'Choose an installed model first' : !isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
-            <span>{running ? 'Working…' : 'Run'}</span>
+            <span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>
           </button>
-          <button disabled={!running} on:click={cancel}>Cancel</button>
+          <button disabled={!running} on:click={cancel}>{tr('run.cancel')}</button>
           <div class="status" class:busy={running}
             class:warning={!running && status === warningStatus}
-            class:error={!running && status === errorStatus}>{status}</div>
+            class:error={!running && status === errorStatus}>{localizedStatus(status, tr)}</div>
         </div>
         {:else}
           <div class="section-title">
-            <div><span>REQUEST</span><h2>No model selected</h2></div>
+            <div><span>{tr('request.label')}</span><h2>{tr('studio.noModel')}</h2></div>
           </div>
           <div class="empty-output">
-            <p>Choose a downloaded model from the Model menu, or install one from the Models tab.</p>
+            <p>{tr('studio.chooseInstalled')}</p>
           </div>
         {/if}
       </section>
 
       <section class="panel output">
         <div class="section-title">
-          <div><span>RESULT</span><h2>Output</h2></div>
-          {#if outputAudio.length}<span class="task-chip">{outputAudio.length} track{outputAudio.length === 1 ? '' : 's'}</span>{/if}
+          <div><span>{tr('result.label')}</span><h2>{tr('result.title')}</h2></div>
+          {#if outputAudio.length}<span class="task-chip">{outputAudio.length} {outputAudio.length === 1 ? tr('result.track') : tr('result.tracks')}</span>{/if}
         </div>
         {#if outputAudio.length}
           <div class="audio-list">
             {#each outputAudio as output}
               <article>
-                <div><strong>{output.id}</strong><a href={output.url} download={`${selected.id}-${output.id}.wav`}>Save WAV</a></div>
+                <div><strong>{output.id}</strong><a href={output.url} download={`${selected.id}-${output.id}.wav`}>{tr('result.saveWav')}</a></div>
                 <audio controls src={output.url}></audio>
               </article>
             {/each}
           </div>
         {:else}
-          <div class="empty-output"><div class="wave">∿</div><p>Generated audio and structured results appear here.</p></div>
+          <div class="empty-output"><div class="wave">∿</div><p>{tr('result.empty')}</p></div>
         {/if}
         {#if outputText}<textarea class="transcript" readonly rows="7" value={outputText}></textarea>{/if}
         {#if outputJson}<pre>{outputJson}</pre>{/if}
@@ -1532,97 +1876,150 @@
     </div>
   {:else if tab === 'models'}
     <section class="page-head">
-      <p class="eyebrow">MODEL LIBRARY</p><h1>Local packages</h1>
-      <p>Download and manage model packages without leaving the native interface.</p>
+      <p class="eyebrow">{tr('models.eyebrow')}</p><h1>{tr('models.title')}</h1>
+      <p>{tr('models.subtitle')}</p>
     </section>
     <section class="panel models-folder-options">
+      <div class="models-folder-controls">
       <div class="models-folder-field">
-        <label for="models-folder">Models folder <span>downloads, local detection, and model loading</span></label>
+        <label for="models-folder">{tr('models.folder')} <span>{tr('models.folderHint')}</span></label>
         <input id="models-folder" bind:value={modelsFolderInput}
-          placeholder={defaultModelsFolder || 'models folder beside audiocpp_server'} />
-        {#if defaultModelsFolder}<small>Default: {defaultModelsFolder}</small>{/if}
+          placeholder={defaultModelsFolder || tr('models.folderPlaceholder')} />
+        {#if defaultModelsFolder}<small>{tr('models.default')}: {defaultModelsFolder}</small>{/if}
       </div>
-      <button disabled={applyingModelsFolder} on:click={() => openFolderBrowser()}>Browse</button>
+      <button disabled={applyingModelsFolder} on:click={() => openFolderBrowser()}>{tr('common.browse')}</button>
       <button disabled={applyingModelsFolder || !modelsFolderInput.trim() || modelsFolderInput.trim() === modelsFolder}
-        on:click={() => applyModelsFolder(false)}>{applyingModelsFolder ? 'Applyingâ€¦' : 'Apply'}</button>
+        on:click={() => applyModelsFolder(false)}>{applyingModelsFolder ? tr('common.applying') : tr('common.apply')}</button>
       <button disabled={applyingModelsFolder || modelsFolderIsDefault}
-        on:click={() => applyModelsFolder(true)}>Use default</button>
+        on:click={() => applyModelsFolder(true)}>{tr('models.useDefault')}</button>
+      </div>
+      <fieldset class="model-type-filters">
+        <legend>{tr('models.showTypes')}</legend>
+        <div>
+          {#each workflowTabs as workflow}
+            <label>
+              <input type="checkbox" checked={modelWorkflowFilters.includes(workflow.id)}
+                on:change={(event) => toggleModelWorkflowFilter(workflow.id, event.currentTarget.checked)} />
+              <span>{workflowLabel(workflow.id, workflow.filterLabel, tr)}</span>
+            </label>
+          {/each}
+        </div>
+      </fieldset>
     </section>
     <section class="model-grid">
-      {#each catalog as entry}
-        {@const installJob = displayInstallJob(entry, installJobs)}
-        {@const packageChoices = entry.install_packages || []}
-        <article class:selected={entry.id === selectedId}>
-          <div class="model-icon">{entry.task.toUpperCase()}</div>
-          <div class="model-copy">
-            <span>{taskLabels[entry.task] || entry.task}</span>
-            <h3>{entry.display_name}</h3>
-            <p>{selectedModelPath(entry)}</p>
+      {#each [0, 1] as column}
+        <div class="model-column">
+        {#each filteredModelGroups as group, groupIndex}
+          {#if groupIndex % 2 === column}
+        <article class="model-family-card" style={`--model-order: ${groupIndex}`}
+          class:selected={group.entries.some((entry) => entry.id === selectedId)}>
+          <div class="model-icon">{group.entries[0].task.toUpperCase()}</div>
+          <div class="model-copy family-copy">
+            <span>{group.entries.length} {group.entries.length === 1 ? tr('models.model') : tr('models.variants')}</span>
+            <h3>{group.label}</h3>
+            <p>{group.entries.map((entry) => localizedTaskLabel(entry.task, tr)).filter((value, index, all) => all.indexOf(value) === index).join(' · ')}</p>
           </div>
-          <div class="model-actions">
-            <small>VRAM ~{entry.min_vram_gb || '?'} GB</small>
-            {#if packageChoices.length}
-              <div class="package-buttons">
-                {#each packageChoices as choice}
-                  <div class="package-choice">
-                    <button class="package-install"
-                      class:preferred={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
-                      class:downloaded={packageSizes[choice.id]?.installed}
-                      aria-pressed={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
-                      disabled={entryInstallBusy(entry, installJobs) ||
-                        (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
-                      title={`${choice.format.toUpperCase()} ${choice.precision}: ${resolveCatalogPath(choice.path)}`}
-                      on:click={() => useOrInstallPackage(entry, choice)}>
-                      <span>{installButtonLabel(choice, installJobs[choice.id])}</span>
-                      {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
-                        choice.path === (selectedPackagePaths[entry.id] || entry.path))}
-                        <span class="package-size">{packageSizeLabel(packageSizes[choice.id], packageSizeState,
-                          choice.path === (selectedPackagePaths[entry.id] || entry.path))}</span>
-                      {/if}
-                    </button>
-                    {#if packageSizes[choice.id]?.installed}
-                      <button class="package-delete"
-                        title={`Delete ${choice.label}`} aria-label={`Delete ${entry.display_name} ${choice.label}`}
-                        on:click={() => removePackage(entry, choice)}>
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 11H8L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
-                        </svg>
-                      </button>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-              {#if installJob && installJob.state !== 'complete'}
-                <div class:failed={installJob.state === 'failed'}
-                  class="install-progress" title={installJob.message}>
-                  <div class="install-progress-head">
-                    <strong>{installJob.state}</strong>
-                    <span>{installProgressLabel(installJob)}</span>
-                  </div>
-                  <div class:indeterminate={installJob.state === 'running' && installJob.progress_percent < 0}
-                    class="install-progress-track" role="progressbar"
-                    aria-label={`${entry.display_name} download progress`}
-                    aria-valuemin="0" aria-valuemax="100" aria-valuenow={installPercent(installJob)}>
-                    <span style={`width: ${installPercent(installJob)}%`}></span>
-                  </div>
-                  <div class="install-status">{installJob.message}</div>
+          <div class="model-variant-list">
+            {#each group.entries as entry}
+              {@const packageChoices = uniquePackagesForEntry(group, entry)}
+              {@const installJob = displayInstallJobForChoices(packageChoices, installJobs)}
+              <section class="model-variant" class:selected-variant={entry.id === selectedId}>
+                <div class="variant-copy">
+                  <strong>{entry.display_name}</strong>
+                  <span>{localizedTaskLabel(entry.task, tr)} · VRAM ~{entry.min_vram_gb || '?'} GB</span>
                 </div>
-              {/if}
-            {/if}
+                <div class="model-actions">
+                  {#if packageChoices.length}
+                    <div class="package-buttons">
+                      {#each packageChoices as choice}
+                        <div class="package-choice">
+                          <button class="package-install"
+                            class:preferred={packageIsSelected(entry, choice)}
+                            class:downloaded={packageSizes[choice.id]?.installed}
+                            aria-pressed={packageIsSelected(entry, choice)}
+                            disabled={groupInstallBusy(group, installJobs) ||
+                              (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
+                            title={`${choice.format.toUpperCase()} ${choice.precision}: ${resolveCatalogPath(choice.path)}`}
+                            on:click={() => useOrInstallPackage(entry, choice)}>
+                            <span>{installButtonLabel(choice, installJobs[choice.id], tr)}</span>
+                            {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
+                              packageIsSelected(entry, choice), tr)}
+                              <span class="package-size">{packageSizeLabel(packageSizes[choice.id], packageSizeState,
+                                packageIsSelected(entry, choice), tr)}</span>
+                            {/if}
+                          </button>
+                          {#if packageSizes[choice.id]?.installed &&
+                            ['update_available', 'unknown'].includes(packageSizes[choice.id]?.version_state)}
+                            <button class="package-update"
+                              title={packageSizes[choice.id]?.version_state === 'update_available'
+                                ? `Update ${choice.label}` : `Reinstall ${choice.label} to record its version`}
+                              aria-label={`${packageSizes[choice.id]?.version_state === 'update_available' ? 'Update' : 'Reinstall'} ${entry.display_name} ${choice.label}`}
+                              disabled={groupInstallBusy(group, installJobs)}
+                              on:click={() => installPackage(entry, choice, true)}>
+                              {packageSizes[choice.id]?.version_state === 'update_available' ? tr('models.update') : tr('models.reinstall')}
+                            </button>
+                          {/if}
+                          {#if packageSizes[choice.id]?.installed}
+                            <button class="package-delete"
+                              title={`Delete ${choice.label}`} aria-label={`Delete ${entry.display_name} ${choice.label}`}
+                              on:click={() => removePackage(entry, choice)}>
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 11H8L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
+                              </svg>
+                            </button>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                    {#if installJob && installJob.state !== 'complete'}
+                      <div class:failed={installJob.state === 'failed'}
+                        class:cancelled={installJob.state === 'cancelled'}
+                        class:cleaned={installJob.state === 'cleaned'}
+                        class="install-progress" title={installJob.message}>
+                        <div class="install-progress-head">
+                          <strong>{installJob.state}</strong>
+                          <span>{installProgressLabel(installJob)}</span>
+                        </div>
+                        <div class:indeterminate={['running', 'cancelling'].includes(installJob.state) && installJob.progress_percent < 0}
+                          class="install-progress-track" role="progressbar"
+                          aria-label={`${entry.display_name} download progress`}
+                          aria-valuemin="0" aria-valuemax="100" aria-valuenow={installPercent(installJob)}>
+                          <span style={`width: ${installPercent(installJob)}%`}></span>
+                        </div>
+                        <div class="install-status">{installJob.message}</div>
+                        <div class="install-actions">
+                          {#if ['queued', 'running', 'cancelling'].includes(installJob.state)}
+                            <button class="danger" disabled={installJob.state === 'cancelling'}
+                              on:click={() => stopPackageDownload(entry, installJob)}>{tr('models.stopDownload')}</button>
+                          {:else if ['failed', 'cancelled'].includes(installJob.state)}
+                            <button on:click={() => cleanPartialDownload(entry, installJob)}>{tr('models.cleanPartial')}</button>
+                          {/if}
+                        </div>
+                      </div>
+                    {/if}
+                  {:else if (entry.install_packages || []).length}
+                    <div class="shared-package-note">{tr('models.sharedPackage', { name: group.label })}</div>
+                  {/if}
+                </div>
+              </section>
+            {/each}
           </div>
         </article>
+          {/if}
+        {/each}
+        </div>
       {/each}
     </section>
   {:else}
-    <section class="page-head"><p class="eyebrow">RUNTIME</p><h1>Session log</h1><p>Browser-side lifecycle and request events.</p></section>
+    <section class="page-head"><p class="eyebrow">{tr('runtime.eyebrow')}</p><h1>{tr('runtime.title')}</h1><p>{tr('runtime.subtitle')}</p></section>
     <section class="panel log-panel">
       <div class="runtime-cards">
-        <div><span>Status</span><strong>{server?.status || 'offline'}</strong></div>
-        <div><span>Backend</span><strong>{server?.backend || '—'}</strong></div>
-        <div><span>Registered</span><strong>{loadedModels.length}</strong></div>
-        <div><span>Resident</span><strong>{loadedModels.filter((model) => model.loaded).length}</strong></div>
+        <div><span>{tr('runtime.status')}</span><strong>{server?.status || 'offline'}</strong></div>
+        <div><span>{tr('runtime.backend')}</span><strong>{server?.backend || '—'}</strong></div>
+        <div><span>{tr('runtime.registered')}</span><strong>{loadedModels.length}</strong></div>
+        <div><span>{tr('runtime.resident')}</span><strong>{loadedModels.filter((model) => model.loaded).length}</strong></div>
       </div>
-      <pre class="logs">{logs.length ? logs.join('\n') : 'No events yet.'}</pre>
+      <pre class="logs">{logs.length ? logs.join('\n') : tr('runtime.noEvents')}</pre>
     </section>
   {/if}
 </main>
@@ -1631,10 +2028,10 @@
   <div class="folder-browser-backdrop">
     <div class="panel folder-browser-dialog" role="dialog" aria-modal="true" aria-labelledby="folder-browser-title">
       <header>
-        <div><span>MODELS FOLDER</span><h2 id="folder-browser-title">Choose a folder</h2></div>
-        <button aria-label="Close folder browser" title="Close" on:click={() => folderBrowserOpen = false}>Close</button>
+        <div><span>{tr('folder.eyebrow')}</span><h2 id="folder-browser-title">{tr('folder.title')}</h2></div>
+        <button aria-label={tr('folder.closeLabel')} title={tr('common.close')} on:click={() => folderBrowserOpen = false}>{tr('common.close')}</button>
       </header>
-      <div class="folder-browser-location">{folderBrowser?.current || 'Loading...'}</div>
+      <div class="folder-browser-location">{folderBrowser?.current || tr('folder.loading')}</div>
       {#if folderBrowser?.roots.length}
         <div class="folder-browser-roots">
           {#each folderBrowser.roots as root}
@@ -1644,14 +2041,14 @@
       {/if}
       <div class="folder-browser-toolbar">
         <button disabled={!folderBrowser?.parent || folderBrowserLoading}
-          on:click={() => openFolderBrowser(folderBrowser?.parent || '')}>Up one level</button>
+          on:click={() => openFolderBrowser(folderBrowser?.parent || '')}>{tr('folder.up')}</button>
         <button disabled={folderBrowserLoading}
-          on:click={() => openFolderBrowser(folderBrowser?.current || '')}>Refresh</button>
+          on:click={() => openFolderBrowser(folderBrowser?.current || '')}>{tr('common.refresh')}</button>
       </div>
       {#if folderBrowserError}
         <div class="folder-browser-error">{folderBrowserError}</div>
       {:else if folderBrowserLoading}
-        <div class="folder-browser-empty">Loading folders...</div>
+        <div class="folder-browser-empty">{tr('folder.loadingFolders')}</div>
       {:else if folderBrowser?.directories.length}
         <div class="folder-browser-list">
           {#each folderBrowser.directories as directory}
@@ -1661,15 +2058,15 @@
           {/each}
         </div>
       {:else}
-        <div class="folder-browser-empty">This folder has no subfolders.</div>
+        <div class="folder-browser-empty">{tr('folder.empty')}</div>
       {/if}
       <footer>
-        <button on:click={() => folderBrowserOpen = false}>Cancel</button>
+        <button on:click={() => folderBrowserOpen = false}>{tr('common.cancel')}</button>
         <button class="primary" disabled={!folderBrowser || folderBrowserLoading}
-          on:click={selectBrowsedFolder}>Select this folder</button>
+          on:click={selectBrowsedFolder}>{tr('folder.select')}</button>
       </footer>
     </div>
   </div>
 {/if}
 
-<footer><span>audio.cpp native WebUI</span><span>SvelteKit · embedded in audiocpp_server</span></footer>
+<footer><span>audio.cpp native WebUI</span><span>{tr('footer.embedded')}</span></footer>
