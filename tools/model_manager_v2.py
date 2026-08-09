@@ -135,9 +135,11 @@ def flatten_packages(specs: list[dict[str, Any]]) -> list[PackageRecord]:
 
 
 def select_package(records: list[PackageRecord], args: argparse.Namespace) -> PackageRecord:
+    format_filter = getattr(args, "format", None)
+    precision_filter = getattr(args, "precision", None)
     exact = [record for record in records if record.id == args.package]
     if exact:
-        if args.format or args.precision:
+        if format_filter or precision_filter:
             raise ManagerError("format/precision filters are only used when selecting by family")
         return exact[0]
 
@@ -145,10 +147,10 @@ def select_package(records: list[PackageRecord], args: argparse.Namespace) -> Pa
     if not family:
         raise ManagerError(f"unknown package or family: {args.package}")
     candidates = family
-    if args.format:
-        candidates = [record for record in candidates if record.format == args.format]
-    if args.precision:
-        candidates = [record for record in candidates if record.precision == args.precision]
+    if format_filter:
+        candidates = [record for record in candidates if record.format == format_filter]
+    if precision_filter:
+        candidates = [record for record in candidates if record.precision == precision_filter]
     if not candidates:
         raise ManagerError(f"no package for family '{args.package}' matches the requested filters")
     default_candidates = [record for record in candidates if record.default]

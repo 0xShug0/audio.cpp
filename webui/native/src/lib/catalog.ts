@@ -98,10 +98,13 @@ function packageLabel(entry: PackageEntry): string {
 }
 
 function packageModelPath(entry: PackageEntry): string {
-  if (entry.format !== 'gguf' || entry.files?.length !== 1) {
+  const modelFile = entry.format === 'gguf'
+    ? entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'))
+    : undefined;
+  if (!modelFile) {
     return `models/${entry.target_directory}`;
   }
-  let relative = entry.files[0].replace(/\\/g, '/');
+  let relative = modelFile.replace(/\\/g, '/');
   const prefix = (entry.strip_prefix || '').replace(/\\/g, '/').replace(/\/$/, '');
   if (prefix && relative.startsWith(`${prefix}/`)) relative = relative.slice(prefix.length + 1);
   return `models/${entry.target_directory}/${relative}`.replace(/\/+/g, '/');

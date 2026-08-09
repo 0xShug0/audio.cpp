@@ -67,6 +67,7 @@
   let maxTokens = 1024;
   let sourceFile: File | null = null;
   let voiceFile: File | null = null;
+  let voiceInput: HTMLInputElement | null = null;
   let referenceTextFile: File | null = null;
   let referenceTextInput: HTMLInputElement | null = null;
   let advancedJson = '{}';
@@ -102,7 +103,7 @@
   let folderBrowserError = '';
   let folderBrowser: DirectoryBrowserResponse | null = null;
   let installPoll: number | null = null;
-  let selectedPackagePaths: Record<string, string> = {};
+  let selectedPackageIds: Record<string, string> = {};
   let packageSizes: Record<string, ModelPackageSize> = {};
   let packageSizeState: 'idle' | 'running' | 'complete' | 'failed' = 'idle';
   let packageSizePoll: number | null = null;
@@ -113,13 +114,13 @@
   let quickStartVoice = '';
 
   const workflowTabs = [
-    { id: 'tts', label: 'Text to speech', tasks: ['tts', 'clon'] },
-    { id: 'asr', label: 'ASR / Transcription', tasks: ['asr'] },
-    { id: 'music', label: 'Music generation', tasks: ['gen'] },
-    { id: 'conversion', label: 'Voice conversion', tasks: ['vc', 'svc', 's2s'] },
-    { id: 'separation', label: 'Source separation', tasks: ['sep'] },
-    { id: 'analysis', label: 'Audio analysis', tasks: ['vad', 'diar', 'align', 'spk'] },
-    { id: 'design', label: 'Voice design', tasks: ['vdes'] }
+    { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
+    { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
+    { id: 'music', label: 'Music generation', filterLabel: 'Music', tasks: ['gen'] },
+    { id: 'conversion', label: 'Voice conversion', filterLabel: 'Voice conversion', tasks: ['vc', 'svc', 's2s'] },
+    { id: 'separation', label: 'Source separation', filterLabel: 'Separation', tasks: ['sep'] },
+    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk'] },
+    { id: 'design', label: 'Voice design', filterLabel: 'Voice design', tasks: ['vdes'] }
   ] as const;
 
   type WorkflowId = typeof workflowTabs[number]['id'];
@@ -140,6 +141,10 @@
     seed_vc: 'Seed-VC'
   };
 
+  function compareModelNames(left: string, right: string) {
+    return left.localeCompare(right, 'en', { sensitivity: 'base', numeric: true });
+  }
+
   const modelGroups: ModelGroup[] = Array.from(
     catalog.reduce((groups, entry) => {
       const existing = groups.get(entry.family) || [];
@@ -149,12 +154,13 @@
     }, new Map<string, CatalogEntry[]>())
   ).map(([family, entries]) => ({
     family,
-    entries,
+    entries: [...entries].sort((left, right) => compareModelNames(left.display_name, right.display_name)),
     label: entries.length > 1 ? (familyLabels[family] || entries[0].display_name) : entries[0].display_name
-  }));
+  })).sort((left, right) => compareModelNames(left.label, right.label));
 
   let activeWorkflow: WorkflowId = 'tts';
   let workflowSelections: Partial<Record<WorkflowId, string>> = {};
+  let modelWorkflowFilters: WorkflowId[] = workflowTabs.map((workflow) => workflow.id);
 
   class StatusWarning extends Error {}
 
@@ -162,6 +168,13 @@
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
   $: workflowModels = catalog.filter((entry) =>
     activeWorkflowSpec.tasks.some((task) => task === entry.task));
+  $: filteredModelGroups = modelGroups.map((group) => ({
+    ...group,
+    entries: group.entries.filter((entry) => {
+      const workflow = workflowTabs.find((candidate) => candidate.tasks.some((task) => task === entry.task));
+      return Boolean(workflow && modelWorkflowFilters.includes(workflow.id));
+    })
+  })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded);
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align'].includes(selected?.task);
   $: acceptsSource = needsSource || selected?.task === 'gen';
@@ -208,8 +221,17 @@
     return `${modelsFolder.replace(/[\\/]+$/, '')}${separator}${relative.replace(/\//g, separator)}`;
   }
 
+  function selectedPackageChoice(entry: CatalogEntry) {
+    const choices = entry.install_packages || [];
+    return choices.find((choice) => choice.id === selectedPackageIds[entry.id]) || choices[0];
+  }
+
+  function packageIsSelected(entry: CatalogEntry, choice: InstallPackageChoice) {
+    return selectedPackageChoice(entry)?.id === choice.id;
+  }
+
   function selectedModelPath(entry: CatalogEntry) {
-    return resolveCatalogPath(selectedPackagePaths[entry.id] || entry.path);
+    return resolveCatalogPath(selectedPackageChoice(entry)?.path || entry.path);
   }
 
   function comparablePath(path: string) {
@@ -222,8 +244,8 @@
 
   function packageIsResident(entry: CatalogEntry, choice: InstallPackageChoice, models = loadedModels) {
     const resident = residentModel(entry, models);
-    const selectedChoicePath = selectedPackagePaths[entry.id] || entry.path;
-    const expectedPath = entry.id === selectedId && choice.path === selectedChoicePath
+    const selectedChoice = selectedPackageChoice(entry);
+    const expectedPath = entry.id === selectedId && choice.id === selectedChoice?.id
       ? modelPath
       : resolveCatalogPath(choice.path);
     return Boolean(resident && comparablePath(resident.path) === comparablePath(expectedPath));
@@ -279,7 +301,12 @@
   }
 
   function chooseVoiceReference(file: File | null) {
-    const changed = Boolean(voiceFile && file && voiceFile.name !== file.name);
+    const changed = Boolean(file && (quickStartVoice || savedVoiceId ||
+      (voiceFile && voiceFile.name !== file.name)));
+    if (file) {
+      quickStartVoice = '';
+      savedVoiceId = '';
+    }
     voiceFile = file;
     if (changed) {
       referenceTextFile = null;
@@ -288,6 +315,18 @@
       status = 'Reference voice changed. Choose or enter its matching transcript.';
       warningStatus = status;
     }
+  }
+
+  function chooseQuickStartVoice(voice: string) {
+    quickStartVoice = voice;
+    if (!voice) return;
+    savedVoiceId = '';
+    voiceFile = null;
+    voiceName = '';
+    referenceTextFile = null;
+    referenceText = '';
+    if (voiceInput) voiceInput.value = '';
+    if (referenceTextInput) referenceTextInput.value = '';
   }
 
   async function chooseReferenceText(file: File | null) {
@@ -312,7 +351,7 @@
   }
 
   function installPercent(job: ModelInstallJob) {
-    if (job.state === 'complete') return 100;
+    if (job.state === 'complete' || job.state === 'cleaned') return 100;
     if (job.progress_percent >= 0) return Math.min(100, Math.max(0, job.progress_percent));
     return 0;
   }
@@ -324,6 +363,7 @@
     }
     if (job.downloaded_bytes > 0) return `${formatBytes(job.downloaded_bytes)} downloaded`;
     if (job.state === 'failed') return 'Download failed';
+    if (job.state === 'cleaned') return 'Partial files cleaned';
     if (job.state === 'complete') return '100% · complete';
     return job.state === 'queued' ? '0% · queued' : 'Connecting and checking package files…';
   }
@@ -423,6 +463,7 @@
       packageSizeState = response.state;
       if (response.data.length) {
         packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
+        if (response.state === 'complete') reconcileSelectedPackageChoices(packageSizes);
       }
       const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
       if (inventoryPending && packageSizePoll === null) {
@@ -445,10 +486,65 @@
     refreshPackageSizes();
   }
 
-  function rememberPackagePath(entry: CatalogEntry, choice: InstallPackageChoice) {
-    selectedPackagePaths = { ...selectedPackagePaths, [entry.id]: choice.path };
-    localStorage.setItem('audiocpp.ui.packagePaths', JSON.stringify(selectedPackagePaths));
+  function rememberPackageChoice(entry: CatalogEntry, choice: InstallPackageChoice) {
+    selectedPackageIds = { ...selectedPackageIds, [entry.id]: choice.id };
+    localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
     if (entry.id === selectedId) modelPath = resolveCatalogPath(choice.path);
+  }
+
+  function reconcileSelectedPackageChoices(sizes = packageSizes) {
+    const nextIds = { ...selectedPackageIds };
+    let changed = false;
+
+    for (const entry of catalog) {
+      const choices = entry.install_packages || [];
+      if (!choices.length) continue;
+      const current = choices.find((choice) => choice.id === nextIds[entry.id]);
+      const currentJob = current ? installJobs[current.id] : undefined;
+      const currentBusy = currentJob && ['queued', 'running', 'cancelling'].includes(currentJob.state);
+      if (currentBusy || (current && sizes[current.id]?.installed)) continue;
+
+      const replacement = choices.find((choice) => sizes[choice.id]?.installed);
+      if (replacement) {
+        if (nextIds[entry.id] !== replacement.id) {
+          nextIds[entry.id] = replacement.id;
+          changed = true;
+        }
+      } else if (nextIds[entry.id] !== undefined) {
+        delete nextIds[entry.id];
+        changed = true;
+      }
+    }
+
+    if (!changed) return false;
+    selectedPackageIds = nextIds;
+    localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
+    if (selectedId) modelPath = selectedModelPath(selected);
+    return true;
+  }
+
+  async function unloadRemovedResidentPackages(sizes = packageSizes) {
+    const staleEntries = catalog.filter((entry) => {
+      const resident = residentModel(entry);
+      if (!resident) return false;
+      const residentPath = comparablePath(resident.path);
+      const residentChoice = (entry.install_packages || []).find((choice) =>
+        comparablePath(resolveCatalogPath(choice.path)) === residentPath);
+      return Boolean(residentChoice && sizes[residentChoice.id]?.installed === false);
+    });
+    if (!staleEntries.length) return false;
+
+    for (const entry of staleEntries) await unloadModel(entry.id);
+    await refresh();
+    return true;
+  }
+
+  async function openStudioPage() {
+    tab = 'studio';
+    await Promise.all([refreshPackageSizes(), refresh()]);
+    await unloadRemovedResidentPackages();
+    const selectionChanged = reconcileSelectedPackageChoices();
+    if (selectionChanged && selectedId) await inspectPath();
   }
 
   function acceptModelsRoot(root: Awaited<ReturnType<typeof getModelsRoot>>) {
@@ -605,6 +701,12 @@
     status = `No installed models are available for ${workflow.label}. Install one from the Models tab.`;
   }
 
+  function toggleModelWorkflowFilter(id: WorkflowId, enabled: boolean) {
+    modelWorkflowFilters = enabled
+      ? [...modelWorkflowFilters, id].filter((value, index, all) => all.indexOf(value) === index)
+      : modelWorkflowFilters.filter((value) => value !== id);
+  }
+
   async function doLoad(modeOverride?: string) {
     if (!selectedId) {
       status = 'Choose an installed model before loading.';
@@ -672,7 +774,7 @@
       return;
     }
 
-    rememberPackagePath(selected, choice);
+    rememberPackageChoice(selected, choice);
     await inspectPath();
     if (installed !== true) {
       status = `${selected.display_name} ${choice.label} is not available at the expected path.`;
@@ -764,7 +866,12 @@
         const blob = new Blob(chunks, { type: recorder?.mimeType || mimeType || 'audio/webm' });
         const file = new File([blob], `recording-${Date.now()}.webm`, { type: blob.type });
         if (target === 'source') sourceFile = file;
-        else voiceFile = file;
+        else {
+          quickStartVoice = '';
+          savedVoiceId = '';
+          voiceFile = file;
+          if (voiceInput) voiceInput.value = '';
+        }
         recordingStream?.getTracks().forEach((track) => track.stop());
         recordingStream = null;
         recorder = null;
@@ -827,7 +934,11 @@
     savedVoiceId = id;
     const voice = savedVoices.find((entry) => entry.id === id);
     if (!voice) return;
+    quickStartVoice = '';
     voiceFile = new File([voice.audio], `${voice.name}.wav`, { type: 'audio/wav' });
+    referenceTextFile = null;
+    if (voiceInput) voiceInput.value = '';
+    if (referenceTextInput) referenceTextInput.value = '';
     referenceText = voice.transcript;
     voiceName = voice.name;
     status = `Selected saved voice “${voice.name}”.`;
@@ -1132,7 +1243,7 @@
       `${expectedSize ? ` (${formatBytes(expectedSize)})` : ''}?`
     );
     if (!confirmed) return;
-    rememberPackagePath(entry, choice);
+    rememberPackageChoice(entry, choice);
     status = `Starting ${choice.label} installation for ${entry.display_name}...`;
     const expectedBytes = packageSizes[choice.id]?.size_bytes || 0;
     installJobs = {
@@ -1183,7 +1294,7 @@
 
   function useOrInstallPackage(entry: CatalogEntry, choice: InstallPackageChoice) {
     if (packageSizes[choice.id]?.installed) {
-      rememberPackagePath(entry, choice);
+      rememberPackageChoice(entry, choice);
       status = `${entry.display_name} will use ${choice.label}. It is available in Studio.`;
       log(status);
       return;
@@ -1203,6 +1314,15 @@
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
       errorStatus = status;
+      installJobs = {
+        ...installJobs,
+        [job.id]: {
+          ...job,
+          state: 'failed',
+          message: status,
+          finished_at_ms: Date.now()
+        }
+      };
     }
   }
 
@@ -1211,14 +1331,32 @@
     status = `Cleaning partial ${entry.display_name} download...`;
     try {
       const result = await cleanPartialModelInstall(job.id);
-      const nextJobs = { ...installJobs };
-      delete nextJobs[job.id];
-      installJobs = nextJobs;
+      installJobs = {
+        ...installJobs,
+        [job.id]: {
+          ...job,
+          state: 'cleaned',
+          message: result.message,
+          downloaded_bytes: 0,
+          total_bytes: 0,
+          progress_percent: 100,
+          finished_at_ms: Date.now()
+        }
+      };
       status = result.message;
       log(status);
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
       errorStatus = status;
+      installJobs = {
+        ...installJobs,
+        [job.id]: {
+          ...job,
+          state: 'failed',
+          message: status,
+          finished_at_ms: Date.now()
+        }
+      };
     }
   }
 
@@ -1230,6 +1368,11 @@
     if (!confirmed) return;
     status = `Deleting ${entry.display_name} ${choice.label}...`;
     try {
+      if (packageIsResident(entry, choice)) {
+        status = `Unloading ${entry.display_name} ${choice.label} before deletion...`;
+        await unloadModel(entry.id);
+        await refresh();
+      }
       const result = await deleteModelPackage(choice.id);
       packageSizes = {
         ...packageSizes,
@@ -1239,16 +1382,19 @@
       delete nextJobs[choice.id];
       installJobs = nextJobs;
 
-      if (selectedPackagePaths[entry.id] === choice.path) {
+      if (packageIsSelected(entry, choice)) {
         const replacement = (entry.install_packages || []).find((candidate) =>
           candidate.id !== choice.id && packageSizes[candidate.id]?.installed);
-        const nextPaths = { ...selectedPackagePaths };
-        if (replacement) nextPaths[entry.id] = replacement.path;
-        else delete nextPaths[entry.id];
-        selectedPackagePaths = nextPaths;
-        localStorage.setItem('audiocpp.ui.packagePaths', JSON.stringify(selectedPackagePaths));
+        const nextIds = { ...selectedPackageIds };
+        if (replacement) nextIds[entry.id] = replacement.id;
+        else delete nextIds[entry.id];
+        selectedPackageIds = nextIds;
+        localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
         if (entry.id === selectedId) modelPath = resolveCatalogPath(replacement?.path || entry.path);
       }
+      // Keep Studio synchronized even when its saved preference was stale or the
+      // removed package shared a directory with another precision.
+      reconcileSelectedPackageChoices(packageSizes);
 
       packageSizeState = 'idle';
       await refreshPackageSizes();
@@ -1266,10 +1412,13 @@
 
   onMount(async () => {
     try {
-      selectedPackagePaths = JSON.parse(localStorage.getItem('audiocpp.ui.packagePaths') || '{}');
+      selectedPackageIds = JSON.parse(localStorage.getItem('audiocpp.ui.packageIds') || '{}');
     } catch {
-      selectedPackagePaths = {};
+      selectedPackageIds = {};
     }
+    // Path-based preferences could select several packages sharing one directory.
+    // Package IDs are unambiguous; discard the legacy preference after migration.
+    localStorage.removeItem('audiocpp.ui.packagePaths');
     const stored = localStorage.getItem('audiocpp.ui.model');
     if (stored && catalog.some((entry) => entry.id === stored)) selectedId = stored;
     selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
@@ -1328,7 +1477,7 @@
     </div>
   </div>
   <nav aria-label="Primary navigation">
-    <button class:active={tab === 'studio'} on:click={() => tab = 'studio'}>Studio</button>
+    <button class:active={tab === 'studio'} on:click={openStudioPage}>Studio</button>
     <button class:active={tab === 'models'} on:click={openModelsPage}>Models</button>
     <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>Runtime</button>
   </nav>
@@ -1395,8 +1544,8 @@
               {@const choice = slot.choice}
               {@const available = Boolean(choice && packageIsAvailable(selected, choice, loadedModels, packageSizes))}
               {@const resident = Boolean(choice && packageIsResident(selected, choice, loadedModels))}
-              <button class:resident class:selected-package={Boolean(choice &&
-                  choice.path === (selectedPackagePaths[selected.id] || selected.path))}
+              <button class:resident class:selected-package={Boolean(choice && available &&
+                  packageIsSelected(selected, choice))}
                 disabled={loadingModel || !available}
                 title={resident ? `Unload ${choice?.label}` : available ? `Load ${choice?.label}` :
                   `${choice?.label || slot.label} is not downloaded`}
@@ -1521,7 +1670,8 @@
         {#if needsVoice}
           {#if quickStartVoices.length}
             <label for="quick-start-voice">Quick-start voice <span>preset or bundled reference</span></label>
-            <select id="quick-start-voice" bind:value={quickStartVoice}>
+            <select id="quick-start-voice" value={quickStartVoice}
+              on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
               <option value="">Use a reference audio file below</option>
               {#each quickStartVoices as voice}<option value={voice}>{voice}</option>{/each}
             </select>
@@ -1537,6 +1687,7 @@
             <div>
               <label for="voice">Reference voice <span>{referenceVoiceRequired ? 'required' : 'optional'}</span></label>
               <input id="voice" class="file" type="file" accept="audio/*"
+                bind:this={voiceInput}
                 on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
             </div>
             <div>
@@ -1681,6 +1832,7 @@
       <p>Download and manage model packages without leaving the native interface.</p>
     </section>
     <section class="panel models-folder-options">
+      <div class="models-folder-controls">
       <div class="models-folder-field">
         <label for="models-folder">Models folder <span>downloads, local detection, and model loading</span></label>
         <input id="models-folder" bind:value={modelsFolderInput}
@@ -1692,10 +1844,27 @@
         on:click={() => applyModelsFolder(false)}>{applyingModelsFolder ? 'Applyingâ€¦' : 'Apply'}</button>
       <button disabled={applyingModelsFolder || modelsFolderIsDefault}
         on:click={() => applyModelsFolder(true)}>Use default</button>
+      </div>
+      <fieldset class="model-type-filters">
+        <legend>Show model types</legend>
+        <div>
+          {#each workflowTabs as workflow}
+            <label>
+              <input type="checkbox" checked={modelWorkflowFilters.includes(workflow.id)}
+                on:change={(event) => toggleModelWorkflowFilter(workflow.id, event.currentTarget.checked)} />
+              <span>{workflow.filterLabel}</span>
+            </label>
+          {/each}
+        </div>
+      </fieldset>
     </section>
     <section class="model-grid">
-      {#each modelGroups as group}
-        <article class="model-family-card" class:selected={group.entries.some((entry) => entry.id === selectedId)}>
+      {#each [0, 1] as column}
+        <div class="model-column">
+        {#each filteredModelGroups as group, groupIndex}
+          {#if groupIndex % 2 === column}
+        <article class="model-family-card" style={`--model-order: ${groupIndex}`}
+          class:selected={group.entries.some((entry) => entry.id === selectedId)}>
           <div class="model-icon">{group.entries[0].task.toUpperCase()}</div>
           <div class="model-copy family-copy">
             <span>{group.entries.length} {group.entries.length === 1 ? 'model' : 'variants'}</span>
@@ -1717,18 +1886,18 @@
                       {#each packageChoices as choice}
                         <div class="package-choice">
                           <button class="package-install"
-                            class:preferred={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
+                            class:preferred={packageIsSelected(entry, choice)}
                             class:downloaded={packageSizes[choice.id]?.installed}
-                            aria-pressed={choice.path === (selectedPackagePaths[entry.id] || entry.path)}
+                            aria-pressed={packageIsSelected(entry, choice)}
                             disabled={groupInstallBusy(group, installJobs) ||
                               (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
                             title={`${choice.format.toUpperCase()} ${choice.precision}: ${resolveCatalogPath(choice.path)}`}
                             on:click={() => useOrInstallPackage(entry, choice)}>
                             <span>{installButtonLabel(choice, installJobs[choice.id])}</span>
                             {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
-                              choice.path === (selectedPackagePaths[entry.id] || entry.path))}
+                              packageIsSelected(entry, choice))}
                               <span class="package-size">{packageSizeLabel(packageSizes[choice.id], packageSizeState,
-                                choice.path === (selectedPackagePaths[entry.id] || entry.path))}</span>
+                                packageIsSelected(entry, choice))}</span>
                             {/if}
                           </button>
                           {#if packageSizes[choice.id]?.installed &&
@@ -1757,6 +1926,7 @@
                     {#if installJob && installJob.state !== 'complete'}
                       <div class:failed={installJob.state === 'failed'}
                         class:cancelled={installJob.state === 'cancelled'}
+                        class:cleaned={installJob.state === 'cleaned'}
                         class="install-progress" title={installJob.message}>
                         <div class="install-progress-head">
                           <strong>{installJob.state}</strong>
@@ -1787,6 +1957,9 @@
             {/each}
           </div>
         </article>
+          {/if}
+        {/each}
+        </div>
       {/each}
     </section>
   {:else}

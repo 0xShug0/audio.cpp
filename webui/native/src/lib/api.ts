@@ -55,7 +55,7 @@ export async function pathStatus(path: string): Promise<{ exists: boolean; direc
 
 export interface ModelInstallJob {
   id: string;
-  state: 'idle' | 'queued' | 'running' | 'cancelling' | 'cancelled' | 'complete' | 'failed';
+  state: 'idle' | 'queued' | 'running' | 'cancelling' | 'cancelled' | 'cleaned' | 'complete' | 'failed';
   message: string;
   exit_code: number;
   downloaded_bytes: number;
