@@ -36,6 +36,31 @@ using engine::io::json::Value;
 
 using Clock = std::chrono::steady_clock;
 
+void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
+    std::filesystem::create_directories(voice_dir);
+    for (const auto & voice : embedded_demo_voices()) {
+        std::ofstream wav(
+            voice_dir / (std::string(voice.name) + ".wav"),
+            std::ios::binary | std::ios::trunc);
+        if (!wav) {
+            throw std::runtime_error("failed to create embedded demo voice: " + std::string(voice.name));
+        }
+        wav.write(voice.wav_bytes.data(), static_cast<std::streamsize>(voice.wav_bytes.size()));
+        if (!wav) {
+            throw std::runtime_error("failed to write embedded demo voice: " + std::string(voice.name));
+        }
+    }
+    const auto prompt_text = embedded_demo_voice_prompt_text();
+    std::ofstream prompts(voice_dir / "prompt_text", std::ios::binary | std::ios::trunc);
+    if (!prompts) {
+        throw std::runtime_error("failed to create embedded demo voice prompt_text");
+    }
+    prompts.write(prompt_text.data(), static_cast<std::streamsize>(prompt_text.size()));
+    if (!prompts) {
+        throw std::runtime_error("failed to write embedded demo voice prompt_text");
+    }
+}
+
 // Per-request override for the busy timeout. Absent means "use the model's
 // configured ceiling"; a value is clamped to that ceiling by resolve_busy_timeout_ms
 // so a client can shorten its own wait but never weaken the guard.
@@ -771,12 +796,6 @@ ServerState::ServerState(
                 return std::filesystem::is_regular_file(root / "tools" / "model_manager_v2.py") &&
                     std::filesystem::is_directory(root / "model_specs");
             }).value_or(request_base_);
-        if (!config_.voice_dir.has_value()) {
-            const auto bundled_voices = repository_root_ / "webui" / "voice";
-            if (std::filesystem::is_directory(bundled_voices)) {
-                config_.voice_dir = bundled_voices;
-            }
-        }
         const auto binary_directory = ui_resource_anchor.empty()
             ? request_base_
             : std::filesystem::absolute(ui_resource_anchor).lexically_normal();
@@ -792,6 +811,11 @@ ServerState::ServerState(
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count()));
         std::filesystem::create_directories(upload_root_);
+        if (!config_.voice_dir.has_value()) {
+            const auto embedded_voices = upload_root_ / "demo_voices";
+            materialize_embedded_demo_voices(embedded_voices);
+            config_.voice_dir = embedded_voices;
+        }
         model_installer_ = std::make_unique<ModelInstaller>(
             repository_root_,
             models_root_);

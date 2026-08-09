@@ -1246,6 +1246,34 @@ configure_file(
     @ONLY
 )
 
+set(AUDIOCPP_DEMO_VOICE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/webui/native/demo_voices")
+macro(audiocpp_embed_demo_voice_file INPUT_FILE OUTPUT_VARIABLE)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${INPUT_FILE}")
+    file(READ "${INPUT_FILE}" _audiocpp_demo_voice_hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," ${OUTPUT_VARIABLE} "${_audiocpp_demo_voice_hex}")
+    string(REPLACE "," ",\n" ${OUTPUT_VARIABLE} "${${OUTPUT_VARIABLE}}")
+endmacro()
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/demo_1_man.wav"
+    AUDIOCPP_DEMO_1_MAN_BYTES)
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/demo_2_man.wav"
+    AUDIOCPP_DEMO_2_MAN_BYTES)
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/demo_3_woman.wav"
+    AUDIOCPP_DEMO_3_WOMAN_BYTES)
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/demo_4_woman.wav"
+    AUDIOCPP_DEMO_4_WOMAN_BYTES)
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/prompt_text"
+    AUDIOCPP_DEMO_PROMPT_TEXT_BYTES)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/app/server/audiocpp_demo_voice_assets.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/audiocpp_demo_voice_assets.h"
+    @ONLY
+)
+
 add_executable(audiocpp_server
     app/server/main.cpp
     app/server/config.cpp

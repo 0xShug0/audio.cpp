@@ -113,6 +113,13 @@
   let bundledVoices: string[] = [];
   let quickStartVoice = '';
 
+  const demoVoiceSources: Record<string, string> = {
+    demo_1_man: 'demo_1_man',
+    demo_2_man: 'demo_2_man',
+    demo_3_woman: 'demo_3_woman',
+    demo_4_woman: 'demo_4_woman'
+  };
+
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
     { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
@@ -185,7 +192,9 @@
   $: referenceVoiceRequired = !quickStartVoice && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: referenceTextRequired = Boolean(voiceFile) && isQwenBase;
-  $: quickStartVoices = Array.from(new Set([...(selected?.builtin_voices || []), ...bundledVoices]));
+  $: quickStartVoices = Object.entries(demoVoiceSources)
+    .filter(([, source]) => bundledVoices.includes(source))
+    .map(([voice]) => voice);
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt'].includes(selected?.family);
@@ -669,7 +678,7 @@
     if (!next || !entrySelectable(next)) return;
     selectedId = id;
     selected = next;
-    quickStartVoice = next.default_voice || '';
+    quickStartVoice = '';
     activeWorkflow = workflowForTask(next.task);
     workflowSelections = { ...workflowSelections, [activeWorkflow]: id };
     modelPath = selectedModelPath(next);
@@ -1081,7 +1090,7 @@
           };
           if (supportsMaxTokens(selected)) body.max_tokens = maxTokens;
           if (voiceRef) body.voice_ref = voiceRef;
-          else if (quickStartVoice) body.voice = quickStartVoice;
+          else if (quickStartVoice) body.voice = demoVoiceSources[quickStartVoice] || quickStartVoice;
           if (referenceText.trim()) body.reference_text = referenceText;
           if (selected.task === 'vdes' && instructions.trim()) body.instructions = instructions;
           const result = await speech(body, aborter.signal);
@@ -1422,7 +1431,7 @@
     const stored = localStorage.getItem('audiocpp.ui.model');
     if (stored && catalog.some((entry) => entry.id === stored)) selectedId = stored;
     selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
-    quickStartVoice = selected.default_voice || '';
+    quickStartVoice = '';
     activeWorkflow = workflowForTask(selected.task);
     if (selectedId) workflowSelections = { ...workflowSelections, [activeWorkflow]: selectedId };
     resetParams();
@@ -1669,7 +1678,7 @@
 
         {#if needsVoice}
           {#if quickStartVoices.length}
-            <label for="quick-start-voice">Quick-start voice <span>preset or bundled reference</span></label>
+            <label for="quick-start-voice">Quick-start voice presets (demo voices)</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
               <option value="">Use a reference audio file below</option>
@@ -1677,9 +1686,7 @@
             </select>
             {#if quickStartVoice}
               <div class="quick-voice-note">
-                {selected?.builtin_voices?.includes(quickStartVoice)
-                  ? 'This model voice is built into the package; no reference audio is required.'
-                  : 'The bundled reference audio and its matching transcript are supplied automatically.'}
+                The bundled reference audio and its matching transcript are supplied automatically.
               </div>
             {/if}
           {/if}

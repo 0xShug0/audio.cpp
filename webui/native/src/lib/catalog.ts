@@ -39,6 +39,19 @@ const packages: PackageEntry[] = Object.values(specModules).flatMap((spec) =>
 
 const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.family, spec]));
 
+const hanCharacters = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u;
+
+function englishUiText(preferred?: string, fallback?: string): string {
+  for (const value of [preferred, fallback]) {
+    if (value && !hanCharacters.test(value)) return value;
+  }
+  return '';
+}
+
+function parameterLabel(name: string, preferred?: string, fallback?: string): string {
+  return englishUiText(preferred, fallback) || name.replace(/_/g, ' ');
+}
+
 const cleanPath = (value: string) => value
   .replace(/\\/g, '/')
   .replace(/^\.\//, '')
@@ -139,7 +152,8 @@ export const catalog = (rawCatalog.models as CatalogEntry[]).map((entry) => {
   const spec = specsByFamily.get(entry.family);
   return {
     ...entry,
-    display_name: entry.display_name_en || entry.display_name,
+    display_name: englishUiText(entry.display_name_en, entry.display_name) || entry.id,
+    input_hint: englishUiText(entry.input_hint_en, entry.input_hint),
     download_id: installPackage?.id || entry.download_id,
     install_packages: choices,
     path: installPackage?.path || entry.path,
@@ -149,7 +163,19 @@ export const catalog = (rawCatalog.models as CatalogEntry[]).map((entry) => {
   };
 });
 
-export const parameterCatalog = rawParams as unknown as Record<string, ParamSpec[]>;
+export const parameterCatalog = Object.fromEntries(
+  Object.entries(rawParams as unknown as Record<string, ParamSpec[] | string>)
+    .filter((entry): entry is [string, ParamSpec[]] => Array.isArray(entry[1]))
+    .map(([family, specs]) => [
+      family,
+      specs.map((spec) => ({
+        ...spec,
+        label: parameterLabel(spec.name, spec.label_en, spec.label),
+        placeholder: englishUiText(spec.placeholder_en, spec.placeholder),
+        info: englishUiText(spec.info_en, spec.info)
+      }))
+    ])
+) as Record<string, ParamSpec[]>;
 
 export const taskLabels: Record<string, string> = {
   tts: 'Text to speech',
