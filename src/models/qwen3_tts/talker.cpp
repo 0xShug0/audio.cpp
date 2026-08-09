@@ -34,6 +34,21 @@
 #include <vector>
 
 namespace engine::models::qwen3_tts {
+
+void validate_qwen3_talker_voice_clone_prefill(
+    const Qwen3TalkerPrefill & prefill,
+    int64_t hidden_size) {
+    if (!prefill.speaker_embedding.has_value() || prefill.speaker_embedding->dims != hidden_size) {
+        throw std::runtime_error("Qwen3 talker voice clone prefill requires speaker embedding");
+    }
+    if (prefill.icl_mode == prefill.x_vector_only_mode) {
+        throw std::runtime_error("Qwen3 talker voice clone prefill requires exactly one prompt mode");
+    }
+    if (prefill.icl_mode && (!prefill.reference_codes.has_value() || prefill.reference_ids.empty())) {
+        throw std::runtime_error("Qwen3 talker ICL prefill requires reference ids and codes");
+    }
+}
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -521,12 +536,7 @@ PromptEmbeddingState build_prompt_state(
         return state;
     }
 
-    if (!prefill.speaker_embedding.has_value() || prefill.speaker_embedding->dims != config.hidden_size) {
-        throw std::runtime_error("Qwen3 talker voice clone prefill requires speaker embedding");
-    }
-    if (!prefill.reference_codes.has_value() || prefill.reference_ids.empty()) {
-        throw std::runtime_error("Qwen3 talker ICL prefill requires reference ids and codes");
-    }
+    validate_qwen3_talker_voice_clone_prefill(prefill, config.hidden_size);
 
     PromptEmbeddingState state;
     state.tts_pad = tts_pad;
@@ -549,6 +559,26 @@ PromptEmbeddingState build_prompt_state(
     append_row(state.prompt, add_rows(tts_bos, row_at(codec_embed, codec_rows - 2, config.hidden_size)));
 
     const std::vector<int32_t> text_ids(prefill.input_ids.begin() + 3, prefill.input_ids.end() - 5);
+    if (prefill.x_vector_only_mode) {
+        auto text_embed = text_project_host(
+            lookup_rows(weights.text_embedding, config.text_hidden_size, text_ids),
+            static_cast<int64_t>(text_ids.size()),
+            weights,
+            config);
+        append_row(text_embed, tts_eos);
+        append_rows(
+            state.prompt,
+            add_rows(
+                text_embed,
+                lookup_rows(
+                    weights.codec_embedding,
+                    config.hidden_size,
+                    std::vector<int32_t>(text_ids.size() + 1, static_cast<int32_t>(config.codec_pad_id)))));
+        append_row(state.prompt, add_rows(tts_pad, row_at(codec_embed, codec_rows - 1, config.hidden_size)));
+        state.trailing_text = tts_pad;
+        return state;
+    }
+
     const std::vector<int32_t> ref_text_ids(prefill.reference_ids.begin() + 3, prefill.reference_ids.end() - 2);
     std::vector<int32_t> combined_text = ref_text_ids;
     combined_text.insert(combined_text.end(), text_ids.begin(), text_ids.end());
@@ -968,8 +998,9 @@ public:
         }
         ggml_backend_tensor_set(input_, embeddings.data(), 0, embeddings.size() * sizeof(float));
         core::set_backend_threads(weights_->backend(), weights_->threads());
+        // compute_backend_graph is synchronous; an additional backend-wide wait
+        // before the blocking output reads only duplicates that synchronization.
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), graph_);
-        ggml_backend_synchronize(weights_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 talker prefill graph compute failed");
         }
@@ -1120,7 +1151,6 @@ public:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), graph_);
-        ggml_backend_synchronize(weights_->backend());
         last_timing_.graph_compute_ms = engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 talker cached step graph compute failed");
@@ -1555,7 +1585,6 @@ private:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), prefill_graph_);
-        ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 code predictor prefill graph compute failed");
@@ -1597,7 +1626,6 @@ private:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), step_graph.graph);
-        ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 code predictor step graph compute failed");
