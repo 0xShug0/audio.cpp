@@ -84,6 +84,9 @@ option(ENGINE_ENABLE_VULKAN "Build ggml with Vulkan backend support" ${ENGINE_DE
 option(ENGINE_ENABLE_METAL "Build ggml with Metal backend support" ${ENGINE_DEFAULT_ENABLE_METAL})
 option(ENGINE_ENABLE_LLAMAFILE "Build ggml with llamafile SGEMM support" ${ENGINE_DEFAULT_ENABLE_LLAMAFILE})
 option(ENGINE_ENABLE_CUDA_GRAPHS "Enable ggml CUDA graphs support" ${ENGINE_DEFAULT_ENABLE_CUDA_GRAPHS})
+option(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS
+    "Enable opt-in HIP optimizations validated only for Strix Halo (gfx1151)"
+    OFF)
 option(ENGINE_ENABLE_NATIVE_CPU "Build ggml CPU kernels with native host ISA flags" ${ENGINE_DEFAULT_ENABLE_NATIVE_CPU})
 option(ENGINE_ENABLE_OPENMP "Build host code with OpenMP support" ON)
 option(ENGINE_ENABLE_CPU_ALL_VARIANTS
@@ -103,6 +106,47 @@ if (ENGINE_ENABLE_CUDA AND ENGINE_ENABLE_HIP)
     message(FATAL_ERROR
         "ENGINE_ENABLE_CUDA and ENGINE_ENABLE_HIP are mutually exclusive; "
         "configure with exactly one of them (e.g. -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_HIP=ON)")
+endif()
+
+set(AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE OFF)
+if (ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
+    if (NOT ENGINE_ENABLE_HIP)
+        message(FATAL_ERROR
+            "ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=ON requires ENGINE_ENABLE_HIP=ON")
+    endif()
+
+    # Match ggml HIP target precedence: an explicit CMake HIP architecture wins,
+    # followed by GPU_TARGETS and then the legacy AMDGPU_TARGETS spelling.
+    if (CMAKE_HIP_ARCHITECTURES)
+        set(AUDIOCPP_EFFECTIVE_HIP_TARGETS ${CMAKE_HIP_ARCHITECTURES})
+        set(AUDIOCPP_EFFECTIVE_HIP_TARGET_SOURCE "CMAKE_HIP_ARCHITECTURES")
+    elseif (GPU_TARGETS)
+        set(AUDIOCPP_EFFECTIVE_HIP_TARGETS ${GPU_TARGETS})
+        set(AUDIOCPP_EFFECTIVE_HIP_TARGET_SOURCE "GPU_TARGETS")
+    elseif (AMDGPU_TARGETS)
+        set(AUDIOCPP_EFFECTIVE_HIP_TARGETS ${AMDGPU_TARGETS})
+        set(AUDIOCPP_EFFECTIVE_HIP_TARGET_SOURCE "AMDGPU_TARGETS")
+    else()
+        message(FATAL_ERROR
+            "ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=ON requires exactly one explicit HIP target, gfx1151; "
+            "set -DGPU_TARGETS=gfx1151 (no project-wide gfx1151 default is provided)")
+    endif()
+
+    list(LENGTH AUDIOCPP_EFFECTIVE_HIP_TARGETS AUDIOCPP_EFFECTIVE_HIP_TARGET_COUNT)
+    if (NOT AUDIOCPP_EFFECTIVE_HIP_TARGET_COUNT EQUAL 1 OR
+        NOT "${AUDIOCPP_EFFECTIVE_HIP_TARGETS}" STREQUAL "gfx1151")
+        message(FATAL_ERROR
+            "ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=ON requires the effective HIP target list to be exactly "
+            "gfx1151; ${AUDIOCPP_EFFECTIVE_HIP_TARGET_SOURCE}='${AUDIOCPP_EFFECTIVE_HIP_TARGETS}'")
+    endif()
+
+    # hipBLASLt regressed decoder compute by roughly 3 seconds on gfx1151.
+    # Keep the validated retained-graph path on rocBLAS; the generic HIP build
+    # remains unchanged because this option is both target- and backend-gated.
+    set(GGML_HIP_HIPBLASLT OFF CACHE BOOL
+        "Use hipBLASLt instead of hipBLAS (rocBLAS) for HIP GEMM" FORCE)
+    set(AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE ON)
+    message(STATUS "Strix Halo HIP optimizations enabled for gfx1151 with rocBLAS")
 endif()
 
 if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
@@ -198,6 +242,9 @@ function(audiocpp_configure_runtime_object target_name)
         ${CMAKE_CURRENT_SOURCE_DIR}/external/libyaml/include
     )
     target_compile_definitions(${target_name} PRIVATE ${AUDIOCPP_LIBYAML_COMPILE_DEFINITIONS})
+    if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
+        target_compile_definitions(${target_name} PRIVATE ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=1)
+    endif()
     target_link_libraries(${target_name} PRIVATE ggml sentencepiece)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(${target_name} PRIVATE OpenMP::OpenMP_CXX)
@@ -1166,6 +1213,9 @@ target_include_directories(engine_runtime PRIVATE
 
 target_link_libraries(engine_runtime PUBLIC ggml)
 target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_vendor)
+if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
+    target_compile_definitions(engine_runtime PRIVATE ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=1)
+endif()
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(engine_runtime PRIVATE OpenMP::OpenMP_CXX)
     if (MSVC)
@@ -1521,6 +1571,14 @@ if (ENGINE_BUILD_TESTS)
         NAME outetts_generation_budget_test
         COMMAND outetts_generation_budget_test
     )
+
+    if (qwen3_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(qwen3_tts_options_config_test tests/unittests/test_qwen3_tts_options_config.cpp)
+        add_test(
+            NAME qwen3_tts_options_config_test
+            COMMAND qwen3_tts_options_config_test
+        )
+    endif()
 
     add_engine_unittest(subtitle_formatter_test tests/unittests/test_subtitle_formatter.cpp)
 
