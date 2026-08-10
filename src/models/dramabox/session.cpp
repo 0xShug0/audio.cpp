@@ -132,7 +132,7 @@ DramaBoxRequest parse_dramabox_request(const runtime::TaskRequest & request, con
         .value_or(out.audio_chunk_duration_sec);
     out.cross_fade_duration_sec = runtime::parse_float_option(request.options, {"cross_fade_duration_sec"})
         .value_or(out.cross_fade_duration_sec);
-    out.seed = runtime::parse_int_option(request.options, {"seed"}).value_or(out.seed);
+    out.seed = runtime::parse_u32_option(request.options, {"seed"}).value_or(static_cast<uint32_t>(out.seed));
     if (const auto value = runtime::find_option(request.options, {"guidance_rescale"})) {
         if (*value != "auto") {
             out.guidance_rescale = runtime::parse_float_option(request.options, {"guidance_rescale"}).value();

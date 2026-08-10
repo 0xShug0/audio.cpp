@@ -613,7 +613,8 @@ std::string ModelInstaller::package_sizes() {
                         " installed --json --models-root " + shell_quote(shared->models_root.string()) +
                         " > " + shell_quote(installed_output_path.string()) +
                         " 2>> " + shell_quote(size_error_path.string());
-                    (void) std::system(installed_command.c_str());
+                    const int installed_result = std::system(installed_command.c_str());
+                    (void) installed_result;
                     std::string command = python_command() + " -u " + shell_quote(script.string()) +
                         " sizes --json --models-root " + shell_quote(shared->models_root.string()) +
                         " > " + shell_quote(size_output_path.string()) +

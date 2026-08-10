@@ -812,7 +812,7 @@ bool wait_for_client(SocketHandle socket, int timeout_ms) {
 }  // namespace
 
 HttpResponse json_response(std::string body, int status) {
-    return HttpResponse{status, "application/json", std::move(body), {}};
+    return HttpResponse{status, "application/json", std::move(body), {}, {}};
 }
 
 HttpResponse error_response(int status, const std::string & message, const std::string & type) {
