@@ -489,6 +489,24 @@ audiocpp_add_model(inflect_v2
         engine::models::inflect_v2::make_inflect_v2_loader
 )
 
+audiocpp_add_model(minimax_h3
+    SOURCES
+        src/community_models/minimax_h3/assets.cpp
+        src/community_models/minimax_h3/audio_vae_decoder.cpp
+        src/community_models/minimax_h3/dit_acceleration.cpp
+        src/community_models/minimax_h3/dit_denoiser.cpp
+        src/community_models/minimax_h3/generation_plan.cpp
+        src/community_models/minimax_h3/prompt_encoder.cpp
+        src/community_models/minimax_h3/pipeline.cpp
+        src/community_models/minimax_h3/sampler.cpp
+        src/community_models/minimax_h3/session.cpp
+        src/community_models/minimax_h3/video_vae_decoder.cpp
+    INCLUDES
+        engine/community_models/minimax_h3/session.h
+    LOADERS
+        engine::models::minimax_h3::make_minimax_h3_loader
+)
+
 audiocpp_add_model(neutts
     SOURCES
         src/models/neutts/ar.cpp

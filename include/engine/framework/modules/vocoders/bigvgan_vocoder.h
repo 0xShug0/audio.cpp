@@ -102,6 +102,14 @@ BigVganVocoderWeights load_direct_bigvgan_from_tensor_source(
     BigVganVocoderConfig config,
     BigVganActivationLayout activation_layout = BigVganActivationLayout::GroupedByStage);
 
+BigVganVocoderWeights load_mono_module_list_bigvgan_from_tensor_source(
+    core::BackendWeightStore & store,
+    const assets::TensorSource & source,
+    const std::string & prefix,
+    BigVganVocoderConfig config,
+    bool torch_parametrized_weight_norm,
+    BigVganActivationLayout activation_layout = BigVganActivationLayout::GroupedByStage);
+
 ggml_tensor * build_bigvgan_graph(
     ggml_context * ctx,
     core::BackendType backend_type,

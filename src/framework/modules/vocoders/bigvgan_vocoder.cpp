@@ -223,6 +223,42 @@ ConvTranspose1dWeights load_weight_norm_conv_transpose1d(
     return out;
 }
 
+ConvTranspose1dWeights load_weight_norm_conv_transpose1d_source(
+    core::BackendWeightStore & store,
+    const assets::TensorSource & source,
+    const std::string & prefix,
+    int64_t in_channels,
+    int64_t out_channels,
+    int64_t kernel,
+    int64_t stride,
+    int64_t padding,
+    assets::TensorStorageType storage_type) {
+    (void) storage_type;
+    const auto weight_v = source.require_f32(prefix + ".weight_v", {in_channels, out_channels, kernel});
+    const auto weight_g = source.require_f32(prefix + ".weight_g", {in_channels, 1, 1});
+    ConvTranspose1dWeights out;
+    out.in_channels = in_channels;
+    out.out_channels = out_channels;
+    out.kernel = kernel;
+    out.stride = stride;
+    out.padding = padding;
+    out.use_bias = true;
+    auto folded = fold_weight_norm(weight_v, weight_g, in_channels, out_channels, kernel);
+    out.transpose_weight = store.make_from_f32(
+        core::TensorShape::from_dims({in_channels, out_channels, kernel}),
+        assets::TensorStorageType::F32,
+        folded);
+    out.conv1d_weight = store.make_from_f32(
+        core::TensorShape::from_dims({out_channels, in_channels, kernel}),
+        assets::TensorStorageType::F32,
+        transpose_conv1d_to_conv1d_weight(folded, in_channels, out_channels, kernel));
+    out.bias = store.make_from_f32(
+        core::TensorShape::from_dims({out_channels}),
+        assets::TensorStorageType::F32,
+        source.require_f32(prefix + ".bias", {out_channels}));
+    return out;
+}
+
 ConvTranspose1dWeights load_direct_conv_transpose1d(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
@@ -845,6 +881,127 @@ BigVganVocoderWeights load_direct_bigvgan_from_tensor_source(
         1,
         false,
         weights.config.weight_storage_type);
+    return weights;
+}
+
+BigVganVocoderWeights load_mono_module_list_bigvgan_from_tensor_source(
+    core::BackendWeightStore & store,
+    const assets::TensorSource & source,
+    const std::string & prefix,
+    BigVganVocoderConfig config,
+    bool torch_parametrized_weight_norm,
+    BigVganActivationLayout activation_layout) {
+    validate_config(config);
+    BigVganVocoderWeights weights;
+    weights.config = std::move(config);
+    weights.source_path = source.source_path();
+    weights.conv_pre = torch_parametrized_weight_norm
+        ? load_weight_norm_conv1d(
+              store,
+              source,
+              prefix + ".conv_pre",
+              weights.config.upsample_initial_channel,
+              weights.config.num_mels,
+              7,
+              1,
+              3,
+              1,
+              true,
+              weights.config.weight_storage_type)
+        : load_direct_conv1d(
+              store,
+              source,
+              prefix + ".conv_pre",
+              weights.config.upsample_initial_channel,
+              weights.config.num_mels,
+              7,
+              1,
+              3,
+              1,
+              true,
+              weights.config.weight_storage_type);
+    const int64_t upsample_count = static_cast<int64_t>(weights.config.upsample_rates.size());
+    weights.ups.reserve(static_cast<size_t>(upsample_count));
+    weights.resblocks.reserve(static_cast<size_t>(upsample_count * kBigVganNumKernels));
+    for (int64_t up_index = 0; up_index < upsample_count; ++up_index) {
+        const int64_t in_channels = weights.config.upsample_initial_channel / (int64_t{1} << up_index);
+        const int64_t out_channels = weights.config.upsample_initial_channel / (int64_t{1} << (up_index + 1));
+        const int64_t kernel = weights.config.upsample_kernel_sizes[static_cast<size_t>(up_index)];
+        const int64_t stride = weights.config.upsample_rates[static_cast<size_t>(up_index)];
+        const auto up_prefix = prefix + ".ups." + std::to_string(up_index) + ".0";
+        weights.ups.push_back(torch_parametrized_weight_norm
+            ? load_weight_norm_conv_transpose1d_source(
+                  store,
+                  source,
+                  up_prefix,
+                  in_channels,
+                  out_channels,
+                  kernel,
+                  stride,
+                  (kernel - stride) / 2,
+                  weights.config.weight_storage_type)
+            : load_direct_conv_transpose1d(
+                  store,
+                  source,
+                  up_prefix,
+                  in_channels,
+                  out_channels,
+                  kernel,
+                  stride,
+                  (kernel - stride) / 2,
+                  true));
+        for (int64_t kernel_index = 0; kernel_index < kBigVganNumKernels; ++kernel_index) {
+            const int64_t block_index = up_index * kBigVganNumKernels + kernel_index;
+            weights.resblocks.push_back(torch_parametrized_weight_norm
+                ? load_resblock(
+                      store,
+                      source,
+                      prefix + ".resblocks." + std::to_string(block_index),
+                      out_channels,
+                      weights.config.resblock_kernel_sizes[static_cast<size_t>(kernel_index)],
+                      weights.config.weight_storage_type)
+                : load_direct_resblock(
+                      store,
+                      source,
+                      prefix + ".resblocks." + std::to_string(block_index),
+                      out_channels,
+                      weights.config.resblock_kernel_sizes[static_cast<size_t>(kernel_index)],
+                      weights.config.weight_storage_type,
+                      activation_layout));
+        }
+    }
+    const int64_t post_channels = weights.config.upsample_initial_channel / (int64_t{1} << upsample_count);
+    weights.activation_post = load_activation(
+        store,
+        source,
+        prefix + ".activation_post",
+        post_channels,
+        weights.config.weight_storage_type);
+    weights.conv_post = torch_parametrized_weight_norm
+        ? load_weight_norm_conv1d(
+              store,
+              source,
+              prefix + ".conv_post",
+              1,
+              post_channels,
+              7,
+              1,
+              3,
+              1,
+              false,
+              weights.config.weight_storage_type)
+        : load_direct_conv1d(
+              store,
+              source,
+              prefix + ".conv_post",
+              1,
+              post_channels,
+              7,
+              1,
+              3,
+              1,
+              false,
+              weights.config.weight_storage_type);
     return weights;
 }
 

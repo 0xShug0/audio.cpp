@@ -493,6 +493,14 @@ std::filesystem::path default_contract_spec_path(std::string_view family) {
     if (const auto gguf = active_gguf_path()) {
         const auto & embedded = embedded_model_spec();
         if (!embedded.has_value()) {
+            if (family == "minimax_h3") {
+                if (const auto external = discover_workspace_model_spec(family)) {
+                    return *external;
+                }
+                if (builtin_model_specs().find(std::string(family)) != builtin_model_specs().end()) {
+                    return std::filesystem::path("@builtin") / (std::string(family) + ".json");
+                }
+            }
             throw std::runtime_error("GGUF for family '" + std::string(family) +
                                      "' does not embed an audio.cpp model spec: " + gguf->string() +
                                      ". Published GGUF packages must embed a model spec; regenerate the GGUF "
