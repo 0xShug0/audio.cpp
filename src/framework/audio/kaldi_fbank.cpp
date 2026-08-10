@@ -9,8 +9,10 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Framing and LFR structure adapted from handy-computer/transcribe.cpp at
@@ -89,6 +91,18 @@ std::vector<float> make_hamming_window(int size) {
   return window;
 }
 
+std::vector<float> make_povey_window(int64_t window_size) {
+  std::vector<float> window(static_cast<size_t>(window_size), 0.0F);
+  constexpr float kPi = 3.14159265358979323846F;
+  for (int64_t index = 0; index < window_size; ++index) {
+    const float hann =
+        0.5F - 0.5F * std::cos(2.0F * kPi * static_cast<float>(index) /
+                               static_cast<float>(window_size - 1));
+    window[static_cast<size_t>(index)] = std::pow(hann, 0.85F);
+  }
+  return window;
+}
+
 std::vector<float> make_mel_filterbank(int sample_rate, int fft_size,
                                        int num_mels, float low_frequency,
                                        float high_frequency) {
@@ -124,7 +138,95 @@ std::vector<float> make_mel_filterbank(int sample_rate, int fft_size,
   return filters;
 }
 
+struct SpeakerMelFilterbankKey {
+  int64_t sample_rate = 0;
+  int64_t padded_window_size = 0;
+  int64_t num_mels = 0;
+  float low_frequency = 0.0F;
+  float high_frequency = 0.0F;
+
+  bool operator==(const SpeakerMelFilterbankKey &other) const noexcept {
+    return sample_rate == other.sample_rate &&
+           padded_window_size == other.padded_window_size &&
+           num_mels == other.num_mels &&
+           low_frequency == other.low_frequency &&
+           high_frequency == other.high_frequency;
+  }
+};
+
+struct SpeakerMelFilterbankKeyHash {
+  size_t operator()(const SpeakerMelFilterbankKey &key) const noexcept {
+    size_t seed = 0;
+    seed ^= std::hash<int64_t>{}(key.sample_rate) + 0x9e3779b9 +
+            (seed << 6) + (seed >> 2);
+    seed ^= std::hash<int64_t>{}(key.padded_window_size) + 0x9e3779b9 +
+            (seed << 6) + (seed >> 2);
+    seed ^= std::hash<int64_t>{}(key.num_mels) + 0x9e3779b9 + (seed << 6) +
+            (seed >> 2);
+    seed ^= std::hash<float>{}(key.low_frequency) + 0x9e3779b9 +
+            (seed << 6) + (seed >> 2);
+    seed ^= std::hash<float>{}(key.high_frequency) + 0x9e3779b9 +
+            (seed << 6) + (seed >> 2);
+    return seed;
+  }
+};
+
 } // namespace
+
+const std::vector<float> &cached_kaldi_povey_window(int64_t window_size) {
+  if (window_size <= 0) {
+    throw std::runtime_error("Kaldi Povey window size must be positive");
+  }
+  static std::mutex mutex;
+  static std::unordered_map<int64_t, std::vector<float>> cache;
+  std::lock_guard<std::mutex> lock(mutex);
+  const auto it = cache.find(window_size);
+  if (it != cache.end()) {
+    return it->second;
+  }
+  return cache.emplace(window_size, make_povey_window(window_size))
+      .first->second;
+}
+
+struct KaldiMelFilterbankCache::Impl {
+  std::mutex mutex;
+  std::unordered_map<SpeakerMelFilterbankKey, std::vector<float>,
+                     SpeakerMelFilterbankKeyHash>
+      values;
+};
+
+KaldiMelFilterbankCache::KaldiMelFilterbankCache()
+    : impl_(std::make_unique<Impl>()) {}
+
+KaldiMelFilterbankCache::~KaldiMelFilterbankCache() = default;
+
+const std::vector<float> &KaldiMelFilterbankCache::get(
+    int64_t sample_rate,
+    int64_t padded_window_size,
+    int64_t num_mels,
+    float low_frequency,
+    float high_frequency,
+    const std::function<std::vector<float>()> &build_filterbank) {
+  if (sample_rate <= 0 || padded_window_size <= 0 || num_mels <= 0) {
+    throw std::runtime_error("Kaldi speaker mel filterbank options must be positive");
+  }
+  const float nyquist = 0.5F * static_cast<float>(sample_rate);
+  const float high = high_frequency <= 0.0F ? high_frequency + nyquist
+                                            : high_frequency;
+  if (!std::isfinite(low_frequency) || !std::isfinite(high_frequency) ||
+      !std::isfinite(high) || low_frequency < 0.0F || low_frequency >= high ||
+      high > nyquist) {
+    throw std::runtime_error("Kaldi speaker mel filterbank frequency bounds are invalid");
+  }
+  const SpeakerMelFilterbankKey key{
+      sample_rate, padded_window_size, num_mels, low_frequency, high_frequency};
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  const auto it = impl_->values.find(key);
+  if (it != impl_->values.end()) {
+    return it->second;
+  }
+  return impl_->values.emplace(key, build_filterbank()).first->second;
+}
 
 KaldiFbankFeatures extract_kaldi_fbank(const std::vector<float> &audio,
                                        const KaldiFbankOptions &options) {

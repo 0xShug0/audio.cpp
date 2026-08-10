@@ -158,6 +158,9 @@ std::shared_ptr<const TensorSource> open_tensor_source(
 std::shared_ptr<const TensorSource> make_prefixed_tensor_source(
     std::shared_ptr<const TensorSource> source,
     std::string_view tensor_prefix);
+std::shared_ptr<const TensorSource> make_weight_norm_folded_tensor_source(
+    std::shared_ptr<const TensorSource> source,
+    std::vector<std::string> patterns);
 struct TensorSourceInput {
     std::filesystem::path path;
     std::string tensor_prefix;
@@ -178,6 +181,7 @@ struct GgufConversionOptions {
     std::optional<TensorStorageType> bnb_nf4_type;
     std::vector<std::string> excluded_tensor_prefixes;
     std::vector<GgufTensorTypeOverride> type_overrides;
+    std::vector<std::string> folded_weight_norm_patterns;
 };
 void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & inputs,
                                     const std::filesystem::path & output_path, TensorStorageType weight_type,

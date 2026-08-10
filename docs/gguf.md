@@ -78,7 +78,9 @@ Status labels:
 | `miotts` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `moss_tts_local` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_tts_nano` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
+| `muscriptor` | Done | Pass | Pass | --- | --- |
 | `nemotron_asr` | Done | Pass | --- | Pass | Pass (minor filler drift) |
+| `neutts` | Done | Pass | --- | Pass | --- |
 | `omnivoice` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `outetts` | Done | Pass (TTS + clone) | --- | --- | Pass (TTS + clone) |
 | `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
@@ -115,6 +117,11 @@ Q8 packaging notes:
   tensors in Q8 in addition to the default converter selection. `conditioner.embed`,
   `cond_embed`, and Mimi conv tensors are not forced to Q8 because tested outputs
   drifted or the current conv path casts quantized conv weights back to F32.
+- `dots_tts` Q8 keeps the vocoder in 16-bit storage and folds vocoder
+  weight-norm conv tensors at conversion time. Use
+  `--keep-type 'vocoder/*=f16' --fold-weight-norm 'vocoder/*'` for both SOAR
+  and MeanFlow Q8 conversion so the flow/LLM path is quantized while the
+  vocoder stays in the tested dtype with direct conv weights.
 - `qwen3_tts` Q8 should keep speaker-sensitive components in their original
   16-bit type. The tested Base Q8 package quantizes the talker transformer and
   projections, talker code-predictor heads, and speech-tokenizer encoder/decoder

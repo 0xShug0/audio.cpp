@@ -1054,6 +1054,8 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "FILL",
 
     "FLASH_ATTN_EXT",
+    "SAGE_ATTN2",
+    "SAGE_ATTN2_I8",
     "FLASH_ATTN_BACK",
     "SSM_CONV",
     "SSM_SCAN",
@@ -1083,7 +1085,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "GLU",
 };
 
-static_assert(GGML_OP_COUNT == 99, "GGML_OP_COUNT != 99");
+static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1167,6 +1169,8 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "fill(x, c)",
 
     "flash_attn_ext(x)",
+    "sage_attn2(q, k, v)",
+    "sage_attn2_i8(q_i8, k_i8, v, q_scale, k_scale)",
     "flash_attn_back(x)",
     "ssm_conv(x)",
     "ssm_scan(x)",
@@ -1196,7 +1200,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 99, "GGML_OP_COUNT != 99");
+static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -5456,6 +5460,96 @@ struct ggml_tensor * ggml_flash_attn_ext(
     result->src[1] = k;
     result->src[2] = v;
     result->src[3] = mask;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_sage_attn2(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * v,
+        float                 scale,
+        bool                  causal) {
+    GGML_ASSERT(q->type == GGML_TYPE_F16);
+    GGML_ASSERT(k->type == GGML_TYPE_F16);
+    GGML_ASSERT(v->type == GGML_TYPE_F16);
+    GGML_ASSERT(ggml_is_contiguous(q));
+    GGML_ASSERT(ggml_is_contiguous(k));
+    GGML_ASSERT(ggml_is_contiguous(v));
+
+    GGML_ASSERT(q->ne[0] == k->ne[0]);
+    GGML_ASSERT(q->ne[0] == v->ne[0]);
+    GGML_ASSERT(k->ne[1] == v->ne[1]);
+    GGML_ASSERT(k->ne[2] == v->ne[2]);
+    GGML_ASSERT(q->ne[3] == k->ne[3]);
+    GGML_ASSERT(q->ne[3] == v->ne[3]);
+    GGML_ASSERT(q->ne[2] % k->ne[2] == 0);
+    GGML_ASSERT(q->ne[0] == 64 || q->ne[0] == 128);
+    GGML_ASSERT(scale > 0.0f);
+
+    int64_t ne[4] = { v->ne[0], q->ne[2], q->ne[1], q->ne[3] };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F16, 4, ne);
+
+    ggml_set_op_params_f32(result, 0, scale);
+    ggml_set_op_params_i32(result, 1, causal ? 1 : 0);
+
+    result->op     = GGML_OP_SAGE_ATTN2;
+    result->src[0] = q;
+    result->src[1] = k;
+    result->src[2] = v;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_sage_attn2_i8(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q_i8,
+        struct ggml_tensor  * k_i8,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * q_scale,
+        struct ggml_tensor  * k_scale,
+        float                 scale,
+        bool                  causal) {
+    GGML_ASSERT(q_i8->type == GGML_TYPE_I8);
+    GGML_ASSERT(k_i8->type == GGML_TYPE_I8);
+    GGML_ASSERT(v->type == GGML_TYPE_F16);
+    GGML_ASSERT(q_scale->type == GGML_TYPE_F32);
+    GGML_ASSERT(k_scale->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(q_i8));
+    GGML_ASSERT(ggml_is_contiguous(k_i8));
+    GGML_ASSERT(ggml_is_contiguous(v));
+    GGML_ASSERT(ggml_is_contiguous(q_scale));
+    GGML_ASSERT(ggml_is_contiguous(k_scale));
+
+    GGML_ASSERT(q_i8->ne[0] == k_i8->ne[0]);
+    GGML_ASSERT(q_i8->ne[0] == v->ne[0]);
+    GGML_ASSERT(k_i8->ne[1] == v->ne[1]);
+    GGML_ASSERT(k_i8->ne[2] == v->ne[2]);
+    GGML_ASSERT(q_i8->ne[3] == k_i8->ne[3]);
+    GGML_ASSERT(q_i8->ne[3] == v->ne[3]);
+    GGML_ASSERT(q_i8->ne[2] % k_i8->ne[2] == 0);
+    GGML_ASSERT(q_i8->ne[0] == 64 || q_i8->ne[0] == 128);
+    GGML_ASSERT(q_scale->ne[0] == ((q_i8->ne[1] + 127) / 128) * 4);
+    GGML_ASSERT(q_scale->ne[1] == q_i8->ne[2]);
+    GGML_ASSERT(q_scale->ne[2] == q_i8->ne[3]);
+    GGML_ASSERT(k_scale->ne[0] == (k_i8->ne[1] + 63) / 64);
+    GGML_ASSERT(k_scale->ne[1] == k_i8->ne[2]);
+    GGML_ASSERT(k_scale->ne[2] == k_i8->ne[3]);
+    GGML_ASSERT(scale > 0.0f);
+
+    int64_t ne[4] = { v->ne[0], q_i8->ne[2], q_i8->ne[1], q_i8->ne[3] };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F16, 4, ne);
+
+    ggml_set_op_params_f32(result, 0, scale);
+    ggml_set_op_params_i32(result, 1, causal ? 1 : 0);
+
+    result->op     = GGML_OP_SAGE_ATTN2_I8;
+    result->src[0] = q_i8;
+    result->src[1] = k_i8;
+    result->src[2] = v;
+    result->src[3] = q_scale;
+    result->src[4] = k_scale;
 
     return result;
 }

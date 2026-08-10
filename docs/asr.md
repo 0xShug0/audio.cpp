@@ -157,7 +157,7 @@ audiocpp_cli --task asr --family higgs_audio_stt --model models/higgs-audio-v3-s
 | `--language` | language code | model default (`en`) | Recognition language hint. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
 | `--max-tokens` | integer | model default | Maximum generated transcript tokens. |
-| `--request-option enable_thinking=true|false` | bool | `true` | Enable the model thinking prompt. |
+| `--request-option enable_thinking=true\|false` | bool | `true` | Enable the model thinking prompt. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `none` | `auto` | Long-audio chunking mode. `auto` uses fixed chunks. |
 | `--request-option audio_chunk_duration_sec=<seconds>` / `--audio-chunk-seconds` | float seconds | `4` | Fixed audio chunk duration. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
@@ -214,7 +214,7 @@ completed GGUF can therefore be moved, renamed, and passed directly to `--model`
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. |
 | `--language` | language code | `da` | Recognition language; can be omitted for the Danish model path. |
-| `--request-option punctuation=true|false` | bool | model default | Enable punctuation tokens in the decoder prompt. |
+| `--request-option punctuation=true\|false` | bool | model default | Enable punctuation tokens in the decoder prompt. |
 | `--max-tokens` | integer | model default | Maximum generated transcript tokens. |
 | `--num-beams` | integer | `1` | Beam-search beam count; `1` uses greedy or sampling decode. |
 | `--request-option length_penalty=<float>` | float | model default | Beam-search length penalty. |
@@ -276,10 +276,10 @@ audiocpp_cli --task asr --family nemotron_asr --model models/nemotron-3.5-asr-st
 | `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
 | `--request-option lookahead_tokens=<n>` | integer | model default | Chunk-limited encoder right context. |
 | `--max-tokens` | integer | model-derived limit | Maximum RNNT generated tokens; `0` uses the model-derived limit. |
-| `--request-option keep_language_tags=true|false` | bool | `false` | Keep language tag tokens in decoded text. |
+| `--request-option keep_language_tags=true\|false` | bool | `false` | Keep language tag tokens in decoded text. |
 | `--words-out` | JSON path | not set | Write token timestamp output when produced. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
-| `--session-option nemotron_asr.mem_saver=true|false` | bool | `false` | Release the offline encoder graph after each offline request. |
+| `--session-option nemotron_asr.mem_saver=true\|false` | bool | `false` | Release the offline encoder graph after each offline request. |
 
 ## Parakeet-TDT
 

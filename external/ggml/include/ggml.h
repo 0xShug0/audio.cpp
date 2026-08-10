@@ -558,6 +558,8 @@ extern "C" {
         GGML_OP_FILL,
 
         GGML_OP_FLASH_ATTN_EXT,
+        GGML_OP_SAGE_ATTN2,
+        GGML_OP_SAGE_ATTN2_I8,
         GGML_OP_FLASH_ATTN_BACK,
         GGML_OP_SSM_CONV,
         GGML_OP_SSM_SCAN,
@@ -2427,6 +2429,33 @@ extern "C" {
             float                 scale,
             float                 max_bias,
             float                 logit_softcap);
+
+    // CUDA-only SageAttention2 op for contiguous HND input tensors:
+    // q, k, v: [head_dim, seq, n_head, batch]
+    // res:     [head_dim, n_head, seq, batch]
+    GGML_API struct ggml_tensor * ggml_sage_attn2(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q,
+            struct ggml_tensor  * k,
+            struct ggml_tensor  * v,
+            float                 scale,
+            bool                  causal);
+
+    // Prequantized CUDA-only SageAttention2 op:
+    // q_i8, k_i8:       [head_dim, seq, n_head, batch]
+    // v:                [head_dim, seq, n_head_kv, batch]
+    // res:              [head_dim, n_head, seq, batch]
+    // q_scale:          [(seq_q + 127)/128*4, n_head, batch]
+    // k_scale:          [(seq_k +  63)/ 64,   n_head_kv, batch]
+    GGML_API struct ggml_tensor * ggml_sage_attn2_i8(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q_i8,
+            struct ggml_tensor  * k_i8,
+            struct ggml_tensor  * v,
+            struct ggml_tensor  * q_scale,
+            struct ggml_tensor  * k_scale,
+            float                 scale,
+            bool                  causal);
 
     // MINITTS_FLASH_BIAS_WRAPPER:
     // Helper for models that already assemble a dense additive attention bias

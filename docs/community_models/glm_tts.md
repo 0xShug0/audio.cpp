@@ -112,9 +112,9 @@ audiocpp_cli --task clon --family glm_tts \
 The legacy GLM-TTS request keys `flow_steps`, `cfg_rate`, `flow_noise_file`,
 `hift_source_random_file`, and `hift_prior_noise_values` remain accepted for
 backward compatibility.
-| `--session-option glm_tts.weight_type=native|f32|f16|bf16|q8_0` | enum | `native` | Requested component weight storage type. |
-| `--session-option glm_tts.mem_saver=true|false` | bool | `false` | Release the reference-only Whisper-VQ and CAMPPlus runtimes after caching the voice, while keeping Llama, Flow, and HiFT warm. |
-| `--session-option glm_tts.aggressive_mem_saver=true|false` | bool | `false` | Also release Llama, Flow, and HiFT after each stage. This minimizes VRAM but reloads the generation path on every request. |
+| `--session-option glm_tts.weight_type=native\|f32\|f16\|bf16\|q8_0` | enum | `native` | Requested component weight storage type. |
+| `--session-option glm_tts.mem_saver=true\|false` | bool | `false` | Release the reference-only Whisper-VQ and CAMPPlus runtimes after caching the voice, while keeping Llama, Flow, and HiFT warm. |
+| `--session-option glm_tts.aggressive_mem_saver=true\|false` | bool | `false` | Also release Llama, Flow, and HiFT after each stage. This minimizes VRAM but reloads the generation path on every request. |
 | `--session-option glm_tts.reference_cache_slots=<n>` | integer | `1` | Prepared reference-audio cache slots. Reusing a reference skips Whisper-VQ, mel, fbank, and CAMPPlus preparation; `0` disables it. |
 
 Balanced mem-saver is intended for a server repeatedly using a cached

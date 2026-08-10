@@ -522,6 +522,19 @@ void write_tensor_bf16(const TensorValue & tensor, const std::vector<float> & va
     write_tensor_bf16(tensor, values.data(), values.size());
 }
 
+void round_f32_to_bf16_in_place(float * values, size_t count) {
+    if (count == 0) {
+        return;
+    }
+    std::vector<ggml_bf16_t> bf16_values(count);
+    ggml_fp32_to_bf16_row(values, bf16_values.data(), static_cast<int64_t>(count));
+    ggml_bf16_to_fp32_row(bf16_values.data(), values, static_cast<int64_t>(count));
+}
+
+void round_f32_to_bf16_in_place(std::vector<float> & values) {
+    round_f32_to_bf16_in_place(values.data(), values.size());
+}
+
 void write_tensor_i32(const TensorValue & tensor, const int32_t * values, size_t count) {
     if (tensor.type != GGML_TYPE_I32) {
         throw std::runtime_error("write_tensor_i32 requires GGML_TYPE_I32 tensor");

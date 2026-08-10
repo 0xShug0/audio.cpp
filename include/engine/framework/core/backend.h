@@ -86,6 +86,8 @@ void write_tensor_f16(const TensorValue & tensor, const float * values, size_t c
 void write_tensor_f16(const TensorValue & tensor, const std::vector<float> & values);
 void write_tensor_bf16(const TensorValue & tensor, const float * values, size_t count);
 void write_tensor_bf16(const TensorValue & tensor, const std::vector<float> & values);
+void round_f32_to_bf16_in_place(float * values, size_t count);
+void round_f32_to_bf16_in_place(std::vector<float> & values);
 void write_tensor_i32(const TensorValue & tensor, const int32_t * values, size_t count);
 void write_tensor_i32(const TensorValue & tensor, const std::vector<int32_t> & values);
 void read_tensor_f32_into(const ggml_tensor * tensor, std::vector<float> & values);

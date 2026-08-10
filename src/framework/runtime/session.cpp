@@ -2,6 +2,7 @@
 #include "engine/framework/text/chunking.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <limits>
 #include <stdexcept>
 
@@ -115,6 +116,8 @@ const char * to_string(VoiceTaskKind task) noexcept {
         return "spk";
     case VoiceTaskKind::Svc:
         return "svc";
+    case VoiceTaskKind::Midi:
+        return "midi";
     }
     return "unknown";
 }
@@ -192,7 +195,10 @@ VoiceTaskKind parse_voice_task_kind(const std::string & value) {
     if (value == "svc") {
         return VoiceTaskKind::Svc;
     }
-    throw std::runtime_error("unsupported task: " + value + " (expected vad, asr, diar, sep, gen, tts, clon, vc, s2s, align, vdes, spk, or svc)");
+    if (value == "midi") {
+        return VoiceTaskKind::Midi;
+    }
+    throw std::runtime_error("unsupported task: " + value + " (expected vad, asr, diar, sep, gen, tts, clon, vc, s2s, align, vdes, spk, svc, or midi)");
 }
 
 RunMode parse_run_mode(const std::string & value) {
@@ -241,6 +247,36 @@ void append_audio_buffer(AudioBuffer & dst, const AudioBuffer & src) {
         throw std::runtime_error("audio append requires matching audio format");
     }
     dst.samples.insert(dst.samples.end(), src.samples.begin(), src.samples.end());
+}
+
+std::vector<std::byte> bytes_from_string(std::string_view value) {
+    std::vector<std::byte> out;
+    out.reserve(value.size());
+    for (const unsigned char ch : value) {
+        out.push_back(static_cast<std::byte>(ch));
+    }
+    return out;
+}
+
+VoiceArtifact make_voice_artifact(
+    ArtifactKind kind,
+    std::string id,
+    std::vector<std::byte> payload,
+    std::unordered_map<std::string, std::string> meta) {
+    VoiceArtifact artifact;
+    artifact.kind = kind;
+    artifact.id = std::move(id);
+    artifact.payload = std::move(payload);
+    artifact.meta = std::move(meta);
+    return artifact;
+}
+
+VoiceArtifact make_text_artifact(
+    ArtifactKind kind,
+    std::string id,
+    std::string_view payload,
+    std::unordered_map<std::string, std::string> meta) {
+    return make_voice_artifact(kind, std::move(id), bytes_from_string(payload), std::move(meta));
 }
 
 GraphCapacityMode parse_graph_capacity_mode(const std::string & value) {

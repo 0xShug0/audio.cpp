@@ -10,7 +10,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--task` | `gen`, `tts`, `clon`, `vc`, `svc`, `s2s`, `asr`, `align`, `vad`, `diar`, `sep`, `vdes` | required | User task. |
+| `--task` | `gen`, `tts`, `clon`, `vc`, `svc`, `s2s`, `asr`, `align`, `vad`, `diar`, `sep`, `vdes`, `midi` | required | User task. |
 | `--family` | model family name | required | Selects the model implementation. Must match a registered loader (`audiocpp_cli --list-loaders`). |
 | `--model` | local model directory | required | Path to local model assets. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Inference backend. |
@@ -33,7 +33,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--input-channels` | streaming ASR with `--audio -` | Raw PCM channel count. Default `1`. |
 | `--voice-ref` | voice clone / voice design / some VC paths | Reference voice WAV. |
 | `--language` | language-aware models | Language code. |
-| `--out` | audio-producing models | Output WAV path. |
+| `--out` | single-primary-output models | Output file path, such as WAV for audio tasks or MIDI/JSON for MuScriptor. |
 | `--out-dir` | multi-output or batch models | Output directory. |
 | `--segments-out` | VAD | Speech segments JSON. |
 | `--vad-chunks-out` | offline VAD | VAD-based audio chunk windows JSON. |
@@ -69,8 +69,8 @@ Omit these unless you need explicit control. If `--seed` is omitted, models that
 | `--batch-text-file <txt>` | One request per non-empty text line. |
 | `--batch-text-dir <dir>` | One request per `.txt`, `.md`, or `.json` file; each file is normalized into a single paragraph. |
 | `--batch-audio-dir <dir>` | One request per `.wav` file. |
-| `--batch-audio-role audio|voice_ref|source_audio|target_voice|prosody_ref|style_ref` | How to use each batch WAV. |
-| `--batch-merge-audio none|concat` | Keep outputs separate or concatenate generated audio. |
+| `--batch-audio-role audio\|voice_ref\|source_audio\|target_voice\|prosody_ref\|style_ref` | How to use each batch WAV. |
+| `--batch-merge-audio none\|concat` | Keep outputs separate or concatenate generated audio. |
 | `--batch-manifest-out <json>` | Write a batch output manifest. |
 
 `--batch-text-dir` reads `.txt` and `.md` files as plain text. For `.json`, use either a JSON string root or an object with a string `input` or `text` field.
@@ -97,4 +97,4 @@ For each request id, `--metrics` prints `metrics[<id>].wall_ms`, `audio_duration
 | OmniVoice TTS, voice cloning, voice design, and streaming | [models/omnivoice.md](models/omnivoice.md) |
 | ASR models | [asr.md](asr.md) |
 | VAD and diarization | [speech_analysis.md](speech_analysis.md) |
-| Voice conversion codec and source separation | [audio_tools.md](audio_tools.md) |
+| Audio tools, voice conversion, codec, and source separation | [audio_tools.md](audio_tools.md) |

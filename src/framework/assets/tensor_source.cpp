@@ -1764,7 +1764,13 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
     if (!engine::io::is_existing_directory(sidecar_root)) {
         throw std::runtime_error("GGUF sidecar root is not a directory: " + sidecar_root.string());
     }
-    auto source = std::make_shared<CompositeTensorSource>(sidecar_root, std::move(components));
+    std::shared_ptr<const TensorSource> source =
+        std::make_shared<CompositeTensorSource>(sidecar_root, std::move(components));
+    if (!options.folded_weight_norm_patterns.empty()) {
+        source = make_weight_norm_folded_tensor_source(
+            std::move(source),
+            options.folded_weight_norm_patterns);
+    }
     const auto metadata = source->tensors();
     if (metadata.empty()) {
         throw std::runtime_error("cannot convert an empty tensor source to GGUF");
