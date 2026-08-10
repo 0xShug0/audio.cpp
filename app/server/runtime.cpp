@@ -9,6 +9,7 @@
 
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/registry.h"
 
 #include <algorithm>
@@ -74,6 +75,14 @@ std::optional<int> parse_busy_timeout_override(const Value & body) {
         throw std::runtime_error("busy_timeout_ms must be >= 0 (0 means no client-side bound)");
     }
     return requested;
+}
+
+bool model_accepts_request_option(std::string_view family, std::string_view option) {
+    const auto contract = engine::model_spec::model_contract(family);
+    if (!contract.has_value()) {
+        return true;
+    }
+    return contract->request_option_keys.find(std::string(option)) != contract->request_option_keys.end();
 }
 
 std::string json_quote(std::string_view value) {
@@ -1523,6 +1532,8 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
 
     bool voice_field_is_preset = false;
     const auto * preset = select_voice_preset(model, body, voice_field_is_preset);
+    const bool can_inject_reference_text =
+        model_accepts_request_option(model.config.family, "reference_text");
 
     engine::runtime::VoiceCondition voice;
     bool has_voice = false;
@@ -1539,7 +1550,9 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
             voice.speaker->audio = *preset->audio;
             has_voice = true;
         }
-        if (preset->reference_text.has_value() && request.options.find("reference_text") == request.options.end()) {
+        if (can_inject_reference_text &&
+            preset->reference_text.has_value() &&
+            request.options.find("reference_text") == request.options.end()) {
             request.options["reference_text"] = *preset->reference_text;
         }
     }
@@ -1556,7 +1569,7 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
                 voice.speaker->audio = minitts::cli::read_audio_buffer(*wav);
                 has_voice = true;
                 voice_library_resolved = true;
-                if (request.options.find("reference_text") == request.options.end()) {
+                if (can_inject_reference_text && request.options.find("reference_text") == request.options.end()) {
                     auto text = load_voice_library_text(*config_.voice_dir, voice_name);
                     if (text.has_value()) {
                         request.options["reference_text"] = *text;
