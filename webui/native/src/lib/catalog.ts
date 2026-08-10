@@ -134,8 +134,10 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
   const otherGguf = !q8 && !fp16
     ? preferredPackage(related.filter((candidate) => candidate.format === 'gguf'))
     : undefined;
-  const safetensors = preferredPackage(related.filter((candidate) => candidate.format === 'safetensors'));
-  return [q8, fp16, otherGguf, safetensors]
+  // The native model manager intentionally exposes complete GGUF packages
+  // only. Safetensors packages frequently depend on source-tree sidecars and
+  // are not yet reliable as one-click UI installs.
+  return [q8, fp16, otherGguf]
     .filter((candidate): candidate is PackageEntry => candidate !== undefined)
     .map((candidate) => ({
       id: candidate.id,
@@ -146,11 +148,17 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
     }));
 }
 
-export const catalog = (rawCatalog.models as CatalogEntry[]).map((entry) => {
+export const catalog = (rawCatalog.models as CatalogEntry[]).flatMap((entry) => {
   const choices = installChoices(entry);
+  // A managed catalog entry with no remaining GGUF choice is Safetensors-only
+  // (or otherwise not installable by the native manager). Do not expose it as
+  // an apparently available Studio model after Safetensors UI support is
+  // disabled. Entries without a download id are bundled or locally managed
+  // and must remain visible.
+  if (entry.download_id && choices.length === 0) return [];
   const installPackage = choices[0];
   const spec = specsByFamily.get(entry.family);
-  return {
+  return [{
     ...entry,
     display_name: englishUiText(entry.display_name_en, entry.display_name) || entry.id,
     input_hint: englishUiText(entry.input_hint_en, entry.input_hint),
@@ -160,7 +168,7 @@ export const catalog = (rawCatalog.models as CatalogEntry[]).map((entry) => {
     request_options: spec?.options?.request?.map((option) => option.name),
     builtin_voices: spec?.ui?.builtin_voices,
     default_voice: spec?.ui?.default_voice
-  };
+  }];
 });
 
 export const parameterCatalog = Object.fromEntries(

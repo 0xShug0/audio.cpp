@@ -315,6 +315,7 @@ def install_package(package: PackageRecord, records: list[PackageRecord], args: 
     models_root = Path(args.models_root)
     final_dir = models_root / target_dir
     plan = [(remote, final_dir / stripped_path(remote, package.strip_prefix)) for remote in package.files]
+    full_plan = list(plan)
 
     print(f"selected {package.id} ({package.family})")
     print(f"repo {package.download['repo']}@{package.download.get('revision', 'main')}")
@@ -384,6 +385,12 @@ def install_package(package: PackageRecord, records: list[PackageRecord], args: 
                 download_file(package, remote, destination, cancel_file=cancel_file)
         if cancellation_requested(cancel_file):
             raise InstallCancelled("download cancelled by user")
+        # Record every package-owned file, including sidecars reused from a
+        # sibling precision. Version checks compare these per-file ETags and
+        # must not depend on a repository-wide revision.
+        for remote, _output in full_plan:
+            if remote not in remote_files:
+                remote_files[remote] = check_remote_file(package, remote)
         if not final_dir.exists():
             final_dir.parent.mkdir(parents=True, exist_ok=True)
             staging.rename(final_dir)
@@ -524,6 +531,39 @@ def package_is_installed(package: PackageRecord, models_root: Path | None) -> bo
     )
 
 
+def package_version_state(
+    installed: bool,
+    manifest: dict[str, Any] | None,
+    remote_files: dict[str, RemoteFileInfo],
+) -> str:
+    """Compare only files owned by this package, not the repository commit.
+
+    Hugging Face's X-Repo-Commit changes whenever *any* file in a repository is
+    uploaded. Several audio.cpp packages share one repository, so comparing
+    that repository-wide revision incorrectly marked every installed package
+    as outdated after an unrelated model upload. Per-file ETags identify the
+    actual package payload and avoid that false positive.
+    """
+    if not installed:
+        return "not_installed"
+    manifest_files = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(manifest_files, dict):
+        return "unknown"
+
+    compared = 0
+    for remote_path, stored in manifest_files.items():
+        if not isinstance(stored, dict):
+            continue
+        local_etag = str(stored.get("etag", "")).strip('"')
+        remote_etag = remote_files.get(remote_path, RemoteFileInfo(None, "", "")).etag.strip('"')
+        if not local_etag or not remote_etag:
+            continue
+        compared += 1
+        if local_etag != remote_etag:
+            return "update_available"
+    return "up_to_date" if compared else "unknown"
+
+
 def package_size_record(package: PackageRecord, models_root: Path | None = None) -> dict[str, Any]:
     installed = package_is_installed(package, models_root)
     try:
@@ -531,8 +571,10 @@ def package_size_record(package: PackageRecord, models_root: Path | None = None)
         total = 0
         unknown = False
         remote_revision = ""
+        remote_files: dict[str, RemoteFileInfo] = {}
         for remote_path in package.files:
             info = check_remote_file(package, remote_path)
+            remote_files[remote_path] = info
             if info.size is None:
                 unknown = True
             else:
@@ -541,14 +583,7 @@ def package_size_record(package: PackageRecord, models_root: Path | None = None)
                 remote_revision = info.revision
         manifest = read_package_manifest(package, models_root)
         local_revision = str(manifest.get("resolved_revision", "")) if manifest else ""
-        if not installed:
-            version_state = "not_installed"
-        elif not local_revision or not remote_revision:
-            version_state = "unknown"
-        elif local_revision == remote_revision:
-            version_state = "up_to_date"
-        else:
-            version_state = "update_available"
+        version_state = package_version_state(installed, manifest, remote_files)
         state = "gated" if unknown and package.download.get("gated") is True else "unknown" if unknown else "ok"
         return {
             "id": package.id,

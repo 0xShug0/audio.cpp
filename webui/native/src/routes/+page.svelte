@@ -140,6 +140,10 @@
     return translate(`task.${task}`, {}, taskLabels[task] || task);
   }
 
+  function loadedModelName(model: LoadedModel) {
+    return catalog.find((entry) => entry.id === model.id)?.display_name || model.id;
+  }
+
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
     { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
@@ -202,7 +206,8 @@
       return Boolean(workflow && modelWorkflowFilters.includes(workflow.id));
     })
   })).filter((group) => group.entries.length > 0);
-  $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded);
+  $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
+    comparablePath(model.path) === comparablePath(modelPath));
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align'].includes(selected?.task);
   $: acceptsSource = needsSource || selected?.task === 'gen';
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
@@ -303,11 +308,6 @@
         choice: choices.find((choice) => choice.format === 'gguf' &&
           ['f16', 'fp16', 'bf16'].includes(choice.precision))
       },
-      {
-        key: 'safetensors',
-        label: 'Safetensors',
-        choice: choices.find((choice) => choice.format === 'safetensors')
-      }
     ];
   }
 
@@ -438,6 +438,12 @@
   function supportsMaxTokens(entry: CatalogEntry) {
     if (entry.request_options !== undefined) return entry.request_options.includes('max_tokens');
     return ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(entry.task);
+  }
+
+  function supportsRequestOption(entry: CatalogEntry, option: string) {
+    // Specs that publish request metadata are authoritative. Older specs
+    // without that metadata keep the legacy UI behavior until migrated.
+    return entry.request_options === undefined || entry.request_options.includes(option);
   }
 
   function packageVersionLabel(size: ModelPackageSize | undefined, translate = tr) {
@@ -761,6 +767,14 @@
     status = `Loading ${selected.display_name}…`;
     log(status);
     try {
+      const targetPath = comparablePath(modelPath);
+      const replaced = loadedModels.filter((model) => model.loaded &&
+        (model.id !== selected.id || comparablePath(model.path) !== targetPath));
+      for (const model of replaced) {
+        log(`Unloading ${loadedModelName(model)} before loading ${selected.display_name}.`);
+        await unloadModel(model.id);
+      }
+      if (replaced.length) await refresh();
       await loadModel({
         id: selected.id,
         path: modelPath,
@@ -1117,7 +1131,10 @@
           if (supportsMaxTokens(selected)) body.max_tokens = maxTokens;
           if (voiceRef) body.voice_ref = voiceRef;
           else if (quickStartVoice) body.voice = demoVoiceSources[quickStartVoice] || quickStartVoice;
-          if (referenceText.trim()) body.reference_text = referenceText;
+          else if (selected.default_voice) body.voice = selected.default_voice;
+          if (referenceText.trim() && supportsRequestOption(selected, 'reference_text')) {
+            body.reference_text = referenceText;
+          }
           if (selected.task === 'vdes' && instructions.trim()) body.instructions = instructions;
           const result = await speech(body, aborter.signal);
           audioChunks.push(result.blob);
@@ -1164,7 +1181,9 @@
         }
         if (audio) request.audio = audio;
         if (voiceRef) request.voice_ref = voiceRef;
-        if (referenceText.trim()) request.reference_text = referenceText;
+        if (referenceText.trim() && supportsRequestOption(selected, 'reference_text')) {
+          request.reference_text = referenceText;
+        }
         const result = await runTask({ model: selected.id, request }, aborter.signal);
         if (typeof result.audio === 'string') {
           outputAudio = [{ id: 'output', url: base64AudioUrl(result.audio) }];
@@ -1549,7 +1568,7 @@
       <div>
         <p class="eyebrow">{tr('studio.eyebrow')}</p>
         <h1>{selectedId ? localizedTaskLabel(selected?.task, tr) : tr('studio.title')}</h1>
-        <p>{tr('studio.subtitle')}</p>
+        <p>{tr(`studio.subtitle.${activeWorkflow}`)}</p>
       </div>
       <div class="hero-stat">
         <span>{tr('studio.model')}</span>
@@ -1949,14 +1968,13 @@
                             {/if}
                           </button>
                           {#if packageSizes[choice.id]?.installed &&
-                            ['update_available', 'unknown'].includes(packageSizes[choice.id]?.version_state)}
+                            packageSizes[choice.id]?.version_state === 'update_available'}
                             <button class="package-update"
-                              title={packageSizes[choice.id]?.version_state === 'update_available'
-                                ? `Update ${choice.label}` : `Reinstall ${choice.label} to record its version`}
-                              aria-label={`${packageSizes[choice.id]?.version_state === 'update_available' ? 'Update' : 'Reinstall'} ${entry.display_name} ${choice.label}`}
+                              title={`Update ${choice.label}`}
+                              aria-label={`Update ${entry.display_name} ${choice.label}`}
                               disabled={groupInstallBusy(group, installJobs)}
                               on:click={() => installPackage(entry, choice, true)}>
-                              {packageSizes[choice.id]?.version_state === 'update_available' ? tr('models.update') : tr('models.reinstall')}
+                              {tr('models.update')}
                             </button>
                           {/if}
                           {#if packageSizes[choice.id]?.installed}
