@@ -227,8 +227,8 @@ def install_package(package: PackageRecord, args: argparse.Namespace) -> None:
         return
     if final_dir.exists() and not args.overwrite:
         raise ManagerError(f"target already exists: {final_dir} (use --overwrite)")
-    models_root.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{package.target_directory.replace('/', '_')}.", dir=models_root))
+    final_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{package.target_directory.replace('/', '_')}.", dir=final_dir.parent))
     try:
         for remote, output in plan:
             download_file(package, remote, staging / output.relative_to(final_dir))
