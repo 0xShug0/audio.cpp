@@ -14,7 +14,8 @@ namespace binding = engine::modules::binding;
 
 modules::QwenDecoderActivationCastPolicy neutts_activation_cast_policy(core::BackendType backend_type) {
     modules::QwenDecoderActivationCastPolicy policy;
-    if (backend_type == core::BackendType::Cpu || backend_type == core::BackendType::Vulkan) {
+    if (backend_type == core::BackendType::Cpu || backend_type == core::BackendType::Vulkan ||
+        backend_type == core::BackendType::Metal) {
         return policy;
     }
     policy.enabled = true;
@@ -149,7 +150,7 @@ modules::QwenCausalDecoderConfig make_neutts_qwen_config(
     out.logits_size = config.vocab_size;
     out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.lm_head_precision = GGML_PREC_DEFAULT;
-    if (backend_type == core::BackendType::Vulkan) {
+    if (backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Metal) {
         out.lm_head_input_type = GGML_TYPE_F16;
     } else if (backend_type != core::BackendType::Cpu) {
         out.lm_head_input_type = GGML_TYPE_BF16;
