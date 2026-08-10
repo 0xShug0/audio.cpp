@@ -93,7 +93,7 @@ Status labels:
 | `silero_vad` | Skip (tiny model) | --- | --- | --- | --- |
 | `sortformer_diar` | Done | Pass | --- | Pass | Pass |
 | `stable_audio` | Done | Pass | --- | Pass (drift) | Pass (drift) |
-| `supertonic` | Done | Pass | Pass | --- | No (unsupported weight dtype) |
+| `supertonic` | Done | Pass | Pass | Pass | No (Q8 blockers unresolved) |
 | `vevo2` | Done | Pass | Pass | Pass (drift) | No (mixed route drift; speech ASR match) |
 | `vibevoice` | Done | Pass | --- | Pass | Pass (drift) |
 | `vibevoice_asr` | Done | Pass | --- | Pass | Pass |
@@ -121,6 +121,11 @@ Q8 packaging notes:
   projection or linear weights, while leaving the speaker encoder, lookup, and
   codebook-sensitive tensors unquantized. Quantizing those speaker-side tensors
   can produce long-form quality problems such as large silence.
+- `supertonic` F16 is intentionally mixed type. Keep duration predictor,
+  vocoder, non-weight tensors, embeddings, codebook tensors, and norm tensors in
+  F32; convert only compatible projection weights to F16. Supertonic Q8 is not
+  currently supported: broader Q8 packages still hit CUDA Q8 copy/layout
+  blockers in text/vector graph paths, so the Q8 blocker is not fully solved.
 - `voxtral_realtime` also has a tested `q4_k` package. In a quick CUDA path
   check it was smaller and faster than Q8_0, while transcript output matched
   Q8_0 except for one capitalization-only difference.
