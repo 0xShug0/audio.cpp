@@ -1568,7 +1568,7 @@
       <div>
         <p class="eyebrow">{tr('studio.eyebrow')}</p>
         <h1>{selectedId ? localizedTaskLabel(selected?.task, tr) : tr('studio.title')}</h1>
-        <p>{tr('studio.subtitle')}</p>
+        <p>{tr(`studio.subtitle.${activeWorkflow}`)}</p>
       </div>
       <div class="hero-stat">
         <span>{tr('studio.model')}</span>
