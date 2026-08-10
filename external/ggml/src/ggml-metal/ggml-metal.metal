@@ -7897,6 +7897,160 @@ kernel void kernel_cpy_t_t(
 
 typedef decltype(kernel_cpy_t_t<float, float>) kernel_cpy_t;
 
+template<typename T0, typename T1>
+kernel void kernel_cpy_contig_t_t(
+        constant ggml_metal_kargs_cpy & args,
+        device  const char * src0,
+        device        char * dst,
+        uint3   tgpig[[threadgroup_position_in_grid]],
+        ushort3 tpitg[[thread_position_in_threadgroup]],
+        ushort3 ntg[[threads_per_threadgroup]]) {
+    const int64_t i = (int64_t)tgpig.x*ntg.x + tpitg.x;
+
+    if (i >= args.nk0) {
+        return;
+    }
+
+    device const T0 * src_data = (device const T0 *) src0;
+    device       T1 * dst_data = (device       T1 *) dst;
+
+    dst_data[i] = (T1) src_data[i];
+}
+
+typedef decltype(kernel_cpy_contig_t_t<float, float>) kernel_cpy_contig_t;
+
+template [[host_name("kernel_cpy_contig_f32_f32")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<float,   float>;
+template [[host_name("kernel_cpy_contig_f32_f16")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<float,   half>;
+template [[host_name("kernel_cpy_contig_f32_i32")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<float,   int32_t>;
+template [[host_name("kernel_cpy_contig_i32_f32")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<int32_t, float>;
+template [[host_name("kernel_cpy_contig_i32_i32")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<int32_t, int32_t>;
+#if defined(GGML_METAL_HAS_BF16)
+template [[host_name("kernel_cpy_contig_f32_bf16")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<float,   bfloat>;
+#endif
+template [[host_name("kernel_cpy_contig_f16_f32")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<half,    float>;
+template [[host_name("kernel_cpy_contig_f16_f16")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<half,    half>;
+#if defined(GGML_METAL_HAS_BF16)
+template [[host_name("kernel_cpy_contig_bf16_f32")]]  kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<bfloat, float>;
+template [[host_name("kernel_cpy_contig_bf16_bf16")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<bfloat, bfloat>;
+#endif
+
+template<typename T>
+kernel void kernel_cpy_2d_t(
+        constant ggml_metal_kargs_cpy & args,
+        device  const char * src0,
+        device        char * dst,
+        uint3   tgpig[[threadgroup_position_in_grid]],
+        ushort3 tpitg[[thread_position_in_threadgroup]],
+        ushort3 ntg[[threads_per_threadgroup]]) {
+    const int64_t i0  = (int64_t)tgpig.x*ntg.x + tpitg.x;
+    const int64_t i1  = (int64_t)tgpig.y*ntg.y + tpitg.y;
+    const int64_t i23 = tgpig.z;
+    const int64_t i2  = i23 % args.ne02;
+    const int64_t i3  = i23 / args.ne02;
+
+    if (i0 >= args.ne00 || i1 >= args.ne01) {
+        return;
+    }
+
+    device const T * src_data = (device const T *) (src0 + i3*args.nb03 + i2*args.nb02 + i1*args.nb01 + i0*args.nb00);
+    device       T * dst_data = (device       T *) (dst  + i3*args.nb3  + i2*args.nb2  + i1*args.nb1  + i0*args.nb0);
+
+    dst_data[0] = src_data[0];
+}
+
+typedef decltype(kernel_cpy_2d_t<float>) kernel_cpy_2d_tmpl;
+
+template [[host_name("kernel_cpy_2d_f32")]] kernel kernel_cpy_2d_tmpl kernel_cpy_2d_t<float>;
+template [[host_name("kernel_cpy_2d_f16")]] kernel kernel_cpy_2d_tmpl kernel_cpy_2d_t<half>;
+template [[host_name("kernel_cpy_2d_i32")]] kernel kernel_cpy_2d_tmpl kernel_cpy_2d_t<int32_t>;
+#if defined(GGML_METAL_HAS_BF16)
+template [[host_name("kernel_cpy_2d_bf16")]] kernel kernel_cpy_2d_tmpl kernel_cpy_2d_t<bfloat>;
+#endif
+
+kernel void kernel_cpy_row_f32(
+        constant ggml_metal_kargs_cpy & args,
+        device  const char * src0,
+        device        char * dst,
+        uint3   tgpig[[threadgroup_position_in_grid]],
+        ushort3 tpitg[[thread_position_in_threadgroup]]) {
+    const int64_t i0 = ((int64_t)tgpig.x*16 + tpitg.x)*4;
+
+    if (i0 >= args.ne00) {
+        return;
+    }
+
+    for (int mat = 0; mat < 4; ++mat) {
+        const int64_t i23 = (int64_t)tgpig.z*4 + mat;
+        if (i23 >= args.ne02*args.ne03) {
+            continue;
+        }
+        const int64_t i2 = i23 % args.ne02;
+        const int64_t i3 = i23 / args.ne02;
+
+        for (int row = 0; row < 2; ++row) {
+            const int64_t i1 = (int64_t)tgpig.y*16 + tpitg.y + 8*row;
+            if (i1 >= args.ne01) {
+                continue;
+            }
+
+            device const char * src_row = src0 + i3*args.nb03 + i2*args.nb02 + i1*args.nb01 + i0*args.nb00;
+            device       char * dst_row = dst  + i3*args.nb3  + i2*args.nb2  + i1*args.nb1  + i0*args.nb0;
+
+            if (i0 + 3 < args.ne00) {
+                device const float4 * src4 = (device const float4 *) src_row;
+                device       float4 * dst4 = (device       float4 *) dst_row;
+                dst4[0] = src4[0];
+            } else {
+                device const float * src1 = (device const float *) src_row;
+                device       float * dst1 = (device       float *) dst_row;
+                for (int64_t i = i0; i < args.ne00; ++i) {
+                    dst1[i - i0] = src1[i - i0];
+                }
+            }
+        }
+    }
+}
+
+kernel void kernel_cpy_transpose_f32(
+        constant ggml_metal_kargs_cpy & args,
+        device  const char * src0,
+        device        char * dst,
+        threadgroup float * shmem [[threadgroup(0)]],
+        uint3   tgpig[[threadgroup_position_in_grid]],
+        ushort3 tpitg[[thread_position_in_threadgroup]]) {
+    constexpr int tile_dim = 32;
+    constexpr int block_rows = 8;
+    constexpr int tile_stride = tile_dim + 1;
+
+    const int64_t tile_col = tgpig.x;
+    const int64_t tile_row = tgpig.y;
+    const int64_t i23 = tgpig.z;
+    const int64_t i2 = i23 % args.ne02;
+    const int64_t i3 = i23 / args.ne02;
+    const int64_t tid_col = tpitg.x;
+    const int64_t tid_row = tpitg.y;
+
+    for (int y = 0; y < 4; ++y) {
+        const int64_t i0 = tile_col*tile_dim + tid_row + block_rows*y;
+        const int64_t i1 = tile_row*tile_dim + tid_col;
+        if (i0 < args.ne00 && i1 < args.ne01) {
+            device const float * src = (device const float *) (src0 + i3*args.nb03 + i2*args.nb02 + i1*args.nb01 + i0*args.nb00);
+            shmem[(tid_row + block_rows*y)*tile_stride + tid_col] = src[0];
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (int y = 0; y < 4; ++y) {
+        const int64_t i0 = tile_col*tile_dim + tid_col;
+        const int64_t i1 = tile_row*tile_dim + tid_row + block_rows*y;
+        if (i0 < args.ne0 && i1 < args.ne1) {
+            device float * dst_data = (device float *) (dst + i3*args.nb3 + i2*args.nb2 + i1*args.nb1 + i0*args.nb0);
+            dst_data[0] = shmem[tid_col*tile_stride + tid_row + block_rows*y];
+        }
+    }
+}
+
 template [[host_name("kernel_cpy_f32_f32")]]   kernel kernel_cpy_t kernel_cpy_t_t<float,   float>;
 template [[host_name("kernel_cpy_f32_f16")]]   kernel kernel_cpy_t kernel_cpy_t_t<float,   half>;
 template [[host_name("kernel_cpy_f32_i32")]]   kernel kernel_cpy_t kernel_cpy_t_t<float,   int32_t>;
