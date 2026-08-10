@@ -139,6 +139,28 @@
       "strip_prefix": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF"
     },
     {
+      "id": "qwen3_tts_0_6b_base_q8_0",
+      "display_name": "Qwen3 TTS 12Hz 0.6B Base Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-TTS-12Hz-0.6B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-0.6B-Base-GGUF"
+    },
+    {
+      "id": "qwen3_tts_0_6b_base_bf16",
+      "display_name": "Qwen3 TTS 12Hz 0.6B Base BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Qwen3-TTS-12Hz-0.6B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-bf16.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-0.6B-Base-GGUF"
+    },
+    {
       "id": "qwen3_tts_1_7b_base_safetensors",
       "display_name": "Qwen3 TTS 12Hz 1.7B Base Safetensors",
       "format": "safetensors",
@@ -155,25 +177,6 @@
       "download": {
         "kind": "huggingface_snapshot",
         "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-      }
-    },
-    {
-      "id": "qwen3_tts_0_6b_base_safetensors",
-      "display_name": "Qwen3 TTS 12Hz 0.6B Base Safetensors",
-      "format": "safetensors",
-      "precision": "native",
-      "target_directory": "Qwen3-TTS-12Hz-0.6B-Base",
-      "files": [
-        "config.json",
-        "generation_config.json",
-        "model.safetensors",
-        "speech_tokenizer/config.json",
-        "speech_tokenizer/model.safetensors",
-        "tokenizer_config.json"
-      ],
-      "download": {
-        "kind": "huggingface_snapshot",
-        "repo": "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
       }
     }
   ],
