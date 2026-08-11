@@ -422,8 +422,12 @@ core::TensorValue h3_attention(
         auto q_f16 = core::wrap_tensor(ggml_cont_3d(ctx.ggml, ggml_cast(ctx.ggml, q.tensor, GGML_TYPE_F16), cfg.head_dim, tokens, cfg.heads), q.shape, GGML_TYPE_F16);
         auto k_f16 = core::wrap_tensor(ggml_cont_3d(ctx.ggml, ggml_cast(ctx.ggml, k.tensor, GGML_TYPE_F16), cfg.head_dim, tokens, cfg.heads), k.shape, GGML_TYPE_F16);
         auto v_f16 = core::wrap_tensor(ggml_cont_3d(ctx.ggml, ggml_cast(ctx.ggml, v.tensor, GGML_TYPE_F16), cfg.head_dim, tokens, cfg.heads), v.shape, GGML_TYPE_F16);
-        attn = ggml_sage_attn2(ctx.ggml, q_f16.tensor, k_f16.tensor, v_f16.tensor, scale, false);
-    } else {
+        ggml_tensor * sage_attn = ggml_sage_attn2(ctx.ggml, q_f16.tensor, k_f16.tensor, v_f16.tensor, scale, false);
+        if (ggml_backend_supports_op(weights.execution.backend(), sage_attn)) {
+            attn = sage_attn;
+        }
+    }
+    if (attn == nullptr) {
         v = core::wrap_tensor(ggml_cont_3d(ctx.ggml, v.tensor, cfg.head_dim, tokens, cfg.heads), v.shape, GGML_TYPE_F32);
         attn = ggml_flash_attn_ext(ctx.ggml, q.tensor, k.tensor, v.tensor, nullptr, scale, 0.0F, 0.0F);
     }
