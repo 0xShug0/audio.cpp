@@ -402,7 +402,7 @@ curl http://127.0.0.1:8080/v1/tasks/run \
 
 Unload specific models from memory to free resources (e.g. VRAM on GPU backends). Subsequent requests to an unloaded model will trigger a transparent reload. The server waits for any in-flight inference on each target model to complete before unloading it.
 
-The request body must contain a `model-ids` array of strings. Unknown ids are reported in the response rather than causing an error. Models that are not yet loaded (e.g. lazy-loaded models that have not been requested yet) are skipped silently.
+The request body must contain a `model_ids` array of strings. Unknown ids are reported in the response rather than causing an error. Models that are not yet loaded (e.g. lazy-loaded models that have not been requested yet) are skipped silently.
 
 ```bash
 curl http://127.0.0.1:8080/v1/tasks/unload_models \
