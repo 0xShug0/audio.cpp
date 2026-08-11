@@ -73,6 +73,32 @@ private:
     NormConfig config_;
 };
 
+struct GroupNormConfig {
+    int64_t channels = 0;
+    int64_t groups = 0;
+    float eps = 1e-5F;
+    bool use_weight = true;
+    bool use_bias = true;
+};
+
+class GroupNormModule {
+public:
+    explicit GroupNormModule(GroupNormConfig config);
+
+    const core::ModuleSchema & schema() const noexcept;
+    const GroupNormConfig & config() const noexcept;
+
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const NormWeights & weights) const;
+
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    GroupNormConfig config_;
+};
+
 struct PixelNormConfig {
     int axis = 1;
     float eps = 1e-8f;

@@ -389,6 +389,7 @@ add_library(engine_core OBJECT
     src/framework/audio/zipenhancer.cpp
     src/framework/modules/speaker_encoders/ecapa_tdnn_runtime.cpp
     src/framework/modules/speaker_encoders/titanet_runtime.cpp
+    src/framework/codecs/fsq_audio_codec_runtime.cpp
     src/framework/codecs/mimi_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
     src/framework/sampling/decode_modules.cpp

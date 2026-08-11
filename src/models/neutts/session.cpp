@@ -209,7 +209,8 @@ NeuTTSSession::NeuTTSSession(
         kDefaultWeightContextBytes,
         backbone_weight_type);
     codec_ = std::make_unique<NeuTTSCodecDecoderRuntime>(
-        assets_,
+        make_neutts_fsq_audio_codec_config(assets_->codec),
+        assets_->codec_weights,
         execution_context(),
         graph_arena_bytes,
         kDefaultWeightContextBytes,

@@ -49,6 +49,16 @@ const core::ModuleSchema kGemmaRmsNormSchema = {
     "Applies Gemma RMS normalization over the last logical dimension using x * (1 + weight).",
 };
 
+const core::ModuleSchema kGroupNormSchema = {
+    "GroupNorm",
+    "nn.normalization",
+    kNormInputs,
+    3,
+    kNormOutputs,
+    1,
+    "Applies group normalization over channel-first [batch, channels, frames] tensors.",
+};
+
 const core::ModuleSchema kPixelNormSchema = {
     "PixelNorm",
     "nn.normalization",
@@ -305,6 +315,75 @@ core::TensorValue GemmaRMSNormModule::build(
 
 const core::ModuleSchema & GemmaRMSNormModule::static_schema() noexcept {
     return kGemmaRmsNormSchema;
+}
+
+GroupNormModule::GroupNormModule(GroupNormConfig config) : config_(config) {
+    if (config_.channels <= 0) {
+        throw std::runtime_error("GroupNormConfig.channels must be positive");
+    }
+    if (config_.groups <= 0) {
+        throw std::runtime_error("GroupNormConfig.groups must be positive");
+    }
+    if (config_.channels % config_.groups != 0) {
+        throw std::runtime_error("GroupNormConfig.channels must be divisible by groups");
+    }
+    if (!(config_.eps > 0.0F)) {
+        throw std::runtime_error("GroupNormConfig.eps must be positive");
+    }
+}
+
+const core::ModuleSchema & GroupNormModule::schema() const noexcept {
+    return static_schema();
+}
+
+const GroupNormConfig & GroupNormModule::config() const noexcept {
+    return config_;
+}
+
+core::TensorValue GroupNormModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const NormWeights & weights) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 3, 3, "input");
+    if (input.shape.dims[1] != config_.channels) {
+        throw std::runtime_error("GroupNorm input channel count mismatch");
+    }
+
+    auto x = core::ensure_backend_addressable_layout(ctx, ensure_f32(ctx, input));
+    auto x_4d = ggml_reshape_4d(
+        ctx.ggml,
+        x.tensor,
+        x.shape.dims[2],
+        1,
+        config_.channels,
+        x.shape.dims[0]);
+    auto normalized_4d = ggml_group_norm(ctx.ggml, x_4d, config_.groups, config_.eps);
+    x = core::wrap_tensor(
+        ggml_reshape_3d(ctx.ggml, normalized_4d, x.shape.dims[2], config_.channels, x.shape.dims[0]),
+        x.shape,
+        GGML_TYPE_F32);
+    if (config_.use_weight) {
+        if (!weights.weight.has_value()) {
+            throw std::runtime_error("GroupNorm weight is required");
+        }
+        auto weight_rep = repeat_channels(ctx, *weights.weight, x, config_.channels, "weight");
+        x = core::wrap_tensor(ggml_mul(ctx.ggml, x.tensor, weight_rep.tensor), x.shape, GGML_TYPE_F32);
+    }
+    if (config_.use_bias) {
+        if (!weights.bias.has_value()) {
+            throw std::runtime_error("GroupNorm bias is required");
+        }
+        auto bias_rep = repeat_channels(ctx, *weights.bias, x, config_.channels, "bias");
+        x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, bias_rep.tensor), x.shape, GGML_TYPE_F32);
+    }
+    return x;
+}
+
+const core::ModuleSchema & GroupNormModule::static_schema() noexcept {
+    return kGroupNormSchema;
 }
 
 PixelNormModule::PixelNormModule(PixelNormConfig config) : config_(config) {
