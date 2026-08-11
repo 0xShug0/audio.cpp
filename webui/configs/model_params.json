@@ -112,11 +112,11 @@
   ],
 
   "minimax_h3": [
-    {"name": "num_inference_steps", "type": "number", "label": "Denoising steps", "default": 12, "minimum": 1, "maximum": 50, "step": 1, "precision": 0, "info": "12 steps with Spectrum acceleration was the fastest transcript-stable setting in the upstream CUDA performance sweep."},
+    {"name": "num_inference_steps", "type": "number", "label": "Denoising steps", "default": 12, "minimum": 1, "maximum": 50, "step": 1, "precision": 0, "info": "Twelve denoising steps provide a practical quality and performance balance."},
     {"name": "num_frames", "type": "number", "label": "Output frames", "default": 241, "minimum": 5, "maximum": 1441, "step": 4, "precision": 0, "info": "Approximately 24 frames per output second; 241 frames produces about 10 seconds of audio."},
     {"name": "guidance_scale", "type": "slider", "label": "Guidance scale", "default": 1.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "sampler", "type": "choice", "label": "Sampler", "default": "euler", "choices": ["euler", "res_multistep", "dpmpp_2m", "unipc"]},
-    {"name": "dit_acceleration", "type": "choice", "label": "DiT acceleration", "default": "spectrum", "choices": ["spectrum", "none", "first_block_cache"], "info": "Spectrum is the recommended fast path. Use none for the conservative full-DiT path."},
+    {"name": "dit_acceleration", "type": "choice", "label": "DiT acceleration", "default": "none", "choices": ["none", "spectrum", "first_block_cache"], "info": "None uses the quality-first full-DiT path. Acceleration modes are experimental and may distort some outputs."},
     {"name": "return_video", "type": "bool", "label": "Decode video", "default": false, "info": "Disabled by default to reduce memory use and return audio only."}
   ],
 

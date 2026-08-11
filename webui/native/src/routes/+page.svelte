@@ -141,6 +141,47 @@
     return translate(`task.${task}`, {}, taskLabels[task] || task);
   }
 
+  function localizedParameterText(
+    spec: ParamSpec,
+    field: 'label' | 'info' | 'placeholder',
+    translate = tr
+  ) {
+    const fallback = field === 'label'
+      ? (spec.label_en || spec.label || spec.name.replace(/_/g, ' '))
+      : field === 'info'
+        ? (spec.info_en || spec.info || '')
+        : (spec.placeholder_en || spec.placeholder || '');
+    return translate(`param.${selected?.family}.${spec.name}.${field}`, {}, fallback);
+  }
+
+  function localizedModelHint(translate = tr) {
+    const fallback = selected?.input_hint_en || selected?.input_hint || '';
+    return translate(`model.${selected?.family}.hint`, {}, fallback);
+  }
+
+  // MiniMax-H3 accepts frame counts with the 17n+3 temporal alignment used by
+  // its joint audio/video DiT. Keep the user-facing duration and expert frame
+  // control synchronized so duration_seconds actually changes output length.
+  function miniMaxFramesForDuration(seconds: number) {
+    const target = Math.max(1, Number.isFinite(seconds) ? seconds : 1) * 24;
+    return Math.max(5, Math.round((target - 3) / 17) * 17 + 3);
+  }
+
+  function setDuration(value: number) {
+    duration = Math.max(1, Number.isFinite(value) ? value : 1);
+    if (selected?.family === 'minimax_h3') {
+      advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration) };
+    }
+  }
+
+  function setParameterValue(spec: ParamSpec, value: unknown) {
+    advancedValues = { ...advancedValues, [spec.name]: value };
+    if (selected?.family === 'minimax_h3' && spec.name === 'num_frames') {
+      const frames = Number(value);
+      if (Number.isFinite(frames) && frames > 0) duration = frames / 24;
+    }
+  }
+
   function loadedModelName(model: LoadedModel) {
     return catalog.find((entry) => entry.id === model.id)?.display_name || model.id;
   }
@@ -683,6 +724,12 @@
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
     paramSpecs = byId;
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
+    if (selected?.family === 'minimax_h3') {
+      duration = 15;
+      advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration), dit_acceleration: 'none' };
+    } else if (selected?.task === 'gen') {
+      duration = 30;
+    }
     advancedJson = '{}';
   }
 
@@ -792,7 +839,7 @@
         session_options: selected.session_options || {}
       });
       await refresh();
-      status = `${selected.display_name} is resident and ready.`;
+      status = tr('status.modelReady', { model: selected.display_name });
       errorStatus = '';
       log(status);
     } catch (error) {
@@ -1103,7 +1150,7 @@
     const started = performance.now();
     warningStatus = '';
     errorStatus = '';
-    status = `Running ${taskLabels[selected.task] || selected.task}…`;
+    status = tr('status.runningTask', { task: localizedTaskLabel(selected.task) });
     log(status);
     try {
       const resolvedSeed = resolveRequestSeed(seed);
@@ -1128,7 +1175,7 @@
         for (let index = 0; index < chunks.length; index += 1) {
           status = chunks.length > 1
             ? `Synthesizing chunk ${index + 1} of ${chunks.length}…`
-            : `Running ${taskLabels[selected.task] || selected.task}…`;
+            : tr('status.runningTask', { task: localizedTaskLabel(selected.task) });
           const body: Record<string, unknown> = {
             model: selected.id,
             input: chunks[index],
@@ -1220,7 +1267,7 @@
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
       warningStatus = '';
       errorStatus = '';
-      status = `Complete in ${elapsed}s.`;
+      status = tr('status.completeIn', { seconds: elapsed });
       log(status);
     } catch (error) {
       if ((error as Error)?.name === 'AbortError') {
@@ -1368,7 +1415,7 @@
   function useOrInstallPackage(entry: CatalogEntry, choice: InstallPackageChoice) {
     if (packageSizes[choice.id]?.installed) {
       rememberPackageChoice(entry, choice);
-      status = `${entry.display_name} will use ${choice.label}. It is available in Studio.`;
+      status = tr('status.packageAvailable', { model: entry.display_name, format: choice.label });
       log(status);
       return;
     }
@@ -1648,7 +1695,7 @@
         {/if}
 
         {#if selectedId && (selected?.input_hint_en || selected?.input_hint)}
-          <div class="hint">{selected.input_hint_en || selected.input_hint}</div>
+          <div class="hint">{localizedModelHint(tr)}</div>
         {/if}
       </aside>
 
@@ -1717,7 +1764,11 @@
           {#if selected.task === 'gen'}
             <div>
               <label for="duration">{tr('request.duration')}</label>
-              <input id="duration" type="number" min="1" bind:value={duration} />
+              <input id="duration" type="number" min="1" step="0.1" value={duration}
+                on:input={(event) => setDuration(event.currentTarget.valueAsNumber)} />
+              {#if selected.family === 'minimax_h3'}
+                <small>{tr('request.minimaxFrames', { frames: Number(advancedValues.num_frames || 0) })}</small>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1830,35 +1881,35 @@
             <div class="parameter-grid">
               {#each paramSpecs as spec}
                 <div class:wide={spec.type === 'text'}>
-                  <label for={'param-' + spec.name}>{spec.label_en || spec.label}</label>
+                  <label for={'param-' + spec.name}>{localizedParameterText(spec, 'label', tr)}</label>
                   {#if spec.type === 'bool'}
                     <label class="toggle">
                       <input id={'param-' + spec.name} type="checkbox"
                         checked={Boolean(advancedValues[spec.name])}
-                        on:change={(event) => advancedValues = {...advancedValues, [spec.name]: event.currentTarget.checked}} />
+                        on:change={(event) => setParameterValue(spec, event.currentTarget.checked)} />
                       <span></span>{advancedValues[spec.name] ? tr('common.enabled') : tr('common.disabled')}
                     </label>
                   {:else if spec.type === 'choice'}
                     <select id={'param-' + spec.name} value={String(advancedValues[spec.name] ?? '')}
-                      on:change={(event) => advancedValues = {...advancedValues, [spec.name]: event.currentTarget.value}}>
+                      on:change={(event) => setParameterValue(spec, event.currentTarget.value)}>
                       {#each spec.choices || [] as choice}<option value={choice}>{choice}</option>{/each}
                     </select>
                   {:else if spec.type === 'slider'}
                     <div class="range">
                       <input id={'param-' + spec.name} type="range" min={spec.minimum} max={spec.maximum} step={spec.step}
                         value={Number(advancedValues[spec.name] ?? spec.default)}
-                        on:input={(event) => advancedValues = {...advancedValues, [spec.name]: event.currentTarget.valueAsNumber}} />
+                        on:input={(event) => setParameterValue(spec, event.currentTarget.valueAsNumber)} />
                       <output>{String(advancedValues[spec.name])}</output>
                     </div>
                   {:else}
                     <input id={'param-' + spec.name} type={spec.type === 'number' ? 'number' : 'text'}
                       min={spec.minimum} max={spec.maximum} step={spec.step}
                       value={String(advancedValues[spec.name] ?? '')}
-                      placeholder={spec.placeholder_en || spec.placeholder || ''}
-                      on:input={(event) => advancedValues = {...advancedValues,
-                        [spec.name]: spec.type === 'number' ? event.currentTarget.valueAsNumber : event.currentTarget.value}} />
+                      placeholder={localizedParameterText(spec, 'placeholder', tr)}
+                      on:input={(event) => setParameterValue(spec,
+                        spec.type === 'number' ? event.currentTarget.valueAsNumber : event.currentTarget.value)} />
                   {/if}
-                  {#if spec.info_en || spec.info}<small>{spec.info_en || spec.info}</small>{/if}
+                  {#if localizedParameterText(spec, 'info', tr)}<small>{localizedParameterText(spec, 'info', tr)}</small>{/if}
                 </div>
               {/each}
             </div>
