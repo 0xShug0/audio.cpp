@@ -88,7 +88,7 @@ MiniMaxH3Session::MiniMaxH3Session(
         this->options().options,
         {"minimax_h3.weight_context_mb"},
         weight_context_bytes_);
-    bool mem_saver = false;
+    bool mem_saver = true;
     if (const auto value = runtime::find_option(this->options().options, {"minimax_h3.mem_saver", "mem_saver"})) {
         mem_saver = runtime::parse_bool_option(*value, "minimax_h3.mem_saver");
     }

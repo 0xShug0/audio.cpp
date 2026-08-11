@@ -202,7 +202,7 @@ Memory and staged-weight options:
 | Option | Default | Notes |
 |---|---:|---|
 | `minimax_h3.weight_context_mb` | `512` | Staged weight context size in MiB. |
-| `minimax_h3.mem_saver` | `false` | Load text and Audio VAE weights only during their request phase instead of keeping them resident for the whole session. |
+| `minimax_h3.mem_saver` | `true` | Release staged DiT, audio VAE, and video VAE weights after their request phase instead of keeping them resident for the whole session. Prompt encoder weights are always request-scoped. Set `false` to keep generation weights cached when VRAM allows. |
 
 Advanced options:
 

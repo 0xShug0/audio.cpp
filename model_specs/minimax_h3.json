@@ -262,9 +262,9 @@
       {
         "name": "mem_saver",
         "type": "bool",
-        "description": "Load text and audio VAE weights only during their request phase instead of preloading them for the session.",
+        "description": "Release staged DiT, audio VAE, and video VAE weights after their request phase instead of keeping them resident for the session. Prompt encoder weights are always request-scoped.",
         "required": false,
-        "default": false
+        "default": true
       }
     ],
     "load": []
