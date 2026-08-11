@@ -1551,10 +1551,10 @@ std::string ServerState::get_allowed_origin(const HttpRequest & request) const {
 }
 
 void ServerState::LoadedModel::unload() {
-    model.reset();
-    session.reset();
-    offline = nullptr;
+	offline = nullptr;
     streaming = nullptr;
+    session.reset();
+    model.reset();
 }
 
 HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
