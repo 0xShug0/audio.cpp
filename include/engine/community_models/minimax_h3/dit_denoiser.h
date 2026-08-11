@@ -33,6 +33,7 @@ public:
         bool load_adaln_table);
 
     const engine::core::TensorValue & require(std::string_view name) const;
+    const engine::core::TensorValue * find(std::string_view name) const;
 
     engine::core::ExecutionContext & execution;
     std::vector<float> adaln_curve_table;

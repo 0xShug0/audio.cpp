@@ -1,9 +1,12 @@
 #include "engine/community_models/minimax_h3/assets.h"
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/config.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/model_spec/package.h"
 
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
 #include <cmath>
 #include <cstdlib>
@@ -22,6 +25,30 @@ bool starts_with(std::string_view value, std::string_view prefix) {
 bool ends_with(std::string_view value, std::string_view suffix) {
     return value.size() >= suffix.size() &&
         value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::string lower_ascii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+bool is_gguf_file(const std::filesystem::path & path) {
+    return engine::io::is_existing_file(path) && lower_ascii(path.extension().string()) == ".gguf";
+}
+
+std::optional<std::filesystem::path> direct_dit_entry_path(const std::filesystem::path & model_path) {
+    if (!is_gguf_file(model_path)) {
+        return std::nullopt;
+    }
+    const auto filename = lower_ascii(model_path.filename().string());
+    if (filename == "dit.gguf" || filename == "dit_int8.gguf") {
+        return std::filesystem::weakly_canonical(model_path);
+    }
+    throw std::runtime_error(
+        "MiniMax-H3 direct GGUF model path must point to dit.gguf or dit_int8.gguf, got: " +
+        model_path.filename().string());
 }
 
 int64_t count_indexed_layers(
@@ -217,13 +244,16 @@ void validate_real_weight_anchors(const MiniMaxH3Assets & assets) {
 }  // namespace
 
 std::shared_ptr<const MiniMaxH3Assets> load_minimax_h3_assets(const std::filesystem::path & model_path) {
+    const auto dit_entry_path = direct_dit_entry_path(model_path);
     MiniMaxH3Assets assets;
     assets.resources = engine::model_spec::load_resource_bundle_for_family(model_path, "minimax_h3");
     if (!assets.resources.has_file("configuration")) {
         throw std::runtime_error("MiniMax-H3 requires a real Q4 per-component GGUF package");
     }
     assets.text_encoder_weights = assets.resources.open_tensor_source("text_encoder_weights");
-    assets.dit_weights = assets.resources.open_tensor_source("dit_weights");
+    assets.dit_weights = dit_entry_path.has_value()
+        ? engine::assets::open_tensor_source(*dit_entry_path)
+        : assets.resources.open_tensor_source("dit_weights");
     assets.audio_vae_weights = assets.resources.open_tensor_source("audio_vae_weights");
     assets.video_vae_weights = assets.resources.open_tensor_source("video_vae_weights");
     validate_real_weight_anchors(assets);

@@ -6,6 +6,7 @@ import fnmatch
 import json
 import math
 import os
+import struct
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -57,6 +58,75 @@ class SyntheticTensor:
 class TypeOverride:
     pattern: str
     qtype: gguf.GGMLQuantizationType | None
+
+
+class ManualTensorSlice:
+    def __init__(self, dtype: str, shape: tuple[int, ...]):
+        self.dtype = dtype
+        self.shape = shape
+
+    def get_dtype(self) -> str:
+        return self.dtype
+
+    def get_shape(self) -> tuple[int, ...]:
+        return self.shape
+
+
+class ManualSafetensorsHandle:
+    def __init__(self, path: Path):
+        self.path = path
+        with path.open("rb") as handle:
+            header_len = struct.unpack("<Q", handle.read(8))[0]
+            self.data_start = 8 + int(header_len)
+            self.header = json.loads(handle.read(header_len))
+        self.index = {key: value for key, value in self.header.items() if key != "__metadata__"}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def keys(self):
+        return list(self.index.keys())
+
+    def get_slice(self, key: str) -> ManualTensorSlice:
+        item = self.index[key]
+        return ManualTensorSlice(item["dtype"], tuple(int(dim) for dim in item["shape"]))
+
+    def get_tensor(self, key: str) -> torch.Tensor:
+        item = self.index[key]
+        dtype = item["dtype"]
+        start, end = (int(x) for x in item["data_offsets"])
+        with self.path.open("rb") as handle:
+            handle.seek(self.data_start + start)
+            data = handle.read(end - start)
+        shape = tuple(int(dim) for dim in item["shape"])
+        if dtype == "BF16":
+            values = np.frombuffer(data, dtype=np.uint16).copy()
+            return torch.from_numpy(values).view(torch.bfloat16).reshape(shape)
+        numpy_dtype = {
+            "F64": np.float64,
+            "F32": np.float32,
+            "F16": np.float16,
+            "I64": np.int64,
+            "I32": np.int32,
+            "I16": np.int16,
+            "I8": np.int8,
+            "U8": np.uint8,
+        }.get(dtype)
+        if numpy_dtype is None:
+            raise ValueError(f"unsupported safetensors dtype: {dtype}")
+        return torch.from_numpy(np.frombuffer(data, dtype=numpy_dtype).copy()).reshape(shape)
+
+
+def open_safetensors_compat(path: Path):
+    try:
+        handle = safe_open(path, framework="pt", device="cpu")
+        handle.keys()
+        return handle
+    except Exception:
+        return ManualSafetensorsHandle(path)
 
 
 def normalize_type_name(value: str) -> str:
@@ -160,7 +230,7 @@ def tensor_to_native_array(tensor: torch.Tensor) -> tuple[np.ndarray, gguf.GGMLQ
 
 
 def load_tensor(path: Path, key: str) -> torch.Tensor:
-    with safe_open(path, framework="pt", device="cpu") as handle:
+    with open_safetensors_compat(path) as handle:
         return handle.get_tensor(key)
 
 
@@ -202,7 +272,7 @@ def checked_elements(name: str, shape: Iterable[int]) -> int:
 
 
 def load_bnb_nf4(path: Path, key: str) -> np.ndarray:
-    with safe_open(path, framework="pt", device="cpu") as handle:
+    with open_safetensors_compat(path) as handle:
         return load_bnb_nf4_from_handle(handle, key)
 
 
@@ -336,7 +406,7 @@ def source_tensors(inputs: list[InputSpec]) -> list[TensorEntry]:
     for source_index, spec in enumerate(inputs):
         if not spec.path.is_file():
             raise FileNotFoundError(f"input safetensors file does not exist: {spec.path}")
-        with safe_open(spec.path, framework="pt", device="cpu") as handle:
+        with open_safetensors_compat(spec.path) as handle:
             keys = set(handle.keys())
             for key in handle.keys():
                 tensor = handle.get_slice(key)
@@ -362,6 +432,10 @@ def include_tensor(name: str, include: list[str], exclude_prefix: list[str]) -> 
     if include and not any(fnmatch.fnmatchcase(name, pattern) for pattern in include):
         return False
     return not any(prefix and name.startswith(prefix) for prefix in exclude_prefix)
+
+
+def matches_any(name: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
 
 
 def physical_names(logical_names: list[str], alias_max_len: int) -> list[str]:
@@ -520,7 +594,7 @@ def h3_adaln_curve_tensors(input_path: Path, grid: int, rank: int) -> tuple[list
         "time_embedder.proj_out.weight",
         "time_embedder.proj_out.bias",
     }
-    with safe_open(input_path, framework="pt", device="cpu") as handle:
+    with open_safetensors_compat(input_path) as handle:
         keys = set(handle.keys())
         tensors = {name: handle.get_tensor(name) for name in needed}
         curve = torch.nn.functional.silu(h3_timestep_embedding(h3_curve_grid(grid), tensors))
@@ -569,6 +643,8 @@ def main() -> int:
     parser.add_argument("--override", action="append", type=parse_override, default=[], help="PATTERN=TYPE")
     parser.add_argument("--include", action="append", default=[], help="fnmatch pattern for logical tensor names")
     parser.add_argument("--exclude-prefix", action="append", default=[])
+    parser.add_argument("--overlay-input", type=Path, default=None)
+    parser.add_argument("--overlay-include", action="append", default=[], help="fnmatch tensor name pattern to take from overlay input")
     parser.add_argument("--quantize-scope", choices=("all", "weights-2d", "none"), default="all")
     parser.add_argument("--ineligible", choices=("error", "native", "f16", "bf16"), default="error")
     parser.add_argument("--quantizer", choices=("auto", "python", "ggml"), default="auto")
@@ -597,7 +673,7 @@ def main() -> int:
     entries = source_tensors(args.input)
     key_sets: list[set[str]] = []
     for spec in args.input:
-        with safe_open(spec.path, framework="pt", device="cpu") as handle:
+        with open_safetensors_compat(spec.path) as handle:
             key_sets.append(set(handle.keys()))
 
     synthetic: list[SyntheticTensor] = []
@@ -611,7 +687,18 @@ def main() -> int:
             args.h3_adaln_curve_rank,
         )
 
+    overlay_keys: set[str] = set()
+    if args.overlay_input is not None:
+        if args.overlay_input.suffix != ".safetensors":
+            raise ValueError("overlay input must be a safetensors file")
+        with open_safetensors_compat(args.overlay_input) as handle:
+            overlay_keys = set(handle.keys())
+        if not args.overlay_include:
+            raise ValueError("--overlay-input requires at least one --overlay-include pattern")
+
     selected: list[TensorEntry] = []
+    overlay_sidecars: list[TensorEntry] = []
+    selected_logical_names: set[str] = set()
     for entry in entries:
         if entry.logical_name in synthetic_exclude:
             continue
@@ -624,10 +711,30 @@ def main() -> int:
         if bnb_type is not None and helper_base_name(key_sets[entry.source_index], entry.key) is not None:
             continue
         selected.append(entry)
+        selected_logical_names.add(entry.logical_name)
+        if args.overlay_input is not None and matches_any(entry.logical_name, args.overlay_include):
+            if entry.logical_name not in overlay_keys:
+                raise ValueError(f"overlay input is missing {entry.logical_name}")
+            for suffix in (".weight_scale",):
+                sidecar = entry.logical_name.removesuffix(".weight") + suffix
+                if sidecar in overlay_keys and sidecar not in selected_logical_names:
+                    with open_safetensors_compat(args.overlay_input) as handle:
+                        tensor = handle.get_slice(sidecar)
+                    overlay_sidecars.append(
+                        TensorEntry(
+                            logical_name=sidecar,
+                            source_index=-1,
+                            key=sidecar,
+                            shape=tuple(int(dim) for dim in tensor.get_shape()),
+                            dtype=safetensors_dtype_to_torch(tensor.get_dtype()),
+                            is_bnb_nf4=False,
+                        )
+                    )
+                    selected_logical_names.add(sidecar)
     if not selected and not synthetic:
         raise ValueError("no tensors selected for conversion")
 
-    ordered_entries = [("source", entry) for entry in selected] + [("synthetic", entry) for entry in synthetic]
+    ordered_entries = [("source", entry) for entry in selected] + [("source", entry) for entry in overlay_sidecars] + [("synthetic", entry) for entry in synthetic]
     ordered_entries.sort(key=lambda item: item[1].logical_name)
     logical_names: list[str] = []
     logical_shapes: list[tuple[int, ...]] = []
@@ -653,8 +760,11 @@ def main() -> int:
         total_tensors = len(ordered_entries)
         for index, (kind, entry) in enumerate(ordered_entries):
             if kind == "source":
-                spec = args.input[entry.source_index]
-                if entry.is_bnb_nf4 and bnb_type is not None:
+                use_overlay = args.overlay_input is not None and (
+                    entry.source_index < 0 or matches_any(entry.logical_name, args.overlay_include)
+                )
+                spec = InputSpec("", args.overlay_input) if use_overlay else args.input[entry.source_index]
+                if not use_overlay and entry.is_bnb_nf4 and bnb_type is not None:
                     override = matching_override(entry.logical_name, args.override)
                     target = bnb_type if override == "no-match" else override
                     if target is None:
@@ -664,6 +774,15 @@ def main() -> int:
                     )
                 else:
                     tensor = load_tensor(spec.path, entry.key)
+                    if use_overlay:
+                        entry = TensorEntry(
+                            entry.logical_name,
+                            entry.source_index,
+                            entry.key,
+                            tuple(int(dim) for dim in tensor.shape),
+                            tensor.dtype,
+                            False,
+                        )
                     if args.h3_video_vae_decode_only and entry.logical_name == "post_quant_conv.weight":
                         if tuple(tensor.shape[-3:]) != (1, 1, 1):
                             raise ValueError("MiniMax-H3 video VAE post_quant_conv.weight must be a 1x1x1 convolution")

@@ -587,6 +587,7 @@ extern "C" {
         GGML_OP_OPT_STEP_SGD,
 
         GGML_OP_GLU,
+        GGML_OP_CONVROT_LINEAR,
 
         GGML_OP_COUNT,
     };
@@ -2456,6 +2457,20 @@ extern "C" {
             struct ggml_tensor  * k_scale,
             float                 scale,
             bool                  causal);
+
+    // CUDA-only ConvRot tensorwise INT8 linear:
+    // weight_i8:     [in_features, out_features]
+    // input:         [in_features, rows, ...], F32
+    // weight_scale:  [out_features, 1], F32
+    // bias:          [out_features], F32, optional
+    // res:           [out_features, rows, ...], F32
+    GGML_API struct ggml_tensor * ggml_convrot_linear(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * weight_i8,
+            struct ggml_tensor  * input,
+            struct ggml_tensor  * weight_scale,
+            struct ggml_tensor  * bias,
+            int                   group_size);
 
     // MINITTS_FLASH_BIAS_WRAPPER:
     // Helper for models that already assemble a dense additive attention bias

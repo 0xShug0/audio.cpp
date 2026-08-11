@@ -21,6 +21,7 @@ enum class TensorStorageType {
     F32,
     F16,
     BF16,
+    I8,
     Q4_0,
     Q4_1,
     Q5_0,

@@ -125,6 +125,11 @@ const core::TensorValue & MiniMaxH3DitWeightStore::require(std::string_view name
     return it->second;
 }
 
+const core::TensorValue * MiniMaxH3DitWeightStore::find(std::string_view name) const {
+    const auto it = weights_.find(std::string(name));
+    return it == weights_.end() ? nullptr : &it->second;
+}
+
 ggml_prec dit_linear_precision(const std::string & prefix, ggml_type weight_type) {
     if (!ggml_is_quantized(weight_type)) {
         return GGML_PREC_F32;
@@ -163,6 +168,7 @@ core::TensorValue dit_f32_view_hnd(
 
 core::TensorValue dit_linear_projection(
     core::ModuleBuildContext & ctx,
+    const MiniMaxH3DitWeightStore & weights,
     const std::string & prefix,
     const core::TensorValue & x,
     const core::TensorValue & weight,
@@ -170,6 +176,47 @@ core::TensorValue dit_linear_projection(
     int64_t in_features,
     int64_t out_features) {
     const ggml_prec precision = dit_linear_precision(prefix, weight.tensor->type);
+    if (weight.tensor->type == GGML_TYPE_I8) {
+        const core::TensorValue * scale = weights.find(prefix + ".weight_scale");
+        if (scale == nullptr) {
+            throw std::runtime_error("MiniMax-H3 ConvRot INT8 tensor is missing scale: " + prefix + ".weight_scale");
+        }
+        if (ctx.backend_type != core::BackendType::Cuda) {
+            throw std::runtime_error("MiniMax-H3 ConvRot INT8 DiT requires CUDA backend");
+        }
+        core::validate_rank_between(x, 1, core::kMaxTensorRank, "input");
+        core::validate_last_dim(x, in_features, "input");
+        core::validate_shape(weight, core::TensorShape::from_dims({out_features, in_features}), "weight");
+        core::validate_shape(*scale, core::TensorShape::from_dims({out_features, 1}), "weight_scale");
+
+        auto input = core::ensure_backend_addressable_layout(ctx, x);
+        if (input.tensor->type != GGML_TYPE_F32) {
+            input = core::wrap_tensor(ggml_cast(ctx.ggml, input.tensor, GGML_TYPE_F32), input.shape, GGML_TYPE_F32);
+            input = core::ensure_backend_addressable_layout(ctx, input);
+        }
+        const core::TensorShape matrix_shape = input.shape.rank == 1
+            ? core::TensorShape::from_dims({1, input.shape.last_dim()})
+            : core::TensorShape::from_dims({input.shape.prefix_elements(), input.shape.last_dim()});
+        auto matrix_input = core::reshape_tensor(ctx, input, matrix_shape);
+        const core::TensorValue * bias_value = bias;
+        std::optional<core::TensorValue> f32_bias;
+        if (bias_value != nullptr && bias_value->tensor->type != GGML_TYPE_F32) {
+            f32_bias = core::wrap_tensor(ggml_cast(ctx.ggml, bias_value->tensor, GGML_TYPE_F32), bias_value->shape, GGML_TYPE_F32);
+            bias_value = &*f32_bias;
+        }
+        ggml_tensor * raw = ggml_convrot_linear(
+            ctx.ggml,
+            weight.tensor,
+            matrix_input.tensor,
+            scale->tensor,
+            bias_value == nullptr ? nullptr : bias_value->tensor,
+            256);
+        auto projected = core::wrap_tensor(
+            raw,
+            core::TensorShape::from_dims({matrix_shape.at(0), out_features}),
+            GGML_TYPE_F32);
+        return core::reshape_tensor(ctx, projected, x.shape.with_last_dim(out_features));
+    }
     if (bias != nullptr) {
         auto bias_value = *bias;
         if (bias_value.type != GGML_TYPE_F32) {
@@ -312,12 +359,12 @@ core::TensorValue h3_mlp(
     const MiniMaxH3Config & cfg,
     const core::TensorValue & x,
     const std::string & prefix) {
-    auto fc1 = dit_linear_projection(ctx, prefix + ".fc1", x, weights.require(prefix + ".fc1.weight"), nullptr, cfg.hidden, cfg.ffn * 2);
+    auto fc1 = dit_linear_projection(ctx, weights, prefix + ".fc1", x, weights.require(prefix + ".fc1.weight"), nullptr, cfg.hidden, cfg.ffn * 2);
     auto hidden = core::wrap_tensor(
         ggml_cont_2d(ctx.ggml, ggml_swiglu(ctx.ggml, fc1.tensor), cfg.ffn, x.shape.dims[0]),
         x.shape.with_last_dim(cfg.ffn),
         GGML_TYPE_F32);
-    return dit_linear_projection(ctx, prefix + ".fc2", hidden, weights.require(prefix + ".fc2.weight"), nullptr, cfg.ffn, cfg.hidden);
+    return dit_linear_projection(ctx, weights, prefix + ".fc2", hidden, weights.require(prefix + ".fc2.weight"), nullptr, cfg.ffn, cfg.hidden);
 }
 
 core::TensorValue h3_attention(
@@ -329,7 +376,7 @@ core::TensorValue h3_attention(
     const core::TensorValue * sin,
     const std::string & prefix) {
     const int64_t tokens = x.shape.dims[0];
-    auto qkv = dit_linear_projection(ctx, prefix + ".qkv_proj", x, weights.require(prefix + ".qkv_proj.weight"), nullptr, cfg.hidden, cfg.heads * cfg.head_dim * 3);
+    auto qkv = dit_linear_projection(ctx, weights, prefix + ".qkv_proj", x, weights.require(prefix + ".qkv_proj.weight"), nullptr, cfg.hidden, cfg.heads * cfg.head_dim * 3);
     qkv = core::wrap_tensor(
         ggml_reshape_4d(ctx.ggml, qkv.tensor, cfg.head_dim, 3, cfg.heads, tokens),
         core::TensorShape::from_dims({tokens, cfg.heads, 3, cfg.head_dim}),
@@ -384,7 +431,7 @@ core::TensorValue h3_attention(
         ggml_cont_2d(ctx.ggml, attn, cfg.heads * cfg.head_dim, tokens),
         core::TensorShape::from_dims({tokens, cfg.heads * cfg.head_dim}),
         GGML_TYPE_F32);
-    return dit_linear_projection(ctx, prefix + ".out_proj", h, weights.require(prefix + ".out_proj.weight"), nullptr, cfg.heads * cfg.head_dim, cfg.hidden);
+    return dit_linear_projection(ctx, weights, prefix + ".out_proj", h, weights.require(prefix + ".out_proj.weight"), nullptr, cfg.heads * cfg.head_dim, cfg.hidden);
 }
 
 core::TensorValue token_refiner(
@@ -426,8 +473,7 @@ std::vector<core::TensorValue> adaln_chunks(
     int64_t modality_count,
     bool apply_silu) {
     auto x = apply_silu ? modules::SiluModule{}.build(ctx, t_emb) : t_emb;
-    x = dit_linear_projection(
-        ctx,
+    x = dit_linear_projection(ctx, weights,
         prefix + ".linear",
         x,
         weights.require(prefix + ".linear.weight"),
@@ -582,8 +628,7 @@ core::TensorValue build_time_embed(
     const MiniMaxH3Config & cfg,
     const core::TensorValue & features) {
     const std::string prefix;
-    auto h = dit_linear_projection(
-        ctx,
+    auto h = dit_linear_projection(ctx, weights,
         prefix + "time_embedder.proj_in",
         features,
         weights.require(prefix + "time_embedder.proj_in.weight"),
@@ -591,8 +636,7 @@ core::TensorValue build_time_embed(
         cfg.timestep_input_dim,
         cfg.time_embed_hidden);
     h = modules::SiluModule{}.build(ctx, h);
-    return dit_linear_projection(
-        ctx,
+    return dit_linear_projection(ctx, weights,
         prefix + "time_embedder.proj_out",
         h,
         weights.require(prefix + "time_embedder.proj_out.weight"),
@@ -621,8 +665,7 @@ MiniMaxH3DitGraph::DitOutput build_dit(
     const core::TensorValue & cos,
     const core::TensorValue & sin) {
     const std::string prefix;
-    auto text = dit_linear_projection(
-        ctx,
+    auto text = dit_linear_projection(ctx, weights,
         prefix + "condition_proj",
         prompt,
         weights.require(prefix + "condition_proj.weight"),
@@ -630,16 +673,14 @@ MiniMaxH3DitGraph::DitOutput build_dit(
         cfg.text_dim,
         cfg.hidden);
     text = token_refiner(ctx, weights, cfg, text);
-    auto audio_projected = dit_linear_projection(
-        ctx,
+    auto audio_projected = dit_linear_projection(ctx, weights,
         prefix + "audio_patch_proj",
         audio_full,
         weights.require(prefix + "audio_patch_proj.weight"),
         &weights.require(prefix + "audio_patch_proj.bias"),
         cfg.audio_latents_dim,
         cfg.hidden);
-    auto video_projected = dit_linear_projection(
-        ctx,
+    auto video_projected = dit_linear_projection(ctx, weights,
         prefix + "video_patch_proj",
         video_full,
         weights.require(prefix + "video_patch_proj.weight"),
@@ -679,16 +720,14 @@ MiniMaxH3DitGraph::DitOutput build_dit(
     hidden = modules::RMSNormModule({cfg.hidden, cfg.final_norm_eps, true, false}).build(
         ctx, hidden, {weights.require(prefix + "final_layer.norm.weight"), std::nullopt});
     hidden = modulate(ctx, hidden, chunks[0], chunks[1], inverse_indices);
-    auto video_full_logits = dit_linear_projection(
-        ctx,
+    auto video_full_logits = dit_linear_projection(ctx, weights,
         prefix + "final_layer.video_out",
         hidden,
         weights.require(prefix + "final_layer.video_out.weight"),
         &weights.require(prefix + "final_layer.video_out.bias"),
         cfg.hidden,
         cfg.video_latents_dim * 4);
-    auto audio_full_logits = dit_linear_projection(
-        ctx,
+    auto audio_full_logits = dit_linear_projection(ctx, weights,
         prefix + "final_layer.audio_out",
         hidden,
         weights.require(prefix + "final_layer.audio_out.weight"),
@@ -849,8 +888,7 @@ LayerwisePreludeOutput build_dit_prelude(
     const core::TensorValue & text_positions,
     const core::TensorValue & timestep_features_value) {
     const std::string prefix;
-    auto text = dit_linear_projection(
-        ctx,
+    auto text = dit_linear_projection(ctx, weights,
         prefix + "condition_proj",
         prompt,
         weights.require(prefix + "condition_proj.weight"),
@@ -858,16 +896,14 @@ LayerwisePreludeOutput build_dit_prelude(
         cfg.text_dim,
         cfg.hidden);
     text = token_refiner(ctx, weights, cfg, text);
-    auto audio_projected = dit_linear_projection(
-        ctx,
+    auto audio_projected = dit_linear_projection(ctx, weights,
         prefix + "audio_patch_proj",
         audio_full,
         weights.require(prefix + "audio_patch_proj.weight"),
         &weights.require(prefix + "audio_patch_proj.bias"),
         cfg.audio_latents_dim,
         cfg.hidden);
-    auto video_projected = dit_linear_projection(
-        ctx,
+    auto video_projected = dit_linear_projection(ctx, weights,
         prefix + "video_patch_proj",
         video_full,
         weights.require(prefix + "video_patch_proj.weight"),
@@ -984,16 +1020,14 @@ MiniMaxH3DitGraph::DitOutput build_dit_final(
     auto hidden = modules::RMSNormModule({cfg.hidden, cfg.final_norm_eps, true, false}).build(
         ctx, hidden_in, {weights.require(prefix + "final_layer.norm.weight"), std::nullopt});
     hidden = modulate(ctx, hidden, chunks[0], chunks[1], inverse_indices);
-    auto video_full_logits = dit_linear_projection(
-        ctx,
+    auto video_full_logits = dit_linear_projection(ctx, weights,
         prefix + "final_layer.video_out",
         hidden,
         weights.require(prefix + "final_layer.video_out.weight"),
         &weights.require(prefix + "final_layer.video_out.bias"),
         cfg.hidden,
         cfg.video_latents_dim * 4);
-    auto audio_full_logits = dit_linear_projection(
-        ctx,
+    auto audio_full_logits = dit_linear_projection(ctx, weights,
         prefix + "final_layer.audio_out",
         hidden,
         weights.require(prefix + "final_layer.audio_out.weight"),

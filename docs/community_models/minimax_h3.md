@@ -13,6 +13,7 @@ MiniMax-H3-Q4-GGUF/
   configuration.json
   text_encoder_q4_k.gguf
   dit.gguf
+  dit_int8.gguf optional experimental ConvRot DiT
   audio_vae.gguf
   audio_vae_folded_f16.gguf
   video_vae.gguf
@@ -72,6 +73,52 @@ The DiT GGUF should contain 532 tensors: one F32 AdaLN table, BF16 tensors for t
 precision-sensitive override list, and Q4_0 tensors for the remaining quantized 2D
 weights.
 
+### DiT INT8 ConvRot
+
+The optional `dit_int8.gguf` variant uses ConvRot INT8 linear layers for selected DiT
+projections. It is CUDA-only and currently experimental. Keep the normal `dit.gguf` as the
+default package DiT unless you explicitly want to test the INT8 path.
+
+```bash
+python scripts/minimax_h3/convert_dit_gguf.py \
+  --input /path/to/MiniMax-H3-NF4/minimax-h3-fl2va-nf4.safetensors \
+  --output models/MiniMax-H3-Q4-GGUF/dit_int8.gguf \
+  --overwrite \
+  --type q4_0 --bnb-nf4-type q4_0 \
+  --overlay-input /path/to/MiniMax_H3_FL2VA_pruned_int8_convrot.safetensors \
+  --overlay-include 'blocks.*.attn.out_proj.weight' \
+  --overlay-include 'blocks.*.mlp.fc1.weight' \
+  --overlay-include 'blocks.*.mlp.fc2.weight' \
+  --override 'blocks.*.adaln_proj.linear.weight=q4_0' \
+  --override 'final_layer.adaln_proj.linear.weight=q4_0' \
+  --override 'condition_proj.weight=bf16' \
+  --override 'time_embedder.proj_in.weight=bf16' \
+  --override 'time_embedder.proj_out.weight=bf16' \
+  --override 'final_layer.audio_out.weight=bf16' \
+  --override 'final_layer.video_out.weight=bf16' \
+  --override 'blocks.39.mlp.fc2.weight=bf16' \
+  --override 'blocks.40.mlp.fc2.weight=bf16' \
+  --override 'blocks.41.mlp.fc2.weight=bf16' \
+  --override 'blocks.42.mlp.fc2.weight=bf16' \
+  --override 'blocks.43.mlp.fc2.weight=bf16' \
+  --override 'blocks.44.mlp.fc2.weight=bf16' \
+  --override 'blocks.45.mlp.fc2.weight=bf16' \
+  --override 'blocks.46.mlp.fc2.weight=bf16' \
+  --override 'blocks.47.mlp.fc2.weight=bf16' \
+  --override 'blocks.48.mlp.fc2.weight=bf16' \
+  --override 'blocks.49.mlp.fc2.weight=bf16' \
+  --quantize-scope weights-2d --ineligible native \
+  --quantizer python \
+  --helper-chunk-rows 128 \
+  --h3-adaln-curve-grid 1024 \
+  --h3-adaln-curve-rank 64
+```
+
+The INT8 overlay is intentionally limited to `attn.out_proj`, `mlp.fc1`, and `mlp.fc2`.
+Do not overlay `attn.qkv_proj`: the isolated projection can look numerically close, but the
+end-to-end model output is not valid with QKV overlaid. ConvRot stores rotated INT8 weights
+and scales in the GGUF; activation rotation and quantization happen in the CUDA runtime.
+
 ### Audio VAE
 
 Create the original Audio VAE GGUF first:
@@ -102,9 +149,10 @@ weights stored as F16. Other tensors are copied from `audio_vae.gguf`.
 
 ## Run
 
-MiniMax-H3 packages contain several component GGUF files. Pass the package `dit.gguf`
-path explicitly; the model-spec resource bundle uses that file's parent directory as the
-package root and resolves the other component files from there.
+MiniMax-H3 packages contain several component GGUF files. Pass the DiT entry file
+explicitly: `dit.gguf` for the default path, or `dit_int8.gguf` for the experimental
+ConvRot INT8 path. The runtime uses that file's parent directory as the package root and
+resolves the other component files from there.
 
 ```bash
 PROMPT='A lively four speaker comedy scene in a small radio studio. Speaker one says, "Welcome back, everyone, today we are testing a microphone that only records embarrassing truths." Speaker two says, "That explains why it kept calling me a sandwich with ambition." Speaker three says, "Please focus, the sponsor asked for professionalism and at least one normal sentence." Speaker four says, "Fine. This is a normal sentence, delivered by a person standing next to a haunted coffee machine." The speakers laugh, interrupt each other lightly, and continue with clear natural voices, quick timing, and no background music.'
@@ -128,7 +176,8 @@ build/debug/bin/audiocpp_cli \
   --metrics
 ```
 
-Set `return_video=true` when you also want RGB24 video output as an artifact.
+Set `return_video=true` when you also want RGB24 video output as an artifact. Use
+`--out-dir <dir>` to write custom artifacts from the CLI.
 
 ## Options
 

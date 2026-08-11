@@ -272,8 +272,9 @@
   "dependencies": [],
   "package_defaults": {
     "download": {
-      "kind": "local_snapshot",
-      "path": "models/MiniMax-H3-Q4-GGUF",
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
       "gated": false
     }
   },
@@ -286,8 +287,39 @@
       "precision": "q4_k",
       "target_directory": "MiniMax-H3-Q4-GGUF",
       "files": [
+        "MiniMax-H3-Q4-GGUF/configuration.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/chat_template.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/merges.txt",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/preprocessor_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/tokenizer.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/tokenizer_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/video_preprocessor_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/vocab.json",
         "MiniMax-H3-Q4-GGUF/text_encoder_q4_k.gguf",
         "MiniMax-H3-Q4-GGUF/dit.gguf",
+        "MiniMax-H3-Q4-GGUF/audio_vae_folded_f16.gguf",
+        "MiniMax-H3-Q4-GGUF/video_vae.gguf"
+      ],
+      "strip_prefix": "MiniMax-H3-Q4-GGUF"
+    },
+    {
+      "id": "minimax_h3_q4_k_int8_dit",
+      "display_name": "MiniMax-H3 Q4_K GGUF + INT8 ConvRot DiT",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "MiniMax-H3-Q4-GGUF",
+      "files": [
+        "MiniMax-H3-Q4-GGUF/configuration.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/chat_template.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/merges.txt",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/preprocessor_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/tokenizer.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/tokenizer_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/video_preprocessor_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/vocab.json",
+        "MiniMax-H3-Q4-GGUF/text_encoder_q4_k.gguf",
+        "MiniMax-H3-Q4-GGUF/dit_int8.gguf",
         "MiniMax-H3-Q4-GGUF/audio_vae_folded_f16.gguf",
         "MiniMax-H3-Q4-GGUF/video_vae.gguf"
       ],

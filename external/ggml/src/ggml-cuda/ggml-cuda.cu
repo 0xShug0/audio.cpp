@@ -13,6 +13,7 @@
 #include "ggml-cuda/clamp.cuh"
 #include "ggml-cuda/col2im-1d.cuh"
 #include "ggml-cuda/concat.cuh"
+#include "ggml-cuda/convrot-linear.cuh"
 #include "ggml-cuda/conv-transpose-1d.cuh"
 #include "ggml-cuda/conv2d.cuh"
 #include "ggml-cuda/conv2d-dw.cuh"
@@ -3250,6 +3251,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_SAGE_ATTN2_I8:
             ggml_cuda_sage_attn2_i8(ctx, dst);
             break;
+        case GGML_OP_CONVROT_LINEAR:
+            ggml_cuda_convrot_linear(ctx, dst);
+            break;
         case GGML_OP_CROSS_ENTROPY_LOSS:
             ggml_cuda_cross_entropy_loss(ctx, dst);
             break;
@@ -5651,6 +5655,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             return ggml_cuda_sage_attn2_supported(dev_ctx->device, op);
         case GGML_OP_SAGE_ATTN2_I8:
             return ggml_cuda_sage_attn2_i8_supported(dev_ctx->device, op);
+        case GGML_OP_CONVROT_LINEAR:
+            return ggml_cuda_convrot_linear_supported(dev_ctx->device, op);
         case GGML_OP_CROSS_ENTROPY_LOSS:
         case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
         case GGML_OP_OPT_STEP_ADAMW:

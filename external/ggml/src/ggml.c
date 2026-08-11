@@ -1083,9 +1083,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
+    "CONVROT_LINEAR",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1198,9 +1199,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "sgd(x)",
 
     "glu(x)",
+    "convrot_linear(weight_i8, input, weight_scale, bias)",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -5550,6 +5552,44 @@ struct ggml_tensor * ggml_sage_attn2_i8(
     result->src[2] = v;
     result->src[3] = q_scale;
     result->src[4] = k_scale;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_convrot_linear(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * weight_i8,
+        struct ggml_tensor  * input,
+        struct ggml_tensor  * weight_scale,
+        struct ggml_tensor  * bias,
+        int                   group_size) {
+    GGML_ASSERT(weight_i8->type == GGML_TYPE_I8);
+    GGML_ASSERT(input->type == GGML_TYPE_F32);
+    GGML_ASSERT(weight_scale->type == GGML_TYPE_F32);
+    GGML_ASSERT(bias == NULL || bias->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(weight_i8));
+    GGML_ASSERT(ggml_is_contiguous(input));
+    GGML_ASSERT(ggml_is_contiguous(weight_scale));
+    GGML_ASSERT(bias == NULL || ggml_is_contiguous(bias));
+    GGML_ASSERT(group_size > 0);
+
+    const int64_t in_features = weight_i8->ne[0];
+    const int64_t out_features = weight_i8->ne[1];
+    GGML_ASSERT(input->ne[0] == in_features);
+    GGML_ASSERT(in_features % group_size == 0);
+    GGML_ASSERT(ggml_nelements(weight_scale) == out_features);
+    GGML_ASSERT(bias == NULL || bias->ne[0] == out_features);
+
+    int64_t ne[4] = { out_features, input->ne[1], input->ne[2], input->ne[3] };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, ggml_n_dims(input), ne);
+
+    ggml_set_op_params_i32(result, 0, group_size);
+
+    result->op     = GGML_OP_CONVROT_LINEAR;
+    result->src[0] = weight_i8;
+    result->src[1] = input;
+    result->src[2] = weight_scale;
+    result->src[3] = bias;
 
     return result;
 }
