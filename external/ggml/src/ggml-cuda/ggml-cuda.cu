@@ -1739,7 +1739,8 @@ static void ggml_cuda_op_mul_mat_cublas(
 
     const int cc = ggml_cuda_info().devices[id].cc;
 
-    const bool supports_bf16 = GGML_CUDA_CC_IS_NVIDIA(cc) || GGML_CUDA_CC_IS_AMD(cc) ||
+    const bool supports_bf16 =
+        (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_AMPERE) || GGML_CUDA_CC_IS_AMD(cc) ||
         (GGML_CUDA_CC_IS_MTHREADS(cc) && cc >= GGML_CUDA_CC_QY2);
 
     const bool use_fp16 =
@@ -1760,18 +1761,19 @@ static void ggml_cuda_op_mul_mat_cublas(
         }
         const nv_bfloat16 * src1_ptr = src1->type == GGML_TYPE_BF16 ? (const nv_bfloat16 *) src1_ddf_i : src1_as_bf16.get();
         const nv_bfloat16 * src0_ptr = (const nv_bfloat16 *)src0_dd_i;
-        ggml_cuda_pool_alloc<nv_bfloat16> dst_bf16(ctx.pool(id), row_diff*src1_ncols);
-
         const float alpha_f32 = 1.0f;
         const float beta_f32  = 0.0f;
 
 #if defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
+        ggml_cuda_pool_alloc<nv_bfloat16> dst_bf16(ctx.pool(id), row_diff*src1_ncols);
         ggml_hipblaslt_gemm(ctx, stream,
                 row_diff, src1_ncols, ne10,
                 src0_ptr,       CUDA_R_16BF, ne00, 0,
                 src1_ptr,       CUDA_R_16BF, ne10, 0,
                 dst_bf16.get(), CUDA_R_16BF, ldc,  0,
                 1);
+        const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(GGML_TYPE_BF16);
+        to_fp32_cuda(dst_bf16.get(), dst_dd_i, row_diff*src1_ncols, stream);
         GGML_UNUSED_VARS(alpha_f32, beta_f32);
 #else
         CUBLAS_CHECK(cublasSetStream(ctx.cublas_handle(id), stream));
@@ -1780,13 +1782,10 @@ static void ggml_cuda_op_mul_mat_cublas(
                     row_diff, src1_ncols, ne10,
                     &alpha_f32,  src0_ptr,       CUDA_R_16BF, ne00,
                                  src1_ptr,       CUDA_R_16BF, ne10,
-                    &beta_f32,   dst_bf16.get(), CUDA_R_16BF, ldc,
+                    &beta_f32,   dst_dd_i,       CUDA_R_32F,  ldc,
                     CUBLAS_COMPUTE_32F,
                     CUBLAS_GEMM_DEFAULT_TENSOR_OP));
 #endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
-
-        const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(GGML_TYPE_BF16);
-        to_fp32_cuda(dst_bf16.get(), dst_dd_i, row_diff*src1_ncols, stream);
     } else if (fast_fp16_hardware_available(cc) && use_fp16) {
         // convert src0 and src1 to fp16, multiply as fp16, convert dst to fp32
         ggml_cuda_pool_alloc<half> src0_as_f16(ctx.pool(id));
