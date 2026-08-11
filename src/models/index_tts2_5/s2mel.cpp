@@ -15,6 +15,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -51,6 +54,109 @@ struct GgmlContextDeleter {
         }
     }
 };
+
+// Debug helpers for backend divergence investigation, enabled by environment
+// variables: INDEXTTS25_DUMP_DIR dumps the initial CFM noise and the first
+// diffusion velocity as NPY files; INDEXTTS25_CFM_NOISE_NPY replaces the RNG
+// initial noise with the contents of an NPY float32 file.
+struct CfmDebugTap {
+    std::string name;
+    core::TensorValue value;
+};
+
+std::string cfm_debug_dump_dir() {
+    const char * dir = std::getenv("INDEXTTS25_DUMP_DIR");
+    if (dir == nullptr || *dir == '\0') {
+        return {};
+    }
+    return std::string(dir);
+}
+
+void cfm_write_npy_f32(
+    const std::string & dir,
+    const std::string & name,
+    const std::vector<int64_t> & shape,
+    const std::vector<float> & values) {
+    if (dir.empty()) {
+        return;
+    }
+    std::string header = "{'descr': '<f4', 'fortran_order': False, 'shape': (";
+    for (const int64_t dim : shape) {
+        header += std::to_string(dim);
+        header += ", ";
+    }
+    header += "), }";
+    const size_t total = 10 + header.size() + 1;
+    const size_t padded = (total + 63) / 64 * 64;
+    header.append(padded - 10 - header.size() - 1, ' ');
+    header.push_back('\n');
+    std::ofstream out(dir + "/" + name + ".npy", std::ios::binary | std::ios::trunc);
+    if (!out) {
+        throw std::runtime_error("IndexTTS2.5 failed to open dump file: " + name);
+    }
+    out.write("\x93NUMPY\x01\x00", 8);
+    const uint16_t header_len = static_cast<uint16_t>(header.size());
+    out.write(reinterpret_cast<const char *>(&header_len), sizeof(header_len));
+    out.write(header.data(), static_cast<std::streamsize>(header.size()));
+    out.write(reinterpret_cast<const char *>(values.data()), static_cast<std::streamsize>(values.size() * sizeof(float)));
+}
+
+std::vector<float> cfm_read_npy_f32(const std::string & path, size_t expected_count) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("IndexTTS2.5 failed to open noise file: " + path);
+    }
+    char magic[8];
+    in.read(magic, 8);
+    if (!in || std::memcmp(magic, "\x93NUMPY\x01\x00", 8) != 0) {
+        throw std::runtime_error("IndexTTS2.5 noise file is not an NPY v1 file: " + path);
+    }
+    uint16_t header_len = 0;
+    in.read(reinterpret_cast<char *>(&header_len), sizeof(header_len));
+    std::string header(header_len, '\0');
+    in.read(header.data(), header_len);
+    if (!in || header.find("'<f4'") == std::string::npos || header.find("'fortran_order': False") == std::string::npos) {
+        throw std::runtime_error("IndexTTS2.5 noise file must be little-endian C-order float32: " + path);
+    }
+    const auto shape_pos = header.find("'shape': (");
+    if (shape_pos == std::string::npos) {
+        throw std::runtime_error("IndexTTS2.5 noise file has no shape entry: " + path);
+    }
+    size_t count = 1;
+    const auto shape_end = header.find(')', shape_pos);
+    std::string dims = header.substr(shape_pos + 10, shape_end - shape_pos - 10);
+    size_t begin = 0;
+    while (begin <= dims.size()) {
+        const size_t comma = dims.find(',', begin);
+        const std::string token = dims.substr(begin, comma == std::string::npos ? std::string::npos : comma - begin);
+        const auto first = token.find_first_not_of(" \t");
+        if (first != std::string::npos) {
+            count *= static_cast<size_t>(std::stoll(token.substr(first)));
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        begin = comma + 1;
+    }
+    if (count != expected_count) {
+        throw std::runtime_error("IndexTTS2.5 noise file element count mismatch: " + path);
+    }
+    std::vector<float> out(count);
+    in.read(reinterpret_cast<char *>(out.data()), static_cast<std::streamsize>(count * sizeof(float)));
+    if (!in) {
+        throw std::runtime_error("IndexTTS2.5 noise file data is truncated: " + path);
+    }
+    return out;
+}
+
+std::string cfm_noise_path_from_env() {
+    const char * path = std::getenv("INDEXTTS25_CFM_NOISE_NPY");
+    if (path == nullptr || *path == '\0') {
+        return {};
+    }
+    return std::string(path);
+}
+
 
 core::TensorValue sub(core::ModuleBuildContext & ctx, const core::TensorValue & lhs, const core::TensorValue & rhs) {
     core::validate_shape(rhs, lhs.shape, "Sub rhs");
@@ -234,10 +340,22 @@ core::TensorValue cfm_wavenet(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input_bct,
     const core::TensorValue & timestep_b,
-    const IndexTTS25S2MelCfmWeights & weights) {
+    const IndexTTS25S2MelCfmWeights & weights,
+    std::vector<CfmDebugTap> * debug_taps = nullptr) {
+    const auto tap = [&](const std::string & name, const core::TensorValue & value) {
+        if (debug_taps != nullptr) {
+            debug_taps->push_back({name, core::ensure_backend_addressable_layout(ctx, value)});
+        }
+    };
     auto g = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, timestep_b), core::TensorShape::from_dims({timestep_b.shape.dims[0], kHidden, 1}));
     g = modules::Conv1dModule({kHidden, 2 * kHidden * kWavenetLayers, 1, 1, 0, 1, true}).build(ctx, g, weights.wavenet_cond);
-    auto output = sub(ctx, input_bct, input_bct);
+    tap("wn_g", g);
+    // The zero accumulator must come from a contiguous tensor: input_bct is a
+    // permuted (transposed) view, and the ggml CPU binary-op kernels miscompute
+    // permuted src operands (the CUDA kernels handle them).
+    const auto zeros_base = core::ensure_backend_addressable_layout(ctx, input_bct);
+    auto output = sub(ctx, zeros_base, zeros_base);
+    tap("wn_zeros", output);
     auto x = input_bct;
     for (int64_t i = 0; i < kWavenetLayers; ++i) {
         const int64_t dilation = 1;
@@ -246,6 +364,13 @@ core::TensorValue cfm_wavenet(
         auto x_in = modules::Conv1dModule(
                         {kHidden, 2 * kHidden, kWavenetKernel, 1, 0, static_cast<int>(dilation), true})
                         .build(ctx, x_padded, weights.wavenet_layers[static_cast<size_t>(i)].in_layer);
+        if (i == 0) {
+            tap("wn_x_padded0", x_padded);
+            tap("wn_xin0", x_in);
+        }
+        if (i == 1) {
+            tap("wn_xin1", x_in);
+        }
         auto g_l = modules::SliceModule({1, i * 2 * kHidden, 2 * kHidden}).build(ctx, g);
         g_l = modules::RepeatModule({x_in.shape}).build(ctx, g_l);
         auto acts = modules::AddModule{}.build(ctx, x_in, g_l);
@@ -254,9 +379,15 @@ core::TensorValue cfm_wavenet(
         auto sigmoid_part = modules::SliceModule({1, kHidden, kHidden}).build(ctx, acts);
         sigmoid_part = modules::SigmoidModule{}.build(ctx, sigmoid_part);
         acts = modules::MulModule{}.build(ctx, tanh_part, sigmoid_part);
+        if (i == 0) {
+            tap("wn_acts0", acts);
+        }
         const int64_t res_skip_channels = i < kWavenetLayers - 1 ? 2 * kHidden : kHidden;
         auto res_skip = modules::Conv1dModule({kHidden, res_skip_channels, 1, 1, 0, 1, true})
                             .build(ctx, acts, weights.wavenet_layers[static_cast<size_t>(i)].res_skip_layer);
+        if (i == 0) {
+            tap("wn_res_skip0", res_skip);
+        }
         if (i < kWavenetLayers - 1) {
             auto res = modules::SliceModule({1, 0, kHidden}).build(ctx, res_skip);
             auto skip = modules::SliceModule({1, kHidden, kHidden}).build(ctx, res_skip);
@@ -265,7 +396,18 @@ core::TensorValue cfm_wavenet(
         } else {
             output = modules::AddModule{}.build(ctx, output, res_skip);
         }
+        if (i == 0) {
+            tap("wn_x1", x);
+            tap("wn_output1", output);
+        }
+        if (i == 1) {
+            tap("wn_output2", output);
+        }
+        if (i == 2) {
+            tap("wn_output3", output);
+        }
     }
+    tap("wn_final", output);
     return output;
 }
 
@@ -291,10 +433,17 @@ core::TensorValue build_cfm_estimator(
     const core::TensorValue & style_bc,
     const core::TensorValue & timestep_b,
     const core::TensorValue & positions,
-    const IndexTTS25S2MelCfmWeights & weights) {
+    const IndexTTS25S2MelCfmWeights & weights,
+    std::vector<CfmDebugTap> * debug_taps = nullptr) {
+    const auto tap = [&](const std::string & name, const core::TensorValue & value) {
+        if (debug_taps != nullptr) {
+            debug_taps->push_back({name, core::ensure_backend_addressable_layout(ctx, value)});
+        }
+    };
     const int64_t batch = x_bct.shape.dims[0];
     const int64_t frames = x_bct.shape.dims[2];
     auto t1 = timestep_embedding(ctx, timestep_b, weights.time_freqs, weights.time_mlp0, weights.time_mlp2);
+    tap("t1", t1);
     auto cond = modules::LinearModule({kHidden, kHidden, true, GGML_PREC_F32}).build(ctx, cond_btc, weights.cond_projection);
     auto x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x_bct);
     auto prompt = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, prompt_bct);
@@ -304,6 +453,7 @@ core::TensorValue build_cfm_estimator(
     hidden = modules::ConcatModule({2}).build(ctx, hidden, style);
     hidden = modules::LinearModule({kHidden + 2 * kMelChannels + kStyleDim, kHidden, true, GGML_PREC_F32})
                  .build(ctx, hidden, weights.cond_x_merge);
+    tap("merged", hidden);
 
     std::vector<core::TensorValue> skips;
     skips.reserve(static_cast<size_t>(kDitLayers / 2));
@@ -313,6 +463,9 @@ core::TensorValue build_cfm_estimator(
             skip = &skips.back();
         }
         hidden = cfm_transformer_layer(ctx, hidden, t1, positions, weights.dit_layers[static_cast<size_t>(i)], skip);
+        if (i == 0) {
+            tap("dit_layer0", hidden);
+        }
         if (i > kDitLayers / 2) {
             skips.pop_back();
         } else if (i < kDitLayers / 2) {
@@ -320,15 +473,18 @@ core::TensorValue build_cfm_estimator(
         }
     }
     hidden = adaptive_rms_norm(ctx, hidden, t1, weights.dit_norm);
+    tap("dit_out", hidden);
     hidden = modules::LinearModule({kHidden + kMelChannels, kHidden, true, GGML_PREC_F32})
                  .build(ctx, modules::ConcatModule({2}).build(ctx, hidden, x), weights.skip_linear);
     auto wavenet_x = modules::LinearModule({kHidden, kHidden, true, GGML_PREC_F32}).build(ctx, hidden, weights.conv1);
     wavenet_x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, wavenet_x);
     auto t2 = timestep_embedding(ctx, timestep_b, weights.time2_freqs, weights.time2_mlp0, weights.time2_mlp2);
-    wavenet_x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, cfm_wavenet(ctx, wavenet_x, t2, weights));
+    wavenet_x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, cfm_wavenet(ctx, wavenet_x, t2, weights, debug_taps));
     auto projected = modules::LinearModule({kHidden, kHidden, true, GGML_PREC_F32}).build(ctx, hidden, weights.res_projection);
     hidden = modules::AddModule{}.build(ctx, wavenet_x, projected);
+    tap("wavenet_out", hidden);
     hidden = cfm_final_layer(ctx, hidden, t1, weights);
+    tap("final_hidden", hidden);
     hidden = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);
     return modules::Conv1dModule({kHidden, kMelChannels, 1, 1, 0, 1, true}).build(ctx, hidden, weights.conv2);
 }
@@ -898,6 +1054,11 @@ public:
         if (input_ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize IndexTTS2.5 S2Mel CFM input context");
         }
+        ggml_init_params output_params{16ull * 1024ull * 1024ull, nullptr, true};
+        output_ctx_.reset(ggml_init(output_params));
+        if (output_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize IndexTTS2.5 S2Mel CFM output context");
+        }
         core::ModuleBuildContext ctx{ctx_.get(), "index_tts2_5.s2mel.cfm", execution_.backend_type()};
         core::ModuleBuildContext input_ctx{input_ctx_.get(), "index_tts2_5.s2mel.cfm.inputs", execution_.backend_type()};
         x_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, kMelChannels, frames_}))
@@ -914,6 +1075,7 @@ public:
         ggml_set_input(style_);
         ggml_set_input(timestep_);
         ggml_set_input(positions_);
+        std::vector<CfmDebugTap> taps;
         auto output = build_cfm_estimator(
             ctx,
             core::wrap_tensor(x_, core::TensorShape::from_dims({batch_, kMelChannels, frames_}), GGML_TYPE_F32),
@@ -922,14 +1084,28 @@ public:
             core::wrap_tensor(style_, core::TensorShape::from_dims({batch_, kStyleDim}), GGML_TYPE_F32),
             core::wrap_tensor(timestep_, core::TensorShape::from_dims({batch_}), GGML_TYPE_F32),
             core::wrap_tensor(positions_, core::TensorShape::from_dims({frames_}), GGML_TYPE_I32),
-            weights_->cfm);
+            weights_->cfm,
+            cfm_debug_dump_dir().empty() ? nullptr : &taps);
         output_ = core::ensure_backend_addressable_layout(ctx, output).tensor;
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(131072, frames_ * 4096)), false);
         ggml_build_forward_expand(graph_, output_);
+        core::ModuleBuildContext output_ctx{output_ctx_.get(), "index_tts2_5.s2mel.cfm.outputs", execution_.backend_type()};
+        for (const auto & tap : taps) {
+            auto * tap_output = core::make_tensor(output_ctx, GGML_TYPE_F32, tap.value.shape).tensor;
+            ggml_build_forward_expand(graph_, ggml_cpy(ctx_.get(), tap.value.tensor, tap_output));
+            debug_taps_.push_back({tap.name, tap_output, tap.value.shape});
+        }
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
         if (input_buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate IndexTTS2.5 S2Mel CFM input buffer");
+        }
+        if (!debug_taps_.empty()) {
+            output_buffer_ = ggml_backend_alloc_ctx_tensors(output_ctx_.get(), execution_.backend());
+            if (output_buffer_ == nullptr) {
+                clear_graph();
+                throw std::runtime_error("failed to allocate IndexTTS2.5 S2Mel CFM output buffer");
+            }
         }
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
         if (gallocr_ == nullptr ||
@@ -989,6 +1165,16 @@ public:
         timing_start = Clock::now();
         ggml_backend_tensor_get(output_, out.data(), 0, out.size() * sizeof(float));
         debug::timing_log_scalar("index_tts2_5.s2mel.cfm.output_read_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        const std::string dump_dir = cfm_debug_dump_dir();
+        if (!dump_dir.empty() && !taps_dumped_) {
+            taps_dumped_ = true;
+            for (const auto & tap : debug_taps_) {
+                std::vector<float> values(tap.shape.num_elements());
+                ggml_backend_tensor_get(tap.tensor, values.data(), 0, values.size() * sizeof(float));
+                const std::vector<int64_t> dims(tap.shape.dims.begin(), tap.shape.dims.begin() + tap.shape.rank);
+                cfm_write_npy_f32(dump_dir, "cfm_tap_" + tap.name, dims, values);
+            }
+        }
         return out;
     }
 
@@ -1006,6 +1192,10 @@ private:
             ggml_backend_buffer_free(input_buffer_);
             input_buffer_ = nullptr;
         }
+        if (output_buffer_ != nullptr) {
+            ggml_backend_buffer_free(output_buffer_);
+            output_buffer_ = nullptr;
+        }
     }
 
     core::ExecutionContext & execution_;
@@ -1014,6 +1204,7 @@ private:
     bool use_cfg_ = false;
     int64_t batch_ = 1;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> output_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * x_ = nullptr;
     ggml_tensor * prompt_ = nullptr;
@@ -1022,9 +1213,17 @@ private:
     ggml_tensor * timestep_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * output_ = nullptr;
+    struct DebugTapTensor {
+        std::string name;
+        ggml_tensor * tensor = nullptr;
+        core::TensorShape shape;
+    };
+    std::vector<DebugTapTensor> debug_taps_;
+    bool taps_dumped_ = false;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
+    ggml_backend_buffer_t output_buffer_ = nullptr;
     std::vector<int32_t> positions_values_;
 };
 
@@ -1221,9 +1420,15 @@ IndexTTS25S2MelMel IndexTTS25S2MelRuntime::infer_mel(
         rng_offset_blocks,
         rng_policy,
         engine::sampling::TorchRandnPrecision::Float32);
+    const std::string noise_path = cfm_noise_path_from_env();
+    if (!noise_path.empty()) {
+        x = cfm_read_npy_f32(noise_path, static_cast<size_t>(kMelChannels * total_frames));
+    }
     auto prompt_x = make_prompt_x(reference_mel, kMelChannels, total_frames, reference_frames);
     zero_prompt_region(x, kMelChannels, total_frames, reference_frames);
     auto mu = make_condition_with_prompt(condition, total_frames);
+    const std::string cfm_dump_dir = cfm_debug_dump_dir();
+    cfm_write_npy_f32(cfm_dump_dir, "cfm_noise", {kMelChannels, total_frames}, x);
 
     const auto cfm_start = Clock::now();
     double graph_ms = 0.0;
@@ -1237,6 +1442,13 @@ IndexTTS25S2MelMel IndexTTS25S2MelRuntime::infer_mel(
         auto style_batched = repeat_or_zero_rows(style, kStyleDim, use_cfg, true);
         std::vector<float> timestep(static_cast<size_t>(use_cfg ? 2 : 1), t);
         const auto velocity = cfm_graph_->run(x_batched, prompt_batched, cond_batched, style_batched, timestep);
+        if (step == 1) {
+            cfm_write_npy_f32(
+                cfm_dump_dir,
+                "cfm_velocity0",
+                {use_cfg ? 2 : 1, kMelChannels, total_frames},
+                velocity);
+        }
         graph_ms += engine::debug::elapsed_ms(graph_start);
         const int64_t row_values = kMelChannels * total_frames;
         for (int64_t i = 0; i < row_values; ++i) {
