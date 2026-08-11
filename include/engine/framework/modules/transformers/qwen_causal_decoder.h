@@ -19,6 +19,11 @@ enum class QwenCausalDecoderLogitsMode {
     AllSteps,
 };
 
+struct QwenDecoderHiddenConfig {
+    QwenDecoderStackConfig stack;
+    QwenCausalDecoderLogitsMode hidden_mode = QwenCausalDecoderLogitsMode::LastStep;
+};
+
 struct QwenCausalDecoderConfig {
     QwenDecoderStackConfig stack;
     int64_t logits_size = 0;
@@ -34,6 +39,23 @@ struct QwenCausalDecoderWeights {
     LinearWeights lm_head;
 };
 
+struct QwenDecoderHiddenWeights {
+    QwenDecoderStackWeights stack;
+    NormWeights final_norm;
+};
+
+struct QwenDecoderHiddenOutputs {
+    core::TensorValue sequence;
+    core::TensorValue hidden;
+    QwenDecoderStackState state;
+};
+
+struct QwenDecoderHiddenStaticCacheOutputs {
+    core::TensorValue sequence;
+    core::TensorValue hidden;
+    runtime::TransformerKVCache cache;
+};
+
 struct QwenCausalDecoderOutputs {
     core::TensorValue sequence;
     core::TensorValue hidden;
@@ -46,6 +68,34 @@ struct QwenCausalDecoderStaticCacheOutputs {
     core::TensorValue hidden;
     core::TensorValue logits;
     runtime::TransformerKVCache cache;
+};
+
+class QwenDecoderHiddenModule {
+public:
+    explicit QwenDecoderHiddenModule(QwenDecoderHiddenConfig config);
+
+    const QwenDecoderHiddenConfig & config() const noexcept;
+
+    QwenDecoderHiddenOutputs build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const core::TensorValue & positions,
+        const QwenDecoderHiddenWeights & weights,
+        const std::optional<QwenDecoderStackState> & prefix_state = std::nullopt,
+        const std::optional<core::TensorValue> & attention_mask = std::nullopt) const;
+
+    QwenDecoderHiddenStaticCacheOutputs build_static_cache_tail(
+        core::ModuleBuildContext & ctx,
+        ggml_cgraph * graph,
+        const core::TensorValue & input,
+        const core::TensorValue & positions,
+        const QwenDecoderHiddenWeights & weights,
+        int64_t cache_steps,
+        const core::TensorValue & attention_mask,
+        const std::optional<core::TensorValue> & cache_slot = std::nullopt) const;
+
+private:
+    QwenDecoderHiddenConfig config_;
 };
 
 class QwenCausalDecoderModule {

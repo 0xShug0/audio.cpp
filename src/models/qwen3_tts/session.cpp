@@ -562,7 +562,7 @@ Qwen3TTSRequest Qwen3TTSSession::make_request(const runtime::TaskRequest & reque
         Qwen3VoiceDesignInput voice_design;
         voice_design.instruct = runtime::find_option(
             request.options,
-            {"instruct"})
+            {"instruction", "instruct"})
             .value_or("");
         if (voice_design.instruct.empty()
             && request.voice.has_value()
@@ -581,7 +581,7 @@ Qwen3TTSRequest Qwen3TTSSession::make_request(const runtime::TaskRequest & reque
         }
         custom_voice.instruct = runtime::find_option(
             request.options,
-            {"instruct"})
+            {"instruction", "instruct"})
             .value_or("");
         if (custom_voice.instruct.empty()
             && request.voice.has_value()

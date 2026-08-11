@@ -42,6 +42,7 @@ struct BigVganGraphOptions {
     bool use_tanh_at_final = false;
     BigVganActivationLayout activation_layout = BigVganActivationLayout::InterleavedPairs;
     bool use_depthwise_transpose_module = false;
+    bool lower_padded_conv_transpose_as_crop = false;
 };
 
 struct BigVganVocoderWeights {
@@ -100,6 +101,14 @@ BigVganVocoderWeights load_direct_bigvgan_from_tensor_source(
     const assets::TensorSource & source,
     const std::string & prefix,
     BigVganVocoderConfig config,
+    BigVganActivationLayout activation_layout = BigVganActivationLayout::GroupedByStage);
+
+BigVganVocoderWeights load_mono_module_list_bigvgan_from_tensor_source(
+    core::BackendWeightStore & store,
+    const assets::TensorSource & source,
+    const std::string & prefix,
+    BigVganVocoderConfig config,
+    bool torch_parametrized_weight_norm,
     BigVganActivationLayout activation_layout = BigVganActivationLayout::GroupedByStage);
 
 ggml_tensor * build_bigvgan_graph(

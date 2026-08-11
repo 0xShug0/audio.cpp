@@ -323,6 +323,9 @@ void emit_task_result(
             audio.samples,
         });
         std::cout << "audio_out=" << audio_out->string() << "\n";
+    } else if (result.artifact_output.has_value() && audio_out.has_value()) {
+        write_artifact_output(*audio_out, *result.artifact_output);
+        std::cout << "artifact_out=" << audio_out->string() << "\n";
     }
 
     if (!result.named_audio_outputs.empty()) {
@@ -390,6 +393,18 @@ void emit_task_result(
 
     if (result.text_output.has_value()) {
         std::cout << "text_output=" << result.text_output->text << "\n";
+    }
+    if (result.artifact_output.has_value()) {
+        const auto & artifact = *result.artifact_output;
+        std::cout << "artifact=" << artifact.id
+                  << " kind=" << artifact_kind_name(artifact.kind)
+                  << " bytes=" << artifact.payload.size() << "\n";
+        if (artifact_out_dir.has_value()) {
+            std::filesystem::create_directories(*artifact_out_dir);
+            const auto path = *artifact_out_dir / (safe_output_name(artifact.id) + artifact_extension(artifact));
+            write_artifact_output(path, artifact);
+            std::cout << "artifact_out[" << artifact.id << "]=" << path.string() << "\n";
+        }
     }
     if (!result.output_artifacts.empty()) {
         std::cout << "artifacts=" << result.output_artifacts.size() << "\n";
@@ -465,6 +480,9 @@ void emit_batch_item_result(
         }
         if (!item.result.named_audio_outputs.empty()) {
             named_out_dir = *policy.output_dir / request_id;
+        }
+        if (item.result.artifact_output.has_value()) {
+            audio_out = *policy.output_dir / (request_id + artifact_extension(*item.result.artifact_output));
         }
         if (!item.result.output_artifacts.empty()) {
             artifact_out_dir = *policy.output_dir / request_id;

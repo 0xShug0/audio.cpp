@@ -2,6 +2,8 @@
 
 #include "engine/framework/core/module.h"
 
+#include <vector>
+
 namespace engine::modules {
 
 struct LSTMCellConfig {
@@ -29,6 +31,10 @@ struct LSTMSequenceConfig {
 
 struct LSTMSequenceWeights {
     LSTMCellWeights cell;
+};
+
+struct LSTMStackWeights {
+    std::vector<LSTMCellWeights> layers;
 };
 
 struct LSTMSequenceOutputs {

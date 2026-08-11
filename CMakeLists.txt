@@ -275,6 +275,7 @@ add_library(engine_core OBJECT
     src/framework/model_spec/options.cpp
     src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
+    src/framework/assets/weight_norm_folding.cpp
     src/framework/assets/torch_bin.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
@@ -350,6 +351,8 @@ add_library(engine_core OBJECT
     src/framework/modules/attention/streaming_frame_attention_cache.cpp
     src/framework/modules/transformers/qwen_decoder.cpp
     src/framework/modules/transformers/qwen_causal_decoder.cpp
+    src/framework/modules/transformers/qwen_causal_decode_runtime.cpp
+    src/framework/modules/transformers/qwen3_vl_encoder_runtime.cpp
     src/framework/modules/attention/cross_attention.cpp
     src/framework/modules/attention/transformer_blocks.cpp
     src/framework/modules/conditioning_modules.cpp
@@ -534,6 +537,42 @@ audiocpp_add_model(inflect_v2
         engine::models::inflect_v2::make_inflect_v2_loader
 )
 
+audiocpp_add_model(minimax_h3
+    SOURCES
+        src/community_models/minimax_h3/assets.cpp
+        src/community_models/minimax_h3/audio_vae_decoder.cpp
+        src/community_models/minimax_h3/dit_acceleration.cpp
+        src/community_models/minimax_h3/dit_denoiser.cpp
+        src/community_models/minimax_h3/generation_plan.cpp
+        src/community_models/minimax_h3/pipeline.cpp
+        src/community_models/minimax_h3/sampler.cpp
+        src/community_models/minimax_h3/session.cpp
+        src/community_models/minimax_h3/video_vae_decoder.cpp
+    INCLUDES
+        engine/community_models/minimax_h3/session.h
+    LOADERS
+        engine::models::minimax_h3::make_minimax_h3_loader
+)
+
+audiocpp_add_model(neutts
+    SOURCES
+        src/models/neutts/ar.cpp
+        src/models/neutts/assets.cpp
+        src/models/neutts/backbone.cpp
+        src/models/neutts/codec.cpp
+        src/models/neutts/prompt.cpp
+        src/models/neutts/session.cpp
+    INCLUDES
+        engine/models/neutts/ar.h
+        engine/models/neutts/assets.h
+        engine/models/neutts/backbone.h
+        engine/models/neutts/codec.h
+        engine/models/neutts/prompt.h
+        engine/models/neutts/session.h
+    LOADERS
+        engine::models::neutts::make_neutts_loader
+)
+
 if (MSVC)
     set_source_files_properties(
         src/community_models/inflect_v2/frontend.cpp
@@ -624,6 +663,19 @@ audiocpp_add_model(moss
     ALIASES
         moss_tts_local
         moss_tts_nano
+)
+
+audiocpp_add_model(muscriptor
+    SOURCES
+        src/models/muscriptor/assets.cpp
+        src/models/muscriptor/frontend.cpp
+        src/models/muscriptor/tokenizer.cpp
+        src/models/muscriptor/decoder.cpp
+        src/models/muscriptor/session.cpp
+    INCLUDES
+        engine/models/muscriptor/session.h
+    LOADERS
+        engine::models::muscriptor::make_muscriptor_loader
 )
 
 audiocpp_add_model(voxcpm2
@@ -726,6 +778,26 @@ audiocpp_add_model(confucius4_tts
         engine/models/confucius4_tts/session.h
     LOADERS
         engine::models::confucius4_tts::make_confucius4_tts_loader
+)
+
+audiocpp_add_model(dots_tts
+    SOURCES
+        src/models/dots_tts/assets.cpp
+        src/models/dots_tts/audio_features.cpp
+        src/models/dots_tts/audio_vae.cpp
+        src/models/dots_tts/flow.cpp
+        src/models/dots_tts/flow_meanflow.cpp
+        src/models/dots_tts/flow_soar.cpp
+        src/models/dots_tts/latent.cpp
+        src/models/dots_tts/llm.cpp
+        src/models/dots_tts/patch_encoder.cpp
+        src/models/dots_tts/request.cpp
+        src/models/dots_tts/session.cpp
+        src/models/dots_tts/tokenizer.cpp
+    INCLUDES
+        engine/models/dots_tts/session.h
+    LOADERS
+        engine::models::dots_tts::make_dots_tts_loader
 )
 
 audiocpp_add_model(dramabox
@@ -1281,12 +1353,57 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_cli PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+set(AUDIOCPP_UI_DIST "${CMAKE_CURRENT_SOURCE_DIR}/webui/native/dist/index.html")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${AUDIOCPP_UI_DIST}")
+if (EXISTS "${AUDIOCPP_UI_DIST}")
+    file(READ "${AUDIOCPP_UI_DIST}" AUDIOCPP_UI_HEX HEX)
+else()
+    string(HEX "<!doctype html><title>audio.cpp</title><p>Embedded WebUI assets are unavailable.</p>" AUDIOCPP_UI_HEX)
+endif()
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," AUDIOCPP_UI_BYTES "${AUDIOCPP_UI_HEX}")
+string(REPLACE "," ",\n" AUDIOCPP_UI_BYTES "${AUDIOCPP_UI_BYTES}")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/app/server/audiocpp_ui_asset.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/audiocpp_ui_asset.h"
+    @ONLY
+)
+
+set(AUDIOCPP_DEMO_VOICE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/webui/native/demo_voices")
+macro(audiocpp_embed_demo_voice_file INPUT_FILE OUTPUT_VARIABLE)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${INPUT_FILE}")
+    file(READ "${INPUT_FILE}" _audiocpp_demo_voice_hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," ${OUTPUT_VARIABLE} "${_audiocpp_demo_voice_hex}")
+    string(REPLACE "," ",\n" ${OUTPUT_VARIABLE} "${${OUTPUT_VARIABLE}}")
+endmacro()
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/demo_1_man.wav"
+    AUDIOCPP_DEMO_1_MAN_BYTES)
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/demo_2_man.wav"
+    AUDIOCPP_DEMO_2_MAN_BYTES)
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/demo_3_woman.wav"
+    AUDIOCPP_DEMO_3_WOMAN_BYTES)
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/demo_4_woman.wav"
+    AUDIOCPP_DEMO_4_WOMAN_BYTES)
+audiocpp_embed_demo_voice_file(
+    "${AUDIOCPP_DEMO_VOICE_DIR}/prompt_text"
+    AUDIOCPP_DEMO_PROMPT_TEXT_BYTES)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/app/server/audiocpp_demo_voice_assets.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/audiocpp_demo_voice_assets.h"
+    @ONLY
+)
+
 add_executable(audiocpp_server
     app/server/main.cpp
     app/server/config.cpp
     app/server/http.cpp
+    app/server/model_installer.cpp
     app/server/multipart.cpp
     app/server/runtime.cpp
+    app/server/ui_assets.cpp
     app/cli/args.cpp
     app/cli/request.cpp
     app/streaming/pcm_source.cpp
@@ -1294,6 +1411,7 @@ add_executable(audiocpp_server
 )
 
 target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
+target_include_directories(audiocpp_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 if (WIN32)
     target_link_libraries(audiocpp_server PRIVATE ws2_32)
 endif()
@@ -1410,9 +1528,11 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
+    add_engine_warmbench(muscriptor_warm_bench tests/muscriptor/muscriptor_warm_bench.cpp)
     add_engine_warmbench(moss_tts_nano_warm_bench tests/moss_tts_nano/moss_tts_nano_warm_bench.cpp)
     add_engine_warmbench(moss_tts_local_warm_bench tests/moss_tts_local/moss_tts_local_warm_bench.cpp)
     add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)
+    add_engine_warmbench(neutts_warm_bench tests/neutts/neutts_warm_bench.cpp)
     add_engine_warmbench(omnivoice_warm_bench tests/omnivoice/omnivoice_warm_bench.cpp)
     add_engine_warmbench(outetts_warm_bench tests/outetts/outetts_warm_bench.cpp)
     add_engine_warmbench(parakeet_warm_bench tests/parakeet_tdt/parakeet_warm_bench.cpp)
@@ -1484,6 +1604,8 @@ if (ENGINE_BUILD_TESTS)
         NAME audio_dsp_test
         COMMAND audio_dsp_test
     )
+
+    add_engine_unittest(dots_tts_vocoder_parity tests/dots_tts/dots_tts_vocoder_parity.cpp)
 
     add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
 
@@ -2096,6 +2218,18 @@ if (ENGINE_BUILD_TESTS)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(parakeet_parity_dump PRIVATE OpenMP::OpenMP_CXX)
     endif()
+
+    add_executable(server_model_installer_test
+        tests/unittests/test_server_model_installer.cpp
+        app/server/model_installer.cpp
+    )
+    target_include_directories(server_model_installer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+    target_link_libraries(server_model_installer_test PRIVATE Threads::Threads)
+
+    add_test(
+        NAME server_model_installer_test
+        COMMAND server_model_installer_test
+    )
 endif()
 
 if (ENGINE_BUILD_EXAMPLES)

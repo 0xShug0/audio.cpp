@@ -67,7 +67,7 @@ void require_spec_number(const json::Value & value, std::string_view path) {
 const std::unordered_set<std::string> & tasks() {
     static const std::unordered_set<std::string> values = {
         "vad", "asr", "diar", "sep", "music", "sfx", "edit", "tts", "clone", "vc",
-        "s2s", "align", "design", "speaker", "svc", "codec",
+        "s2s", "align", "design", "speaker", "svc", "codec", "midi",
     };
     return values;
 }
@@ -139,7 +139,7 @@ const std::unordered_set<std::string> & runtime_tags() {
 const std::unordered_set<std::string> & ui_tags() {
     static const std::unordered_set<std::string> values = {
         "ASR", "TTS", "Clone", "VC", "Align", "VAD", "Diar", "Codec", "Sep", "Music", "SFX",
-        "Edit", "Design", "GGUF", "Stream",
+        "Edit", "Design", "MIDI", "GGUF", "Stream",
     };
     return values;
 }
@@ -158,6 +158,7 @@ const std::unordered_set<std::string> & capabilities_for_task(const std::string 
         {"vad", {"speech_segments", "chunk_planning"}},
         {"diar", {"speaker_turns"}},
         {"sep", {"stems"}},
+        {"midi", {"note_events", "midi_artifact"}},
         {"music", {"lyrics", "instrumental", "continuation", "style_control"}},
         {"sfx", {"prompt_generation"}},
         {"edit", {"prompt_editing", "inpaint"}},

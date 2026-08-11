@@ -404,6 +404,13 @@ std::vector<float> resample_mono_linear(
     return output;
 }
 
+TorchaudioSincHannResampleOptions torchaudio_sinc_hann_float32_options() {
+    TorchaudioSincHannResampleOptions options;
+    options.kernel_mode = TorchaudioSincHannKernelMode::Float32ComputationStoredAsFloat32;
+    options.accumulation = TorchaudioSincHannAccumulation::Float32;
+    return options;
+}
+
 std::vector<float> resample_mono_torchaudio_sinc_hann(
     const std::vector<float> & mono_samples,
     int source_sample_rate_hz,

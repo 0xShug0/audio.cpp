@@ -45,7 +45,7 @@ audiocpp_cli --task clon --family moss_tts_local --model /path/to/MOSS-TTS-Local
 | `--request-option text_top_k=<n>` | integer | `50` | Text-gate top-k sampling limit. |
 | `--text-chunk-size` | characters | `2048` | Framework long-form text chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |
-| `--session-option moss_tts_local.weight_type=auto|native|f32|f16|bf16|q8_0` | enum | `auto` | Backbone weight storage type. |
+| `--session-option moss_tts_local.weight_type=auto\|native\|f32\|f16\|bf16\|q8_0` | enum | `auto` | Backbone weight storage type. |
 | `--session-option moss_tts_local.reference_cache_slots=<n>` | integer slots | `1` | Prepared reference-voice cache slots; set `0` to disable reuse. |
 
 ## MOSS-TTS-Nano
@@ -90,9 +90,9 @@ audiocpp_cli --task clon --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-1
 | `--request-option text_top_k=<n>` | integer | `50` | Text-gate top-k sampling limit. |
 | `--text-chunk-size` | characters | `256` | Framework long-form text chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |
-| `--session-option moss_tts_nano.weight_type=native|f32|f16|bf16|q8_0` | enum | `native` | Global and local-frame weight storage type. |
-| `--session-option moss_tts_nano.global_weight_type=native|f32|f16|bf16|q8_0` | enum | `native` | Global transformer weight storage type. |
-| `--session-option moss_tts_nano.local_frame_weight_type=native|f32|f16|bf16|q8_0` | enum | `native` | Local frame decoder weight storage type. |
+| `--session-option moss_tts_nano.weight_type=native\|f32\|f16\|bf16\|q8_0` | enum | `native` | Global and local-frame weight storage type. |
+| `--session-option moss_tts_nano.global_weight_type=native\|f32\|f16\|bf16\|q8_0` | enum | `native` | Global transformer weight storage type. |
+| `--session-option moss_tts_nano.local_frame_weight_type=native\|f32\|f16\|bf16\|q8_0` | enum | `native` | Local frame decoder weight storage type. |
 | `--session-option moss_tts_nano.global_prefill_graph_arena_mb=<n>` | MB | `256` | Global prefill graph arena size. |
 | `--session-option moss_tts_nano.global_decode_graph_arena_mb=<n>` | MB | `128` | Global decode graph arena size. |
 | `--session-option moss_tts_nano.global_weight_context_mb=<n>` | MB | `512` | Global transformer weight context size. |

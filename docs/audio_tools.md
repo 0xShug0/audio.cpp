@@ -6,11 +6,16 @@
 | RVC | `rvc` | `vc` | [RVC](#rvc) |
 | Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |
 | VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
+| MuScriptor | `muscriptor` | audio to MIDI/events | [MuScriptor](#muscriptor) |
 | HTDemucs | `htdemucs` | `sep` | [HTDemucs](#htdemucs) |
 | BS-RoFormer | `bs_roformer` | `sep` | [BS-RoFormer](#bs-roformer) |
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
 
-This page covers voice conversion, codec, and source-separation families. These models do not share one interface: conversion models consume source speech plus a target voice, while the separation models consume a mixture and write named stems.
+This page covers voice conversion, codec, audio-to-symbolic, and source-separation
+families. These models do not share one interface: conversion models consume
+source speech plus a target voice, audio-to-symbolic models consume audio and
+write structured artifacts, and separation models consume a mixture and write
+named stems.
 
 Common CLI shape:
 
@@ -123,6 +128,26 @@ VeVo2 covers speech, singing, voice conversion, singing conversion, and editing 
 ```bash
 audiocpp_cli --task vc --family vevo2 --model models/VeVo2 --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
 ```
+
+## MuScriptor
+
+MuScriptor is an audio-to-symbolic tool that converts music audio into
+note-event JSON or a MIDI file. See [MuScriptor](models/muscriptor.md) for
+streaming, sampling, and full option details.
+
+```bash
+python3 tools/model_manager_v2.py install muscriptor
+
+audiocpp_cli --task midi --family muscriptor \
+  --model models/MuScriptor-Small-GGUF/muscriptor-small-f32.gguf \
+  --backend cuda \
+  --audio song.wav \
+  --request-option instruments=drums,electric_bass \
+  --out result.mid
+```
+
+Use `--request-option output_format=json --out events.json` when you want the
+generated note-event JSON instead of MIDI.
 
 ## HTDemucs
 

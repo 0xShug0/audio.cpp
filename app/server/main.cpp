@@ -41,13 +41,33 @@ bool has_arg(int argc, char ** argv, const std::string & name) {
     return false;
 }
 
+std::filesystem::path executable_directory(const char * argv0) {
+    if (argv0 == nullptr || *argv0 == '\0') {
+        return std::filesystem::current_path();
+    }
+    std::error_code ec;
+    auto path = std::filesystem::absolute(std::filesystem::path(argv0), ec);
+    if (ec) {
+        return std::filesystem::current_path();
+    }
+    path = path.lexically_normal();
+    if (std::filesystem::is_regular_file(path, ec)) {
+        return path.parent_path();
+    }
+    return std::filesystem::current_path();
+}
+
 void print_help() {
     std::cout
-        << "audiocpp_server --config <server.json> [--host <ip>] [--port <port>] [--backend <backend>]\n"
+        << "audiocpp_server [--config <server.json>] [--ui] [--host <ip>] [--port <port>] [--backend <backend>]\n"
         << "                [--device <id>] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--model-spec-override <json-or-directory>]\n"
         << "                [--log] [--log-file <path>]\n"
         << "                [--cors-origins <origins>]\n"
+        << "  --ui                             serve the embedded WebUI; without --config, start\n"
+        << "                                   as a native model-management host\n"
+        << "  --no-ui                          disable the embedded WebUI\n"
+        << "  --ui-management                  allow WebUI model load/unload and temporary uploads\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
         << "                                   busy this long; default 300000, 0 disables\n"
@@ -55,8 +75,21 @@ void print_help() {
         << "                                   requests from any origin for trusted local demos only\n"
         << "\n"
         << "Endpoints:\n"
+        << "  GET  /                           embedded WebUI (enabled by default with a config)\n"
         << "  GET  /health\n"
         << "  GET  /v1/models\n"
+        << "  POST /v1/models/load             available with --ui-management\n"
+        << "  POST /v1/models/unload           available with --ui-management\n"
+        << "  POST /v1/ui/upload               available with --ui-management\n"
+        << "  POST /v1/ui/models/install       background package download/preparation\n"
+        << "  POST /v1/ui/models/install/stop  stop one active package download\n"
+        << "  POST /v1/ui/models/clean-partial remove abandoned package staging files\n"
+        << "  POST /v1/ui/models/delete        remove one installed package precision\n"
+        << "  GET  /v1/ui/models-root          current and binary-local default models folders\n"
+        << "  POST /v1/ui/models-root          select a models folder (empty path restores default)\n"
+        << "  POST /v1/ui/browse-directories   list local folders for the native folder picker\n"
+        << "  GET  /v1/ui/models/install-status[?id=<package>]\n"
+        << "  GET  /v1/ui/models/package-sizes package sizes from metadata-only checks\n"
         << "  GET  /v1/audio/voices?model=<id>\n"
         << "  POST /v1/audio/speech\n"
         << "  POST /v1/audio/transcriptions\n"
@@ -75,8 +108,9 @@ int main(int argc, char ** argv) {
             return 0;
         }
         const auto config_path = arg_value(argc, argv, "--config");
-        if (!config_path.has_value()) {
-            throw std::runtime_error("missing required --config argument");
+        const bool ui_requested = has_arg(argc, argv, "--ui");
+        if (!config_path.has_value() && !ui_requested) {
+            throw std::runtime_error("missing required --config argument (or use --ui for the native WebUI)");
         }
         const auto log_file = arg_value(argc, argv, "--log-file");
         engine::debug::configure_logging(engine::debug::LoggingConfig{
@@ -94,7 +128,22 @@ int main(int argc, char ** argv) {
         std::signal(SIGPIPE, SIG_IGN);
 #endif
 
-        auto config = minitts::server::load_server_config(*config_path);
+        auto config = config_path.has_value()
+            ? minitts::server::load_server_config(*config_path)
+            : minitts::server::ServerConfig{};
+        if (!config_path.has_value()) {
+            config.ui_management = true;
+            config.lazy_load = true;
+        }
+        if (ui_requested) {
+            config.ui_enabled = true;
+        }
+        if (has_arg(argc, argv, "--no-ui")) {
+            config.ui_enabled = false;
+        }
+        if (has_arg(argc, argv, "--ui-management")) {
+            config.ui_management = true;
+        }
         if (const auto host = arg_value(argc, argv, "--host")) {
             config.host = *host;
         }
@@ -129,7 +178,11 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("--busy-timeout-ms must be >= 0 (0 disables the guard)");
         }
 
-        minitts::server::ServerState state(config, std::filesystem::current_path());
+        const auto ui_resource_anchor = executable_directory(argc > 0 ? argv[0] : nullptr);
+        minitts::server::ServerState state(
+            config,
+            std::filesystem::current_path(),
+            ui_resource_anchor);
         minitts::server::serve_http(config.host, config.port, state, shutdown_requested, config.max_request_body_bytes);
         return 0;
     } catch (const std::exception & ex) {

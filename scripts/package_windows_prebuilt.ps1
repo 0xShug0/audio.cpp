@@ -155,6 +155,19 @@ Server:
 .\audiocpp_server.exe --config C:\path\to\server.json
 ```
 
+Native WebUI (no Python required):
+
+```powershell
+.\audiocpp_server.exe --ui --backend cuda
+```
+
+Then open `http://127.0.0.1:8080`.
+
+Inference and the WebUI do not require Python. The optional **Install / prepare**
+button uses the bundled `tools\model_manager_v2.py` for normal downloads and
+`tools\model_manager_deprecated.py` for legacy conversion workflows; install Python dependencies
+only when downloading or converting packages through that button.
+
 ## Notes
 
 - Models are not bundled.
@@ -194,6 +207,19 @@ Server:
 ```powershell
 .\audiocpp_server.exe --config C:\path\to\server.json
 ```
+
+Native WebUI (no Python required):
+
+```powershell
+.\audiocpp_server.exe --ui --backend cpu
+```
+
+Then open `http://127.0.0.1:8080`.
+
+Inference and the WebUI do not require Python. The optional **Install / prepare**
+button uses the bundled `tools\model_manager_v2.py` for normal downloads and
+`tools\model_manager_deprecated.py` for legacy conversion workflows; install Python dependencies
+only when downloading or converting packages through that button.
 
 ## Notes
 
@@ -281,6 +307,27 @@ function New-PrebuiltPackage {
     $packageName = "audiocpp-windows-$Kind-$Profile"
     $stageDir = Join-Path $OutputDir $packageName
     Copy-TreeContents $sourceBin $stageDir
+
+    # The embedded UI runs entirely from audiocpp_server.exe.  Keep the small
+    # preparation helpers and package specs beside portable builds so the Models
+    # page can install current packages and retain legacy converter workflows.
+    $stageTools = Join-Path $stageDir "tools"
+    New-Item -ItemType Directory -Force -Path $stageTools | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repoRoot "tools\model_manager_v2.py") -Destination $stageTools -Force
+    Copy-Item -LiteralPath (Join-Path $repoRoot "tools\model_manager_deprecated.py") -Destination $stageTools -Force
+    $communityTools = Join-Path $repoRoot "tools\community_models"
+    if (Test-Path -LiteralPath $communityTools) {
+        Copy-TreeContents $communityTools (Join-Path $stageTools "community_models")
+    }
+    Copy-TreeContents (Join-Path $repoRoot "model_specs") (Join-Path $stageDir "model_specs")
+    $quickStartVoices = Join-Path $repoRoot "webui\voice"
+    if (Test-Path -LiteralPath $quickStartVoices) {
+        Copy-TreeContents $quickStartVoices (Join-Path $stageDir "webui\voice")
+    }
+    $modelManagerAssets = Join-Path $repoRoot "assets\model_manager"
+    if (Test-Path -LiteralPath $modelManagerAssets) {
+        Copy-TreeContents $modelManagerAssets (Join-Path $stageDir "assets\model_manager")
+    }
 
     $crtDir = Find-VcRedistDir "Microsoft.VC143.CRT"
     $ompDir = Find-VcRedistDir "Microsoft.VC143.OpenMP"

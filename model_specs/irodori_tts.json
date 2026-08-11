@@ -34,9 +34,9 @@
         "default": "ja"
       },
       {
-        "name": "caption",
+        "name": "instruction",
         "type": "string",
-        "description": "VoiceDesign caption describing target voice identity, style, or emotion; supported only by caption-conditioned checkpoints.",
+        "description": "Natural-language voice or style instruction describing target voice identity, style, or emotion; supported only by caption-conditioned checkpoints. Legacy caption is accepted as an alias.",
         "required": false
       },
       {

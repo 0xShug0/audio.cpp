@@ -433,9 +433,12 @@ def verify_case(case: dict[str, Any], case_dir: Path, stdout: str) -> None:
     if "artifact" in outputs and "artifact_out[" not in stdout:
         raise RuntimeError(f"{case['id']} did not write an artifact json")
     if "artifact" in outputs:
-        artifacts = list((case_dir / "outputs").rglob("*.json"))
-        if not artifacts or not any(path.stat().st_size > 2 for path in artifacts):
-            raise RuntimeError(f"{case['id']} did not produce artifact json")
+        artifacts = [
+            path for path in (case_dir / "outputs").rglob("*")
+            if path.is_file() and path.name not in {"stdout.log", "stderr.log"}
+        ]
+        if not artifacts or not any(path.stat().st_size > 0 for path in artifacts):
+            raise RuntimeError(f"{case['id']} did not produce a non-empty artifact file")
     for kind, filename in (("segments", "segments"), ("turns", "turns"), ("words", "words")):
         if kind not in outputs:
             continue

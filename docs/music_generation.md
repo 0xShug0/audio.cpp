@@ -40,7 +40,7 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `--duration-seconds` | float, `-1` for auto | `-1` | Target duration. |
 | `--num-inference-steps` | integer | `8` | Diffusion denoising steps. |
 | `--guidance-scale` | float | `1.0` | Diffusion guidance scale. |
-| `--session-option ace_step.mem_saver=true|false` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+| `--session-option ace_step.mem_saver=true\|false` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 
 ## Stable Audio
 
@@ -78,7 +78,7 @@ audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-smal
 | `--request-option init_noise_level=<float>` | `0..1` | `1.0` | Strength for init-audio conditioning. |
 | `--request-option inpaint_mask_start_seconds=<list>` | comma-separated seconds | not set | Inpaint region start times. |
 | `--request-option inpaint_mask_end_seconds=<list>` | comma-separated seconds | not set | Inpaint region end times. |
-| `--session-option stable_audio.mem_saver=true|false` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+| `--session-option stable_audio.mem_saver=true\|false` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 
 ## HeartMuLa
 
@@ -117,14 +117,14 @@ audiocpp_cli --task gen --family heartmula --model models/HeartMuLa --backend cu
 | `--num-inference-steps` | integer | `10` | Codec flow solver steps. |
 | `--request-option codec_duration_sec=<seconds>` | seconds | `29.76` | Codec detokenization chunk duration. |
 | `--request-option codec_guidance_scale=<float>` | float | `1.25` | Codec classifier-free guidance scale. |
-| `--request-option infinite_mode=true|false` | bool | `false` | Generate long outputs by splitting lyrics into bounded HeartMuLa requests. |
+| `--request-option infinite_mode=true\|false` | bool | `false` | Generate long outputs by splitting lyrics into bounded HeartMuLa requests. |
 | `--text-chunk-size` | chars | `4096` | Text chunk size for infinite mode. |
 | `--request-option infinite_chunk_audio_duration_ms=<n>` | milliseconds | `240000` | Per-chunk audio cap for infinite mode. |
 | `--seed` | integer | `1234` | Generation seed. |
 | `--session-option heartmula.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | MuLa and codec weight storage type. |
 | `--session-option heartmula.generator_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `heartmula.weight_type` or `native` | MuLa music-token generator weight storage type. |
 | `--session-option heartmula.codec_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `heartmula.weight_type` or `native` | Codec weight storage type. |
-| `--session-option heartmula.mem_saver=true|false` | bool | `false` | Release staged graph/cache state after AR/codec phases and infinite-mode chunks to reduce resident VRAM. Later requests may rebuild released graphs. |
+| `--session-option heartmula.mem_saver=true\|false` | bool | `false` | Release staged graph/cache state after AR/codec phases and infinite-mode chunks to reduce resident VRAM. Later requests may rebuild released graphs. |
 
 Compatibility mapping:
 

@@ -336,6 +336,41 @@ void test_negative_per_model_busy_timeout_is_rejected() {
     require(rejected, "negative per-model busy_timeout_ms is rejected, naming the model");
 }
 
+void test_ui_configuration() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "ui.json",
+        R"JSON({
+  "ui": false,
+  "ui_management": true,
+  "models": []
+})JSON");
+
+    const auto config = minitts::server::load_server_config(config_path);
+    require(!config.ui_enabled, "ui=false disables the embedded WebUI");
+    require(config.ui_management, "ui_management=true enables dynamic model management");
+    require(config.models.empty(), "management hosts may start without configured models");
+}
+
+void test_empty_models_require_ui_management() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "empty_models.json",
+        R"JSON({
+  "models": []
+})JSON");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("ui_management") != std::string::npos;
+    }
+    require(rejected, "an empty static server config requires ui_management");
+}
+
 // A request may shorten its own wait but must never lengthen it past server policy,
 // otherwise a client could reintroduce the unbounded hang the guard prevents.
 void test_request_timeout_is_clamped_to_policy() {
@@ -388,6 +423,8 @@ int main() {
         test_negative_busy_timeout_is_rejected();
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
+        test_ui_configuration();
+        test_empty_models_require_ui_management();
         test_request_timeout_is_clamped_to_policy();
         test_model_run_overrun_predicate();
     } catch (const std::exception & error) {
