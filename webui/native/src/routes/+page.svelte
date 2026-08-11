@@ -75,6 +75,7 @@
   let advancedValues: Record<string, unknown> = {};
   let paramSpecs: ParamSpec[] = [];
   let outputAudio: AudioOutput[] = [];
+  let outputArtifacts: Array<{ id: string; url: string; extension: string }> = [];
   let outputText = '';
   let outputJson = '';
   let logs: string[] = [];
@@ -150,7 +151,7 @@
     { id: 'music', label: 'Music generation', filterLabel: 'Music', tasks: ['gen'] },
     { id: 'conversion', label: 'Voice conversion', filterLabel: 'Voice conversion', tasks: ['vc', 'svc', 's2s'] },
     { id: 'separation', label: 'Source separation', filterLabel: 'Separation', tasks: ['sep'] },
-    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk'] },
+    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk', 'midi'] },
     { id: 'design', label: 'Voice design', filterLabel: 'Voice design', tasks: ['vdes'] }
   ] as const;
 
@@ -208,7 +209,7 @@
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
     comparablePath(model.path) === comparablePath(modelPath));
-  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align'].includes(selected?.task);
+  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task);
   $: acceptsSource = needsSource || selected?.task === 'gen';
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
@@ -296,17 +297,23 @@
 
   function studioPackageSlots(entry: CatalogEntry) {
     const choices = entry.install_packages || [];
+    const q8 = choices.find((choice) => choice.format === 'gguf' &&
+      ['q8', 'q8_0'].includes(choice.precision));
+    const fp16 = choices.find((choice) => choice.format === 'gguf' &&
+      ['f16', 'fp16', 'bf16'].includes(choice.precision));
+    if (!q8 && !fp16) {
+      return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
+    }
     return [
       {
         key: 'q8',
         label: 'GGUF Q8',
-        choice: choices.find((choice) => choice.format === 'gguf' && ['q8', 'q8_0'].includes(choice.precision))
+        choice: q8
       },
       {
         key: 'fp16',
         label: 'GGUF FP16',
-        choice: choices.find((choice) => choice.format === 'gguf' &&
-          ['f16', 'fp16', 'bf16'].includes(choice.precision))
+        choice: fp16
       },
     ];
   }
@@ -843,7 +850,7 @@
     if (!file) return undefined;
     const targetSampleRate = selected.task === 'sep'
       ? 44100
-      : ['asr', 'vad', 'diar', 'align'].includes(selected.task) ? 16000 : undefined;
+      : ['asr', 'vad', 'diar', 'align', 'midi'].includes(selected.task) ? 16000 : undefined;
     const wav = await browserDecodeToWav(file, targetSampleRate);
     return uploadWav(wav, file.name.replace(/\.[^.]+$/, '') + '.wav', aborter?.signal);
   }
@@ -863,6 +870,7 @@
   function clearOutput() {
     for (const output of outputAudio) URL.revokeObjectURL(output.url);
     outputAudio = [];
+    outputArtifacts = [];
     outputText = '';
     outputJson = '';
   }
@@ -1194,9 +1202,20 @@
               typeof entry?.id === 'string' && typeof entry?.audio === 'string')
             .map((entry) => ({ id: entry.id, url: base64AudioUrl(entry.audio) }));
         }
+        if (Array.isArray(result.artifacts)) {
+          outputArtifacts = result.artifacts
+            .filter((entry): entry is { id: string; payload: string; meta?: Record<string, string> } =>
+              typeof entry?.id === 'string' && typeof entry?.payload === 'string')
+            .map((entry) => ({
+              id: entry.id,
+              extension: entry.meta?.extension || (entry.meta?.format === 'midi' ? 'mid' : 'bin'),
+              url: `data:${entry.meta?.mime || 'application/octet-stream'};base64,${entry.payload}`
+            }));
+        }
         outputText = typeof result.text === 'string' ? result.text : '';
         outputJson = JSON.stringify(result, (key, value) =>
-          key === 'audio' && typeof value === 'string' ? `<base64 audio: ${value.length} chars>` : value, 2);
+          (key === 'audio' || key === 'payload') && typeof value === 'string'
+            ? `<base64 data: ${value.length} chars>` : value, 2);
       }
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
       warningStatus = '';
@@ -1886,7 +1905,17 @@
               </article>
             {/each}
           </div>
-        {:else}
+        {/if}
+        {#if outputArtifacts.length}
+          <div class="audio-list">
+            {#each outputArtifacts as artifact}
+              <article>
+                <div><strong>{artifact.id}</strong><a href={artifact.url} download={`${selected.id}-${artifact.id}.${artifact.extension}`}>Save {artifact.extension.toUpperCase()}</a></div>
+              </article>
+            {/each}
+          </div>
+        {/if}
+        {#if !outputAudio.length && !outputArtifacts.length}
           <div class="empty-output"><div class="wave">∿</div><p>{tr('result.empty')}</p></div>
         {/if}
         {#if outputText}<textarea class="transcript" readonly rows="7" value={outputText}></textarea>{/if}

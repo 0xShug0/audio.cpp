@@ -31,6 +31,7 @@ const english: Record<string, string> = {
   'task.clon': 'Voice cloning',
   'task.asr': 'Transcription',
   'task.gen': 'Music generation',
+  'task.midi': 'Audio to MIDI',
   'task.vc': 'Voice conversion',
   'task.svc': 'Singing voice conversion',
   'task.s2s': 'Speech editing',

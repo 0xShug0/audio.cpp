@@ -5,6 +5,7 @@ import type { CatalogEntry, InstallPackageChoice, ParamSpec } from './types';
 interface PackageEntry {
   family: string;
   id: string;
+  display_name?: string;
   target_directory: string;
   format: string;
   precision: string;
@@ -104,6 +105,8 @@ function relatedPackages(entry: CatalogEntry): PackageEntry[] {
 
 function packageLabel(entry: PackageEntry): string {
   if (entry.format === 'safetensors') return 'Safetensors';
+  if (entry.id.includes('int8_dit')) return 'GGUF Q4 ConvRot';
+  if (entry.precision === 'q4_k' || entry.precision === 'q4_0') return 'GGUF Q4';
   if (entry.precision === 'q8_0' || entry.precision === 'q8') return 'GGUF Q8';
   if (entry.precision === 'bf16') return 'GGUF BF16';
   if (entry.precision === 'f16' || entry.precision === 'fp16') return 'GGUF FP16';
@@ -111,9 +114,13 @@ function packageLabel(entry: PackageEntry): string {
 }
 
 function packageModelPath(entry: PackageEntry): string {
-  const modelFile = entry.format === 'gguf'
-    ? entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'))
-    : undefined;
+  let modelFile: string | undefined;
+  if (entry.format === 'gguf' && entry.family === 'minimax_h3') {
+    const entryName = entry.id.includes('int8_dit') ? 'dit_int8.gguf' : 'dit.gguf';
+    modelFile = entry.files?.find((file) => file.toLowerCase().endsWith(`/${entryName}`));
+  } else if (entry.format === 'gguf') {
+    modelFile = entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'));
+  }
   if (!modelFile) {
     return `models/${entry.target_directory}`;
   }
@@ -132,12 +139,12 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
     preferredPackage(related.filter((candidate) =>
       candidate.format === 'gguf' && candidate.precision === 'bf16'));
   const otherGguf = !q8 && !fp16
-    ? preferredPackage(related.filter((candidate) => candidate.format === 'gguf'))
-    : undefined;
+    ? related.filter((candidate) => candidate.format === 'gguf')
+    : [];
   // The native model manager intentionally exposes complete GGUF packages
   // only. Safetensors packages frequently depend on source-tree sidecars and
   // are not yet reliable as one-click UI installs.
-  return [q8, fp16, otherGguf]
+  return [q8, fp16, ...otherGguf]
     .filter((candidate): candidate is PackageEntry => candidate !== undefined)
     .map((candidate) => ({
       id: candidate.id,
@@ -190,6 +197,7 @@ export const taskLabels: Record<string, string> = {
   clon: 'Voice cloning',
   asr: 'Transcription',
   gen: 'Music & sound',
+  midi: 'Audio to MIDI',
   vc: 'Voice conversion',
   svc: 'Singing conversion',
   s2s: 'Speech editing',

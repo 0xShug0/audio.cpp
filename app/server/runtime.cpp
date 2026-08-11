@@ -322,6 +322,10 @@ std::string base64_encode(const std::vector<uint8_t> & bytes) {
     return base64_encode(bytes.data(), bytes.size());
 }
 
+std::string base64_encode(const std::vector<std::byte> & bytes) {
+    return base64_encode(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
+}
+
 void write_sse(HttpStreamWriter & writer, const std::string & json) {
     writer.write("data: " + json + "\n\n");
 }
@@ -502,7 +506,25 @@ bool stream_event_has_output(const engine::runtime::StreamEvent & event) {
 bool task_result_has_output(const engine::runtime::TaskResult & result) {
     return result.text_output.has_value() ||
         result.audio_output.has_value() ||
-        !result.named_audio_outputs.empty();
+        !result.named_audio_outputs.empty() ||
+        result.artifact_output.has_value() ||
+        !result.output_artifacts.empty();
+}
+
+const char * artifact_kind_name(engine::runtime::ArtifactKind kind) {
+    using engine::runtime::ArtifactKind;
+    switch (kind) {
+    case ArtifactKind::SpeakerEmbedding: return "speaker_embedding";
+    case ArtifactKind::StyleEmbedding: return "style_embedding";
+    case ArtifactKind::PromptEmbedding: return "prompt_embedding";
+    case ArtifactKind::AcousticTokens: return "acoustic_tokens";
+    case ArtifactKind::Midi: return "midi";
+    case ArtifactKind::TranscriptAlignment: return "transcript_alignment";
+    case ArtifactKind::DiarizationState: return "diarization_state";
+    case ArtifactKind::VadState: return "vad_state";
+    case ArtifactKind::Custom: return "custom";
+    }
+    return "custom";
 }
 
 double require_ttft_ms(const std::optional<double> & ttft_ms) {
@@ -568,6 +590,29 @@ std::string task_result_json_with_timing(
                 << ",\"channels\":" << result.named_audio_outputs[i].audio.channels
                 << "}";
         }
+        out << "]";
+    }
+    if (result.artifact_output.has_value() || !result.output_artifacts.empty()) {
+        field("artifacts");
+        out << "[";
+        bool first_artifact = true;
+        auto write_artifact = [&](const engine::runtime::VoiceArtifact & artifact) {
+            if (!first_artifact) out << ",";
+            first_artifact = false;
+            out << "{\"id\":" << json_quote(artifact.id)
+                << ",\"kind\":" << json_quote(artifact_kind_name(artifact.kind))
+                << ",\"payload\":" << json_quote(base64_encode(artifact.payload))
+                << ",\"meta\":{";
+            bool first_meta = true;
+            for (const auto & [key, value] : artifact.meta) {
+                if (!first_meta) out << ",";
+                first_meta = false;
+                out << json_quote(key) << ":" << json_quote(value);
+            }
+            out << "}}";
+        };
+        if (result.artifact_output.has_value()) write_artifact(*result.artifact_output);
+        for (const auto & artifact : result.output_artifacts) write_artifact(artifact);
         out << "]";
     }
     if (!result.speech_segments.empty()) {
