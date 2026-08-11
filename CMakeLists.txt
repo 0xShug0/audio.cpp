@@ -305,6 +305,7 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/qwen_decoder.cpp
     src/framework/modules/transformers/qwen_causal_decoder.cpp
     src/framework/modules/transformers/qwen_causal_decode_runtime.cpp
+    src/framework/modules/transformers/qwen3_vl_encoder_runtime.cpp
     src/framework/modules/attention/cross_attention.cpp
     src/framework/modules/attention/transformer_blocks.cpp
     src/framework/modules/conditioning_modules.cpp
@@ -496,7 +497,6 @@ audiocpp_add_model(minimax_h3
         src/community_models/minimax_h3/dit_acceleration.cpp
         src/community_models/minimax_h3/dit_denoiser.cpp
         src/community_models/minimax_h3/generation_plan.cpp
-        src/community_models/minimax_h3/prompt_encoder.cpp
         src/community_models/minimax_h3/pipeline.cpp
         src/community_models/minimax_h3/sampler.cpp
         src/community_models/minimax_h3/session.cpp

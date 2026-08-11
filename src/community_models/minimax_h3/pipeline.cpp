@@ -4,11 +4,11 @@
 #include "engine/community_models/minimax_h3/dit_acceleration.h"
 #include "engine/community_models/minimax_h3/dit_denoiser.h"
 #include "engine/community_models/minimax_h3/generation_plan.h"
-#include "engine/community_models/minimax_h3/prompt_encoder.h"
 #include "engine/community_models/minimax_h3/sampler.h"
 #include "engine/community_models/minimax_h3/video_vae_decoder.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/modules/transformers/qwen3_vl_encoder_runtime.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 
 #include <algorithm>
@@ -32,15 +32,6 @@ std::shared_ptr<const MiniMaxH3Assets> require_runtime_assets(std::shared_ptr<co
         throw std::runtime_error("MiniMax-H3 runtime requires assets");
     }
     return assets;
-}
-
-void round_bf16_in_place(std::vector<float> & values, std::vector<ggml_bf16_t> & bf16_scratch) {
-    if (values.empty()) {
-        return;
-    }
-    bf16_scratch.resize(values.size());
-    ggml_fp32_to_bf16_row(values.data(), bf16_scratch.data(), static_cast<int64_t>(values.size()));
-    ggml_bf16_to_fp32_row(bf16_scratch.data(), values.data(), static_cast<int64_t>(values.size()));
 }
 
 MiniMaxH3SamplerGraphSpec sampler_graph_spec(
@@ -82,18 +73,58 @@ float spectrum_coordinate(float sigma, float sigma_min, float sigma_max) {
     return std::clamp(2.0F * (sigma - sigma_min) / span - 1.0F, -1.0F, 1.0F);
 }
 
+engine::modules::Qwen3VlEncoderRuntimeConfig qwen3_vl_encoder_config(
+    const MiniMaxH3Config & cfg,
+    size_t weight_context_bytes) {
+    engine::modules::Qwen3VlEncoderRuntimeConfig out;
+    out.trace_name = "minimax_h3.prompt_encoder";
+    out.model_prefix = "model.language_model";
+    out.vocab_size = cfg.vocab_size;
+    out.weight_context_bytes = weight_context_bytes;
+    out.graph_arena_bytes = 512ull * 1024ull * 1024ull;
+    out.stack.hidden_size = cfg.prompt_hidden;
+    out.stack.num_attention_heads = cfg.prompt_heads;
+    out.stack.num_key_value_heads = cfg.prompt_kv_heads;
+    out.stack.head_dim = cfg.prompt_head_dim;
+    out.stack.intermediate_size = cfg.prompt_intermediate;
+    out.stack.layers = cfg.prompt_layers;
+    out.stack.rms_norm_eps = cfg.prompt_eps;
+    out.stack.rope_theta = cfg.prompt_rope_theta;
+    out.stack.attention_precision = GGML_PREC_DEFAULT;
+    out.stack.projection_precision = GGML_PREC_DEFAULT;
+    out.stack.use_qk_norm = true;
+    out.readback_round_type = GGML_TYPE_BF16;
+    return out;
+}
+
+class ScopedEncoderWeightRelease {
+public:
+    explicit ScopedEncoderWeightRelease(engine::modules::Qwen3VlEncoderRuntime & runtime) : runtime_(runtime) {}
+    ~ScopedEncoderWeightRelease() {
+        runtime_.release_weights();
+    }
+
+    ScopedEncoderWeightRelease(const ScopedEncoderWeightRelease &) = delete;
+    ScopedEncoderWeightRelease & operator=(const ScopedEncoderWeightRelease &) = delete;
+
+private:
+    engine::modules::Qwen3VlEncoderRuntime & runtime_;
+};
+
 }  // namespace
 
 struct MiniMaxH3PipelineRuntime::Impl {
     std::shared_ptr<tokenizers::LlamaBpeTokenizer> tokenizer;
     size_t weight_context_bytes = 0;
     bool mem_saver = false;
+    std::unique_ptr<engine::modules::Qwen3VlEncoderRuntime> text_encoder;
     std::unique_ptr<MiniMaxH3DitWeightStore> dit_weights;
     std::unique_ptr<AudioVaeWeightStore> audio_vae_weights;
     std::unique_ptr<VideoVaeWeightStore> video_vae_weights;
     VideoVaeDecodeCache video_vae_decode_cache;
 
     Impl(
+        core::ExecutionContext & execution,
         const MiniMaxH3Assets & assets,
         size_t weight_context_bytes_in,
         bool mem_saver_in)
@@ -106,6 +137,10 @@ struct MiniMaxH3PipelineRuntime::Impl {
         spec.tokenizer_json_path = assets.resources.require_file("tokenizer_json");
         spec.pre_type = tokenizers::LlamaBpePreTokenizer::Qwen35;
         tokenizer = tokenizers::load_llama_bpe_tokenizer(spec);
+        text_encoder = std::make_unique<engine::modules::Qwen3VlEncoderRuntime>(
+            execution,
+            assets.text_encoder_weights,
+            qwen3_vl_encoder_config(assets.config, weight_context_bytes));
     }
 };
 
@@ -116,7 +151,7 @@ MiniMaxH3PipelineRuntime::MiniMaxH3PipelineRuntime(
     bool mem_saver)
     : execution_(execution),
       assets_(require_runtime_assets(std::move(assets))),
-      impl_(std::make_unique<Impl>(*assets_, weight_context_bytes, mem_saver)) {
+      impl_(std::make_unique<Impl>(execution_, *assets_, weight_context_bytes, mem_saver)) {
 }
 
 MiniMaxH3PipelineRuntime::~MiniMaxH3PipelineRuntime() = default;
@@ -161,39 +196,17 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
     const auto prompt_start = Clock::now();
     std::vector<float> prompt_out;
     std::vector<float> negative_prompt_out;
-    std::vector<ggml_bf16_t> bf16_scratch;
     {
-        if (request.text_layerwise) {
-            const auto weight_start = Clock::now();
-            prompt_out = run_prompt_graph_layerwise(
-                execution_,
-                assets_->text_encoder_weights,
-                cfg,
-                ids,
-                impl_->weight_context_bytes,
-                request.text_layerwise_batch);
-            engine::debug::timing_log_scalar("minimax_h3.text_weights_load_ms", engine::debug::elapsed_ms(weight_start, Clock::now()));
-        } else {
-            const auto weight_start = Clock::now();
-            PromptEncoderWeightStore text_weights(execution_, assets_->text_encoder_weights, impl_->weight_context_bytes);
-            engine::debug::timing_log_scalar("minimax_h3.text_weights_load_ms", engine::debug::elapsed_ms(weight_start, Clock::now()));
-            prompt_out = run_prompt_graph(text_weights, cfg, ids);
-            if (cfg_enabled) {
-                negative_prompt_out = run_prompt_graph(text_weights, cfg, negative_ids);
-            }
+        if (impl_->text_encoder == nullptr) {
+            throw std::runtime_error("MiniMax-H3 text encoder runtime is missing");
         }
-        round_bf16_in_place(prompt_out, bf16_scratch);
-        if (cfg_enabled && request.text_layerwise) {
-            negative_prompt_out = run_prompt_graph_layerwise(
-                execution_,
-                assets_->text_encoder_weights,
-                cfg,
-                negative_ids,
-                impl_->weight_context_bytes,
-                request.text_layerwise_batch);
-        }
+        ScopedEncoderWeightRelease release_encoder_weights(*impl_->text_encoder);
+        engine::modules::Qwen3VlEncoderOptions encoder_options;
+        encoder_options.layerwise = request.text_layerwise;
+        encoder_options.layerwise_batch = request.text_layerwise_batch;
+        prompt_out = impl_->text_encoder->encode_text(ids, encoder_options).hidden;
         if (cfg_enabled) {
-            round_bf16_in_place(negative_prompt_out, bf16_scratch);
+            negative_prompt_out = impl_->text_encoder->encode_text(negative_ids, encoder_options).hidden;
         }
     }
     engine::debug::timing_log_scalar("minimax_h3.prompt_encoder_ms", engine::debug::elapsed_ms(prompt_start, Clock::now()));
@@ -352,8 +365,8 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
             }
             sampler_update_ms += engine::debug::elapsed_ms(update_start, Clock::now());
             const auto round_start = Clock::now();
-            round_bf16_in_place(video, bf16_scratch);
-            round_bf16_in_place(audio, bf16_scratch);
+            core::round_f32_to_bf16_in_place(video);
+            core::round_f32_to_bf16_in_place(audio);
             round_ms += engine::debug::elapsed_ms(round_start, Clock::now());
         }
         positive_input_upload_ms = layerwise_dit->input_upload_ms();
@@ -571,8 +584,8 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
             audio.swap(pred.next_audio);
             sampler_update_ms += engine::debug::elapsed_ms(update_start, Clock::now());
             const auto round_start = Clock::now();
-            round_bf16_in_place(video, bf16_scratch);
-            round_bf16_in_place(audio, bf16_scratch);
+            core::round_f32_to_bf16_in_place(video);
+            core::round_f32_to_bf16_in_place(audio);
             round_ms += engine::debug::elapsed_ms(round_start, Clock::now());
         }
         if (positive_dit != nullptr) {
