@@ -7,9 +7,6 @@
 Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
 
 > [!IMPORTANT]
-> **2026-08-10 - Official UI and Release 0.6 preview:** the official audio.cpp UI is currently under active testing on the [dev branch](https://github.com/0xShug0/audio.cpp/tree/dev), alongside the Release 0.6 preview models: DotTTS, NeuTTS, and MuScriptor. Please try them, report issues, and share feedback so the workflow can be polished before it becomes the default release experience.
-
-> [!IMPORTANT]
 > **CUDA performance headline:** multiple TTS paths already run **1.8x to up to 8x faster than their Python reference paths** while cutting end-to-end latency by **45%-85%**.
 >
 > **GGUF performance:** all released model families support GGUF loading, and tested Q8 packages can run up to **1.53x faster** while reducing peak VRAM by up to about **37%** on routes such as Higgs Audio, Fish Audio, and Voxtral. See the [GGUF guide](docs/gguf.md) for support status and the [Q8 performance report](docs/reports/gguf_q8_performance.md) for 16-bit vs Q8 measurements.
@@ -45,7 +42,7 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **2026-08-03 - Irodori-TTS v4 Small:** Irodori-TTS v4 Small is now available as the preferred Japanese TTS package, with GGUF Q8/F16 builds covering no-reference TTS, voice cloning, and caption-based voice design in one checkpoint.
+> **2026-08-11 - Release 0.6 WIP:** the next release is taking shape with DotTTS, NeuTTS, MuScriptor, and MiniMax-H3, alongside the new native WebUI, expanded GGUF packaging, and more shared framework runtime pieces.
 >
 > **2026-07-31 - Release 0.5:** audio.cpp grows to **44 model families** with **9 new additions**: DramaBox, Confucius4-TTS, RVC, BS-RoFormer, GLM-TTS, Kroko ASR, Parakeet-TDT, Inflect v2, and Fun-ASR-Nano.
 >
