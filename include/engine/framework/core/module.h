@@ -21,7 +21,7 @@ enum class BackendType {
 
 // CUDA and HIP share ggml's ggml-cuda implementation for a small set of
 // explicitly verified operators. This is intentionally not a generic GPU test.
-constexpr bool uses_ggml_cuda_family_backend(BackendType type) noexcept {
+constexpr bool uses_ggml_cuda_or_hip_backend(BackendType type) noexcept {
     return type == BackendType::Cuda || type == BackendType::Hip;
 }
 

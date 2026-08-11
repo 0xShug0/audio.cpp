@@ -59,8 +59,8 @@ core::TensorValue FastPackedProjection4Module::build(
     if (ctx.ggml == nullptr) {
         throw std::runtime_error("ModuleBuildContext.ggml is null");
     }
-    if (!core::uses_ggml_cuda_family_backend(ctx.backend_type)) {
-        throw std::runtime_error("FastPackedProjection4Module requires a ggml CUDA-family backend");
+    if (!core::uses_ggml_cuda_or_hip_backend(ctx.backend_type)) {
+        throw std::runtime_error("FastPackedProjection4Module requires CUDA or HIP backend");
     }
 
     core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");

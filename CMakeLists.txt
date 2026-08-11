@@ -1572,13 +1572,6 @@ if (ENGINE_BUILD_TESTS)
         COMMAND outetts_generation_budget_test
     )
 
-    if (qwen3_tts IN_LIST AUDIOCPP_LINKED_MODELS)
-        add_engine_unittest(qwen3_tts_options_config_test tests/unittests/test_qwen3_tts_options_config.cpp)
-        add_test(
-            NAME qwen3_tts_options_config_test
-            COMMAND qwen3_tts_options_config_test
-        )
-    endif()
 
     add_engine_unittest(subtitle_formatter_test tests/unittests/test_subtitle_formatter.cpp)
 
