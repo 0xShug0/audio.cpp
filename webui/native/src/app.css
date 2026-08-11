@@ -186,6 +186,7 @@ pre { background: #071220; border: 1px solid var(--line); border-radius: 8px; pa
 .package-install > span:first-child { line-height: 1.1; }
 .package-install.preferred { border-color: #347d8f; color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(66,232,213,.1); }
 .package-install.downloaded { padding-right: 23px; border-color: #50708b; background: color-mix(in srgb, #102238 80%, white 20%); color: #9dc5ff; white-space: normal; }
+.package-install.downloaded > span:first-child { white-space: nowrap; }
 .package-install.downloaded:hover:not(:disabled) { border-color: #6398b2; background: color-mix(in srgb, #142b43 76%, white 24%); }
 .package-install.downloaded.preferred { border-color: #347d8f; color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(66,232,213,.16); }
 .model-actions .package-delete { position: absolute; top: 3px; right: 3px; z-index: 1; display: grid; width: 18px; height: 18px; min-height: 0; padding: 2px; place-items: center; border-color: transparent; background: transparent; color: #7189a8; }
