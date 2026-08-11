@@ -24,11 +24,15 @@ Then run the printed audiocpp_gguf command, or let the script run it:
         --model-dir /path/to/IndexTTS-2.5 \
         --output-dir /path/to/staging \
         --run-converter /path/to/audiocpp_gguf --type f16
+
+Add --native-dir /path/to/native-model to also emit a directly loadable
+native Safetensors model directory (no GGUF conversion needed).
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -166,6 +170,48 @@ def build_converter_command(output_dir: Path, converter: str, quant_type: str) -
     return command
 
 
+# Native Safetensors model directory layout: the spec's safetensors source maps
+# logical tensor groups to these paths under the model root.
+NATIVE_TENSOR_LAYOUT = [
+    # (staging filename, relative path in the native model directory)
+    ("gpt.safetensors", "gpt.safetensors"),
+    ("s2mel.safetensors", "s2mel.safetensors"),
+    ("speaker_matrix.safetensors", "feat1.safetensors"),
+    ("emotion_matrix.safetensors", "feat2.safetensors"),
+    ("wav2vec2bert_stats.safetensors", "wav2vec2bert_stats.safetensors"),
+    ("wav2vec2bert.safetensors", "w2v-bert-2.0/model.safetensors"),
+    ("semantic_codec.safetensors", "semantic_codec_model.safetensors"),
+    ("campplus.safetensors", "campplus.safetensors"),
+    ("bigvgan.safetensors", "bigvgan/model.safetensors"),
+    ("qwen_emotion.safetensors", "qwen0.6bemo4-merge/model.safetensors"),
+]
+
+
+def _link_or_copy(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copyfile(src, dst)
+
+
+def write_native_layout(output_dir: Path, native_dir: Path) -> None:
+    """Assemble the directly loadable native Safetensors model directory."""
+    for staging_name, relative in NATIVE_TENSOR_LAYOUT:
+        _link_or_copy(_require_file(output_dir / staging_name, staging_name), native_dir / relative)
+    root_dir = output_dir / "root"
+    for name in ("config.yaml", "multilingual_zh_ja_yue_char_del.tiktoken",
+                 "w2v-bert-2.0/config.json", "w2v-bert-2.0/preprocessor_config.json",
+                 "bigvgan/config.json"):
+        _link_or_copy(_require_file(root_dir / name, name), native_dir / name)
+    for name in QWEN_SIDECARS:
+        _link_or_copy(_require_file(root_dir / "qwen0.6bemo4-merge" / name, name),
+                      native_dir / "qwen0.6bemo4-merge" / name)
+    print(f"native model directory written to {native_dir}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Stage an official IndexTTS-2.5 snapshot for audio.cpp's GGUF converter.",
@@ -184,6 +230,11 @@ def main() -> int:
                         help="Directory with bigvgan_generator.pt and config.json. Default: <model-dir>/hf_cache/bigvgan")
     parser.add_argument("--run-converter", type=str, default=None,
                         help="Path to the audiocpp_gguf executable; when given, run the GGUF conversion right away.")
+    parser.add_argument("--native-dir", type=Path, default=None,
+                        help="Also write a directly loadable native Safetensors model directory (the layout of "
+                             "the spec's safetensors source: feat1/feat2.safetensors, semantic_codec_model.safetensors, "
+                             "bigvgan/model.safetensors, w2v-bert-2.0/, qwen0.6bemo4-merge/). Files are hardlinked "
+                             "from the staging directory when possible, copied otherwise.")
     parser.add_argument("--type", dest="quant_type", default="f16",
                         choices=("orig", "f16", "bf16", "q8_0", "q2_k", "q3_k", "q4_k", "q5_k", "q6_k"),
                         help="GGUF weight type used with --run-converter and in the printed command (default: f16).")
@@ -230,6 +281,14 @@ def main() -> int:
     _copy(bigvgan_dir / "config.json", root_dir / "bigvgan" / "config.json", "bigvgan config")
     for name in QWEN_SIDECARS:
         _copy(model_dir / "qwen0.6bemo4-merge" / name, root_dir / "qwen0.6bemo4-merge" / name, f"qwen sidecar {name}")
+
+    if args.native_dir is not None:
+        native_dir = args.native_dir.resolve()
+        if native_dir == model_dir or model_dir in native_dir.parents:
+            print("error: --native-dir must not be inside --model-dir", file=sys.stderr)
+            return 1
+        native_dir.mkdir(parents=True, exist_ok=True)
+        write_native_layout(output_dir, native_dir)
 
     converter = args.run_converter or "audiocpp_gguf"
     command = build_converter_command(output_dir, converter, args.quant_type)

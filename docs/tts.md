@@ -668,6 +668,8 @@ python tools/convert_index_tts2_5.py \
     --run-converter /path/to/audiocpp_gguf --type q8_0
 ```
 
+Pass `--native-dir /path/to/IndexTTS-2.5-native` to also emit a directly loadable native Safetensors model directory (hardlinked from the staging files), no GGUF conversion required.
+
 The script repackages the checkpoints the loader needs (unwraps the `s2mel.pth`/`codec.pth` container keys, prefixes CAMPPlus tensors with `speaker_encoder.`, strips BigVGAN's `generator.` prefix, wraps the `feat1/feat2.pt` matrices as a single `tensor`) and assembles the sidecar `root/` (config, tiktoken vocabulary, auxiliary model configs) that gets embedded into the GGUF.
 
 ## Irodori-TTS
