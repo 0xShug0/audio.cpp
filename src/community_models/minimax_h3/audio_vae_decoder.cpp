@@ -126,12 +126,20 @@ public:
                 build_ctx,
                 core::ensure_backend_addressable_layout(build_ctx, z),
                 core::TensorShape::from_dims({cfg.audio_vae_latent_dim, cfg.audio_steps}));
+            const auto backend_type = weights.execution.backend_type();
+            modules::BigVganGraphOptions options;
+            // Match padded transposed conv by running padding-zero and cropping on backends
+            // that cannot lower padded ConvTranspose1d directly.
+            options.lower_padded_conv_transpose_as_crop =
+                backend_type == core::BackendType::Cpu ||
+                backend_type == core::BackendType::Vulkan ||
+                backend_type == core::BackendType::Metal;
             channel_outputs_.push_back(modules::build_bigvgan_graph(
                 build_ctx.ggml,
-                weights.execution.backend_type(),
+                backend_type,
                 weights.decoder,
                 z_2d.tensor,
-                {}));
+                options));
         }
         graph_ = ggml_new_graph_custom(ctx_.get(), 262144, false);
         for (auto * output : channel_outputs_) {

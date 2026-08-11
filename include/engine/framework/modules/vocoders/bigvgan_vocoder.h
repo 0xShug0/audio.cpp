@@ -42,6 +42,7 @@ struct BigVganGraphOptions {
     bool use_tanh_at_final = false;
     BigVganActivationLayout activation_layout = BigVganActivationLayout::InterleavedPairs;
     bool use_depthwise_transpose_module = false;
+    bool lower_padded_conv_transpose_as_crop = false;
 };
 
 struct BigVganVocoderWeights {

@@ -4,6 +4,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
+#include "engine/framework/modules/structural_modules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -531,22 +532,33 @@ ggml_tensor * conv_transpose1d(
     core::BackendType backend_type,
     ggml_tensor * x,
     const ConvTranspose1dWeights & conv,
-    const std::string & name) {
+    const std::string & name,
+    bool lower_padding_as_crop) {
     if (conv.transpose_weight.has_value()) {
         core::ModuleBuildContext build_ctx{ctx, name.c_str(), backend_type};
         auto * input = ggml_reshape_3d(ctx, contiguous_if_needed(ctx, x), x->ne[0], x->ne[1], 1);
         const auto input_value =
             core::wrap_tensor(input, core::TensorShape::from_dims({1, conv.in_channels, x->ne[0]}), GGML_TYPE_F32);
+        const int module_padding = lower_padding_as_crop ? 0 : static_cast<int>(conv.padding);
         const auto module = ConvTranspose1dModule({
             conv.in_channels,
             conv.out_channels,
             conv.kernel,
             static_cast<int>(conv.stride),
-            static_cast<int>(conv.padding),
+            module_padding,
             1,
             conv.use_bias});
-        const auto output = module.build(build_ctx, input_value, {*conv.transpose_weight, conv.bias});
-        return named(ggml_reshape_2d(ctx, output.tensor, output.shape.dims[2], output.shape.dims[1]), name.c_str());
+        auto output = module.build(build_ctx, input_value, {*conv.transpose_weight, conv.bias});
+        if (lower_padding_as_crop && conv.padding > 0) {
+            const int64_t cropped_frames = output.shape.dims[2] - 2 * conv.padding;
+            if (cropped_frames <= 0) {
+                throw std::runtime_error("BigVGAN padded ConvTranspose1d crop would produce empty output");
+            }
+            output = SliceModule({2, conv.padding, cropped_frames}).build(build_ctx, output);
+        }
+        return named(
+            ggml_reshape_2d(ctx, contiguous_if_needed(ctx, output.tensor), output.shape.dims[2], output.shape.dims[1]),
+            name.c_str());
     }
     ggml_tensor * x3 = ggml_reshape_3d(ctx, contiguous_if_needed(ctx, x), 1, x->ne[0], x->ne[1]);
     ggml_tensor * zero3 = ggml_scale(ctx, x3, 0.0F);
@@ -697,7 +709,13 @@ ggml_tensor * build_bigvgan_graph_impl(
         const std::string upsample_name = weights.ups[up_index].transpose_weight.has_value()
             ? "ups." + std::to_string(up_index)
             : "ups." + std::to_string(up_index) + ".0";
-        x = conv_transpose1d(ctx, backend_type, x, weights.ups[up_index], upsample_name);
+        x = conv_transpose1d(
+            ctx,
+            backend_type,
+            x,
+            weights.ups[up_index],
+            upsample_name,
+            options.lower_padded_conv_transpose_as_crop);
         ggml_tensor * sum = nullptr;
         for (int64_t kernel_index = 0; kernel_index < kBigVganNumKernels; ++kernel_index) {
             const size_t block_index = up_index * static_cast<size_t>(kBigVganNumKernels) + static_cast<size_t>(kernel_index);
