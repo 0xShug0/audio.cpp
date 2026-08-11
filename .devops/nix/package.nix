@@ -14,6 +14,7 @@
   python-scripts,
   config,
   version,
+  autoAddDriverRunpath,
 
   # Overridable feature flags
   cudaSupport ? config.cudaSupport or false,
@@ -21,6 +22,7 @@
   metalSupport ? stdenv.isDarwin,
   rocmSupport ? config.rocmSupport or false,
   rocmGpuTargets ? (lib.optionals rocmSupport rocmPackages.clr.gpuTargets),
+  strixHaloOptimizations ? (rocmSupport && rocmGpuTargets == [ "gfx1151" ]),
   # Model selection: if non-empty, only these model targets are built.
   # See CMakeLists.txt AUDIOCPP_MODEL_SET / AUDIOCPP_MODELS.
   models ? [ ],
@@ -37,6 +39,7 @@ stdenv.mkDerivation (finalAttrs: {
     pkg-config
   ]
   ++ lib.optional cudaSupport cudaPackages.cuda_nvcc
+  ++ lib.optional cudaSupport autoAddDriverRunpath
   ++ lib.optional rocmSupport rocmPackages.clr;
 
   buildInputs = [
@@ -78,7 +81,8 @@ stdenv.mkDerivation (finalAttrs: {
   ++ lib.optional metalSupport "-DENGINE_ENABLE_METAL=ON"
   ++ lib.optional rocmSupport "-DENGINE_ENABLE_HIP=ON"
   ++ lib.optional rocmSupport "-DCMAKE_HIP_COMPILER=${rocmPackages.llvm.clang}/bin/clang"
-  ++ lib.optional rocmSupport "-DGPU_TARGETS=${lib.concatStringsSep ";" rocmGpuTargets}";
+  ++ lib.optional rocmSupport "-DGPU_TARGETS=${lib.concatStringsSep ";" rocmGpuTargets}"
+  ++ lib.optional strixHaloOptimizations "-DENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=ON";
 
   env = lib.optionalAttrs rocmSupport {
     ROCM_PATH = "${rocmPackages.clr}";

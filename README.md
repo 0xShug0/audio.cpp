@@ -7,7 +7,7 @@
 Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
 
 > [!IMPORTANT]
-> **2026-08-06 - Official UI preview:** the official audio.cpp UI is currently under active testing on the [dev branch](https://github.com/0xShug0/audio.cpp/tree/dev). Please try it, report issues, and share feedback so the workflow can be polished before it becomes the default release experience.
+> **2026-08-10 - Official UI and Release 0.6 preview:** the official audio.cpp UI is currently under active testing on the [dev branch](https://github.com/0xShug0/audio.cpp/tree/dev), alongside the Release 0.6 preview models: DotTTS, NeuTTS, and MuScriptor. Please try them, report issues, and share feedback so the workflow can be polished before it becomes the default release experience.
 
 > [!IMPORTANT]
 > **CUDA performance headline:** multiple TTS paths already run **1.8x to up to 8x faster than their Python reference paths** while cutting end-to-end latency by **45%-85%**.

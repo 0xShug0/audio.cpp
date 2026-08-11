@@ -60,6 +60,10 @@ private:
         // Serializes runs on this model and bounds how long a caller waits for its
         // turn; see BusyGuard.
         BusyGuard busy;
+
+        // Release the loaded model and session from memory (frees VRAM on GPU backends).
+        // The next request will trigger a reload via ensure_model_loaded_locked().
+        void unload();
     };
 
     // Acquire the model's run guard. `request_timeout_ms` is the caller-supplied
@@ -149,6 +153,8 @@ private:
     HttpResponse handle_generic_run(const std::string & body_text);
     HttpResponse handle_generic_stream(const std::string & body_text);
     HttpResponse handle_voices(const HttpRequest & request) const;
+    HttpResponse handle_unload_models(const std::string & body_text);
+    HttpResponse handle_unload_all_models();
     std::string models_json() const;
     std::string get_allowed_origin(const HttpRequest & request) const;
 

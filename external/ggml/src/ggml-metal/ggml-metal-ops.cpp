@@ -68,6 +68,49 @@ static bool ggml_metal_op_pad_left_supported(const ggml_tensor * op) {
 
 static int ggml_metal_op_pad_left(ggml_metal_op_t ctx, int idx);
 
+static bool ggml_metal_cpy_scalar_type_supported(ggml_type type) {
+    return type == GGML_TYPE_F32 ||
+        type == GGML_TYPE_F16 ||
+        type == GGML_TYPE_I32 ||
+        type == GGML_TYPE_BF16;
+}
+
+static bool ggml_metal_cpy_contig_fast_supported(const ggml_tensor * op) {
+    return ggml_is_contiguous(op->src[0]) &&
+        ggml_is_contiguous(op) &&
+        ggml_metal_cpy_scalar_type_supported(op->src[0]->type) &&
+        ggml_metal_cpy_scalar_type_supported(op->type);
+}
+
+static bool ggml_metal_cpy_2d_fast_supported(const ggml_tensor * op) {
+    return op->src[0]->type == op->type &&
+        ggml_metal_cpy_scalar_type_supported(op->type) &&
+        ggml_are_same_shape(op->src[0], op) &&
+        ggml_is_contiguous(op) &&
+        op->src[0]->ne[0] > 1 &&
+        op->src[0]->ne[1] > 1;
+}
+
+static bool ggml_metal_cpy_row_f32_supported(const ggml_tensor * op) {
+    return op->src[0]->type == GGML_TYPE_F32 &&
+        op->type == GGML_TYPE_F32 &&
+        ggml_are_same_shape(op->src[0], op) &&
+        ggml_is_contiguous(op) &&
+        op->src[0]->nb[0] == sizeof(float) &&
+        op->nb[0] == sizeof(float);
+}
+
+static bool ggml_metal_cpy_transpose_f32_supported(const ggml_tensor * op) {
+    return op->src[0]->type == GGML_TYPE_F32 &&
+        op->type == GGML_TYPE_F32 &&
+        ggml_are_same_shape(op->src[0], op) &&
+        ggml_is_contiguous(op) &&
+        op->src[0]->nb[1] == sizeof(float) &&
+        op->nb[0] == sizeof(float) &&
+        op->src[0]->ne[0] > 1 &&
+        op->src[0]->ne[1] > 1;
+}
+
 struct ggml_metal_op {
     ggml_metal_op(
         ggml_metal_device_t dev,
@@ -1980,25 +2023,6 @@ int ggml_metal_op_cpy(ggml_metal_op_t ctx, int idx) {
         nk0 = ne00/ggml_blck_size(op->type);
     }
 
-    int nth = std::min<int>(nk0, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
-
-    // when rows are small, we can batch them together in a single threadgroup
-    int nrptg = 1;
-
-    // TODO: relax this constraint in the future
-    if (ggml_blck_size(op->src[0]->type) == 1 && ggml_blck_size(op->type) == 1) {
-        if (nth > nk0) {
-            nrptg = (nth + nk0 - 1)/nk0;
-            nth   = nk0;
-
-            if (nrptg*nth > ggml_metal_pipeline_max_theads_per_threadgroup(pipeline)) {
-                nrptg--;
-            }
-        }
-    }
-
-    nth = std::min<int>(nth, nk0);
-
     ggml_metal_kargs_cpy args = {
         /*.nk0  =*/ nk0,
         /*.ne00 =*/ ne00,
@@ -2018,6 +2042,81 @@ int ggml_metal_op_cpy(ggml_metal_op_t ctx, int idx) {
         /*.nb2  =*/ nb2,
         /*.nb3  =*/ nb3,
     };
+
+    if (ggml_metal_cpy_contig_fast_supported(op)) {
+        auto pipeline_contig = ggml_metal_library_get_pipeline_cpy_contig(lib, op->src[0]->type, op->type);
+        const int64_t nelements = ggml_nelements(op);
+        const int nth = std::min<int>(ggml_metal_pipeline_max_theads_per_threadgroup(pipeline_contig), 256);
+        args.nk0 = nelements;
+
+        ggml_metal_encoder_set_pipeline(enc, pipeline_contig);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, (nelements + nth - 1)/nth, 1, 1, nth, 1, 1);
+
+        return 1;
+    }
+
+    if (ggml_metal_cpy_row_f32_supported(op)) {
+        auto pipeline_row = ggml_metal_library_get_pipeline_cpy_row_f32(lib);
+
+        ggml_metal_encoder_set_pipeline(enc, pipeline_row);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, (ne00 + 63)/64, (ne01 + 15)/16, (ne02*ne03 + 3)/4, 16, 8, 1);
+
+        return 1;
+    }
+
+    if (ggml_metal_cpy_transpose_f32_supported(op)) {
+        auto pipeline_transpose = ggml_metal_library_get_pipeline_cpy_transpose_f32(lib);
+
+        ggml_metal_encoder_set_pipeline(enc, pipeline_transpose);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
+        ggml_metal_encoder_set_threadgroup_memory_size(enc, 32*(32 + 1)*sizeof(float), 0);
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, (ne00 + 31)/32, (ne01 + 31)/32, ne02*ne03, 32, 8, 1);
+
+        return 1;
+    }
+
+    if (ggml_metal_cpy_2d_fast_supported(op)) {
+        auto pipeline_2d = ggml_metal_library_get_pipeline_cpy_2d(lib, op->type);
+
+        ggml_metal_encoder_set_pipeline(enc, pipeline_2d);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, (ne00 + 15)/16, (ne01 + 15)/16, ne02*ne03, 16, 16, 1);
+
+        return 1;
+    }
+
+    int nth = std::min<int>(ggml_metal_pipeline_max_theads_per_threadgroup(pipeline), 256);
+
+    // when rows are small, we can batch them together in a single threadgroup
+    int nrptg = 1;
+
+    // TODO: relax this constraint in the future
+    if (ggml_blck_size(op->src[0]->type) == 1 && ggml_blck_size(op->type) == 1) {
+        if (nth > nk0) {
+            nrptg = (nth + nk0 - 1)/nk0;
+            nth   = nk0;
+
+            if (nrptg*nth > ggml_metal_pipeline_max_theads_per_threadgroup(pipeline)) {
+                nrptg--;
+            }
+        }
+    }
+
+    nth = std::min<int>(nth, nk0);
 
     const int nw0 = nrptg == 1 ? (nk0 + nth - 1)/nth : 1;
 

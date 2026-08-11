@@ -6,6 +6,7 @@
 #include "engine/models/qwen3_tts/assets.h"
 #include "engine/models/qwen3_tts/types.h"
 
+#include <array>
 #include <cstddef>
 #include <memory>
 
@@ -45,6 +46,9 @@ private:
     Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
     std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph> graph_;
+    // Always present to keep this public class layout identical when the private
+    // Strix Halo compile definition differs between translation units.
+    mutable std::array<std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph>, 2> optimized_graphs_;
 };
 
 }  // namespace qwen3_tts

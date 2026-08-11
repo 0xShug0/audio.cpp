@@ -980,6 +980,12 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else if (request.method == "POST" && request.path == "/v1/tasks/stream") {
         response = handle_generic_stream(request.body);
     }
+    else if (request.method == "POST" && request.path == "/v1/tasks/unload_models") {
+        response = handle_unload_models(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/tasks/unload_all_models") {
+        response = handle_unload_all_models();
+    }
     else {
         response = error_response(404, "unknown endpoint: " + request.path, "not_found");
     }
@@ -2299,6 +2305,80 @@ std::string ServerState::get_allowed_origin(const HttpRequest & request) const {
         }
     }
     return "";
+}
+
+void ServerState::LoadedModel::unload() {
+	offline = nullptr;
+    streaming = nullptr;
+    session.reset();
+    model.reset();
+}
+
+HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
+    const auto body = engine::io::json::parse(body_text);
+    const auto * ids = body.find("model_ids");
+    if (ids == nullptr || !ids->is_array()) {
+        return error_response(400, "request requires a 'model_ids' string array", "invalid_request_error");
+    }
+
+    std::vector<std::string> unloaded;
+    std::vector<std::string> not_found;
+
+    for (const auto & id_val : ids->as_array()) {
+        if (!id_val.is_string()) {
+            return error_response(400, "each element of 'model_ids' must be a string", "invalid_request_error");
+        }
+        const std::string id = id_val.as_string();
+        const auto it = model_index_.find(id);
+        if (it == model_index_.end()) {
+            not_found.push_back(id);
+            continue;
+        }
+        LoadedModel & model = *models_.at(it->second);
+        // Only unload if the model is currently loaded in memory. Acquire the busy
+        // lock for the duration of the unload so no inference starts mid-operation.
+        if (model.session != nullptr) {
+            [[maybe_unused]] BusyGuard::Lock lock = model.busy.acquire(0, model.config.id);
+            model.unload();
+            unloaded.push_back(id);
+        }
+    }
+
+    std::ostringstream out;
+    out << "{\"unloaded\":[";
+    for (size_t i = 0; i < unloaded.size(); ++i) {
+        if (i != 0) { out << ","; }
+        out << json_quote(unloaded[i]);
+    }
+    out << "],\"not_found\":";
+    out << "[";
+    for (size_t i = 0; i < not_found.size(); ++i) {
+        if (i != 0) { out << ","; }
+        out << json_quote(not_found[i]);
+    }
+    out << "]}";
+    return json_response(out.str());
+}
+
+HttpResponse ServerState::handle_unload_all_models() {
+    std::vector<std::string> unloaded;
+
+    for (auto & model : models_) {
+        if (model->session != nullptr) {
+            [[maybe_unused]] BusyGuard::Lock lock = model->busy.acquire(0, model->config.id);
+            model->unload();
+            unloaded.push_back(model->config.id);
+        }
+    }
+
+    std::ostringstream out;
+    out << "{\"unloaded\":[";
+    for (size_t i = 0; i < unloaded.size(); ++i) {
+        if (i != 0) { out << ","; }
+        out << json_quote(unloaded[i]);
+    }
+    out << "]}";
+    return json_response(out.str());
 }
 
 }  // namespace minitts::server
