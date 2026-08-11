@@ -14,6 +14,7 @@
   python-scripts,
   config,
   version,
+  autoAddDriverRunpath,
 
   # Overridable feature flags
   cudaSupport ? config.cudaSupport or false,
@@ -38,6 +39,7 @@ stdenv.mkDerivation (finalAttrs: {
     pkg-config
   ]
   ++ lib.optional cudaSupport cudaPackages.cuda_nvcc
+  ++ lib.optional cudaSupport autoAddDriverRunpath
   ++ lib.optional rocmSupport rocmPackages.clr;
 
   buildInputs = [
