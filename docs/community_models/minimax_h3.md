@@ -37,10 +37,9 @@ DiT script for that component.
 ### DiT
 
 ```bash
-source /home/leo/anaconda3/etc/profile.d/conda.sh && conda activate qwen3-tts && \
 python scripts/minimax_h3/convert_dit_gguf.py \
-  --input /media/leo/Software/MiniMax-H3-NF4/minimax-h3-fl2va-nf4.safetensors \
-  --output /media/leo/Share/models/audio.cpp-gguf/MiniMax-H3-Q4-GGUF/dit.gguf \
+  --input /path/to/MiniMax-H3-NF4/minimax-h3-fl2va-nf4.safetensors \
+  --output models/MiniMax-H3-Q4-GGUF/dit.gguf \
   --overwrite \
   --type q4_0 --bnb-nf4-type q4_0 \
   --override 'blocks.*.adaln_proj.linear.weight=q4_0' \
@@ -79,22 +78,21 @@ Create the original Audio VAE GGUF first:
 
 ```bash
 build/debug/bin/audiocpp_gguf \
-  --input /media/leo/Software/MiniMax-H3-NF4/audio_vae_nf4.safetensors \
-  --output /media/leo/Share/models/audio.cpp-gguf/MiniMax-H3-Q4-GGUF/audio_vae.gguf \
+  --input /path/to/MiniMax-H3-NF4/audio_vae_nf4.safetensors \
+  --output models/MiniMax-H3-Q4-GGUF/audio_vae.gguf \
   --type orig \
   --bnb-nf4-type q4_k \
   --family minimax_h3 \
-  --root /media/leo/Share/models/audio.cpp-gguf/MiniMax-H3-Q4-GGUF \
+  --root models/MiniMax-H3-Q4-GGUF \
   --overwrite
 ```
 
 Then create the folded runtime Audio VAE GGUF:
 
 ```bash
-source /home/leo/anaconda3/etc/profile.d/conda.sh && conda activate qwen3-tts && \
 python scripts/minimax_h3/convert_fold_audio_vae_gguf.py \
-  --input /media/leo/Share/models/audio.cpp-gguf/MiniMax-H3-Q4-GGUF/audio_vae.gguf \
-  --output /media/leo/Share/models/audio.cpp-gguf/MiniMax-H3-Q4-GGUF/audio_vae_folded_f16.gguf \
+  --input models/MiniMax-H3-Q4-GGUF/audio_vae.gguf \
+  --output models/MiniMax-H3-Q4-GGUF/audio_vae_folded_f16.gguf \
   --folded-type f16 \
   --overwrite
 ```
@@ -114,7 +112,7 @@ PROMPT='A lively four speaker comedy scene in a small radio studio. Speaker one 
 build/debug/bin/audiocpp_cli \
   --task gen \
   --family minimax_h3 \
-  --model /media/leo/Share/models/audio.cpp-gguf/MiniMax-H3-Q4-GGUF/dit.gguf \
+  --model models/MiniMax-H3-Q4-GGUF/dit.gguf \
   --model-spec-override model_specs/minimax_h3.json \
   --backend cuda \
   --threads 8 \
@@ -126,7 +124,7 @@ build/debug/bin/audiocpp_cli \
   --request-option width=32 \
   --request-option num_frames=481 \
   --request-option return_video=false \
-  --out build/logs/minimax_h3/example/output.wav \
+  --out output.wav \
   --metrics
 ```
 
