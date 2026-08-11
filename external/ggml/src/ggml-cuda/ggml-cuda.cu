@@ -1784,7 +1784,7 @@ static void ggml_cuda_op_mul_mat_cublas(
                                  src1_ptr,       CUDA_R_16BF, ne10,
                     &beta_f32,   dst_dd_i,       CUDA_R_32F,  ldc,
                     CUBLAS_COMPUTE_32F,
-                    CUBLAS_GEMM_DEFAULT));
+                    CUBLAS_GEMM_DEFAULT_TENSOR_OP));
 #endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
     } else if (fast_fp16_hardware_available(cc) && use_fp16) {
         // convert src0 and src1 to fp16, multiply as fp16, convert dst to fp32
