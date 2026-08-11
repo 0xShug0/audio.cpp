@@ -657,6 +657,19 @@ License: IndexTTS-2.5 weights are distributed under the bilibili Model Use Licen
 | `--session-option index_tts2_5.emotion_text_max_new_tokens=<n>` | tokens | `256` | Maximum generated tokens for emotion-text classification. |
 | `--session-option index_tts2_5.weight_context_mb=<n>` | MB | `32` | Shared ggml weight metadata context size. |
 
+### Converting From Upstream Weights
+
+`tools/convert_index_tts2_5.py` turns an official `IndexTeam/IndexTTS-2.5` snapshot (the `.pth` checkpoints) into the Safetensors staging layout the engine expects, and prints (or runs) the matching `audiocpp_gguf` command. The w2v-bert-2.0, CAMPPlus, and BigVGAN checkpoints are auto-detected under `<model-dir>/hf_cache/` (run the official inference once to populate it) and each has an explicit override flag:
+
+```bash
+python tools/convert_index_tts2_5.py \
+    --model-dir /path/to/IndexTTS-2.5 \
+    --output-dir /path/to/staging \
+    --run-converter /path/to/audiocpp_gguf --type q8_0
+```
+
+The script repackages the checkpoints the loader needs (unwraps the `s2mel.pth`/`codec.pth` container keys, prefixes CAMPPlus tensors with `speaker_encoder.`, strips BigVGAN's `generator.` prefix, wraps the `feat1/feat2.pt` matrices as a single `tensor`) and assembles the sidecar `root/` (config, tiktoken vocabulary, auxiliary model configs) that gets embedded into the GGUF.
+
 ## Irodori-TTS
 
 Irodori-TTS is Japanese TTS under `--family irodori_tts`. v4 Small is the preferred GGUF-first package and supports no-reference speech, reference-conditioned speech, and instruction-based voice design in one checkpoint. The older 500M v3 and 600M v3 VoiceDesign packages remain supported for existing users. See [Irodori-TTS](models/irodori_tts.md) for v3/v4 differences, GGUF variants, options, and compatibility aliases.
