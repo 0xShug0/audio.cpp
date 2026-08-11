@@ -164,6 +164,7 @@ void ggml_cuda_convrot_linear(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     const int n = static_cast<int>(weight_i8->ne[1]);
     const int tokens = static_cast<int>(input->ne[1] * input->ne[2] * input->ne[3]);
     GGML_ASSERT(k % group_size == 0);
+    GGML_ASSERT(tokens > 0);
 
     cudaStream_t stream = ctx.stream();
     ggml_cuda_pool_alloc<int8_t> qx(ctx.pool(), static_cast<size_t>(tokens) * k);
@@ -203,7 +204,18 @@ void ggml_cuda_convrot_linear(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     const int32_t beta = 0;
     CUBLAS_CHECK(cublasSetStream(ctx.cublas_handle(), stream));
     constexpr int threads = 256;
-    constexpr int chunk_n = 16384;
+    constexpr int max_chunk_n = 16384;
+    constexpr int chunk_multiple = 256;
+    constexpr size_t max_acc_bytes = 512ull * 1024ull * 1024ull;
+    size_t max_rows_by_workspace = max_acc_bytes / (static_cast<size_t>(tokens) * sizeof(int32_t));
+    if (max_rows_by_workspace == 0) {
+        max_rows_by_workspace = 1;
+    }
+    int chunk_n = std::min<int>(max_chunk_n, std::min<int>(n, static_cast<int>(max_rows_by_workspace)));
+    if (chunk_n > chunk_multiple) {
+        chunk_n = (chunk_n / chunk_multiple) * chunk_multiple;
+    }
+    chunk_n = std::max(1, chunk_n);
     ggml_cuda_pool_alloc<int32_t> acc(ctx.pool(), static_cast<size_t>(tokens) * chunk_n);
     for (int row_offset = 0; row_offset < n; row_offset += chunk_n) {
         const int rows = std::min(chunk_n, n - row_offset);
