@@ -17,6 +17,7 @@
 | Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](#higgs-audio-v3-tts) |
 | Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
 | IndexTTS2 | `index_tts2` | `tts` | [IndexTTS2](#indextts2) |
+| IndexTTS2.5 | `index_tts2_5` | `tts` | [IndexTTS2.5](#indextts25) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
@@ -589,6 +590,72 @@ audiocpp_cli --task tts --family index_tts2 --model /path/to/IndexTTS-2 --backen
 | `--session-option index_tts2.emotion_text_decode_graph_arena_mb=<n>` | MB | model default | Emotion-text cached-step graph arena size. |
 | `--session-option index_tts2.emotion_text_max_new_tokens=<n>` | tokens | `256` | Maximum generated tokens for emotion-text classification. |
 | `--session-option index_tts2.weight_context_mb=<n>` | MB | `32` | Shared ggml weight metadata context size. |
+
+## IndexTTS2.5
+
+IndexTTS2.5 is IndexTeam/bilibili's multilingual zero-shot TTS model (released 2026-07): a 0.8B GPT (autoregressive) + DiT CFM + BigVGAN stack that keeps IndexTTS2's timbre-emotion decoupling and adds Japanese, Spanish, and Arabic on top of Chinese and English. It requires a speaker reference through the framework `--voice-ref` path. Inline `<文字|发音>` pronunciation overrides (pinyin, CMU phonemes, or kana) are supported. Upstream weights live at [IndexTeam/IndexTTS-2.5](https://huggingface.co/IndexTeam/IndexTTS-2.5); the reference implementation is [index-tts/index-tts](https://github.com/index-tts/index-tts) branch `indextts-2.5`.
+
+| Field | Value |
+|---|---|
+| Family | `index_tts2_5` |
+| Model directory | `models/IndexTTS2.5-GGUF` (default GGUF package `index_tts2_5_q8_0`; `index_tts2_5_f16` and `index_tts2_5_orig` also available) |
+| Task | `tts`, `clon` |
+| Modes | `offline` |
+| Languages | `zh`, `en`, `ja`, `es`, `ar` |
+| Voice input | Required reference WAV through `--voice-ref` |
+| Built-in voices | Not exposed |
+
+Voice clone:
+
+```bash
+audiocpp_cli --task clon --family index_tts2_5 --model /path/to/IndexTTS2.5-GGUF --backend cuda --text "Hello from IndexTTS2.5." --voice-ref /path/to/reference.wav --out out.wav
+```
+
+Emotion text:
+
+```bash
+audiocpp_cli --task tts --family index_tts2_5 --model /path/to/IndexTTS2.5-GGUF --backend cuda --text "今天的演示会更有情绪。" --voice-ref /path/to/reference.wav --emotion "你吓死我了！你是鬼吗？" --request-option emotion_alpha=0.6 --out out.wav
+```
+
+The `lang` request option selects the text language (`auto`, `zh`, `en`, `ja`, `es`, `ar`, or any tokenizer language code). The default `auto` picks `zh` when the text contains Han characters and `en` otherwise, so mixed Japanese/Spanish/Arabic text should set `--request-option lang=ja|es|ar` explicitly.
+
+Emotion conditioning supports all three IndexTTS2 paths: an emotion reference WAV through `--audio`, an explicit `emotion_vector`, and Qwen-based emotion-text classification through `--emotion` / `use_emotion_text`. Known limitation: the NeMo text normalizers for Japanese and Spanish are not ported, so ja/es input text is passed through without upstream-style normalization.
+
+License: IndexTTS-2.5 weights are distributed under the bilibili Model Use License, which is not OSI-approved. It requires separate commercial authorization when monthly active users exceed 100 million or annual revenue exceeds 1 billion RMB, and it forbids using model outputs to improve other AI models. Check the upstream repository for the full terms before redistribution or commercial use.
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--voice-ref` | WAV path | required | Reference speaker audio. |
+| `--request-option lang=<code>` | `auto`, `zh`, `en`, `ja`, `es`, `ar`, ... | `auto` | Text language hint; `auto` infers `zh` when the text contains Han characters, otherwise `en`. |
+| `--emotion` | text | not set | Emotion-text conditioning through the framework style field. |
+| `--request-option emotion_alpha=<float>` | float in `[0, 1]` | `1.0` | Blend strength for explicit emotion conditioning. |
+| `--request-option emotion_vector=<v0,...,v7>` | 8 floats | not set | Explicit emotion vector. |
+| `--request-option use_emotion_text=true|false` | bool | `false` | Infer emotion from text. |
+| `--request-option use_random_emotion=true|false` | bool | `false` | Use random emotion weights in the emotion mixer. |
+| `--request-option interval_silence_ms=<n>` | milliseconds | `200` | Silence inserted between generated text chunks. |
+| `--text-chunk-size` | characters | not set | Optional framework outer text chunk size. When omitted, IndexTTS2.5 keeps its internal tokenizer segmentation. |
+| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework chunking mode used only when `--text-chunk-size` is set. |
+| `--max-tokens` | integer | `1500` | Maximum generated GPT mel tokens. |
+| `--temperature` | float | `0.8` | GPT sampling temperature. |
+| `--top-p` | float | `0.8` | GPT nucleus sampling limit. |
+| `--top-k` | integer | `30` | GPT top-k sampling limit. |
+| `--repetition-penalty` | float | `10.0` | GPT repetition penalty. |
+| `--do-sample` | `true`, `false` | `true` | Enable stochastic GPT sampling. |
+| `--request-option length_penalty=<float>` | float | `0.0` | GPT beam-search length penalty. |
+| `--request-option num_beams=<n>` | integer | `3` | GPT beam count. |
+| `--session-option index_tts2_5.mem_saver=true|false` | bool | `false` | Release staged reference and conditioning graphs after request phases. |
+| `--session-option index_tts2_5.weight_type=native|f32|f16|bf16|q8_0` | enum | `native` | Matmul weight storage type. |
+| `--session-option index_tts2_5.conv_weight_type=native|f32|f16` | enum | `native` | Convolution weight storage type. |
+| `--session-option index_tts2_5.speaker_cache_slots=<n>` | integer slots | `1` | Prepared speaker-reference cache slots; set `0` to disable reuse. |
+| `--session-option index_tts2_5.emotion_cache_slots=<n>` | integer slots | `1` | Prepared emotion-reference cache slots; set `0` to disable reuse. |
+| `--session-option index_tts2_5.emotion_text_cache_slots=<n>` | integer slots | `1` | Emotion-text weight cache slots; set `0` to disable reuse. |
+| `--session-option index_tts2_5.gpt_graph_arena_mb=<n>` | MB | model default | GPT graph arena size. |
+| `--session-option index_tts2_5.s2mel_graph_arena_mb=<n>` | MB | model default | S2Mel graph arena size. |
+| `--session-option index_tts2_5.reference_graph_arena_mb=<n>` | MB | model default | Reference encoder and codec graph arena size. |
+| `--session-option index_tts2_5.emotion_text_prefill_graph_arena_mb=<n>` | MB | model default | Emotion-text prefill graph arena size. |
+| `--session-option index_tts2_5.emotion_text_decode_graph_arena_mb=<n>` | MB | model default | Emotion-text cached-step graph arena size. |
+| `--session-option index_tts2_5.emotion_text_max_new_tokens=<n>` | tokens | `256` | Maximum generated tokens for emotion-text classification. |
+| `--session-option index_tts2_5.weight_context_mb=<n>` | MB | `32` | Shared ggml weight metadata context size. |
 
 ## Irodori-TTS
 
