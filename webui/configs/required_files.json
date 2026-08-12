@@ -447,6 +447,9 @@
     "model.safetensors",
     "tokens.txt"
   ],
+  "sensevoice_small_q8": [
+    "sensevoice-small-q8.gguf"
+  ],
   "voxcpm2": [
     "config.json",
     "model.safetensors",
