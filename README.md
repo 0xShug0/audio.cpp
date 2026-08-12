@@ -119,6 +119,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **moss_tts_local** | TTS, Clone, Ctrl | auto, optional language hint | GGUF | [@justinjohn0306](https://github.com/justinjohn0306) | MOSS-TTS-Local Transformer v1.5 support |
 | **outetts** | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | GGUF | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
 | **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | GGUF F32/16/Q8, Stream | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](docs/community_models/parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support |
+| **sense_asr** | ASR | auto, zh, en, yue, ja, ko, pt, ru, es, it, fr, de, nl, pl, tr, ar, hi, vi, th, id, ms, fa, nospeech | GGUF Q8, Stream | Community | [SenseVoice-Small](docs/community_models/sense_asr.md) offline/streaming SAN-M + CTC transcription with event/emotion/language tags and ITN |
 | **vietneu_tts** | TTS, Clone | vi, en | GGUF | Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS-v3-Turbo](docs/community_models/vietneu_tts.md) TTS and voice cloning support |
 
 ## Docker
