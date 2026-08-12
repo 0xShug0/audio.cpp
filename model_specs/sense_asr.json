@@ -79,7 +79,7 @@
         "default": "auto"
       },
       {
-        "name": "audio_chunk_seconds",
+        "name": "audio_chunk_duration_sec",
         "type": "float",
         "description": "Fixed chunk duration in seconds when not using VAD segmentation.",
         "required": false,

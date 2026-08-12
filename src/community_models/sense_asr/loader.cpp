@@ -46,8 +46,8 @@ runtime::ModelCliInterface cli() {
       {"audio_chunk_mode", "auto|fixed|none",
        "Audio chunking mode; auto uses bundled silero VAD segmentation.",
        false, "auto"},
-      {"audio_chunk_seconds", "seconds",
-       "Max audio chunk duration in seconds.", false, "30", "0"},
+{"audio_chunk_duration_sec", "seconds",
+        "Max audio chunk duration in seconds.", false, "30", "0"},
   };
   result.session_options = {
       {"sense_asr.weight_type", "native|f32|f16|bf16|q8_0",

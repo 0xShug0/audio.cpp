@@ -105,7 +105,8 @@ void validate_request_options(
     (void)value;
     if (key != "language" && key != "enable_itn" && key != "keep_tags" &&
         key != "audio_chunk_mode" && key != "audio_chunk_seconds" &&
-        key != "audio_chunk_duration_seconds" && key != "audio_chunk_duration") {
+        key != "audio_chunk_duration_seconds" && key != "audio_chunk_duration" &&
+        key != "audio_chunk_duration_sec") {
       throw std::runtime_error("unknown SenseVoice request option: " + key);
     }
   }
