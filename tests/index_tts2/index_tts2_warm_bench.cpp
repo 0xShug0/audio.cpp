@@ -127,7 +127,7 @@ engine::runtime::TaskRequest make_request(const engine::io::json::Value & object
     set_optional_option(request, object, "emotion_vector");
     set_optional_option(request, object, "use_emotion_text");
     set_optional_option(request, object, "emotion_text");
-    set_optional_option(request, object, "lang");
+    set_optional_option(request, object, "language");
     set_optional_option(request, object, "use_random_emotion");
     set_optional_option(request, object, "interval_silence_ms");
     set_optional_option(request, object, "text_chunk_size");

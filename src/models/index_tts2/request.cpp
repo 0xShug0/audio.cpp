@@ -59,15 +59,15 @@ void require_valid_audio(const runtime::AudioBuffer & audio, const char * label)
 
 }  // namespace
 
-std::string normalize_index_tts2_lang(const std::string & value) {
-    std::string lang = engine::io::trim_ascii_whitespace(value);
-    std::transform(lang.begin(), lang.end(), lang.begin(), [](unsigned char ch) {
+std::string normalize_index_tts2_language(const std::string & value) {
+    std::string language = engine::io::trim_ascii_whitespace(value);
+    std::transform(language.begin(), language.end(), language.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
     });
-    if (lang == "auto") {
-        lang.clear();
+    if (language == "auto") {
+        language.clear();
     }
-    return lang;
+    return language;
 }
 
 IndexTTS2Request parse_index_tts2_request(const runtime::TaskRequest & request) {
@@ -87,8 +87,8 @@ IndexTTS2Request parse_index_tts2_request(const runtime::TaskRequest & request) 
     } else {
         throw std::runtime_error("IndexTTS2 request requires --voice-ref or voice.speaker.audio");
     }
-    if (const auto value = runtime::find_option(request.options, {"lang"})) {
-        out.lang = normalize_index_tts2_lang(*value);
+    if (const auto value = runtime::find_option(request.options, {"language"})) {
+        out.language = normalize_index_tts2_language(*value);
     }
 
     if (const auto value = runtime::parse_finite_float_option(request.options, {"emotion_alpha"})) {

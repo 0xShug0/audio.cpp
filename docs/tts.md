@@ -588,7 +588,7 @@ audiocpp_cli --task tts --family index_tts2 --model /path/to/IndexTTS-2 --backen
 | `--session-option index_tts2.reference_graph_arena_mb=<n>` | MB | model default | Reference encoder and codec graph arena size. |
 | `--session-option index_tts2.emotion_text_prefill_graph_arena_mb=<n>` | MB | model default | Emotion-text prefill graph arena size. |
 | `--session-option index_tts2.emotion_text_decode_graph_arena_mb=<n>` | MB | model default | Emotion-text cached-step graph arena size. |
-| `--session-option index_tts2.emotion_text_max_new_tokens=<n>` | tokens | `256` | Maximum generated tokens for emotion-text classification. |
+| `--session-option index_tts2.emotion_text_max_tokens=<n>` | tokens | `256` | Maximum generated tokens for emotion-text classification; old name `index_tts2.emotion_text_max_new_tokens` is still accepted. |
 | `--session-option index_tts2.weight_context_mb=<n>` | MB | `32` | Shared ggml weight metadata context size. |
 
 ## IndexTTS2.5
@@ -619,7 +619,7 @@ Emotion text:
 audiocpp_cli --task tts --family index_tts2 --model /path/to/IndexTTS2.5-GGUF --backend cuda --text "今天的演示会更有情绪。" --voice-ref /path/to/reference.wav --emotion "你吓死我了！你是鬼吗？" --request-option emotion_alpha=0.6 --out out.wav
 ```
 
-The `lang` request option selects the text language (`auto`, `zh`, `en`, `ja`, `es`, `ar`, or any tokenizer language code). The default `auto` picks `zh` when the text contains Han characters and `en` otherwise, so mixed Japanese/Spanish/Arabic text should set `--request-option lang=ja|es|ar` explicitly.
+The `language` request option selects the text language (`auto`, `zh`, `en`, `ja`, `es`, `ar`, or any tokenizer language code). The default `auto` picks `zh` when the text contains Han characters and `en` otherwise, so mixed Japanese/Spanish/Arabic text should set `--request-option language=ja|es|ar` explicitly.
 
 Emotion conditioning supports all three IndexTTS2 paths: an emotion reference WAV through `--audio`, an explicit `emotion_vector`, and Qwen-based emotion-text classification through `--emotion` / `use_emotion_text`. Known limitation: the NeMo text normalizers for Japanese and Spanish are not ported, so ja/es input text is passed through without upstream-style normalization.
 
@@ -628,7 +628,7 @@ License: IndexTTS-2.5 weights are distributed under the bilibili Model Use Licen
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--voice-ref` | WAV path | required | Reference speaker audio. |
-| `--request-option lang=<code>` | `auto`, `zh`, `en`, `ja`, `es`, `ar`, ... | `auto` | Text language hint; `auto` infers `zh` when the text contains Han characters, otherwise `en`. |
+| `--request-option language=<code>` | `auto`, `zh`, `en`, `ja`, `es`, `ar`, ... | `auto` | Text language hint; `auto` infers `zh` when the text contains Han characters, otherwise `en`. |
 | `--emotion` | text | not set | Emotion-text conditioning through the framework style field. |
 | `--request-option emotion_alpha=<float>` | float in `[0, 1]` | `1.0` | Blend strength for explicit emotion conditioning. |
 | `--request-option emotion_vector=<v0,...,v7>` | 8 floats | not set | Explicit emotion vector. |
@@ -656,7 +656,7 @@ License: IndexTTS-2.5 weights are distributed under the bilibili Model Use Licen
 | `--session-option index_tts2.reference_graph_arena_mb=<n>` | MB | model default | Reference encoder and codec graph arena size. |
 | `--session-option index_tts2.emotion_text_prefill_graph_arena_mb=<n>` | MB | model default | Emotion-text prefill graph arena size. |
 | `--session-option index_tts2.emotion_text_decode_graph_arena_mb=<n>` | MB | model default | Emotion-text cached-step graph arena size. |
-| `--session-option index_tts2.emotion_text_max_new_tokens=<n>` | tokens | `256` | Maximum generated tokens for emotion-text classification. |
+| `--session-option index_tts2.emotion_text_max_tokens=<n>` | tokens | `256` | Maximum generated tokens for emotion-text classification; old name `index_tts2.emotion_text_max_new_tokens` is still accepted. |
 | `--session-option index_tts2.weight_context_mb=<n>` | MB | `32` | Shared ggml weight metadata context size. |
 
 ### Converting From Upstream Weights

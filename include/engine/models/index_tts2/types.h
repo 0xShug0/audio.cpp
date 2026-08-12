@@ -152,7 +152,7 @@ struct IndexTTS2Request {
     std::optional<runtime::AudioBuffer> emotion_audio = std::nullopt;
     // Text language hint (v2.5 only); empty means auto (zh when the text
     // contains Han characters, otherwise en).
-    std::string lang;
+    std::string language;
     float emotion_alpha = 1.0F;
     std::optional<std::vector<float>> emotion_vector = std::nullopt;
     bool use_emotion_text = false;

@@ -219,11 +219,13 @@ IndexTTS2Session::IndexTTS2Session(
         options.options, {"index_tts2.emotion_text_decode_graph_arena_mb"}, emotion_text_decode_graph_arena_bytes_);
     weight_context_bytes_ = runtime::parse_size_mb_option(
         options.options, {"index_tts2.weight_context_mb"}, weight_context_bytes_);
-    if (const auto value = runtime::parse_int_option(options.options, {"index_tts2.emotion_text_max_new_tokens"})) {
+    if (const auto value = runtime::parse_int_option(
+            options.options,
+            {"index_tts2.emotion_text_max_tokens", "index_tts2.emotion_text_max_new_tokens"})) {
         if (*value <= 0) {
-            throw std::runtime_error("index_tts2.emotion_text_max_new_tokens must be positive");
+            throw std::runtime_error("index_tts2.emotion_text_max_tokens must be positive");
         }
-        emotion_text_max_new_tokens_ = *value;
+        emotion_text_max_tokens_ = *value;
     }
     if (const auto it = options.options.find("index_tts2.weight_type"); it != options.options.end()) {
         matmul_weight_storage_type_ = engine::assets::parse_tensor_storage_type(it->second);
@@ -241,6 +243,7 @@ IndexTTS2Session::IndexTTS2Session(
             key != "index_tts2.reference_graph_arena_mb" &&
             key != "index_tts2.emotion_text_prefill_graph_arena_mb" &&
             key != "index_tts2.emotion_text_decode_graph_arena_mb" &&
+            key != "index_tts2.emotion_text_max_tokens" &&
             key != "index_tts2.emotion_text_max_new_tokens" &&
             key != "index_tts2.weight_context_mb" &&
             key != "index_tts2.weight_type" &&
@@ -355,16 +358,16 @@ void IndexTTS2Session::prepare(const runtime::SessionPreparationRequest & reques
             }
             generation.num_beams = *value;
         }
-        std::string lang;
+        std::string language;
         if (is_v2_5_variant(*assets_)) {
-            if (const auto value = runtime::find_option(request.options, {"lang"})) {
-                lang = normalize_index_tts2_lang(*value);
+            if (const auto value = runtime::find_option(request.options, {"language"})) {
+                language = normalize_index_tts2_language(*value);
             }
         }
         const auto text_encoding = tokenizer_.encode_for_inference(
             text,
             IndexTTS2Request{}.max_text_tokens_per_segment,
-            lang);
+            language);
         for (const auto & segment : text_encoding.segment_token_ids) {
             const int64_t gpt_text_tokens = is_v2_5_variant(*assets_)
                 ? static_cast<int64_t>(align_index_tts2_gpt_text_tokens(segment).size())
@@ -572,7 +575,7 @@ std::vector<float> IndexTTS2Session::resolve_emotion_vector(
             const bool will_evict =
                 emotion_text_weights_cache_.capacity() > 0 &&
                 emotion_text_weights_cache_.size() >= emotion_text_weights_cache_.capacity();
-            explicit_weights = qwen_emotion_->infer(emotion_text, emotion_text_max_new_tokens_).values;
+            explicit_weights = qwen_emotion_->infer(emotion_text, emotion_text_max_tokens_).values;
             if (mem_saver_) {
                 qwen_emotion_->release_graphs();
             }
@@ -766,7 +769,7 @@ runtime::TaskResult IndexTTS2Session::run(const runtime::TaskRequest & request) 
         const auto text_encoding = tokenizer_.encode_for_inference(
             text_chunk,
             parsed.max_text_tokens_per_segment,
-            parsed.lang);
+            parsed.language);
         const int32_t lang_id = v2_5 ? IndexTTS2TextTokenizer::lang_to_id(text_encoding.lang) : 0;
         for (const auto & ids : text_encoding.segment_token_ids) {
             segment_token_ids.push_back(ids);

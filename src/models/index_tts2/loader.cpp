@@ -50,7 +50,7 @@ runtime::ModelCliInterface cli(const IndexTTS2Assets & assets) {
     };
     if (index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5) {
         out.request_options.push_back(
-            {"lang", "auto|zh|en|ja|es|ar|...", "Text language hint; auto infers zh when the text contains Han characters, otherwise en."});
+            {"language", "auto|zh|en|ja|es|ar|...", "Text language hint; auto infers zh when the text contains Han characters, otherwise en."});
     }
     out.session_options = {
         {"index_tts2.weight_type", "native|f32|f16|bf16|q8_0", "Matmul weight storage type."},
@@ -60,7 +60,7 @@ runtime::ModelCliInterface cli(const IndexTTS2Assets & assets) {
         {"index_tts2.reference_graph_arena_mb", "n", "Reference encoder and codec graph arena size."},
         {"index_tts2.emotion_text_prefill_graph_arena_mb", "n", "Emotion-text prefill graph arena size."},
         {"index_tts2.emotion_text_decode_graph_arena_mb", "n", "Emotion-text cached-step graph arena size."},
-        {"index_tts2.emotion_text_max_new_tokens", "n", "Maximum generated tokens for emotion-text classification; default 256."},
+        {"index_tts2.emotion_text_max_tokens", "n", "Maximum generated tokens for emotion-text classification; default 256."},
         {"index_tts2.weight_context_mb", "n", "Shared weight context size."},
         {"index_tts2.mem_saver", "true|false", "Release staged reference and conditioning graphs after request phases; default false."},
         {"index_tts2.speaker_cache_slots", "n", "Prepared speaker-reference cache slots; default 1."},
