@@ -713,6 +713,7 @@ std::string IndexTTS2TextTokenizer::normalize_english(const std::string & text) 
     options.expand_common_contractions = true;
     options.index_tts_punctuation = true;
     options.uppercase_ascii = variant_ == IndexTTS2Variant::kV2;
+    options.verbalize_symbols = true;
     return engine::text::normalize_english_text(text, options);
 }
 

@@ -489,6 +489,27 @@ std::string normalize_english_text(std::string_view text, const EnglishTextNorma
     if (options.spell_numbers) {
         out = normalize_english_numbers(std::move(out));
     }
+    if (options.verbalize_symbols) {
+        // Match the official wetext English normalizer: standalone ASCII
+        // symbols are verbalized ("a_b" -> "a underscore b",
+        // "C++" -> "C plus plus", "a=b" -> "a equal sign b"). Runs after
+        // number spelling so "50%" has already become "fifty percent".
+        const std::pair<const char *, const char *> symbol_words[] = {
+            {"_", " underscore "},
+            {"+", " plus "},
+            {"=", " equal sign "},
+            {"*", " asterisk "},
+            {"&", " and "},
+            {"#", " hash "},
+            {"%", " percent "},
+            {"|", " vertical bar "},
+            {"~", " tilde "},
+        };
+        for (const auto & [from, to] : symbol_words) {
+            out = replace_all(std::move(out), from, to);
+        }
+        out = collapse_ascii_whitespace(out);
+    }
     if (options.index_tts_punctuation) {
         out = apply_index_tts_punctuation_map(std::move(out));
     }

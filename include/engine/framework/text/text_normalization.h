@@ -10,6 +10,9 @@ struct EnglishTextNormalizationOptions {
     bool spell_numbers = true;
     bool index_tts_punctuation = false;
     bool uppercase_ascii = false;
+    // Verbalize standalone ASCII symbols like the official wetext English
+    // normalizer ("a_b" -> "a underscore b", "C++" -> "C plus plus").
+    bool verbalize_symbols = false;
 };
 
 std::string replace_all(std::string text, std::string_view from, std::string_view to);
