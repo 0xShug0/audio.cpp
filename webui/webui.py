@@ -654,6 +654,12 @@ MODEL_PROFILES = {
                        "语种/上下文/对话模式见『转写选项』。"),
         "max_input_seconds": 60,
     },
+    "sense_asr": {
+        "input_hint": (
+            "**SenseVoice-Small**（社区模型）：多语种 ASR，事件/情感/语言标签，ITN 可开关；"
+            "离线与流式模式。"),
+        "supports_streaming": True,
+    },
     "voxtral_realtime": {
         "input_hint": (
             "**Voxtral Mini 4B Realtime**：自动语种转写；支持⚡流式转写，"
@@ -818,6 +824,7 @@ MODEL_HINTS_EN = {
     "confucius4_tts": "**Confucius4-TTS** requires a voice reference. Chinese/English are the most reliable paths.",
     "chatterbox": "**Chatterbox** requires a voice reference and supports en/es/fr/de/it/pt/ko.",
     "qwen3_asr": "**Qwen3-ASR** automatically splits long audio. Language and context are optional.",
+    "sense_asr": "**SenseVoice-Small** (community): multilingual ASR with event/emotion/language tags, optional ITN; offline and streaming modes.",
     "voxtral_realtime": "**Voxtral Mini 4B Realtime** auto-detects language and supports streaming transcription. Timestamps are not exposed.",
     "fun_asr_nano": "**Fun-ASR-Nano** is a lightweight offline ASR model for auto/zh/en/ja.",
     "parakeet_tdt": "**Parakeet-TDT** supports offline, long-form and streaming ASR for many European languages.",

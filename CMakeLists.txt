@@ -835,6 +835,18 @@ audiocpp_add_model(fun_asr_nano
         engine::models::fun_asr_nano::make_fun_asr_nano_loader
 )
 
+audiocpp_add_model(sense_asr
+    SOURCES
+        src/community_models/sense_asr/assets.cpp
+        src/community_models/sense_asr/frontend.cpp
+        src/community_models/sense_asr/encoder.cpp
+        src/community_models/sense_asr/session.cpp
+    INCLUDES
+        engine/community_models/sense_asr/session.h
+    LOADERS
+        engine::community_models::sense_asr::make_sense_asr_loader
+)
+
 audiocpp_add_model(heartmula
     SOURCES
         src/models/heartmula/assets.cpp
