@@ -36,19 +36,19 @@ the rest of the tags fall back to `auto`. `keep_tags` keeps the
 Install the default package:
 
 Download the standalone GGUF directly from
-[FunAudioLLM/SenseVoiceSmall-GGUF](https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF)
-(such as `sensevoice-small-q8.gguf`) and point `--model` at the file.
+[FunAudioLLM/SenseVoiceSmall-GGUF-audiocpp](https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF-audiocpp)
+(such as `sensevoice-small-q8-audiocpp-v1.gguf`) and point `--model` at the file.
 
 ## Run (offline)
 
 ```bash
 audiocpp_cli --task asr --family sense_asr \
-  --model models/SenseVoice-Small-GGUF/sensevoice-small-q8.gguf \
+  --model models/SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf \
   --backend cpu --audio samples/zh.wav
 ```
 
 `audio_chunk_mode=auto` (default) segments long audio with the bundled silero
-VAD; `audio_chunk_mode=fixed` splits on `audio_chunk_seconds`; `none` runs the
+VAD; `audio_chunk_mode=fixed` splits on `audio_chunk_duration_sec`; `none` runs the
 whole clip as one encoder pass. Chunk transcripts are joined at ASCII word
 boundaries so CJK output stays space-free.
 
@@ -56,14 +56,14 @@ boundaries so CJK output stays space-free.
 
 ```bash
 audiocpp_cli --task asr --family sense_asr \
-  --model models/SenseVoice-Small-GGUF/sensevoice-small-q8.gguf \
+  --model models/SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf \
   --backend cpu --mode streaming --audio - \
-  --request-option audio_chunk_seconds=5 --request-option audio_chunk_mode=none \
+  --request-option audio_chunk_duration_sec=5 --request-option audio_chunk_mode=none \
   < 16k_s16.pcm
 ```
 
 Buffered streaming holds accumulated PCM and transcribes one fixed window per
-`audio_chunk_seconds`; each window yields a `partial_text` delta and
+`audio_chunk_duration_sec`; each window yields a `partial_text` delta and
 `finalize()` returns the full accumulated transcript. The SenseVoice service
 also runs through `audiocpp_server` with
 `POST /v1/audio/transcriptions/live` for chunked PCM ingest with SSE deltas.
@@ -74,7 +74,7 @@ Start the WebUI-enabled server with the SenseVoice model:
 
 ```bash
 audiocpp_server --ui --backend cpu \
-  --config <(echo '{"models":[{"id":"sense_asr","family":"sense_asr","path":"models/SenseVoiceSmall-GGUF/sensevoice-small-q8.gguf","task":"asr","mode":"streaming"}]}')
+  --config <(echo '{"models":[{"id":"sense_asr","family":"sense_asr","path":"models/SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf","task":"asr","mode":"streaming"}]}')
 ```
 
 Then open http://127.0.0.1:8080 and select "SenseVoice-Small (asr, 流式, 社区)" from the ASR tab.
@@ -85,7 +85,7 @@ For headless API-only mode without WebUI:
 
 ```bash
 audiocpp_server --backend cpu \
-  --config <(echo '{"models":[{"id":"sense_asr","family":"sense_asr","path":"models/SenseVoiceSmall-GGUF/sensevoice-small-q8.gguf","task":"asr","mode":"streaming"}],"ui":false}')
+  --config <(echo '{"models":[{"id":"sense_asr","family":"sense_asr","path":"models/SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf","task":"asr","mode":"streaming"}],"ui":false}')
 ```
 
 Then use the OpenAI-compatible endpoint:
@@ -110,7 +110,7 @@ curl -X POST http://127.0.0.1:8080/v1/audio/transcriptions/live \
 | `enable_itn` | true\|false | `true` | Inverse text normalization via the withitn query token |
 | `keep_tags` | true\|false | `false` | Keep `<|...|>` meta tags inline |
 | `audio_chunk_mode` | auto\|fixed\|none | `auto` | VAD segmentation, fixed split, or one pass |
-| `audio_chunk_seconds` | seconds | `30` | Max chunk/window duration |
+| `audio_chunk_duration_sec` | seconds | `30` | Max chunk/window duration |
 
 Session options: `sense_asr.weight_type` (native\|f32\|f16\|bf16\|q8_0),
 `sense_asr.encoder_graph_arena_mb`, and `sense_asr.vad_model_path` (defaults to

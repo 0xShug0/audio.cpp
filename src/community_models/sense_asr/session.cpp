@@ -5,6 +5,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/models/silero_vad/session.h"
 
 #include <algorithm>
@@ -35,6 +36,14 @@ require_assets(std::shared_ptr<const SenseAsrAssets> assets) {
   return assets;
 }
 
+const engine::model_spec::ModelContract &require_contract(
+    const std::shared_ptr<const engine::model_spec::ModelContract> &contract) {
+  if (contract == nullptr) {
+    throw std::runtime_error("SenseVoice session requires a model contract");
+  }
+  return *contract;
+}
+
 void validate_weight_storage(assets::TensorStorageType storage,
                              const std::string &option) {
   if (storage == assets::TensorStorageType::Native ||
@@ -59,7 +68,8 @@ option_weight_type(const runtime::SessionOptions &options, const char *key,
 
 runtime::SessionOptions
 validate_session_setup(const runtime::TaskSpec &task,
-                       runtime::SessionOptions options) {
+                       runtime::SessionOptions options,
+                       const engine::model_spec::ModelContract &contract) {
   if (task.task != runtime::VoiceTaskKind::Asr) {
     throw std::runtime_error("SenseVoice only supports VoiceTaskKind::Asr");
   }
@@ -68,18 +78,11 @@ validate_session_setup(const runtime::TaskSpec &task,
     throw std::runtime_error(
         "SenseVoice supports offline and streaming sessions");
   }
-  const auto shared =
-      option_weight_type(options, "sense_asr.weight_type",
-                         assets::TensorStorageType::Native);
+  const auto shared = option_weight_type(options, "sense_asr.weight_type",
+                                         assets::TensorStorageType::Native);
   validate_weight_storage(shared, "sense_asr.weight_type");
-  for (const auto &[key, value] : options.options) {
-    (void)value;
-    if (key.rfind("sense_asr.", 0) == 0 && key != "sense_asr.weight_type" &&
-        key != "sense_asr.encoder_graph_arena_mb" &&
-        key != "sense_asr.vad_model_path") {
-      throw std::runtime_error("unknown SenseVoice session option: " + key);
-    }
-  }
+  runtime::validate_spec_backed_session_options(options, contract, "sense_asr",
+                                                "SenseVoice");
   return options;
 }
 
@@ -99,24 +102,27 @@ int64_t audio_frame_count(const runtime::AudioBuffer &audio) {
                               static_cast<size_t>(audio.channels));
 }
 
-void validate_request_options(
-    const std::unordered_map<std::string, std::string> &options) {
-  for (const auto &[key, value] : options) {
-    (void)value;
-    if (key != "language" && key != "enable_itn" && key != "keep_tags" &&
-        key != "audio_chunk_mode" && key != "audio_chunk_seconds" &&
-        key != "audio_chunk_duration_seconds" && key != "audio_chunk_duration" &&
-        key != "audio_chunk_duration_sec") {
-      throw std::runtime_error("unknown SenseVoice request option: " + key);
-    }
-  }
+std::unordered_map<std::string, std::string>
+normalize_request_options(std::unordered_map<std::string, std::string> options,
+                          const engine::model_spec::ModelContract &contract) {
+  options = runtime::apply_option_v1_compatibility(
+      std::move(options),
+      {
+          {"audio_chunk_seconds", "audio_chunk_duration_sec"},
+          {"audio_chunk_duration_seconds", "audio_chunk_duration_sec"},
+          {"audio_chunk_duration", "audio_chunk_duration_sec"},
+      },
+      "SenseVoice", "request");
+  runtime::validate_spec_backed_request_options(options, contract,
+                                                "SenseVoice");
+  return options;
 }
 
 bool is_language_tag(const std::string &tag) {
   static const std::vector<std::string> kLanguages = {
-      "auto", "zh",   "en",   "yue", "ja", "ko", "nospeech", "pt", "ru",
-      "es",   "it",   "fr",   "de",  "nl", "pl", "tr",       "ar", "hi",
-      "vi",   "th",   "id",   "ms",  "fa"};
+      "auto", "zh", "en", "yue", "ja", "ko", "nospeech", "pt",
+      "ru",   "es", "it", "fr",  "de", "nl", "pl",       "tr",
+      "ar",   "hi", "vi", "th",  "id", "ms", "fa"};
   return std::find(kLanguages.begin(), kLanguages.end(), tag) !=
          kLanguages.end();
 }
@@ -143,7 +149,8 @@ SenseAsrDecodedTokens decode_ctc(const std::vector<float> &logits,
   ids.reserve(static_cast<size_t>(frames));
   int32_t previous = -1;
   for (int64_t frame = 0; frame < frames; ++frame) {
-    const float *column = logits.data() + static_cast<size_t>(frame) * static_cast<size_t>(vocab_size);
+    const float *column = logits.data() + static_cast<size_t>(frame) *
+                                              static_cast<size_t>(vocab_size);
     int32_t argmax = 0;
     float best = column[0];
     for (int64_t token = 1; token < vocab_size; ++token) {
@@ -159,15 +166,19 @@ SenseAsrDecodedTokens decode_ctc(const std::vector<float> &logits,
   }
   if (std::getenv("SENSE_ASR_DUMP_IDS") != nullptr) {
     std::string s = "ids(" + std::to_string(frames) + "):";
-    for (int32_t id : ids) s += " " + std::to_string(id);
+    for (int32_t id : ids)
+      s += " " + std::to_string(id);
     s += "\n";
     (void)!std::fwrite(s.data(), 1, s.size(), stderr);
   }
   if (std::getenv("SENSE_ASR_DUMP_LOGITS") != nullptr) {
     int start = std::atoi(std::getenv("SENSE_ASR_DUMP_LOGITS"));
-    if (start < 0) start = 0;
-    for (int64_t frame = start; frame < std::min<int64_t>(frames, start + 50); ++frame) {
-      const float *column = logits.data() + static_cast<size_t>(frame) * static_cast<size_t>(vocab_size);
+    if (start < 0)
+      start = 0;
+    for (int64_t frame = start; frame < std::min<int64_t>(frames, start + 50);
+         ++frame) {
+      const float *column = logits.data() + static_cast<size_t>(frame) *
+                                                static_cast<size_t>(vocab_size);
       int32_t argmax = 0;
       float best = column[0];
       for (int64_t token = 1; token < vocab_size; ++token) {
@@ -176,7 +187,8 @@ SenseAsrDecodedTokens decode_ctc(const std::vector<float> &logits,
           argmax = static_cast<int32_t>(token);
         }
       }
-      fprintf(stderr, "frame %lld: argmax=%d (%.4f)\n", (long long)frame, argmax, best);
+      fprintf(stderr, "frame %lld: argmax=%d (%.4f)\n", (long long)frame,
+              argmax, best);
     }
   }
   decoded.ids = std::move(ids);
@@ -237,7 +249,7 @@ void append_chunk_text(std::string &merged, std::string chunk) {
 
 int32_t language_query_token(const std::string &language) {
   static const std::vector<std::pair<std::string, int32_t>> kLidTokens = {
-      {"auto", 0}, {"zh", 3},  {"en", 4},  {"yue", 7},
+      {"auto", 0}, {"zh", 3},  {"en", 4},       {"yue", 7},
       {"ja", 11},  {"ko", 12}, {"nospeech", 13}};
   for (const auto &[tag, token] : kLidTokens) {
     if (tag == language) {
@@ -271,11 +283,14 @@ std::filesystem::path default_vad_model_path() {
 
 } // namespace
 
-SenseAsrSession::SenseAsrSession(runtime::TaskSpec task,
-                                 runtime::SessionOptions options,
-                                 std::shared_ptr<const SenseAsrAssets> assets)
-    : RuntimeSessionBase(validate_session_setup(task, options)), task_(task),
-      assets_(require_assets(std::move(assets))),
+SenseAsrSession::SenseAsrSession(
+    runtime::TaskSpec task, runtime::SessionOptions options,
+    std::shared_ptr<const SenseAsrAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : RuntimeSessionBase(
+          validate_session_setup(task, options, require_contract(contract))),
+      task_(task), assets_(require_assets(std::move(assets))),
+      contract_(std::move(contract)),
       encoder_graph_arena_bytes_(runtime::parse_size_mb_option(
           options.options, {"sense_asr.encoder_graph_arena_mb"},
           1024ull * 1024ull * 1024ull)),
@@ -295,17 +310,14 @@ SenseAsrSession::~SenseAsrSession() = default;
 
 std::string SenseAsrSession::family() const { return "sense_asr"; }
 
-runtime::VoiceTaskKind SenseAsrSession::task_kind() const {
-  return task_.task;
-}
+runtime::VoiceTaskKind SenseAsrSession::task_kind() const { return task_.task; }
 
 runtime::RunMode SenseAsrSession::run_mode() const { return task_.mode; }
 
 void SenseAsrSession::prepare(
     const runtime::SessionPreparationRequest &request) {
   if (!request.audio.has_value()) {
-    throw std::runtime_error(
-        "SenseVoice prepare() requires an audio contract");
+    throw std::runtime_error("SenseVoice prepare() requires an audio contract");
   }
   mark_prepared();
 }
@@ -315,14 +327,16 @@ runtime::TaskResult SenseAsrSession::run(const runtime::TaskRequest &request) {
   if (task_.mode != runtime::RunMode::Offline) {
     throw std::runtime_error("SenseVoice run() requires an offline session");
   }
-  validate_request_options(request.options);
-  const auto chunks = audio_chunk_plan(request);
+  auto normalized_request = request;
+  normalized_request.options =
+      normalize_request_options(request.options, *contract_);
+  const auto chunks = audio_chunk_plan(normalized_request);
   if (chunks.empty()) {
-    return run_single(make_request(request));
+    return run_single(make_request(normalized_request));
   }
-  const auto &audio = *request.audio_input;
+  const auto &audio = *normalized_request.audio_input;
   if (chunks.size() == 1) {
-    auto item = request;
+    auto item = normalized_request;
     item.audio_input =
         engine::audio::slice_audio_buffer(audio, chunks.front().source_span);
     return run_single(make_request(item));
@@ -331,7 +345,7 @@ runtime::TaskResult SenseAsrSession::run(const runtime::TaskRequest &request) {
   runtime::TaskResult merged;
   std::string text;
   for (const auto &chunk : chunks) {
-    auto item = request;
+    auto item = normalized_request;
     item.audio_input =
         engine::audio::slice_audio_buffer(audio, chunk.source_span);
     const auto result = run_single(make_request(item));
@@ -367,8 +381,9 @@ void SenseAsrSession::start_stream(const runtime::TaskRequest &request) {
         "SenseVoice start_stream() requires a streaming session");
   }
   reset();
-  validate_request_options(request.options);
   streaming_request_ = request;
+  streaming_request_.options =
+      normalize_request_options(request.options, *contract_);
   if (streaming_request_.audio_input.has_value()) {
     streaming_request_.audio_input->samples.clear();
   }
@@ -454,15 +469,14 @@ runtime::TaskResult SenseAsrSession::finalize() {
   }
   engine::debug::timing_log_scalar("sense_asr.session.stream.windows",
                                    streaming_windows_processed_);
-  engine::debug::timing_log_scalar(
-      "sense_asr.session.stream.finalize_ms",
-      engine::debug::elapsed_ms(finalize_start));
+  engine::debug::timing_log_scalar("sense_asr.session.stream.finalize_ms",
+                                   engine::debug::elapsed_ms(finalize_start));
   if (stream_wall_start_ != std::chrono::steady_clock::time_point{}) {
     engine::debug::timing_log_scalar(
         "sense_asr.session.stream.wall_ms",
         engine::debug::elapsed_ms(stream_wall_start_));
-    engine::debug::timing_log_scalar("session.wall_ms",
-                                     engine::debug::elapsed_ms(stream_wall_start_));
+    engine::debug::timing_log_scalar(
+        "session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
   }
   return streaming_result_;
 }
@@ -483,8 +497,7 @@ SenseAsrSession::make_request(const runtime::TaskRequest &request) const {
     out.transcription.enable_itn =
         runtime::parse_bool_option(*value, "enable_itn");
   }
-  if (const auto value =
-          runtime::find_option(request.options, {"keep_tags"})) {
+  if (const auto value = runtime::find_option(request.options, {"keep_tags"})) {
     out.transcription.keep_tags =
         runtime::parse_bool_option(*value, "keep_tags");
   }
@@ -508,25 +521,25 @@ SenseAsrSession::audio_chunk_plan(const runtime::TaskRequest &request) {
   const int64_t frames = audio_frame_count(audio);
   if (mode == engine::audio::AudioChunkMode::Vad ||
       mode == engine::audio::AudioChunkMode::Auto) {
-    const auto seconds = engine::audio::parse_audio_chunk_seconds_override(
-                             request.options)
-                             .value_or(kDefaultChunkSeconds);
+    const auto seconds =
+        engine::audio::parse_audio_chunk_seconds_override(request.options)
+            .value_or(kDefaultChunkSeconds);
     if (!(seconds > 0.0F)) {
       throw std::runtime_error(
-          "SenseVoice audio_chunk_seconds must be positive");
+          "SenseVoice audio_chunk_duration_sec must be positive");
     }
     const auto vad_options = engine::audio::VadAudioChunkOptions{
         static_cast<int64_t>(
             std::llround(static_cast<double>(seconds) *
                          static_cast<double>(audio.sample_rate))),
-        static_cast<int64_t>(std::llround(0.5 *
-                                          static_cast<double>(audio.sample_rate))),
+        static_cast<int64_t>(
+            std::llround(0.5 * static_cast<double>(audio.sample_rate))),
         static_cast<int64_t>(
             std::llround(0.25 * static_cast<double>(audio.sample_rate))),
     };
     if (vad_options.max_chunk_samples <= 0) {
       throw std::runtime_error(
-          "SenseVoice audio_chunk_seconds produced an empty chunk");
+          "SenseVoice audio_chunk_duration_sec produced an empty chunk");
     }
     const auto spans =
         engine::audio::plan_vad_audio_chunks(audio, vad_session(), vad_options);
@@ -537,22 +550,24 @@ SenseAsrSession::audio_chunk_plan(const runtime::TaskRequest &request) {
     }
     return plan;
   }
-  const auto seconds = engine::audio::parse_audio_chunk_seconds_override(
-                           request.options)
-                           .value_or(kDefaultChunkSeconds);
+  const auto seconds =
+      engine::audio::parse_audio_chunk_seconds_override(request.options)
+          .value_or(kDefaultChunkSeconds);
   if (!(seconds > 0.0F)) {
     throw std::runtime_error(
-        "SenseVoice audio_chunk_seconds must be positive");
+        "SenseVoice audio_chunk_duration_sec must be positive");
   }
   const double sample_count =
       static_cast<double>(seconds) * static_cast<double>(audio.sample_rate);
-  if (sample_count >= static_cast<double>(std::numeric_limits<int64_t>::max())) {
-    throw std::runtime_error("SenseVoice audio_chunk_seconds is too large");
+  if (sample_count >=
+      static_cast<double>(std::numeric_limits<int64_t>::max())) {
+    throw std::runtime_error(
+        "SenseVoice audio_chunk_duration_sec is too large");
   }
   const int64_t samples = static_cast<int64_t>(std::llround(sample_count));
   if (samples <= 0) {
     throw std::runtime_error(
-        "SenseVoice audio_chunk_seconds produced an empty chunk");
+        "SenseVoice audio_chunk_duration_sec produced an empty chunk");
   }
   const auto chunks = engine::audio::plan_audio_chunks(
       frames, {samples, samples, engine::audio::AudioChunkPadMode::Zero,
@@ -570,9 +585,11 @@ runtime::IOfflineVoiceTaskSession &SenseAsrSession::vad_session() {
   if (vad_session_ == nullptr) {
     runtime::ModelLoadRequest load_request;
     load_request.model_path = vad_model_path_;
-    vad_model_ = engine::models::silero_vad::load_silero_vad_model(load_request);
+    vad_model_ =
+        engine::models::silero_vad::load_silero_vad_model(load_request);
     auto session = vad_model_->create_task_session(
-        runtime::TaskSpec{runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},
+        runtime::TaskSpec{runtime::VoiceTaskKind::Vad,
+                          runtime::RunMode::Offline},
         runtime::SessionOptions{options().backend, {}});
     auto *offline =
         dynamic_cast<runtime::IOfflineVoiceTaskSession *>(session.get());
@@ -586,8 +603,7 @@ runtime::IOfflineVoiceTaskSession &SenseAsrSession::vad_session() {
   return *vad_session_;
 }
 
-runtime::TaskResult
-SenseAsrSession::run_single(const AsrRequest &request) {
+runtime::TaskResult SenseAsrSession::run_single(const AsrRequest &request) {
   const auto wall_start = Clock::now();
 
   const auto resample_start = Clock::now();
@@ -603,16 +619,16 @@ SenseAsrSession::run_single(const AsrRequest &request) {
   const auto frontend_end = Clock::now();
 
   const auto encoder_start = Clock::now();
-  encoder_.set_query_tokens(
-      query_tokens(request.transcription, assets_->config.encoder.query_tokens));
+  encoder_.set_query_tokens(query_tokens(request.transcription,
+                                         assets_->config.encoder.query_tokens));
   const auto encoded = encoder_.encode(features);
   const auto encoder_end = Clock::now();
 
   const auto decode_start = Clock::now();
-  const auto decoded = decode_ctc(
-      encoded.logits, encoded.frames, encoded.vocab_size,
-      assets_->config.encoder.blank_id, assets_->config.vocab,
-      request.transcription.keep_tags);
+  const auto decoded =
+      decode_ctc(encoded.logits, encoded.frames, encoded.vocab_size,
+                 assets_->config.encoder.blank_id, assets_->config.vocab,
+                 request.transcription.keep_tags);
   const auto decode_end = Clock::now();
 
   runtime::TaskResult result;
@@ -647,9 +663,11 @@ SenseAsrSession::process_available_stream_chunks(bool final) {
         "SenseVoice streaming pending audio offset is out of range");
   }
   if (streaming_audio_.samples.size() %
-              static_cast<size_t>(streaming_audio_.channels) != 0 ||
+              static_cast<size_t>(streaming_audio_.channels) !=
+          0 ||
       streaming_audio_offset_values_ %
-              static_cast<size_t>(streaming_audio_.channels) != 0) {
+              static_cast<size_t>(streaming_audio_.channels) !=
+          0) {
     throw std::runtime_error(
         "SenseVoice streaming pending audio has invalid channel layout");
   }
@@ -658,14 +676,14 @@ SenseAsrSession::process_available_stream_chunks(bool final) {
                            .value_or(kDefaultStreamingWindowSeconds);
   if (!(seconds > 0.0F)) {
     throw std::runtime_error(
-        "SenseVoice streaming audio_chunk_seconds must be positive");
+        "SenseVoice streaming audio_chunk_duration_sec must be positive");
   }
-  const int64_t window_frames = static_cast<int64_t>(std::llround(
-      static_cast<double>(seconds) *
-      static_cast<double>(streaming_audio_.sample_rate)));
+  const int64_t window_frames = static_cast<int64_t>(
+      std::llround(static_cast<double>(seconds) *
+                   static_cast<double>(streaming_audio_.sample_rate)));
   if (window_frames <= 0) {
-    throw std::runtime_error(
-        "SenseVoice streaming audio_chunk_seconds produced an empty chunk");
+    throw std::runtime_error("SenseVoice streaming audio_chunk_duration_sec "
+                             "produced an empty chunk");
   }
 
   int64_t processed_chunks = 0;
@@ -687,7 +705,8 @@ SenseAsrSession::process_available_stream_chunks(bool final) {
     const auto begin =
         streaming_audio_.samples.begin() +
         static_cast<std::ptrdiff_t>(streaming_audio_offset_values_);
-    chunk.samples.assign(begin, begin + static_cast<std::ptrdiff_t>(take_values));
+    chunk.samples.assign(begin,
+                         begin + static_cast<std::ptrdiff_t>(take_values));
     streaming_audio_offset_values_ += take_values;
     last_event = process_one_stream_chunk(chunk);
     ++streaming_windows_processed_;
@@ -747,6 +766,22 @@ SenseAsrSession::process_one_stream_chunk(const runtime::AudioBuffer &audio) {
     streaming_published_bytes_ = streaming_text_.size();
   }
   return event;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_sense_asr_loader() {
+  runtime::SpecBackedVoiceModelConfig<SenseAsrAssets> config;
+  config.family = "sense_asr";
+  config.load_assets = [](const std::filesystem::path &model_path) {
+    return load_sense_asr_assets(model_path);
+  };
+  config.create_session =
+      [](const runtime::TaskSpec &task, const runtime::SessionOptions &options,
+         std::shared_ptr<const SenseAsrAssets> assets,
+         std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<SenseAsrSession>(
+            task, options, std::move(assets), std::move(contract));
+      };
+  return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 } // namespace engine::community_models::sense_asr

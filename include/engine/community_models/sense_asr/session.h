@@ -1,11 +1,12 @@
 #pragma once
 
-#include "engine/framework/assets/tensor_source.h"
-#include "engine/framework/runtime/session_base.h"
 #include "engine/community_models/sense_asr/assets.h"
 #include "engine/community_models/sense_asr/encoder.h"
 #include "engine/community_models/sense_asr/frontend.h"
 #include "engine/community_models/sense_asr/types.h"
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/session_base.h"
 
 #include <chrono>
 #include <cstddef>
@@ -25,13 +26,16 @@ class SileroVADLoadedModel;
 
 namespace engine::community_models::sense_asr {
 
-class SenseAsrSession final
-    : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession
-    , public runtime::IStreamingVoiceTaskSession {
+std::shared_ptr<runtime::IVoiceModelLoader> make_sense_asr_loader();
+
+class SenseAsrSession final : public runtime::RuntimeSessionBase,
+                              public runtime::IOfflineVoiceTaskSession,
+                              public runtime::IStreamingVoiceTaskSession {
 public:
-  SenseAsrSession(runtime::TaskSpec task, runtime::SessionOptions options,
-                  std::shared_ptr<const SenseAsrAssets> assets);
+  SenseAsrSession(
+      runtime::TaskSpec task, runtime::SessionOptions options,
+      std::shared_ptr<const SenseAsrAssets> assets,
+      std::shared_ptr<const engine::model_spec::ModelContract> contract);
   ~SenseAsrSession() override;
 
   std::string family() const override;
@@ -43,7 +47,8 @@ public:
   void start_stream(const runtime::TaskRequest &request) override;
   void set_stream_event_sink(runtime::StreamEventCallback sink) override;
   void reset() override;
-  runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk &chunk) override;
+  runtime::StreamEvent
+  process_audio_chunk(const runtime::AudioChunk &chunk) override;
   runtime::TaskResult finish_stream() override;
   runtime::TaskResult finalize() override;
 
@@ -58,16 +63,20 @@ private:
   };
 
   AsrRequest make_request(const runtime::TaskRequest &request) const;
-  std::vector<AudioChunkPlan> audio_chunk_plan(const runtime::TaskRequest &request);
+  std::vector<AudioChunkPlan>
+  audio_chunk_plan(const runtime::TaskRequest &request);
   runtime::IOfflineVoiceTaskSession &vad_session();
   runtime::TaskResult run_single(const AsrRequest &request);
   runtime::StreamEvent process_available_stream_chunks(bool final);
-  runtime::StreamEvent process_one_stream_chunk(const runtime::AudioBuffer &audio);
+  runtime::StreamEvent
+  process_one_stream_chunk(const runtime::AudioBuffer &audio);
 
   runtime::TaskSpec task_;
   std::shared_ptr<const SenseAsrAssets> assets_;
+  std::shared_ptr<const engine::model_spec::ModelContract> contract_;
   size_t encoder_graph_arena_bytes_ = 1024ull * 1024ull * 1024ull;
-  assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
+  assets::TensorStorageType weight_storage_type_ =
+      assets::TensorStorageType::Native;
   SenseAsrFrontend frontend_;
   SenseAsrEncoderRuntime encoder_;
   std::filesystem::path vad_model_path_;

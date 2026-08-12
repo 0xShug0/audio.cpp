@@ -103,6 +103,13 @@
         "required": false,
         "min": 64,
         "default": 1024
+      },
+      {
+        "name": "vad_model_path",
+        "type": "string",
+        "description": "Path to the Silero VAD model directory used by automatic audio chunking.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
       }
     ],
     "load": []
@@ -127,12 +134,12 @@
       "precision": "q8_0",
       "target_directory": "SenseVoice-Small-GGUF",
       "files": [
-        "sensevoice-small-q8.gguf"
+        "sensevoice-small-q8-audiocpp-v1.gguf"
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "FunAudioLLM/SenseVoiceSmall",
-        "revision": "main",
+        "repo": "FunAudioLLM/SenseVoiceSmall-GGUF-audiocpp",
+        "revision": "5c3fcfe748a8714216bc135476d5863084fddb72",
         "gated": false
       }
     }

@@ -63,7 +63,7 @@ see the loader-catalog sync checks below.
 - Model-manager package: **`sensevoice_small_q8`** (Q8 GGUF)
   `tools/model_manager_v2.py install sensevoice_small_q8 --models-root models`
 - Standalone GGUF used in this PR's validation runs:
-  `/workspace/SenseVoice/model/sensevoice-small-q8.gguf`
+  `/workspace/SenseVoice/model/sensevoice-small-q8-audiocpp-v1.gguf`
   (254 MB, exported by the reference runtime's `export_sensevoice_gguf.py`)
 
 ## Exact run commands
@@ -72,7 +72,7 @@ Offline:
 
 ```bash
 audiocpp_cli --task asr --family sense_asr \
-  --model /workspace/SenseVoice/model/sensevoice-small-q8.gguf \
+  --model /workspace/SenseVoice/model/sensevoice-small-q8-audiocpp-v1.gguf \
   --backend cpu --threads 8 \
   --audio /workspace/SenseVoice/runtime/llama.cpp/tests/sample.wav \
   --request-option audio_chunk_mode=none
@@ -82,10 +82,10 @@ Buffered streaming (raw 16 kHz S16 PCM on stdin, 3 s windows):
 
 ```bash
 audiocpp_cli --task asr --family sense_asr \
-  --model /workspace/SenseVoice/model/sensevoice-small-q8.gguf \
+  --model /workspace/SenseVoice/model/sensevoice-small-q8-audiocpp-v1.gguf \
   --backend cpu --threads 8 --mode streaming \
   --audio - --input-format s16le \
-  --request-option audio_chunk_seconds=3 --request-option audio_chunk_mode=none \
+  --request-option audio_chunk_duration_sec=3 --request-option audio_chunk_mode=none \
   < 16k_s16.pcm
 ```
 
@@ -145,11 +145,11 @@ server launch commands:
 ```bash
 # WebUI-enabled server
 audiocpp_server --ui --backend cpu \
-  --config <(echo '{"models":[{"id":"sense_asr","family":"sense_asr","path":"models/SenseVoiceSmall-GGUF/sensevoice-small-q8.gguf","task":"asr","mode":"streaming"}]}')
+  --config <(echo '{"models":[{"id":"sense_asr","family":"sense_asr","path":"models/SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf","task":"asr","mode":"streaming"}]}')
 
 # Headless API server
 audiocpp_server --backend cpu \
-  --config <(echo '{"models":[{"id":"sense_asr","family":"sense_asr","path":"models/SenseVoiceSmall-GGUF/sensevoice-small-q8.gguf","task":"asr","mode":"streaming"}],"ui":false}')
+  --config <(echo '{"models":[{"id":"sense_asr","family":"sense_asr","path":"models/SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf","task":"asr","mode":"streaming"}],"ui":false}')
 
 # Offline transcription
 curl -X POST http://127.0.0.1:8080/v1/audio/transcriptions \
@@ -174,7 +174,7 @@ curl -X POST http://127.0.0.1:8080/v1/audio/transcriptions/live \
 | Server streaming endpoint | `curl -H 'Transfer-Encoding: chunked' -F 'model=sense_asr' -F 'file=@3.wav' /v1/audio/transcriptions/live` | Returns `400: live transcription requires chunked body` (expected - client must stream) ✅ |
 | WebUI catalog entry | `models_catalog.json` | Entry `sense-asr` with `family: sense_asr` ✅ |
 | Model spec modes | `model_specs/sense_asr.json` | `"modes": ["offline", "streaming"]` ✅ |
-| Required files sync | `required_files.json` | `sensevoice_small_q8` → `SenseVoiceSmall-GGUF/sensevoice-small-q8.gguf` ✅ |
+| Required files sync | `required_files.json` | `sensevoice_small_q8` → `SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf` ✅ |
 | Loader-catalog sync | `python3 tools/check_loader_catalog_sync.py` | OK ✅ |
 
 All verifications run on `build/sense` (custom `AUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=sense_asr` CPU build).
@@ -206,7 +206,7 @@ Notes:
 - `language` fully maps only the model's native tags (`zh`, `en`, `yue`, `ja`,
   `ko`, `nospeech`); other advertised tags fall back to `auto`, consistent
   with the reference `lid_dict`.
-- Buffered streaming emits one partial per fixed `audio_chunk_seconds` window;
+- Buffered streaming emits one partial per fixed `audio_chunk_duration_sec` window;
   it is windowed (like `qwen3_asr`), not frame-level token streaming. A
   6 s clip fed with 3 s windows yields 2 partials.
 - The `sensevoice_small_q8` package is a Q8_0 GGUF; the loader also supports

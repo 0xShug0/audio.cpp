@@ -840,9 +840,8 @@ audiocpp_add_model(sense_asr
         src/community_models/sense_asr/frontend.cpp
         src/community_models/sense_asr/encoder.cpp
         src/community_models/sense_asr/session.cpp
-        src/community_models/sense_asr/loader.cpp
     INCLUDES
-        engine/community_models/sense_asr/loader.h
+        engine/community_models/sense_asr/session.h
     LOADERS
         engine::community_models::sense_asr::make_sense_asr_loader
 )

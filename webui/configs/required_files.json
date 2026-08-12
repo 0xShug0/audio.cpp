@@ -448,7 +448,7 @@
     "tokens.txt"
   ],
   "sensevoice_small_q8": [
-    "sensevoice-small-q8.gguf"
+    "sensevoice-small-q8-audiocpp-v1.gguf"
   ],
   "voxcpm2": [
     "config.json",
