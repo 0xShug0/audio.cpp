@@ -62,6 +62,10 @@ int64_t gpt_text_vocab_size(const IndexTTS2Config & config) {
     return config.gpt.number_text_tokens + 1;
 }
 
+ggml_type decode_cache_type(core::BackendType backend_type) {
+    return backend_type == core::BackendType::Cuda ? GGML_TYPE_F16 : GGML_TYPE_F32;
+}
+
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
         if (ctx != nullptr) {
@@ -643,7 +647,8 @@ Gpt2LayerOutput gpt2_layer_cached_tail(
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & cache_slots,
-    const core::TensorValue & attention_mask) {
+    const core::TensorValue & attention_mask,
+    modules::FastKVSetRowsMode set_rows_mode) {
     if (cache_key.shape.dims[0] != input.shape.dims[0] ||
         cache_value.shape.dims[0] != input.shape.dims[0] ||
         cache_key.shape.dims[1] != cache_value.shape.dims[1] ||
@@ -661,7 +666,7 @@ Gpt2LayerOutput gpt2_layer_cached_tail(
     k = reshape_heads(ctx, k, kGptHeads, kGptHeadDim);
     v = reshape_heads(ctx, v, kGptHeads, kGptHeadDim);
 
-    const modules::FastKVSetRowsModule set_rows;
+    const modules::FastKVSetRowsModule set_rows({set_rows_mode});
     auto updated_key = set_rows.build(ctx, cache_key, k, cache_slots);
     auto updated_value = set_rows.build(ctx, cache_value, v, cache_slots);
 
@@ -1789,7 +1794,8 @@ public:
           weights_(std::move(weights)),
           cache_steps_(cache_steps),
           beam_count_(beam_count),
-          beam_slots_(2 * beam_count) {
+          beam_slots_(2 * beam_count),
+          cache_type_(decode_cache_type(execution_.backend_type())) {
         if (weights_ == nullptr || cache_steps_ <= 0 || beam_count_ <= 0) {
             throw std::runtime_error("IndexTTS2 GPT decode graph requires weights and cache steps");
         }
@@ -1825,11 +1831,11 @@ public:
             for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
                 keys.push_back(core::make_tensor(
                     state_ctx,
-                    GGML_TYPE_F32,
+                    cache_type_,
                     core::TensorShape::from_dims({beam_count_, cache_steps_, kGptHeads, kGptHeadDim})));
                 values.push_back(core::make_tensor(
                     state_ctx,
-                    GGML_TYPE_F32,
+                    cache_type_,
                     core::TensorShape::from_dims({beam_count_, cache_steps_, kGptHeads, kGptHeadDim})));
             }
         }
@@ -1858,6 +1864,7 @@ public:
         debug::timing_log_scalar("index_tts2.gpt.decode.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("index_tts2.gpt.decode.cache_steps", cache_steps_);
         debug::trace_log_scalar("index_tts2.gpt.decode.beam_batch", beam_count_);
+        debug::trace_log_scalar("index_tts2.gpt.decode.cache_type", std::string_view(ggml_type_name(cache_type_)));
     }
 
     ~DecodeGraph() {
@@ -1897,16 +1904,12 @@ public:
             if (!state.layers.empty() && layer_state.valid_steps != state.layers.front().valid_steps) {
                 throw std::runtime_error("IndexTTS2 GPT beam state valid step mismatch");
             }
-            ggml_backend_tensor_set(
+            set_cache_prefix(
                 beam_key_prefix_views_[static_cast<size_t>(slot)][static_cast<size_t>(layer_state.valid_steps)][layer],
-                layer_state.key.data(),
-                0,
-                layer_state.key.size() * sizeof(float));
-            ggml_backend_tensor_set(
+                layer_state.key);
+            set_cache_prefix(
                 beam_value_prefix_views_[static_cast<size_t>(slot)][static_cast<size_t>(layer_state.valid_steps)][layer],
-                layer_state.value.data(),
-                0,
-                layer_state.value.size() * sizeof(float));
+                layer_state.value);
         }
     }
 
@@ -2016,13 +2019,29 @@ private:
                 key_layers.reserve(weights_->gpt_layers.size());
                 value_layers.reserve(weights_->gpt_layers.size());
                 const int64_t elems = steps * kGptHeads * kGptHeadDim;
-                const size_t byte_offset = static_cast<size_t>(row * cache_steps_ * kGptHeads * kGptHeadDim) * sizeof(float);
+                const size_t byte_offset =
+                    static_cast<size_t>(row * cache_steps_ * kGptHeads * kGptHeadDim) * ggml_type_size(cache_type_);
                 for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
                     key_layers.push_back(ggml_view_1d(state_ctx_.get(), bank_keys_[static_cast<size_t>(bank)][layer].tensor, elems, byte_offset));
                     value_layers.push_back(ggml_view_1d(state_ctx_.get(), bank_values_[static_cast<size_t>(bank)][layer].tensor, elems, byte_offset));
                 }
             }
         }
+    }
+
+    void set_cache_prefix(ggml_tensor * tensor, const std::vector<float> & values) {
+        if (cache_type_ == GGML_TYPE_F32) {
+            ggml_backend_tensor_set(tensor, values.data(), 0, values.size() * sizeof(float));
+            return;
+        }
+        if (cache_type_ != GGML_TYPE_F16) {
+            throw std::runtime_error("IndexTTS2 GPT decode cache prefix upload supports only f32 and f16 caches");
+        }
+        cache_prefix_f16_.resize(values.size());
+        for (size_t i = 0; i < values.size(); ++i) {
+            cache_prefix_f16_[i] = ggml_fp32_to_fp16(values[i]);
+        }
+        ggml_backend_tensor_set(tensor, cache_prefix_f16_.data(), 0, cache_prefix_f16_.size() * sizeof(ggml_fp16_t));
     }
 
     void copy_beam_prefix(int64_t parent_slot, int64_t child_slot, int64_t valid_steps, size_t layer) {
@@ -2059,7 +2078,10 @@ private:
                 bank_keys_[static_cast<size_t>(bank)][layer],
                 bank_values_[static_cast<size_t>(bank)][layer],
                 cache_slots,
-                mask);
+                mask,
+                cache_type_ == GGML_TYPE_F32
+                    ? modules::FastKVSetRowsMode::Exact
+                    : modules::FastKVSetRowsMode::BackendViewOptimized);
             x = out.output;
         }
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->gpt_final_norm);
@@ -2075,6 +2097,7 @@ private:
     int64_t cache_steps_ = 0;
     int64_t beam_count_ = 0;
     int64_t beam_slots_ = 0;
+    ggml_type cache_type_ = GGML_TYPE_F32;
     std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ids_ = nullptr;
@@ -2087,6 +2110,7 @@ private:
     std::vector<std::vector<std::vector<ggml_tensor *>>> beam_key_prefix_views_;
     std::vector<std::vector<std::vector<ggml_tensor *>>> beam_value_prefix_views_;
     std::vector<ggml_fp16_t> attention_mask_values_;
+    std::vector<ggml_fp16_t> cache_prefix_f16_;
     std::vector<int32_t> token_values_;
     std::vector<int32_t> position_values_;
     std::vector<int32_t> cache_slot_values_;

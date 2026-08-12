@@ -8,6 +8,24 @@
       }
     ]
   },
+  "beam_decode_medium_voice_clone": {
+    "requests": [
+      {
+        "text": "The meeting room went quiet after the first announcement, but the engineer kept explaining the schedule carefully so everyone could follow the plan without confusion.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_02.wav",
+        "seed": 1260
+      }
+    ]
+  },
+  "beam_decode_long_single_voice_clone": {
+    "requests": [
+      {
+        "text": "The engineer returned to the console and described every step of the recovery plan in a calm voice, explaining how the archive would be verified, how the temporary network would stay isolated, how the team would compare the rebuilt service against the known good output, and why nobody should restart the remaining workers until the final checksum report arrived.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_02.wav",
+        "seed": 1261
+      }
+    ]
+  },
   "chinese_voice_clone": {
     "requests": [
       {
