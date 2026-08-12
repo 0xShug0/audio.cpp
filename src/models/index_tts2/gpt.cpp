@@ -1933,12 +1933,24 @@ public:
         if (child_bank < 0 || child_bank > 1) {
             throw std::runtime_error("IndexTTS2 GPT child beam bank is out of range");
         }
+        const bool same_bank = std::all_of(parent_slots.begin(), parent_slots.end(), [&](int64_t slot) {
+            return slot / beam_count_ == child_bank;
+        });
+        if (same_bank && active != static_cast<size_t>(beam_count_)) {
+            throw std::runtime_error("IndexTTS2 GPT same-bank decode requires a full beam batch");
+        }
         for (size_t row = 0; row < active; ++row) {
             if (parent_slots[row] < 0 || parent_slots[row] >= beam_slots_ ||
                 child_slots[row] < 0 || child_slots[row] >= beam_slots_ ||
                 child_slots[row] / beam_count_ != child_bank ||
                 child_slots[row] % beam_count_ != static_cast<int64_t>(row)) {
                 throw std::runtime_error("IndexTTS2 GPT beam slot layout mismatch");
+            }
+            const int64_t parent_row = parent_slots[row] % beam_count_;
+            if (same_bank &&
+                parent_row != static_cast<int64_t>(row) &&
+                (parent_slots[static_cast<size_t>(parent_row)] % beam_count_) != parent_row) {
+                throw std::runtime_error("IndexTTS2 GPT same-bank beam mapping would overwrite a live prefix");
             }
             for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
                 if (parent_slots[row] != child_slots[row]) {
@@ -1948,13 +1960,15 @@ public:
             token_values_[row] = tokens[row];
             position_values_[row] = mel_position;
         }
-        for (size_t row = active; row < static_cast<size_t>(beam_count_); ++row) {
-            const int64_t child_slot = child_bank * beam_count_ + static_cast<int64_t>(row);
-            for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
-                copy_beam_prefix(child_slots.front(), child_slot, valid_steps, layer);
+        if (!same_bank) {
+            for (size_t row = active; row < static_cast<size_t>(beam_count_); ++row) {
+                const int64_t child_slot = child_bank * beam_count_ + static_cast<int64_t>(row);
+                for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
+                    copy_beam_prefix(child_slots.front(), child_slot, valid_steps, layer);
+                }
+                token_values_[row] = tokens.front();
+                position_values_[row] = mel_position;
             }
-            token_values_[row] = tokens.front();
-            position_values_[row] = mel_position;
         }
 
         const auto masked = ggml_fp32_to_fp16(-INFINITY);
@@ -2388,11 +2402,21 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
     std::vector<int64_t> parent_slots;
     std::vector<int64_t> child_slots;
     std::vector<int32_t> next_tokens;
+    std::vector<size_t> row_to_next;
+    std::vector<int64_t> target_rows;
+    std::vector<bool> used_rows;
+    std::vector<int64_t> run_parent_slots;
+    std::vector<int32_t> run_next_tokens;
     candidates.reserve(static_cast<size_t>(2 * beam_count));
     next_beams.reserve(static_cast<size_t>(beam_count));
     parent_slots.reserve(static_cast<size_t>(beam_count));
     child_slots.reserve(static_cast<size_t>(beam_count));
     next_tokens.reserve(static_cast<size_t>(beam_count));
+    row_to_next.reserve(static_cast<size_t>(beam_count));
+    target_rows.reserve(static_cast<size_t>(beam_count));
+    used_rows.reserve(static_cast<size_t>(beam_count));
+    run_parent_slots.reserve(static_cast<size_t>(beam_count));
+    run_next_tokens.reserve(static_cast<size_t>(beam_count));
     for (int step = 0; step < request.max_mel_tokens && !beams.empty(); ++step) {
         const auto sampling_start = Clock::now();
         candidates.clear();
@@ -2467,7 +2491,6 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
         }
         sampling_ms += engine::debug::elapsed_ms(sampling_start, Clock::now());
         next_beams.clear();
-        const int next_bank = 1 - active_bank;
         parent_slots.clear();
         child_slots.clear();
         next_tokens.clear();
@@ -2485,11 +2508,9 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
                 continue;
             }
             next.codes.push_back(candidate.token);
-            next.slot = static_cast<int64_t>(next_bank * beam_count + static_cast<int>(next_beams.size()));
             next.valid_steps = parent.valid_steps + 1;
             next.current_end = parent.current_end + 1;
             parent_slots.push_back(parent.slot);
-            child_slots.push_back(next.slot);
             next_tokens.push_back(candidate.token);
             next_beams.push_back(std::move(next));
             if (static_cast<int>(next_beams.size()) == beam_count) {
@@ -2497,6 +2518,54 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
             }
         }
         if (!next_beams.empty()) {
+            row_to_next.clear();
+            int next_active_bank = 1 - active_bank;
+            if (static_cast<int>(next_beams.size()) == beam_count) {
+                target_rows.assign(next_beams.size(), -1);
+                used_rows.assign(static_cast<size_t>(beam_count), false);
+                for (size_t i = 0; i < next_beams.size(); ++i) {
+                    const int64_t parent_row = parent_slots[i] % beam_count;
+                    if (!used_rows[static_cast<size_t>(parent_row)]) {
+                        target_rows[i] = parent_row;
+                        used_rows[static_cast<size_t>(parent_row)] = true;
+                    }
+                }
+                for (size_t i = 0; i < next_beams.size(); ++i) {
+                    if (target_rows[i] >= 0) {
+                        continue;
+                    }
+                    const auto row_it = std::find(used_rows.begin(), used_rows.end(), false);
+                    if (row_it == used_rows.end()) {
+                        throw std::runtime_error("IndexTTS2 GPT beam row assignment failed");
+                    }
+                    const int64_t row = static_cast<int64_t>(std::distance(used_rows.begin(), row_it));
+                    target_rows[i] = row;
+                    *row_it = true;
+                }
+                row_to_next.assign(static_cast<size_t>(beam_count), 0);
+                child_slots.assign(static_cast<size_t>(beam_count), 0);
+                run_parent_slots.assign(static_cast<size_t>(beam_count), 0);
+                run_next_tokens.assign(static_cast<size_t>(beam_count), 0);
+                for (size_t i = 0; i < next_beams.size(); ++i) {
+                    const size_t row = static_cast<size_t>(target_rows[i]);
+                    next_beams[i].slot = static_cast<int64_t>(active_bank * beam_count + target_rows[i]);
+                    row_to_next[row] = i;
+                    run_parent_slots[row] = parent_slots[i];
+                    child_slots[row] = next_beams[i].slot;
+                    run_next_tokens[row] = next_tokens[i];
+                }
+                parent_slots.swap(run_parent_slots);
+                next_tokens.swap(run_next_tokens);
+                next_active_bank = active_bank;
+            } else {
+                child_slots.clear();
+                row_to_next.resize(next_beams.size());
+                for (size_t i = 0; i < next_beams.size(); ++i) {
+                    next_beams[i].slot = static_cast<int64_t>(next_active_bank * beam_count + static_cast<int>(i));
+                    child_slots.push_back(next_beams[i].slot);
+                    row_to_next[i] = i;
+                }
+            }
             const auto run_start = Clock::now();
             const int64_t parent_valid_steps = next_beams.front().valid_steps - 1;
             const auto batch_out = decode_graph_->run_batch_from_beams(
@@ -2511,19 +2580,19 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
                 throw std::runtime_error("IndexTTS2 GPT batched decode output size mismatch");
             }
             for (size_t beam = 0; beam < next_beams.size(); ++beam) {
-                next_beams[beam].logits = batch_out.steps[beam].logits;
+                next_beams[row_to_next[beam]].logits = batch_out.steps[beam].logits;
             }
             if (!first_decode_timing_logged) {
                 debug::timing_log_scalar("index_tts2.gpt.decode.first_run_ms", run_ms);
                 first_decode_timing_logged = true;
             }
+            active_bank = next_active_bank;
         }
         if (!candidates.empty() && should_stop(candidates.front().score, static_cast<int64_t>(step + 1))) {
             beam_search_done = true;
             break;
         }
         beams.swap(next_beams);
-        active_bank = next_bank;
     }
     debug::timing_log_scalar("index_tts2.gpt.sampling_ms", sampling_ms);
     debug::timing_log_scalar("index_tts2.gpt.decode.run_ms", decode_run_ms);
