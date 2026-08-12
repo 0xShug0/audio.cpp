@@ -827,8 +827,17 @@ IndexTTS2TextEncoding IndexTTS2TextTokenizer::encode_for_inference_v2_5(
             ? normalize_chinese(protected_text.first)
             : normalize_english(protected_text.first);
         processed = restore_pronunciation_annotations(std::move(protected_text.first), protected_text.second);
+    } else {
+        // ja/es/ar/...: no full TN, but the official front.normalize still
+        // applies its punctuation map to every language (、→"," 。→"." ...).
+        // Text with Han characters takes the zh path, which additionally maps
+        // "$" → ".".
+        const bool han = contains_han(processed);
+        processed = engine::text::normalize_index_tts_punctuation(std::move(processed));
+        if (han) {
+            processed = engine::text::replace_all(std::move(processed), "$", ".");
+        }
     }
-    // ja/es/ar and other languages currently pass through without TN.
     if (resolved_lang == "zh" || resolved_lang == "ja" || resolved_lang == "en") {
         processed = lowercase_ascii(std::move(processed));
     } else if (resolved_lang == "es") {

@@ -19,6 +19,11 @@ std::string replace_all(std::string text, std::string_view from, std::string_vie
 std::string collapse_ascii_whitespace(std::string_view text);
 
 std::string normalize_english_numbers(std::string text);
+
+// Applies the IndexTTS punctuation replacement map (、→",", 。→"." etc.),
+// matching the char_rep_map the official front.TextNormalizer applies to
+// every language path.
+std::string normalize_index_tts_punctuation(std::string text);
 std::string normalize_english_text(
     std::string_view text,
     const EnglishTextNormalizationOptions & options = {});

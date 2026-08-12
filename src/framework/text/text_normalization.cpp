@@ -428,6 +428,10 @@ std::string collapse_ascii_whitespace(std::string_view text) {
     return engine::io::trim_ascii_whitespace(std::move(out));
 }
 
+std::string normalize_index_tts_punctuation(std::string text) {
+    return apply_index_tts_punctuation_map(std::move(text));
+}
+
 std::string normalize_english_numbers(std::string text) {
     text = normalize_english_dates(std::move(text));
     text = normalize_english_regex(

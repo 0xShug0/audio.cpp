@@ -768,24 +768,28 @@ void index_tts2_log_probs(
     if (!(temperature > 0.0F)) {
         throw std::runtime_error("IndexTTS2 GPT temperature must be positive");
     }
+    auto & scores = workspace.scores;
+    scores = logits;
+    // The official pipeline applies the repetition penalty to the raw logits
+    // (HF RepetitionPenaltyLogitsProcessor runs before softmax): negative raw
+    // logits are multiplied, positive ones divided. Penalizing log-probs
+    // instead would multiply every seen token (log-probs are all <= 0).
+    apply_repetition_penalty(scores, codes, repetition_penalty, workspace);
     float max_logit = -std::numeric_limits<float>::infinity();
-    for (float logit : logits) {
-        max_logit = std::max(max_logit, logit);
+    for (float score : scores) {
+        max_logit = std::max(max_logit, score);
     }
     float total = 0.0F;
-    for (float logit : logits) {
-        total += std::exp(logit - max_logit);
+    for (float score : scores) {
+        total += std::exp(score - max_logit);
     }
     if (!(total > 0.0F)) {
         throw std::runtime_error("IndexTTS2 GPT sampler invalid logit mass");
     }
     const float log_total = std::log(total);
-    auto & scores = workspace.scores;
-    scores.resize(logits.size());
-    for (size_t i = 0; i < logits.size(); ++i) {
-        scores[i] = logits[i] - max_logit - log_total;
+    for (size_t i = 0; i < scores.size(); ++i) {
+        scores[i] = scores[i] - max_logit - log_total;
     }
-    apply_repetition_penalty(scores, codes, repetition_penalty, workspace);
     for (float & score : scores) {
         score /= temperature;
     }
