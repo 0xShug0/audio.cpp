@@ -462,6 +462,13 @@ std::string normalize_english_numbers(std::string text) {
         [](const std::smatch & match) {
             return english_ordinal_from_digits(match[1].str());
         });
+    // Split letter<->digit boundaries so digits attached to letters verbalize
+    // like the official wetext English normalizer ("DS4" -> "DS four",
+    // "R2D2" -> "R two D two", "4K" -> "four K"). Runs after dates/decimals/
+    // ordinals so "1st", "2.5" and friends have already been expanded; the
+    // standalone cardinal rule below then spells out each digit group.
+    text = std::regex_replace(std::move(text), std::regex(R"(([A-Za-z])(\d))"), "$1 $2");
+    text = std::regex_replace(std::move(text), std::regex(R"((\d)([A-Za-z]))"), "$1 $2");
     text = normalize_english_regex(
         std::move(text),
         std::regex(R"(\b(\d+)\b)"),
