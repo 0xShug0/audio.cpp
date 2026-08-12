@@ -83,9 +83,6 @@
     { "id": "kroko-asr",              "display_name": "Kroko Community ASR (asr, GGUF Q8)",     "display_name_en": "Kroko Community ASR (asr, GGUF Q8)", "family": "kroko_asr", "path": "models/Kroko-ASR-GGUF", "task": "asr", "mode": "offline", "download_id": "kroko_asr_community_q8_0", "min_vram_gb": 4,
       "input_hint": "**Kroko Community ASR**：GGUF Q8 包；离线转写，支持时间戳。",
       "input_hint_en": "**Kroko Community ASR**: GGUF Q8 package for offline transcription with timestamps." },
-    { "id": "sense-asr",                "display_name": "SenseVoice-Small (asr, 流式, 社区)",   "display_name_en": "SenseVoice-Small (asr + streaming, community)", "family": "sense_asr", "path": "models/SenseVoice-Small-GGUF", "task": "asr", "mode": "offline", "download_id": "sensevoice_small_q8", "min_vram_gb": 4,
-      "input_hint": "**SenseVoice-Small**（社区模型）：多语种 ASR，事件/情感/语言标签，ITN 可开关；离线与流式模式。",
-      "input_hint_en": "**SenseVoice-Small** (community): multilingual ASR with event/emotion/language tags, optional ITN; offline and streaming modes." },
 
     { "id": "chatterbox-vc",           "display_name": "Chatterbox (vc 声音转换)",                "display_name_en": "Chatterbox (voice conversion)", "family": "chatterbox", "path": "models/chatterbox", "task": "vc", "mode": "offline", "download_id": "chatterbox", "min_vram_gb": 12,
       "input_hint": "**Chatterbox VC**：上传源语音和目标音色参考；模型保留源语音内容，将说话人音色转换为目标音色，输出 24kHz 单声道。",
