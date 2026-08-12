@@ -29,6 +29,87 @@ MiniMax-H3-Q4-GGUF/
 The runtime uses `audio_vae_folded_f16.gguf`. Keep `audio_vae.gguf` as the original
 Audio VAE GGUF so the folded runtime file can be regenerated.
 
+## Run
+
+For performance, memory, and quality tradeoffs across step count, DiT variant,
+and acceleration options, see the [MiniMax-H3 performance notes](../reports/minimax_h3_performance.md).
+
+MiniMax-H3 packages contain several component GGUF files. Pass the DiT entry file
+explicitly: `dit.gguf` for the default path, or `dit_int8.gguf` for the experimental
+ConvRot INT8 path. The runtime uses that file's parent directory as the package root and
+resolves the other component files from there.
+
+```bash
+PROMPT='A lively four speaker comedy scene in a small radio studio. Speaker one says, "Welcome back, everyone, today we are testing a microphone that only records embarrassing truths." Speaker two says, "That explains why it kept calling me a sandwich with ambition." Speaker three says, "Please focus, the sponsor asked for professionalism and at least one normal sentence." Speaker four says, "Fine. This is a normal sentence, delivered by a person standing next to a haunted coffee machine." The speakers laugh, interrupt each other lightly, and continue with clear natural voices, quick timing, and no background music.'
+
+build/debug/bin/audiocpp_cli \
+  --task gen \
+  --family minimax_h3 \
+  --model models/MiniMax-H3-Q4-GGUF/dit.gguf \
+  --model-spec-override model_specs/minimax_h3.json \
+  --backend cuda \
+  --threads 8 \
+  --text "$PROMPT" \
+  --seed 20260808 \
+  --num-inference-steps 20 \
+  --guidance-scale 1.0 \
+  --request-option height=32 \
+  --request-option width=32 \
+  --request-option num_frames=481 \
+  --request-option return_video=false \
+  --out output.wav \
+  --metrics
+```
+
+Set `return_video=true` when you also want RGB24 video output as an artifact. Use
+`--out-dir <dir>` to write custom artifacts from the CLI.
+
+## Options
+
+Common request options:
+
+| Option | Default | Notes |
+|---|---:|---|
+| `num_inference_steps` | `50` | Joint DiT denoising steps. Lower values are faster. |
+| `seed` | `42` | Deterministic initial latent seed. |
+| `height` | `768` | Target video canvas height. Use smaller values for short audio-focused generations. |
+| `width` | `1344` | Target video canvas width. Use smaller values for short audio-focused generations. |
+| `num_frames` | `124` | Target video frame count before H3 alignment. MiniMax-H3 video is 24 fps. |
+| `guidance_scale` | `1.0` | Classifier-free guidance scale. |
+| `negative_prompt` | `" "` | Negative prompt used when guidance is active. |
+| `sampler` | `euler` | One of `euler`, `res_multistep`, `dpmpp_2m`, or `unipc`. |
+| `flow_shift` | `12.0` | Video FlowMatch scheduler shift. |
+| `audio_flow_shift` | `3.0` | Audio FlowMatch scheduler shift. |
+| `return_video` | `false` | Decode RGB24 video frames in addition to audio. |
+
+Memory and staged-weight options:
+
+| Option | Default | Notes |
+|---|---:|---|
+| `minimax_h3.weight_context_mb` | `512` | Staged weight context size in MiB. |
+| `minimax_h3.mem_saver` | `true` | Release staged DiT, audio VAE, and video VAE weights after their request phase instead of keeping them resident for the whole session. Prompt encoder weights are always request-scoped. Set `false` to keep generation weights cached when VRAM allows. |
+
+Advanced options:
+
+| Option | Default | Notes |
+|---|---:|---|
+| `text_layerwise` | `false` | Load prompt encoder weights in scoped layer groups. |
+| `text_layerwise_batch` | `1` | Prompt encoder layer-group size when `text_layerwise=true`. |
+| `dit_layerwise` | `false` | Load DiT weights in scoped prelude/block/final groups. |
+| `dit_layerwise_batch` | `1` | DiT block-group size when `dit_layerwise=true`. |
+| `dit_mlp_chunk_tokens` | `0` | Token chunk size for high-resolution layerwise MLP. Zero disables chunking. |
+| `dit_acceleration` | `none` | Optional acceleration mode: `none`, `first_block_cache`, or `spectrum`. |
+| `first_block_cache_threshold` | `0.1` | First-block cache residual-difference threshold. |
+| `first_block_cache_start_sigma` | `0.95` | Largest video sigma where first-block cache may be used. |
+| `first_block_cache_end_sigma` | `0.1` | Smallest video sigma where first-block cache may be used. |
+| `first_block_cache_max_consecutive` | `2` | Maximum consecutive cache hits before forcing a full DiT step. |
+| `spectrum_warmup_steps` | `1` | Full DiT warmup steps before spectrum forecasting. |
+| `spectrum_initial_window` | `2.0` | Initial spectrum forecast scheduling window. |
+| `spectrum_flex_window` | `0.75` | Spectrum forecast window growth after actual DiT steps. |
+| `spectrum_degree` | `1` | Chebyshev polynomial degree for spectrum forecasting. |
+| `spectrum_history_size` | `8` | Maximum spectrum forecast history rows. |
+| `spectrum_ridge_lambda` | `0.1` | Ridge regularization for spectrum forecasting. |
+
 ## Convert
 
 Most MiniMax-H3 components use the normal `audiocpp_gguf` converter. The DiT component is
@@ -146,81 +227,3 @@ python scripts/minimax_h3/convert_fold_audio_vae_gguf.py \
 
 The folded file replaces MiniMax-H3 BigVGAN weight-norm pairs with direct convolution
 weights stored as F16. Other tensors are copied from `audio_vae.gguf`.
-
-## Run
-
-MiniMax-H3 packages contain several component GGUF files. Pass the DiT entry file
-explicitly: `dit.gguf` for the default path, or `dit_int8.gguf` for the experimental
-ConvRot INT8 path. The runtime uses that file's parent directory as the package root and
-resolves the other component files from there.
-
-```bash
-PROMPT='A lively four speaker comedy scene in a small radio studio. Speaker one says, "Welcome back, everyone, today we are testing a microphone that only records embarrassing truths." Speaker two says, "That explains why it kept calling me a sandwich with ambition." Speaker three says, "Please focus, the sponsor asked for professionalism and at least one normal sentence." Speaker four says, "Fine. This is a normal sentence, delivered by a person standing next to a haunted coffee machine." The speakers laugh, interrupt each other lightly, and continue with clear natural voices, quick timing, and no background music.'
-
-build/debug/bin/audiocpp_cli \
-  --task gen \
-  --family minimax_h3 \
-  --model models/MiniMax-H3-Q4-GGUF/dit.gguf \
-  --model-spec-override model_specs/minimax_h3.json \
-  --backend cuda \
-  --threads 8 \
-  --text "$PROMPT" \
-  --seed 20260808 \
-  --num-inference-steps 20 \
-  --guidance-scale 1.0 \
-  --request-option height=32 \
-  --request-option width=32 \
-  --request-option num_frames=481 \
-  --request-option return_video=false \
-  --out output.wav \
-  --metrics
-```
-
-Set `return_video=true` when you also want RGB24 video output as an artifact. Use
-`--out-dir <dir>` to write custom artifacts from the CLI.
-
-## Options
-
-Common request options:
-
-| Option | Default | Notes |
-|---|---:|---|
-| `num_inference_steps` | `50` | Joint DiT denoising steps. Lower values are faster. |
-| `seed` | `42` | Deterministic initial latent seed. |
-| `height` | `768` | Target video canvas height. Use smaller values for short audio-focused generations. |
-| `width` | `1344` | Target video canvas width. Use smaller values for short audio-focused generations. |
-| `num_frames` | `124` | Target video frame count before H3 alignment. MiniMax-H3 video is 24 fps. |
-| `guidance_scale` | `1.0` | Classifier-free guidance scale. |
-| `negative_prompt` | `" "` | Negative prompt used when guidance is active. |
-| `sampler` | `euler` | One of `euler`, `res_multistep`, `dpmpp_2m`, or `unipc`. |
-| `flow_shift` | `12.0` | Video FlowMatch scheduler shift. |
-| `audio_flow_shift` | `3.0` | Audio FlowMatch scheduler shift. |
-| `return_video` | `false` | Decode RGB24 video frames in addition to audio. |
-
-Memory and staged-weight options:
-
-| Option | Default | Notes |
-|---|---:|---|
-| `minimax_h3.weight_context_mb` | `512` | Staged weight context size in MiB. |
-| `minimax_h3.mem_saver` | `true` | Release staged DiT, audio VAE, and video VAE weights after their request phase instead of keeping them resident for the whole session. Prompt encoder weights are always request-scoped. Set `false` to keep generation weights cached when VRAM allows. |
-
-Advanced options:
-
-| Option | Default | Notes |
-|---|---:|---|
-| `text_layerwise` | `false` | Load prompt encoder weights in scoped layer groups. |
-| `text_layerwise_batch` | `1` | Prompt encoder layer-group size when `text_layerwise=true`. |
-| `dit_layerwise` | `false` | Load DiT weights in scoped prelude/block/final groups. |
-| `dit_layerwise_batch` | `1` | DiT block-group size when `dit_layerwise=true`. |
-| `dit_mlp_chunk_tokens` | `0` | Token chunk size for high-resolution layerwise MLP. Zero disables chunking. |
-| `dit_acceleration` | `none` | Optional acceleration mode: `none`, `first_block_cache`, or `spectrum`. |
-| `first_block_cache_threshold` | `0.1` | First-block cache residual-difference threshold. |
-| `first_block_cache_start_sigma` | `0.95` | Largest video sigma where first-block cache may be used. |
-| `first_block_cache_end_sigma` | `0.1` | Smallest video sigma where first-block cache may be used. |
-| `first_block_cache_max_consecutive` | `2` | Maximum consecutive cache hits before forcing a full DiT step. |
-| `spectrum_warmup_steps` | `1` | Full DiT warmup steps before spectrum forecasting. |
-| `spectrum_initial_window` | `2.0` | Initial spectrum forecast scheduling window. |
-| `spectrum_flex_window` | `0.75` | Spectrum forecast window growth after actual DiT steps. |
-| `spectrum_degree` | `1` | Chebyshev polynomial degree for spectrum forecasting. |
-| `spectrum_history_size` | `8` | Maximum spectrum forecast history rows. |
-| `spectrum_ridge_lambda` | `0.1` | Ridge regularization for spectrum forecasting. |

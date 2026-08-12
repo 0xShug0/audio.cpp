@@ -1,12 +1,13 @@
-# Music And Sound Generation
+# Music, Video, And Sound Generation
 
 | Model | Family | Main Route(s) | Quick Start |
 |---|---|---|---|
 | ACE-Step | `ace_step` | text-to-music, edit, cover, repaint | [ACE-Step](#ace-step) |
+| MiniMax-H3 | `minimax_h3` | text-to-audio, dialogue, video | [MiniMax-H3](#minimax-h3) |
 | Stable Audio | `stable_audio` | music, SFX, init-audio, inpaint | [Stable Audio](#stable-audio) |
 | HeartMuLa | `heartmula` | lyrics/tags to music | [HeartMuLa](#heartmula) |
 
-Use `--task gen` for models that generate music, sound effects, or audio from text and optional audio conditioning. These models are not TTS models: text chunking for speech TTS does not apply unless a model explicitly documents a long-output mode.
+Use `--task gen` for models that generate music, sound effects, video, or audio from text and optional audio conditioning. These models are not normal TTS models: text chunking for speech TTS does not apply unless a model explicitly documents a long-output mode.
 
 Common CLI shape:
 
@@ -41,6 +42,28 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `--num-inference-steps` | integer | `8` | Diffusion denoising steps. |
 | `--guidance-scale` | float | `1.0` | Diffusion guidance scale. |
 | `--session-option ace_step.mem_saver=true\|false` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+
+## MiniMax-H3
+
+MiniMax-H3 generates prompt-conditioned audio and optional video. It can be used for music-like audio, dialogue-style audio, and text-to-video experiments through the same `gen` route. See [MiniMax-H3](community_models/minimax_h3.md) for component GGUF package layout, conversion, options, and performance notes.
+
+Audio-only prompt:
+
+```bash
+audiocpp_cli --task gen --family minimax_h3 \
+  --model models/MiniMax-H3-Q4-GGUF/dit.gguf \
+  --backend cuda \
+  --text "A lively four-speaker podcast scene with clear voices, quick timing, and no background music." \
+  --num-inference-steps 20 \
+  --guidance-scale 1.0 \
+  --request-option height=32 \
+  --request-option width=32 \
+  --request-option num_frames=481 \
+  --request-option return_video=false \
+  --out output.wav
+```
+
+Set `--request-option return_video=true` and provide `--out-dir` when you also want video frames as an output artifact.
 
 ## Stable Audio
 

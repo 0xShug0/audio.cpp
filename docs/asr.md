@@ -10,6 +10,7 @@
 | Hviske ASR | `hviske_asr` | offline | [Hviske ASR](#hviske-asr) |
 | Nemotron ASR | `nemotron_asr` | offline, streaming | [Nemotron ASR](#nemotron-asr) |
 | Parakeet-TDT | `parakeet_tdt` | offline, streaming | [Parakeet-TDT](#parakeet-tdt) |
+| SenseVoice-Small | `sense_asr` | offline, streaming | [SenseVoice-Small](#sensevoice-small) |
 | VibeVoice ASR | `vibevoice_asr` | offline | [VibeVoice ASR](#vibevoice-asr) |
 | Voxtral Realtime | `voxtral_realtime` | offline, streaming | [Voxtral Realtime](#voxtral-realtime) |
 
@@ -297,6 +298,31 @@ audiocpp_cli --task asr --family parakeet_tdt \
 Use `parakeet_tdt_f16` for the F16 GGUF variant. See
 [Parakeet-TDT 0.6B v3](community_models/parakeet_tdt.md) for long-form,
 streaming, conversion, options, validation, and performance details.
+
+## SenseVoice-Small
+
+SenseVoice-Small is a community multilingual ASR port with offline and buffered
+streaming sessions, language/event/emotion tags, and optional inverse text
+normalization. The recommended package is the standalone Q8 GGUF from
+FunAudioLLM.
+
+```bash
+audiocpp_cli --task asr --family sense_asr \
+  --model models/SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf \
+  --backend cuda --audio speech_16k.wav --text-out transcript.txt
+```
+
+Streaming:
+
+```bash
+audiocpp_cli --task asr --mode streaming --family sense_asr \
+  --model models/SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf \
+  --backend cuda --audio speech_16k.wav \
+  --request-option audio_chunk_duration_sec=5 --text-out transcript.txt
+```
+
+See [SenseVoice-Small](community_models/sense_asr.md) for language tags,
+chunking, server usage, and validation notes.
 
 ## VibeVoice ASR
 

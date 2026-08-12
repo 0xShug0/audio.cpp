@@ -10,6 +10,7 @@
 | MioTTS | `miotts` | `tts` | [MioTTS](#miotts) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
+| MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](community_models/minimax_h3.md) |
 | NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
 | OmniVoice | `omnivoice` | `tts` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
 | PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
@@ -24,7 +25,7 @@
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
 
-This page covers speech TTS-style families. Detailed route manuals live under `docs/models/` or `docs/community_models/` when a model needs more space.
+This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/community_models/` when a model needs more space.
 
 Common CLI shape:
 

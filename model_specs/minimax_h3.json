@@ -4,17 +4,27 @@
   "display_name": "MiniMax-H3",
   "description": "MiniMax-H3 text-to-audio/video generation through the official T2VA pipeline: Qwen3-VL text conditioning, joint audio/video DiT denoising, and MiniMax-H3 audio/video VAE decode.",
   "category": "audio_generation",
-  "status": "wip",
+  "status": "experimental",
   "tasks": [
+    "tts",
+    "music",
     "sfx"
   ],
   "modes": [
     "offline"
   ],
   "languages": [
-    "en"
+    "auto"
   ],
   "capabilities": {
+    "tts": [
+      "style_control",
+      "multi_speaker"
+    ],
+    "music": [
+      "instrumental",
+      "style_control"
+    ],
     "sfx": [
       "prompt_generation"
     ]
@@ -28,11 +38,14 @@
   "ui": {
     "recommended_package": "minimax_h3_q4_k",
     "tags": [
+      "TTS",
+      "Music",
       "SFX",
       "GGUF"
     ],
     "docs": [
-      "docs/gguf.md"
+      "docs/community_models/minimax_h3.md",
+      "docs/reports/minimax_h3_performance.md"
     ]
   },
   "options": {
