@@ -13,11 +13,13 @@ runtime::ModelMetadata metadata(const IndexTTS2Assets & assets) {
     runtime::ModelMetadata out;
     out.family = "index_tts2";
     out.variant = assets.config.version;
-    out.description = "IndexTTS2 loaded from local extracted assets.";
+    out.description = index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5
+        ? "IndexTTS2.5 (index_tts2 family variant) loaded from local extracted assets."
+        : "IndexTTS2 loaded from local extracted assets.";
     return out;
 }
 
-runtime::CapabilitySet capabilities(const IndexTTS2Assets &) {
+runtime::CapabilitySet capabilities(const IndexTTS2Assets & assets) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
@@ -25,11 +27,15 @@ runtime::CapabilitySet capabilities(const IndexTTS2Assets &) {
     };
     out.supports_speaker_reference = true;
     out.supports_style_condition = true;
-    out.languages = {"English", "Chinese"};
+    if (index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5) {
+        out.languages = {"Chinese", "English", "Japanese", "Spanish", "Arabic"};
+    } else {
+        out.languages = {"English", "Chinese"};
+    }
     return out;
 }
 
-runtime::ModelCliInterface cli(const IndexTTS2Assets &) {
+runtime::ModelCliInterface cli(const IndexTTS2Assets & assets) {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"emotion_alpha", "float", "Blend strength for explicit emotion conditioning."},
@@ -42,6 +48,10 @@ runtime::ModelCliInterface cli(const IndexTTS2Assets &) {
         {"length_penalty", "float", "GPT beam-search length penalty."},
         {"num_beams", "n", "GPT beam count."},
     };
+    if (index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5) {
+        out.request_options.push_back(
+            {"lang", "auto|zh|en|ja|es|ar|...", "Text language hint; auto infers zh when the text contains Han characters, otherwise en."});
+    }
     out.session_options = {
         {"index_tts2.weight_type", "native|f32|f16|bf16|q8_0", "Matmul weight storage type."},
         {"index_tts2.conv_weight_type", "native|f32|f16", "Convolution weight storage type."},

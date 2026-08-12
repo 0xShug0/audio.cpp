@@ -932,27 +932,6 @@ audiocpp_add_model(index_tts2
         engine::models::index_tts2::make_index_tts2_loader
 )
 
-audiocpp_add_model(index_tts2_5
-    SOURCES
-        src/models/index_tts2_5/assets.cpp
-        src/models/index_tts2_5/audio_features.cpp
-        src/models/index_tts2_5/gpt.cpp
-        src/models/index_tts2_5/loader.cpp
-        src/models/index_tts2_5/qwen_emotion.cpp
-        src/models/index_tts2_5/request.cpp
-        src/models/index_tts2_5/s2mel.cpp
-        src/models/index_tts2_5/semantic_codec.cpp
-        src/models/index_tts2_5/semantic_encoder.cpp
-        src/models/index_tts2_5/session.cpp
-        src/models/index_tts2_5/style_encoder.cpp
-        src/models/index_tts2_5/tokenizer_text.cpp
-        src/models/index_tts2_5/vocoder.cpp
-    INCLUDES
-        engine/models/index_tts2_5/loader.h
-    LOADERS
-        engine::models::index_tts2_5::make_index_tts2_5_loader
-)
-
 audiocpp_add_model(nemotron_asr
     SOURCES
         src/models/nemotron_asr/assets.cpp
@@ -1547,7 +1526,6 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(higgs_audio_tts_warm_bench tests/higgs_audio_tts/higgs_audio_tts_warm_bench.cpp)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)
     add_engine_warmbench(index_tts2_warm_bench tests/index_tts2/index_tts2_warm_bench.cpp)
-    add_engine_warmbench(index_tts2_5_warm_bench tests/index_tts2_5/index_tts2_5_warm_bench.cpp)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)

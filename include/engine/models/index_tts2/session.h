@@ -73,6 +73,7 @@ private:
         const EmotionState & emotion);
     runtime::AudioBuffer synthesize_segment(
         const std::vector<int32_t> & text_tokens,
+        int32_t lang_id,
         const SpeakerState & speaker,
         const EmotionState & emotion,
         const std::vector<float> & emotion_vector,

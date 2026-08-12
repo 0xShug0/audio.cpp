@@ -69,8 +69,7 @@ Status labels:
 | `htdemucs` | Done | Pass | --- | Pass | Pass (drift) |
 | `hviske_asr` | Done | Pass | --- | --- | Pass |
 | `inflect_v2` | Done | Pass | Pass | --- | --- |
-| `index_tts2` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
-| `index_tts2_5` | Done | Pass | Pass | Pass | Pass (ASR match, drift) |
+| `index_tts2` | Done (v2 + v2.5 variant) | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `irodori_tts` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `kroko_asr` | Done | Pass | --- | --- | Pass |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |

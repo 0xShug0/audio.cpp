@@ -42,7 +42,7 @@ from typing import Dict
 import torch
 from safetensors.torch import save_file
 
-# GGUF tensor namespaces (must match the index_tts2_5 model spec) and the
+# GGUF tensor namespaces (must match the index_tts2 model spec) and the
 # staging file each one is produced from.
 TENSOR_OUTPUTS = [
     ("gpt", "gpt.safetensors"),
@@ -157,13 +157,35 @@ def _copy(src: Path, dst: Path, label: str) -> None:
     print(f"copied {src} -> {dst}")
 
 
+def _stage_config_v2_5(src: Path, dst: Path) -> None:
+    """Stage config.yaml with the version field normalized to "2.5".
+
+    The official IndexTTS-2.5 snapshot ships config.yaml with `version: 2.0`
+    (inherited from IndexTTS-2). audio.cpp selects the IndexTTS2 family variant
+    from this field, so the staged copy must declare 2.5 explicitly.
+    """
+    _require_file(src, "config.yaml")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    lines = src.read_text(encoding="utf-8").splitlines()
+    replaced = False
+    for i, line in enumerate(lines):
+        if line.strip().startswith("version:"):
+            lines[i] = 'version: "2.5"'
+            replaced = True
+            break
+    if not replaced:
+        lines.append('version: "2.5"')
+    dst.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"staged {src} -> {dst} (version normalized to \"2.5\")")
+
+
 def build_converter_command(output_dir: Path, converter: str, quant_type: str) -> list[str]:
     command = [converter]
     for namespace, filename in TENSOR_OUTPUTS:
         command += ["--input", f"{namespace}={output_dir / filename}"]
     command += [
         "--root", str(output_dir / "root"),
-        "--family", "index_tts2_5",
+        "--family", "index_tts2",
         "--type", quant_type,
         "--output", str(output_dir / f"index-tts2_5-{quant_type}.gguf"),
     ]
@@ -272,7 +294,7 @@ def main() -> int:
           "qwen emotion weights")
 
     # Sidecar files embedded into the GGUF via --root.
-    _copy(model_dir / "config.yaml", root_dir / "config.yaml", "config.yaml")
+    _stage_config_v2_5(model_dir / "config.yaml", root_dir / "config.yaml")
     _copy(model_dir / "multilingual_zh_ja_yue_char_del.tiktoken",
           root_dir / "multilingual_zh_ja_yue_char_del.tiktoken", "tiktoken vocabulary")
     _copy(w2v_bert_dir / "config.json", root_dir / "w2v-bert-2.0" / "config.json", "w2v-bert-2.0 config")

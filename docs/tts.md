@@ -17,7 +17,7 @@
 | Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](#higgs-audio-v3-tts) |
 | Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
 | IndexTTS2 | `index_tts2` | `tts` | [IndexTTS2](#indextts2) |
-| IndexTTS2.5 | `index_tts2_5` | `tts` | [IndexTTS2.5](#indextts25) |
+| IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS2.5](#indextts25) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
@@ -595,9 +595,11 @@ audiocpp_cli --task tts --family index_tts2 --model /path/to/IndexTTS-2 --backen
 
 IndexTTS2.5 is IndexTeam/bilibili's multilingual zero-shot TTS model (released 2026-07): a 0.8B GPT (autoregressive) + DiT CFM + BigVGAN stack that keeps IndexTTS2's timbre-emotion decoupling and adds Japanese, Spanish, and Arabic on top of Chinese and English. It requires a speaker reference through the framework `--voice-ref` path. Inline `<文字|发音>` pronunciation overrides (pinyin, CMU phonemes, or kana) are supported. Upstream weights live at [IndexTeam/IndexTTS-2.5](https://huggingface.co/IndexTeam/IndexTTS-2.5); the reference implementation is [index-tts/index-tts](https://github.com/index-tts/index-tts) branch `indextts-2.5`.
 
+IndexTTS2.5 is implemented as a variant of the `index_tts2` family rather than a separate family: both variants share the audio features, wav2vec2bert, Qwen emotion, style encoder, BigVGAN vocoder, S2Mel, and the GPT decode/cache code, while the tokenizer (SentencePiece vs multilingual tiktoken), GPT speaker conditioning (conditioning encoder + perceiver vs CAMPPlus `spk_emb_proj` + `lang_embedding`), and the semantic-codec decode path (v2.5 adds a 2x nearest upsample + `up` conv) are selected per variant from the model config `version` field (`"2.5"`). All IndexTTS2 session options (`index_tts2.*`) apply to both variants.
+
 | Field | Value |
 |---|---|
-| Family | `index_tts2_5` |
+| Family | `index_tts2` (the `2.5` variant is selected from the model config `version` field; no separate family) |
 | Model directory | `models/IndexTTS2.5-GGUF` (default GGUF package `index_tts2_5_q8_0`; `index_tts2_5_f16` and `index_tts2_5_orig` also available) |
 | Task | `tts`, `clon` |
 | Modes | `offline` |
@@ -608,13 +610,13 @@ IndexTTS2.5 is IndexTeam/bilibili's multilingual zero-shot TTS model (released 2
 Voice clone:
 
 ```bash
-audiocpp_cli --task clon --family index_tts2_5 --model /path/to/IndexTTS2.5-GGUF --backend cuda --text "Hello from IndexTTS2.5." --voice-ref /path/to/reference.wav --out out.wav
+audiocpp_cli --task clon --family index_tts2 --model /path/to/IndexTTS2.5-GGUF --backend cuda --text "Hello from IndexTTS2.5." --voice-ref /path/to/reference.wav --out out.wav
 ```
 
 Emotion text:
 
 ```bash
-audiocpp_cli --task tts --family index_tts2_5 --model /path/to/IndexTTS2.5-GGUF --backend cuda --text "今天的演示会更有情绪。" --voice-ref /path/to/reference.wav --emotion "你吓死我了！你是鬼吗？" --request-option emotion_alpha=0.6 --out out.wav
+audiocpp_cli --task tts --family index_tts2 --model /path/to/IndexTTS2.5-GGUF --backend cuda --text "今天的演示会更有情绪。" --voice-ref /path/to/reference.wav --emotion "你吓死我了！你是鬼吗？" --request-option emotion_alpha=0.6 --out out.wav
 ```
 
 The `lang` request option selects the text language (`auto`, `zh`, `en`, `ja`, `es`, `ar`, or any tokenizer language code). The default `auto` picks `zh` when the text contains Han characters and `en` otherwise, so mixed Japanese/Spanish/Arabic text should set `--request-option lang=ja|es|ar` explicitly.
@@ -643,19 +645,19 @@ License: IndexTTS-2.5 weights are distributed under the bilibili Model Use Licen
 | `--do-sample` | `true`, `false` | `true` | Enable stochastic GPT sampling. |
 | `--request-option length_penalty=<float>` | float | `0.0` | GPT beam-search length penalty. |
 | `--request-option num_beams=<n>` | integer | `3` | GPT beam count. |
-| `--session-option index_tts2_5.mem_saver=true|false` | bool | `false` | Release staged reference and conditioning graphs after request phases. |
-| `--session-option index_tts2_5.weight_type=native|f32|f16|bf16|q8_0` | enum | `native` | Matmul weight storage type. |
-| `--session-option index_tts2_5.conv_weight_type=native|f32|f16` | enum | `native` | Convolution weight storage type. |
-| `--session-option index_tts2_5.speaker_cache_slots=<n>` | integer slots | `1` | Prepared speaker-reference cache slots; set `0` to disable reuse. |
-| `--session-option index_tts2_5.emotion_cache_slots=<n>` | integer slots | `1` | Prepared emotion-reference cache slots; set `0` to disable reuse. |
-| `--session-option index_tts2_5.emotion_text_cache_slots=<n>` | integer slots | `1` | Emotion-text weight cache slots; set `0` to disable reuse. |
-| `--session-option index_tts2_5.gpt_graph_arena_mb=<n>` | MB | model default | GPT graph arena size. |
-| `--session-option index_tts2_5.s2mel_graph_arena_mb=<n>` | MB | model default | S2Mel graph arena size. |
-| `--session-option index_tts2_5.reference_graph_arena_mb=<n>` | MB | model default | Reference encoder and codec graph arena size. |
-| `--session-option index_tts2_5.emotion_text_prefill_graph_arena_mb=<n>` | MB | model default | Emotion-text prefill graph arena size. |
-| `--session-option index_tts2_5.emotion_text_decode_graph_arena_mb=<n>` | MB | model default | Emotion-text cached-step graph arena size. |
-| `--session-option index_tts2_5.emotion_text_max_new_tokens=<n>` | tokens | `256` | Maximum generated tokens for emotion-text classification. |
-| `--session-option index_tts2_5.weight_context_mb=<n>` | MB | `32` | Shared ggml weight metadata context size. |
+| `--session-option index_tts2.mem_saver=true|false` | bool | `false` | Release staged reference and conditioning graphs after request phases. |
+| `--session-option index_tts2.weight_type=native|f32|f16|bf16|q8_0` | enum | `native` | Matmul weight storage type. |
+| `--session-option index_tts2.conv_weight_type=native|f32|f16` | enum | `native` | Convolution weight storage type. |
+| `--session-option index_tts2.speaker_cache_slots=<n>` | integer slots | `1` | Prepared speaker-reference cache slots; set `0` to disable reuse. |
+| `--session-option index_tts2.emotion_cache_slots=<n>` | integer slots | `1` | Prepared emotion-reference cache slots; set `0` to disable reuse. |
+| `--session-option index_tts2.emotion_text_cache_slots=<n>` | integer slots | `1` | Emotion-text weight cache slots; set `0` to disable reuse. |
+| `--session-option index_tts2.gpt_graph_arena_mb=<n>` | MB | model default | GPT graph arena size. |
+| `--session-option index_tts2.s2mel_graph_arena_mb=<n>` | MB | model default | S2Mel graph arena size. |
+| `--session-option index_tts2.reference_graph_arena_mb=<n>` | MB | model default | Reference encoder and codec graph arena size. |
+| `--session-option index_tts2.emotion_text_prefill_graph_arena_mb=<n>` | MB | model default | Emotion-text prefill graph arena size. |
+| `--session-option index_tts2.emotion_text_decode_graph_arena_mb=<n>` | MB | model default | Emotion-text cached-step graph arena size. |
+| `--session-option index_tts2.emotion_text_max_new_tokens=<n>` | tokens | `256` | Maximum generated tokens for emotion-text classification. |
+| `--session-option index_tts2.weight_context_mb=<n>` | MB | `32` | Shared ggml weight metadata context size. |
 
 ### Converting From Upstream Weights
 
@@ -670,7 +672,7 @@ python tools/convert_index_tts2_5.py \
 
 Pass `--native-dir /path/to/IndexTTS-2.5-native` to also emit a directly loadable native Safetensors model directory (hardlinked from the staging files), no GGUF conversion required.
 
-The script repackages the checkpoints the loader needs (unwraps the `s2mel.pth`/`codec.pth` container keys, prefixes CAMPPlus tensors with `speaker_encoder.`, strips BigVGAN's `generator.` prefix, wraps the `feat1/feat2.pt` matrices as a single `tensor`) and assembles the sidecar `root/` (config, tiktoken vocabulary, auxiliary model configs) that gets embedded into the GGUF.
+The script repackages the checkpoints the loader needs (unwraps the `s2mel.pth`/`codec.pth` container keys, prefixes CAMPPlus tensors with `speaker_encoder.`, strips BigVGAN's `generator.` prefix, wraps the `feat1/feat2.pt` matrices as a single `tensor`) and assembles the sidecar `root/` (config, tiktoken vocabulary, auxiliary model configs) that gets embedded into the GGUF. The staged `config.yaml` has its `version` field normalized to `"2.5"` (the official snapshot ships `version: 2.0`); the engine uses that field to select the IndexTTS2 family variant.
 
 ## Irodori-TTS
 

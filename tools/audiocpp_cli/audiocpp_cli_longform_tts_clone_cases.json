@@ -291,7 +291,7 @@
     {
       "id": "index_tts2_5_voice_clone_longform",
       "coverage": "IndexTTS2.5 voice clone with shared long-form text for chunking and RTF measurement",
-      "family": "index_tts2_5",
+      "family": "index_tts2",
       "model": "models/IndexTTS2.5-GGUF",
       "task": "tts",
       "mode": "offline",
@@ -406,7 +406,7 @@
     {
       "id": "index_tts2_5_longform_voice_clone_6000_emotion_text",
       "coverage": "IndexTTS2.5 longform voice clone with 6000-character text plus long emotion-text conditioning",
-      "family": "index_tts2_5",
+      "family": "index_tts2",
       "model": "models/IndexTTS2.5-GGUF",
       "task": "tts",
       "mode": "offline",
