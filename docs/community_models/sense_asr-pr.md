@@ -20,7 +20,7 @@ Closes the porting track for
 | Catalog | `model_specs/sense_asr.json` (family `sense_asr`, status `community`, package `sensevoice_small_q8`) |
 | Build | `CMakeLists.txt` — `audiocpp_add_model(sense_asr ...)` with `engine::community_models::sense_asr::make_sense_asr_loader` |
 | Docs | `docs/community_models/sense_asr.md` (+ rows in `docs/community_models/models.md`, `README.md`) |
-| WebUI | `webui/webui.py` — `MODEL_PROFILES["sense_asr"]` with `supports_streaming: true`, `MODEL_HINTS_EN["sense_asr"]`; catalog entry in `webui/configs/models_catalog.json` |
+| WebUI | Native catalog entry in `webui/configs/models_catalog.json`; controls are driven by model-spec metadata |
 
 The port adapts the engine (80-mel Kaldi-compatible filterbank + LFR, the
 50-block SAN-M encoder, CTC collapse, SentencePiece detok) from the reference
@@ -131,16 +131,11 @@ python3 tools/check_loader_catalog_sync.py               # ok: runtime loaders, 
   context), so CUDA/Metal/Vulkan should work through the normal build paths;
   GPU performance has not been measured in this PR.
 
-## WebUI integration fix (this PR)
+## Native WebUI integration
 
-The model was missing from `MODEL_PROFILES` in `webui/webui.py`, causing the
-streaming toggle to not appear in the ASR tab. Added:
-
-- `MODEL_PROFILES["sense_asr"]` with `"supports_streaming": True` and input hint
-- `MODEL_HINTS_EN["sense_asr"]` with English hint
-
-Documentation updated in `docs/community_models/sense_asr.md` with verified
-server launch commands:
+SenseVoice is exposed through `webui/configs/models_catalog.json`. The embedded
+Svelte UI consumes the catalog and schema-v1 model metadata directly, including
+its streaming mode and request controls. Verified server launch commands:
 
 ```bash
 # WebUI-enabled server
@@ -174,7 +169,7 @@ curl -X POST http://127.0.0.1:8080/v1/audio/transcriptions/live \
 | Server streaming endpoint | `curl -H 'Transfer-Encoding: chunked' -F 'model=sense_asr' -F 'file=@3.wav' /v1/audio/transcriptions/live` | Returns `400: live transcription requires chunked body` (expected - client must stream) ✅ |
 | WebUI catalog entry | `models_catalog.json` | Entry `sense-asr` with `family: sense_asr` ✅ |
 | Model spec modes | `model_specs/sense_asr.json` | `"modes": ["offline", "streaming"]` ✅ |
-| Required files sync | `required_files.json` | `sensevoice_small_q8` → `SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf` ✅ |
+| Package spec | `model_specs/sense_asr.json` | `sensevoice_small_q8` resolves to the standalone Q8 GGUF ✅ |
 | Loader-catalog sync | `python3 tools/check_loader_catalog_sync.py` | OK ✅ |
 
 All verifications run on `build/sense` (custom `AUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=sense_asr` CPU build).

@@ -320,10 +320,6 @@ function New-PrebuiltPackage {
         Copy-TreeContents $communityTools (Join-Path $stageTools "community_models")
     }
     Copy-TreeContents (Join-Path $repoRoot "model_specs") (Join-Path $stageDir "model_specs")
-    $quickStartVoices = Join-Path $repoRoot "webui\voice"
-    if (Test-Path -LiteralPath $quickStartVoices) {
-        Copy-TreeContents $quickStartVoices (Join-Path $stageDir "webui\voice")
-    }
     $modelManagerAssets = Join-Path $repoRoot "assets\model_manager"
     if (Test-Path -LiteralPath $modelManagerAssets) {
         Copy-TreeContents $modelManagerAssets (Join-Path $stageDir "assets\model_manager")

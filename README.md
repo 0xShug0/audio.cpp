@@ -168,9 +168,8 @@ add `--ui-management` when that instance should permit model switching.
 The native UI also exposes background model download/preparation, long-text split-and-merge synthesis, a
 browser-local saved voice library, microphone recording, and near-live ASR input. Some model preparation jobs invoke
 the repository's Python model manager because those packages require Hugging Face download or checkpoint conversion;
-model inference and the embedded UI remain Python-free. The previous Python/Gradio interface remains available for
-compatibility. See [webui/README.md](webui/README.md) for native and legacy launch commands, model notes, and frontend
-development instructions.
+model inference and the embedded UI remain Python-free. See [webui/README.md](webui/README.md) for launch commands,
+model notes, and frontend development instructions.
 
 Huge thanks to [@kigner](https://github.com/kigner) for the original [audio.cpp-webui](https://github.com/kigner/audio.cpp-webui), and to [@patrickjchen](https://github.com/patrickjchen) for porting and integrating it into audio.cpp.
 
