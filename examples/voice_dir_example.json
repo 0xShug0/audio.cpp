@@ -5,7 +5,7 @@
   "device": 0,
   "threads": 1,
   "lazy_load": true,
-  "voice_dir": "../../webui/voice",
+  "voice_dir": "../../webui/native/demo_voices",
   "models": [
     {
       "id": "qwen3-tts",

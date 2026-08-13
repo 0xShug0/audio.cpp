@@ -34,18 +34,8 @@ __pycache__/
 # --- portable bundle: distributed manually, never committed ---
 /audiocpp-portable/
 
-# --- WebUI runtime artifacts: keep the source + empty dirs, drop generated files ---
-/webui/output/*
-!/webui/output/.gitkeep
-/webui/logs/*
-!/webui/logs/.gitkeep
-/webui/third_party/
-/webui/llm_api_key.txt
+# --- Native WebUI build artifacts ---
 /webui/native/node_modules/
 /webui/native/.svelte-kit/
 /webui/native/dist/*
 !/webui/native/dist/index.html
-# written by the in-UI language picker; per-machine, not a project setting
-/webui/configs/ui_language.json
-# personal voice recording — stays local, repo is public
-/webui/voice/my-record.wav
