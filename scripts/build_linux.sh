@@ -6,6 +6,7 @@ CONDA_ENV=""
 BUILD_DIR=""
 BUILD_TYPE="RelWithDebInfo"
 CUDA_MODE="auto"
+CUDA_ARCH=""
 VULKAN_MODE="off"
 HIP_MODE="off"
 GPU_TARGETS=""
@@ -72,6 +73,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --gpu-targets)
             GPU_TARGETS="$2"
+            shift 2
+            ;;
+        --cuda-arch)
+            CUDA_ARCH="$2"
             shift 2
             ;;
         --with-tests)
@@ -318,6 +323,9 @@ fi
 echo "Using generator: $GENERATOR"
 echo "Using build dir: $BUILD_DIR"
 echo "Including CUDA backend: $ENGINE_ENABLE_CUDA"
+if [[ "$ENGINE_ENABLE_CUDA" == "ON" ]]; then
+    echo "CUDA architectures: ${CUDA_ARCH:-<auto: machine-native at configure time>}"
+fi
 echo "Including Vulkan backend: $ENGINE_ENABLE_VULKAN"
 echo "Including HIP backend: $ENGINE_ENABLE_HIP"
 if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
@@ -363,6 +371,16 @@ if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
         -UGPU_BUILD_TARGETS
         -UAMDGPU_TARGETS
         -DGPU_TARGETS="$GPU_TARGETS"
+    )
+fi
+
+if [[ "$ENGINE_ENABLE_CUDA" == "ON" && -n "$CUDA_ARCH" ]]; then
+    CMAKE_ARGS+=(
+        # CMAKE_CUDA_ARCHITECTURES is a sticky cache entry; -U it so a previous
+        # configure's arch list does not win over a new --cuda-arch value
+        # (mirrors the HIP --gpu-targets handling above).
+        -UCMAKE_CUDA_ARCHITECTURES
+        -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH"
     )
 fi
 

@@ -58,6 +58,29 @@ Leave `CMAKE_CUDA_ARCHITECTURES` unset to build for the GPUs present at build ti
 (`native`). Note that CMake caches the CUDA compiler: switching toolkits in an
 existing build directory requires deleting `CMakeCache.txt` and `CMakeFiles/`.
 
+### Building an old GPU with the helper script
+
+The `scripts/build_linux.sh --backend cuda` script leaves `CMAKE_CUDA_ARCHITECTURES` unset, so it
+builds for the GPU attached to the *build* machine (`native`). If you build on one machine and run
+on another — or target an old GPU such as a Pascal compute-capability 6.1 device — pass
+`--cuda-arch`, which forwards `-DCMAKE_CUDA_ARCHITECTURES` (and un-defines the sticky cache value so
+a previous configure does not win):
+
+```bash
+scripts/build_linux.sh --backend cuda --cuda-arch 61 --target audiocpp_cli --target audiocpp_server
+```
+
+Pinning an architecture below 8.9 also turns SageAttention2 off at build time
+(`external/ggml/src/ggml-cuda/CMakeLists.txt` gates it to `>= 89`), so no SM89+ kernels are packaged
+and a 6.1 GPU will not hit an illegal-instruction core dump:
+`scripts/build_linux.sh --backend cuda --cuda-arch 61` is equivalent to the working direct CMake
+configure `cmake -S . -B build -DENGINE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61`.
+
+You do **not** need `-DENGINE_ENABLE_NATIVE_CPU=OFF` for this: `GGML_NATIVE` only influences the CUDA
+architecture as a *fallback* (`if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)` in the ggml CUDA CMake
+file), so once `--cuda-arch`/`CMAKE_CUDA_ARCHITECTURES` is set, GPU architecture is fully determined
+by it.
+
 On WSL2, install the toolkit only — `cuda-toolkit-<version>` from the `wsl-ubuntu`
 repo. The `cuda` and `cuda-drivers` metapackages pull a Linux display driver that
 breaks the GPU passthrough provided by the Windows host driver.
