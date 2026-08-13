@@ -357,6 +357,7 @@ add_library(engine_core OBJECT
     src/framework/modules/attention/transformer_blocks.cpp
     src/framework/modules/conditioning_modules.cpp
     src/framework/modules/conformer_modules.cpp
+    src/framework/modules/flow_sampler_runtime.cpp
     src/framework/modules/predictor_modules.cpp
     src/framework/modules/positional_modules.cpp
     src/framework/modules/text_encoders/t5_base_encoder.cpp
@@ -387,6 +388,7 @@ add_library(engine_core OBJECT
     src/framework/audio/wav_reader.cpp
     src/framework/audio/wav_writer.cpp
     src/framework/audio/zipenhancer.cpp
+    src/framework/runtime/flow_kv_cache.cpp
     src/framework/modules/speaker_encoders/ecapa_tdnn_runtime.cpp
     src/framework/modules/speaker_encoders/titanet_runtime.cpp
     src/framework/codecs/fsq_audio_codec_runtime.cpp

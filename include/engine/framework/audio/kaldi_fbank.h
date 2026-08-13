@@ -7,11 +7,17 @@
 
 namespace engine::audio {
 
+enum class KaldiFbankWindowType {
+  Hamming,
+  Povey,
+};
+
 struct KaldiFbankOptions {
   int sample_rate = 16000;
   int num_mels = 80;
   float frame_length_ms = 25.0F;
   float frame_shift_ms = 10.0F;
+  KaldiFbankWindowType window_type = KaldiFbankWindowType::Hamming;
   int lfr_m = 7;
   int lfr_n = 6;
   float preemphasis = 0.97F;

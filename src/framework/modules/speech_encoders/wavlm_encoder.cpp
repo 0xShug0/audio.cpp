@@ -501,7 +501,7 @@ std::vector<core::TensorValue> build_wavlm_graph_layers(
     }
     int64_t max_output_layer = 0;
     for (const int64_t layer : output_layers) {
-        if (layer <= 0 || layer > config.num_hidden_layers) {
+        if (layer < 0 || layer > config.num_hidden_layers) {
             throw std::runtime_error("WavLM output layer is out of range");
         }
         max_output_layer = std::max(max_output_layer, layer);
@@ -518,7 +518,12 @@ std::vector<core::TensorValue> build_wavlm_graph_layers(
             0,
             1,
             false}).build(ctx, hidden, conv1d_weights(weights, prefix + ".conv", false));
-        if (index == 0) {
+        if (config.conv_feature_layer_norm) {
+            hidden = transpose_bct_btc(ctx, hidden);
+            hidden = LayerNormModule({config.conv_dim[index], config.layer_norm_eps, true, true})
+                         .build(ctx, hidden, norm_weights(weights, prefix + ".layer_norm"));
+            hidden = transpose_bct_btc(ctx, hidden);
+        } else if (index == 0) {
             hidden = masked_group_norm_affine(
                 ctx,
                 hidden,
@@ -545,28 +550,49 @@ std::vector<core::TensorValue> build_wavlm_graph_layers(
         conv1d_weights(weights, "encoder.pos_conv_embed.conv", true),
         config);
     hidden = add_same(ctx, hidden, transpose_bct_btc(ctx, pos));
-    hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
-                 .build(ctx, hidden, norm_weights(weights, "encoder.layer_norm"));
+    if (!config.transformer_layer_norm_first) {
+        hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                     .build(ctx, hidden, norm_weights(weights, "encoder.layer_norm"));
+    }
     hidden = MaskingModule().build(ctx, hidden, token_mask);
 
     std::vector<core::TensorValue> outputs;
     outputs.reserve(output_layers.size());
+    if (std::find(output_layers.begin(), output_layers.end(), 0) != output_layers.end()) {
+        outputs.push_back(hidden);
+    }
     for (int64_t layer = 0; layer < max_output_layer; ++layer) {
         const std::string prefix = "encoder.layers." + std::to_string(layer);
-        auto attn = build_wavlm_self_attention(ctx, hidden, position_bias, attention_mask, weights, layer);
-        hidden = add_same(ctx, hidden, attn);
-        hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
-                     .build(ctx, hidden, norm_weights(weights, prefix + ".self_attn_layer_norm"));
-        hidden = MaskingModule().build(ctx, hidden, token_mask);
-        const auto ff_in = hidden;
-        auto ff = build_feed_forward(ctx, hidden, weights, layer);
-        hidden = add_same(ctx, ff_in, ff);
-        hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
-                     .build(ctx, hidden, norm_weights(weights, prefix + ".final_layer_norm"));
+        if (config.transformer_layer_norm_first) {
+            const auto attn_in = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                                     .build(ctx, hidden, norm_weights(weights, prefix + ".self_attn_layer_norm"));
+            hidden = add_same(ctx, hidden, build_wavlm_self_attention(ctx, attn_in, position_bias, attention_mask, weights, layer));
+            hidden = MaskingModule().build(ctx, hidden, token_mask);
+            const auto ff_in = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                                   .build(ctx, hidden, norm_weights(weights, prefix + ".final_layer_norm"));
+            hidden = add_same(ctx, hidden, build_feed_forward(ctx, ff_in, weights, layer));
+        } else {
+            auto attn = build_wavlm_self_attention(ctx, hidden, position_bias, attention_mask, weights, layer);
+            hidden = add_same(ctx, hidden, attn);
+            hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                         .build(ctx, hidden, norm_weights(weights, prefix + ".self_attn_layer_norm"));
+            hidden = MaskingModule().build(ctx, hidden, token_mask);
+            const auto ff_in = hidden;
+            auto ff = build_feed_forward(ctx, hidden, weights, layer);
+            hidden = add_same(ctx, ff_in, ff);
+            hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                         .build(ctx, hidden, norm_weights(weights, prefix + ".final_layer_norm"));
+        }
         hidden = MaskingModule().build(ctx, hidden, token_mask);
         const int64_t layer_index = layer + 1;
         if (std::find(output_layers.begin(), output_layers.end(), layer_index) != output_layers.end()) {
-            outputs.push_back(hidden);
+            if (config.transformer_layer_norm_first && layer_index == config.num_hidden_layers) {
+                outputs.push_back(
+                    LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                        .build(ctx, hidden, norm_weights(weights, "encoder.layer_norm")));
+            } else {
+                outputs.push_back(hidden);
+            }
         }
     }
     return outputs;
@@ -647,7 +673,25 @@ public:
         }
         auto timing_start = Clock::now();
         std::vector<float> padded_input(static_cast<size_t>(sample_capacity_), 0.0F);
-        std::copy(input_values.begin(), input_values.end(), padded_input.begin());
+        if (weights_->config.normalize_input) {
+            double mean = 0.0;
+            for (const float value : input_values) {
+                mean += static_cast<double>(value);
+            }
+            mean /= static_cast<double>(input_values.size());
+            double variance = 0.0;
+            for (const float value : input_values) {
+                const double centered = static_cast<double>(value) - mean;
+                variance += centered * centered;
+            }
+            variance /= static_cast<double>(input_values.size());
+            const float inv_std = 1.0F / std::sqrt(static_cast<float>(variance) + weights_->config.layer_norm_eps);
+            for (size_t i = 0; i < input_values.size(); ++i) {
+                padded_input[i] = (input_values[i] - static_cast<float>(mean)) * inv_std;
+            }
+        } else {
+            std::copy(input_values.begin(), input_values.end(), padded_input.begin());
+        }
         core::write_tensor_f32(input_, padded_input);
         engine::debug::timing_log_scalar("framework.wavlm.input_upload_ms", engine::debug::elapsed_ms(timing_start));
         timing_start = Clock::now();
@@ -912,6 +956,20 @@ WavlmEncoderComponent WavlmEncoderComponent::load_from_tensor_source(
             "feature_extractor.conv_layers." + std::to_string(i) + ".conv.weight",
             "feature_extractor.conv_layers." + std::to_string(i) + ".0.weight",
             {config_ref.conv_dim[static_cast<size_t>(i)], config_ref.conv_dim[static_cast<size_t>(i - 1)], config_ref.conv_kernel[static_cast<size_t>(i)]});
+        if (config_ref.conv_feature_layer_norm) {
+            load_tensor_alias(
+                *weights,
+                source,
+                "feature_extractor.conv_layers." + std::to_string(i) + ".layer_norm.weight",
+                "feature_extractor.conv_layers." + std::to_string(i) + ".2.weight",
+                {config_ref.conv_dim[static_cast<size_t>(i)]});
+            load_tensor_alias(
+                *weights,
+                source,
+                "feature_extractor.conv_layers." + std::to_string(i) + ".layer_norm.bias",
+                "feature_extractor.conv_layers." + std::to_string(i) + ".2.bias",
+                {config_ref.conv_dim[static_cast<size_t>(i)]});
+        }
     }
     load_tensor_alias(*weights, source, "feature_projection.layer_norm.weight", "layer_norm.weight", {config_ref.conv_dim.back()});
     load_tensor_alias(*weights, source, "feature_projection.layer_norm.bias", "layer_norm.bias", {config_ref.conv_dim.back()});

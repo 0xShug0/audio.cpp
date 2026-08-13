@@ -522,6 +522,41 @@ void write_tensor_bf16(const TensorValue & tensor, const std::vector<float> & va
     write_tensor_bf16(tensor, values.data(), values.size());
 }
 
+void write_tensor_float(const TensorValue & tensor, const float * values, size_t count) {
+    switch (tensor.type) {
+        case GGML_TYPE_F32:
+            write_tensor_f32(tensor, values, count);
+            return;
+        case GGML_TYPE_F16:
+            write_tensor_f16(tensor, values, count);
+            return;
+        case GGML_TYPE_BF16:
+            write_tensor_bf16(tensor, values, count);
+            return;
+        default:
+            throw std::runtime_error("write_tensor_float supports only f32/f16/bf16 tensors");
+    }
+}
+
+void write_tensor_float(const TensorValue & tensor, const std::vector<float> & values) {
+    write_tensor_float(tensor, values.data(), values.size());
+}
+
+void write_tensor_bytes(const TensorValue & tensor, const std::vector<std::byte> & bytes) {
+    if (tensor.tensor == nullptr) {
+        throw std::runtime_error("write_tensor_bytes requires non-null tensor");
+    }
+    const size_t expected = static_cast<size_t>(ggml_nbytes(tensor.tensor));
+    if (bytes.size() != expected) {
+        throw std::runtime_error(
+            "write_tensor_bytes byte count does not match tensor '" +
+            std::string(tensor.tensor->name) +
+            "': expected " + std::to_string(expected) +
+            ", got " + std::to_string(bytes.size()));
+    }
+    ggml_backend_tensor_set(tensor.tensor, bytes.data(), 0, bytes.size());
+}
+
 void round_f32_to_bf16_in_place(float * values, size_t count) {
     if (count == 0) {
         return;
@@ -618,6 +653,43 @@ std::vector<float> read_tensor_bf16(const ggml_tensor * tensor) {
     std::vector<float> values;
     read_tensor_bf16_into(tensor, values);
     return values;
+}
+
+void read_tensor_float_into(const ggml_tensor * tensor, std::vector<float> & values) {
+    switch (tensor->type) {
+        case GGML_TYPE_F32:
+            read_tensor_f32_into(tensor, values);
+            return;
+        case GGML_TYPE_F16:
+            read_tensor_f16_into(tensor, values);
+            return;
+        case GGML_TYPE_BF16:
+            read_tensor_bf16_into(tensor, values);
+            return;
+        default:
+            throw std::runtime_error("read_tensor_float supports only f32/f16/bf16 tensors");
+    }
+}
+
+std::vector<float> read_tensor_float(const ggml_tensor * tensor) {
+    std::vector<float> values;
+    read_tensor_float_into(tensor, values);
+    return values;
+}
+
+void read_tensor_bytes_into(const ggml_tensor * tensor, std::vector<std::byte> & bytes) {
+    if (tensor == nullptr) {
+        throw std::runtime_error("read_tensor_bytes requires non-null tensor");
+    }
+    const size_t byte_count = static_cast<size_t>(ggml_nbytes(tensor));
+    bytes.resize(byte_count);
+    ggml_backend_tensor_get(tensor, bytes.data(), 0, byte_count);
+}
+
+std::vector<std::byte> read_tensor_bytes(const ggml_tensor * tensor) {
+    std::vector<std::byte> bytes;
+    read_tensor_bytes_into(tensor, bytes);
+    return bytes;
 }
 
 void read_tensor_i32_into(const ggml_tensor * tensor, std::vector<int32_t> & values) {

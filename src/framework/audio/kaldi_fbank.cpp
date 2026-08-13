@@ -277,7 +277,9 @@ KaldiFbankFeatures extract_kaldi_fbank(const std::vector<float> &audio,
   const int fft_size = next_power_of_two(window_size);
   const int spectrum_bins = fft_size / 2 + 1;
   const float sample_scale = options.upscale_samples ? 32768.0F : 1.0F;
-  const auto window = make_hamming_window(window_size);
+  const auto window = options.window_type == KaldiFbankWindowType::Povey
+                          ? cached_kaldi_povey_window(window_size)
+                          : make_hamming_window(window_size);
   const auto filters =
       make_mel_filterbank(options.sample_rate, fft_size, options.num_mels,
                           options.low_frequency, options.high_frequency);

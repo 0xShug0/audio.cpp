@@ -5,6 +5,7 @@
 #include "ggml.h"
 #include "ggml-backend.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -86,6 +87,9 @@ void write_tensor_f16(const TensorValue & tensor, const float * values, size_t c
 void write_tensor_f16(const TensorValue & tensor, const std::vector<float> & values);
 void write_tensor_bf16(const TensorValue & tensor, const float * values, size_t count);
 void write_tensor_bf16(const TensorValue & tensor, const std::vector<float> & values);
+void write_tensor_float(const TensorValue & tensor, const float * values, size_t count);
+void write_tensor_float(const TensorValue & tensor, const std::vector<float> & values);
+void write_tensor_bytes(const TensorValue & tensor, const std::vector<std::byte> & bytes);
 void round_f32_to_bf16_in_place(float * values, size_t count);
 void round_f32_to_bf16_in_place(std::vector<float> & values);
 void write_tensor_i32(const TensorValue & tensor, const int32_t * values, size_t count);
@@ -96,6 +100,10 @@ void read_tensor_f16_into(const ggml_tensor * tensor, std::vector<float> & value
 std::vector<float> read_tensor_f16(const ggml_tensor * tensor);
 void read_tensor_bf16_into(const ggml_tensor * tensor, std::vector<float> & values);
 std::vector<float> read_tensor_bf16(const ggml_tensor * tensor);
+void read_tensor_float_into(const ggml_tensor * tensor, std::vector<float> & values);
+std::vector<float> read_tensor_float(const ggml_tensor * tensor);
+void read_tensor_bytes_into(const ggml_tensor * tensor, std::vector<std::byte> & bytes);
+std::vector<std::byte> read_tensor_bytes(const ggml_tensor * tensor);
 void read_tensor_i32_into(const ggml_tensor * tensor, std::vector<int32_t> & values);
 std::vector<int32_t> read_tensor_i32(const ggml_tensor * tensor);
 
