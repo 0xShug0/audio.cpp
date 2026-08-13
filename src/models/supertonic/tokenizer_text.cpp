@@ -8,7 +8,6 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
-#include <utility>
 
 namespace engine::models::supertonic {
 namespace {
@@ -79,83 +78,6 @@ bool ends_with_reference_punctuation(const std::string & text) {
     return false;
 }
 
-void append_hangul_decomposition(uint32_t codepoint, std::vector<uint32_t> & out) {
-    constexpr uint32_t kSBase = 0xAC00;
-    constexpr uint32_t kLBase = 0x1100;
-    constexpr uint32_t kVBase = 0x1161;
-    constexpr uint32_t kTBase = 0x11A7;
-    constexpr uint32_t kLCount = 19;
-    constexpr uint32_t kVCount = 21;
-    constexpr uint32_t kTCount = 28;
-    constexpr uint32_t kNCount = kVCount * kTCount;
-    constexpr uint32_t kSCount = kLCount * kNCount;
-    if (codepoint < kSBase || codepoint >= kSBase + kSCount) {
-        out.push_back(codepoint);
-        return;
-    }
-    const uint32_t s_index = codepoint - kSBase;
-    const uint32_t l_index = s_index / kNCount;
-    const uint32_t v_index = (s_index % kNCount) / kTCount;
-    const uint32_t t_index = s_index % kTCount;
-    out.push_back(kLBase + l_index);
-    out.push_back(kVBase + v_index);
-    if (t_index > 0) {
-        out.push_back(kTBase + t_index);
-    }
-}
-
-bool append_japanese_kana_decomposition(uint32_t codepoint, std::vector<uint32_t> & out) {
-    constexpr uint32_t kDakuten = 0x3099;
-    constexpr uint32_t kHandakuten = 0x309A;
-    static constexpr std::pair<uint32_t, uint32_t> kDakutenKana[] = {
-        {0x304C, 0x304B}, {0x304E, 0x304D}, {0x3050, 0x304F}, {0x3052, 0x3051}, {0x3054, 0x3053},
-        {0x3056, 0x3055}, {0x3058, 0x3057}, {0x305A, 0x3059}, {0x305C, 0x305B}, {0x305E, 0x305D},
-        {0x3060, 0x305F}, {0x3062, 0x3061}, {0x3065, 0x3064}, {0x3067, 0x3066}, {0x3069, 0x3068},
-        {0x3070, 0x306F}, {0x3073, 0x3072}, {0x3076, 0x3075}, {0x3079, 0x3078}, {0x307C, 0x307B},
-        {0x3094, 0x3046},
-        {0x30AC, 0x30AB}, {0x30AE, 0x30AD}, {0x30B0, 0x30AF}, {0x30B2, 0x30B1}, {0x30B4, 0x30B3},
-        {0x30B6, 0x30B5}, {0x30B8, 0x30B7}, {0x30BA, 0x30B9}, {0x30BC, 0x30BB}, {0x30BE, 0x30BD},
-        {0x30C0, 0x30BF}, {0x30C2, 0x30C1}, {0x30C5, 0x30C4}, {0x30C7, 0x30C6}, {0x30C9, 0x30C8},
-        {0x30D0, 0x30CF}, {0x30D3, 0x30D2}, {0x30D6, 0x30D5}, {0x30D9, 0x30D8}, {0x30DC, 0x30DB},
-        {0x30F4, 0x30A6}, {0x30F7, 0x30EF}, {0x30F8, 0x30F0}, {0x30F9, 0x30F1}, {0x30FA, 0x30F2},
-    };
-    static constexpr std::pair<uint32_t, uint32_t> kHandakutenKana[] = {
-        {0x3071, 0x306F}, {0x3074, 0x3072}, {0x3077, 0x3075}, {0x307A, 0x3078}, {0x307D, 0x307B},
-        {0x30D1, 0x30CF}, {0x30D4, 0x30D2}, {0x30D7, 0x30D5}, {0x30DA, 0x30D8}, {0x30DD, 0x30DB},
-    };
-
-    for (const auto & [composed, base] : kDakutenKana) {
-        if (codepoint == composed) {
-            out.push_back(base);
-            out.push_back(kDakuten);
-            return true;
-        }
-    }
-    for (const auto & [composed, base] : kHandakutenKana) {
-        if (codepoint == composed) {
-            out.push_back(base);
-            out.push_back(kHandakuten);
-            return true;
-        }
-    }
-    return false;
-}
-
-std::vector<uint32_t> decompose_known_text_codepoints(const std::vector<uint32_t> & codepoints) {
-    std::vector<uint32_t> out;
-    out.reserve(codepoints.size() * 2);
-    for (const uint32_t codepoint : codepoints) {
-        if (engine::text::append_known_unicode_decomposition(codepoint, out)) {
-            continue;
-        }
-        if (append_japanese_kana_decomposition(codepoint, out)) {
-            continue;
-        }
-        append_hangul_decomposition(codepoint, out);
-    }
-    return out;
-}
-
 }  // namespace
 
 SupertonicTextTokenizer::SupertonicTextTokenizer(std::shared_ptr<const SupertonicAssets> assets)
@@ -163,7 +85,7 @@ SupertonicTextTokenizer::SupertonicTextTokenizer(std::shared_ptr<const Supertoni
 
 SupertonicTextInputs SupertonicTextTokenizer::encode(const std::string & text, const std::string & language) const {
     const auto processed = preprocess(text, language);
-    const auto codepoints = decompose_known_text_codepoints(utf8_to_codepoints(processed));
+    const auto codepoints = engine::text::normalize_nfkd_codepoints(utf8_to_codepoints(processed));
     SupertonicTextInputs out;
     out.length = static_cast<int64_t>(codepoints.size());
     out.ids.reserve(codepoints.size());
