@@ -88,6 +88,12 @@ struct IndexTTS2GptWeights {
     engine::modules::LinearWeights emotion_vec_projection;
     engine::modules::LinearWeights emotion_layer;
     std::vector<float> speed_embedding_values;
+    // v2.5 campplus speaker conditioning (spk_cond_mode="campplus" in the
+    // official model_v2.py): projects the 192-dim CAMPPlus speaker/style
+    // embedding into a GPT speaker token.
+    engine::modules::LinearWeights spk_emb_proj;
+    // v2.5: row of this table is added to every text embedding during prefill.
+    engine::core::TensorValue lang_embedding;
     std::vector<IndexTTS2Gpt2LayerWeights> gpt_layers;
     engine::modules::NormWeights gpt_final_norm;
     engine::modules::NormWeights final_norm;
@@ -109,8 +115,14 @@ struct IndexTTS2GptGeneration {
 
 struct IndexTTS2GptGenerationRequest {
     std::vector<int32_t> text_tokens;
+    // v2 speaker conditioning: wav2vec2bert semantic features of the reference.
     std::vector<float> speaker_semantic;
     int64_t speaker_frames = 0;
+    // v2.5 speaker conditioning: 192-dim CAMPPlus speaker embedding, projected
+    // by spk_emb_proj inside the prefill graph.
+    std::vector<float> speaker_style;
+    // v2.5: row of the GPT lang_embedding table added to every text embedding.
+    int32_t lang_id = 0;
     std::vector<float> emotion_semantic;
     int64_t emotion_frames = 0;
     std::vector<float> emotion_vector;
@@ -124,6 +136,12 @@ struct IndexTTS2GptGenerationRequest {
     int max_mel_tokens = 1500;
     uint32_t seed = 0;
 };
+
+// Mirrors the valid_mask filtering in the official v2.5 prepare_gpt_inputs:
+// any start/stop text tokens in the segment (including the trailing pad
+// appended by the tokenizer) are dropped before the start/stop pair is
+// re-added around it.
+std::vector<int32_t> align_index_tts2_gpt_text_tokens(const std::vector<int32_t> & text_tokens);
 
 std::shared_ptr<const IndexTTS2GptWeights> load_index_tts2_gpt_weights(
     const IndexTTS2Assets & assets,

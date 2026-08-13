@@ -36,6 +36,10 @@ std::shared_ptr<const IndexTTS2Assets> require_assets(std::shared_ptr<const Inde
     return assets;
 }
 
+bool is_v2_5_variant(const IndexTTS2Assets & assets) {
+    return index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5;
+}
+
 void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
     if (storage_type == engine::assets::TensorStorageType::Native ||
         storage_type == engine::assets::TensorStorageType::F32 ||
@@ -215,11 +219,13 @@ IndexTTS2Session::IndexTTS2Session(
         options.options, {"index_tts2.emotion_text_decode_graph_arena_mb"}, emotion_text_decode_graph_arena_bytes_);
     weight_context_bytes_ = runtime::parse_size_mb_option(
         options.options, {"index_tts2.weight_context_mb"}, weight_context_bytes_);
-    if (const auto value = runtime::parse_int_option(options.options, {"index_tts2.emotion_text_max_new_tokens"})) {
+    if (const auto value = runtime::parse_int_option(
+            options.options,
+            {"index_tts2.emotion_text_max_tokens", "index_tts2.emotion_text_max_new_tokens"})) {
         if (*value <= 0) {
-            throw std::runtime_error("index_tts2.emotion_text_max_new_tokens must be positive");
+            throw std::runtime_error("index_tts2.emotion_text_max_tokens must be positive");
         }
-        emotion_text_max_new_tokens_ = *value;
+        emotion_text_max_tokens_ = *value;
     }
     if (const auto it = options.options.find("index_tts2.weight_type"); it != options.options.end()) {
         matmul_weight_storage_type_ = engine::assets::parse_tensor_storage_type(it->second);
@@ -237,6 +243,7 @@ IndexTTS2Session::IndexTTS2Session(
             key != "index_tts2.reference_graph_arena_mb" &&
             key != "index_tts2.emotion_text_prefill_graph_arena_mb" &&
             key != "index_tts2.emotion_text_decode_graph_arena_mb" &&
+            key != "index_tts2.emotion_text_max_tokens" &&
             key != "index_tts2.emotion_text_max_new_tokens" &&
             key != "index_tts2.weight_context_mb" &&
             key != "index_tts2.weight_type" &&
@@ -351,12 +358,22 @@ void IndexTTS2Session::prepare(const runtime::SessionPreparationRequest & reques
             }
             generation.num_beams = *value;
         }
+        std::string language;
+        if (is_v2_5_variant(*assets_)) {
+            if (const auto value = runtime::find_option(request.options, {"language"})) {
+                language = normalize_index_tts2_language(*value);
+            }
+        }
         const auto text_encoding = tokenizer_.encode_for_inference(
             text,
-            IndexTTS2Request{}.max_text_tokens_per_segment);
+            IndexTTS2Request{}.max_text_tokens_per_segment,
+            language);
         for (const auto & segment : text_encoding.segment_token_ids) {
+            const int64_t gpt_text_tokens = is_v2_5_variant(*assets_)
+                ? static_cast<int64_t>(align_index_tts2_gpt_text_tokens(segment).size())
+                : static_cast<int64_t>(segment.size());
             gpt_->prepare_generation(
-                static_cast<int64_t>(segment.size()),
+                gpt_text_tokens,
                 generation.max_mel_tokens,
                 generation.num_beams);
         }
@@ -384,18 +401,30 @@ const IndexTTS2Session::SpeakerState & IndexTTS2Session::resolve_speaker_state(c
         true);
     semantic_encoder_->prepare(prepared.semantic_features.frames);
     auto semantic = semantic_encoder_->encode(prepared.semantic_features);
-    semantic_codec_->prepare_quantize(semantic.frames);
-    auto reference_codes = semantic_codec_->quantize(semantic);
-    const auto reference_content = channel_first_to_time_major(
-        reference_codes.embedding_channel_first,
-        reference_codes.dims,
-        reference_codes.frames);
-    debug::trace_log_scalar("index_tts2.s2mel.reference_mel_frames", static_cast<double>(prepared.mel.frames));
-    s2mel_->prepare_length_regulator(reference_codes.frames, prepared.mel.frames);
-    auto prompt_condition = s2mel_->regulate_length(
-        reference_content,
-        reference_codes.frames,
-        prepared.mel.frames);
+    IndexTTS2S2MelSequence prompt_condition;
+    if (is_v2_5_variant(*assets_)) {
+        // Official v2.5 regulates the raw (normalized) w2v-bert semantic
+        // directly; the semantic codec is only used to decode generated codes.
+        debug::trace_log_scalar("index_tts2.s2mel.reference_mel_frames", static_cast<double>(prepared.mel.frames));
+        s2mel_->prepare_length_regulator(semantic.frames, prepared.mel.frames);
+        prompt_condition = s2mel_->regulate_length(
+            semantic.values,
+            semantic.frames,
+            prepared.mel.frames);
+    } else {
+        semantic_codec_->prepare_quantize(semantic.frames);
+        auto reference_codes = semantic_codec_->quantize(semantic);
+        const auto reference_content = channel_first_to_time_major(
+            reference_codes.embedding_channel_first,
+            reference_codes.dims,
+            reference_codes.frames);
+        debug::trace_log_scalar("index_tts2.s2mel.reference_mel_frames", static_cast<double>(prepared.mel.frames));
+        s2mel_->prepare_length_regulator(reference_codes.frames, prepared.mel.frames);
+        prompt_condition = s2mel_->regulate_length(
+            reference_content,
+            reference_codes.frames,
+            prepared.mel.frames);
+    }
 
     SpeakerState state;
     state.identity = identity;
@@ -546,7 +575,7 @@ std::vector<float> IndexTTS2Session::resolve_emotion_vector(
             const bool will_evict =
                 emotion_text_weights_cache_.capacity() > 0 &&
                 emotion_text_weights_cache_.size() >= emotion_text_weights_cache_.capacity();
-            explicit_weights = qwen_emotion_->infer(emotion_text, emotion_text_max_new_tokens_).values;
+            explicit_weights = qwen_emotion_->infer(emotion_text, emotion_text_max_tokens_).values;
             if (mem_saver_) {
                 qwen_emotion_->release_graphs();
             }
@@ -592,15 +621,22 @@ std::vector<float> IndexTTS2Session::resolve_emotion_vector(
 
 runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
     const std::vector<int32_t> & text_tokens,
+    int32_t lang_id,
     const SpeakerState & speaker,
     const EmotionState & emotion,
     const std::vector<float> & emotion_vector,
     const IndexTTS2GenerationOptions & options,
     uint32_t segment_seed) {
+    const bool v2_5 = is_v2_5_variant(*assets_);
     IndexTTS2GptGenerationRequest generation;
     generation.text_tokens = text_tokens;
-    generation.speaker_semantic = speaker.semantic.values;
-    generation.speaker_frames = speaker.semantic.frames;
+    if (v2_5) {
+        generation.speaker_style = speaker.style.values;
+        generation.lang_id = lang_id;
+    } else {
+        generation.speaker_semantic = speaker.semantic.values;
+        generation.speaker_frames = speaker.semantic.frames;
+    }
     generation.emotion_semantic = emotion.semantic.values;
     generation.emotion_frames = emotion.semantic.frames;
     generation.emotion_vector = emotion_vector;
@@ -624,29 +660,42 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
         throw std::runtime_error("IndexTTS2 GPT generated no acoustic codes");
     }
     const int64_t code_frames = static_cast<int64_t>(generated.codes.size());
-    const int64_t target_frames = static_cast<int64_t>(static_cast<float>(code_frames) * 1.72F);
-    const int64_t total_frames = speaker.prompt_condition.frames + target_frames;
-    const auto forward_start = Clock::now();
-    auto latent = gpt_->forward_latent(
-        generated.speech_conditioning_latent,
-        text_tokens,
-        generated.codes,
-        emotion.semantic.values,
-        emotion.semantic.frames,
-        emotion_vector);
-    debug::timing_log_scalar("index_tts2.gpt.forward_ms", engine::debug::elapsed_ms(forward_start));
 
     const auto s2mel_start = Clock::now();
-    s2mel_->prepare_gpt_layer(latent.frames);
-    auto projected = s2mel_->project_gpt_latent(latent.values, latent.frames);
     semantic_codec_->prepare_codes(code_frames);
     auto semantic = semantic_codec_->codes_to_embedding(generated.codes, code_frames);
     if (mem_saver_) {
         semantic_codec_->release_graphs();
     }
-    auto content = add_latent_to_semantic(semantic, projected);
-    s2mel_->prepare_length_regulator(code_frames, target_frames);
-    auto generated_condition = s2mel_->regulate_length(content, code_frames, target_frames);
+    std::vector<float> content;
+    int64_t content_frames = 0;
+    if (v2_5) {
+        // v2.5: the codec decode (with its 2x upsample) yields the S2Mel
+        // content directly; there is no GPT latent projection in this variant.
+        content = channel_first_to_time_major(
+            semantic.embedding_channel_first,
+            semantic.dims,
+            semantic.frames);
+        content_frames = semantic.frames;
+    } else {
+        const auto forward_start = Clock::now();
+        auto latent = gpt_->forward_latent(
+            generated.speech_conditioning_latent,
+            text_tokens,
+            generated.codes,
+            emotion.semantic.values,
+            emotion.semantic.frames,
+            emotion_vector);
+        debug::timing_log_scalar("index_tts2.gpt.forward_ms", engine::debug::elapsed_ms(forward_start));
+        s2mel_->prepare_gpt_layer(latent.frames);
+        auto projected = s2mel_->project_gpt_latent(latent.values, latent.frames);
+        content = add_latent_to_semantic(semantic, projected);
+        content_frames = code_frames;
+    }
+    const int64_t target_frames = static_cast<int64_t>(static_cast<float>(content_frames) * 1.72F);
+    const int64_t total_frames = speaker.prompt_condition.frames + target_frames;
+    s2mel_->prepare_length_regulator(content_frames, target_frames);
+    auto generated_condition = s2mel_->regulate_length(content, content_frames, target_frames);
     auto condition = concat_conditions(speaker.prompt_condition, generated_condition);
     if (mem_saver_) {
         gpt_->release_generation_graphs();
@@ -713,15 +762,19 @@ runtime::TaskResult IndexTTS2Session::run(const runtime::TaskRequest & request) 
         throw std::runtime_error("IndexTTS2 text chunking produced no chunks");
     }
 
+    const bool v2_5 = is_v2_5_variant(*assets_);
     std::vector<std::vector<int32_t>> segment_token_ids;
+    std::vector<int32_t> segment_lang_ids;
     for (const auto & text_chunk : text_chunks) {
         const auto text_encoding = tokenizer_.encode_for_inference(
             text_chunk,
-            parsed.max_text_tokens_per_segment);
-        segment_token_ids.insert(
-            segment_token_ids.end(),
-            text_encoding.segment_token_ids.begin(),
-            text_encoding.segment_token_ids.end());
+            parsed.max_text_tokens_per_segment,
+            parsed.language);
+        const int32_t lang_id = v2_5 ? IndexTTS2TextTokenizer::lang_to_id(text_encoding.lang) : 0;
+        for (const auto & ids : text_encoding.segment_token_ids) {
+            segment_token_ids.push_back(ids);
+            segment_lang_ids.push_back(lang_id);
+        }
     }
 
     runtime::AudioBuffer merged;
@@ -731,6 +784,7 @@ runtime::TaskResult IndexTTS2Session::run(const runtime::TaskRequest & request) 
         }
         auto segment_audio = synthesize_segment(
             segment_token_ids[i],
+            segment_lang_ids[i],
             speaker,
             emotion,
             emotion_vector,

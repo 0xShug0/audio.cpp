@@ -237,7 +237,11 @@ core::TensorValue cfm_wavenet(
     const IndexTTS2S2MelCfmWeights & weights) {
     auto g = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, timestep_b), core::TensorShape::from_dims({timestep_b.shape.dims[0], kHidden, 1}));
     g = modules::Conv1dModule({kHidden, 2 * kHidden * kWavenetLayers, 1, 1, 0, 1, true}).build(ctx, g, weights.wavenet_cond);
-    auto output = sub(ctx, input_bct, input_bct);
+    // The zero accumulator must come from a contiguous tensor: input_bct is a
+    // permuted (transposed) view, and the ggml CPU binary-op kernels miscompute
+    // permuted src operands (the CUDA kernels handle them).
+    const auto zeros_base = core::ensure_backend_addressable_layout(ctx, input_bct);
+    auto output = sub(ctx, zeros_base, zeros_base);
     auto x = input_bct;
     for (int64_t i = 0; i < kWavenetLayers; ++i) {
         const int64_t dilation = 1;

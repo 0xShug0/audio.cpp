@@ -366,6 +366,15 @@
     "qwen0.6bemo4-merge/merges.txt",
     "qwen0.6bemo4-merge/model.safetensors"
   ],
+  "index_tts2_5_q8_0": [
+    "index-tts2_5-q8_0.gguf"
+  ],
+  "index_tts2_5_f16": [
+    "index-tts2_5-f16.gguf"
+  ],
+  "index_tts2_5_orig": [
+    "index-tts2_5-orig.gguf"
+  ],
   "mel_band_roformer": [
     "config.json",
     "model.safetensors"
