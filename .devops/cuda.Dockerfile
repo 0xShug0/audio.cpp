@@ -77,10 +77,11 @@ LABEL org.opencontainers.image.created=$BUILD_DATE \
       org.opencontainers.image.url=$IMAGE_URL \
       org.opencontainers.image.source=$IMAGE_SOURCE
 
-# Runtime deps: OpenMP threading, curl (healthcheck), ffmpeg (audio I/O)
+# Runtime deps: OpenMP threading, curl (healthcheck), ffmpeg (audio I/O),
+# python3 for the native WebUI's spec-backed model installer.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        libgomp1 curl ffmpeg && \
+        libgomp1 curl ffmpeg python3 ca-certificates && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     rm -rf /tmp/* /var/tmp/* && \
@@ -96,6 +97,7 @@ FROM base AS full
 
 COPY --from=build /app/full /app
 COPY model_specs/ /app/model_specs/
+COPY tools/model_manager_v2.py /app/tools/model_manager_v2.py
 
 USER ubuntu
 
