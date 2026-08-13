@@ -55,8 +55,20 @@
     {"name": "instruct", "type": "text", "label": "instruct（风格/音色指令）", "default": "", "placeholder": "如：以轻快的语气朗读"}
   ],
 
+  "sense_asr": [
+    {"name": "enable_itn", "type": "bool", "label": "enable_itn（逆文本规范化）", "label_en": "enable_itn", "default": true},
+    {"name": "keep_tags", "type": "bool", "label": "keep_tags（保留语言/情绪/事件标签）", "label_en": "keep_tags", "default": false},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "default": "auto", "choices": ["auto", "fixed", "none"]},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "default": 30, "minimum": 0.001, "step": 1}
+  ],
+
   "pocket_tts": [
     {"name": "frames_after_eos", "type": "number", "label": "frames_after_eos（-1=自动）", "default": -1, "minimum": -1, "step": 1, "precision": 0}
+  ],
+
+  "neutts": [
+    {"name": "voice_id", "type": "choice", "label": "voice_id（内置音色）", "label_en": "voice_id (built-in voice)", "default": "emily", "choices": ["dave", "emily", "greta", "jo", "juliette", "mateo", "paul", "sophie", "steven"]},
+    {"name": "emotion", "type": "choice", "label": "emotion（情绪）", "label_en": "emotion", "default": "neutral", "choices": ["angry", "disgusted", "sad", "happy", "fearful", "neutral", "surprised"]}
   ],
 
   "inflect_v2": [
