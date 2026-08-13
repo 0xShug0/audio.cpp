@@ -1,5 +1,6 @@
 #include "runtime.h"
 
+#include "base64.h"
 #include "multipart.h"
 #include "ui_assets.h"
 
@@ -299,31 +300,6 @@ std::vector<uint8_t> encode_pcm16_samples(const engine::runtime::AudioBuffer & a
         append_bytes(&pcm, sizeof(pcm));
     }
     return out;
-}
-
-std::string base64_encode(const uint8_t * data, size_t size) {
-    constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve(((size + 2) / 3) * 4);
-    for (size_t i = 0; i < size; i += 3) {
-        const uint32_t b0 = data[i];
-        const uint32_t b1 = i + 1 < size ? data[i + 1] : 0;
-        const uint32_t b2 = i + 2 < size ? data[i + 2] : 0;
-        const uint32_t chunk = (b0 << 16) | (b1 << 8) | b2;
-        out.push_back(kAlphabet[(chunk >> 18) & 0x3f]);
-        out.push_back(kAlphabet[(chunk >> 12) & 0x3f]);
-        out.push_back(i + 1 < size ? kAlphabet[(chunk >> 6) & 0x3f] : '=');
-        out.push_back(i + 2 < size ? kAlphabet[chunk & 0x3f] : '=');
-    }
-    return out;
-}
-
-std::string base64_encode(const std::vector<uint8_t> & bytes) {
-    return base64_encode(bytes.data(), bytes.size());
-}
-
-std::string base64_encode(const std::vector<std::byte> & bytes) {
-    return base64_encode(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
 }
 
 void write_sse(HttpStreamWriter & writer, const std::string & json) {
@@ -1553,7 +1529,7 @@ const ServerState::LoadedModel::RuntimeVoicePreset * ServerState::select_voice_p
         }
         return nullptr;
     }
-    if (body.find("voice_ref") != nullptr) {
+    if (body.find("voice_ref") != nullptr || body.find("voice_ref_b64") != nullptr) {
         return nullptr;
     }
     return model.default_voice_preset.has_value() ? &*model.default_voice_preset : nullptr;
@@ -1607,7 +1583,8 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
             request.options["reference_text"] = *preset->reference_text;
         }
     }
-    const bool has_explicit_voice_ref = body.find("voice_ref") != nullptr;
+    const bool has_explicit_voice_ref =
+        body.find("voice_ref") != nullptr || body.find("voice_ref_b64") != nullptr;
     if (const auto * value = body.find("voice"); value != nullptr && !voice_field_is_preset) {
         // Voice library: "voice" may name a wav in the configured voice_dir. When it
         // does, that audio becomes the cloning reference and the transcript from
@@ -1636,6 +1613,21 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
             voice.speaker->cached_voice_id = value->as_string();
             has_voice = true;
         }
+    }
+    if (const auto * value = body.find("voice_ref_b64")) {
+        if (body.find("voice_ref") != nullptr) {
+            throw std::runtime_error("voice_ref and voice_ref_b64 are mutually exclusive");
+        }
+        if (!voice.speaker.has_value()) {
+            voice.speaker = engine::runtime::VoiceReference{};
+        }
+        const auto bytes = base64_decode(value->as_string());
+        if (bytes.empty()) {
+            throw std::runtime_error("voice_ref_b64 decoded to an empty payload");
+        }
+        voice.speaker->audio = minitts::cli::read_audio_buffer(
+            std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+        has_voice = true;
     }
     if (const auto * value = body.find("voice_ref")) {
         if (!voice.speaker.has_value()) {
