@@ -5,6 +5,48 @@ framework's expected `models/` layout. It reads package metadata from
 `model_specs/*.json`, which is the current source of truth for default download
 links.
 
+The same package surface is also available through the reusable native C++
+`audiocpp_package_manager` library. Two native frontends use that library:
+
+- `audiocpp_server` exposes asynchronous management endpoints for the embedded
+  WebUI.
+- `audiocpp_model_manager` provides direct headless/CLI and Docker access
+  without starting a server.
+
+The Python v2 manager remains a supported alternative for existing scripted
+workflows while the native command surface matures.
+
+## Native Standalone Manager
+
+The native executable embeds the active `model_specs/*.json` catalog. An
+external `model_specs/` below `--repository-root` is an optional development
+override, not a deployment requirement.
+
+```bash
+audiocpp_model_manager list
+audiocpp_model_manager list --remote
+audiocpp_model_manager info qwen3_asr_0_6b_q8_0 --remote
+audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-dir models
+audiocpp_model_manager clean qwen3_asr_0_6b_q8_0 --models-dir models
+audiocpp_model_manager remove qwen3_asr_0_6b_q8_0 --models-dir models
+```
+
+`list` and `info` return machine-readable JSON. Native installation uses the
+same downloader, staging, size validation, atomic publication, shared-sidecar,
+and version metadata logic as the server/WebUI.
+
+For a container image, no server process is required:
+
+```dockerfile
+RUN audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-dir /models
+```
+
+```text
+                     +-- audiocpp_server -> REST API / native WebUI
+model_specs/*.json -> audiocpp_package_manager
+                     +-- audiocpp_model_manager -> CLI / Docker / scripts
+```
+
 When a family has a ready-to-use GGUF package, the default install should be that
 GGUF package. The old safetensors/converter catalog is still available as
 `tools/model_manager_deprecated.py`, but it is a legacy path for models that have

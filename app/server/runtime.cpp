@@ -830,8 +830,7 @@ ServerState::ServerState(
             request_base_,
             ui_resource_anchor,
             [](const std::filesystem::path & root) {
-                return std::filesystem::is_regular_file(root / "tools" / "model_manager_v2.py") &&
-                    std::filesystem::is_directory(root / "model_specs");
+                return std::filesystem::is_directory(root / "model_specs");
             }).value_or(request_base_);
         const auto binary_directory = ui_resource_anchor.empty()
             ? request_base_

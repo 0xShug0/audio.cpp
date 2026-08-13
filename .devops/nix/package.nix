@@ -94,7 +94,7 @@ stdenv.mkDerivation (finalAttrs: {
     mkdir -p $out/bin
 
     # Copy the built C++ executables directly from the bin directory
-    cp bin/audiocpp_cli bin/audiocpp_server bin/audiocpp_gguf $out/bin/
+    cp bin/audiocpp_cli bin/audiocpp_server bin/audiocpp_gguf bin/audiocpp_model_manager $out/bin/
 
     # Install the supported spec-backed model manager and the catalog it reads
     # relative to its installed location.

@@ -49,6 +49,7 @@ RUN cmake -S . -B build \
     cmake --build build --parallel $(nproc) \
         --target audiocpp_cli \
         --target audiocpp_server \
+        --target audiocpp_model_manager \
         --target model_perf \
         --target miocodec_wavlm_parity
 
@@ -58,7 +59,7 @@ RUN mkdir -p /app/lib && \
 
 # Collect binaries + multiplexer into /app/full
 RUN mkdir -p /app/full && \
-    cp build/bin/audiocpp_cli build/bin/audiocpp_server \
+    cp build/bin/audiocpp_cli build/bin/audiocpp_server build/bin/audiocpp_model_manager \
        build/bin/model_perf build/bin/miocodec_wavlm_parity /app/full/ && \
     cp .devops/entrypoint.sh /app/full/entrypoint.sh && \
     chmod +x /app/full/entrypoint.sh

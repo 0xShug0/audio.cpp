@@ -21,10 +21,13 @@ option(AUDIOCPP_DEPLOYMENT_BUILD
 file(GLOB AUDIOCPP_MODEL_SPEC_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/model_specs/*.json")
 set(AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES "")
 set(AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES "")
+set(AUDIOCPP_NATIVE_PACKAGE_SPEC_ENTRIES "")
 foreach(AUDIOCPP_MODEL_SPEC_FILE IN LISTS AUDIOCPP_MODEL_SPEC_FILES)
     get_filename_component(AUDIOCPP_MODEL_SPEC_FAMILY "${AUDIOCPP_MODEL_SPEC_FILE}" NAME_WE)
     file(READ "${AUDIOCPP_MODEL_SPEC_FILE}" AUDIOCPP_MODEL_SPEC_JSON)
     string(APPEND AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES
+        "    {\"${AUDIOCPP_MODEL_SPEC_FAMILY}\", R\"AUDIOCPP_SPEC(${AUDIOCPP_MODEL_SPEC_JSON})AUDIOCPP_SPEC\"},\n")
+    string(APPEND AUDIOCPP_NATIVE_PACKAGE_SPEC_ENTRIES
         "    {\"${AUDIOCPP_MODEL_SPEC_FAMILY}\", R\"AUDIOCPP_SPEC(${AUDIOCPP_MODEL_SPEC_JSON})AUDIOCPP_SPEC\"},\n")
     if (AUDIOCPP_DEPLOYMENT_BUILD)
         string(APPEND AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES
@@ -38,6 +41,9 @@ file(GENERATE
 file(GENERATE
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/gguf_converter_model_specs.inc"
     CONTENT "${AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES}")
+file(GENERATE
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/native_package_specs.inc"
+    CONTENT "${AUDIOCPP_NATIVE_PACKAGE_SPEC_ENTRIES}")
 
 if (NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -1266,6 +1272,28 @@ add_library(engine_runtime STATIC
     ${AUDIOCPP_RUNTIME_OBJECTS}
 )
 
+# Reusable package management for the server, standalone/headless CLI, and
+# container workflows. Package specifications are embedded in this library so
+# consumers do not need a source checkout or external model_specs directory.
+add_library(audiocpp_package_manager STATIC
+    src/framework/package_manager/manager.cpp
+    src/framework/io/json.cpp
+    src/framework/io/filesystem.cpp
+)
+target_include_directories(audiocpp_package_manager PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_include_directories(audiocpp_package_manager PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
+)
+target_link_libraries(audiocpp_package_manager PRIVATE cjson_vendor)
+if (WIN32)
+    target_link_libraries(audiocpp_package_manager PUBLIC winhttp)
+else()
+    find_package(CURL REQUIRED)
+    target_link_libraries(audiocpp_package_manager PUBLIC CURL::libcurl)
+endif()
+
 add_library(cjson_vendor STATIC
     external/cJSON/cJSON.c
 )
@@ -1426,7 +1454,7 @@ add_executable(audiocpp_server
     app/streaming/streaming.cpp
 )
 
-target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
+target_link_libraries(audiocpp_server PRIVATE engine_runtime audiocpp_package_manager ggml)
 target_include_directories(audiocpp_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 if (WIN32)
     target_link_libraries(audiocpp_server PRIVATE ws2_32)
@@ -1443,6 +1471,11 @@ target_include_directories(audiocpp_gguf PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/ge
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_gguf PRIVATE OpenMP::OpenMP_CXX)
 endif()
+
+add_executable(audiocpp_model_manager
+    app/model_manager/main.cpp
+)
+target_link_libraries(audiocpp_model_manager PRIVATE audiocpp_package_manager)
 
 add_executable(model_perf
     tests/perf/model_perf.cpp
@@ -2250,8 +2283,13 @@ if (ENGINE_BUILD_TESTS)
         tests/unittests/test_server_model_installer.cpp
         app/server/model_installer.cpp
     )
-    target_include_directories(server_model_installer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
-    target_link_libraries(server_model_installer_test PRIVATE Threads::Threads)
+    target_include_directories(server_model_installer_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/app/server
+        ${CMAKE_CURRENT_BINARY_DIR}/generated)
+    target_link_libraries(server_model_installer_test PRIVATE
+        Threads::Threads engine_runtime audiocpp_package_manager)
+    target_compile_definitions(server_model_installer_test PRIVATE
+        AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
 
     add_test(
         NAME server_model_installer_test

@@ -140,6 +140,18 @@ Use `tools/model_manager_v2.py` for normal model downloads. It reads
 `model_specs/*.json` and installs the default package for each family, preferring
 ready-to-use GGUF packages when they are available.
 
+Native builds also provide `audiocpp_model_manager`, a standalone headless
+frontend over the same reusable C++ package-management library used by the
+server and embedded WebUI. It supports list, info, install, clean, and remove
+without starting `audiocpp_server`; this is the preferred native path for CLI,
+Docker, remote provisioning, and other scripted environments. The Python v2
+manager remains available as an alternative during migration.
+
+```bash
+audiocpp_model_manager list
+audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-dir models
+```
+
 The old safetensors/converter catalog has been renamed to
 `tools/model_manager_deprecated.py`. Use it only for legacy model layouts that
 have not moved to spec-backed GGUF packages yet.
