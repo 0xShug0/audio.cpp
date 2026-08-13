@@ -110,6 +110,24 @@ if (CUDAToolkit_FOUND)
     list(APPEND GGML_SOURCES_CUDA ${SRCS})
     file(GLOB   SRCS "template-instances/mmf*.cu")
     list(APPEND GGML_SOURCES_CUDA ${SRCS})
+    # SageAttention2 needs SM89+ kernels and cuda::barrier (sm_70+). Exclude it
+    # unless every selected CUDA architecture is >= 89; sage-attn2.cuh provides
+    # stub definitions for the dispatcher when it is compiled out.
+    set(GGML_CUDA_SAGE_ATTN2_ENABLED ON)
+    foreach(ARCH IN LISTS CMAKE_CUDA_ARCHITECTURES)
+        string(REGEX MATCH "^[0-9]+" ARCH_NUMBER "${ARCH}")
+        if (ARCH_NUMBER STREQUAL "" OR ARCH_NUMBER LESS 89)
+            set(GGML_CUDA_SAGE_ATTN2_ENABLED OFF)
+        endif()
+    endforeach()
+
+    if (NOT GGML_CUDA_SAGE_ATTN2_ENABLED)
+        list(REMOVE_ITEM GGML_SOURCES_CUDA
+            "${CMAKE_CURRENT_SOURCE_DIR}/sage-attn2.cu"
+            "sage-attn2.cu")
+        message(STATUS "CUDA SageAttention2 disabled for CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
+    endif()
+
 
     if (GGML_CUDA_FA_ALL_QUANTS)
         file(GLOB   SRCS "template-instances/fattn-vec*.cu")
@@ -127,6 +145,10 @@ if (CUDAToolkit_FOUND)
                              ${GGML_HEADERS_CUDA}
                              ${GGML_SOURCES_CUDA}
                             )
+
+    if (GGML_CUDA_SAGE_ATTN2_ENABLED)
+        target_compile_definitions(ggml-cuda PRIVATE GGML_CUDA_SAGE_ATTN2_ENABLED)
+    endif()
 
     add_compile_definitions(GGML_CUDA_PEER_MAX_BATCH_SIZE=${GGML_CUDA_PEER_MAX_BATCH_SIZE})
 
