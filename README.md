@@ -42,7 +42,7 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **2026-08-11 - Release 0.6 WIP:** the next release is taking shape with **5** new model families - DotTTS, NeuTTS, MuScriptor, MiniMax-H3, and SenseVoice - bringing audio.cpp to **49** total model families and **70+** model variants, alongside the new native WebUI, expanded GGUF packaging, and more shared framework runtime pieces.
+> **2026-08-13 - Release 0.6:** This release adds **5** new model families - DotTTS, NeuTTS, MuScriptor, MiniMax-H3, and SenseVoice - bringing audio.cpp to **49** total model families and **70+** model variants, alongside the new native WebUI, expanded GGUF packaging, and more shared framework runtime pieces.
 >
 > **2026-07-31 - Release 0.5:** audio.cpp grows to **44 model families** with **9 new additions**: DramaBox, Confucius4-TTS, RVC, BS-RoFormer, GLM-TTS, Kroko ASR, Parakeet-TDT, Inflect v2, and Fun-ASR-Nano.
 >
