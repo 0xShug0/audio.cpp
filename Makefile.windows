@@ -9,7 +9,7 @@ JOBS ?=
 VS_INSTALL ?=
 NATIVE_CPU ?=
 
-.PHONY: all build configure cpu cpu-release cuda cuda-debug cuda-release clean presets help
+.PHONY: all build configure cpu cpu-release cuda cuda-debug cuda-release vulkan vulkan-debug vulkan-release clean presets help
 
 all: cuda
 
@@ -34,6 +34,15 @@ cuda-debug:
 cuda-release:
 	$(MAKE) -f "$(THIS_MAKEFILE)" build PRESET=windows-cuda-release
 
+vulkan:
+	$(MAKE) -f "$(THIS_MAKEFILE)" build PRESET=windows-vulkan-release
+
+vulkan-debug:
+	$(MAKE) -f "$(THIS_MAKEFILE)" build PRESET=windows-vulkan-debug
+
+vulkan-release:
+	$(MAKE) -f "$(THIS_MAKEFILE)" build PRESET=windows-vulkan-release
+
 clean:
 	$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File "$(BUILD_SCRIPT)" -Preset "$(PRESET)" -Clean $(if $(VS_INSTALL),-VsInstall "$(VS_INSTALL)",)
 
@@ -46,6 +55,8 @@ help:
 	@echo   make -f Makefile.windows cpu              CPU Release build of audiocpp_cli
 	@echo   make -f Makefile.windows cuda             CUDA Release build of audiocpp_cli
 	@echo   make -f Makefile.windows cuda-debug       CUDA Debug build with /O2 /Zi
+	@echo   make -f Makefile.windows vulkan           Vulkan Release build of audiocpp_cli
+	@echo   make -f Makefile.windows vulkan-debug     Vulkan Debug build with /O2 /Zi
 	@echo   make -f Makefile.windows build TARGET=name  Build one target from the selected Windows preset
 	@echo   make -f Makefile.windows presets          List available CMake presets
 	@echo   $(BUILD_CMD)            Same build from cmd.exe without make
@@ -53,6 +64,7 @@ help:
 	@echo Examples:
 	@echo   make -f Makefile.windows cpu JOBS=8
 	@echo   make -f Makefile.windows cuda JOBS=8
+	@echo   make -f Makefile.windows vulkan JOBS=8
 	@echo   make -f Makefile.windows cuda NATIVE_CPU=OFF JOBS=8
 	@echo   make -f Makefile.windows cuda-debug TARGET=audiocpp_cli JOBS=8
 	@echo   make -f Makefile.windows cuda VS_INSTALL="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"

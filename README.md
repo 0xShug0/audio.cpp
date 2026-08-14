@@ -184,7 +184,7 @@ Huge thanks to [@kigner](https://github.com/kigner) for the original [audio.cpp-
 | OS | Requirements |
 |---|---|
 | Linux | GCC 13 or newer, CMake, plus the backend toolchain for the build you want: NVIDIA CUDA Toolkit for CUDA, Vulkan SDK for Vulkan, ROCm for HIP |
-| Windows | Visual Studio Build Tools 2022 or newer with C++ desktop workload, MSVC x64 compiler, Windows SDK, CMake, Ninja, MSVC OpenMP components; official NVIDIA CUDA Toolkit for CUDA builds, AMD HIP SDK for HIP builds |
+| Windows | Visual Studio Build Tools 2022 or newer with C++ desktop workload, MSVC x64 compiler, Windows SDK, CMake, Ninja, MSVC OpenMP components; official NVIDIA CUDA Toolkit for CUDA builds, Vulkan SDK for Vulkan builds, AMD HIP SDK for HIP builds |
 | macOS | Xcode or Xcode Command Line Tools, plus CMake. Metal builds also require the Metal compiler available through `xcrun` |
 
 ### Homebrew Install
@@ -263,6 +263,7 @@ Common presets:
 
 ```powershell
 .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli
+.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
 .\scripts\build_windows.ps1 -Preset windows-cuda-release -ModelSet custom -Models "qwen3_tts,pocket_tts,qwen3_asr" -Target audiocpp_cli
