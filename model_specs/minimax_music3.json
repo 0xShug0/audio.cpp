@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "family": "minimax_music3",
+  "display_name": "MiniMax-Music3",
+  "description": "MiniMax-Music3 lyrics- and caption-conditioned song generation: Qwen3-8B autoregressive semantic codes, RVQ depth decoding, flow-matching latent synthesis, and Flow-VAE decode to 44.1 kHz stereo.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "music"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "capabilities": {
+    "music": [
+      "lyrics",
+      "style_control"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "cuda",
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "minimax_music3_q8_0",
+    "tags": [
+      "Music",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/minimax_music3.md"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "lyrics",
+        "type": "string",
+        "description": "Lyrics to sing. Structure tags such as [verse] or [chorus] must each be on their own line.",
+        "required": true
+      },
+      {
+        "name": "duration_seconds",
+        "type": "float",
+        "description": "Upper bound on the generated audio length in seconds; the model may stop earlier.",
+        "default": 60.0,
+        "min": 1.0,
+        "max": 360.0,
+        "required": false
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Flow-matching Euler steps per denoising window.",
+        "default": 30,
+        "min": 1,
+        "max": 200,
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Random seed for autoregressive sampling and latent noise.",
+        "default": 0,
+        "required": false
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale of the flow-matching stage.",
+        "default": 1.7,
+        "min": 0.0,
+        "max": 10.0,
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Backend weight context size in megabytes per component store.",
+        "default": 0,
+        "required": false
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Load each pipeline phase's weights on demand and free them afterwards.",
+        "default": true,
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "dependencies": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "minimax_music3_q8_0",
+      "display_name": "MiniMax-Music3 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MiniMax-Music3-GGUF",
+      "files": [
+        "MiniMax-Music3-GGUF/lm_q8_0.gguf",
+        "MiniMax-Music3-GGUF/depth_decoder_f16.gguf",
+        "MiniMax-Music3-GGUF/dit_f16.gguf",
+        "MiniMax-Music3-GGUF/condition_encoder_f32.gguf",
+        "MiniMax-Music3-GGUF/vocoder_f16.gguf",
+        "MiniMax-Music3-GGUF/tokenizer/tokenizer.json",
+        "MiniMax-Music3-GGUF/tokenizer/tokenizer_config.json"
+      ],
+      "strip_prefix": "MiniMax-Music3-GGUF"
+    },
+    {
+      "id": "minimax_music3_q4_k",
+      "display_name": "MiniMax-Music3 Q4_K GGUF",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "MiniMax-Music3-GGUF",
+      "files": [
+        "MiniMax-Music3-GGUF/lm_q4_k.gguf",
+        "MiniMax-Music3-GGUF/depth_decoder_f16.gguf",
+        "MiniMax-Music3-GGUF/dit_f16.gguf",
+        "MiniMax-Music3-GGUF/condition_encoder_f32.gguf",
+        "MiniMax-Music3-GGUF/vocoder_f16.gguf",
+        "MiniMax-Music3-GGUF/tokenizer/tokenizer.json",
+        "MiniMax-Music3-GGUF/tokenizer/tokenizer_config.json"
+      ],
+      "strip_prefix": "MiniMax-Music3-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "tokenizer_json": "model:tokenizer/tokenizer.json",
+        "tokenizer_config": "model:tokenizer/tokenizer_config.json"
+      },
+      "tensors": {
+        "lm_weights": "model:lm_q8_0.gguf",
+        "depth_decoder_weights": "model:depth_decoder_f16.gguf",
+        "dit_weights": "model:dit_f16.gguf",
+        "condition_encoder_weights": "model:condition_encoder_f32.gguf",
+        "vocoder_weights": "model:vocoder_f16.gguf"
+      }
+    }
+  ]
+}

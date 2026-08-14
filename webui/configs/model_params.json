@@ -123,6 +123,11 @@
     {"name": "timesignature", "type": "text", "label": "【曲谱】timesignature", "default": "", "placeholder": "如 4"}
   ],
 
+  "minimax_music3": [
+    {"name": "num_inference_steps", "type": "number", "label": "Flow steps per window", "default": 30, "minimum": 1, "maximum": 200, "step": 1, "precision": 0, "info": "Flow-matching Euler steps per 200-frame denoising window."},
+    {"name": "guidance_scale", "type": "slider", "label": "Guidance scale", "default": 1.7, "minimum": 0.0, "maximum": 10.0, "step": 0.1, "info": "Classifier-free guidance of the flow-matching stage; the autoregressive stage's sampling recipe is fixed by the checkpoint."}
+  ],
+
   "minimax_h3": [
     {"name": "num_inference_steps", "type": "number", "label": "Denoising steps", "default": 12, "minimum": 1, "maximum": 50, "step": 1, "precision": 0, "info": "Twelve denoising steps provide a practical quality and performance balance."},
     {"name": "num_frames", "type": "number", "label": "Output frames", "default": 241, "minimum": 5, "maximum": 1441, "step": 4, "precision": 0, "info": "Approximately 24 frames per output second; 241 frames produces about 10 seconds of audio."},

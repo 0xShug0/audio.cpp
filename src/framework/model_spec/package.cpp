@@ -493,7 +493,7 @@ std::filesystem::path default_contract_spec_path(std::string_view family) {
     if (const auto gguf = active_gguf_path()) {
         const auto & embedded = embedded_model_spec();
         if (!embedded.has_value()) {
-            if (family == "minimax_h3") {
+            if (family == "minimax_h3" || family == "minimax_music3") {
                 if (const auto external = discover_workspace_model_spec(family)) {
                     return *external;
                 }

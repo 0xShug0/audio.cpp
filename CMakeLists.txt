@@ -540,6 +540,23 @@ audiocpp_add_model(inflect_v2
         engine::models::inflect_v2::make_inflect_v2_loader
 )
 
+audiocpp_add_model(minimax_music3
+    SOURCES
+        src/community_models/minimax_music3/assets.cpp
+        src/community_models/minimax_music3/condition_encoder.cpp
+        src/community_models/minimax_music3/depth_decoder.cpp
+        src/community_models/minimax_music3/dit.cpp
+        src/community_models/minimax_music3/lm.cpp
+        src/community_models/minimax_music3/pipeline.cpp
+        src/community_models/minimax_music3/session.cpp
+        src/community_models/minimax_music3/tokenizer_text.cpp
+        src/community_models/minimax_music3/vocoder.cpp
+    INCLUDES
+        engine/community_models/minimax_music3/session.h
+    LOADERS
+        engine::models::minimax_music3::make_minimax_music3_loader
+)
+
 audiocpp_add_model(minimax_h3
     SOURCES
         src/community_models/minimax_h3/assets.cpp
@@ -1435,6 +1452,11 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_server PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+add_executable(ggml-quantize-raw
+    tools/ggml_quantize_raw.c
+)
+target_link_libraries(ggml-quantize-raw PRIVATE ggml)
+
 add_executable(audiocpp_gguf
     app/gguf/main.cpp
 )
@@ -1532,6 +1554,7 @@ if (ENGINE_BUILD_WARMBENCH)
     endfunction()
 
     add_engine_warmbench(campplus_shared_default_probe tests/glm_tts/campplus_shared_default_probe.cpp)
+    add_engine_warmbench(minimax_music3_component_probe tests/minimax_music3/minimax_music3_component_probe.cpp)
     add_engine_warmbench(chatterbox_warm_bench tests/chatterbox/chatterbox_warm_bench.cpp)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
     add_engine_warmbench(confucius4_tts_warm_bench tests/confucius4_tts/confucius4_tts_warm_bench.cpp)

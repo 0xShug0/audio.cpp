@@ -778,7 +778,8 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     context = core::reshape_tensor(
         ctx,
         context,
-        core::TensorShape::from_dims({1, 1, config_.num_attention_heads * dim}));
+        core::TensorShape::from_dims(
+            {input.shape.dims[0], input.shape.dims[1], config_.num_attention_heads * dim}));
 
     auto attn_out = LinearModule(
                         {
