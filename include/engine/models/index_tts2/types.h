@@ -144,6 +144,9 @@ struct IndexTTS2GenerationOptions {
     float repetition_penalty = 10.0F;
     int max_mel_tokens = 1500;
     uint32_t seed = 0;
+    // Output duration multiplier applied to the S2Mel length-regulator target
+    // (matches official IndexTTS2.5 duration_factor): >1 slower, <1 faster.
+    float duration_factor = 1.0F;
 };
 
 struct IndexTTS2Request {

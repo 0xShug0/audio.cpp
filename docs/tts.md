@@ -570,6 +570,7 @@ audiocpp_cli --task tts --family index_tts2 --model /path/to/IndexTTS-2 --backen
 | `--request-option use_emotion_text=true\|false` | bool | `false` | Infer emotion from text. |
 | `--request-option use_random_emotion=true\|false` | bool | `false` | Use random emotion weights in the emotion mixer. |
 | `--request-option interval_silence_ms=<n>` | milliseconds | `200` | Silence inserted between generated text chunks. |
+| `--request-option duration_factor=<float>` | positive float | `1.0` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`; also accepted for the v2 variant. |
 | `--text-chunk-size` | characters | not set | Optional framework outer text chunk size. When omitted, IndexTTS2 keeps its internal tokenizer segmentation. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework chunking mode used only when `--text-chunk-size` is set. |
 | `--max-tokens` | integer | model default | Maximum generated GPT mel tokens. |
@@ -636,6 +637,7 @@ License: IndexTTS-2.5 weights are distributed under the bilibili Model Use Licen
 | `--request-option use_emotion_text=true|false` | bool | `false` | Infer emotion from text. |
 | `--request-option use_random_emotion=true|false` | bool | `false` | Use random emotion weights in the emotion mixer. |
 | `--request-option interval_silence_ms=<n>` | milliseconds | `200` | Silence inserted between generated text chunks. |
+| `--request-option duration_factor=<float>` | positive float | `1.0` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`. |
 | `--text-chunk-size` | characters | not set | Optional framework outer text chunk size. When omitted, IndexTTS2.5 keeps its internal tokenizer segmentation. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework chunking mode used only when `--text-chunk-size` is set. |
 | `--max-tokens` | integer | `1500` | Maximum generated GPT mel tokens. |

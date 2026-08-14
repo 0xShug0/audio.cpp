@@ -34,6 +34,7 @@ const std::unordered_map<std::string, std::unordered_set<std::string>> & shared_
         {"do_sample", {"bool"}},
         {"duration_sec", {"float", "float_list"}},
         {"duration_seconds", {"float", "float_list"}},
+        {"duration_factor", {"float"}},
         {"duration_scale", {"float"}},
         {"edge_fade_duration_sec", {"float"}},
         {"edge_pad_duration_sec", {"float"}},
