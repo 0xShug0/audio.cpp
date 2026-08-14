@@ -1460,6 +1460,7 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
     session_options.options = model.config.session_options;
 
     engine::debug::trace_log_scalar("server.model.id", model.config.id);
+    engine::debug::trace_log_scalar("server.model.path", model.config.path.string());
     engine::debug::trace_log_scalar("server.model.family", model.config.family);
     engine::debug::trace_log_scalar(
         "server.model.task",

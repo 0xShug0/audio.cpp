@@ -314,17 +314,21 @@
     return path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
   }
 
+  function packagePathMatches(choice: InstallPackageChoice, path: string) {
+    const actual = comparablePath(path);
+    const expected = comparablePath(resolveCatalogPath(choice.path));
+    if (actual === expected) return true;
+    const relative = comparablePath(choice.path).replace(/^models\//, '');
+    return actual === relative || actual.endsWith(`/${relative}`);
+  }
+
   function residentModel(entry: CatalogEntry, models = loadedModels) {
     return models.find((model) => model.id === entry.id && model.loaded);
   }
 
   function packageIsResident(entry: CatalogEntry, choice: InstallPackageChoice, models = loadedModels) {
     const resident = residentModel(entry, models);
-    const selectedChoice = selectedPackageChoice(entry);
-    const expectedPath = entry.id === selectedId && choice.id === selectedChoice?.id
-      ? modelPath
-      : resolveCatalogPath(choice.path);
-    return Boolean(resident && comparablePath(resident.path) === comparablePath(expectedPath));
+    return Boolean(resident && packagePathMatches(choice, resident.path));
   }
 
   function packageIsAvailable(
@@ -348,12 +352,12 @@
     return [
       {
         key: 'q8',
-        label: 'GGUF Q8',
+        label: q8?.label || 'GGUF Q8',
         choice: q8
       },
       {
         key: 'fp16',
-        label: 'GGUF FP16',
+        label: fp16?.label || 'GGUF FP16',
         choice: fp16
       },
     ];
@@ -612,6 +616,28 @@
     return true;
   }
 
+  function reconcileResidentPackageChoices(models = loadedModels) {
+    const nextIds = { ...selectedPackageIds };
+    let changed = false;
+
+    for (const entry of catalog) {
+      const resident = residentModel(entry, models);
+      if (!resident) continue;
+      const choice = (entry.install_packages || []).find((candidate) =>
+        packagePathMatches(candidate, resident.path));
+      if (choice && nextIds[entry.id] !== choice.id) {
+        nextIds[entry.id] = choice.id;
+        changed = true;
+      }
+    }
+
+    if (!changed) return false;
+    selectedPackageIds = nextIds;
+    localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
+    if (selectedId) modelPath = selectedModelPath(selected);
+    return true;
+  }
+
   async function unloadRemovedResidentPackages(sizes = packageSizes) {
     const staleEntries = catalog.filter((entry) => {
       const resident = residentModel(entry);
@@ -736,6 +762,7 @@
   async function refresh() {
     try {
       [server, loadedModels] = await Promise.all([health(), models()]);
+      reconcileResidentPackageChoices();
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
     }
