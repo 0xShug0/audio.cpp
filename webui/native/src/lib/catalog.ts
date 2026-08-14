@@ -71,6 +71,7 @@ function preferredPackage(entries: PackageEntry[]): PackageEntry | undefined {
 function relatedPackages(entry: CatalogEntry): PackageEntry[] {
   const family = packages.filter((candidate) => candidate.family === entry.family);
   if (!family.length) return [];
+  if (entry.family === 'ace_step') return family;
   if (!entry.download_id) return family;
   const exact = family.find((candidate) => candidate.id === entry.download_id);
   if (exact) {
@@ -104,6 +105,15 @@ function relatedPackages(entry: CatalogEntry): PackageEntry[] {
 }
 
 function packageLabel(entry: PackageEntry): string {
+  if (entry.family === 'ace_step') {
+    const variant = entry.id.includes('_base_') ? 'Base' : entry.id.includes('_turbo_') ? 'Turbo' : '';
+    const precision = entry.precision === 'bf16'
+      ? 'BF16'
+      : ['q8_0', 'q8'].includes(entry.precision)
+        ? 'Q8'
+        : entry.precision.toUpperCase();
+    return variant ? `${variant} ${precision}` : `GGUF ${precision}`;
+  }
   if (entry.format === 'safetensors') return 'Safetensors';
   if (entry.id.includes('int8_dit')) return 'GGUF Q4 ConvRot';
   if (entry.precision === 'q4_k' || entry.precision === 'q4_0') return 'GGUF Q4';
@@ -132,6 +142,17 @@ function packageModelPath(entry: PackageEntry): string {
 
 function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
   const related = relatedPackages(entry);
+  if (entry.family === 'ace_step') {
+    return related
+      .filter((candidate) => candidate.format === 'gguf')
+      .map((candidate) => ({
+        id: candidate.id,
+        label: packageLabel(candidate),
+        path: packageModelPath(candidate),
+        format: candidate.format,
+        precision: candidate.precision
+      }));
+  }
   const q8 = preferredPackage(related.filter((candidate) =>
     candidate.format === 'gguf' && ['q8_0', 'q8'].includes(candidate.precision)));
   const fp16 = preferredPackage(related.filter((candidate) =>

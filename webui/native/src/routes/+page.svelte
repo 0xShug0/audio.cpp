@@ -342,6 +342,9 @@
 
   function studioPackageSlots(entry: CatalogEntry) {
     const choices = entry.install_packages || [];
+    if (entry.family === 'ace_step') {
+      return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
+    }
     const q8 = choices.find((choice) => choice.format === 'gguf' &&
       ['q8', 'q8_0'].includes(choice.precision));
     const fp16 = choices.find((choice) => choice.format === 'gguf' &&
@@ -2056,7 +2059,7 @@
                 </div>
                 <div class="model-actions">
                   {#if packageChoices.length}
-                    <div class="package-buttons">
+                    <div class={`package-buttons${packageChoices.length > 3 ? ' wide-package-set' : ''}`}>
                       {#each packageChoices as choice}
                         <div class="package-choice">
                           <button class="package-install"
