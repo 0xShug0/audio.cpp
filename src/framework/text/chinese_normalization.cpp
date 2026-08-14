@@ -120,9 +120,12 @@ std::string correct_index_tts_pinyin(std::string value) {
                        static_cast<unsigned char>(value[2]) == 0xBCU) {
                 value.replace(1, 2, "v");
             }
+            // The official correct_pinyin only uppercases the j/q/x ü->v cases;
+            // other pinyin keeps its original casing.
+            return uppercase_ascii_and_v(std::move(value));
         }
     }
-    return uppercase_ascii_and_v(std::move(value));
+    return value;
 }
 
 bool is_index_tts_pinyin_candidate(const std::string & candidate) {
@@ -168,7 +171,10 @@ std::vector<std::pair<std::string, std::string>> save_regex_matches(
 
     std::vector<std::pair<std::string, std::string>> saved;
     for (size_t i = 0; i < matches.size(); ++i) {
-        const std::string placeholder = "<" + std::string(placeholder_prefix) + "_" + std::to_string(i) + ">";
+        // Letter suffix like the official TextNormalizer: a digit suffix would be
+        // rewritten by the number normalizer and the placeholder would leak.
+        const std::string placeholder =
+            "<" + std::string(placeholder_prefix) + "_" + static_cast<char>('a' + i % 26) + ">";
         text = replace_all(std::move(text), matches[i], placeholder);
         saved.emplace_back(placeholder, matches[i]);
     }
@@ -209,7 +215,9 @@ std::vector<std::pair<std::string, std::string>> save_pinyin_tones(std::string &
 
     std::vector<std::pair<std::string, std::string>> saved;
     for (size_t i = 0; i < matches.size(); ++i) {
-        const std::string placeholder = "<pinyin_" + std::to_string(i) + ">";
+        // Letter suffix like the official TextNormalizer: a digit suffix would be
+        // rewritten by the number normalizer and the placeholder would leak.
+        const std::string placeholder = "<pinyin_" + std::string(1, static_cast<char>('a' + i % 26)) + ">";
         text = replace_all(std::move(text), matches[i], placeholder);
         saved.emplace_back(placeholder, correct_index_tts_pinyin(matches[i]));
     }
