@@ -245,6 +245,74 @@ QwenDecoderHiddenBatchedStaticCacheOutputs QwenDecoderHiddenModule::build_static
     };
 }
 
+QwenDecoderHiddenBatchedStaticCacheOutputs QwenDecoderHiddenModule::build_static_cache_tail_batched(
+    core::ModuleBuildContext & ctx,
+    ggml_cgraph * graph,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const QwenDecoderHiddenWeights & weights,
+    int64_t cache_steps,
+    const core::TensorValue & attention_mask,
+    const core::TensorValue & cache_slot) const {
+    if (graph == nullptr) {
+        throw std::runtime_error("QwenDecoderHiddenModule batched static-cache build requires a graph");
+    }
+    validate_steps(cache_steps, "QwenDecoderHiddenModule batched static-cache build");
+    if (input.shape.rank != 3 || input.shape.dims[0] <= 0 || input.shape.dims[1] != 1 ||
+        input.shape.dims[2] != config_.stack.hidden_size) {
+        throw std::runtime_error("QwenDecoderHiddenModule batched static-cache input shape must be [batch, 1, hidden]");
+    }
+    if (static_cast<int64_t>(weights.stack.layers.size()) != config_.stack.layers) {
+        throw std::runtime_error("QwenDecoderHiddenWeights layer count does not match config");
+    }
+
+    const int64_t batch_size = input.shape.dims[0];
+    const int64_t row_elems = config_.stack.num_key_value_heads * config_.stack.head_dim;
+    std::vector<core::TensorValue> cache_keys;
+    std::vector<core::TensorValue> cache_values;
+    cache_keys.reserve(weights.stack.layers.size());
+    cache_values.reserve(weights.stack.layers.size());
+
+    auto x = input;
+    const QwenDecoderLayerModule layer_module(qwen_decoder_layer_config_from_stack(config_.stack));
+    for (const auto & layer : weights.stack.layers) {
+        cache_keys.push_back(core::make_tensor(
+            ctx,
+            GGML_TYPE_F32,
+            core::TensorShape::from_dims(
+                {batch_size, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
+        cache_values.push_back(core::make_tensor(
+            ctx,
+            GGML_TYPE_F32,
+            core::TensorShape::from_dims(
+                {batch_size, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
+        auto out = layer_module.build_with_static_cache_tail_batched(
+            ctx,
+            graph,
+            x,
+            positions,
+            layer,
+            cache_keys.back(),
+            cache_values.back(),
+            cache_slot,
+            attention_mask);
+        x = out.output;
+    }
+
+    auto hidden = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false})
+                      .build(ctx, x, weights.final_norm);
+    return {
+        std::move(x),
+        hidden,
+        runtime::TransformerBatchedKVCache(
+            cache_steps,
+            batch_size,
+            row_elems,
+            std::move(cache_keys),
+            std::move(cache_values)),
+    };
+}
+
 QwenCausalDecoderModule::QwenCausalDecoderModule(QwenCausalDecoderConfig config)
     : config_(std::move(config)) {
     validate_config(config_);
