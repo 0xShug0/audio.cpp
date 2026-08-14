@@ -1625,9 +1625,21 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
                 voice.speaker->audio = minitts::cli::read_audio_buffer(
                     resolve_path(request_base_, engine::io::json::require_string(*value, "path")));
             } else if (type == "base64") {
-                const auto bytes = base64_decode(engine::io::json::require_string(*value, "data"));
+                // Bound the inline reference audio so a huge base64 payload cannot
+                // blow up host RAM through decode + f32 expansion (~3x its size).
+                constexpr size_t kMaxVoiceRefBytes = size_t{5} * 1024 * 1024;
+                // 4/3 expansion plus slack for a data URI prefix and whitespace.
+                constexpr size_t kMaxVoiceRefB64Length = ((kMaxVoiceRefBytes + 2) / 3) * 4 + 4096;
+                const auto & data = engine::io::json::require_string(*value, "data");
+                if (data.size() > kMaxVoiceRefB64Length) {
+                    throw std::runtime_error("voice_ref base64 data exceeds the 5 MiB limit");
+                }
+                const auto bytes = base64_decode(data);
                 if (bytes.empty()) {
                     throw std::runtime_error("voice_ref base64 data decoded to an empty payload");
+                }
+                if (bytes.size() > kMaxVoiceRefBytes) {
+                    throw std::runtime_error("voice_ref base64 data exceeds the 5 MiB limit");
                 }
                 voice.speaker->audio = minitts::cli::read_audio_buffer(
                     std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
