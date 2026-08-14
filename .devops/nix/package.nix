@@ -11,6 +11,7 @@
   vulkan-tools,
   glslang,
   shaderc,
+  curl,
   python-scripts,
   config,
   version,
@@ -43,6 +44,7 @@ stdenv.mkDerivation (finalAttrs: {
   ++ lib.optional rocmSupport rocmPackages.clr;
 
   buildInputs = [
+    curl
     python-scripts
   ]
   ++ lib.optionals vulkanSupport [
@@ -96,13 +98,13 @@ stdenv.mkDerivation (finalAttrs: {
     # Copy the built C++ executables directly from the bin directory
     cp bin/audiocpp_cli bin/audiocpp_server bin/audiocpp_gguf bin/audiocpp_model_manager $out/bin/
 
-    # Install the supported spec-backed model manager and the catalog it reads
-    # relative to its installed location.
-    install -Dm755 $src/tools/model_manager_v2.py $out/bin/audiocpp_model_manager
+    # Keep the supported Python v2 manager available during migration without
+    # overwriting the native audiocpp_model_manager executable copied above.
+    install -Dm755 $src/tools/model_manager_v2.py $out/bin/audiocpp_model_manager_v2.py
     cp -R $src/model_specs $out/model_specs
 
     # Patch the shebang to use our python environment with torch/safetensors/pyyaml
-    patchShebangs $out/bin/audiocpp_model_manager
+    patchShebangs $out/bin/audiocpp_model_manager_v2.py
 
     runHook postInstall
   '';
