@@ -112,6 +112,7 @@
   let packageSizeRefreshInFlight = false;
   let refreshedInstallFinishes: Record<string, number> = {};
   let quickStartVoices: string[] = [];
+  let configuredVoices: string[] = [];
   let bundledVoices: string[] = [];
   let quickStartVoice = '';
   let uiLanguage = 'en';
@@ -292,9 +293,11 @@
   $: referenceVoiceRequired = !quickStartVoice && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: referenceTextRequired = Boolean(voiceFile) && isQwenBase;
-  $: quickStartVoices = Object.entries(demoVoiceSources)
-    .filter(([, source]) => bundledVoices.includes(source))
-    .map(([voice]) => voice);
+  $: quickStartVoices = server && !server.ui_management
+    ? configuredVoices
+    : Object.entries(demoVoiceSources)
+      .filter(([, source]) => bundledVoices.includes(source))
+      .map(([voice]) => voice);
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr'].includes(selected?.family);
@@ -721,6 +724,7 @@
   function clearModelSelection() {
     selectedId = '';
     quickStartVoice = '';
+    configuredVoices = [];
     modelPath = '';
     installed = null;
     paramSpecs = [];
@@ -817,6 +821,10 @@
     }
     const current = selectedId ? entries.find((entry) => entry.id === selectedId) : undefined;
     const next = current || entries[0];
+    if (selectedId !== next.id) {
+      quickStartVoice = '';
+      configuredVoices = [];
+    }
     selectedId = next.id;
     selected = next;
     activeWorkflow = workflowForTask(next.task);
@@ -866,6 +874,7 @@
     selectedId = id;
     selected = next;
     quickStartVoice = '';
+    configuredVoices = [];
     activeWorkflow = workflowForTask(next.task);
     workflowSelections = { ...workflowSelections, [activeWorkflow]: id };
     modelPath = selectedModelPath(next);
@@ -873,6 +882,7 @@
     localStorage.setItem('audiocpp.ui.model', id);
     resetParams();
     inspectPath();
+    refreshConfiguredVoices();
   }
 
   function chooseWorkflow(id: WorkflowId) {
@@ -1129,6 +1139,20 @@
       bundledVoices = await availableVoices();
     } catch (error) {
       log(`Quick-start voices unavailable: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  async function refreshConfiguredVoices() {
+    if (!selectedId || server?.ui_management !== false) {
+      configuredVoices = [];
+      return;
+    }
+    try {
+      configuredVoices = await availableVoices(selectedId);
+      if (quickStartVoice && !configuredVoices.includes(quickStartVoice)) quickStartVoice = '';
+    } catch (error) {
+      configuredVoices = [];
+      log(`Configured voices unavailable: ${error instanceof Error ? error.message : error}`);
     }
   }
 
@@ -1662,9 +1686,10 @@
     // Package IDs are unambiguous; discard the legacy preference after migration.
     localStorage.removeItem('audiocpp.ui.packagePaths');
     const stored = localStorage.getItem('audiocpp.ui.model');
-    if (stored && catalog.some((entry) => entry.id === stored)) selectedId = stored;
-    selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
+    if (stored) selectedId = stored;
+    selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
     quickStartVoice = '';
+    configuredVoices = [];
     activeWorkflow = workflowForTask(selected.task);
     if (selectedId) workflowSelections = { ...workflowSelections, [activeWorkflow]: selectedId };
     resetParams();
@@ -1695,6 +1720,7 @@
     }
     await refreshVoices();
     await refreshBundledVoices();
+    await refreshConfiguredVoices();
     await refreshInstallJobs();
   });
 
@@ -1933,7 +1959,7 @@
 
         {#if needsVoice}
           {#if quickStartVoices.length}
-            <label for="quick-start-voice">{tr('voice.quickStart')}</label>
+            <label for="quick-start-voice">{server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
               <option value="">{tr('voice.useReference')}</option>

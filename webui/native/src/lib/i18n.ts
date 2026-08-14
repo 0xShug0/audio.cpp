@@ -96,6 +96,7 @@ const english: Record<string, string> = {
   'request.stopLive': 'Stop live',
   'request.startLive': 'Start live',
   'voice.quickStart': 'Quick-start voice presets (demo voices)',
+  'voice.configured': 'Configured voices',
   'voice.useReference': 'Use a reference audio file below',
   'voice.bundledNote': 'The bundled reference audio and its matching transcript are supplied automatically.',
   'voice.reference': 'Reference voice',
