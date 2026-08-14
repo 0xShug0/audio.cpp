@@ -58,6 +58,24 @@ Leave `CMAKE_CUDA_ARCHITECTURES` unset to build for the GPUs present at build ti
 (`native`). Note that CMake caches the CUDA compiler: switching toolkits in an
 existing build directory requires deleting `CMakeCache.txt` and `CMakeFiles/`.
 
+
+Old CUDA GPUs (cm<89):
+
+If you build for old CUDA GPUs with CUDA architecture < 8.9, e.g. Pascal compute-capability
+6.1, use build_linux.sh with  `--cuda-arch`. Or cmake with `-DCMAKE_CUDA_ARCHITECTURES=<archi-id>` 
+(and un-defines the sticky cache value so a previous configure does not win):
+
+```bash
+./scripts/build_linux.sh --backend cuda --cuda-arch 61 --target audiocpp_cli --target audiocpp_server
+```
+or
+```bash
+cmake -S . -B build -DENGINE_ENABLE_CUDA=ON \
+  -DCUDAToolkit_ROOT=/usr/local/cuda-12.9 \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.9/bin/nvcc \
+  -DCMAKE_CUDA_ARCHITECTURES=61      # 61 = GTX 1080Ti
+```
+
 On WSL2, install the toolkit only — `cuda-toolkit-<version>` from the `wsl-ubuntu`
 repo. The `cuda` and `cuda-drivers` metapackages pull a Linux display driver that
 breaks the GPU passthrough provided by the Windows host driver.
