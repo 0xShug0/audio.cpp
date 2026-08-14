@@ -16,6 +16,7 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | Model directory | `models/Ace-Step1.5` |
 | Task | `gen` |
 | Default DiT | `acestep-v15-turbo` |
+| Optional DiT | `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` |
 | Default LM | `acestep-5Hz-lm-1.7B` |
 | Prompt input | `--text` |
 | Lyrics input | `--lyrics` |
@@ -183,7 +184,7 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--load-option ace_step.dit_model_path=<dir>` | `acestep-v15-turbo`, `acestep-v15-base` | `acestep-v15-turbo` | Select DiT variant inside the model root. |
+| `--load-option ace_step.dit_model_path=<dir>` | `acestep-v15-turbo`, `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` | `acestep-v15-turbo` | Select DiT variant inside the model root. |
 | `--session-option ace_step.dit_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | DiT weight type. |
 | `--session-option ace_step.planner_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Planner LM weight type. |
 | `--session-option ace_step.mem_saver=true\|false` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
@@ -191,3 +192,27 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 ACE-Step GGUF packages are variant-specific. Use the Turbo GGUF for the default
 `acestep-v15-turbo` path, and pass `--load-option ace_step.dit_model_path=acestep-v15-base`
 when loading a Base GGUF package.
+
+### XL variants
+
+`acestep-v15-xl-turbo` and `acestep-v15-xl-sft` are the larger DiT: 32 layers of
+2560 against turbo's 24 of 2048, with 32 attention heads of 128 (so the attention
+width is 4096, wider than the model). The condition encoder, audio tokenizer and
+detokenizer stay at 2048 — the `encoder_hidden_size` group in the XL config — and
+the DiT's condition embedder bridges the two. The XL timbre encoder also prepends
+a CLS token to the reference frames and reads that position back, where earlier
+variants read the first audio frame.
+
+Both are **optional package resources**: they are only loadable when their
+directory is present, and a package without them loads and runs exactly as
+before. Selecting one that is not installed reports which directory is missing.
+The upstream snapshots ship four safetensors shards plus a
+`model.safetensors.index.json`, which the package spec points at directly.
+
+```bash
+audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend cuda --task-route text2music --text "warm lo-fi hip hop with a soft rhodes piano" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-xl-turbo --session-option ace_step.dit_weight_type=bf16 --out song.wav
+```
+
+`dit_weight_type=bf16` is worth passing. The XL snapshots are stored in float32,
+so `native` puts 19.9 GB of weights on the card: measured on an RTX 5090, 20 s of
+audio took 87 s at `native` against 24 s at `bf16` (turbo, for reference: 11 s).
