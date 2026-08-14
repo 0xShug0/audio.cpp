@@ -101,7 +101,7 @@
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "audio-cpp/audio.cpp-gguf",
+      "repo": "joemattie/MiniMax-Music3-GGUF",
       "revision": "main",
       "gated": false
     }
