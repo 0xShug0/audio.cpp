@@ -274,6 +274,26 @@ option parsing.
 
 If no request voice is provided and the configured model has `default_voice_preset`, the server injects that preset automatically. Request-level `voice`, `voice_ref`, and `reference_text` override the configured default.
 
+`voice_ref` accepts either a plain path string (server-side file) or an object with a `type`:
+
+```json
+"voice_ref": { "type": "path", "path": "voices/alice.wav" }
+```
+
+With `"type": "base64"`, the `data` field carries a base64-encoded WAV payload (a `data:audio/wav;base64,...` URI is also accepted), so cloning clients can inline the reference audio instead of staging a file on the server first. The decoded payload is limited to 5 MiB; larger references must use a path:
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -o out.wav \
+  -d '{
+    "model": "indextts2",
+    "input": "Cloned from an inline reference.",
+    "voice_ref": { "type": "base64", "data": "UklGRh..." },
+    "reference_text": "Transcript of the reference audio."
+  }'
+```
+
 Set `"response_format": "json"` to receive base64 WAV in a JSON response.
 
 For streaming-capable TTS models configured with `mode: "streaming"`, `stream_format` follows the OpenAI speech streaming shape:
