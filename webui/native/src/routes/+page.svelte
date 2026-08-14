@@ -957,6 +957,7 @@
       status = error instanceof Error ? error.message : String(error);
       errorStatus = status;
       log(`Load failed: ${status}`);
+      throw error;
     } finally {
       loadingModel = false;
     }
