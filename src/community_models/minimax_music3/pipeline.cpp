@@ -126,9 +126,9 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         uint64_t rng_offset_blocks = 0;
         std::vector<float> frame_hiddens;
         {
-            auto scoped_ar = memory_saver ? make_ar() : nullptr;
-            auto & ar_runtime = memory_saver ? *scoped_ar : *ar;
+            auto & ar_runtime = ensure_ar();
             frame_hiddens = ar_runtime.generate_frame_hiddens(request, target_frames, rng_offset_blocks);
+            release_ar_after_phase();
         }
         const int64_t generated_frames =
             static_cast<int64_t>(frame_hiddens.size()) /
@@ -148,10 +148,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         std::vector<float> previous_latent;
         std::vector<float> previous_condition;
         {
-            auto scoped_condition = memory_saver ? make_condition() : nullptr;
-            auto scoped_flow = memory_saver ? make_flow() : nullptr;
-            auto & condition_runtime = memory_saver ? *scoped_condition : *condition;
-            auto & flow_runtime = memory_saver ? *scoped_flow : *flow;
+            auto & condition_runtime = ensure_condition();
+            auto & flow_runtime = ensure_flow();
             for (size_t chunk_index = 0; chunk_index < starts.size(); ++chunk_index) {
                 const int64_t start = starts[chunk_index];
                 const int64_t end = std::min(start + assets->config.chunk_frames, generated_frames);
@@ -193,12 +191,12 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
                 previous_condition = std::move(carry_condition);
                 denoised.push_back({std::move(latents), condition_frames});
             }
+            release_flow_after_phase();
         }
         std::vector<runtime::AudioBuffer> chunks;
         chunks.reserve(denoised.size());
         {
-            auto scoped_vocoder = memory_saver ? make_vocoder() : nullptr;
-            auto & vocoder_runtime = memory_saver ? *scoped_vocoder : *vocoder;
+            auto & vocoder_runtime = ensure_vocoder();
             for (size_t chunk_index = 0; chunk_index < denoised.size(); ++chunk_index) {
                 const auto vocoder_start = Clock::now();
                 auto audio = vocoder_runtime.decode(
@@ -213,6 +211,7 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
                 audio.samples = crop_interleaved_audio(audio, left, right);
                 chunks.push_back(std::move(audio));
             }
+            release_vocoder_after_phase();
         }
         engine::debug::timing_log_scalar(
             "minimax_music3.flow_vocoder.total_ms",
@@ -245,6 +244,67 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         }
         if (vocoder != nullptr) {
             vocoder->release_runtime_graphs();
+        }
+    }
+
+    MiniMaxMusic3ArRuntime & ensure_ar() {
+        if (ar == nullptr) {
+            ar = make_ar();
+        }
+        return *ar;
+    }
+
+    MiniMaxMusic3ConditionEncoderRuntime & ensure_condition() {
+        if (condition == nullptr) {
+            condition = make_condition();
+        }
+        return *condition;
+    }
+
+    MiniMaxMusic3FlowSamplerRuntime & ensure_flow() {
+        if (flow == nullptr) {
+            flow = make_flow();
+        }
+        return *flow;
+    }
+
+    MiniMaxMusic3VocoderRuntime & ensure_vocoder() {
+        if (vocoder == nullptr) {
+            vocoder = make_vocoder();
+        }
+        return *vocoder;
+    }
+
+    void release_ar_after_phase() {
+        if (ar == nullptr) {
+            return;
+        }
+        ar->release_runtime_graphs();
+        if (memory_saver) {
+            ar.reset();
+        }
+    }
+
+    void release_flow_after_phase() {
+        if (condition != nullptr) {
+            condition->release_runtime_graphs();
+        }
+        if (flow != nullptr) {
+            flow->release_runtime_graphs();
+        }
+        if (memory_saver) {
+            flow.reset();
+            condition.reset();
+        }
+    }
+
+    void release_vocoder_after_phase() {
+        if (vocoder == nullptr) {
+            return;
+        }
+        vocoder->release_runtime_graphs();
+        if (memory_saver) {
+            vocoder.reset();
         }
     }
 
