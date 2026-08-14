@@ -184,7 +184,7 @@ Huge thanks to [@kigner](https://github.com/kigner) for the original [audio.cpp-
 |---|---|
 | Linux | GCC 13 or newer, CMake, plus the backend toolchain for the build you want: NVIDIA CUDA Toolkit for CUDA, Vulkan SDK for Vulkan, ROCm for HIP |
 | Windows | Visual Studio Build Tools 2022 or newer with C++ desktop workload, MSVC x64 compiler, Windows SDK, CMake, Ninja, MSVC OpenMP components; official NVIDIA CUDA Toolkit for CUDA builds, AMD HIP SDK for HIP builds |
-| macOS | Xcode or Xcode Command Line Tools with the Metal compiler available through `xcrun` |
+| macOS | Xcode or Xcode Command Line Tools, plus CMake. Metal builds also require the Metal compiler available through `xcrun` |
 
 ### Homebrew Install
 
@@ -280,6 +280,29 @@ For deployment builds with compiled package specs:
 ```
 
 For requirements, CPU profiles, CUDA packaging, and release zips, see [docs/build/windows.md](docs/build/windows.md).
+
+### macOS CPU Build
+
+Apple builds enable Metal by default. To build a CPU-only binary, disable Metal explicitly:
+
+```bash
+cmake -S . -B build/macos-cpu-release \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DENGINE_ENABLE_CUDA=OFF \
+  -DENGINE_ENABLE_VULKAN=OFF \
+  -DENGINE_ENABLE_METAL=OFF \
+  -DENGINE_ENABLE_OPENMP=OFF \
+  -DGGML_OPENMP=OFF
+cmake --build build/macos-cpu-release \
+  --parallel "$(sysctl -n hw.logicalcpu)" \
+  --target audiocpp_cli audiocpp_server audiocpp_gguf
+```
+
+Confirm that the resulting CLI sees the host CPU backend:
+
+```bash
+build/macos-cpu-release/bin/audiocpp_cli --list-devices
+```
 
 ### Metal Build
 
