@@ -223,7 +223,7 @@ Relative `voice_dir` paths resolve against the config file's directory. When a r
 
 Resolution precedence for a TTS request's voice fields:
 
-1. `voice_ref` / `voice_ref_b64` — always wins.
+1. `voice_ref` — always wins.
 2. `voice` matching a configured model preset — preset wins.
 3. `voice` matching a wav basename in `voice_dir` — voice-library clone.
 4. Otherwise — `voice` is used as the model-native cached voice id (previous behavior).
@@ -274,7 +274,13 @@ option parsing.
 
 If no request voice is provided and the configured model has `default_voice_preset`, the server injects that preset automatically. Request-level `voice`, `voice_ref`, and `reference_text` override the configured default.
 
-`voice_ref` takes a server-side file path. To clone from audio the server has never seen, send `voice_ref_b64` instead: a base64-encoded WAV payload (a `data:audio/wav;base64,...` URI is also accepted), so no file has to land on the server first. `voice_ref` and `voice_ref_b64` are mutually exclusive in one request.
+`voice_ref` accepts either a plain path string (server-side file) or an object with a `type`:
+
+```json
+"voice_ref": { "type": "path", "path": "voices/alice.wav" }
+```
+
+With `"type": "base64"`, the `data` field carries a base64-encoded WAV payload (a `data:audio/wav;base64,...` URI is also accepted), so cloning clients can inline the reference audio instead of staging a file on the server first:
 
 ```bash
 curl http://127.0.0.1:8080/v1/audio/speech \
@@ -283,7 +289,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -d '{
     "model": "indextts2",
     "input": "Cloned from an inline reference.",
-    "voice_ref_b64": "UklGRh...",
+    "voice_ref": { "type": "base64", "data": "UklGRh..." },
     "reference_text": "Transcript of the reference audio."
   }'
 ```

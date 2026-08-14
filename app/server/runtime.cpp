@@ -1529,7 +1529,7 @@ const ServerState::LoadedModel::RuntimeVoicePreset * ServerState::select_voice_p
         }
         return nullptr;
     }
-    if (body.find("voice_ref") != nullptr || body.find("voice_ref_b64") != nullptr) {
+    if (body.find("voice_ref") != nullptr) {
         return nullptr;
     }
     return model.default_voice_preset.has_value() ? &*model.default_voice_preset : nullptr;
@@ -1583,8 +1583,7 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
             request.options["reference_text"] = *preset->reference_text;
         }
     }
-    const bool has_explicit_voice_ref =
-        body.find("voice_ref") != nullptr || body.find("voice_ref_b64") != nullptr;
+    const bool has_explicit_voice_ref = body.find("voice_ref") != nullptr;
     if (const auto * value = body.find("voice"); value != nullptr && !voice_field_is_preset) {
         // Voice library: "voice" may name a wav in the configured voice_dir. When it
         // does, that audio becomes the cloning reference and the transcript from
@@ -1614,26 +1613,30 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
             has_voice = true;
         }
     }
-    if (const auto * value = body.find("voice_ref_b64")) {
-        if (body.find("voice_ref") != nullptr) {
-            throw std::runtime_error("voice_ref and voice_ref_b64 are mutually exclusive");
-        }
-        if (!voice.speaker.has_value()) {
-            voice.speaker = engine::runtime::VoiceReference{};
-        }
-        const auto bytes = base64_decode(value->as_string());
-        if (bytes.empty()) {
-            throw std::runtime_error("voice_ref_b64 decoded to an empty payload");
-        }
-        voice.speaker->audio = minitts::cli::read_audio_buffer(
-            std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
-        has_voice = true;
-    }
     if (const auto * value = body.find("voice_ref")) {
         if (!voice.speaker.has_value()) {
             voice.speaker = engine::runtime::VoiceReference{};
         }
-        voice.speaker->audio = minitts::cli::read_audio_buffer(resolve_path(request_base_, value->as_string()));
+        if (value->is_string()) {
+            voice.speaker->audio = minitts::cli::read_audio_buffer(resolve_path(request_base_, value->as_string()));
+        } else if (value->is_object()) {
+            const auto & type = engine::io::json::require_string(*value, "type");
+            if (type == "path") {
+                voice.speaker->audio = minitts::cli::read_audio_buffer(
+                    resolve_path(request_base_, engine::io::json::require_string(*value, "path")));
+            } else if (type == "base64") {
+                const auto bytes = base64_decode(engine::io::json::require_string(*value, "data"));
+                if (bytes.empty()) {
+                    throw std::runtime_error("voice_ref base64 data decoded to an empty payload");
+                }
+                voice.speaker->audio = minitts::cli::read_audio_buffer(
+                    std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+            } else {
+                throw std::runtime_error("voice_ref type must be \"path\" or \"base64\"");
+            }
+        } else {
+            throw std::runtime_error("voice_ref must be a path string or an object with type \"path\" or \"base64\"");
+        }
         has_voice = true;
     }
     if (const auto * value = body.find("reference_text")) {
