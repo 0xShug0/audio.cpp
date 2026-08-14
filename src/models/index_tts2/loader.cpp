@@ -47,6 +47,7 @@ runtime::ModelCliInterface cli(const IndexTTS2Assets & assets) {
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode used when text_chunk_size is set."},
         {"length_penalty", "float", "GPT beam-search length penalty."},
         {"num_beams", "n", "GPT beam count."},
+        {"duration_factor", "float", "Output duration multiplier for speech-rate control; >1 slower, <1 faster. Matches official IndexTTS2.5 duration_factor."},
     };
     if (index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5) {
         out.request_options.push_back(

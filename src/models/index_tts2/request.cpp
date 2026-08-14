@@ -168,6 +168,9 @@ IndexTTS2Request parse_index_tts2_request(const runtime::TaskRequest & request) 
         }
         out.generation.max_mel_tokens = *value;
     }
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"duration_factor"})) {
+        out.generation.duration_factor = *value;
+    }
     if (const auto value = runtime::parse_u32_option(request.options, {"seed"})) {
         out.generation.seed = *value;
     } else {
@@ -185,6 +188,9 @@ IndexTTS2Request parse_index_tts2_request(const runtime::TaskRequest & request) 
     }
     if (out.generation.num_beams <= 0) {
         throw std::runtime_error("IndexTTS2 num_beams must be positive");
+    }
+    if (!(out.generation.duration_factor > 0.0F)) {
+        throw std::runtime_error("IndexTTS2 duration_factor must be positive");
     }
     return out;
 }

@@ -692,7 +692,8 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
         content = add_latent_to_semantic(semantic, projected);
         content_frames = code_frames;
     }
-    const int64_t target_frames = static_cast<int64_t>(static_cast<float>(content_frames) * 1.72F);
+    const int64_t target_frames =
+        static_cast<int64_t>(static_cast<float>(content_frames) * 1.72F * options.duration_factor);
     const int64_t total_frames = speaker.prompt_condition.frames + target_frames;
     s2mel_->prepare_length_regulator(content_frames, target_frames);
     auto generated_condition = s2mel_->regulate_length(content, content_frames, target_frames);
