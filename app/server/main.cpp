@@ -80,7 +80,7 @@ void print_help() {
         << "  GET  /v1/models\n"
         << "  POST /v1/models/load             available with --ui-management\n"
         << "  POST /v1/models/unload           available with --ui-management\n"
-        << "  POST /v1/ui/upload               available with --ui-management\n"
+        << "  POST /v1/ui/upload               temporary browser upload for WebUI requests\n"
         << "  POST /v1/ui/models/install       background package download/preparation\n"
         << "  POST /v1/ui/models/install/stop  stop one active package download\n"
         << "  POST /v1/ui/models/clean-partial remove abandoned package staging files\n"

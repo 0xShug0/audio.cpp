@@ -163,7 +163,8 @@ audiocpp_server --ui --backend cuda
 
 Open `http://127.0.0.1:8080`. Starting with `--ui` and no server config enables on-demand model
 load/unload and temporary browser uploads. Existing static server configurations also expose the UI by default;
-add `--ui-management` when that instance should permit model switching.
+in that mode the UI only offers models declared by the server config. Add `--ui-management` when that instance
+should permit catalog browsing, downloads, temporary uploads, and dynamic model switching.
 
 The native UI also exposes background model download/preparation, long-text split-and-merge synthesis, a
 browser-local saved voice library, microphone recording, and near-live ASR input. Some model preparation jobs invoke

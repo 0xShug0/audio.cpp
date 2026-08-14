@@ -818,6 +818,13 @@ ServerState::ServerState(
             << backend_name(config_.backend)
             << " server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA.\n";
     }
+    if (config_.ui_enabled || config_.ui_management) {
+        upload_root_ = std::filesystem::temp_directory_path() /
+            ("audiocpp-ui-" + std::to_string(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count()));
+        std::filesystem::create_directories(upload_root_);
+    }
     if (config_.ui_management) {
         repository_root_ = find_from_roots(
             request_base_,
@@ -836,11 +843,6 @@ ServerState::ServerState(
         std::cerr
             << "native WebUI model root: " << models_root_ << "\n"
             << "native WebUI package resources: " << repository_root_ << "\n";
-        upload_root_ = std::filesystem::temp_directory_path() /
-            ("audiocpp-ui-" + std::to_string(
-                std::chrono::duration_cast<std::chrono::microseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count()));
-        std::filesystem::create_directories(upload_root_);
         if (!config_.voice_dir.has_value()) {
             const auto embedded_voices = upload_root_ / "demo_voices";
             materialize_embedded_demo_voices(embedded_voices);
@@ -1120,7 +1122,7 @@ HttpResponse ServerState::handle_path_status(const std::string & body_text) cons
 }
 
 HttpResponse ServerState::handle_ui_upload(const HttpRequest & request) {
-    if (!config_.ui_management) {
+    if (!config_.ui_enabled && !config_.ui_management) {
         return error_response(403, "UI uploads are disabled", "forbidden");
     }
     if (request.body.empty()) {

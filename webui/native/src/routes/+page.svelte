@@ -218,28 +218,61 @@
     return left.localeCompare(right, 'en', { sensitivity: 'base', numeric: true });
   }
 
-  const modelGroups: ModelGroup[] = Array.from(
-    catalog.reduce((groups, entry) => {
-      const existing = groups.get(entry.family) || [];
-      existing.push(entry);
-      groups.set(entry.family, existing);
-      return groups;
-    }, new Map<string, CatalogEntry[]>())
-  ).map(([family, entries]) => ({
-    family,
-    entries: [...entries].sort((left, right) => compareModelNames(left.display_name, right.display_name)),
-    label: entries.length > 1 ? (familyLabels[family] || entries[0].display_name) : entries[0].display_name
-  })).sort((left, right) => compareModelNames(left.label, right.label));
+  function configuredCatalogEntries() {
+    return loadedModels.map((model) => {
+      const exact = catalog.find((entry) => entry.id === model.id);
+      const familyMatch = catalog.find((entry) =>
+        entry.family === model.family && entry.task === model.task);
+      const base = exact || familyMatch;
+      return {
+        ...(base || {
+          id: model.id,
+          display_name: model.id,
+          family: model.family,
+          path: model.path,
+          task: model.task,
+          mode: model.mode
+        }),
+        id: model.id,
+        display_name: exact ? exact.display_name : base ? `${base.display_name} (${model.id})` : model.id,
+        display_name_en: exact ? exact.display_name_en : base?.display_name_en,
+        family: model.family,
+        path: model.path,
+        task: model.task,
+        mode: model.mode,
+        install_packages: []
+      } as CatalogEntry;
+    });
+  }
+
+  function groupCatalog(entries: CatalogEntry[]): ModelGroup[] {
+    return Array.from(
+      entries.reduce((groups, entry) => {
+        const existing = groups.get(entry.family) || [];
+        existing.push(entry);
+        groups.set(entry.family, existing);
+        return groups;
+      }, new Map<string, CatalogEntry[]>())
+    ).map(([family, entries]) => ({
+      family,
+      entries: [...entries].sort((left, right) => compareModelNames(left.display_name, right.display_name)),
+      label: entries.length > 1 ? (familyLabels[family] || entries[0].display_name) : entries[0].display_name
+    })).sort((left, right) => compareModelNames(left.label, right.label));
+  }
 
   let activeWorkflow: WorkflowId = 'tts';
   let workflowSelections: Partial<Record<WorkflowId, string>> = {};
   let modelWorkflowFilters: WorkflowId[] = workflowTabs.map((workflow) => workflow.id);
+  let activeCatalog: CatalogEntry[] = catalog;
+  let modelGroups: ModelGroup[] = groupCatalog(catalog);
 
   class StatusWarning extends Error {}
 
-  $: selected = catalog.find((entry) => entry.id === selectedId) || catalog[0];
+  $: activeCatalog = server && !server.ui_management ? configuredCatalogEntries() : catalog;
+  $: modelGroups = groupCatalog(activeCatalog);
+  $: selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
-  $: workflowModels = catalog.filter((entry) =>
+  $: workflowModels = activeCatalog.filter((entry) =>
     activeWorkflowSpec.tasks.some((task) => task === entry.task));
   $: filteredModelGroups = modelGroups.map((group) => ({
     ...group,
@@ -267,7 +300,8 @@
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr'].includes(selected?.family);
   $: modelInventoryLoading = server === null ||
     (Boolean(server.ui_management) && Object.keys(packageSizes).length === 0 && packageSizeState !== 'failed');
-  $: selectableModelIds = new Set(catalog.filter((entry) => {
+  $: selectableModelIds = new Set(activeCatalog.filter((entry) => {
+    if (server && !server.ui_management) return true;
     if (loadedModels.some((model) => model.id === entry.id && model.loaded)) return true;
     if (entry.id === selectedId && installed === true) return true;
     const choices = entry.install_packages || [];
@@ -307,6 +341,7 @@
   }
 
   function selectedModelPath(entry: CatalogEntry) {
+    if (server && !server.ui_management) return entry.path;
     return resolveCatalogPath(selectedPackageChoice(entry)?.path || entry.path);
   }
 
@@ -577,6 +612,13 @@
   }
 
   function openModelsPage() {
+    if (!server?.ui_management) {
+      tab = 'studio';
+      status = 'Model management is disabled for this configured server.';
+      warningStatus = status;
+      errorStatus = '';
+      return;
+    }
     tab = 'models';
     if (packageSizeState === 'idle') packageSizeState = 'running';
     refreshPackageSizes();
@@ -659,10 +701,13 @@
 
   async function openStudioPage() {
     tab = 'studio';
-    await Promise.all([refreshPackageSizes(), refresh()]);
-    await unloadRemovedResidentPackages();
-    const selectionChanged = reconcileSelectedPackageChoices();
-    if (selectionChanged && selectedId) await inspectPath();
+    await refresh();
+    if (server?.ui_management) {
+      await refreshPackageSizes();
+      await unloadRemovedResidentPackages();
+      const selectionChanged = reconcileSelectedPackageChoices();
+      if (selectionChanged && selectedId) await inspectPath();
+    }
   }
 
   function acceptModelsRoot(root: Awaited<ReturnType<typeof getModelsRoot>>) {
@@ -686,6 +731,7 @@
   }
 
   function clearUnavailableModelSelection(ignoreResident = false) {
+    if (server && !server.ui_management) return false;
     if (!selectedId || (!ignoreResident && isLoaded) || installed !== false) return false;
     clearModelSelection();
     return true;
@@ -762,10 +808,31 @@
     advancedJson = '{}';
   }
 
+  function syncConfiguredSelection() {
+    if (!server || server.ui_management) return;
+    const entries = configuredCatalogEntries();
+    if (!entries.length) {
+      clearModelSelection();
+      return;
+    }
+    const current = selectedId ? entries.find((entry) => entry.id === selectedId) : undefined;
+    const next = current || entries[0];
+    selectedId = next.id;
+    selected = next;
+    activeWorkflow = workflowForTask(next.task);
+    workflowSelections = { ...workflowSelections, [activeWorkflow]: next.id };
+    modelPath = next.path;
+    installed = true;
+    chunkBudget = defaultChunkBudget(next.family);
+    localStorage.setItem('audiocpp.ui.model', next.id);
+    resetParams();
+  }
+
   async function refresh() {
     try {
       [server, loadedModels] = await Promise.all([health(), models()]);
-      reconcileResidentPackageChoices();
+      if (server.ui_management) reconcileResidentPackageChoices();
+      else syncConfiguredSelection();
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
     }
@@ -774,6 +841,10 @@
   async function inspectPath() {
     if (!selectedId || !modelPath.trim()) {
       installed = null;
+      return;
+    }
+    if (server && !server.ui_management) {
+      installed = loadedModels.some((model) => model.id === selectedId);
       return;
     }
     installed = null;
@@ -790,7 +861,7 @@
       status = 'No model selected. Choose an installed model or download one from the Models tab.';
       return;
     }
-    const next = catalog.find((entry) => entry.id === id);
+    const next = activeCatalog.find((entry) => entry.id === id);
     if (!next || !entrySelectable(next)) return;
     selectedId = id;
     selected = next;
@@ -812,10 +883,10 @@
 
     const rememberedId = workflowSelections[id];
     const remembered = rememberedId
-      ? catalog.find((entry) => entry.id === rememberedId &&
+      ? activeCatalog.find((entry) => entry.id === rememberedId &&
           workflow.tasks.some((task) => task === entry.task) && entrySelectable(entry))
       : undefined;
-    const next = remembered || catalog.find((entry) =>
+    const next = remembered || activeCatalog.find((entry) =>
       workflow.tasks.some((task) => task === entry.task) && entrySelectable(entry));
     if (next) {
       chooseModel(next.id);
@@ -882,6 +953,12 @@
   }
 
   async function doUnload() {
+    if (!server?.ui_management) {
+      status = 'Model unload is disabled for this configured server.';
+      warningStatus = status;
+      errorStatus = '';
+      return;
+    }
     if (!selectedId) return;
     const modelName = selected.display_name;
     loadingModel = true;
@@ -953,6 +1030,12 @@
   }
 
   async function ensureLoaded() {
+    if (!server?.ui_management) {
+      if (!loadedModels.some((model) => model.id === selectedId)) {
+        throw new Error('Configured model is not registered by this server.');
+      }
+      return;
+    }
     if (!isLoaded) {
       await doLoad();
       await refresh();
@@ -963,6 +1046,12 @@
   }
 
   async function ensureLoadedMode(mode: string) {
+    if (!server?.ui_management) {
+      if (!loadedModels.some((model) => model.id === selectedId && model.mode === mode)) {
+        throw new Error(`Configured model is not registered in ${mode} mode.`);
+      }
+      return;
+    }
     const loaded = loadedModels.find((model) => model.id === selectedId && model.loaded);
     if (!loaded || loaded.mode !== mode) {
       await doLoad(mode);
@@ -1595,10 +1684,14 @@
       }
     }
     modelPath = selectedModelPath(selected);
-    await refreshPackageSizes();
-    await inspectPath();
-    if (clearUnavailableModelSelection()) {
-      status = 'No installed model is selected. Choose a downloaded model or install one from the Models tab.';
+    if (server?.ui_management) {
+      await refreshPackageSizes();
+      await inspectPath();
+      if (clearUnavailableModelSelection()) {
+        status = 'No installed model is selected. Choose a downloaded model or install one from the Models tab.';
+      }
+    } else {
+      installed = Boolean(selectedId);
     }
     await refreshVoices();
     await refreshBundledVoices();
@@ -1631,7 +1724,9 @@
   </div>
   <nav aria-label={tr('nav.primary')}>
     <button class:active={tab === 'studio'} on:click={openStudioPage}>{tr('nav.studio')}</button>
-    <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
+    {#if server?.ui_management !== false}
+      <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
+    {/if}
     <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>{tr('nav.runtime')}</button>
   </nav>
   <label class="language-picker">
@@ -1655,7 +1750,7 @@
         <button class:active={activeWorkflow === workflow.id}
           on:click={() => chooseWorkflow(workflow.id)}>
           {workflowLabel(workflow.id, workflow.label, tr)}
-          <small>{catalog.filter((entry) => workflow.tasks.some((task) => task === entry.task)).length}</small>
+          <small>{activeCatalog.filter((entry) => workflow.tasks.some((task) => task === entry.task)).length}</small>
         </button>
       {/each}
     </nav>
@@ -1718,9 +1813,11 @@
           </div>
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
-            disabled={!selectedId || loadingModel || installed === false}
-            title={isLoaded ? tr('studio.unload') : tr('studio.load')} on:click={toggleSingleModel}>
-            {loadingModel ? tr('studio.working') : isLoaded ? tr('studio.bundledLoaded') : tr('studio.load')}
+            disabled={!selectedId || loadingModel || installed === false || !server?.ui_management}
+            title={!server?.ui_management ? 'Configured by server config' : isLoaded ? tr('studio.unload') : tr('studio.load')}
+            on:click={toggleSingleModel}>
+            {!server?.ui_management ? (isLoaded ? tr('studio.bundledLoaded') : 'Configured') :
+              loadingModel ? tr('studio.working') : isLoaded ? tr('studio.bundledLoaded') : tr('studio.load')}
           </button>
         {/if}
 
