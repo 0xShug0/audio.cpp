@@ -34,6 +34,24 @@ COMPONENTS = [
     ("vocoder", "vocoder/diffusion_pytorch_model.safetensors", "vocoder.gguf"),
 ]
 
+# Conv kernels must not be stored BF16: the CUDA conv lowering corrupts on BF16 kernel
+# types (and the runtime guards this at load). Keep them F32 on disk for every target
+# type.
+KEEP_TYPES = {
+    "transformer": ["preprocess_conv*=f32", "postprocess_conv*=f32"],
+    "condition_encoder": ["proj.weight=f32"],
+    "vocoder": ["dec_in_proj*=f32"],
+}
+
+# Config sidecars the runtime requires next to the component GGUFs.
+CONFIG_SIDECARS = {
+    "language_model": "language_model/config.json",
+    "rvq_depth_decoder": "rvq_depth_decoder/config.json",
+    "condition_encoder": "condition_encoder/config.json",
+    "transformer": "transformer/config.json",
+    "vocoder": "vocoder/config.json",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -117,6 +135,7 @@ def write_variant_spec(args: argparse.Namespace) -> tempfile.TemporaryDirectory[
 
     output_by_name = {name: output_name(args, component) for name, _input, _base in COMPONENTS for component in [next(c for c in COMPONENTS if c[0] == name)]}
     gguf_source = next(source for source in spec["sources"] if source["format"] == "gguf")
+    gguf_source.setdefault("tensors", {})
     gguf_source["tensors"]["language_model_weights"] = f"model:{output_by_name['language_model']}"
     gguf_source["tensors"]["depth_decoder_weights"] = f"model:{output_by_name['rvq_depth_decoder']}"
     gguf_source["tensors"]["condition_encoder_weights"] = f"model:{output_by_name['condition_encoder']}"
@@ -151,11 +170,22 @@ def run_conversion(args: argparse.Namespace, component: tuple[str, str, str]) ->
         "--model-spec",
         str(args.model_spec),
         "--no-sidecars",
+        # The runtime opens component GGUFs by filename rather than through spec tensor
+        # ids, and the spec's gguf source does not yet match audiocpp_gguf's
+        # source-matching rules, so conversion proceeds without a matching package spec.
+        "--allow-missing-model-spec",
     ]
+    for keep in KEEP_TYPES.get(name, []):
+        cmd.extend(["--keep-type", keep])
     if args.overwrite:
         cmd.append("--overwrite")
     print("[convert]", name, "->", output_path, flush=True)
     subprocess.run(cmd, cwd=REPO_ROOT, check=True)
+    sidecar = CONFIG_SIDECARS.get(name)
+    if sidecar is not None:
+        config_dir = Path(args.output) / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(Path(args.source) / sidecar, config_dir / f"{name}.json")
 
 
 def main() -> None:
