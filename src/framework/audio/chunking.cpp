@@ -1,5 +1,6 @@
 #include "engine/framework/audio/chunking.h"
 
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 #include <cstddef>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -599,7 +601,20 @@ void append_chunk_word_timestamps(
         const int64_t local_start = std::max<int64_t>(word.span.start_sample, 0);
         const int64_t local_end = std::min<int64_t>(word.span.end_sample, source_samples);
         if (local_start >= local_end) {
-            throw std::runtime_error("Audio chunker word merge received a timestamp outside the chunk span");
+            std::ostringstream warning;
+            warning << "dropping word timestamp outside chunk span"
+                    << " word=\"" << word.word << "\""
+                    << " local_start=" << word.span.start_sample
+                    << " local_end=" << word.span.end_sample
+                    << " source_samples=" << source_samples
+                    << " source_start=" << source_span.start_sample
+                    << " source_end=" << source_span.end_sample
+                    << " keep_start=" << keep_span.start_sample
+                    << " keep_end=" << keep_span.end_sample
+                    << " source_sample_rate=" << source_sample_rate
+                    << " timestamp_sample_rate=" << timestamp_sample_rate;
+            debug::log_message(debug::LogLevel::Warning, "audio.chunking", warning.str());
+            continue;
         }
         const int64_t global_start = timestamp_source_span.start_sample + local_start;
         if (global_start < timestamp_keep_span.start_sample || global_start >= timestamp_keep_span.end_sample) {

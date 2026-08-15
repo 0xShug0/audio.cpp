@@ -841,16 +841,6 @@ void test_chunk_word_timestamp_merge_rejects_invalid_spans() {
             std::vector<engine::runtime::WordTimestamp> merged;
             engine::audio::append_chunk_word_timestamps(
                 merged,
-                {word("outside", 120, 140)},
-                engine::runtime::TimeSpan{1000, 1100});
-        },
-        "word outside chunk");
-
-    require_throws(
-        []() {
-            std::vector<engine::runtime::WordTimestamp> merged;
-            engine::audio::append_chunk_word_timestamps(
-                merged,
                 {word("bad", 0, 10)},
                 engine::runtime::TimeSpan{1000, 1100},
                 engine::runtime::TimeSpan{900, 1100});
@@ -869,6 +859,24 @@ void test_chunk_word_timestamp_merge_rejects_invalid_spans() {
                 24000);
         },
         "invalid source sample rate");
+}
+
+void test_chunk_word_timestamp_merge_drops_outside_words() {
+    std::vector<engine::runtime::WordTimestamp> merged;
+    engine::audio::append_chunk_word_timestamps(
+        merged,
+        {
+            word("kept", 20, 40),
+            word("outside", 120, 140),
+            word("also_kept", 50, 80),
+        },
+        engine::runtime::TimeSpan{1000, 1100});
+
+    engine::test::require_eq(merged.size(), static_cast<size_t>(2), "outside word dropped");
+    engine::test::require_eq(merged[0].word, std::string("kept"), "first valid word kept");
+    require_span(merged[0].span, 1020, 1040, "first valid word span");
+    engine::test::require_eq(merged[1].word, std::string("also_kept"), "second valid word kept");
+    require_span(merged[1].span, 1050, 1080, "second valid word span");
 }
 
 }  // namespace
@@ -903,6 +911,7 @@ int main() {
         test_chunk_word_timestamp_merge_rescales_chunk_domain();
         test_chunk_speech_metadata_merge_rescales_chunk_domain();
         test_chunk_word_timestamp_merge_rejects_invalid_spans();
+        test_chunk_word_timestamp_merge_drops_outside_words();
         std::cout << "audio_chunking_test passed\n";
     } catch (const std::exception & ex) {
         std::cerr << "audio_chunking_test failed: " << ex.what() << "\n";
