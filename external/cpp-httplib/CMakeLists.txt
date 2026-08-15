@@ -58,25 +58,44 @@ if (AUDIOCPP_BUILD_BORINGSSL)
     # Some packagers (notably Nix) inject a global -Werror. Do not let the
     # parent project's warning policy turn compatibility warnings inside the
     # pinned third-party TLS implementation into audio.cpp build failures.
-    foreach(AUDIOCPP_BORINGSSL_TARGET crypto ssl fipsmodule)
-        if (TARGET ${AUDIOCPP_BORINGSSL_TARGET})
-            set_property(TARGET ${AUDIOCPP_BORINGSSL_TARGET}
-                PROPERTY COMPILE_WARNING_AS_ERROR OFF)
-            if (MSVC)
-                target_compile_options(${AUDIOCPP_BORINGSSL_TARGET} PRIVATE /WX-)
-            else()
-                target_compile_options(${AUDIOCPP_BORINGSSL_TARGET} PRIVATE
-                    -Wno-error
-                    -Wno-unused-parameter
-                    # BoringSSL intentionally uses GNU compound literals in
-                    # its vectorized C++ implementation. The parent project
-                    # enables -pedantic-errors globally, so keep that policy
-                    # from leaking into this pinned third-party dependency.
-                    -Wno-pedantic
-                    -Wno-error=pedantic)
+    # Discover targets recursively instead of naming only crypto/ssl: Nix's
+    # default all-target build also compiles auxiliary libraries such as
+    # decrepit, and BoringSSL may add further subdirectory targets over time.
+    function(audiocpp_relax_boringssl_warnings AUDIOCPP_DIRECTORY)
+        get_property(AUDIOCPP_DIRECTORY_TARGETS
+            DIRECTORY "${AUDIOCPP_DIRECTORY}" PROPERTY BUILDSYSTEM_TARGETS)
+        foreach(AUDIOCPP_BORINGSSL_TARGET IN LISTS AUDIOCPP_DIRECTORY_TARGETS)
+            get_target_property(AUDIOCPP_BORINGSSL_TARGET_TYPE
+                ${AUDIOCPP_BORINGSSL_TARGET} TYPE)
+            if (NOT AUDIOCPP_BORINGSSL_TARGET_TYPE STREQUAL "INTERFACE_LIBRARY"
+                    AND NOT AUDIOCPP_BORINGSSL_TARGET_TYPE STREQUAL "UTILITY")
+                set_property(TARGET ${AUDIOCPP_BORINGSSL_TARGET}
+                    PROPERTY COMPILE_WARNING_AS_ERROR OFF)
+                if (MSVC)
+                    target_compile_options(${AUDIOCPP_BORINGSSL_TARGET} PRIVATE /WX-)
+                else()
+                    target_compile_options(${AUDIOCPP_BORINGSSL_TARGET} PRIVATE
+                        -Wno-error
+                        -Wno-unused-parameter
+                        # BoringSSL intentionally uses GNU compound literals
+                        # in its vectorized C++ implementation. The parent
+                        # enables -pedantic-errors globally, so keep that
+                        # policy out of this pinned third-party dependency.
+                        -Wno-pedantic
+                        -Wno-error=pedantic)
+                endif()
             endif()
-        endif()
-    endforeach()
+        endforeach()
+
+        get_property(AUDIOCPP_BORINGSSL_SUBDIRECTORIES
+            DIRECTORY "${AUDIOCPP_DIRECTORY}" PROPERTY SUBDIRECTORIES)
+        foreach(AUDIOCPP_BORINGSSL_SUBDIRECTORY
+                IN LISTS AUDIOCPP_BORINGSSL_SUBDIRECTORIES)
+            audiocpp_relax_boringssl_warnings(
+                "${AUDIOCPP_BORINGSSL_SUBDIRECTORY}")
+        endforeach()
+    endfunction()
+    audiocpp_relax_boringssl_warnings("${audiocpp_boringssl_SOURCE_DIR}")
 
     target_compile_definitions(${TARGET} PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(${TARGET} PUBLIC ssl crypto)
