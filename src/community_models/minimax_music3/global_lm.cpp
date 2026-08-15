@@ -17,9 +17,11 @@ void validate_storage_type(assets::TensorStorageType storage_type) {
         case assets::TensorStorageType::F16:
         case assets::TensorStorageType::BF16:
         case assets::TensorStorageType::Q8_0:
+        case assets::TensorStorageType::Q4_0:
+        case assets::TensorStorageType::Q4_K:
             return;
         default:
-            throw std::runtime_error("MiniMax Music 3 weight_type supports native, f32, f16, bf16, and q8_0");
+            throw std::runtime_error("MiniMax Music 3 weight_type supports native, bf16, f16, q8_0, q4_0, and q4_k");
     }
 }
 
