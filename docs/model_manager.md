@@ -16,6 +16,36 @@ The same package surface is also available through the reusable native C++
 The Python v2 manager remains a supported alternative for existing scripted
 workflows while the native command surface matures.
 
+## Native Network Backend
+
+The native library, server, and standalone manager share one vendored
+`cpp-httplib` transport on Windows, Linux, and macOS. HTTPS is enabled by
+default with a pinned BoringSSL release that is fetched at configure time and
+linked statically. The resulting executables do not require libcurl, a system
+OpenSSL development package, or separate TLS DLLs at runtime.
+
+Offline and sandboxed builds may provide the same verified source archive with
+`-DAUDIOCPP_BORINGSSL_ARCHIVE=/path/to/boringssl.tar.gz`. The Nix package does
+this through a fixed-output derivation, so its CMake phase never accesses the
+network.
+
+The default configuration is equivalent to:
+
+```bash
+cmake -S . -B build -DAUDIOCPP_BUILD_BORINGSSL=ON
+```
+
+Packagers that prefer their distribution's OpenSSL can select it explicitly:
+
+```bash
+cmake -S . -B build \
+  -DAUDIOCPP_BUILD_BORINGSSL=OFF \
+  -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON
+```
+
+Disabling both options leaves only plain HTTP support and therefore cannot
+download normal Hugging Face `https://` package URLs.
+
 ## Native Standalone Manager
 
 The native executable embeds the active `model_specs/*.json` catalog. An

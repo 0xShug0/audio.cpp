@@ -95,6 +95,12 @@ option(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS
     OFF)
 option(ENGINE_ENABLE_NATIVE_CPU "Build ggml CPU kernels with native host ISA flags" ${ENGINE_DEFAULT_ENABLE_NATIVE_CPU})
 option(ENGINE_ENABLE_OPENMP "Build host code with OpenMP support" ON)
+option(AUDIOCPP_BUILD_BORINGSSL
+    "Build bundled BoringSSL for self-contained HTTPS model downloads"
+    ON)
+option(AUDIOCPP_USE_SYSTEM_OPENSSL
+    "Use a system OpenSSL installation instead of bundled BoringSSL"
+    OFF)
 option(ENGINE_ENABLE_CPU_ALL_VARIANTS
     "Build CPU backends as dynamic libraries with per-ISA variants (for Docker/portable builds)"
     OFF)
@@ -1286,13 +1292,11 @@ target_include_directories(audiocpp_package_manager PUBLIC
 target_include_directories(audiocpp_package_manager PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
-target_link_libraries(audiocpp_package_manager PRIVATE cjson_vendor)
-if (WIN32)
-    target_link_libraries(audiocpp_package_manager PUBLIC winhttp)
-else()
-    find_package(CURL REQUIRED)
-    target_link_libraries(audiocpp_package_manager PUBLIC CURL::libcurl)
-endif()
+add_subdirectory(external/cpp-httplib)
+target_link_libraries(audiocpp_package_manager PRIVATE
+    cjson_vendor
+    audiocpp_cpp_httplib
+)
 
 add_library(cjson_vendor STATIC
     external/cJSON/cJSON.c

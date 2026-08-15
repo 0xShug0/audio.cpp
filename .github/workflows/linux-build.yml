@@ -45,7 +45,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-13 g++-13 cmake make glslc libvulkan-dev spirv-headers libcurl4-openssl-dev
+          sudo apt-get install -y gcc-13 g++-13 cmake make glslc libvulkan-dev spirv-headers
 
       - name: Configure
         run: |

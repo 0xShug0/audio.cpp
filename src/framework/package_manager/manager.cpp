@@ -2,6 +2,8 @@
 
 #include "engine/framework/io/json.h"
 
+#include "httplib.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -20,14 +22,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#include <winhttp.h>
-#else
-#include <curl/curl.h>
-#endif
 
 namespace engine::package_manager {
 namespace {
@@ -273,143 +267,64 @@ struct HttpResult {
     std::unordered_map<std::string, std::string> headers;
 };
 
-#ifdef _WIN32
-
-std::wstring widen(const std::string & text) {
-    if (text.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (size <= 0) throw std::runtime_error("failed to convert HTTP text to UTF-16");
-    std::wstring result(static_cast<size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size);
-    return result;
-}
-
-std::string narrow(const std::wstring & text) {
-    if (text.empty()) return {};
-    const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    std::string result(static_cast<size_t>(size), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size, nullptr, nullptr);
-    return result;
-}
-
-struct WinHttpHandle {
-    HINTERNET value = nullptr;
-    ~WinHttpHandle() { if (value) WinHttpCloseHandle(value); }
+struct HttpUrl {
+    std::string scheme;
+    std::string host;
+    int port = 0;
+    std::string path;
 };
 
-std::string query_header(HINTERNET request, DWORD query, const wchar_t * custom = WINHTTP_HEADER_NAME_BY_INDEX) {
-    DWORD bytes = 0;
-    WinHttpQueryHeaders(request, query, custom, nullptr, &bytes, WINHTTP_NO_HEADER_INDEX);
-    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0) return {};
-    std::wstring value(bytes / sizeof(wchar_t), L'\0');
-    if (!WinHttpQueryHeaders(request, query, custom, value.data(), &bytes, WINHTTP_NO_HEADER_INDEX)) return {};
-    while (!value.empty() && value.back() == L'\0') value.pop_back();
-    return narrow(value);
-}
+HttpUrl parse_http_url(const std::string & url) {
+    const auto scheme_end = url.find("://");
+    if (scheme_end == std::string::npos) {
+        throw std::runtime_error("invalid model URL: no scheme");
+    }
 
-HttpResult http_request(
-    const std::string & url,
-    bool head,
-    std::ofstream * output,
-    const std::shared_ptr<std::atomic_bool> & cancelled,
-    const std::function<void(uint64_t)> & progress) {
-    URL_COMPONENTS parts{};
-    parts.dwStructSize = sizeof(parts);
-    parts.dwHostNameLength = static_cast<DWORD>(-1);
-    parts.dwUrlPathLength = static_cast<DWORD>(-1);
-    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
-    const auto wide_url = widen(url);
-    if (!WinHttpCrackUrl(wide_url.c_str(), 0, 0, &parts)) {
-        throw std::runtime_error("invalid download URL");
+    HttpUrl result;
+    result.scheme = lower(url.substr(0, scheme_end));
+    if (result.scheme != "http" && result.scheme != "https") {
+        throw std::runtime_error("unsupported model URL scheme: " + result.scheme);
     }
-    const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
-    std::wstring path(parts.lpszUrlPath, parts.dwUrlPathLength);
-    if (parts.dwExtraInfoLength) path.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
 
-    WinHttpHandle session{WinHttpOpen(L"audio.cpp native model manager/1.0",
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
-    if (!session.value) throw std::runtime_error("WinHTTP initialization failed");
-    WinHttpSetTimeouts(session.value, 60000, 60000, 300000, 300000);
-    WinHttpHandle connection{WinHttpConnect(session.value, host.c_str(), parts.nPort, 0)};
-    if (!connection.value) throw std::runtime_error("could not connect to model host");
-    WinHttpHandle request{WinHttpOpenRequest(connection.value, head ? L"HEAD" : L"GET", path.c_str(),
-        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-        parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)};
-    if (!request.value) throw std::runtime_error("could not create model download request");
-    const auto token = huggingface_token();
-    if (!token.empty()) {
-        const auto header = widen("Authorization: Bearer " + token);
-        WinHttpAddRequestHeaders(request.value, header.c_str(), static_cast<DWORD>(-1), WINHTTP_ADDREQ_FLAG_ADD);
-    }
-    if (!WinHttpSendRequest(request.value, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(request.value, nullptr)) {
-        throw std::runtime_error("model host request failed (WinHTTP " + std::to_string(GetLastError()) + ")");
-    }
-    DWORD status = 0;
-    DWORD status_size = sizeof(status);
-    WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size, WINHTTP_NO_HEADER_INDEX);
-    HttpResult result;
-    result.status = status;
-    result.headers["content-length"] = query_header(request.value, WINHTTP_QUERY_CONTENT_LENGTH);
-    result.headers["etag"] = query_header(request.value, WINHTTP_QUERY_ETAG);
-    result.headers["x-repo-commit"] = query_header(request.value, WINHTTP_QUERY_CUSTOM, L"X-Repo-Commit");
-    if (!head && output != nullptr && status >= 200 && status < 300) {
-        uint64_t downloaded = 0;
-        for (;;) {
-            if (cancelled && cancelled->load()) throw Cancelled();
-            DWORD available = 0;
-            if (!WinHttpQueryDataAvailable(request.value, &available)) throw std::runtime_error("download read failed");
-            if (available == 0) break;
-            std::vector<char> buffer(std::min<DWORD>(available, 1024 * 1024));
-            DWORD read = 0;
-            if (!WinHttpReadData(request.value, buffer.data(), static_cast<DWORD>(buffer.size()), &read)) {
-                throw std::runtime_error("download read failed");
-            }
-            output->write(buffer.data(), read);
-            if (!*output) throw std::runtime_error("could not write downloaded model file");
-            downloaded += read;
-            if (progress) progress(downloaded);
+    const auto authority_start = scheme_end + 3;
+    const auto path_start = url.find('/', authority_start);
+    auto authority = url.substr(authority_start,
+        path_start == std::string::npos ? std::string::npos : path_start - authority_start);
+    result.path = path_start == std::string::npos ? "/" : url.substr(path_start);
+    if (authority.empty()) throw std::runtime_error("invalid model URL: no host");
+
+    std::string port;
+    if (authority.front() == '[') {
+        const auto close = authority.find(']');
+        if (close == std::string::npos) throw std::runtime_error("invalid IPv6 model URL");
+        result.host = authority.substr(1, close - 1);
+        if (close + 1 < authority.size()) {
+            if (authority[close + 1] != ':') throw std::runtime_error("invalid model URL authority");
+            port = authority.substr(close + 2);
+        }
+    } else {
+        const auto colon = authority.rfind(':');
+        if (colon != std::string::npos && authority.find(':') == colon) {
+            result.host = authority.substr(0, colon);
+            port = authority.substr(colon + 1);
+        } else {
+            result.host = authority;
         }
     }
+    if (result.host.empty()) throw std::runtime_error("invalid model URL: no host");
+
+    try {
+        result.port = port.empty() ? (result.scheme == "https" ? 443 : 80) : std::stoi(port);
+    } catch (...) {
+        throw std::runtime_error("invalid model URL port");
+    }
+    if (result.port <= 0 || result.port > 65535) throw std::runtime_error("invalid model URL port");
     return result;
 }
 
-#else
-
-struct CurlContext {
-    std::ofstream * output = nullptr;
-    std::shared_ptr<std::atomic_bool> cancelled;
-    std::function<void(uint64_t)> progress;
-    uint64_t downloaded = 0;
-    std::unordered_map<std::string, std::string> headers;
-};
-
-size_t curl_write(char * data, size_t size, size_t count, void * user) {
-    auto & context = *static_cast<CurlContext *>(user);
-    if (context.cancelled && context.cancelled->load()) return 0;
-    const size_t bytes = size * count;
-    if (context.output) {
-        context.output->write(data, static_cast<std::streamsize>(bytes));
-        if (!*context.output) return 0;
-    }
-    context.downloaded += bytes;
-    if (context.progress) context.progress(context.downloaded);
-    return bytes;
-}
-
-size_t curl_header(char * data, size_t size, size_t count, void * user) {
-    auto & headers = static_cast<CurlContext *>(user)->headers;
-    std::string line(data, size * count);
-    const auto colon = line.find(':');
-    if (colon != std::string::npos) {
-        auto name = lower(line.substr(0, colon));
-        auto value = line.substr(colon + 1);
-        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.erase(value.begin());
-        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back();
-        headers[name] = value;
-    }
-    return size * count;
+std::string http_origin(const HttpUrl & url) {
+    const auto host = url.host.find(':') == std::string::npos ? url.host : "[" + url.host + "]";
+    return url.scheme + "://" + host + ":" + std::to_string(url.port);
 }
 
 HttpResult http_request(
@@ -418,38 +333,57 @@ HttpResult http_request(
     std::ofstream * output,
     const std::shared_ptr<std::atomic_bool> & cancelled,
     const std::function<void(uint64_t)> & progress) {
-    static const int initialized = [] { curl_global_init(CURL_GLOBAL_DEFAULT); return 1; }();
-    (void) initialized;
-    CURL * curl = curl_easy_init();
-    if (!curl) throw std::runtime_error("libcurl initialization failed");
-    CurlContext context{output, cancelled, progress};
-    struct curl_slist * request_headers = nullptr;
-    const auto token = huggingface_token();
-    if (!token.empty()) request_headers = curl_slist_append(request_headers, ("Authorization: Bearer " + token).c_str());
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "audio.cpp native model manager/1.0");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 60L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, head ? 60L : 0L);
-    curl_easy_setopt(curl, CURLOPT_NOBODY, head ? 1L : 0L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_header);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &context);
-    if (request_headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, request_headers);
-    const CURLcode code = curl_easy_perform(curl);
-    long status = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-    curl_slist_free_all(request_headers);
-    curl_easy_cleanup(curl);
-    if (code != CURLE_OK) {
-        if (cancelled && cancelled->load()) throw Cancelled();
-        throw std::runtime_error(std::string("model host request failed: ") + curl_easy_strerror(code));
-    }
-    return {status, std::move(context.headers)};
-}
-
+    const auto parsed = parse_http_url(url);
+    httplib::Client client(http_origin(parsed));
+    client.set_follow_location(true);
+    client.set_connection_timeout(60, 0);
+    client.set_read_timeout(head ? 60 : 300, 0);
+    client.set_write_timeout(60, 0);
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+    client.enable_server_certificate_verification(true);
 #endif
+
+    httplib::Headers request_headers{{"User-Agent", "audio.cpp native model manager/1.0"}};
+    const auto token = huggingface_token();
+    if (!token.empty()) {
+        request_headers.emplace("Authorization", "Bearer " + token);
+    }
+
+    uint64_t downloaded = 0;
+    bool write_failed = false;
+    const httplib::ContentReceiver receiver = [&](const char * data, size_t size) {
+        if (cancelled && cancelled->load()) return false;
+        if (output != nullptr) {
+            output->write(data, static_cast<std::streamsize>(size));
+            if (!*output) {
+                write_failed = true;
+                return false;
+            }
+        }
+        downloaded += size;
+        if (progress) progress(downloaded);
+        return true;
+    };
+    const httplib::DownloadProgress keep_downloading = [&](size_t, size_t) {
+        return !(cancelled && cancelled->load());
+    };
+
+    httplib::Result response = head
+        ? client.Head(parsed.path, request_headers)
+        : client.Get(parsed.path, request_headers, receiver, keep_downloading);
+    if (!response) {
+        if (cancelled && cancelled->load()) throw Cancelled();
+        if (write_failed) throw std::runtime_error("could not write downloaded model file");
+        throw std::runtime_error("model host request failed: " + httplib::to_string(response.error()));
+    }
+
+    HttpResult result;
+    result.status = response->status;
+    for (const auto & [name, value] : response->headers) {
+        result.headers[lower(name)] = value;
+    }
+    return result;
+}
 
 RemoteFileInfo remote_info(const Package & package, const std::string & remote) {
     const auto response = http_request(hf_url(package, remote), true, nullptr, {}, {});

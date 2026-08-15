@@ -17,7 +17,7 @@ ARG GCC_VERSION=14
 # Install build toolchain
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        gcc-${GCC_VERSION} g++-${GCC_VERSION} make cmake libgomp1 && \
+        gcc-${GCC_VERSION} g++-${GCC_VERSION} make cmake libgomp1 ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
