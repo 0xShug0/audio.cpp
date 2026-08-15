@@ -75,7 +75,7 @@ MiniMaxMusic3ConditionWeights load_condition_weights(
         *out.store,
         source,
         "proj",
-        storage_type,
+        conv_safe_storage_type(source, "proj", storage_type),
         config.out_dim,
         config.condition_hidden_dim,
         3,

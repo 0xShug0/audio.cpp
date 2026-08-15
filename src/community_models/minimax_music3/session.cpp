@@ -236,7 +236,7 @@ MiniMaxMusic3Request MiniMaxMusic3Session::parse_request(const runtime::TaskRequ
     if (out.lyrics.empty()) {
         throw std::runtime_error("MiniMax Music 3 requires lyrics");
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"duration_sec"})) {
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"duration_sec", "duration_seconds"})) {
         out.duration_sec = *value;
     }
     if (const auto value = runtime::parse_i64_option(request.options, {"num_inference_steps"})) {

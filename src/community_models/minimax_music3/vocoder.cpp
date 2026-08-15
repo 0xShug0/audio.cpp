@@ -86,7 +86,7 @@ Music3VocoderWeights load_vocoder_weights(
         *out.store,
         source,
         "dec_in_proj",
-        storage_type,
+        conv_safe_storage_type(source, "dec_in_proj", storage_type),
         config.decoder_input_dim,
         config.latent_channels / 2,
         1,
