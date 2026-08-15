@@ -67,7 +67,13 @@ if (AUDIOCPP_BUILD_BORINGSSL)
             else()
                 target_compile_options(${AUDIOCPP_BORINGSSL_TARGET} PRIVATE
                     -Wno-error
-                    -Wno-unused-parameter)
+                    -Wno-unused-parameter
+                    # BoringSSL intentionally uses GNU compound literals in
+                    # its vectorized C++ implementation. The parent project
+                    # enables -pedantic-errors globally, so keep that policy
+                    # from leaking into this pinned third-party dependency.
+                    -Wno-pedantic
+                    -Wno-error=pedantic)
             endif()
         endif()
     endforeach()
