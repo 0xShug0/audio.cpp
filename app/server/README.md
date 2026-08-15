@@ -219,7 +219,9 @@ demo_01_man|okay,I'm Cemo and what you just heard wasn't a human voice.
 demo_02_woman|以前我对这句话一知半解，现在好像有点懂了。因为你我开始留意很多以前不曾关心的事，开始对这个世界有了更多的好奇和善意。
 ```
 
-Relative `voice_dir` paths resolve against the config file's directory. When a request sends `"voice"` that is not a configured model preset, the server checks `<voice_dir>/<name>.wav`; if the file exists it is loaded as the cloning reference, and the `<name>` transcript from `prompt_text` is injected as `reference_text` unless the request already provides one.
+Relative `voice_dir` paths resolve against the config file's directory. The command-line option `--voice-dir <directory>` overrides the configured value, which is useful when a process manager launches multiple single-model server configurations against one shared voice library. Relative command-line paths resolve against the process working directory.
+
+When a request sends `"voice"` that is not a configured model preset, the server checks `<voice_dir>/<name>.wav`; if the file exists it is loaded as the cloning reference, and the `<name>` transcript from `prompt_text` is injected as `reference_text` unless the request already provides one.
 
 Resolution precedence for a TTS request's voice fields:
 
@@ -236,10 +238,11 @@ Resolution precedence for a TTS request's voice fields:
 build/bin/audiocpp_server --config server.json
 ```
 
-You can override the configured backend at startup:
+You can override configured server settings at startup, including the backend and shared voice library:
 
 ```bash
 build/bin/audiocpp_server --config server.json --backend vulkan
+build/bin/audiocpp_server --config server.json --voice-dir /absolute/path/to/voice
 ```
 
 ## Endpoints
