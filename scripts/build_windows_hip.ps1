@@ -50,21 +50,40 @@ function Find-FirstFile {
 
 # --- ROCm ---
 if ($RocmPath -eq "") {
-    if ($env:HIP_PATH -and (Test-Path (Join-Path $env:HIP_PATH "bin\clang++.exe"))) {
+    $hipPathHasClang = $env:HIP_PATH -and (
+        (Test-Path (Join-Path $env:HIP_PATH "bin\clang++.exe")) -or
+        (Test-Path (Join-Path $env:HIP_PATH "lib\llvm\bin\clang++.exe"))
+    )
+    if ($hipPathHasClang) {
         $RocmPath = (Resolve-Path $env:HIP_PATH).Path
     } else {
-        $clang = Find-FirstFile @("C:\Program Files\AMD\ROCm\*\bin\clang++.exe")
+        $clang = Find-FirstFile @(
+            "C:\Program Files\AMD\ROCm\*\bin\clang++.exe",
+            "C:\TheRock\build\lib\llvm\bin\clang++.exe"
+        )
         if ($clang -eq "") {
             throw "ROCm was not found. Install the AMD HIP SDK or pass -RocmPath."
         }
-        $RocmPath = (Resolve-Path (Join-Path (Split-Path $clang -Parent) "..")).Path
+        $clangDir = Split-Path $clang -Parent
+        if ($clangDir -like "*\lib\llvm\bin") {
+            $RocmPath = (Resolve-Path (Join-Path $clangDir "..\..\..")).Path
+        } else {
+            $RocmPath = (Resolve-Path (Join-Path $clangDir "..")).Path
+        }
     }
 }
-$clangxx = Join-Path $RocmPath "bin\clang++.exe"
-$clangc  = Join-Path $RocmPath "bin\clang.exe"
-if (-not (Test-Path $clangxx) -or -not (Test-Path $clangc)) {
-    throw "ROCm clang not found under $RocmPath\bin"
+$compilerDir = @(
+    (Join-Path $RocmPath "bin"),
+    (Join-Path $RocmPath "lib\llvm\bin")
+) | Where-Object {
+    (Test-Path (Join-Path $_ "clang.exe")) -and
+    (Test-Path (Join-Path $_ "clang++.exe"))
+} | Select-Object -First 1
+if ($null -eq $compilerDir) {
+    throw "ROCm clang not found under $RocmPath\bin or $RocmPath\lib\llvm\bin"
 }
+$clangxx = Join-Path $compilerDir "clang++.exe"
+$clangc  = Join-Path $compilerDir "clang.exe"
 
 # --- GPU targets ---
 if ($GpuTargets -eq "") {
@@ -126,7 +145,7 @@ if ($Clean) {
 
 $env:HIP_PATH = $RocmPath
 $env:ROCM_PATH = $RocmPath
-$env:PATH = @((Join-Path $RocmPath "bin"), $env:PATH) -join [IO.Path]::PathSeparator
+$env:PATH = @($compilerDir, (Join-Path $RocmPath "bin"), $env:PATH) -join [IO.Path]::PathSeparator
 
 $configureArgs = @(
     "-S", $sourceDir,
