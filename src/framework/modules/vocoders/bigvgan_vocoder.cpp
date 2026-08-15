@@ -138,7 +138,6 @@ Conv1dWeights load_weight_norm_conv1d(
     int64_t dilation,
     bool use_bias,
     assets::TensorStorageType storage_type) {
-    (void) storage_type;
     const auto weight_v = source.require_f32(prefix + ".weight_v", {out_channels, in_channels, kernel});
     const auto weight_g = source.require_f32(prefix + ".weight_g", {out_channels, 1, 1});
     Conv1dWeights out;
@@ -151,7 +150,7 @@ Conv1dWeights load_weight_norm_conv1d(
     out.use_bias = use_bias;
     out.weight = store.make_from_f32(
         core::TensorShape::from_dims({out_channels, in_channels, kernel}),
-        assets::TensorStorageType::F32,
+        storage_type,
         fold_weight_norm(weight_v, weight_g, out_channels, in_channels, kernel));
     if (use_bias) {
         out.bias = store.make_from_f32(
@@ -199,7 +198,6 @@ ConvTranspose1dWeights load_weight_norm_conv_transpose1d(
     int64_t stride,
     int64_t padding,
     assets::TensorStorageType storage_type) {
-    (void) storage_type;
     const auto weight_v = source.require_f32(prefix + ".weight_v", {in_channels, out_channels, kernel});
     const auto weight_g = source.require_f32(prefix + ".weight_g", {in_channels, 1, 1});
     ConvTranspose1dWeights out;
@@ -211,7 +209,7 @@ ConvTranspose1dWeights load_weight_norm_conv_transpose1d(
     out.use_bias = true;
     out.conv1d_weight = store.make_from_f32(
         core::TensorShape::from_dims({out_channels, in_channels, kernel}),
-        assets::TensorStorageType::F32,
+        storage_type,
         transpose_conv1d_to_conv1d_weight(
             fold_weight_norm(weight_v, weight_g, in_channels, out_channels, kernel),
             in_channels,
@@ -234,7 +232,6 @@ ConvTranspose1dWeights load_weight_norm_conv_transpose1d_source(
     int64_t stride,
     int64_t padding,
     assets::TensorStorageType storage_type) {
-    (void) storage_type;
     const auto weight_v = source.require_f32(prefix + ".weight_v", {in_channels, out_channels, kernel});
     const auto weight_g = source.require_f32(prefix + ".weight_g", {in_channels, 1, 1});
     ConvTranspose1dWeights out;
@@ -247,11 +244,11 @@ ConvTranspose1dWeights load_weight_norm_conv_transpose1d_source(
     auto folded = fold_weight_norm(weight_v, weight_g, in_channels, out_channels, kernel);
     out.transpose_weight = store.make_from_f32(
         core::TensorShape::from_dims({in_channels, out_channels, kernel}),
-        assets::TensorStorageType::F32,
+        storage_type,
         folded);
     out.conv1d_weight = store.make_from_f32(
         core::TensorShape::from_dims({out_channels, in_channels, kernel}),
-        assets::TensorStorageType::F32,
+        storage_type,
         transpose_conv1d_to_conv1d_weight(folded, in_channels, out_channels, kernel));
     out.bias = store.make_from_f32(
         core::TensorShape::from_dims({out_channels}),
@@ -342,7 +339,6 @@ ResBlockWeights load_resblock(
     int64_t channels,
     int64_t kernel,
     assets::TensorStorageType storage_type) {
-    (void) storage_type;
     ResBlockWeights out;
     out.convs1.reserve(3);
     out.convs2.reserve(3);

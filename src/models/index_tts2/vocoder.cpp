@@ -1,5 +1,6 @@
 #include "engine/models/index_tts2/vocoder.h"
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
@@ -46,6 +47,22 @@ IndexTTS2BigVganVocoder::IndexTTS2BigVganVocoder(
     : assets_(std::move(assets)) {
     if (assets_ == nullptr) {
         throw std::runtime_error("IndexTTS2 BigVGAN vocoder requires assets");
+    }
+    // Folded weight-norm conv tensors are derived host-side values, so "native"
+    // cannot resolve through load_tensor; follow the checkpoint dtype so an F16
+    // GGUF keeps F16 vocoder weights in the compute graph.
+    if (weight_storage_type == engine::assets::TensorStorageType::Native) {
+        for (const auto & tensor : assets_->bigvgan_weights->tensors()) {
+            if (tensor.name.find(".weight_v") != std::string::npos ||
+                tensor.name.find(".weight") != std::string::npos) {
+                try {
+                    weight_storage_type =
+                        engine::assets::tensor_storage_type_for_dtype(tensor.dtype);
+                } catch (...) {
+                }
+                break;
+            }
+        }
     }
     component_ = engine::modules::BigVganVocoderComponent::load_from_tensor_source(
         assets_->bigvgan_weights,
