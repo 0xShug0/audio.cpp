@@ -55,6 +55,23 @@ if (AUDIOCPP_BUILD_BORINGSSL)
     set(BUILD_SHARED_LIBS ${AUDIOCPP_SAVED_BUILD_SHARED_LIBS})
     set(BUILD_TESTING ${AUDIOCPP_SAVED_BUILD_TESTING})
 
+    # Some packagers (notably Nix) inject a global -Werror. Do not let the
+    # parent project's warning policy turn compatibility warnings inside the
+    # pinned third-party TLS implementation into audio.cpp build failures.
+    foreach(AUDIOCPP_BORINGSSL_TARGET crypto ssl fipsmodule)
+        if (TARGET ${AUDIOCPP_BORINGSSL_TARGET})
+            set_property(TARGET ${AUDIOCPP_BORINGSSL_TARGET}
+                PROPERTY COMPILE_WARNING_AS_ERROR OFF)
+            if (MSVC)
+                target_compile_options(${AUDIOCPP_BORINGSSL_TARGET} PRIVATE /WX-)
+            else()
+                target_compile_options(${AUDIOCPP_BORINGSSL_TARGET} PRIVATE
+                    -Wno-error
+                    -Wno-unused-parameter)
+            endif()
+        endif()
+    endforeach()
+
     target_compile_definitions(${TARGET} PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(${TARGET} PUBLIC ssl crypto)
 elseif (AUDIOCPP_USE_SYSTEM_OPENSSL)
