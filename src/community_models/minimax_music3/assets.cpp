@@ -147,4 +147,19 @@ std::shared_ptr<const MiniMaxMusic3Assets> load_minimax_music3_assets(
     return assets;
 }
 
+assets::TensorStorageType conv_safe_storage_type(
+    const assets::TensorSource & source,
+    const std::string & tensor_prefix,
+    assets::TensorStorageType requested) {
+    if (requested == assets::TensorStorageType::BF16) {
+        return assets::TensorStorageType::F32;
+    }
+    if (requested == assets::TensorStorageType::Native &&
+        assets::ggml_type_for_tensor_dtype(source.require_metadata(tensor_prefix + ".weight").dtype) ==
+            GGML_TYPE_BF16) {
+        return assets::TensorStorageType::F32;
+    }
+    return requested;
+}
+
 }  // namespace engine::models::minimax_music3
