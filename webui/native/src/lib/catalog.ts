@@ -18,7 +18,7 @@ interface PackageSpec {
   family: string;
   packages?: Array<Omit<PackageEntry, 'family'>>;
   options?: {
-    request?: Array<{ name: string }>;
+    request?: Array<{ name: string; required?: boolean }>;
   };
   ui?: {
     builtin_voices?: string[];
@@ -179,6 +179,9 @@ export const catalog = (rawCatalog.models as CatalogEntry[]).flatMap((entry) => 
     install_packages: choices,
     path: installPackage?.path || entry.path,
     request_options: spec?.options?.request?.map((option) => option.name),
+    required_request_options: spec?.options?.request
+      ?.filter((option) => option.required === true)
+      .map((option) => option.name),
     builtin_voices: spec?.ui?.builtin_voices,
     default_voice: spec?.ui?.default_voice
   }];

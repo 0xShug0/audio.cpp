@@ -258,7 +258,9 @@
     !selected?.id.includes('custom');
   $: referenceVoiceRequired = !quickStartVoice && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
-  $: referenceTextRequired = Boolean(voiceFile) && isQwenBase;
+  $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
+  $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
+    (Boolean(voiceFile) && isQwenBase);
   $: quickStartVoices = Object.entries(demoVoiceSources)
     .filter(([, source]) => bundledVoices.includes(source))
     .map(([voice]) => voice);
@@ -492,6 +494,10 @@
     // Specs that publish request metadata are authoritative. Older specs
     // without that metadata keep the legacy UI behavior until migrated.
     return entry.request_options === undefined || entry.request_options.includes(option);
+  }
+
+  function requiresRequestOption(entry: CatalogEntry, option: string) {
+    return entry.required_request_options?.includes(option) === true;
   }
 
   function packageVersionLabel(size: ModelPackageSize | undefined, translate = tr) {
@@ -1158,7 +1164,11 @@
         throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires a reference voice.`);
       }
       if (referenceTextRequired && !referenceText.trim()) {
-        throw new StatusWarning('Qwen3-TTS Base voice cloning requires a reference transcript. Choose a matching .txt file or enter the transcript.');
+        const prefix = isQwenBase ? 'Qwen3-TTS Base voice cloning' : (selected.display_name_en || selected.display_name);
+        throw new StatusWarning(`${prefix} requires a reference transcript. Choose a matching .txt file or enter the transcript.`);
+      }
+      if (lyricsRequired && !lyrics.trim()) {
+        throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires lyrics.`);
       }
       await ensureLoaded();
       const options = requestOptions();
@@ -1727,8 +1737,9 @@
         {/if}
 
         {#if selected.task === 'gen'}
-          <label for="lyrics">{tr('request.lyrics')} <span>{tr('request.optional')}</span></label>
-          <textarea id="lyrics" rows="3" bind:value={lyrics} placeholder="[Verse]…"></textarea>
+          <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
+          <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
+            aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
         {/if}
 
         {#if selected.task === 'asr'}
