@@ -37,6 +37,10 @@ struct Qwen3TalkerCodes {
     Qwen3SpeechCodes decoder_input_codes;
 };
 
+void validate_qwen3_talker_voice_clone_prefill(
+    const Qwen3TalkerPrefill & prefill,
+    int64_t hidden_size);
+
 class Qwen3TalkerWeightsRuntime;
 class Qwen3TalkerStepRuntime;
 

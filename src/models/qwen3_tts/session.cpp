@@ -26,7 +26,7 @@ std::shared_ptr<const Qwen3TTSAssets> require_assets(std::shared_ptr<const Qwen3
     return assets;
 }
 
-Qwen3TTSGenerationOptions generation_options_from_request(
+Qwen3TTSGenerationOptions generation_options_from_request_impl(
     const runtime::TaskRequest & request,
     const Qwen3TTSConfig & config) {
     Qwen3TTSGenerationOptions options;
@@ -40,39 +40,50 @@ Qwen3TTSGenerationOptions generation_options_from_request(
     if (const auto value = runtime::find_option(request.options, {"do_sample"})) {
         options.do_sample = runtime::parse_bool_option(*value, "do_sample");
     }
-    if (const auto value = runtime::find_option(
-            request.options,
-            {"subtalker_do_sample"})) {
+    if (const auto value = runtime::find_option(request.options, {"subtalker_do_sample"})) {
         options.subtalker_do_sample = runtime::parse_bool_option(*value, "subtalker_do_sample");
     }
-    if (const auto value = runtime::parse_float_option(request.options, {"temperature"})) {
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"temperature"})) {
         options.temperature = *value;
     }
     if (const auto value = runtime::parse_int_option(request.options, {"top_k"})) {
         options.top_k = *value;
     }
-    if (const auto value = runtime::parse_float_option(request.options, {"top_p"})) {
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"top_p"})) {
         options.top_p = *value;
     }
-    if (const auto value = runtime::parse_float_option(
-            request.options,
-            {"repetition_penalty"})) {
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"repetition_penalty"})) {
         options.repetition_penalty = *value;
     }
-    if (const auto value = runtime::parse_float_option(
-            request.options,
-            {"subtalker_temperature"})) {
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"subtalker_temperature"})) {
         options.subtalker_temperature = *value;
     }
-    if (const auto value = runtime::parse_int_option(
-            request.options,
-            {"subtalker_top_k"})) {
+    if (const auto value = runtime::parse_int_option(request.options, {"subtalker_top_k"})) {
         options.subtalker_top_k = *value;
     }
-    if (const auto value = runtime::parse_float_option(
-            request.options,
-            {"subtalker_top_p"})) {
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"subtalker_top_p"})) {
         options.subtalker_top_p = *value;
+    }
+    if (options.do_sample && options.temperature <= 0.0F) {
+        throw std::runtime_error("Qwen3 TTS temperature must be positive when sampling");
+    }
+    if (options.top_k < 0) {
+        throw std::runtime_error("Qwen3 TTS top_k must be non-negative");
+    }
+    if (options.top_p < 0.0F || options.top_p > 1.0F) {
+        throw std::runtime_error("Qwen3 TTS top_p must be in [0, 1]");
+    }
+    if (options.repetition_penalty <= 0.0F) {
+        throw std::runtime_error("Qwen3 TTS repetition_penalty must be positive");
+    }
+    if (options.subtalker_do_sample && options.subtalker_temperature <= 0.0F) {
+        throw std::runtime_error("Qwen3 TTS subtalker_temperature must be positive when sampling");
+    }
+    if (options.subtalker_top_k < 0) {
+        throw std::runtime_error("Qwen3 TTS subtalker_top_k must be non-negative");
+    }
+    if (options.subtalker_top_p < 0.0F || options.subtalker_top_p > 1.0F) {
+        throw std::runtime_error("Qwen3 TTS subtalker_top_p must be in [0, 1]");
     }
     options.seed = runtime::parse_u32_option(request.options, {"seed"})
         .value_or(runtime::random_u32_seed());
@@ -179,7 +190,45 @@ void validate_conv_weight_storage(engine::assets::TensorStorageType storage_type
     throw std::runtime_error(std::string(option_name) + " currently supports only native, f32, and f16");
 }
 
+class TalkerCachedStepReleaseGuard {
+public:
+    TalkerCachedStepReleaseGuard(Qwen3TalkerStepRuntime * runtime, bool enabled)
+        : runtime_(runtime), enabled_(enabled) {}
+
+    ~TalkerCachedStepReleaseGuard() noexcept {
+        try {
+            release();
+        } catch (...) {
+            // Cleanup must not replace the request exception during stack unwinding.
+        }
+    }
+
+    void release() {
+        if (!enabled_ || released_ || runtime_ == nullptr) {
+            return;
+        }
+        const auto release_start = Clock::now();
+        const int64_t released_steps = runtime_->release_cached_step_graph();
+        debug::timing_log_scalar(
+            "qwen3_tts.talker.cached_step_release_ms",
+            engine::debug::elapsed_ms(release_start, Clock::now()));
+        debug::timing_log_scalar("qwen3_tts.talker.cached_step_released_steps", released_steps);
+        released_ = true;
+    }
+
+private:
+    Qwen3TalkerStepRuntime * runtime_ = nullptr;
+    bool enabled_ = false;
+    bool released_ = false;
+};
+
 }  // namespace
+
+Qwen3TTSGenerationOptions qwen3_tts_generation_options_from_request(
+    const runtime::TaskRequest & request,
+    const Qwen3TTSConfig & config) {
+    return generation_options_from_request_impl(request, config);
+}
 
 bool Qwen3TTSSession::VoicePromptCacheKeyEqual::operator()(
     const VoicePromptCacheKey & lhs,
@@ -336,16 +385,7 @@ void Qwen3TTSSession::prepare(const runtime::SessionPreparationRequest & request
 runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
     require_prepared("Qwen3 TTS run");
     const auto wall_start = Clock::now();
-    auto release_talker_cached_step_graph = [&]() {
-        if (mem_saver_) {
-            const auto release_start = Clock::now();
-            const int64_t released_steps = talker_step_->release_cached_step_graph();
-            debug::timing_log_scalar(
-                "qwen3_tts.talker.cached_step_release_ms",
-                engine::debug::elapsed_ms(release_start, Clock::now()));
-            debug::timing_log_scalar("qwen3_tts.talker.cached_step_released_steps", released_steps);
-        }
-    };
+    TalkerCachedStepReleaseGuard release_talker_cached_step_graph(talker_step_.get(), mem_saver_);
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
     const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
@@ -375,7 +415,7 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
                 speech_decoder_->decode(codes.generated_codes));
             decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
         }
-        release_talker_cached_step_graph();
+        release_talker_cached_step_graph.release();
         runtime::TaskResult result;
         result.audio_output = std::move(merged_audio);
         debug::timing_log_scalar("qwen3_tts.voice_design_prefill_build_ms", prefill_ms);
@@ -410,7 +450,7 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
                 speech_decoder_->decode(codes.generated_codes));
             decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
         }
-        release_talker_cached_step_graph();
+        release_talker_cached_step_graph.release();
         runtime::TaskResult result;
         result.audio_output = std::move(merged_audio);
         debug::timing_log_scalar("qwen3_tts.custom_voice_prefill_build_ms", prefill_ms);
@@ -444,9 +484,6 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
         const auto prefill_start = Clock::now();
         const auto prefill = prompt_builder.build_prefill(qwen_request, voice_prompt);
         prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
-        if (!voice_prompt.reference_codes.has_value()) {
-            throw std::runtime_error("Qwen3 base TTS talker currently requires ICL reference codes");
-        }
         const auto talker_start = Clock::now();
         const auto codes = talker_step_->generate(
             prefill,
@@ -454,14 +491,15 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
             qwen_request.generation.repetition_penalty);
         talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
         const auto decoder_start = Clock::now();
-        runtime::append_audio_buffer(
-            merged_audio,
-            speech_decoder_->decode_and_trim_reference(
-                *voice_prompt.reference_codes,
-                codes.generated_codes));
+        runtime::AudioBuffer decoded = voice_prompt.reference_codes.has_value()
+            ? speech_decoder_->decode_and_trim_reference(
+                  *voice_prompt.reference_codes,
+                  codes.generated_codes)
+            : speech_decoder_->decode(codes.generated_codes);
+        runtime::append_audio_buffer(merged_audio, decoded);
         decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
     }
-    release_talker_cached_step_graph();
+    release_talker_cached_step_graph.release();
     runtime::TaskResult result;
     result.audio_output = std::move(merged_audio);
     debug::timing_log_scalar("qwen3_tts.voice_prompt_ms", prompt_ms);
@@ -529,7 +567,7 @@ Qwen3TTSRequest Qwen3TTSSession::make_request(const runtime::TaskRequest & reque
     Qwen3TTSRequest out;
     out.text = request.text_input->text;
     out.language = !request.text_input->language.empty() ? request.text_input->language : "Auto";
-    out.generation = generation_options_from_request(request, assets_->config);
+    out.generation = qwen3_tts_generation_options_from_request(request, assets_->config);
     if (assets_->config.variant == Qwen3TTSVariant::Base) {
         const runtime::AudioBuffer * reference_audio = nullptr;
         if (request.voice.has_value()
