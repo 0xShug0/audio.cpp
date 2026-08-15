@@ -84,7 +84,8 @@
         "name": "weight_context_mb",
         "type": "int",
         "description": "Backend weight context size in megabytes per component store.",
-        "default": 0,
+        "default": 256,
+        "min": 1,
         "required": false
       },
       {

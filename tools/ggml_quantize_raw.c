@@ -11,7 +11,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 int main(int argc, char ** argv) {
+#ifdef _WIN32
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1 ||
+        _setmode(_fileno(stdout), _O_BINARY) == -1) {
+        fprintf(stderr, "failed to switch standard streams to binary mode\n");
+        return 1;
+    }
+#endif
+
     if (argc != 4) {
         fprintf(stderr, "usage: %s <ggml-type-int> <row-size> <chunk-rows>\n", argv[0]);
         return 1;

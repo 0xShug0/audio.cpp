@@ -21,6 +21,7 @@ namespace assets = engine::assets;
 namespace core = engine::core;
 
 constexpr int64_t kBatch = 2;  // conditional + unconditional CFG branches
+constexpr float kPi = 3.14159265358979323846F;
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -204,7 +205,7 @@ struct MiniMaxMusic3DitRuntime::Impl {
         ggml_tensor * angles = ggml_scale(
             ctx,
             ggml_mul_mat(ctx, ggml_reshape_2d(ctx, time_proj.tensor, 1, config.dit_fourier_dim / 2), ggml_reshape_2d(ctx, in_time, 1, 1)),
-            2.0F * static_cast<float>(M_PI));  // [fourier/2, 1]
+            2.0F * kPi);  // [fourier/2, 1]
         ggml_tensor * fourier = ggml_concat(ctx, ggml_cos(ctx, angles), ggml_sin(ctx, angles), 0);  // [fourier, 1]
         ggml_tensor * temb = ggml_add(
             ctx,

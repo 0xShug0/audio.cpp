@@ -16,6 +16,7 @@
 #include <functional>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 #include <random>
 #include <stdexcept>
 #include <utility>
@@ -70,6 +71,17 @@ int32_t sample_top_k(const std::vector<float> & logits, int top_k, std::mt19937 
 struct MiniMaxMusic3PipelineRuntime::Impl {
     size_t weight_context_bytes = 0;
     bool mem_saver = true;
+    std::mutex generate_mutex;
+
+    // These runtimes retain their uploaded weights (and, where supported, their
+    // request-shape graphs) between generate() calls when memory saving is disabled.
+    // Keep the LM before the depth decoder so the dependent token embedding outlives
+    // the depth decoder during destruction.
+    std::unique_ptr<MiniMaxMusic3LmRuntime> lm;
+    std::unique_ptr<MiniMaxMusic3DepthDecoderRuntime> depth;
+    std::unique_ptr<MiniMaxMusic3ConditionEncoderRuntime> condition_encoder;
+    std::unique_ptr<MiniMaxMusic3DitRuntime> dit;
+    std::unique_ptr<MiniMaxMusic3VocoderRuntime> vocoder;
 };
 
 MiniMaxMusic3PipelineRuntime::MiniMaxMusic3PipelineRuntime(
@@ -90,6 +102,9 @@ MiniMaxMusic3PipelineRuntime::MiniMaxMusic3PipelineRuntime(
 MiniMaxMusic3PipelineRuntime::~MiniMaxMusic3PipelineRuntime() = default;
 
 MiniMaxMusic3GenerateResult MiniMaxMusic3PipelineRuntime::generate(const MiniMaxMusic3GenerateRequest & request) {
+    // Retained runtimes contain mutable input buffers, KV state, and graph state. A
+    // session therefore executes one request at a time in either memory mode.
+    const std::lock_guard<std::mutex> generate_lock(impl_->generate_mutex);
     const auto & config = assets_->config;
     const int64_t hidden = config.lm_hidden;
     const int64_t frame_width = config.cond_layers * hidden;
@@ -112,17 +127,40 @@ MiniMaxMusic3GenerateResult MiniMaxMusic3PipelineRuntime::generate(const MiniMax
     frame_hiddens.reserve(static_cast<size_t>(std::min<int64_t>(max_frames, 2048) * frame_width));
     int64_t frames = 0;
     {
-        MiniMaxMusic3LmRuntime lm(
-            execution_, assets_->lm_weights, config, impl_->weight_context_bytes);
-        MiniMaxMusic3DepthDecoderRuntime depth(
-            execution_,
-            assets_->depth_decoder_weights,
-            lm.token_embedding(),
-            config,
-            impl_->weight_context_bytes);
+        std::unique_ptr<MiniMaxMusic3LmRuntime> scoped_lm;
+        std::unique_ptr<MiniMaxMusic3DepthDecoderRuntime> scoped_depth;
+        MiniMaxMusic3LmRuntime * lm = nullptr;
+        MiniMaxMusic3DepthDecoderRuntime * depth = nullptr;
+        if (impl_->mem_saver) {
+            scoped_lm = std::make_unique<MiniMaxMusic3LmRuntime>(
+                execution_, assets_->lm_weights, config, impl_->weight_context_bytes);
+            scoped_depth = std::make_unique<MiniMaxMusic3DepthDecoderRuntime>(
+                execution_,
+                assets_->depth_decoder_weights,
+                scoped_lm->token_embedding(),
+                config,
+                impl_->weight_context_bytes);
+            lm = scoped_lm.get();
+            depth = scoped_depth.get();
+        } else {
+            if (impl_->lm == nullptr) {
+                impl_->lm = std::make_unique<MiniMaxMusic3LmRuntime>(
+                    execution_, assets_->lm_weights, config, impl_->weight_context_bytes);
+            }
+            if (impl_->depth == nullptr) {
+                impl_->depth = std::make_unique<MiniMaxMusic3DepthDecoderRuntime>(
+                    execution_,
+                    assets_->depth_decoder_weights,
+                    impl_->lm->token_embedding(),
+                    config,
+                    impl_->weight_context_bytes);
+            }
+            lm = impl_->lm.get();
+            depth = impl_->depth.get();
+        }
         const int64_t required_cache_steps =
             static_cast<int64_t>(prompt.cond_ids.size()) + max_frames + 2;
-        auto step = lm.prefill(prompt.cond_ids, prompt.uncond_ids, required_cache_steps);
+        auto step = lm->prefill(prompt.cond_ids, prompt.uncond_ids, required_cache_steps);
 
         // Gumbel(0, 1) noise drives the depth decoder's on-device top-k sampling.
         const size_t gumbel_size =
@@ -169,7 +207,7 @@ MiniMaxMusic3GenerateResult MiniMaxMusic3PipelineRuntime::generate(const MiniMax
 
             const auto depth_start = Clock::now();
             refill_gumbel();
-            auto frame = depth.decode_frame(step.last_hidden, semantic_code, gumbel);
+            auto frame = depth->decode_frame(step.last_hidden, semantic_code, gumbel);
             depth_ms += engine::debug::elapsed_ms(depth_start, Clock::now());
             if (frame_index > 0) {
                 frame_hiddens.insert(
@@ -186,7 +224,7 @@ MiniMaxMusic3GenerateResult MiniMaxMusic3PipelineRuntime::generate(const MiniMax
                 }
             }
             const auto lm_start = Clock::now();
-            step = lm.decode_embedding(frame.feedback_embedding);
+            step = lm->decode_embedding(frame.feedback_embedding);
             lm_ms += engine::debug::elapsed_ms(lm_start, Clock::now());
         }
         engine::debug::timing_log_scalar("minimax_music3.ar_lm_decode_ms", lm_ms);
@@ -212,10 +250,29 @@ MiniMaxMusic3GenerateResult MiniMaxMusic3PipelineRuntime::generate(const MiniMax
     std::vector<int64_t> latent_lengths;
     const int64_t latent_channels = config.dit_in_channels;
     {
-        MiniMaxMusic3ConditionEncoderRuntime condition_encoder(
-            execution_, assets_->condition_encoder_weights, config, impl_->weight_context_bytes);
-        MiniMaxMusic3DitRuntime dit(
-            execution_, assets_->dit_weights, config, impl_->weight_context_bytes);
+        std::unique_ptr<MiniMaxMusic3ConditionEncoderRuntime> scoped_condition_encoder;
+        std::unique_ptr<MiniMaxMusic3DitRuntime> scoped_dit;
+        MiniMaxMusic3ConditionEncoderRuntime * condition_encoder = nullptr;
+        MiniMaxMusic3DitRuntime * dit = nullptr;
+        if (impl_->mem_saver) {
+            scoped_condition_encoder = std::make_unique<MiniMaxMusic3ConditionEncoderRuntime>(
+                execution_, assets_->condition_encoder_weights, config, impl_->weight_context_bytes);
+            scoped_dit = std::make_unique<MiniMaxMusic3DitRuntime>(
+                execution_, assets_->dit_weights, config, impl_->weight_context_bytes);
+            condition_encoder = scoped_condition_encoder.get();
+            dit = scoped_dit.get();
+        } else {
+            if (impl_->condition_encoder == nullptr) {
+                impl_->condition_encoder = std::make_unique<MiniMaxMusic3ConditionEncoderRuntime>(
+                    execution_, assets_->condition_encoder_weights, config, impl_->weight_context_bytes);
+            }
+            if (impl_->dit == nullptr) {
+                impl_->dit = std::make_unique<MiniMaxMusic3DitRuntime>(
+                    execution_, assets_->dit_weights, config, impl_->weight_context_bytes);
+            }
+            condition_encoder = impl_->condition_encoder.get();
+            dit = impl_->dit.get();
+        }
 
         const auto flow_start = Clock::now();
         std::vector<float> previous_latent;    // [latent_channels, overlap]
@@ -225,12 +282,12 @@ MiniMaxMusic3GenerateResult MiniMaxMusic3PipelineRuntime::generate(const MiniMax
         for (const int64_t chunk_start : chunk_starts) {
             const int64_t chunk_end = std::min(chunk_start + Contract::kChunkFrames, frames);
             const int64_t chunk_frames = chunk_end - chunk_start;
-            auto condition_rows = condition_encoder.encode(
+            auto condition_rows = condition_encoder->encode(
                 std::vector<float>(
                     frame_hiddens.begin() + chunk_start * frame_width,
                     frame_hiddens.begin() + chunk_end * frame_width),
                 chunk_frames);
-            const int64_t length = condition_encoder.latent_length(chunk_frames);
+            const int64_t length = condition_encoder->latent_length(chunk_frames);
             // Row-major [length, cond_dim] -> channel-major [cond_dim, length].
             std::vector<float> condition(static_cast<size_t>(config.cond_out_dim * length));
             for (int64_t index = 0; index < length; ++index) {
@@ -246,7 +303,7 @@ MiniMaxMusic3GenerateResult MiniMaxMusic3PipelineRuntime::generate(const MiniMax
                     previous_condition.begin() + channel * previous_overlap + overlap,
                     condition.begin() + channel * length);
             }
-            dit.begin_chunk(condition, length);
+            dit->begin_chunk(condition, length);
 
             auto latent = engine::sampling::generate_normal_noise(
                 static_cast<size_t>(latent_channels * length),
@@ -275,7 +332,7 @@ MiniMaxMusic3GenerateResult MiniMaxMusic3PipelineRuntime::generate(const MiniMax
                         }
                     }
                 }
-                const auto velocity = dit.guided_velocity(latent, t, request.guidance_scale);
+                const auto velocity = dit->guided_velocity(latent, t, request.guidance_scale);
                 const float dt = 1.0F / static_cast<float>(steps);
                 for (size_t index = 0; index < latent.size(); ++index) {
                     latent[index] += dt * velocity[index];
@@ -322,12 +379,23 @@ MiniMaxMusic3GenerateResult MiniMaxMusic3PipelineRuntime::generate(const MiniMax
     result.sample_rate = config.sample_rate;
     result.channels = 2;
     {
-        MiniMaxMusic3VocoderRuntime vocoder(
-            execution_, assets_->vocoder_weights, config, impl_->weight_context_bytes);
+        std::unique_ptr<MiniMaxMusic3VocoderRuntime> scoped_vocoder;
+        MiniMaxMusic3VocoderRuntime * vocoder = nullptr;
+        if (impl_->mem_saver) {
+            scoped_vocoder = std::make_unique<MiniMaxMusic3VocoderRuntime>(
+                execution_, assets_->vocoder_weights, config, impl_->weight_context_bytes);
+            vocoder = scoped_vocoder.get();
+        } else {
+            if (impl_->vocoder == nullptr) {
+                impl_->vocoder = std::make_unique<MiniMaxMusic3VocoderRuntime>(
+                    execution_, assets_->vocoder_weights, config, impl_->weight_context_bytes);
+            }
+            vocoder = impl_->vocoder.get();
+        }
         const auto vocode_start = Clock::now();
         const int64_t hop = config.cond_output_hop;
         for (size_t chunk_index = 0; chunk_index < latent_chunks.size(); ++chunk_index) {
-            auto waveform = vocoder.decode(latent_chunks[chunk_index], latent_lengths[chunk_index]);
+            auto waveform = vocoder->decode(latent_chunks[chunk_index], latent_lengths[chunk_index]);
             const int64_t samples = static_cast<int64_t>(waveform.size()) / 2;
             const int64_t left =
                 chunk_index == 0 ? 0 : Contract::kCropLeftLatent * hop;
