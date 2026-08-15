@@ -168,12 +168,20 @@ core::TensorValue adaptive_rms_norm(
     return modules::AddModule{}.build(ctx, modules::MulModule{}.build(ctx, normed, weight), bias);
 }
 
+// CUDA matmul kernels handle reduced-precision weights correctly, so the s2mel
+// CFM estimator follows the module default precision there. Other backends stay
+// pinned to F32: the ggml CPU kernels produced audible noise in the CFM wavenet
+// with reduced precision.
+ggml_prec cfm_linear_precision(core::BackendType backend_type) {
+    return backend_type == core::BackendType::Cuda ? GGML_PREC_DEFAULT : GGML_PREC_F32;
+}
+
 core::TensorValue cfm_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const IndexTTS2DitLayerWeights & weights) {
-    auto qkv = modules::LinearModule({kHidden, 3 * kHidden, false, GGML_PREC_F32}).build(ctx, input, weights.qkv);
+    auto qkv = modules::LinearModule({kHidden, 3 * kHidden, false, cfm_linear_precision(ctx.backend_type)}).build(ctx, input, weights.qkv);
     auto q = slice_last(ctx, qkv, 0, kHidden);
     auto k = slice_last(ctx, qkv, kHidden, kHidden);
     auto v = slice_last(ctx, qkv, 2 * kHidden, kHidden);
@@ -198,18 +206,18 @@ core::TensorValue cfm_attention(
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], kDitHeads, kDitHeadDim}),
         GGML_TYPE_F32);
     context = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, context), input.shape);
-    return modules::LinearModule({kHidden, kHidden, false, GGML_PREC_F32}).build(ctx, context, weights.attention_out);
+    return modules::LinearModule({kHidden, kHidden, false, cfm_linear_precision(ctx.backend_type)}).build(ctx, context, weights.attention_out);
 }
 
 core::TensorValue cfm_ffn(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const IndexTTS2DitLayerWeights & weights) {
-    auto gate = modules::LinearModule({kHidden, kDitFfnDim, false, GGML_PREC_F32}).build(ctx, input, weights.ffn_w1);
+    auto gate = modules::LinearModule({kHidden, kDitFfnDim, false, cfm_linear_precision(ctx.backend_type)}).build(ctx, input, weights.ffn_w1);
     gate = modules::SiluModule{}.build(ctx, gate);
-    auto up = modules::LinearModule({kHidden, kDitFfnDim, false, GGML_PREC_F32}).build(ctx, input, weights.ffn_w3);
+    auto up = modules::LinearModule({kHidden, kDitFfnDim, false, cfm_linear_precision(ctx.backend_type)}).build(ctx, input, weights.ffn_w3);
     auto hidden = modules::MulModule{}.build(ctx, gate, up);
-    return modules::LinearModule({kDitFfnDim, kHidden, false, GGML_PREC_F32}).build(ctx, hidden, weights.ffn_w2);
+    return modules::LinearModule({kDitFfnDim, kHidden, false, cfm_linear_precision(ctx.backend_type)}).build(ctx, hidden, weights.ffn_w2);
 }
 
 core::TensorValue cfm_transformer_layer(
@@ -221,7 +229,7 @@ core::TensorValue cfm_transformer_layer(
     const core::TensorValue * skip) {
     auto x = input;
     if (skip != nullptr) {
-        x = modules::LinearModule({2 * kHidden, kHidden, true, GGML_PREC_F32})
+        x = modules::LinearModule({2 * kHidden, kHidden, true, cfm_linear_precision(ctx.backend_type)})
                 .build(ctx, modules::ConcatModule({2}).build(ctx, x, *skip), weights.skip_in);
     }
     auto attn = cfm_attention(ctx, adaptive_rms_norm(ctx, x, timestep, weights.attention_norm), positions, weights);
@@ -284,7 +292,7 @@ core::TensorValue cfm_final_layer(
     auto scale_v = broadcast_batch_time(ctx, slice_last(ctx, mod, kHidden, kHidden), input.shape.dims[0], input.shape.dims[1], kHidden);
     auto normed = modules::LayerNormModule({kHidden, kLayerNormEps, false, false}).build(ctx, input, {std::nullopt, std::nullopt});
     normed = modules::AddModule{}.build(ctx, modules::MulModule{}.build(ctx, normed, add_one(ctx, scale_v)), shift);
-    return modules::LinearModule({kHidden, kHidden, true, GGML_PREC_F32}).build(ctx, normed, weights.final_linear);
+    return modules::LinearModule({kHidden, kHidden, true, cfm_linear_precision(ctx.backend_type)}).build(ctx, normed, weights.final_linear);
 }
 
 core::TensorValue build_cfm_estimator(
@@ -299,14 +307,14 @@ core::TensorValue build_cfm_estimator(
     const int64_t batch = x_bct.shape.dims[0];
     const int64_t frames = x_bct.shape.dims[2];
     auto t1 = timestep_embedding(ctx, timestep_b, weights.time_freqs, weights.time_mlp0, weights.time_mlp2);
-    auto cond = modules::LinearModule({kHidden, kHidden, true, GGML_PREC_F32}).build(ctx, cond_btc, weights.cond_projection);
+    auto cond = modules::LinearModule({kHidden, kHidden, true, cfm_linear_precision(ctx.backend_type)}).build(ctx, cond_btc, weights.cond_projection);
     auto x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x_bct);
     auto prompt = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, prompt_bct);
     auto style = broadcast_batch_time(ctx, style_bc, batch, frames, kStyleDim);
     auto hidden = modules::ConcatModule({2}).build(ctx, x, prompt);
     hidden = modules::ConcatModule({2}).build(ctx, hidden, cond);
     hidden = modules::ConcatModule({2}).build(ctx, hidden, style);
-    hidden = modules::LinearModule({kHidden + 2 * kMelChannels + kStyleDim, kHidden, true, GGML_PREC_F32})
+    hidden = modules::LinearModule({kHidden + 2 * kMelChannels + kStyleDim, kHidden, true, cfm_linear_precision(ctx.backend_type)})
                  .build(ctx, hidden, weights.cond_x_merge);
 
     std::vector<core::TensorValue> skips;
@@ -324,13 +332,13 @@ core::TensorValue build_cfm_estimator(
         }
     }
     hidden = adaptive_rms_norm(ctx, hidden, t1, weights.dit_norm);
-    hidden = modules::LinearModule({kHidden + kMelChannels, kHidden, true, GGML_PREC_F32})
+    hidden = modules::LinearModule({kHidden + kMelChannels, kHidden, true, cfm_linear_precision(ctx.backend_type)})
                  .build(ctx, modules::ConcatModule({2}).build(ctx, hidden, x), weights.skip_linear);
-    auto wavenet_x = modules::LinearModule({kHidden, kHidden, true, GGML_PREC_F32}).build(ctx, hidden, weights.conv1);
+    auto wavenet_x = modules::LinearModule({kHidden, kHidden, true, cfm_linear_precision(ctx.backend_type)}).build(ctx, hidden, weights.conv1);
     wavenet_x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, wavenet_x);
     auto t2 = timestep_embedding(ctx, timestep_b, weights.time2_freqs, weights.time2_mlp0, weights.time2_mlp2);
     wavenet_x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, cfm_wavenet(ctx, wavenet_x, t2, weights));
-    auto projected = modules::LinearModule({kHidden, kHidden, true, GGML_PREC_F32}).build(ctx, hidden, weights.res_projection);
+    auto projected = modules::LinearModule({kHidden, kHidden, true, cfm_linear_precision(ctx.backend_type)}).build(ctx, hidden, weights.res_projection);
     hidden = modules::AddModule{}.build(ctx, wavenet_x, projected);
     hidden = cfm_final_layer(ctx, hidden, t1, weights);
     hidden = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);

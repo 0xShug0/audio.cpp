@@ -1,5 +1,6 @@
 #include "engine/models/index_tts2/gpt.h"
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -353,9 +354,20 @@ engine::modules::LinearWeights load_hf_conv1d_linear(
                 source_weight[static_cast<size_t>(in * out_features + out)];
         }
     }
+    // Transposed HF conv1d weights are derived host-side values, so "native"
+    // cannot resolve through load_tensor; follow the checkpoint dtype instead
+    // so an F16 GGUF keeps F16 decoder weights in the compute graph.
+    auto effective_storage_type = storage_type;
+    if (effective_storage_type == engine::assets::TensorStorageType::Native) {
+        try {
+            effective_storage_type = engine::assets::tensor_storage_type_for_dtype(
+                source.require_metadata(prefix + ".weight").dtype);
+        } catch (...) {
+        }
+    }
     weights.weight = store.make_from_f32(
         engine::core::TensorShape::from_dims({out_features, in_features}),
-        storage_type,
+        effective_storage_type,
         std::move(transposed));
     if (use_bias) {
         weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_features});
