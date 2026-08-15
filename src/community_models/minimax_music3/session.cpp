@@ -101,11 +101,13 @@ const runtime::ModelMetadata & minimax_music3_metadata() noexcept {
             "tokenizer/tokenizer_config.json",
         },
         {
+            "language_model_q4_0.gguf",
             "language_model_q4_k.gguf",
             "language_model_bf16.gguf",
             "rvq_depth_decoder_bf16.gguf",
             "rvq_depth_decoder_q4_k.gguf",
             "condition_encoder.gguf",
+            "transformer_q4_0.gguf",
             "transformer_q4_k.gguf",
             "transformer_bf16.gguf",
             "vocoder.gguf",
@@ -139,10 +141,10 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"seed", "int", "Generation seed.", false, "0", "0"},
     };
     out.session_options = {
-        {"minimax_music3.weight_type", "native|f32|f16|bf16|q8_0", "Shared weight storage type.", false, "native"},
-        {"minimax_music3.language_model_gguf", "string", "Language model component GGUF file relative to the model root.", false, "language_model_q4_k.gguf"},
+        {"minimax_music3.weight_type", "native|bf16|f16|q8_0|q4_0|q4_k", "Shared weight storage type.", false, "native"},
+        {"minimax_music3.language_model_gguf", "string", "Language model component GGUF file relative to the model root.", false, "language_model_q4_0.gguf"},
         {"minimax_music3.rvq_depth_decoder_gguf", "string", "RVQ depth decoder component GGUF file relative to the model root.", false, "rvq_depth_decoder_bf16.gguf"},
-        {"minimax_music3.flow_transformer_gguf", "string", "Flow transformer component GGUF file relative to the model root.", false, "transformer_q4_k.gguf"},
+        {"minimax_music3.flow_transformer_gguf", "string", "Flow transformer component GGUF file relative to the model root.", false, "transformer_q4_0.gguf"},
         {"minimax_music3.graph_context_mb", "int", "Runtime graph arena size in MiB.", false, "32", "1"},
         {"minimax_music3.weight_context_mb", "int", "Weight context size in MiB.", false, "32", "1"},
         {"minimax_music3.mem_saver", "bool", "Load large generation stages only while they are needed to reduce peak VRAM.", false, "true"},
@@ -188,10 +190,11 @@ MiniMaxMusic3Session::MiniMaxMusic3Session(
         "minimax_music3.weight_type",
         assets::TensorStorageType::Native,
         {assets::TensorStorageType::Native,
-         assets::TensorStorageType::F32,
-         assets::TensorStorageType::F16,
          assets::TensorStorageType::BF16,
-         assets::TensorStorageType::Q8_0});
+         assets::TensorStorageType::F16,
+         assets::TensorStorageType::Q8_0,
+         assets::TensorStorageType::Q4_0,
+         assets::TensorStorageType::Q4_K});
     bool memory_saver = true;
     if (const auto value = runtime::find_option(this->options().options, {"minimax_music3.mem_saver"})) {
         memory_saver = runtime::parse_bool_option(*value, "minimax_music3.mem_saver");

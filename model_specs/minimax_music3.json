@@ -86,7 +86,14 @@
       {
         "name": "weight_type",
         "type": "enum",
-        "preset": "weight_type_full",
+        "values": [
+          "native",
+          "bf16",
+          "f16",
+          "q8_0",
+          "q4_0",
+          "q4_k"
+        ],
         "description": "Shared weight storage type.",
         "required": false,
         "default": "native"
@@ -96,7 +103,7 @@
         "type": "string",
         "description": "Language model component GGUF file relative to the model root.",
         "required": false,
-        "default": "language_model_q4_k.gguf"
+        "default": "language_model_q4_0.gguf"
       },
       {
         "name": "rvq_depth_decoder_gguf",
@@ -110,7 +117,7 @@
         "type": "string",
         "description": "Flow transformer component GGUF file relative to the model root.",
         "required": false,
-        "default": "transformer_q4_k.gguf"
+        "default": "transformer_q4_0.gguf"
       },
       {
         "name": "graph_context_mb",
@@ -148,11 +155,11 @@
   },
   "packages": [
     {
-      "id": "minimax_music3_q4_k",
-      "display_name": "MiniMax Music 3 Q4_K GGUF",
+      "id": "minimax_music3_q4_0",
+      "display_name": "MiniMax Music 3 Q4_0 GGUF",
       "default": true,
       "format": "gguf",
-      "precision": "q4_k",
+      "precision": "q4_0",
       "target_directory": "MiniMax-Music3-GGUF",
       "files": [
         "MiniMax-Music3-GGUF/config.json",
@@ -164,11 +171,13 @@
         "MiniMax-Music3-GGUF/tokenizer/tokenizer.json",
         "MiniMax-Music3-GGUF/tokenizer/tokenizer_config.json",
         "MiniMax-Music3-GGUF/language_model_bf16.gguf",
+        "MiniMax-Music3-GGUF/language_model_q4_0.gguf",
         "MiniMax-Music3-GGUF/language_model_q4_k.gguf",
         "MiniMax-Music3-GGUF/rvq_depth_decoder_bf16.gguf",
         "MiniMax-Music3-GGUF/rvq_depth_decoder_q4_k.gguf",
         "MiniMax-Music3-GGUF/condition_encoder.gguf",
         "MiniMax-Music3-GGUF/transformer_bf16.gguf",
+        "MiniMax-Music3-GGUF/transformer_q4_0.gguf",
         "MiniMax-Music3-GGUF/transformer_q4_k.gguf",
         "MiniMax-Music3-GGUF/vocoder.gguf"
       ],
@@ -177,7 +186,7 @@
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "minimax_music3_q4_k",
+    "recommended_package": "minimax_music3_q4_0",
     "tags": [
       "Music",
       "GGUF"
