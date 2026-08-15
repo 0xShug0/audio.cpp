@@ -69,12 +69,21 @@ void test_unsafe_integer_numbers_are_not_silently_rounded() {
     require_seed_rejected(rounded);
 }
 
+void test_audio_only_language_is_request_option() {
+    const char * argv[] = {"audiocpp_cli", "--task", "asr", "--family", "qwen3_asr", "--language", "en"};
+    const auto request = minitts::cli::build_request_from_cli(7, const_cast<char **>(argv));
+
+    engine::test::require(!request.text_input.has_value(), "audio-only language does not synthesize text input");
+    engine::test::require_eq(request.options.at("language"), std::string("en"), "audio-only language request option");
+}
+
 }  // namespace
 
 int main() {
     test_large_safe_integer_numbers_stay_decimal();
     test_float_numbers_keep_json_formatting();
     test_unsafe_integer_numbers_are_not_silently_rounded();
+    test_audio_only_language_is_request_option();
     std::cout << "cli_request_options_test passed\n";
     return 0;
 }
