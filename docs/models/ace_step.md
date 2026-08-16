@@ -191,7 +191,8 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 
 ACE-Step GGUF packages are variant-specific. Use the Turbo GGUF for the default
 `acestep-v15-turbo` path, and pass `--load-option ace_step.dit_model_path=acestep-v15-base`
-when loading a Base GGUF package.
+when loading a Base GGUF package, or
+`--load-option ace_step.dit_model_path=acestep-v15-xl-turbo` for the XL Turbo one.
 
 ### XL variants
 
@@ -204,15 +205,47 @@ a CLS token to the reference frames and reads that position back, where earlier
 variants read the first audio frame.
 
 Both are **optional package resources**: they are only loadable when their
-directory is present, and a package without them loads and runs exactly as
+weights are present, and a package without them loads and runs exactly as
 before. Selecting one that is not installed reports which directory is missing.
 The upstream snapshots ship four safetensors shards plus a
 `model.safetensors.index.json`, which the package spec points at directly.
 
+`ace_step_xl_turbo_bf16` installs the XL Turbo GGUF (14.2 GB), which is
+self-contained the way the Turbo and Base GGUFs are — XL DiT, planner LM, text
+encoder and VAE in one file:
+
 ```bash
-audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend cuda --task-route text2music --text "warm lo-fi hip hop with a soft rhodes piano" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-xl-turbo --session-option ace_step.dit_weight_type=bf16 --out song.wav
+audiocpp_cli --task gen --family ace_step --model models/ACE-Step1.5-GGUF/xl-turbo --backend cuda --task-route text2music --text "warm lo-fi hip hop with a soft rhodes piano" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-xl-turbo --out song.wav
 ```
 
-`dit_weight_type=bf16` is worth passing. The XL snapshots are stored in float32,
-so `native` puts 19.9 GB of weights on the card: measured on an RTX 5090, 20 s of
-audio took 87 s at `native` against 24 s at `bf16` (turbo, for reference: 11 s).
+`acestep-v15-xl-sft` has no GGUF package yet; run it from a safetensors tree.
+There, `dit_weight_type=bf16` is worth passing — the XL snapshots are stored in
+float32, so `native` puts 19.9 GB of weights on the card:
+
+```bash
+audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend cuda --task-route text2music --text "warm lo-fi hip hop with a soft rhodes piano" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-xl-sft --session-option ace_step.dit_weight_type=bf16 --out song.wav
+```
+
+Measured on an RTX 5090, 20 s of audio, weight loading included and the weights
+warm in the page cache: 87 s from safetensors at `native`, 25 s from safetensors
+at `bf16`, 15 s from the bf16 GGUF (turbo, for reference: 11 s). Reading the
+weights off disk adds roughly 10 s either way.
+
+Building the XL GGUF yourself needs the other variants' safetensors on hand,
+because `audiocpp_gguf` checks the conversion against the spec's required
+namespaces; exclude them from the output:
+
+```bash
+audiocpp_gguf --root models/Ace-Step1.5 --family ace_step \
+  --input dit_turbo_weights=models/Ace-Step1.5/acestep-v15-turbo/model.safetensors \
+  --input dit_turbo_silence_latent=models/Ace-Step1.5/acestep-v15-turbo/silence_latent.safetensors \
+  --input dit_base_weights=models/Ace-Step1.5/acestep-v15-base/model.safetensors \
+  --input dit_base_silence_latent=models/Ace-Step1.5/acestep-v15-base/silence_latent.safetensors \
+  --input dit_xl_turbo_weights=models/Ace-Step1.5/acestep-v15-xl-turbo/model.safetensors.index.json \
+  --input dit_xl_turbo_silence_latent=models/Ace-Step1.5/acestep-v15-xl-turbo/silence_latent.safetensors \
+  --input lm_weights=models/Ace-Step1.5/acestep-5Hz-lm-1.7B/model.safetensors \
+  --input text_encoder_weights=models/Ace-Step1.5/Qwen3-Embedding-0.6B/model.safetensors \
+  --input vae_weights=models/Ace-Step1.5/vae/diffusion_pytorch_model.safetensors \
+  --exclude-prefix dit_turbo_ --exclude-prefix dit_base_ \
+  --type bf16 --output ace-step-1.5-xl-turbo-bf16.gguf
+```

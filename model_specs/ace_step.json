@@ -93,6 +93,21 @@
         "ACE-Step1.5-GGUF/base/ace-step-1.5-base-bf16.gguf"
       ],
       "strip_prefix": "ACE-Step1.5-GGUF"
+    },
+    {
+      "id": "ace_step_xl_turbo_bf16",
+      "display_name": "ACE-Step 1.5 XL Turbo BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/xl-turbo/ace-step-1.5-xl-turbo-bf16.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "CaptainArni/audio.cpp-gguf"
+      }
     }
   ],
   "sources": [
