@@ -156,12 +156,11 @@ export async function availableVoices(model = ''): Promise<string[]> {
   return response.voices;
 }
 
-export async function uploadWav(blob: Blob, filename: string, signal?: AbortSignal): Promise<string> {
+export async function uploadWav(blob: Blob, signal?: AbortSignal): Promise<string> {
   const response = await jsonRequest<{ path: string }>('/v1/ui/upload', {
     method: 'POST',
     headers: {
-      'Content-Type': 'audio/wav',
-      'X-AudioCPP-Filename': filename
+      'Content-Type': 'audio/wav'
     },
     body: blob
   }, signal);
