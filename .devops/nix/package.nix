@@ -4,7 +4,7 @@
   cmake,
   ninja,
   pkg-config,
-  fetchurl,
+  openssl,
   rocmPackages,
   cudaPackages,
   vulkan-headers,
@@ -30,12 +30,6 @@
   models ? [ ],
 }:
 
-let
-  boringsslArchive = fetchurl {
-    url = "https://github.com/google/boringssl/archive/refs/tags/0.20260813.0.tar.gz";
-    hash = "sha256-N+I8uaX6VPAbB8rdZTzrwdGyNZRUOabDNP6ljqR7Wwo=";
-  };
-in
 stdenv.mkDerivation (finalAttrs: {
   pname = "audio.cpp";
   inherit version;
@@ -53,6 +47,7 @@ stdenv.mkDerivation (finalAttrs: {
   buildInputs = [
     python-scripts
   ]
+  ++ lib.optional nativeModelManagerSupport openssl
   ++ lib.optionals vulkanSupport [
     vulkan-headers
     vulkan-loader
@@ -76,7 +71,7 @@ stdenv.mkDerivation (finalAttrs: {
   ]
   ++ lib.optionals nativeModelManagerSupport [
     "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON"
-    "-DAUDIOCPP_BORINGSSL_ARCHIVE=${boringsslArchive}"
+    "-DAUDIOCPP_USE_SYSTEM_OPENSSL=ON"
   ]
   ++ (
     if models != [ ] then
