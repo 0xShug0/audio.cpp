@@ -4,6 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include <ggml.h>
@@ -231,16 +232,24 @@ struct MiniMaxMusic3VocoderRuntime::Impl {
             const auto & block = weights.blocks[i];
             const int64_t out_channels = channels / 2;
             const int64_t stride = config.upsample_ratios[i];
+            const int64_t padding = stride / 2;
             x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
             x = modules::ConvTranspose1dModule({
                 channels,
                 out_channels,
                 stride * 2,
                 static_cast<int>(stride),
-                static_cast<int>(stride / 2),
+                0,
                 1,
                 true,
             }).build(ctx, x, block.conv_t);
+            if (padding > 0) {
+                const int64_t cropped_frames = x.shape.dims[2] - 2 * padding;
+                if (cropped_frames <= 0) {
+                    throw std::runtime_error("MiniMax Music 3 vocoder ConvTranspose1d crop would produce empty output");
+                }
+                x = modules::SliceModule({2, padding, cropped_frames}).build(ctx, x);
+            }
             for (const auto & residual : block.residuals) {
                 x = residual_unit(ctx, x, residual, out_channels);
             }
