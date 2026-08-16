@@ -16,6 +16,7 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | Model directory | `models/Ace-Step1.5` |
 | Task | `gen` |
 | Default DiT | `acestep-v15-turbo` |
+| Optional DiT | `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` |
 | Default LM | `acestep-5Hz-lm-1.7B` |
 | Prompt input | `--text` |
 | Lyrics input | `--lyrics` |
@@ -183,11 +184,77 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--load-option ace_step.dit_model_path=<dir>` | `acestep-v15-turbo`, `acestep-v15-base` | `acestep-v15-turbo` | Select DiT variant inside the model root. |
+| `--load-option ace_step.dit_model_path=<dir>` | `acestep-v15-turbo`, `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` | `acestep-v15-turbo` | Select DiT variant inside the model root. |
 | `--session-option ace_step.dit_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | DiT weight type. |
 | `--session-option ace_step.planner_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Planner LM weight type. |
 | `--session-option ace_step.mem_saver=true\|false` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 
 ACE-Step GGUF packages are variant-specific. Use the Turbo GGUF for the default
 `acestep-v15-turbo` path, and pass `--load-option ace_step.dit_model_path=acestep-v15-base`
-when loading a Base GGUF package.
+when loading a Base GGUF package, or
+`--load-option ace_step.dit_model_path=acestep-v15-xl-turbo` for the XL Turbo one.
+
+### XL variants
+
+`acestep-v15-xl-turbo` and `acestep-v15-xl-sft` are the larger DiT: 32 layers of
+2560 against turbo's 24 of 2048, with 32 attention heads of 128 (so the attention
+width is 4096, wider than the model). The condition encoder, audio tokenizer and
+detokenizer stay at 2048 — the `encoder_hidden_size` group in the XL config — and
+the DiT's condition embedder bridges the two. The XL timbre encoder also prepends
+a CLS token to the reference frames and reads that position back, where earlier
+variants read the first audio frame.
+
+Both are **optional package resources**: they are only loadable when their
+weights are present, and a package without them loads and runs exactly as
+before. Selecting one that is not installed reports which directory is missing.
+The upstream snapshots ship four safetensors shards plus a
+`model.safetensors.index.json`, which the package spec points at directly.
+
+The two differ only in `is_turbo`: XL Turbo is guidance-distilled and ignores
+`guidance_scale`, XL SFT takes the CFG path the way `acestep-v15-base` does.
+Their dimensions, encoder group and head configuration are identical.
+
+`ace_step_xl_turbo_bf16` and `ace_step_xl_sft_bf16` install them as GGUFs
+(14.2 GB each), self-contained the way the Turbo and Base GGUFs are — XL DiT,
+planner LM, text encoder and VAE in one file:
+
+```bash
+audiocpp_cli --task gen --family ace_step --model models/ACE-Step1.5-GGUF/xl-turbo --backend cuda --task-route text2music --text "warm lo-fi hip hop with a soft rhodes piano" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-xl-turbo --out song.wav
+```
+
+Running one from a safetensors tree instead is worth a `dit_weight_type=bf16`,
+because the XL snapshots are stored in float32 and `native` puts 19.9 GB of
+weights on the card:
+
+```bash
+audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend cuda --task-route text2music --text "warm lo-fi hip hop with a soft rhodes piano" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-xl-sft --session-option ace_step.dit_weight_type=bf16 --out song.wav
+```
+
+Measured on an RTX 5090, 20 s of audio, weight loading included and the weights
+warm in the page cache: 87 s from safetensors at `native`, 25 s from safetensors
+at `bf16`, 15 s from the bf16 GGUF, both variants alike (turbo, for reference:
+11 s). Reading the weights off disk adds roughly 10 s either way.
+
+Building an XL GGUF yourself needs the other variants' safetensors on hand,
+because `audiocpp_gguf` checks the conversion against the spec's required
+namespaces; exclude them from the output:
+
+```bash
+audiocpp_gguf --root models/Ace-Step1.5 --family ace_step \
+  --input dit_turbo_weights=models/Ace-Step1.5/acestep-v15-turbo/model.safetensors \
+  --input dit_turbo_silence_latent=models/Ace-Step1.5/acestep-v15-turbo/silence_latent.safetensors \
+  --input dit_base_weights=models/Ace-Step1.5/acestep-v15-base/model.safetensors \
+  --input dit_base_silence_latent=models/Ace-Step1.5/acestep-v15-base/silence_latent.safetensors \
+  --input dit_xl_turbo_weights=models/Ace-Step1.5/acestep-v15-xl-turbo/model.safetensors.index.json \
+  --input dit_xl_turbo_silence_latent=models/Ace-Step1.5/acestep-v15-xl-turbo/silence_latent.safetensors \
+  --input lm_weights=models/Ace-Step1.5/acestep-5Hz-lm-1.7B/model.safetensors \
+  --input text_encoder_weights=models/Ace-Step1.5/Qwen3-Embedding-0.6B/model.safetensors \
+  --input vae_weights=models/Ace-Step1.5/vae/diffusion_pytorch_model.safetensors \
+  --exclude-prefix dit_turbo_ --exclude-prefix dit_base_ \
+  --type bf16 --output ace-step-1.5-xl-turbo-bf16.gguf
+```
+
+Swap `dit_xl_turbo_*` for `dit_xl_sft_*` to build the SFT one. Upstream ships
+`silence_latent.pt` where the spec wants safetensors;
+`tests/ace_step/convert_silence_latent.py --input <variant>/silence_latent.pt`
+converts it.

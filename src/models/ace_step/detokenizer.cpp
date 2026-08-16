@@ -123,7 +123,7 @@ public:
 
         AceStepLatents decode_audio_codes(const int32_t * audio_code_ids, int64_t code_count, std::vector<float> & expanded) const {
             const auto total_start = Clock::now();
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
             if (code_count <= 0) {
                 return {};
             }
@@ -186,7 +186,7 @@ public:
 
     private:
         void build() {
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
             ggml_init_params params{96ull * 1024ull * 1024ull, nullptr, true};
             ctx_.reset(ggml_init(params));
             if (ctx_ == nullptr) {
@@ -350,7 +350,7 @@ public:
           assets_(std::move(assets)),
           weights_(dit_weights_runtime->detokenizer_weights()),
           quantizer_(ace_step_build_fsq_quantizer_table(
-              assets_->config.diffusion,
+              assets_->config.encoder,
               "ACE-Step native detokenizer")) {
         if (backend_ == nullptr) {
             throw std::runtime_error("ACE-Step detokenizer backend initialization failed");
@@ -378,7 +378,7 @@ public:
         engine::debug::timing_log_scalar(
             "ace_step.detokenizer.graph.ensure_ms",
             engine::debug::elapsed_ms(ensure_start, Clock::now()));
-        const auto & config = assets_->config.diffusion;
+        const auto & config = assets_->config.encoder;
         AceStepLatents out;
         out.frames = code_count * config.pool_window_size;
         out.channels = config.latent_channels;

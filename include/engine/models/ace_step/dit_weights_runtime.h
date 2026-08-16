@@ -59,6 +59,8 @@ struct AceStepConditionEncoderWeights {
     core::TensorValue timbre_embed_bias;
     std::vector<AceStepConditionEncoderLayerWeights> timbre_layers;
     core::TensorValue timbre_norm;
+    // Empty unless the variant prepends a CLS token to the timbre sequence.
+    std::vector<float> timbre_special_token_host;
 };
 
 struct AceStepTimeEmbeddingWeights {

@@ -22,10 +22,11 @@ AceStepModelSelection selection_from_request(const runtime::ModelLoadRequest & r
     std::transform(model_name.begin(), model_name.end(), model_name.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
     });
-    if (model_name.find("base") != std::string::npos) {
-        selection.dit_model_path = "acestep-v15-base";
+    const bool xl = model_name.find("xl") != std::string::npos;
+    if (model_name.find("base") != std::string::npos || model_name.find("sft") != std::string::npos) {
+        selection.dit_model_path = xl ? "acestep-v15-xl-sft" : "acestep-v15-base";
     } else if (model_name.find("turbo") != std::string::npos) {
-        selection.dit_model_path = "acestep-v15-turbo";
+        selection.dit_model_path = xl ? "acestep-v15-xl-turbo" : "acestep-v15-turbo";
     }
     return selection;
 }
@@ -89,7 +90,9 @@ runtime::ModelCliInterface cli(const AceStepAssets &) {
         {"ace_step.mem_saver", "true|false", "Release staged runtime graphs after each request; default false."},
     };
     out.load_options = {
-        {"ace_step.dit_model_path", "acestep-v15-turbo|acestep-v15-base", "DiT variant inside the model package."},
+        {"ace_step.dit_model_path",
+         "acestep-v15-turbo|acestep-v15-base|acestep-v15-xl-turbo|acestep-v15-xl-sft",
+         "DiT variant inside the model package; the XL variants are optional and must be installed."},
     };
     return out;
 }

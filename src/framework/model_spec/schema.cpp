@@ -485,7 +485,7 @@ void validate_layout(const json::Value & value, std::string_view path) {
         }
         (void) require_spec_string(root_value, std::string(path) + ".roots." + root_id);
     }
-    for (const std::string map_name : {"files", "optional_files", "tensors"}) {
+    for (const std::string map_name : {"files", "optional_files", "tensors", "optional_tensors"}) {
         const auto * map_value = value.find(map_name);
         if (map_value == nullptr) {
             continue;
