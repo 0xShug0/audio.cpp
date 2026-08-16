@@ -1049,7 +1049,7 @@
       ? 44100
       : ['asr', 'vad', 'diar', 'align', 'midi'].includes(selected.task) ? 16000 : undefined;
     const wav = await browserDecodeToWav(file, targetSampleRate);
-    return uploadWav(wav, file.name.replace(/\.[^.]+$/, '') + '.wav', aborter?.signal);
+    return uploadWav(wav, aborter?.signal);
   }
 
   function requestOptions() {
@@ -1237,7 +1237,7 @@
     if (!blob.size) return;
     const file = new File([blob], `live-${liveChunkNumber}.webm`, { type: blob.type });
     const wav = await browserDecodeToWav(file, 16000);
-    const audio = await uploadWav(wav, `live-${liveChunkNumber}.wav`);
+    const audio = await uploadWav(wav);
     const result = await transcription({
       model: selected.id,
       audio,
