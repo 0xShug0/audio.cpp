@@ -140,7 +140,8 @@ Use `tools/model_manager_v2.py` for normal model downloads. It reads
 `model_specs/*.json` and installs the default package for each family, preferring
 ready-to-use GGUF packages when they are available.
 
-Native builds also provide `audiocpp_model_manager`, a standalone headless
+Native builds configured with `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` also
+provide `audiocpp_model_manager`, a standalone headless
 frontend over the same reusable C++ package-management library used by the
 server and embedded WebUI. It supports list, info, install, clean, and remove
 without starting `audiocpp_server`; this is the preferred native path for CLI,
@@ -172,13 +173,13 @@ generation, conversion, separation, VAD, diarization, and alignment workflows. T
 into the server binary, so using it requires neither Python nor separate frontend files:
 
 ```bash
-audiocpp_server --ui --backend cuda
+audiocpp_server --ui --ui-management --backend cuda
 ```
 
-Open `http://127.0.0.1:8080`. Starting with `--ui` and no server config enables on-demand model
-load/unload and temporary browser uploads. Existing static server configurations also expose the UI by default;
-in that mode the UI only offers models declared by the server config. Add `--ui-management` when that instance
-should permit catalog browsing, downloads, temporary uploads, and dynamic model switching.
+Open `http://127.0.0.1:8080`. The command above requires a build configured with
+`-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` and enables catalog browsing, downloads, temporary uploads, and
+dynamic model switching. A normal build has no HTTP/TLS model-manager dependency and can still serve the UI with
+`--ui` from an existing server configuration; in that mode the UI only offers models declared by the config.
 
 The native UI also exposes background model download/preparation, long-text split-and-merge synthesis, a
 browser-local saved voice library, microphone recording, and near-live ASR input. Some model preparation jobs invoke
@@ -394,6 +395,8 @@ Run with `--backend hip` (`rocm` is accepted as an alias). For GPU target select
 | `ENGINE_BUILD_EXAMPLES` | Build example binaries. | `OFF` |
 | `ENGINE_BUILD_TESTS` | Build framework unit tests. | `OFF` |
 | `ENGINE_BUILD_WARMBENCH` | Build warmbench helper binaries. | `OFF` |
+| `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER` | Build the standalone native model manager and enable server-side WebUI downloads/install management. This opt-in feature builds the HTTP/TLS dependency. | `OFF` |
+| `AUDIOCPP_USE_SYSTEM_OPENSSL` | Use system OpenSSL instead of bundled BoringSSL when native model management is enabled. | `OFF` |
 | `AUDIOCPP_DEPLOYMENT_BUILD` | Compile package specs into CLI/server binaries for standalone GGUF and package-spec fallback loading. Script builds expose this as `--deployment-build` on Linux/macOS and `-DeploymentBuild` on Windows. | `OFF` |
 | `AUDIOCPP_MODEL_SET` | Model composite to build: `full`, `core`, or `custom`. Script builds expose this as `--model-set` on Linux/macOS and `-ModelSet` on Windows. | `full` |
 | `AUDIOCPP_MODELS` | Comma or semicolon separated model target names when `AUDIOCPP_MODEL_SET=custom`, such as `qwen3_tts,pocket_tts,qwen3_asr`. Script builds expose this as `--models` on Linux/macOS and `-Models` on Windows. | empty |

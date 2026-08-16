@@ -6,17 +6,23 @@ inference and normal UI operation.
 
 ## Run
 
-Build `audiocpp_server`, then start it with UI management enabled:
+Configure the optional native manager, build `audiocpp_server`, then start it
+with UI management enabled:
+
+```bash
+cmake -S . -B build -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON
+cmake --build build --target audiocpp_server
+```
 
 ```powershell
-.\build\windows-cuda-release\bin\audiocpp_server.exe --ui --backend cuda
+.\build\windows-cuda-release\bin\audiocpp_server.exe --ui --ui-management --backend cuda
 ```
 
 ```bash
-./build/bin/audiocpp_server --ui --backend cuda
+./build/bin/audiocpp_server --ui --ui-management --backend cuda
 ```
 
-Open **http://127.0.0.1:8080**. With no `--config`, `--ui` enables on-demand model loading,
+Open **http://127.0.0.1:8080**. `--ui-management` enables on-demand model loading,
 unloading, package management, and temporary browser uploads. Models default to a `models/` directory
 beside the server executable. The Models page can select and remember a different directory.
 

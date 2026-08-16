@@ -1516,9 +1516,12 @@ bool mmap::open(const char *path) {
   auto wpath = u8string_to_wstring(path);
   if (wpath.empty()) { return false; }
 
-  hFile_ =
-      ::CreateFile2(wpath.c_str(), GENERIC_READ,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING, NULL);
+  // CreateFile2 is unavailable in some otherwise supported Windows SDKs and
+  // MinGW headers. CreateFileW provides the same read-only mapping semantics
+  // and keeps the native manager portable across Windows toolchains.
+  hFile_ = ::CreateFileW(wpath.c_str(), GENERIC_READ,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
   if (hFile_ == INVALID_HANDLE_VALUE) { return false; }
 

@@ -38,6 +38,7 @@ using engine::io::json::Value;
 
 using Clock = std::chrono::steady_clock;
 
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
     std::filesystem::create_directories(voice_dir);
     for (const auto & voice : embedded_demo_voices()) {
@@ -62,6 +63,7 @@ void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
         throw std::runtime_error("failed to write embedded demo voice prompt_text");
     }
 }
+#endif
 
 // Per-request override for the busy timeout. Absent means "use the model's
 // configured ceiling"; a value is clamped to that ceiling by resolve_busy_timeout_ms
@@ -812,6 +814,9 @@ ServerState::ServerState(
     std::filesystem::path ui_resource_anchor)
     : config_(std::move(config)),
       request_base_(std::filesystem::absolute(std::move(request_base)).lexically_normal()) {
+#if !defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
+    (void) ui_resource_anchor;
+#endif
     if (config_.backend != engine::core::BackendType::Cuda) {
         std::cerr
             << "audio.cpp is optimized for CUDA. The "
@@ -825,6 +830,7 @@ ServerState::ServerState(
                     std::chrono::system_clock::now().time_since_epoch()).count()));
         std::filesystem::create_directories(upload_root_);
     }
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     if (config_.ui_management) {
         repository_root_ = find_from_roots(
             request_base_,
@@ -851,6 +857,7 @@ ServerState::ServerState(
             repository_root_,
             models_root_);
     }
+#endif
     load_models();
 }
 
@@ -912,6 +919,7 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else if (request.method == "POST" && request.path == "/v1/ui/upload") {
         response = handle_ui_upload(request);
     }
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     else if (request.method == "GET" && request.path == "/v1/ui/models-root") {
         response = handle_models_root_get();
     }
@@ -939,6 +947,7 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else if (request.method == "GET" && request.path == "/v1/ui/models/package-sizes") {
         response = handle_model_package_sizes();
     }
+#endif
     else if (request.method == "POST" && request.path == "/v1/audio/speech") {
         response = handle_speech(request.body);
     }
@@ -1150,6 +1159,7 @@ HttpResponse ServerState::handle_ui_upload(const HttpRequest & request) {
         ",\"bytes\":" + std::to_string(request.body.size()) + "}");
 }
 
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 HttpResponse ServerState::handle_model_install(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "UI model installation is disabled", "forbidden");
@@ -1388,6 +1398,7 @@ HttpResponse ServerState::handle_directory_browser(const std::string & body_text
     }
     return json_response(response + "]}");
 }
+#endif
 
 HttpResponse ServerState::handle_ui_asset() const {
     if (!config_.ui_enabled) {

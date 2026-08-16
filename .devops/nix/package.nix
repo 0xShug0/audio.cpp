@@ -24,6 +24,7 @@
   rocmSupport ? config.rocmSupport or false,
   rocmGpuTargets ? (lib.optionals rocmSupport rocmPackages.clr.gpuTargets),
   strixHaloOptimizations ? (rocmSupport && rocmGpuTargets == [ "gfx1151" ]),
+  nativeModelManagerSupport ? true,
   # Model selection: if non-empty, only these model targets are built.
   # See CMakeLists.txt AUDIOCPP_MODEL_SET / AUDIOCPP_MODELS.
   models ? [ ],
@@ -72,6 +73,9 @@ stdenv.mkDerivation (finalAttrs: {
     "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
     "-DENGINE_ENABLE_NATIVE_CPU=ON"
     "-DENGINE_ENABLE_LLAMAFILE=ON"
+  ]
+  ++ lib.optionals nativeModelManagerSupport [
+    "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON"
     "-DAUDIOCPP_BORINGSSL_ARCHIVE=${boringsslArchive}"
   ]
   ++ (
@@ -102,7 +106,10 @@ stdenv.mkDerivation (finalAttrs: {
     mkdir -p $out/bin
 
     # Copy the built C++ executables directly from the bin directory
-    cp bin/audiocpp_cli bin/audiocpp_server bin/audiocpp_gguf bin/audiocpp_model_manager $out/bin/
+    cp bin/audiocpp_cli bin/audiocpp_server bin/audiocpp_gguf $out/bin/
+    ${lib.optionalString nativeModelManagerSupport ''
+      cp bin/audiocpp_model_manager $out/bin/
+    ''}
 
     # Keep the supported Python v2 manager available during migration without
     # overwriting the native audiocpp_model_manager executable copied above.

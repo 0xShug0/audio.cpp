@@ -1,10 +1,5 @@
 set(TARGET audiocpp_cpp_httplib)
 
-if (AUDIOCPP_BUILD_BORINGSSL AND AUDIOCPP_USE_SYSTEM_OPENSSL)
-    message(FATAL_ERROR
-        "AUDIOCPP_BUILD_BORINGSSL and AUDIOCPP_USE_SYSTEM_OPENSSL are mutually exclusive")
-endif()
-
 find_package(Threads REQUIRED)
 
 add_library(${TARGET} STATIC httplib.cpp httplib.h)
@@ -18,10 +13,11 @@ else()
     target_compile_options(${TARGET} PRIVATE -w)
 endif()
 
-# Match llama.cpp's TLS arrangement: cpp-httplib is vendored and BoringSSL can
-# be built with the project, so Hugging Face HTTPS does not require libcurl or
-# system OpenSSL development packages.
-if (AUDIOCPP_BUILD_BORINGSSL)
+# Match llama.cpp's TLS arrangement: cpp-httplib is vendored and BoringSSL is
+# built with the opt-in native manager, so Hugging Face HTTPS does not require
+# libcurl or system OpenSSL development packages. Packagers may explicitly use
+# system OpenSSL instead.
+if (NOT AUDIOCPP_USE_SYSTEM_OPENSSL)
     set(AUDIOCPP_BORINGSSL_VERSION "0.20260813.0" CACHE STRING
         "Pinned BoringSSL release used by the native package manager")
     set(AUDIOCPP_BORINGSSL_SHA256
@@ -99,19 +95,16 @@ if (AUDIOCPP_BUILD_BORINGSSL)
 
     target_compile_definitions(${TARGET} PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(${TARGET} PUBLIC ssl crypto)
-elseif (AUDIOCPP_USE_SYSTEM_OPENSSL)
+else()
     find_package(OpenSSL REQUIRED)
     target_compile_definitions(${TARGET} PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(${TARGET} PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-else()
-    message(WARNING
-        "Native model-manager HTTPS is disabled; enable AUDIOCPP_BUILD_BORINGSSL "
-        "or AUDIOCPP_USE_SYSTEM_OPENSSL to download Hugging Face packages")
 endif()
 
 if (WIN32)
+    target_compile_definitions(${TARGET} PUBLIC _WIN32_WINNT=0x0A00)
     target_link_libraries(${TARGET} PUBLIC ws2_32 crypt32)
-elseif (APPLE AND (AUDIOCPP_BUILD_BORINGSSL OR AUDIOCPP_USE_SYSTEM_OPENSSL))
+elseif (APPLE)
     find_library(AUDIOCPP_CORE_FOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
     find_library(AUDIOCPP_SECURITY_FRAMEWORK Security REQUIRED)
     target_link_libraries(${TARGET} PUBLIC

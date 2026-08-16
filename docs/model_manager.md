@@ -16,11 +16,27 @@ The same package surface is also available through the reusable native C++
 The Python v2 manager remains a supported alternative for existing scripted
 workflows while the native command surface matures.
 
-## Native Network Backend
+## Opt-in Native Network Backend
 
-The native library, server, and standalone manager share one vendored
+Native model management is disabled by default so ordinary CLI and server
+builds do not configure, fetch, compile, or link an HTTP/TLS dependency. Enable
+it explicitly to build the reusable library, standalone manager, and server
+download/install endpoints:
+
+```bash
+cmake -S . -B build -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON
+cmake --build build --target audiocpp_model_manager audiocpp_server
+```
+
+Run the managed WebUI with:
+
+```bash
+audiocpp_server --ui --ui-management --backend cuda
+```
+
+The enabled native library, server, and standalone manager share one vendored
 `cpp-httplib` transport on Windows, Linux, and macOS. HTTPS is enabled by
-default with a pinned BoringSSL release that is fetched at configure time and
+with a pinned BoringSSL release that is fetched at configure time and
 linked statically. The resulting executables do not require libcurl, a system
 OpenSSL development package, or separate TLS DLLs at runtime.
 
@@ -29,22 +45,13 @@ Offline and sandboxed builds may provide the same verified source archive with
 this through a fixed-output derivation, so its CMake phase never accesses the
 network.
 
-The default configuration is equivalent to:
-
-```bash
-cmake -S . -B build -DAUDIOCPP_BUILD_BORINGSSL=ON
-```
-
 Packagers that prefer their distribution's OpenSSL can select it explicitly:
 
 ```bash
 cmake -S . -B build \
-  -DAUDIOCPP_BUILD_BORINGSSL=OFF \
+  -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
   -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON
 ```
-
-Disabling both options leaves only plain HTTP support and therefore cannot
-download normal Hugging Face `https://` package URLs.
 
 ## Native Standalone Manager
 
