@@ -132,6 +132,27 @@
     document.documentElement.lang = uiLanguage;
   }
 
+  async function clearLegacyUiCaches() {
+    // This server commonly reuses localhost:8080. Remove workers and Cache
+    // Storage left by an older application on that origin before Native Studio
+    // starts making requests. Do not clear localStorage or IndexedDB: they hold
+    // saved voices, model-folder selection, and UI preferences.
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((registration) => registration.unregister()));
+      }
+      if ('caches' in window) {
+        const cacheNames = await window.caches.keys();
+        await Promise.all(cacheNames.map((name) => window.caches.delete(name)));
+      }
+    } catch (error) {
+      // Cache cleanup must not prevent an offline/local UI from starting when a
+      // browser restricts either API. The no-store response headers still apply.
+      console.warn('Unable to clear legacy WebUI caches:', error);
+    }
+  }
+
   function workflowLabel(id: string, fallback: string, translate = tr) {
     const translationId = id === 'conversion' ? 'vc' : id === 'separation' ? 'sep' : id;
     return translate(`workflow.${translationId}`, {}, fallback);
@@ -1707,6 +1728,7 @@
   }
 
   onMount(async () => {
+    await clearLegacyUiCaches();
     const savedLanguage = localStorage.getItem('audiocpp.ui.language');
     uiLanguage = resolveUiLanguage(savedLanguage ? [savedLanguage] : navigator.languages);
     document.documentElement.lang = uiLanguage;
