@@ -696,6 +696,21 @@ audiocpp_add_model(voxcpm2
         engine::models::voxcpm2::make_voxcpm2_loader
 )
 
+audiocpp_add_model(voxcpm1
+    SOURCES
+        src/models/voxcpm2/assets.cpp
+        src/models/voxcpm2/audiovae.cpp
+        src/models/voxcpm2/generator.cpp
+        src/models/voxcpm2/loader.cpp
+        src/models/voxcpm2/minicpm.cpp
+        src/models/voxcpm2/session.cpp
+        src/models/voxcpm2/tokenizer_text.cpp
+    INCLUDES
+        engine/models/voxcpm2/loader.h
+    LOADERS
+        engine::models::voxcpm2::make_voxcpm1_loader
+)
+
 audiocpp_add_model(vibevoice
     SOURCES
         src/models/vibevoice/assets.cpp

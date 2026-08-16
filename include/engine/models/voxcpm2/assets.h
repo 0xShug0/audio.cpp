@@ -85,6 +85,7 @@ struct VoxCPM2Config {
     int64_t max_length = 8192;
     std::string device = "cuda";
     std::string dtype = "bfloat16";
+    bool v1 = false;
 };
 
 struct VoxCPM2Assets {
@@ -94,6 +95,6 @@ struct VoxCPM2Assets {
     std::shared_ptr<const assets::TensorSource> audiovae_weights;
 };
 
-std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(const std::filesystem::path & model_path, bool is_v1);
 
 }  // namespace engine::models::voxcpm2

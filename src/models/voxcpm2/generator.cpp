@@ -115,6 +115,18 @@ std::vector<float> concat_dit_mu(const std::vector<float> &lm,
   return out;
 }
 
+std::vector<float> add_dit_mu(const std::vector<float> &lm,
+                              const std::vector<float> &residual) {
+  if (lm.size() != residual.size()) {
+    throw std::runtime_error("VoxCPM1 dit mu inputs must have equal size");
+  }
+  std::vector<float> out(lm.size(), 0.0F);
+  for (size_t i = 0; i < lm.size(); ++i) {
+    out[i] = lm[i] + residual[i];
+  }
+  return out;
+}
+
 void append_patch(std::vector<float> &features, const std::vector<float> &patch,
                   int64_t expected_size) {
   if (static_cast<int64_t>(patch.size()) != expected_size) {
@@ -401,23 +413,32 @@ private:
               .build(ctx, fsq, proj.fsq_out_proj);
     fsq_hidden_output_ = fsq.tensor;
 
-    auto current_residual_concat =
-        engine::modules::ConcatModule({1}).build(ctx, lm_hidden, current_embed);
-    auto current_residual_input =
-        engine::modules::LinearModule(
-            binding::linear_config(config.lm.hidden_size * 2,
-                                   config.lm.hidden_size, true))
-            .build(ctx, current_residual_concat, proj.fusion_concat_proj);
-    current_residual_input_output_ = current_residual_input.tensor;
+    if (config.v1) {
+      current_residual_input_output_ =
+          engine::modules::AddModule()
+              .build(ctx, lm_hidden, current_embed)
+              .tensor;
+      residual_input_output_ =
+          engine::modules::AddModule().build(ctx, fsq, current_embed).tensor;
+    } else {
+      auto current_residual_concat =
+          engine::modules::ConcatModule({1}).build(ctx, lm_hidden, current_embed);
+      auto current_residual_input =
+          engine::modules::LinearModule(
+              binding::linear_config(config.lm.hidden_size * 2,
+                                     config.lm.hidden_size, true))
+              .build(ctx, current_residual_concat, proj.fusion_concat_proj);
+      current_residual_input_output_ = current_residual_input.tensor;
 
-    auto residual_concat =
-        engine::modules::ConcatModule({1}).build(ctx, fsq, current_embed);
-    auto residual_input =
-        engine::modules::LinearModule(
-            binding::linear_config(config.lm.hidden_size * 2,
-                                   config.lm.hidden_size, true))
-            .build(ctx, residual_concat, proj.fusion_concat_proj);
-    residual_input_output_ = residual_input.tensor;
+      auto residual_concat =
+          engine::modules::ConcatModule({1}).build(ctx, fsq, current_embed);
+      auto residual_input =
+          engine::modules::LinearModule(
+              binding::linear_config(config.lm.hidden_size * 2,
+                                     config.lm.hidden_size, true))
+              .build(ctx, residual_concat, proj.fusion_concat_proj);
+      residual_input_output_ = residual_input.tensor;
+    }
 
     auto current_lm_dit =
         engine::modules::LinearModule(
@@ -1024,7 +1045,8 @@ public:
       throw std::runtime_error("VoxCPM2 CFM received non-finite scalar input");
     }
     const int64_t patch_elems = config.feat_dim * config.patch_size;
-    if (static_cast<int64_t>(mu.size()) != config.dit.hidden_dim * 2) {
+    const int64_t mu_dim = config.dit.hidden_dim * (config.v1 ? 1 : 2);
+    if (static_cast<int64_t>(mu.size()) != mu_dim) {
       throw std::runtime_error("VoxCPM2 CFM mu size mismatch");
     }
     if (static_cast<int64_t>(cond_patch.size()) != patch_elems) {
@@ -1556,8 +1578,11 @@ private:
     for (int64_t index = 0; index < max_tokens; ++index) {
       const auto projected =
           projection_.run(lm_hidden, residual_hidden, zero_hidden);
-      const auto mu = concat_dit_mu(projected.current_lm_dit_hidden,
-                                    projected.residual_dit_hidden);
+      const auto mu = assets_->config.v1
+                          ? add_dit_mu(projected.current_lm_dit_hidden,
+                                       projected.residual_dit_hidden)
+                          : concat_dit_mu(projected.current_lm_dit_hidden,
+                                          projected.residual_dit_hidden);
       const auto patch = cfm_.generate_patch(
           mu, prefix_cond, options.num_inference_steps, options.guidance_scale,
           options.seed, patch_noise_start, options.cfm_noise_file);

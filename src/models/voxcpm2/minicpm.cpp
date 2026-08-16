@@ -789,13 +789,15 @@ private:
 
     auto masked_current = mask_sequence(ctx, current_embeddings, audio_mask);
     auto residual_input =
-        engine::modules::ConcatModule({2}).build(ctx, lm_hidden, masked_current);
-    residual_input =
-        engine::modules::LinearModule(
-            binding::linear_config(config.lm.hidden_size * 2,
-                                   config.lm.hidden_size, true))
-            .build(ctx, residual_input,
-                   model_weights.projections.fusion_concat_proj);
+        config.v1
+            ? engine::modules::AddModule{}.build(ctx, lm_hidden, masked_current)
+            : engine::modules::LinearModule(
+                  binding::linear_config(config.lm.hidden_size * 2,
+                                         config.lm.hidden_size, true))
+                  .build(ctx,
+                         engine::modules::ConcatModule({2}).build(
+                             ctx, lm_hidden, masked_current),
+                         model_weights.projections.fusion_concat_proj);
 
     auto residual_hidden = residual_input;
     for (const auto &layer : model_weights.residual_lm.layers) {
