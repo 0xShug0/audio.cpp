@@ -215,6 +215,35 @@ const char * backend_name(engine::core::BackendType type) {
     return "unknown";
 }
 
+HttpResponse ui_service_worker_retirement_response() {
+    HttpResponse response;
+    response.status = 200;
+    response.content_type = "application/javascript; charset=utf-8";
+    response.body = R"JS(
+// Retire service workers left by applications that previously used this origin.
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const cacheNames = await caches.keys();
+    await Promise.all(cacheNames.map((name) => caches.delete(name)));
+    await self.clients.claim();
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    await self.registration.unregister();
+    await Promise.all(windows.map((client) => client.navigate(client.url)));
+  })());
+});
+)JS";
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0";
+    response.headers["Clear-Site-Data"] = "\"cache\"";
+    response.headers["Expires"] = "0";
+    response.headers["Pragma"] = "no-cache";
+    response.headers["Service-Worker-Allowed"] = "/";
+    response.headers["X-Content-Type-Options"] = "nosniff";
+    return response;
+}
+
 std::unordered_map<std::string, std::string> options_from_object(const Value * value) {
     return minitts::cli::json_options_map(value);
 }
@@ -876,6 +905,11 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else if (request.method == "GET" && (request.path == "/" || request.path == "/index.html")) {
         response = handle_ui_asset();
     }
+    else if (
+        request.method == "GET" && config_.ui_enabled &&
+        (request.path == "/sw.js" || request.path == "/service-worker.js")) {
+        response = ui_service_worker_retirement_response();
+    }
     else if (request.method == "GET" && request.path == "/favicon.ico") {
         response.status = 204;
         response.content_type = "image/x-icon";
@@ -1399,7 +1433,15 @@ HttpResponse ServerState::handle_ui_asset() const {
     response.content_type = "text/html; charset=utf-8";
     const auto html = embedded_ui_html();
     response.body.assign(html.data(), html.size());
-    response.headers["Cache-Control"] = "no-cache";
+    // The WebUI shares the server origin (usually localhost:8080) with any app
+    // that previously occupied that port. Never let an old shell survive a
+    // server upgrade, and ask the browser to discard only cached resources.
+    // Deliberately omit the Clear-Site-Data "storage" directive: saved voices,
+    // the selected models folder, and UI preferences live in local storage.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0";
+    response.headers["Clear-Site-Data"] = "\"cache\"";
+    response.headers["Expires"] = "0";
+    response.headers["Pragma"] = "no-cache";
     response.headers["Content-Security-Policy"] =
         "default-src 'self' 'unsafe-inline' blob: data:; connect-src 'self'; media-src 'self' blob: data:";
     response.headers["X-Content-Type-Options"] = "nosniff";
