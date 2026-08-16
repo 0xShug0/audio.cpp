@@ -108,6 +108,21 @@
         "kind": "huggingface_snapshot",
         "repo": "CaptainArni/audio.cpp-gguf"
       }
+    },
+    {
+      "id": "ace_step_xl_sft_bf16",
+      "display_name": "ACE-Step 1.5 XL SFT BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/xl-sft/ace-step-1.5-xl-sft-bf16.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "CaptainArni/audio.cpp-gguf"
+      }
     }
   ],
   "sources": [

@@ -210,17 +210,21 @@ before. Selecting one that is not installed reports which directory is missing.
 The upstream snapshots ship four safetensors shards plus a
 `model.safetensors.index.json`, which the package spec points at directly.
 
-`ace_step_xl_turbo_bf16` installs the XL Turbo GGUF (14.2 GB), which is
-self-contained the way the Turbo and Base GGUFs are — XL DiT, planner LM, text
-encoder and VAE in one file:
+The two differ only in `is_turbo`: XL Turbo is guidance-distilled and ignores
+`guidance_scale`, XL SFT takes the CFG path the way `acestep-v15-base` does.
+Their dimensions, encoder group and head configuration are identical.
+
+`ace_step_xl_turbo_bf16` and `ace_step_xl_sft_bf16` install them as GGUFs
+(14.2 GB each), self-contained the way the Turbo and Base GGUFs are — XL DiT,
+planner LM, text encoder and VAE in one file:
 
 ```bash
 audiocpp_cli --task gen --family ace_step --model models/ACE-Step1.5-GGUF/xl-turbo --backend cuda --task-route text2music --text "warm lo-fi hip hop with a soft rhodes piano" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-xl-turbo --out song.wav
 ```
 
-`acestep-v15-xl-sft` has no GGUF package yet; run it from a safetensors tree.
-There, `dit_weight_type=bf16` is worth passing — the XL snapshots are stored in
-float32, so `native` puts 19.9 GB of weights on the card:
+Running one from a safetensors tree instead is worth a `dit_weight_type=bf16`,
+because the XL snapshots are stored in float32 and `native` puts 19.9 GB of
+weights on the card:
 
 ```bash
 audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend cuda --task-route text2music --text "warm lo-fi hip hop with a soft rhodes piano" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-xl-sft --session-option ace_step.dit_weight_type=bf16 --out song.wav
@@ -228,10 +232,10 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 
 Measured on an RTX 5090, 20 s of audio, weight loading included and the weights
 warm in the page cache: 87 s from safetensors at `native`, 25 s from safetensors
-at `bf16`, 15 s from the bf16 GGUF (turbo, for reference: 11 s). Reading the
-weights off disk adds roughly 10 s either way.
+at `bf16`, 15 s from the bf16 GGUF, both variants alike (turbo, for reference:
+11 s). Reading the weights off disk adds roughly 10 s either way.
 
-Building the XL GGUF yourself needs the other variants' safetensors on hand,
+Building an XL GGUF yourself needs the other variants' safetensors on hand,
 because `audiocpp_gguf` checks the conversion against the spec's required
 namespaces; exclude them from the output:
 
@@ -249,3 +253,8 @@ audiocpp_gguf --root models/Ace-Step1.5 --family ace_step \
   --exclude-prefix dit_turbo_ --exclude-prefix dit_base_ \
   --type bf16 --output ace-step-1.5-xl-turbo-bf16.gguf
 ```
+
+Swap `dit_xl_turbo_*` for `dit_xl_sft_*` to build the SFT one. Upstream ships
+`silence_latent.pt` where the spec wants safetensors;
+`tests/ace_step/convert_silence_latent.py --input <variant>/silence_latent.pt`
+converts it.
