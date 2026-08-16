@@ -182,7 +182,6 @@ pre { background: #071220; border: 1px solid var(--line); border-radius: 8px; pa
 .model-actions button { padding: 7px; font-size: 11px; }
 .package-buttons { display: grid; grid-template-columns: repeat(3, minmax(76px, 1fr)); gap: 5px; }
 .package-buttons.wide-package-set { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.package-buttons.wide-package-set .package-choice, .package-buttons.wide-package-set .package-install { height: 68px; }
 .package-buttons.wide-package-set .package-size { line-height: 1.15; }
 .package-buttons:has(> .package-choice:only-child) { grid-template-columns: minmax(0, 1fr); }
 .package-buttons:has(> .package-choice:nth-child(2):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
