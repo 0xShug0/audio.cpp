@@ -106,13 +106,15 @@ function relatedPackages(entry: CatalogEntry): PackageEntry[] {
 
 function packageLabel(entry: PackageEntry): string {
   if (entry.family === 'ace_step') {
-    const variant = entry.id.includes('_base_') ? 'Base' : entry.id.includes('_turbo_') ? 'Turbo' : '';
     const precision = entry.precision === 'bf16'
       ? 'BF16'
       : ['q8_0', 'q8'].includes(entry.precision)
         ? 'Q8'
         : entry.precision.toUpperCase();
-    return variant ? `${variant} ${precision}` : `GGUF ${precision}`;
+    if (entry.id.includes('_xl_turbo_')) return `GGUF Turbo XL ${precision}`;
+    if (entry.id.includes('_xl_sft_')) return `GGUF Turbo XL SFT ${precision}`;
+    if (entry.id.includes('_turbo_')) return `GGUF Turbo ${precision}`;
+    return `GGUF ${precision}`;
   }
   if (entry.format === 'safetensors') return 'Safetensors';
   if (entry.id.includes('int8_dit')) return 'GGUF Q4 ConvRot';
