@@ -90,6 +90,7 @@ bool raw_dtype_matches_ggml_type(std::string_view dtype, ggml_type type) {
     return (normalized == "f32" && type == GGML_TYPE_F32) ||
            (normalized == "f16" && type == GGML_TYPE_F16) ||
            (normalized == "bf16" && type == GGML_TYPE_BF16) ||
+           (normalized == "i8" && type == GGML_TYPE_I8) ||
            (normalized == "q4_0" && type == GGML_TYPE_Q4_0) ||
            (normalized == "q4_1" && type == GGML_TYPE_Q4_1) ||
            (normalized == "q5_0" && type == GGML_TYPE_Q5_0) ||
@@ -594,7 +595,7 @@ public:
         const std::optional<std::vector<int64_t>> & expected_shape) const override {
         const auto tensor = require_tensor_data(name);
         validate_expected_shape(name, tensor.metadata.shape, expected_shape);
-        const ggml_type type = ggml_type_for_tensor_storage(tensor_storage_type_for_dtype(tensor.metadata.dtype));
+        const ggml_type type = ggml_type_for_tensor_dtype(tensor.metadata.dtype);
         const auto physical_shape = tensor.metadata.shape.empty()
             ? shape_from_dims({1})
             : shape_from_dims(tensor.metadata.shape);
@@ -1403,6 +1404,8 @@ ggml_type ggml_type_for_tensor_storage(TensorStorageType storage_type) {
             return GGML_TYPE_F16;
         case TensorStorageType::BF16:
             return GGML_TYPE_BF16;
+        case TensorStorageType::I8:
+            return GGML_TYPE_I8;
         case TensorStorageType::Q4_0:
             return GGML_TYPE_Q4_0;
         case TensorStorageType::Q4_1:
@@ -1437,6 +1440,9 @@ TensorStorageType tensor_storage_type_for_dtype(std::string_view dtype) {
     }
     if (normalized == "bf16" || normalized == "bfloat16") {
         return TensorStorageType::BF16;
+    }
+    if (normalized == "i8" || normalized == "int8") {
+        return TensorStorageType::I8;
     }
     if (normalized == "q4_0") {
         return TensorStorageType::Q4_0;
@@ -1764,7 +1770,13 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
     if (!engine::io::is_existing_directory(sidecar_root)) {
         throw std::runtime_error("GGUF sidecar root is not a directory: " + sidecar_root.string());
     }
-    auto source = std::make_shared<CompositeTensorSource>(sidecar_root, std::move(components));
+    std::shared_ptr<const TensorSource> source =
+        std::make_shared<CompositeTensorSource>(sidecar_root, std::move(components));
+    if (!options.folded_weight_norm_patterns.empty()) {
+        source = make_weight_norm_folded_tensor_source(
+            std::move(source),
+            options.folded_weight_norm_patterns);
+    }
     const auto metadata = source->tensors();
     if (metadata.empty()) {
         throw std::runtime_error("cannot convert an empty tensor source to GGUF");

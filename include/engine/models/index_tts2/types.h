@@ -5,9 +5,27 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::models::index_tts2 {
+
+// Model variant, selected from the model config "version" field ("2.5" ->
+// kV2_5, anything else -> kV2). Variant branches must be driven by this value,
+// never by probing weight tensor names in hot paths.
+enum class IndexTTS2Variant {
+    kV2,
+    kV2_5,
+};
+
+inline IndexTTS2Variant index_tts2_variant_from_version(std::string_view version) {
+    return version == "2.5" ? IndexTTS2Variant::kV2_5 : IndexTTS2Variant::kV2;
+}
+
+// Rows in the v2.5 GPT lang_embedding table. indextts/utils/tokenizer.py
+// defines 106 language codes (including "common"); the checkpoint table has
+// one extra unused row.
+constexpr int64_t kIndexTTS2LangEmbeddingRows = 107;
 
 struct IndexTTS2GptConfig {
     int64_t model_dim = 1280;
@@ -126,12 +144,18 @@ struct IndexTTS2GenerationOptions {
     float repetition_penalty = 10.0F;
     int max_mel_tokens = 1500;
     uint32_t seed = 0;
+    // Output duration multiplier applied to the S2Mel length-regulator target
+    // (matches official IndexTTS2.5 duration_factor): >1 slower, <1 faster.
+    float duration_factor = 1.0F;
 };
 
 struct IndexTTS2Request {
     std::string text;
     std::optional<runtime::AudioBuffer> speaker_audio = std::nullopt;
     std::optional<runtime::AudioBuffer> emotion_audio = std::nullopt;
+    // Text language hint (v2.5 only); empty means auto (zh when the text
+    // contains Han characters, otherwise en).
+    std::string language;
     float emotion_alpha = 1.0F;
     std::optional<std::vector<float>> emotion_vector = std::nullopt;
     bool use_emotion_text = false;

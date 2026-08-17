@@ -314,6 +314,19 @@ std::vector<std::string> validate_candidate(const PackageSpecCandidate & candida
             (void)unused;
             expected_prefixes.insert(tensor_prefix(value));
         }
+        // A namespace in `optional_tensors` is one the family's packages may or
+        // may not ship — an ACE-Step XL DiT against a turbo-only package. It
+        // cannot be required of every conversion, but a conversion that does
+        // supply it is building exactly the package the spec describes, so it
+        // is not unexpected either.
+        std::set<std::string> optional_prefixes;
+        if (const auto * optional_tensors = source.find("optional_tensors");
+            optional_tensors != nullptr && !optional_tensors->is_null()) {
+            for (const auto & [unused, value] : optional_tensors->as_object()) {
+                (void)unused;
+                optional_prefixes.insert(tensor_prefix(value));
+            }
+        }
         for (const auto & prefix : expected_prefixes) {
             if (actual_prefixes.find(prefix) == actual_prefixes.end()) {
                 errors.push_back("missing tensor namespace '" + (prefix.empty() ? std::string("<root>") : prefix) +
@@ -321,7 +334,8 @@ std::vector<std::string> validate_candidate(const PackageSpecCandidate & candida
             }
         }
         for (const auto & prefix : actual_prefixes) {
-            if (expected_prefixes.find(prefix) == expected_prefixes.end()) {
+            if (expected_prefixes.find(prefix) == expected_prefixes.end() &&
+                optional_prefixes.find(prefix) == optional_prefixes.end()) {
                 errors.push_back("unexpected tensor namespace '" + (prefix.empty() ? std::string("<root>") : prefix) +
                                  "'");
             }
@@ -436,6 +450,7 @@ void print_usage() {
                  "[--root <model-dir>] [--sidecar <source>=<destination>] "
                  "[--bnb-nf4-type q8_0] [--exclude-prefix <logical-prefix>] "
                  "[--keep-type <tensor-prefix>*=<type>] "
+                 "[--fold-weight-norm <tensor-prefix>*] "
                  "[--overwrite] [--no-sidecars] "
                  "[--allow-missing-model-spec]\n"
         << "       audiocpp_gguf --inspect <model.gguf>\n";
@@ -477,7 +492,8 @@ int main(int argc, char ** argv) {
             }
             if ((arg == "--input" || arg == "--output" || arg == "--type" || arg == "--inspect" || arg == "--root" ||
                  arg == "--sidecar" || arg == "--family" || arg == "--model-spec" || arg == "--model-spec-override" ||
-                 arg == "--bnb-nf4-type" || arg == "--exclude-prefix" || arg == "--keep-type") &&
+                 arg == "--bnb-nf4-type" || arg == "--exclude-prefix" || arg == "--keep-type" ||
+                 arg == "--fold-weight-norm") &&
                 i + 1 < argc) {
                 const std::string value = argv[++i];
                 if (arg == "--input") {
@@ -494,6 +510,8 @@ int main(int argc, char ** argv) {
                     conversion_options.bnb_nf4_type = engine::assets::parse_tensor_storage_type(value);
                 else if (arg == "--exclude-prefix")
                     conversion_options.excluded_tensor_prefixes.push_back(value);
+                else if (arg == "--fold-weight-norm")
+                    conversion_options.folded_weight_norm_patterns.push_back(value);
                 else if (arg == "--inspect")
                     inspect_path = value;
                 else if (arg == "--root")
@@ -596,6 +614,7 @@ int main(int argc, char ** argv) {
         for (const auto & prefix : conversion_options.excluded_tensor_prefixes)
             std::cout << "excluded_prefix=" << prefix << "\n";
         std::cout << "type_overrides=" << conversion_options.type_overrides.size() << "\n";
+        std::cout << "folded_weight_norm_patterns=" << conversion_options.folded_weight_norm_patterns.size() << "\n";
         std::cout << "embedded_sidecars=" << (engine::assets::gguf_has_embedded_sidecars(output) ? "true" : "false")
                   << "\n";
         std::cout << "embedded_model_spec=" << (embedded_model_spec.has_value() ? "true" : "false") << "\n";

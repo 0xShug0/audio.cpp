@@ -93,6 +93,36 @@
         "ACE-Step1.5-GGUF/base/ace-step-1.5-base-bf16.gguf"
       ],
       "strip_prefix": "ACE-Step1.5-GGUF"
+    },
+    {
+      "id": "ace_step_xl_turbo_bf16",
+      "display_name": "ACE-Step 1.5 XL Turbo BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/xl-turbo/ace-step-1.5-xl-turbo-bf16.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "CaptainArni/audio.cpp-gguf"
+      }
+    },
+    {
+      "id": "ace_step_xl_sft_bf16",
+      "display_name": "ACE-Step 1.5 XL SFT BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/xl-sft/ace-step-1.5-xl-sft-bf16.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "CaptainArni/audio.cpp-gguf"
+      }
     }
   ],
   "sources": [
@@ -118,6 +148,28 @@
         "text_encoder_tokenizer_json": "model:Qwen3-Embedding-0.6B/tokenizer.json",
         "text_encoder_chat_template": "model:Qwen3-Embedding-0.6B/chat_template.jinja",
         "vae_config": "model:vae/config.json"
+      },
+      "optional_files": {
+        "dit_xl_turbo_config": "model:acestep-v15-xl-turbo/config.json",
+        "dit_xl_sft_config": "model:acestep-v15-xl-sft/config.json"
+      },
+      "optional_tensors": {
+        "dit_xl_turbo_weights": {
+          "source": "weights:",
+          "prefix": "dit_xl_turbo_weights"
+        },
+        "dit_xl_turbo_silence_latent": {
+          "source": "weights:",
+          "prefix": "dit_xl_turbo_silence_latent"
+        },
+        "dit_xl_sft_weights": {
+          "source": "weights:",
+          "prefix": "dit_xl_sft_weights"
+        },
+        "dit_xl_sft_silence_latent": {
+          "source": "weights:",
+          "prefix": "dit_xl_sft_silence_latent"
+        }
       },
       "tensors": {
         "dit_turbo_weights": {
@@ -171,6 +223,16 @@
         "text_encoder_tokenizer_json": "model:Qwen3-Embedding-0.6B/tokenizer.json",
         "text_encoder_chat_template": "model:Qwen3-Embedding-0.6B/chat_template.jinja",
         "vae_config": "model:vae/config.json"
+      },
+      "optional_files": {
+        "dit_xl_turbo_config": "model:acestep-v15-xl-turbo/config.json",
+        "dit_xl_sft_config": "model:acestep-v15-xl-sft/config.json"
+      },
+      "optional_tensors": {
+        "dit_xl_turbo_weights": "model:acestep-v15-xl-turbo/model.safetensors.index.json",
+        "dit_xl_turbo_silence_latent": "model:acestep-v15-xl-turbo/silence_latent.safetensors",
+        "dit_xl_sft_weights": "model:acestep-v15-xl-sft/model.safetensors.index.json",
+        "dit_xl_sft_silence_latent": "model:acestep-v15-xl-sft/silence_latent.safetensors"
       },
       "tensors": {
         "dit_turbo_weights": "model:acestep-v15-turbo/model.safetensors",

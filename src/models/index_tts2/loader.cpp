@@ -13,11 +13,13 @@ runtime::ModelMetadata metadata(const IndexTTS2Assets & assets) {
     runtime::ModelMetadata out;
     out.family = "index_tts2";
     out.variant = assets.config.version;
-    out.description = "IndexTTS2 loaded from local extracted assets.";
+    out.description = index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5
+        ? "IndexTTS2.5 (index_tts2 family variant) loaded from local extracted assets."
+        : "IndexTTS2 loaded from local extracted assets.";
     return out;
 }
 
-runtime::CapabilitySet capabilities(const IndexTTS2Assets &) {
+runtime::CapabilitySet capabilities(const IndexTTS2Assets & assets) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
@@ -25,11 +27,15 @@ runtime::CapabilitySet capabilities(const IndexTTS2Assets &) {
     };
     out.supports_speaker_reference = true;
     out.supports_style_condition = true;
-    out.languages = {"English", "Chinese"};
+    if (index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5) {
+        out.languages = {"Chinese", "English", "Japanese", "Spanish", "Arabic"};
+    } else {
+        out.languages = {"English", "Chinese"};
+    }
     return out;
 }
 
-runtime::ModelCliInterface cli(const IndexTTS2Assets &) {
+runtime::ModelCliInterface cli(const IndexTTS2Assets & assets) {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"emotion_alpha", "float", "Blend strength for explicit emotion conditioning."},
@@ -41,7 +47,12 @@ runtime::ModelCliInterface cli(const IndexTTS2Assets &) {
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode used when text_chunk_size is set."},
         {"length_penalty", "float", "GPT beam-search length penalty."},
         {"num_beams", "n", "GPT beam count."},
+        {"duration_factor", "float", "Output duration multiplier for speech-rate control; >1 slower, <1 faster. Matches official IndexTTS2.5 duration_factor."},
     };
+    if (index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5) {
+        out.request_options.push_back(
+            {"language", "auto|zh|en|ja|es|ar|...", "Text language hint; auto infers zh when the text contains Han characters, otherwise en."});
+    }
     out.session_options = {
         {"index_tts2.weight_type", "native|f32|f16|bf16|q8_0", "Matmul weight storage type."},
         {"index_tts2.conv_weight_type", "native|f32|f16", "Convolution weight storage type."},
@@ -50,7 +61,7 @@ runtime::ModelCliInterface cli(const IndexTTS2Assets &) {
         {"index_tts2.reference_graph_arena_mb", "n", "Reference encoder and codec graph arena size."},
         {"index_tts2.emotion_text_prefill_graph_arena_mb", "n", "Emotion-text prefill graph arena size."},
         {"index_tts2.emotion_text_decode_graph_arena_mb", "n", "Emotion-text cached-step graph arena size."},
-        {"index_tts2.emotion_text_max_new_tokens", "n", "Maximum generated tokens for emotion-text classification; default 256."},
+        {"index_tts2.emotion_text_max_tokens", "n", "Maximum generated tokens for emotion-text classification; default 256."},
         {"index_tts2.weight_context_mb", "n", "Shared weight context size."},
         {"index_tts2.mem_saver", "true|false", "Release staged reference and conditioning graphs after request phases; default false."},
         {"index_tts2.speaker_cache_slots", "n", "Prepared speaker-reference cache slots; default 1."},

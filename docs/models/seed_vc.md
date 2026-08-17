@@ -44,7 +44,7 @@ audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda
 | `--request-option intelligibility_guidance_scale=<float>` | float | `0.7` | CFG strength for source-content intelligibility. |
 | `--request-option similarity_guidance_scale=<float>` | float | `0.7` | CFG strength for target-speaker similarity. |
 | `--seed` | integer | random if omitted | Seed for V2 random sampling/noise. |
-| `--request-option voice_anonymization=true|false` | bool | `false` | Use randomized voice conditioning instead of target-speaker conditioning. |
+| `--request-option voice_anonymization=true\|false` | bool | `false` | Use randomized voice conditioning instead of target-speaker conditioning. |
 | `--request-option noise_path=<path>` | path | empty | Optional deterministic noise input for validation. |
 
 ## V1 Whisper + BigVGAN Voice Conversion
@@ -117,8 +117,8 @@ audiocpp_cli --task svc --family seed_vc --model models/SeedVC-MLX --backend cud
 | `--num-inference-steps` | integer | `30` | V1 CFM denoising steps. |
 | `--request-option length_adjust=<float>` | float | `1.0` | Stretch or compress generated duration. |
 | `--request-option inference_guidance_scale=<float>` | float | `0.7` | V1 CFM guidance strength. |
-| `--request-option f0_condition=true|false` | bool | `false` | Enable F0-conditioned conversion. |
-| `--request-option auto_f0_adjust=true|false` | bool | `false` | Automatically adjust F0 when F0 conditioning is enabled. |
+| `--request-option f0_condition=true\|false` | bool | `false` | Enable F0-conditioned conversion. |
+| `--request-option auto_f0_adjust=true\|false` | bool | `false` | Automatically adjust F0 when F0 conditioning is enabled. |
 | `--request-option semitone_shift=<n>` | integer | `0` | Shift pitch by semitones when F0 conditioning is enabled. |
 | `--seed` | integer | random if omitted | Seed for V1 random noise. |
 

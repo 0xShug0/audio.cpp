@@ -23,6 +23,8 @@ struct CampplusEncoderConfig {
     // opts into normalization by the complete segment width to match its
     // published ONNX graph for a final partial segment.
     bool normalize_partial_segment_by_full_length = false;
+    std::string tensor_prefix = "speaker_encoder";
+    float stats_variance_floor = 0.0F;
 };
 
 struct CampplusEncoderOutputs {

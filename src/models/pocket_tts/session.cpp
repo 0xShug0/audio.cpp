@@ -760,6 +760,7 @@ void PocketTTSSession::prepare(const runtime::SessionPreparationRequest & reques
 
 runtime::TaskResult PocketTTSSession::run(const runtime::TaskRequest & request) {
     require_prepared("PocketTTS run()");
+    audio_decoder_.clear_runtime_cache();
     runtime::TaskRequest effective_request = request;
     effective_request.voice.reset();
     GenerationRequest generation_request =

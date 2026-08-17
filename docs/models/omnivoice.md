@@ -108,8 +108,8 @@ The SSE stream emits `speech.audio.delta` events followed by `speech.audio.done`
 | `--request-option speed=<float>` | float | `1.0` | Speech speed multiplier. |
 | `--request-option audio_chunk_duration=<float>` | seconds | `15.0` | Model-side automatic chunk duration when framework chunking is not explicitly enabled. |
 | `--request-option audio_chunk_threshold=<float>` | seconds | `30.0` | Estimated audio length threshold before model-side chunking is used. |
-| `--session-option omnivoice.mem_saver=true|false` | bool | `false` | Release staged generator and audio-tokenizer runtime graphs after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
-| `--session-option omnivoice.perf_mode=off|flash_attention` | enum | `off` | Opt-in generator attention mode. `off` keeps the exact-safe path; `flash_attention` can improve CUDA throughput with small output drift. |
+| `--session-option omnivoice.mem_saver=true\|false` | bool | `false` | Release staged generator and audio-tokenizer runtime graphs after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+| `--session-option omnivoice.perf_mode=off\|flash_attention` | enum | `off` | Opt-in generator attention mode. `off` keeps the exact-safe path; `flash_attention` can improve CUDA throughput with small output drift. |
 
 `omnivoice.perf_mode=flash_attention` is only available on the normal graph path and cannot be combined with `omnivoice.mem_saver=true`.
 

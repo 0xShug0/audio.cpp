@@ -1,6 +1,6 @@
 # Irodori-TTS
 
-Irodori-TTS is Japanese TTS under `--family irodori_tts`. It supports no-reference speech, optional reference-audio voice cloning, and caption-based voice design.
+Irodori-TTS is Japanese TTS under `--family irodori_tts`. It supports no-reference speech, optional reference-audio voice cloning, and instruction-based voice design.
 
 The default downloadable package is the GGUF v4 Small Q8_0 checkpoint. v4 Small is the preferred path for new use because one checkpoint covers no-reference TTS, voice cloning, and voice design. The older v3 packages remain supported for existing users and local validation.
 
@@ -8,13 +8,13 @@ The default downloadable package is the GGUF v4 Small Q8_0 checkpoint. v4 Small 
 
 | Variant | Package | Tasks | Notes |
 |---|---|---|---|
-| v4 Small | `Irodori-TTS-v4-Small-GGUF` | `tts`, `clon`, `vdes` | Bundles its v4 tokenizer and supports caption conditioning in the same checkpoint. |
+| v4 Small | `Irodori-TTS-v4-Small-GGUF` | `tts`, `clon`, `vdes` | Bundles its v4 tokenizer and supports instruction/caption conditioning in the same checkpoint. |
 | 500M v3 | `Irodori-TTS-500M-v3-GGUF` | `tts`, `clon` | Uses the shared llm-jp tokenizer layout in the original safetensors package. |
-| 600M v3 VoiceDesign | `Irodori-TTS-600M-v3-VoiceDesign-GGUF` | `tts`, `clon`, `vdes` | Adds caption conditioning for voice design. |
+| 600M v3 VoiceDesign | `Irodori-TTS-600M-v3-VoiceDesign-GGUF` | `tts`, `clon`, `vdes` | Adds instruction/caption conditioning for voice design. |
 
 v4 GGUF packages are published in both `q8_0` and `f16`. v3 GGUF packages are also available in `q8_0` and `f16`.
 
-> **v4 reference-conditioning note:** Fresh v4 voice-clone or reference+caption generations may occasionally add a short extra phrase near the end of the clip. This behavior is also reproducible in the upstream Python path with the same reference/text/seed, so it is treated as a current v4 model/runtime limitation rather than a GGUF-only issue. No-reference and caption-only paths are usually cleaner; for reference-conditioned use, try a different seed, caption, or explicit `duration_sec` if the tail matters.
+> **v4 reference-conditioning note:** Fresh v4 voice-clone or reference+instruction generations may occasionally add a short extra phrase near the end of the clip. This behavior is also reproducible in the upstream Python path with the same reference/text/seed, so it is treated as a current v4 model/runtime limitation rather than a GGUF-only issue. No-reference and instruction-only paths are usually cleaner; for reference-conditioned use, try a different seed, instruction, or explicit `duration_sec` if the tail matters.
 
 ## Quick Start
 
@@ -47,7 +47,7 @@ audiocpp_cli --task vdes --family irodori_tts \
   --model models/Irodori-TTS-v4-Small-GGUF/irodori-tts-v4-small-q8_0.gguf \
   --backend cuda --language ja \
   --text "本日はお越しいただき、誠にありがとうございます。" \
-  --request-option caption="落ち着いた大人の男性。深く響く声で丁寧に話している。" \
+  --request-option instruction="落ち着いた大人の男性。深く響く声で丁寧に話している。" \
   --request-option no_ref=true \
   --request-option guidance_scale=3 \
   --out out.wav
@@ -72,7 +72,7 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `language` | `ja` | `ja` | Text language code; Irodori-TTS is Japanese-only. |
-| `caption` | text | empty | Voice-design caption; only useful on caption-conditioned checkpoints. |
+| `instruction` | text | empty | Voice-design instruction; only useful on caption-conditioned checkpoints. Legacy `caption` is accepted as an alias. |
 | `no_ref` | bool | `true` unless a reference is provided | Use no-reference generation. Set `false` with `--voice-ref` for reference conditioning. |
 | `num_inference_steps` | integer | `40` | RF diffusion steps. |
 | `duration_sec` | seconds | unset | Explicit output duration; omitted uses predicted duration. |
@@ -108,10 +108,11 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 
 ## Compatibility
 
-The v3 runtime accepts the old option names below for existing local scripts and older standalone GGUF packages. Prefer the v1 names for new requests.
+The runtime accepts the old option names below for existing local scripts and older standalone GGUF packages. Prefer the v1 names for new requests.
 
 | Legacy option | v1 option |
 |---|---|
+| `caption` | `instruction` |
 | `duration_seconds` | `duration_sec` |
 | `min_seconds` | `min_duration_sec` |
 | `max_seconds` | `max_duration_sec` |

@@ -316,6 +316,27 @@ void add_tensor_map(assets::ResourceBundle & bundle,
     }
 }
 
+// Tensor sources a package may or may not ship. The required `tensors` map is
+// checked eagerly, which is what a package wants for the weights it cannot run
+// without; a family whose variants are separate multi-gigabyte downloads needs
+// the other answer, or installing one variant means downloading all of them.
+// A model that selects a missing variant reports it itself, where it can name
+// the variant instead of a resource id.
+void add_optional_tensor_map(assets::ResourceBundle & bundle,
+    const ResourceRoots & roots,
+    const engine::io::json::Value * map_value) {
+    if (map_value == nullptr || map_value->is_null()) {
+        return;
+    }
+    for (const auto & [id, ref] : map_value->as_object()) {
+        std::string prefix;
+        const auto path = resolve_tensor_source_ref(roots, ref, prefix);
+        if (engine::io::is_existing_file(path)) {
+            bundle.add_tensor_source(id, path, std::move(prefix));
+        }
+    }
+}
+
 void add_optional_resource_map(assets::ResourceBundle & bundle, const ResourceRoots & roots,
     const engine::io::json::Value * map_value) {
     if (map_value == nullptr || map_value->is_null()) {
@@ -354,6 +375,7 @@ assets::ResourceBundle load_source(const std::filesystem::path & model_root, con
     add_resource_map(bundle, roots, source.find("files"));
     add_optional_resource_map(bundle, roots, source.find("optional_files"));
     add_tensor_map(bundle, roots, source.find("tensors"));
+    add_optional_tensor_map(bundle, roots, source.find("optional_tensors"));
     return bundle;
 }
 
@@ -362,10 +384,9 @@ std::vector<assets::ResourceFile> discover_safetensors_source_resources(const en
     const ResourceRoots & roots) {
     auto resources = resources_from_resource_map(
         roots, source.find(kind == ResourceKind::Files ? "files" : "tensors"), true);
-    if (kind == ResourceKind::Files) {
-        auto optional = resources_from_resource_map(roots, source.find("optional_files"), false);
-        resources.insert(resources.end(), optional.begin(), optional.end());
-    }
+    auto optional = resources_from_resource_map(
+        roots, source.find(kind == ResourceKind::Files ? "optional_files" : "optional_tensors"), false);
+    resources.insert(resources.end(), optional.begin(), optional.end());
     return resources;
 }
 
@@ -493,6 +514,14 @@ std::filesystem::path default_contract_spec_path(std::string_view family) {
     if (const auto gguf = active_gguf_path()) {
         const auto & embedded = embedded_model_spec();
         if (!embedded.has_value()) {
+            if (family == "minimax_h3") {
+                if (const auto external = discover_workspace_model_spec(family)) {
+                    return *external;
+                }
+                if (builtin_model_specs().find(std::string(family)) != builtin_model_specs().end()) {
+                    return std::filesystem::path("@builtin") / (std::string(family) + ".json");
+                }
+            }
             throw std::runtime_error("GGUF for family '" + std::string(family) +
                                      "' does not embed an audio.cpp model spec: " + gguf->string() +
                                      ". Published GGUF packages must embed a model spec; regenerate the GGUF "

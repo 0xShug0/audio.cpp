@@ -65,12 +65,18 @@ const char * status_text(int status) noexcept {
     switch (status) {
     case 200:
         return "OK";
+    case 204:
+        return "No Content";
     case 400:
         return "Bad Request";
+    case 403:
+        return "Forbidden";
     case 404:
         return "Not Found";
     case 405:
         return "Method Not Allowed";
+    case 413:
+        return "Payload Too Large";
     case 500:
         return "Internal Server Error";
     case 503:
@@ -806,7 +812,7 @@ bool wait_for_client(SocketHandle socket, int timeout_ms) {
 }  // namespace
 
 HttpResponse json_response(std::string body, int status) {
-    return HttpResponse{status, "application/json", std::move(body), {}};
+    return HttpResponse{status, "application/json", std::move(body), {}, {}};
 }
 
 HttpResponse error_response(int status, const std::string & message, const std::string & type) {

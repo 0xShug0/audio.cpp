@@ -129,6 +129,15 @@ const core::ModulePortSpec kSnakeInputs[] = {
     {"alpha", core::PortKind::Parameter, false},
 };
 
+const core::ModulePortSpec kAliasFreeActivationInputs[] = {
+    {"input", core::PortKind::Activation, false},
+    {"alpha", core::PortKind::Parameter, false},
+    {"inv_beta", core::PortKind::Parameter, false},
+    {"up_filter_even", core::PortKind::Parameter, false},
+    {"up_filter_odd", core::PortKind::Parameter, false},
+    {"down_filter", core::PortKind::Parameter, false},
+};
+
 const core::ModuleSchema kSnake1dSchema = {
     "Snake1d",
     "nn.activation",
@@ -137,6 +146,16 @@ const core::ModuleSchema kSnake1dSchema = {
     kActivationOutputs,
     1,
     "Applies Snake activation over channel-time tensors using per-channel alpha.",
+};
+
+const core::ModuleSchema kAliasFreeActivationSchema = {
+    "AliasFreeActivation",
+    "nn.activation",
+    kAliasFreeActivationInputs,
+    6,
+    kActivationOutputs,
+    1,
+    "Applies filtered upsample, nonlinear activation, and filtered downsample to channel-time tensors.",
 };
 
 template <typename Fn>
@@ -181,6 +200,87 @@ bool same_shape(const core::TensorShape & lhs, const core::TensorShape & rhs) {
         }
     }
     return true;
+}
+
+ggml_tensor * repeat_frame(ggml_context * ctx, ggml_tensor * x, int64_t frame, int64_t count) {
+    ggml_tensor * src = ggml_view_2d(ctx, x, 1, x->ne[1], x->nb[1], static_cast<size_t>(frame) * x->nb[0]);
+    return ggml_repeat(ctx, src, ggml_new_tensor_2d(ctx, GGML_TYPE_F32, count, x->ne[1]));
+}
+
+ggml_tensor * replicate_pad_left_ct(ggml_context * ctx, ggml_tensor * x, int64_t count) {
+    if (count <= 0) {
+        return x;
+    }
+    return ggml_concat(ctx, repeat_frame(ctx, x, 0, count), x, 0);
+}
+
+ggml_tensor * depthwise_conv_transpose_causal_ct(
+    core::ModuleBuildContext & ctx,
+    ggml_tensor * x,
+    const core::TensorValue & even_filter,
+    const core::TensorValue & odd_filter,
+    int64_t phase_kernel,
+    int64_t upsample_ratio) {
+    const int64_t frames = x->ne[0];
+    const int64_t channels = x->ne[1];
+    ggml_tensor * input4 = ggml_reshape_4d(
+        ctx.ggml,
+        core::has_backend_addressable_layout(x) ? x : ggml_cont(ctx.ggml, x),
+        frames,
+        1,
+        channels,
+        1);
+
+    auto convolve_phase = [&](const core::TensorValue & phase_filter) {
+        ggml_tensor * raw = ggml_conv_2d_dw_direct(
+            ctx.ggml,
+            phase_filter.tensor,
+            input4,
+            1,
+            1,
+            static_cast<int>(phase_kernel - 1),
+            0,
+            1,
+            1);
+        raw = core::has_backend_addressable_layout(raw) ? raw : ggml_cont(ctx.ggml, raw);
+        auto * reshaped = ggml_reshape_2d(ctx.ggml, raw, raw->ne[0], raw->ne[2]);
+        return ggml_view_2d(ctx.ggml, reshaped, frames, reshaped->ne[1], reshaped->nb[1], 0);
+    };
+
+    ggml_tensor * even = convolve_phase(even_filter);
+    ggml_tensor * odd = convolve_phase(odd_filter);
+    ggml_tensor * even3 = ggml_reshape_3d(
+        ctx.ggml,
+        core::has_backend_addressable_layout(even) ? even : ggml_cont(ctx.ggml, even),
+        1,
+        frames,
+        channels);
+    ggml_tensor * odd3 = ggml_reshape_3d(
+        ctx.ggml,
+        core::has_backend_addressable_layout(odd) ? odd : ggml_cont(ctx.ggml, odd),
+        1,
+        frames,
+        channels);
+    return ggml_reshape_2d(ctx.ggml, ggml_concat(ctx.ggml, even3, odd3, 0), frames * upsample_ratio, channels);
+}
+
+ggml_tensor * depthwise_conv_causal_ct(
+    core::ModuleBuildContext & ctx,
+    ggml_tensor * x,
+    const core::TensorValue & filter,
+    int64_t kernel_size,
+    int64_t stride) {
+    ggml_tensor * padded = replicate_pad_left_ct(ctx.ggml, x, kernel_size - 1);
+    ggml_tensor * input4 = ggml_reshape_4d(
+        ctx.ggml,
+        core::has_backend_addressable_layout(padded) ? padded : ggml_cont(ctx.ggml, padded),
+        padded->ne[0],
+        1,
+        padded->ne[1],
+        1);
+    ggml_tensor * out = ggml_conv_2d_dw_direct(ctx.ggml, filter.tensor, input4, static_cast<int>(stride), 1, 0, 0, 1, 1);
+    out = core::has_backend_addressable_layout(out) ? out : ggml_cont(ctx.ggml, out);
+    return ggml_reshape_2d(ctx.ggml, out, out->ne[0], out->ne[2]);
 }
 
 core::TensorValue build_swoosh(
@@ -425,6 +525,89 @@ core::TensorValue Snake1dModule::build(
 
 const core::ModuleSchema & Snake1dModule::static_schema() noexcept {
     return kSnake1dSchema;
+}
+
+AliasFreeActivationModule::AliasFreeActivationModule(AliasFreeActivationConfig config) : config_(config) {
+    if (config_.channels <= 0) {
+        throw std::runtime_error("AliasFreeActivationConfig.channels must be positive");
+    }
+    if (config_.kernel_size <= 0) {
+        throw std::runtime_error("AliasFreeActivationConfig.kernel_size must be positive");
+    }
+    if (config_.upsample_ratio <= 0 || config_.kernel_size % config_.upsample_ratio != 0) {
+        throw std::runtime_error("AliasFreeActivationConfig.upsample_ratio must divide kernel_size");
+    }
+}
+
+const AliasFreeActivationConfig & AliasFreeActivationModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & AliasFreeActivationModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue AliasFreeActivationModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const AliasFreeActivationWeights & weights) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 3, 3, "input");
+    if (input.shape.dims[1] != config_.channels) {
+        throw std::runtime_error("AliasFreeActivation input channel mismatch");
+    }
+    const int64_t phase_kernel = config_.kernel_size / config_.upsample_ratio;
+    core::validate_shape(weights.alpha, core::TensorShape::from_dims({config_.channels}), "alpha");
+    core::validate_shape(weights.inv_beta, core::TensorShape::from_dims({config_.channels}), "inv_beta");
+    core::validate_shape(weights.up_filter_even, core::TensorShape::from_dims({config_.channels, 1, 1, phase_kernel}), "up_filter_even");
+    core::validate_shape(weights.up_filter_odd, core::TensorShape::from_dims({config_.channels, 1, 1, phase_kernel}), "up_filter_odd");
+    core::validate_shape(weights.down_filter, core::TensorShape::from_dims({config_.channels, 1, 1, config_.kernel_size}), "down_filter");
+
+    auto input_ct = ggml_reshape_2d(
+        ctx.ggml,
+        core::ensure_backend_addressable_layout(ctx, input).tensor,
+        input.shape.dims[2],
+        input.shape.dims[1]);
+    ggml_tensor * up = depthwise_conv_transpose_causal_ct(
+        ctx,
+        input_ct,
+        weights.up_filter_even,
+        weights.up_filter_odd,
+        phase_kernel,
+        config_.upsample_ratio);
+    up = ggml_scale(ctx.ggml, up, static_cast<float>(config_.upsample_ratio));
+    ggml_tensor * alpha = ggml_reshape_2d(ctx.ggml, weights.alpha.tensor, 1, config_.channels);
+    ggml_tensor * inv_beta = ggml_reshape_2d(ctx.ggml, weights.inv_beta.tensor, 1, config_.channels);
+    ggml_tensor * periodic = nullptr;
+    switch (config_.kind) {
+        case AliasFreeActivationKind::SnakeBeta:
+            periodic = ggml_sqr(ctx.ggml, ggml_sin(ctx.ggml, ggml_mul(ctx.ggml, up, alpha)));
+            break;
+        default:
+            throw std::runtime_error("Unsupported alias-free activation kind");
+    }
+    ggml_tensor * activated = ggml_add(ctx.ggml, up, ggml_mul(ctx.ggml, periodic, inv_beta));
+    ggml_tensor * output_ct = depthwise_conv_causal_ct(
+        ctx,
+        activated,
+        weights.down_filter,
+        config_.kernel_size,
+        config_.upsample_ratio);
+    return core::wrap_tensor(
+        ggml_reshape_3d(
+            ctx.ggml,
+            core::has_backend_addressable_layout(output_ct) ? output_ct : ggml_cont(ctx.ggml, output_ct),
+            output_ct->ne[0],
+            output_ct->ne[1],
+            1),
+        core::TensorShape::from_dims({1, output_ct->ne[1], output_ct->ne[0]}),
+        GGML_TYPE_F32);
+}
+
+const core::ModuleSchema & AliasFreeActivationModule::static_schema() noexcept {
+    return kAliasFreeActivationSchema;
 }
 
 }  // namespace engine::modules

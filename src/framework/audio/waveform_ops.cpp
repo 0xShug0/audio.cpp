@@ -71,6 +71,64 @@ void normalize_peak_to_unit_range_and_clamp_in_place(std::vector<float> & sample
     }
 }
 
+std::vector<float> trim_mono_librosa_effects(
+    const std::vector<float> & mono_samples,
+    const LibrosaEffectsTrimOptions & options) {
+    if (options.frame_length <= 0 || options.hop_length <= 0) {
+        throw std::runtime_error("librosa effects trim frame and hop lengths must be positive");
+    }
+    if (!std::isfinite(options.top_db) || options.top_db < 0.0F) {
+        throw std::runtime_error("librosa effects trim top_db must be finite and non-negative");
+    }
+    if (!std::isfinite(options.amin) || options.amin <= 0.0F) {
+        throw std::runtime_error("librosa effects trim amin must be finite and positive");
+    }
+    if (mono_samples.empty()) {
+        return mono_samples;
+    }
+
+    const int64_t sample_count = static_cast<int64_t>(mono_samples.size());
+    const int64_t frames = 1 + sample_count / options.hop_length;
+    std::vector<float> rms(static_cast<size_t>(frames), 0.0F);
+    float ref = options.amin;
+    for (int64_t frame = 0; frame < frames; ++frame) {
+        const int64_t start = frame * options.hop_length - options.frame_length / 2;
+        double power = 0.0;
+        for (int64_t i = 0; i < options.frame_length; ++i) {
+            const int64_t sample_index = start + i;
+            const float sample =
+                sample_index >= 0 && sample_index < sample_count
+                    ? mono_samples[static_cast<size_t>(sample_index)]
+                    : 0.0F;
+            power += static_cast<double>(sample) * static_cast<double>(sample);
+        }
+        const float value = std::sqrt(static_cast<float>(power / static_cast<double>(options.frame_length)));
+        rms[static_cast<size_t>(frame)] = value;
+        ref = std::max(ref, value);
+    }
+
+    const float threshold = ref * std::pow(10.0F, -options.top_db / 20.0F);
+    int64_t first = -1;
+    int64_t last = -1;
+    for (int64_t frame = 0; frame < frames; ++frame) {
+        if (std::max(rms[static_cast<size_t>(frame)], options.amin) > threshold) {
+            if (first < 0) {
+                first = frame;
+            }
+            last = frame;
+        }
+    }
+    if (first < 0) {
+        return {};
+    }
+
+    const int64_t start = std::min<int64_t>(sample_count, first * options.hop_length);
+    const int64_t end = std::min<int64_t>(sample_count, (last + 1) * options.hop_length);
+    return std::vector<float>(
+        mono_samples.begin() + static_cast<std::ptrdiff_t>(start),
+        mono_samples.begin() + static_cast<std::ptrdiff_t>(end));
+}
+
 std::vector<float> reflect_pad_samples(
     const std::vector<float> & samples,
     int64_t left_pad_samples,

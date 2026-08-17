@@ -270,8 +270,14 @@ void validate_config(const CampplusEncoderConfig & config) {
     if (config.feat_dim != 80) {
         throw std::runtime_error("CAMPPlus framework module currently supports 80-dim fbank input");
     }
-    if (config.embedding_size != 192) {
-        throw std::runtime_error("CAMPPlus framework module currently supports 192-dim embeddings");
+    if (config.embedding_size <= 0) {
+        throw std::runtime_error("CAMPPlus framework module requires positive embedding size");
+    }
+    if (config.tensor_prefix.empty()) {
+        throw std::runtime_error("CAMPPlus framework module requires non-empty tensor prefix");
+    }
+    if (config.stats_variance_floor < 0.0F) {
+        throw std::runtime_error("CAMPPlus framework module requires non-negative stats variance floor");
     }
 }
 
@@ -524,6 +530,12 @@ public:
                     std::vector<float>{static_cast<float>(time_steps) / static_cast<float>(time_steps - 1)});
                 var = core::wrap_tensor(ggml_mul(ctx.ggml, var.tensor, correction.tensor), var.shape, GGML_TYPE_F32);
             }
+            if (weights.config.stats_variance_floor > 0.0F) {
+                var = core::wrap_tensor(
+                    ggml_clamp(ctx.ggml, var.tensor, weights.config.stats_variance_floor, INFINITY),
+                    var.shape,
+                    GGML_TYPE_F32);
+            }
             auto stddev = core::wrap_tensor(ggml_sqrt(ctx.ggml, var.tensor), var.shape, GGML_TYPE_F32);
             return concat_along_axis(ctx, mean, stddev, 1);
         };
@@ -607,6 +619,9 @@ public:
     }
 
     ~CampplusBackendRunner() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(execution_context_.backend(), graph_);
+        }
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
@@ -661,6 +676,11 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
         512ull * 1024ull * 1024ull);
     count_source_tensors(*source, *weights);
 
+    const std::string base = weights->config.tensor_prefix;
+    auto tensor_name = [&](const std::string & suffix) {
+        return base + "." + suffix;
+    };
+
     auto load_res_block = [&](const std::string & prefix, bool use_shortcut, int64_t stride_h) {
         CampplusEncoderWeights::BasicResBlockWeights block;
         auto conv1 = load_conv2d(*weights->store, *source, prefix + ".conv1", 32, 32, 3, 3, stride_h, 1, 1, 1);
@@ -679,25 +699,25 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
         return block;
     };
 
-    auto head_conv1 = load_conv2d(*weights->store, *source, "speaker_encoder.head.conv1", 32, 1, 3, 3, 1, 1, 1, 1);
-    auto head_bn1 = load_bn2d(*weights->store, *source, "speaker_encoder.head.bn1", 32);
+    auto head_conv1 = load_conv2d(*weights->store, *source, tensor_name("head.conv1"), 32, 1, 3, 3, 1, 1, 1, 1);
+    auto head_bn1 = load_bn2d(*weights->store, *source, tensor_name("head.bn1"), 32);
     weights->head_conv1_folded = fold_bn_after_conv2d(*weights->store, head_conv1, head_bn1, weights->config.weight_storage_type);
-    auto head_conv2 = load_conv2d(*weights->store, *source, "speaker_encoder.head.conv2", 32, 32, 3, 3, 2, 1, 1, 1);
-    auto head_bn2 = load_bn2d(*weights->store, *source, "speaker_encoder.head.bn2", 32);
+    auto head_conv2 = load_conv2d(*weights->store, *source, tensor_name("head.conv2"), 32, 32, 3, 3, 2, 1, 1, 1);
+    auto head_bn2 = load_bn2d(*weights->store, *source, tensor_name("head.bn2"), 32);
     weights->head_conv2_folded = fold_bn_after_conv2d(*weights->store, head_conv2, head_bn2, weights->config.weight_storage_type);
     weights->head_layer1 = {
-        load_res_block("speaker_encoder.head.layer1.0", true, 2),
-        load_res_block("speaker_encoder.head.layer1.1", false, 1),
+        load_res_block(tensor_name("head.layer1.0"), true, 2),
+        load_res_block(tensor_name("head.layer1.1"), false, 1),
     };
     weights->head_layer2 = {
-        load_res_block("speaker_encoder.head.layer2.0", true, 2),
-        load_res_block("speaker_encoder.head.layer2.1", false, 1),
+        load_res_block(tensor_name("head.layer2.0"), true, 2),
+        load_res_block(tensor_name("head.layer2.1"), false, 1),
     };
 
     auto tdnn_linear = load_conv1d(
         *weights->store,
         *source,
-        "speaker_encoder.xvector.tdnn.linear",
+        tensor_name("xvector.tdnn.linear"),
         128,
         320,
         5,
@@ -706,7 +726,7 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
         1,
         false,
         weights->config.weight_storage_type);
-    auto tdnn_bn = load_bn1d(*weights->store, *source, "speaker_encoder.xvector.tdnn.nonlinear.batchnorm", 128);
+    auto tdnn_bn = load_bn1d(*weights->store, *source, tensor_name("xvector.tdnn.nonlinear.batchnorm"), 128);
     weights->tdnn_linear_folded = fold_bn_after_conv1d(*weights->store, tdnn_linear, tdnn_bn, weights->config.weight_storage_type);
 
     const int block_layers[3] = {12, 24, 16};
@@ -718,7 +738,7 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
         for (int layer = 1; layer <= block_layers[block_index]; ++layer) {
             const int in_channels = block_input_channels[block_index] + (layer - 1) * 32;
             const std::string prefix =
-                "speaker_encoder.xvector.block" + std::to_string(block_index + 1) + ".tdnnd" + std::to_string(layer);
+                tensor_name("xvector.block" + std::to_string(block_index + 1) + ".tdnnd" + std::to_string(layer));
             CampplusEncoderWeights::CAMDenseTDNNLayerWeights layer_weights;
             layer_weights.nonlinear1_bn = load_bn1d(*weights->store, *source, prefix + ".nonlinear1.batchnorm", in_channels);
             layer_weights.linear1 = load_conv1d(
@@ -777,7 +797,7 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
         }
         const int transit_in = block_input_channels[block_index] + block_layers[block_index] * 32;
         const int transit_out = transit_in / 2;
-        const std::string transit_prefix = "speaker_encoder.xvector.transit" + std::to_string(block_index + 1);
+        const std::string transit_prefix = tensor_name("xvector.transit" + std::to_string(block_index + 1));
         weights->transits[static_cast<size_t>(block_index)].nonlinear_bn =
             load_bn1d(*weights->store, *source, transit_prefix + ".nonlinear.batchnorm", transit_in);
         weights->transits[static_cast<size_t>(block_index)].linear =
@@ -795,12 +815,12 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
                 weights->config.weight_storage_type);
     }
 
-    weights->out_nonlinear_bn = load_bn1d(*weights->store, *source, "speaker_encoder.xvector.out_nonlinear.batchnorm", 512);
+    weights->out_nonlinear_bn = load_bn1d(*weights->store, *source, tensor_name("xvector.out_nonlinear.batchnorm"), 512);
     auto dense_linear = load_conv1d(
         *weights->store,
         *source,
-        "speaker_encoder.xvector.dense.linear",
-        192,
+        tensor_name("xvector.dense.linear"),
+        weights->config.embedding_size,
         1024,
         1,
         1,
@@ -808,7 +828,12 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
         1,
         false,
         weights->config.weight_storage_type);
-    auto dense_bn = load_bn1d(*weights->store, *source, "speaker_encoder.xvector.dense.nonlinear.batchnorm", 192, false);
+    auto dense_bn = load_bn1d(
+        *weights->store,
+        *source,
+        tensor_name("xvector.dense.nonlinear.batchnorm"),
+        weights->config.embedding_size,
+        false);
     weights->dense_linear_folded = fold_bn_after_conv1d(*weights->store, dense_linear, dense_bn, weights->config.weight_storage_type);
     weights->store->upload();
     source->release_storage();

@@ -1,5 +1,6 @@
 #include "engine/models/index_tts2/gpt.h"
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -39,7 +40,6 @@ constexpr int64_t kSpeakerConditionLayers = 6;
 constexpr int64_t kEmotionConditionLayers = 4;
 constexpr int64_t kGptLayers = 24;
 constexpr int64_t kGptMlpDim = 5120;
-constexpr int64_t kTextTokens = 12001;
 constexpr int64_t kMelCodes = 8194;
 constexpr int64_t kMelPositions = 1818;
 constexpr int64_t kTextPositions = 602;
@@ -47,11 +47,25 @@ constexpr int64_t kConditionPosFrames = 5000;
 constexpr int64_t kConditionConvKernel = 15;
 constexpr int64_t kGptHeads = 20;
 constexpr int64_t kGptHeadDim = kModelDim / kGptHeads;
-constexpr int64_t kConditionTokens = 34;
+// v2: 32 perceiver speaker tokens + two speed embedding tokens.
+constexpr int64_t kV2ConditionTokens = 34;
+constexpr int64_t kV2TextTokens = 12001;
+// v2.5 spk_cond_mode="campplus": the projected 192-dim CAMPPlus embedding
+// forms a single speaker token, followed by two all-zero tokens.
+constexpr int64_t kCampplusStyleDim = 192;
+constexpr int64_t kV2_5ConditionTokens = 3;
 constexpr int32_t kStartTextToken = 0;
 constexpr int32_t kStopTextToken = 1;
 constexpr int32_t kStartMelToken = 8192;
 constexpr int32_t kStopMelToken = 8193;
+
+int64_t gpt_text_vocab_size(const IndexTTS2Config & config) {
+    return config.gpt.number_text_tokens + 1;
+}
+
+ggml_type decode_cache_type(core::BackendType backend_type) {
+    return backend_type == core::BackendType::Cuda ? GGML_TYPE_F16 : GGML_TYPE_F32;
+}
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -340,9 +354,20 @@ engine::modules::LinearWeights load_hf_conv1d_linear(
                 source_weight[static_cast<size_t>(in * out_features + out)];
         }
     }
+    // Transposed HF conv1d weights are derived host-side values, so "native"
+    // cannot resolve through load_tensor; follow the checkpoint dtype instead
+    // so an F16 GGUF keeps F16 decoder weights in the compute graph.
+    auto effective_storage_type = storage_type;
+    if (effective_storage_type == engine::assets::TensorStorageType::Native) {
+        try {
+            effective_storage_type = engine::assets::tensor_storage_type_for_dtype(
+                source.require_metadata(prefix + ".weight").dtype);
+        } catch (...) {
+        }
+    }
     weights.weight = store.make_from_f32(
         engine::core::TensorShape::from_dims({out_features, in_features}),
-        storage_type,
+        effective_storage_type,
         std::move(transposed));
     if (use_bias) {
         weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_features});
@@ -634,7 +659,8 @@ Gpt2LayerOutput gpt2_layer_cached_tail(
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & cache_slots,
-    const core::TensorValue & attention_mask) {
+    const core::TensorValue & attention_mask,
+    modules::FastKVSetRowsMode set_rows_mode) {
     if (cache_key.shape.dims[0] != input.shape.dims[0] ||
         cache_value.shape.dims[0] != input.shape.dims[0] ||
         cache_key.shape.dims[1] != cache_value.shape.dims[1] ||
@@ -652,7 +678,7 @@ Gpt2LayerOutput gpt2_layer_cached_tail(
     k = reshape_heads(ctx, k, kGptHeads, kGptHeadDim);
     v = reshape_heads(ctx, v, kGptHeads, kGptHeadDim);
 
-    const modules::FastKVSetRowsModule set_rows;
+    const modules::FastKVSetRowsModule set_rows({set_rows_mode});
     auto updated_key = set_rows.build(ctx, cache_key, k, cache_slots);
     auto updated_value = set_rows.build(ctx, cache_value, v, cache_slots);
 
@@ -759,24 +785,28 @@ void index_tts2_log_probs(
     if (!(temperature > 0.0F)) {
         throw std::runtime_error("IndexTTS2 GPT temperature must be positive");
     }
+    auto & scores = workspace.scores;
+    scores = logits;
+    // The official pipeline applies the repetition penalty to the raw logits
+    // (HF RepetitionPenaltyLogitsProcessor runs before softmax): negative raw
+    // logits are multiplied, positive ones divided. Penalizing log-probs
+    // instead would multiply every seen token (log-probs are all <= 0).
+    apply_repetition_penalty(scores, codes, repetition_penalty, workspace);
     float max_logit = -std::numeric_limits<float>::infinity();
-    for (float logit : logits) {
-        max_logit = std::max(max_logit, logit);
+    for (float score : scores) {
+        max_logit = std::max(max_logit, score);
     }
     float total = 0.0F;
-    for (float logit : logits) {
-        total += std::exp(logit - max_logit);
+    for (float score : scores) {
+        total += std::exp(score - max_logit);
     }
     if (!(total > 0.0F)) {
         throw std::runtime_error("IndexTTS2 GPT sampler invalid logit mass");
     }
     const float log_total = std::log(total);
-    auto & scores = workspace.scores;
-    scores.resize(logits.size());
-    for (size_t i = 0; i < logits.size(); ++i) {
-        scores[i] = logits[i] - max_logit - log_total;
+    for (size_t i = 0; i < scores.size(); ++i) {
+        scores[i] = scores[i] - max_logit - log_total;
     }
-    apply_repetition_penalty(scores, codes, repetition_penalty, workspace);
     for (float & score : scores) {
         score /= temperature;
     }
@@ -920,15 +950,20 @@ std::shared_ptr<const IndexTTS2GptWeights> load_index_tts2_gpt_weights(
         weight_context_bytes);
 
     const auto & source = *assets.gpt_weights;
-    weights->speaker_conditioner = load_condition_encoder(
-        *weights->store,
-        source,
-        "conditioning_encoder",
-        kSpeakerConditionLayers,
-        2048,
-        8,
-        matmul_storage_type,
-        conv_storage_type);
+    const bool campplus_conditioning =
+        index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5;
+    const int64_t text_vocab = gpt_text_vocab_size(assets.config);
+    if (!campplus_conditioning) {
+        weights->speaker_conditioner = load_condition_encoder(
+            *weights->store,
+            source,
+            "conditioning_encoder",
+            kSpeakerConditionLayers,
+            2048,
+            8,
+            matmul_storage_type,
+            conv_storage_type);
+    }
     weights->emotion_conditioner = load_condition_encoder(
         *weights->store,
         source,
@@ -938,16 +973,18 @@ std::shared_ptr<const IndexTTS2GptWeights> load_index_tts2_gpt_weights(
         4,
         matmul_storage_type,
         conv_storage_type);
-    weights->speaker_perceiver = load_perceiver(
-        *weights->store,
-        source,
-        "perceiver_encoder",
-        32,
-        kModelDim,
-        kConditionDim,
-        512,
-        3412,
-        matmul_storage_type);
+    if (!campplus_conditioning) {
+        weights->speaker_perceiver = load_perceiver(
+            *weights->store,
+            source,
+            "perceiver_encoder",
+            32,
+            kModelDim,
+            kConditionDim,
+            512,
+            3412,
+            matmul_storage_type);
+    }
     weights->emotion_perceiver = load_perceiver(
         *weights->store,
         source,
@@ -962,7 +999,7 @@ std::shared_ptr<const IndexTTS2GptWeights> load_index_tts2_gpt_weights(
         source,
         "text_embedding.weight",
         matmul_storage_type,
-        {kTextTokens, kModelDim});
+        {text_vocab, kModelDim});
     weights->mel_embedding = weights->store->load_tensor(
         source,
         "mel_embedding.weight",
@@ -992,7 +1029,23 @@ std::shared_ptr<const IndexTTS2GptWeights> load_index_tts2_gpt_weights(
         kModelDim,
         kModelDim,
         true);
-    weights->speed_embedding_values = source.require_f32("speed_emb.weight", {2, kModelDim});
+    if (campplus_conditioning) {
+        weights->spk_emb_proj = binding::linear_from_source(
+            *weights->store,
+            source,
+            "spk_emb_proj",
+            matmul_storage_type,
+            kModelDim,
+            kCampplusStyleDim,
+            true);
+        weights->lang_embedding = weights->store->load_tensor(
+            source,
+            "lang_embedding.weight",
+            matmul_storage_type,
+            {kIndexTTS2LangEmbeddingRows, kModelDim});
+    } else {
+        weights->speed_embedding_values = source.require_f32("speed_emb.weight", {2, kModelDim});
+    }
     weights->gpt_layers.reserve(static_cast<size_t>(kGptLayers));
     for (int64_t i = 0; i < kGptLayers; ++i) {
         weights->gpt_layers.push_back(load_gpt2_layer(*weights->store, source, i, matmul_storage_type));
@@ -1012,7 +1065,7 @@ std::shared_ptr<const IndexTTS2GptWeights> load_index_tts2_gpt_weights(
         source,
         "text_head",
         matmul_storage_type,
-        kTextTokens,
+        text_vocab,
         kModelDim,
         true);
 
@@ -1298,13 +1351,18 @@ public:
         core::ExecutionContext & execution,
         std::shared_ptr<const IndexTTS2GptWeights> weights,
         int64_t text_tokens,
+        bool campplus_conditioning,
+        int64_t text_vocab,
         size_t graph_arena_bytes)
         : execution_(execution),
           weights_(std::move(weights)),
+          campplus_conditioning_(campplus_conditioning),
+          condition_tokens_(campplus_conditioning ? kV2_5ConditionTokens : kV2ConditionTokens),
+          text_vocab_(text_vocab),
           text_tokens_(text_tokens),
           text_steps_(text_tokens + 2),
-          prompt_steps_(kConditionTokens + text_tokens + 3) {
-        if (weights_ == nullptr || text_tokens_ <= 0) {
+          prompt_steps_(condition_tokens_ + text_tokens + 3) {
+        if (weights_ == nullptr || text_tokens_ < 0 || (!campplus_conditioning_ && text_tokens_ == 0)) {
             throw std::runtime_error("IndexTTS2 GPT prefill graph requires weights and text tokens");
         }
         const auto build_start = Clock::now();
@@ -1332,17 +1390,43 @@ public:
             output_ctx_.get(),
             "index_tts2.gpt.prefill.outputs",
             execution_.backend_type()};
-        conds_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kConditionTokens, kModelDim})).tensor;
+        core::TensorValue conds;
+        if (campplus_conditioning_) {
+            style_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kCampplusStyleDim})).tensor;
+            emo_vec_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kModelDim})).tensor;
+            lang_id_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, 1);
+            ggml_set_input(style_);
+            ggml_set_input(emo_vec_);
+            ggml_set_input(lang_id_);
+        } else {
+            conds_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, condition_tokens_, kModelDim})).tensor;
+            ggml_set_input(conds_);
+            conds = core::wrap_tensor(conds_, core::TensorShape::from_dims({1, condition_tokens_, kModelDim}), GGML_TYPE_F32);
+        }
         text_ids_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, text_steps_);
         start_mel_id_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, 1);
-        ggml_set_input(conds_);
         ggml_set_input(text_ids_);
         ggml_set_input(start_mel_id_);
-        auto conds = core::wrap_tensor(conds_, core::TensorShape::from_dims({1, kConditionTokens, kModelDim}), GGML_TYPE_F32);
         auto text_ids = core::wrap_tensor(text_ids_, core::TensorShape::from_dims({text_steps_}), GGML_TYPE_I32);
-        auto text = modules::EmbeddingModule({kTextTokens, kModelDim}).build(ctx, text_ids, weights_->text_embedding);
+        auto text = modules::EmbeddingModule({text_vocab_, kModelDim}).build(ctx, text_ids, weights_->text_embedding);
         auto text_pos = modules::SliceModule({0, 0, text_steps_}).build(ctx, weights_->text_pos_embedding);
         text = modules::AddModule{}.build(ctx, text, text_pos);
+        if (campplus_conditioning_) {
+            // v2.5 campplus conditioning prefix (model_v2.py inference_speech):
+            // conds = [spk_emb_proj(style) + emo_vec, zeros, zeros].
+            auto style = core::wrap_tensor(style_, core::TensorShape::from_dims({1, kCampplusStyleDim}), GGML_TYPE_F32);
+            auto speaker_token = build_biased_gpt_projection(ctx, style, kCampplusStyleDim, kModelDim, weights_->spk_emb_proj);
+            speaker_token = core::reshape_tensor(ctx, speaker_token, core::TensorShape::from_dims({1, 1, kModelDim}));
+            auto emo_vec = core::wrap_tensor(emo_vec_, core::TensorShape::from_dims({1, kModelDim}), GGML_TYPE_F32);
+            emo_vec = core::reshape_tensor(ctx, emo_vec, core::TensorShape::from_dims({1, 1, kModelDim}));
+            conds = modules::AddModule{}.build(ctx, speaker_token, emo_vec);
+            auto zero_token = modules::RepeatModule({core::TensorShape::from_dims({1, condition_tokens_ - 1, kModelDim})})
+                                  .build(ctx, scale(ctx, conds, 0.0F));
+            conds = modules::ConcatModule({1}).build(ctx, conds, zero_token);
+            auto lang_id = core::wrap_tensor(lang_id_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+            auto lang = modules::EmbeddingModule({kIndexTTS2LangEmbeddingRows, kModelDim}).build(ctx, lang_id, weights_->lang_embedding);
+            text = modules::AddModule{}.build(ctx, text, modules::RepeatModule({text.shape}).build(ctx, lang));
+        }
         text = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, text), core::TensorShape::from_dims({1, text_steps_, kModelDim}));
         auto mel_id = core::wrap_tensor(start_mel_id_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
         auto mel = modules::EmbeddingModule({kMelCodes, kModelDim}).build(ctx, mel_id, weights_->mel_embedding);
@@ -1412,17 +1496,48 @@ public:
     }
 
     GptPrefillOutput run(const std::vector<float> & conds, const std::vector<int32_t> & text_tokens) {
-        if (static_cast<int64_t>(conds.size()) != kConditionTokens * kModelDim ||
+        if (campplus_conditioning_) {
+            throw std::runtime_error("IndexTTS2 GPT prefill conds input requires the v2 speaker-conditioning mode");
+        }
+        if (static_cast<int64_t>(conds.size()) != condition_tokens_ * kModelDim ||
             static_cast<int64_t>(text_tokens.size()) != text_tokens_) {
             throw std::runtime_error("IndexTTS2 GPT prefill input shape mismatch");
         }
+        auto timing_start = Clock::now();
+        ggml_backend_tensor_set(conds_, conds.data(), 0, conds.size() * sizeof(float));
+        return run_with_text_tokens(text_tokens, timing_start);
+    }
+
+    GptPrefillOutput run(
+        const std::vector<float> & speaker_style,
+        const std::vector<float> & emotion_vector,
+        int32_t lang_id,
+        const std::vector<int32_t> & text_tokens) {
+        if (!campplus_conditioning_) {
+            throw std::runtime_error("IndexTTS2 GPT prefill style/lang inputs require the v2.5 campplus speaker-conditioning mode");
+        }
+        if (static_cast<int64_t>(speaker_style.size()) != kCampplusStyleDim ||
+            static_cast<int64_t>(emotion_vector.size()) != kModelDim ||
+            static_cast<int64_t>(text_tokens.size()) != text_tokens_) {
+            throw std::runtime_error("IndexTTS2 GPT prefill input shape mismatch");
+        }
+        if (lang_id < 0 || lang_id >= kIndexTTS2LangEmbeddingRows) {
+            throw std::runtime_error("IndexTTS2 GPT prefill lang id is out of range");
+        }
+        auto timing_start = Clock::now();
+        ggml_backend_tensor_set(style_, speaker_style.data(), 0, speaker_style.size() * sizeof(float));
+        ggml_backend_tensor_set(emo_vec_, emotion_vector.data(), 0, emotion_vector.size() * sizeof(float));
+        ggml_backend_tensor_set(lang_id_, &lang_id, 0, sizeof(int32_t));
+        return run_with_text_tokens(text_tokens, timing_start);
+    }
+
+private:
+    GptPrefillOutput run_with_text_tokens(const std::vector<int32_t> & text_tokens, Clock::time_point timing_start) {
         std::vector<int32_t> ids;
         ids.reserve(static_cast<size_t>(text_steps_));
         ids.push_back(kStartTextToken);
         ids.insert(ids.end(), text_tokens.begin(), text_tokens.end());
         ids.push_back(kStopTextToken);
-        auto timing_start = Clock::now();
-        ggml_backend_tensor_set(conds_, conds.data(), 0, conds.size() * sizeof(float));
         ggml_backend_tensor_set(text_ids_, ids.data(), 0, ids.size() * sizeof(int32_t));
         debug::timing_log_scalar("index_tts2.gpt.prefill.input_upload_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         core::set_backend_threads(execution_.backend(), execution_.config().threads);
@@ -1452,7 +1567,6 @@ public:
         return out;
     }
 
-private:
     void clear_graph() {
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(execution_.backend(), graph_);
@@ -1474,6 +1588,9 @@ private:
 
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2GptWeights> weights_;
+    bool campplus_conditioning_ = false;
+    int64_t condition_tokens_ = kV2ConditionTokens;
+    int64_t text_vocab_ = 0;
     int64_t text_tokens_ = 0;
     int64_t text_steps_ = 0;
     int64_t prompt_steps_ = 0;
@@ -1481,6 +1598,9 @@ private:
     std::unique_ptr<ggml_context, GgmlContextDeleter> output_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * conds_ = nullptr;
+    ggml_tensor * style_ = nullptr;
+    ggml_tensor * emo_vec_ = nullptr;
+    ggml_tensor * lang_id_ = nullptr;
     ggml_tensor * text_ids_ = nullptr;
     ggml_tensor * start_mel_id_ = nullptr;
     ggml_tensor * latent_ = nullptr;
@@ -1526,16 +1646,16 @@ public:
             input_ctx_.get(),
             "index_tts2.gpt.forward.inputs",
             execution_.backend_type()};
-        conds_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kConditionTokens, kModelDim})).tensor;
+        conds_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kV2ConditionTokens, kModelDim})).tensor;
         text_ids_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, text_steps_);
         mel_ids_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, mel_steps_);
         ggml_set_input(conds_);
         ggml_set_input(text_ids_);
         ggml_set_input(mel_ids_);
 
-        auto conds = core::wrap_tensor(conds_, core::TensorShape::from_dims({1, kConditionTokens, kModelDim}), GGML_TYPE_F32);
+        auto conds = core::wrap_tensor(conds_, core::TensorShape::from_dims({1, kV2ConditionTokens, kModelDim}), GGML_TYPE_F32);
         auto text_ids = core::wrap_tensor(text_ids_, core::TensorShape::from_dims({text_steps_}), GGML_TYPE_I32);
-        auto text = modules::EmbeddingModule({kTextTokens, kModelDim}).build(ctx, text_ids, weights_->text_embedding);
+        auto text = modules::EmbeddingModule({kV2TextTokens, kModelDim}).build(ctx, text_ids, weights_->text_embedding);
         auto text_pos = modules::SliceModule({0, 0, text_steps_}).build(ctx, weights_->text_pos_embedding);
         text = modules::AddModule{}.build(ctx, text, text_pos);
         text = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, text), core::TensorShape::from_dims({1, text_steps_, kModelDim}));
@@ -1553,14 +1673,14 @@ public:
             x = out.output;
         }
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->gpt_final_norm);
-        x = modules::SliceModule({1, kConditionTokens + text_steps_, code_count_}).build(ctx, x);
+        x = modules::SliceModule({1, kV2ConditionTokens + text_steps_, code_count_}).build(ctx, x);
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->final_norm);
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
 
         graph_ = ggml_new_graph_custom(
             ctx_.get(),
-            static_cast<size_t>(std::max<int64_t>(65536, (kConditionTokens + text_steps_ + mel_steps_) * 8192)),
+            static_cast<size_t>(std::max<int64_t>(65536, (kV2ConditionTokens + text_steps_ + mel_steps_) * 8192)),
             false);
         ggml_build_forward_expand(graph_, output_);
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
@@ -1591,7 +1711,7 @@ public:
         const std::vector<float> & conds,
         const std::vector<int32_t> & text_tokens,
         const std::vector<int32_t> & codes) {
-        if (static_cast<int64_t>(conds.size()) != kConditionTokens * kModelDim ||
+        if (static_cast<int64_t>(conds.size()) != kV2ConditionTokens * kModelDim ||
             static_cast<int64_t>(text_tokens.size()) != text_tokens_ ||
             static_cast<int64_t>(codes.size()) != code_count_) {
             throw std::runtime_error("IndexTTS2 GPT forward graph input shape mismatch");
@@ -1686,7 +1806,8 @@ public:
           weights_(std::move(weights)),
           cache_steps_(cache_steps),
           beam_count_(beam_count),
-          beam_slots_(2 * beam_count) {
+          beam_slots_(2 * beam_count),
+          cache_type_(decode_cache_type(execution_.backend_type())) {
         if (weights_ == nullptr || cache_steps_ <= 0 || beam_count_ <= 0) {
             throw std::runtime_error("IndexTTS2 GPT decode graph requires weights and cache steps");
         }
@@ -1722,11 +1843,11 @@ public:
             for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
                 keys.push_back(core::make_tensor(
                     state_ctx,
-                    GGML_TYPE_F32,
+                    cache_type_,
                     core::TensorShape::from_dims({beam_count_, cache_steps_, kGptHeads, kGptHeadDim})));
                 values.push_back(core::make_tensor(
                     state_ctx,
-                    GGML_TYPE_F32,
+                    cache_type_,
                     core::TensorShape::from_dims({beam_count_, cache_steps_, kGptHeads, kGptHeadDim})));
             }
         }
@@ -1755,6 +1876,7 @@ public:
         debug::timing_log_scalar("index_tts2.gpt.decode.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("index_tts2.gpt.decode.cache_steps", cache_steps_);
         debug::trace_log_scalar("index_tts2.gpt.decode.beam_batch", beam_count_);
+        debug::trace_log_scalar("index_tts2.gpt.decode.cache_type", std::string_view(ggml_type_name(cache_type_)));
     }
 
     ~DecodeGraph() {
@@ -1794,16 +1916,12 @@ public:
             if (!state.layers.empty() && layer_state.valid_steps != state.layers.front().valid_steps) {
                 throw std::runtime_error("IndexTTS2 GPT beam state valid step mismatch");
             }
-            ggml_backend_tensor_set(
+            set_cache_prefix(
                 beam_key_prefix_views_[static_cast<size_t>(slot)][static_cast<size_t>(layer_state.valid_steps)][layer],
-                layer_state.key.data(),
-                0,
-                layer_state.key.size() * sizeof(float));
-            ggml_backend_tensor_set(
+                layer_state.key);
+            set_cache_prefix(
                 beam_value_prefix_views_[static_cast<size_t>(slot)][static_cast<size_t>(layer_state.valid_steps)][layer],
-                layer_state.value.data(),
-                0,
-                layer_state.value.size() * sizeof(float));
+                layer_state.value);
         }
     }
 
@@ -1827,12 +1945,24 @@ public:
         if (child_bank < 0 || child_bank > 1) {
             throw std::runtime_error("IndexTTS2 GPT child beam bank is out of range");
         }
+        const bool same_bank = std::all_of(parent_slots.begin(), parent_slots.end(), [&](int64_t slot) {
+            return slot / beam_count_ == child_bank;
+        });
+        if (same_bank && active != static_cast<size_t>(beam_count_)) {
+            throw std::runtime_error("IndexTTS2 GPT same-bank decode requires a full beam batch");
+        }
         for (size_t row = 0; row < active; ++row) {
             if (parent_slots[row] < 0 || parent_slots[row] >= beam_slots_ ||
                 child_slots[row] < 0 || child_slots[row] >= beam_slots_ ||
                 child_slots[row] / beam_count_ != child_bank ||
                 child_slots[row] % beam_count_ != static_cast<int64_t>(row)) {
                 throw std::runtime_error("IndexTTS2 GPT beam slot layout mismatch");
+            }
+            const int64_t parent_row = parent_slots[row] % beam_count_;
+            if (same_bank &&
+                parent_row != static_cast<int64_t>(row) &&
+                (parent_slots[static_cast<size_t>(parent_row)] % beam_count_) != parent_row) {
+                throw std::runtime_error("IndexTTS2 GPT same-bank beam mapping would overwrite a live prefix");
             }
             for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
                 if (parent_slots[row] != child_slots[row]) {
@@ -1842,13 +1972,15 @@ public:
             token_values_[row] = tokens[row];
             position_values_[row] = mel_position;
         }
-        for (size_t row = active; row < static_cast<size_t>(beam_count_); ++row) {
-            const int64_t child_slot = child_bank * beam_count_ + static_cast<int64_t>(row);
-            for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
-                copy_beam_prefix(child_slots.front(), child_slot, valid_steps, layer);
+        if (!same_bank) {
+            for (size_t row = active; row < static_cast<size_t>(beam_count_); ++row) {
+                const int64_t child_slot = child_bank * beam_count_ + static_cast<int64_t>(row);
+                for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
+                    copy_beam_prefix(child_slots.front(), child_slot, valid_steps, layer);
+                }
+                token_values_[row] = tokens.front();
+                position_values_[row] = mel_position;
             }
-            token_values_[row] = tokens.front();
-            position_values_[row] = mel_position;
         }
 
         const auto masked = ggml_fp32_to_fp16(-INFINITY);
@@ -1913,13 +2045,29 @@ private:
                 key_layers.reserve(weights_->gpt_layers.size());
                 value_layers.reserve(weights_->gpt_layers.size());
                 const int64_t elems = steps * kGptHeads * kGptHeadDim;
-                const size_t byte_offset = static_cast<size_t>(row * cache_steps_ * kGptHeads * kGptHeadDim) * sizeof(float);
+                const size_t byte_offset =
+                    static_cast<size_t>(row * cache_steps_ * kGptHeads * kGptHeadDim) * ggml_type_size(cache_type_);
                 for (size_t layer = 0; layer < weights_->gpt_layers.size(); ++layer) {
                     key_layers.push_back(ggml_view_1d(state_ctx_.get(), bank_keys_[static_cast<size_t>(bank)][layer].tensor, elems, byte_offset));
                     value_layers.push_back(ggml_view_1d(state_ctx_.get(), bank_values_[static_cast<size_t>(bank)][layer].tensor, elems, byte_offset));
                 }
             }
         }
+    }
+
+    void set_cache_prefix(ggml_tensor * tensor, const std::vector<float> & values) {
+        if (cache_type_ == GGML_TYPE_F32) {
+            ggml_backend_tensor_set(tensor, values.data(), 0, values.size() * sizeof(float));
+            return;
+        }
+        if (cache_type_ != GGML_TYPE_F16) {
+            throw std::runtime_error("IndexTTS2 GPT decode cache prefix upload supports only f32 and f16 caches");
+        }
+        cache_prefix_f16_.resize(values.size());
+        for (size_t i = 0; i < values.size(); ++i) {
+            cache_prefix_f16_[i] = ggml_fp32_to_fp16(values[i]);
+        }
+        ggml_backend_tensor_set(tensor, cache_prefix_f16_.data(), 0, cache_prefix_f16_.size() * sizeof(ggml_fp16_t));
     }
 
     void copy_beam_prefix(int64_t parent_slot, int64_t child_slot, int64_t valid_steps, size_t layer) {
@@ -1956,7 +2104,10 @@ private:
                 bank_keys_[static_cast<size_t>(bank)][layer],
                 bank_values_[static_cast<size_t>(bank)][layer],
                 cache_slots,
-                mask);
+                mask,
+                cache_type_ == GGML_TYPE_F32
+                    ? modules::FastKVSetRowsMode::Exact
+                    : modules::FastKVSetRowsMode::BackendViewOptimized);
             x = out.output;
         }
         x = modules::LayerNormModule({kModelDim, 1.0e-5F, true, true}).build(ctx, x, weights_->gpt_final_norm);
@@ -1972,6 +2123,7 @@ private:
     int64_t cache_steps_ = 0;
     int64_t beam_count_ = 0;
     int64_t beam_slots_ = 0;
+    ggml_type cache_type_ = GGML_TYPE_F32;
     std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ids_ = nullptr;
@@ -1984,6 +2136,7 @@ private:
     std::vector<std::vector<std::vector<ggml_tensor *>>> beam_key_prefix_views_;
     std::vector<std::vector<std::vector<ggml_tensor *>>> beam_value_prefix_views_;
     std::vector<ggml_fp16_t> attention_mask_values_;
+    std::vector<ggml_fp16_t> cache_prefix_f16_;
     std::vector<int32_t> token_values_;
     std::vector<int32_t> position_values_;
     std::vector<int32_t> cache_slot_values_;
@@ -2021,6 +2174,9 @@ IndexTTS2GptRuntime::~IndexTTS2GptRuntime() = default;
 void IndexTTS2GptRuntime::prepare_speaker_conditioning(int64_t frames) {
     if (execution_ == nullptr) {
         throw std::runtime_error("IndexTTS2 GPT runtime execution context is missing");
+    }
+    if (index_tts2_variant_from_version(assets_->config.version) != IndexTTS2Variant::kV2) {
+        throw std::runtime_error("IndexTTS2 GPT speaker conditioning is only used by the v2 variant; v2.5 uses campplus conditioning inside the prefill graph");
     }
     if (frames <= 0) {
         throw std::runtime_error("IndexTTS2 GPT speaker conditioning prepare requires positive frames");
@@ -2064,7 +2220,9 @@ void IndexTTS2GptRuntime::prepare_generation(int64_t text_tokens, int64_t max_me
     if (execution_ == nullptr) {
         throw std::runtime_error("IndexTTS2 GPT runtime execution context is missing");
     }
-    if (text_tokens <= 0 || max_mel_tokens <= 0) {
+    const bool campplus_conditioning =
+        index_tts2_variant_from_version(assets_->config.version) == IndexTTS2Variant::kV2_5;
+    if (text_tokens < 0 || (!campplus_conditioning && text_tokens == 0) || max_mel_tokens <= 0) {
         throw std::runtime_error("IndexTTS2 GPT generation prepare requires positive lengths");
     }
     if (num_beams != 1) {
@@ -2072,7 +2230,13 @@ void IndexTTS2GptRuntime::prepare_generation(int64_t text_tokens, int64_t max_me
     }
     if (prefill_graph_ == nullptr || !prefill_graph_->matches(text_tokens)) {
         prefill_graph_.reset();
-        prefill_graph_ = std::make_unique<PrefillGraph>(*execution_, weights_, text_tokens, graph_arena_bytes_);
+        prefill_graph_ = std::make_unique<PrefillGraph>(
+            *execution_,
+            weights_,
+            text_tokens,
+            campplus_conditioning,
+            gpt_text_vocab_size(assets_->config),
+            graph_arena_bytes_);
     }
     const int64_t required_cache_steps = prefill_graph_->prompt_steps() + max_mel_tokens + 1;
     const int64_t required_beam_slots = 2 * std::max<int64_t>(1, num_beams);
@@ -2113,11 +2277,28 @@ std::vector<float> IndexTTS2GptRuntime::merge_emotion_vector(
 }
 
 IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGenerationRequest & request) {
-    if (request.text_tokens.empty()) {
-        throw std::runtime_error("IndexTTS2 GPT generation requires text tokens");
+    const bool campplus_conditioning =
+        index_tts2_variant_from_version(assets_->config.version) == IndexTTS2Variant::kV2_5;
+    std::vector<int32_t> text_tokens = request.text_tokens;
+    IndexTTS2GptLatent speech_conditioning;
+    if (campplus_conditioning) {
+        // v2.5: drop embedded start/stop text tokens (mirrors the valid_mask
+        // filtering in the official prepare_gpt_inputs); the speaker token is
+        // built inside the prefill graph from the CAMPPlus style embedding.
+        text_tokens = align_index_tts2_gpt_text_tokens(request.text_tokens);
+        if (static_cast<int64_t>(request.speaker_style.size()) != kCampplusStyleDim) {
+            throw std::runtime_error("IndexTTS2 GPT generation speaker style shape mismatch");
+        }
+        if (request.lang_id < 0 || request.lang_id >= kIndexTTS2LangEmbeddingRows) {
+            throw std::runtime_error("IndexTTS2 GPT generation lang id is out of range");
+        }
+    } else {
+        if (request.text_tokens.empty()) {
+            throw std::runtime_error("IndexTTS2 GPT generation requires text tokens");
+        }
+        prepare_speaker_conditioning(request.speaker_frames);
+        speech_conditioning = speaker_conditioning(request.speaker_semantic, request.speaker_frames);
     }
-    prepare_speaker_conditioning(request.speaker_frames);
-    const auto speech_conditioning = speaker_conditioning(request.speaker_semantic, request.speaker_frames);
     std::vector<float> emotion_vector = request.emotion_vector;
     if (emotion_vector.empty()) {
         prepare_emotion_conditioning(request.emotion_frames);
@@ -2127,21 +2308,26 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
         throw std::runtime_error("IndexTTS2 GPT generation emotion vector shape mismatch");
     }
     prepare_generation(
-        static_cast<int64_t>(request.text_tokens.size()),
+        static_cast<int64_t>(text_tokens.size()),
         request.max_mel_tokens,
         request.num_beams);
-    std::vector<float> conds(static_cast<size_t>(kConditionTokens * kModelDim), 0.0F);
-    for (int64_t token = 0; token < 32; ++token) {
-        for (int64_t dim = 0; dim < kModelDim; ++dim) {
-            conds[static_cast<size_t>(token * kModelDim + dim)] =
-                speech_conditioning.values[static_cast<size_t>(token * kModelDim + dim)] +
-                emotion_vector[static_cast<size_t>(dim)];
+    GptPrefillOutput prefill;
+    if (campplus_conditioning) {
+        prefill = prefill_graph_->run(request.speaker_style, emotion_vector, request.lang_id, text_tokens);
+    } else {
+        std::vector<float> conds(static_cast<size_t>(kV2ConditionTokens * kModelDim), 0.0F);
+        for (int64_t token = 0; token < 32; ++token) {
+            for (int64_t dim = 0; dim < kModelDim; ++dim) {
+                conds[static_cast<size_t>(token * kModelDim + dim)] =
+                    speech_conditioning.values[static_cast<size_t>(token * kModelDim + dim)] +
+                    emotion_vector[static_cast<size_t>(dim)];
+            }
         }
+        const auto & speed = weights_->speed_embedding_values;
+        std::copy_n(speed.data() + static_cast<std::ptrdiff_t>(kModelDim), static_cast<size_t>(kModelDim), conds.data() + static_cast<std::ptrdiff_t>(32 * kModelDim));
+        std::copy_n(speed.data(), static_cast<size_t>(kModelDim), conds.data() + static_cast<std::ptrdiff_t>(33 * kModelDim));
+        prefill = prefill_graph_->run(conds, request.text_tokens);
     }
-    const auto & speed = weights_->speed_embedding_values;
-    std::copy_n(speed.data() + static_cast<std::ptrdiff_t>(kModelDim), static_cast<size_t>(kModelDim), conds.data() + static_cast<std::ptrdiff_t>(32 * kModelDim));
-    std::copy_n(speed.data(), static_cast<size_t>(kModelDim), conds.data() + static_cast<std::ptrdiff_t>(33 * kModelDim));
-    auto prefill = prefill_graph_->run(conds, request.text_tokens);
     const auto sampling_policy = engine::sampling::resolve_torch_cuda_sampling_policy(
         execution_->backend_type(),
         execution_->config().device,
@@ -2228,11 +2414,21 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
     std::vector<int64_t> parent_slots;
     std::vector<int64_t> child_slots;
     std::vector<int32_t> next_tokens;
+    std::vector<size_t> row_to_next;
+    std::vector<int64_t> target_rows;
+    std::vector<bool> used_rows;
+    std::vector<int64_t> run_parent_slots;
+    std::vector<int32_t> run_next_tokens;
     candidates.reserve(static_cast<size_t>(2 * beam_count));
     next_beams.reserve(static_cast<size_t>(beam_count));
     parent_slots.reserve(static_cast<size_t>(beam_count));
     child_slots.reserve(static_cast<size_t>(beam_count));
     next_tokens.reserve(static_cast<size_t>(beam_count));
+    row_to_next.reserve(static_cast<size_t>(beam_count));
+    target_rows.reserve(static_cast<size_t>(beam_count));
+    used_rows.reserve(static_cast<size_t>(beam_count));
+    run_parent_slots.reserve(static_cast<size_t>(beam_count));
+    run_next_tokens.reserve(static_cast<size_t>(beam_count));
     for (int step = 0; step < request.max_mel_tokens && !beams.empty(); ++step) {
         const auto sampling_start = Clock::now();
         candidates.clear();
@@ -2307,7 +2503,6 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
         }
         sampling_ms += engine::debug::elapsed_ms(sampling_start, Clock::now());
         next_beams.clear();
-        const int next_bank = 1 - active_bank;
         parent_slots.clear();
         child_slots.clear();
         next_tokens.clear();
@@ -2325,11 +2520,9 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
                 continue;
             }
             next.codes.push_back(candidate.token);
-            next.slot = static_cast<int64_t>(next_bank * beam_count + static_cast<int>(next_beams.size()));
             next.valid_steps = parent.valid_steps + 1;
             next.current_end = parent.current_end + 1;
             parent_slots.push_back(parent.slot);
-            child_slots.push_back(next.slot);
             next_tokens.push_back(candidate.token);
             next_beams.push_back(std::move(next));
             if (static_cast<int>(next_beams.size()) == beam_count) {
@@ -2337,6 +2530,54 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
             }
         }
         if (!next_beams.empty()) {
+            row_to_next.clear();
+            int next_active_bank = 1 - active_bank;
+            if (static_cast<int>(next_beams.size()) == beam_count) {
+                target_rows.assign(next_beams.size(), -1);
+                used_rows.assign(static_cast<size_t>(beam_count), false);
+                for (size_t i = 0; i < next_beams.size(); ++i) {
+                    const int64_t parent_row = parent_slots[i] % beam_count;
+                    if (!used_rows[static_cast<size_t>(parent_row)]) {
+                        target_rows[i] = parent_row;
+                        used_rows[static_cast<size_t>(parent_row)] = true;
+                    }
+                }
+                for (size_t i = 0; i < next_beams.size(); ++i) {
+                    if (target_rows[i] >= 0) {
+                        continue;
+                    }
+                    const auto row_it = std::find(used_rows.begin(), used_rows.end(), false);
+                    if (row_it == used_rows.end()) {
+                        throw std::runtime_error("IndexTTS2 GPT beam row assignment failed");
+                    }
+                    const int64_t row = static_cast<int64_t>(std::distance(used_rows.begin(), row_it));
+                    target_rows[i] = row;
+                    *row_it = true;
+                }
+                row_to_next.assign(static_cast<size_t>(beam_count), 0);
+                child_slots.assign(static_cast<size_t>(beam_count), 0);
+                run_parent_slots.assign(static_cast<size_t>(beam_count), 0);
+                run_next_tokens.assign(static_cast<size_t>(beam_count), 0);
+                for (size_t i = 0; i < next_beams.size(); ++i) {
+                    const size_t row = static_cast<size_t>(target_rows[i]);
+                    next_beams[i].slot = static_cast<int64_t>(active_bank * beam_count + target_rows[i]);
+                    row_to_next[row] = i;
+                    run_parent_slots[row] = parent_slots[i];
+                    child_slots[row] = next_beams[i].slot;
+                    run_next_tokens[row] = next_tokens[i];
+                }
+                parent_slots.swap(run_parent_slots);
+                next_tokens.swap(run_next_tokens);
+                next_active_bank = active_bank;
+            } else {
+                child_slots.clear();
+                row_to_next.resize(next_beams.size());
+                for (size_t i = 0; i < next_beams.size(); ++i) {
+                    next_beams[i].slot = static_cast<int64_t>(next_active_bank * beam_count + static_cast<int>(i));
+                    child_slots.push_back(next_beams[i].slot);
+                    row_to_next[i] = i;
+                }
+            }
             const auto run_start = Clock::now();
             const int64_t parent_valid_steps = next_beams.front().valid_steps - 1;
             const auto batch_out = decode_graph_->run_batch_from_beams(
@@ -2351,19 +2592,19 @@ IndexTTS2GptGeneration IndexTTS2GptRuntime::generate_speech(const IndexTTS2GptGe
                 throw std::runtime_error("IndexTTS2 GPT batched decode output size mismatch");
             }
             for (size_t beam = 0; beam < next_beams.size(); ++beam) {
-                next_beams[beam].logits = batch_out.steps[beam].logits;
+                next_beams[row_to_next[beam]].logits = batch_out.steps[beam].logits;
             }
             if (!first_decode_timing_logged) {
                 debug::timing_log_scalar("index_tts2.gpt.decode.first_run_ms", run_ms);
                 first_decode_timing_logged = true;
             }
+            active_bank = next_active_bank;
         }
         if (!candidates.empty() && should_stop(candidates.front().score, static_cast<int64_t>(step + 1))) {
             beam_search_done = true;
             break;
         }
         beams.swap(next_beams);
-        active_bank = next_bank;
     }
     debug::timing_log_scalar("index_tts2.gpt.sampling_ms", sampling_ms);
     debug::timing_log_scalar("index_tts2.gpt.decode.run_ms", decode_run_ms);
@@ -2400,6 +2641,9 @@ IndexTTS2GptLatent IndexTTS2GptRuntime::forward_latent(
     const std::vector<float> & emotion_semantic,
     int64_t emotion_frames,
     const std::vector<float> & emotion_vector) {
+    if (index_tts2_variant_from_version(assets_->config.version) != IndexTTS2Variant::kV2) {
+        throw std::runtime_error("IndexTTS2 GPT latent forward is only used by the v2 variant; v2.5 decodes codes through the semantic codec");
+    }
     if (speech_conditioning_latent.frames != 32 ||
         speech_conditioning_latent.dims != kModelDim ||
         static_cast<int64_t>(speech_conditioning_latent.values.size()) != 32 * kModelDim) {
@@ -2416,7 +2660,7 @@ IndexTTS2GptLatent IndexTTS2GptRuntime::forward_latent(
     if (static_cast<int64_t>(emo.size()) != kModelDim) {
         throw std::runtime_error("IndexTTS2 GPT latent forward emotion vector shape mismatch");
     }
-    std::vector<float> conds(static_cast<size_t>(kConditionTokens * kModelDim), 0.0F);
+    std::vector<float> conds(static_cast<size_t>(kV2ConditionTokens * kModelDim), 0.0F);
     for (int64_t token = 0; token < 32; ++token) {
         for (int64_t dim = 0; dim < kModelDim; ++dim) {
             conds[static_cast<size_t>(token * kModelDim + dim)] =
@@ -2447,6 +2691,18 @@ void IndexTTS2GptRuntime::release_generation_graphs() {
     prefill_graph_.reset();
     decode_graph_.reset();
     forward_graph_.reset();
+}
+
+std::vector<int32_t> align_index_tts2_gpt_text_tokens(const std::vector<int32_t> & text_tokens) {
+    std::vector<int32_t> out;
+    out.reserve(text_tokens.size());
+    for (const int32_t token : text_tokens) {
+        if (token == kStartTextToken || token == kStopTextToken) {
+            continue;
+        }
+        out.push_back(token);
+    }
+    return out;
 }
 
 }  // namespace engine::models::index_tts2

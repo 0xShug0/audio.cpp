@@ -428,6 +428,10 @@ std::string collapse_ascii_whitespace(std::string_view text) {
     return engine::io::trim_ascii_whitespace(std::move(out));
 }
 
+std::string normalize_index_tts_punctuation(std::string text) {
+    return apply_index_tts_punctuation_map(std::move(text));
+}
+
 std::string normalize_english_numbers(std::string text) {
     text = normalize_english_dates(std::move(text));
     text = normalize_english_regex(
@@ -462,6 +466,13 @@ std::string normalize_english_numbers(std::string text) {
         [](const std::smatch & match) {
             return english_ordinal_from_digits(match[1].str());
         });
+    // Split letter<->digit boundaries so digits attached to letters verbalize
+    // like the official wetext English normalizer ("DS4" -> "DS four",
+    // "R2D2" -> "R two D two", "4K" -> "four K"). Runs after dates/decimals/
+    // ordinals so "1st", "2.5" and friends have already been expanded; the
+    // standalone cardinal rule below then spells out each digit group.
+    text = std::regex_replace(std::move(text), std::regex(R"(([A-Za-z])(\d))"), "$1 $2");
+    text = std::regex_replace(std::move(text), std::regex(R"((\d)([A-Za-z]))"), "$1 $2");
     text = normalize_english_regex(
         std::move(text),
         std::regex(R"(\b(\d+)\b)"),
@@ -481,6 +492,27 @@ std::string normalize_english_text(std::string_view text, const EnglishTextNorma
     }
     if (options.spell_numbers) {
         out = normalize_english_numbers(std::move(out));
+    }
+    if (options.verbalize_symbols) {
+        // Match the official wetext English normalizer: standalone ASCII
+        // symbols are verbalized ("a_b" -> "a underscore b",
+        // "C++" -> "C plus plus", "a=b" -> "a equal sign b"). Runs after
+        // number spelling so "50%" has already become "fifty percent".
+        const std::pair<const char *, const char *> symbol_words[] = {
+            {"_", " underscore "},
+            {"+", " plus "},
+            {"=", " equal sign "},
+            {"*", " asterisk "},
+            {"&", " and "},
+            {"#", " hash "},
+            {"%", " percent "},
+            {"|", " vertical bar "},
+            {"~", " tilde "},
+        };
+        for (const auto & [from, to] : symbol_words) {
+            out = replace_all(std::move(out), from, to);
+        }
+        out = collapse_ascii_whitespace(out);
     }
     if (options.index_tts_punctuation) {
         out = apply_index_tts_punctuation_map(std::move(out));

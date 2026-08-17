@@ -609,6 +609,9 @@ Qwen3ASRRequest Qwen3ASRSession::make_request(const runtime::TaskRequest & reque
         out.context = request.text_input->text;
         out.language = request.text_input->language;
     }
+    if (const auto value = runtime::find_option(request.options, {"language"})) {
+        out.language = *value == "Auto" ? "" : *value;
+    }
     if (const auto value = runtime::parse_int_option(request.options, {"max_tokens"})) {
         out.generation.max_new_tokens = *value;
         if (out.generation.max_new_tokens <= 0) {

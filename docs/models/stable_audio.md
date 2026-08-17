@@ -82,12 +82,12 @@ audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-medi
 | `--request-option apg_scale=<float>` | float | `1.0` | Adaptive projected guidance scale. |
 | `--request-option batch_size=<n>` | integer | `1` | Prompt batch size. |
 | `--request-option duration_padding_seconds=<seconds>` | seconds | `6.0` | Extra generated padding before truncation. |
-| `--request-option truncate_output_to_duration=true|false` | bool | `true` | Trim decoded audio to requested duration. |
-| `--request-option chunked_decode=true|false` | bool | `true` | Decode the autoencoder in chunks. |
+| `--request-option truncate_output_to_duration=true\|false` | bool | `true` | Trim decoded audio to requested duration. |
+| `--request-option chunked_decode=true\|false` | bool | `true` | Decode the autoencoder in chunks. |
 | `--request-option audio_input_kind=<kind>` | `init_audio`, `inpaint_audio` | `init_audio` when `--audio` is provided | How the model uses input audio. |
 | `--request-option init_noise_level=<float>` | `0..1` | `1.0` | Strength for audio-conditioned generation. |
 | `--request-option inpaint_mask_start_seconds=<list>` | comma-separated seconds | not set | Inpaint region start times. |
 | `--request-option inpaint_mask_end_seconds=<list>` | comma-separated seconds | not set | Inpaint region end times. |
-| `--session-option stable_audio.mem_saver=true|false` | bool | `false` | Release staged graph/cache state after conditioner, diffusion, and autoencoder phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+| `--session-option stable_audio.mem_saver=true\|false` | bool | `false` | Release staged graph/cache state after conditioner, diffusion, and autoencoder phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family stable_audio`.

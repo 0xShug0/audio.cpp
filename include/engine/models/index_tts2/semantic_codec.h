@@ -41,6 +41,8 @@ struct IndexTTS2SemanticCodecWeights {
     engine::modules::Conv1dWeights quantizer_out;
     IndexTTS2VocosBackboneWeights decoder_backbone;
     engine::modules::LinearWeights decoder_projection;
+    // v2.5 only: conv applied after the 2x nearest upsample in the decode path.
+    engine::modules::Conv1dWeights up;
 };
 
 struct IndexTTS2SemanticCodecOutput {

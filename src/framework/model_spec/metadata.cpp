@@ -57,6 +57,9 @@ runtime::VoiceTaskKind parse_task_kind(const std::string & value) {
     if (value == "svc") {
         return runtime::VoiceTaskKind::Svc;
     }
+    if (value == "midi") {
+        return runtime::VoiceTaskKind::Midi;
+    }
     throw std::runtime_error("unknown model spec task: " + value);
 }
 

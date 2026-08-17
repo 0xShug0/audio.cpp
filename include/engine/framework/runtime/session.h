@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -32,6 +33,7 @@ enum class VoiceTaskKind {
     VoiceDesign,
     SpeakerRecognition,
     Svc,
+    Midi,
 };
 
 enum class RunMode {
@@ -143,6 +145,18 @@ struct VoiceArtifact {
     std::unordered_map<std::string, std::string> meta;
 };
 
+std::vector<std::byte> bytes_from_string(std::string_view value);
+VoiceArtifact make_voice_artifact(
+    ArtifactKind kind,
+    std::string id,
+    std::vector<std::byte> payload,
+    std::unordered_map<std::string, std::string> meta = {});
+VoiceArtifact make_text_artifact(
+    ArtifactKind kind,
+    std::string id,
+    std::string_view payload,
+    std::unordered_map<std::string, std::string> meta = {});
+
 struct TaskRequest {
     std::optional<Transcript> text_input = std::nullopt;
     std::optional<AudioBuffer> audio_input = std::nullopt;
@@ -184,6 +198,7 @@ struct TaskResult {
     std::vector<SpeechSegment> speech_segments;
     std::vector<SpeakerTurn> speaker_turns;
     std::vector<WordTimestamp> word_timestamps;
+    std::optional<VoiceArtifact> artifact_output = std::nullopt;
     std::vector<VoiceArtifact> output_artifacts;
 };
 

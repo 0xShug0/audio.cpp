@@ -23,82 +23,97 @@ void validate_config(const QwenCausalDecoderConfig & config) {
     }
 }
 
+void validate_hidden_config(const QwenDecoderHiddenConfig & config) {
+    if (config.stack.hidden_size <= 0) {
+        throw std::runtime_error("QwenDecoderHiddenConfig requires positive hidden size");
+    }
+    if (config.stack.layers <= 0) {
+        throw std::runtime_error("QwenDecoderHiddenConfig requires a positive layer count");
+    }
+}
+
 void validate_steps(int64_t steps, const char * label) {
     if (steps <= 0) {
         throw std::runtime_error(std::string(label) + " requires positive step count");
     }
 }
 
-}  // namespace
-
-QwenCausalDecoderModule::QwenCausalDecoderModule(QwenCausalDecoderConfig config)
-    : config_(std::move(config)) {
-    validate_config(config_);
+core::TensorValue select_hidden_steps(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & hidden_sequence,
+    QwenCausalDecoderLogitsMode mode) {
+    if (mode == QwenCausalDecoderLogitsMode::AllSteps) {
+        return hidden_sequence;
+    }
+    const int64_t steps = hidden_sequence.shape.dims[1];
+    return SliceModule({1, steps - 1, 1}).build(ctx, hidden_sequence);
 }
 
-const QwenCausalDecoderConfig & QwenCausalDecoderModule::config() const noexcept {
+QwenDecoderHiddenConfig hidden_config_from_causal(const QwenCausalDecoderConfig & config) {
+    QwenDecoderHiddenConfig out;
+    out.stack = config.stack;
+    out.hidden_mode = config.logits_mode;
+    return out;
+}
+
+QwenDecoderHiddenWeights hidden_weights_from_causal(const QwenCausalDecoderWeights & weights) {
+    QwenDecoderHiddenWeights out;
+    out.stack = weights.stack;
+    out.final_norm = weights.final_norm;
+    return out;
+}
+
+}  // namespace
+
+QwenDecoderHiddenModule::QwenDecoderHiddenModule(QwenDecoderHiddenConfig config)
+    : config_(std::move(config)) {
+    validate_hidden_config(config_);
+}
+
+const QwenDecoderHiddenConfig & QwenDecoderHiddenModule::config() const noexcept {
     return config_;
 }
 
-QwenCausalDecoderOutputs QwenCausalDecoderModule::build(
+QwenDecoderHiddenOutputs QwenDecoderHiddenModule::build(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenCausalDecoderWeights & weights,
+    const QwenDecoderHiddenWeights & weights,
     const std::optional<QwenDecoderStackState> & prefix_state,
     const std::optional<core::TensorValue> & attention_mask) const {
     if (input.shape.rank != 3 || input.shape.dims[2] != config_.stack.hidden_size) {
-        throw std::runtime_error("QwenCausalDecoderModule input shape must be [batch, steps, hidden]");
+        throw std::runtime_error("QwenDecoderHiddenModule input shape must be [batch, steps, hidden]");
     }
 
     auto stack = QwenDecoderStackModule(config_.stack)
                      .build(ctx, input, positions, weights.stack, prefix_state, attention_mask);
     auto hidden_sequence = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false})
                                .build(ctx, stack.output, weights.final_norm);
-    core::TensorValue hidden = hidden_sequence;
-    if (config_.logits_mode == QwenCausalDecoderLogitsMode::LastStep) {
-        const int64_t steps = hidden_sequence.shape.dims[1];
-        hidden = SliceModule({1, steps - 1, 1}).build(ctx, hidden_sequence);
-    }
-
-    auto logits_input = hidden;
-    if (config_.lm_head_input_type.has_value() && logits_input.type != *config_.lm_head_input_type) {
-        logits_input = core::wrap_tensor(
-            ggml_cast(ctx.ggml, logits_input.tensor, *config_.lm_head_input_type),
-            logits_input.shape,
-            *config_.lm_head_input_type);
-    }
-    const auto logits = LinearModule({
-                            config_.stack.hidden_size,
-                            config_.logits_size,
-                            config_.use_lm_head_bias,
-                            config_.lm_head_precision,
-                        })
-                            .build(ctx, logits_input, weights.lm_head);
-    return {std::move(stack.output), hidden, logits, std::move(stack.state)};
+    auto hidden = select_hidden_steps(ctx, hidden_sequence, config_.hidden_mode);
+    return {std::move(stack.output), hidden, std::move(stack.state)};
 }
 
-QwenCausalDecoderStaticCacheOutputs QwenCausalDecoderModule::build_static_cache_tail(
+QwenDecoderHiddenStaticCacheOutputs QwenDecoderHiddenModule::build_static_cache_tail(
     core::ModuleBuildContext & ctx,
     ggml_cgraph * graph,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenCausalDecoderWeights & weights,
+    const QwenDecoderHiddenWeights & weights,
     int64_t cache_steps,
     const core::TensorValue & attention_mask,
     const std::optional<core::TensorValue> & cache_slot) const {
     if (graph == nullptr) {
-        throw std::runtime_error("QwenCausalDecoderModule static-cache build requires a graph");
+        throw std::runtime_error("QwenDecoderHiddenModule static-cache build requires a graph");
     }
-    validate_steps(cache_steps, "QwenCausalDecoderModule static-cache build");
+    validate_steps(cache_steps, "QwenDecoderHiddenModule static-cache build");
     if (input.shape.rank != 3 || input.shape.dims[2] != config_.stack.hidden_size) {
-        throw std::runtime_error("QwenCausalDecoderModule static-cache input shape must be [batch, steps, hidden]");
+        throw std::runtime_error("QwenDecoderHiddenModule static-cache input shape must be [batch, steps, hidden]");
     }
     if (input.shape.dims[0] != 1 || input.shape.dims[1] != 1) {
-        throw std::runtime_error("QwenCausalDecoderModule static-cache build currently supports single-token decode");
+        throw std::runtime_error("QwenDecoderHiddenModule static-cache build currently supports single-token decode");
     }
     if (static_cast<int64_t>(weights.stack.layers.size()) != config_.stack.layers) {
-        throw std::runtime_error("QwenCausalDecoderWeights layer count does not match config");
+        throw std::runtime_error("QwenDecoderHiddenWeights layer count does not match config");
     }
 
     const int64_t step_elems = config_.stack.num_key_value_heads * config_.stack.head_dim;
@@ -133,7 +148,90 @@ QwenCausalDecoderStaticCacheOutputs QwenCausalDecoderModule::build_static_cache_
 
     auto hidden = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false})
                       .build(ctx, x, weights.final_norm);
-    auto logits_input = hidden;
+    return {
+        std::move(x),
+        hidden,
+        runtime::TransformerKVCache(cache_steps, step_elems, std::move(cache_keys), std::move(cache_values)),
+    };
+}
+
+QwenCausalDecoderModule::QwenCausalDecoderModule(QwenCausalDecoderConfig config)
+    : config_(std::move(config)) {
+    validate_config(config_);
+}
+
+const QwenCausalDecoderConfig & QwenCausalDecoderModule::config() const noexcept {
+    return config_;
+}
+
+QwenCausalDecoderOutputs QwenCausalDecoderModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const QwenCausalDecoderWeights & weights,
+    const std::optional<QwenDecoderStackState> & prefix_state,
+    const std::optional<core::TensorValue> & attention_mask) const {
+    if (input.shape.rank != 3 || input.shape.dims[2] != config_.stack.hidden_size) {
+        throw std::runtime_error("QwenCausalDecoderModule input shape must be [batch, steps, hidden]");
+    }
+
+    auto hidden_out = QwenDecoderHiddenModule(hidden_config_from_causal(config_))
+                          .build(
+                              ctx,
+                              input,
+                              positions,
+                              hidden_weights_from_causal(weights),
+                              prefix_state,
+                              attention_mask);
+
+    auto logits_input = hidden_out.hidden;
+    if (config_.lm_head_input_type.has_value() && logits_input.type != *config_.lm_head_input_type) {
+        logits_input = core::wrap_tensor(
+            ggml_cast(ctx.ggml, logits_input.tensor, *config_.lm_head_input_type),
+            logits_input.shape,
+            *config_.lm_head_input_type);
+    }
+    const auto logits = LinearModule({
+                            config_.stack.hidden_size,
+                            config_.logits_size,
+                            config_.use_lm_head_bias,
+                            config_.lm_head_precision,
+                        })
+                            .build(ctx, logits_input, weights.lm_head);
+    return {std::move(hidden_out.sequence), hidden_out.hidden, logits, std::move(hidden_out.state)};
+}
+
+QwenCausalDecoderStaticCacheOutputs QwenCausalDecoderModule::build_static_cache_tail(
+    core::ModuleBuildContext & ctx,
+    ggml_cgraph * graph,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const QwenCausalDecoderWeights & weights,
+    int64_t cache_steps,
+    const core::TensorValue & attention_mask,
+    const std::optional<core::TensorValue> & cache_slot) const {
+    if (graph == nullptr) {
+        throw std::runtime_error("QwenCausalDecoderModule static-cache build requires a graph");
+    }
+    validate_steps(cache_steps, "QwenCausalDecoderModule static-cache build");
+    if (input.shape.rank != 3 || input.shape.dims[2] != config_.stack.hidden_size) {
+        throw std::runtime_error("QwenCausalDecoderModule static-cache input shape must be [batch, steps, hidden]");
+    }
+    if (input.shape.dims[0] != 1 || input.shape.dims[1] != 1) {
+        throw std::runtime_error("QwenCausalDecoderModule static-cache build currently supports single-token decode");
+    }
+
+    auto hidden_out = QwenDecoderHiddenModule(hidden_config_from_causal(config_))
+                          .build_static_cache_tail(
+                              ctx,
+                              graph,
+                              input,
+                              positions,
+                              hidden_weights_from_causal(weights),
+                              cache_steps,
+                              attention_mask,
+                              cache_slot);
+    auto logits_input = hidden_out.hidden;
     if (config_.lm_head_input_type.has_value() && logits_input.type != *config_.lm_head_input_type) {
         logits_input = core::wrap_tensor(
             ggml_cast(ctx.ggml, logits_input.tensor, *config_.lm_head_input_type),
@@ -148,10 +246,10 @@ QwenCausalDecoderStaticCacheOutputs QwenCausalDecoderModule::build_static_cache_
                         })
                             .build(ctx, logits_input, weights.lm_head);
     return {
-        std::move(x),
-        hidden,
+        std::move(hidden_out.sequence),
+        hidden_out.hidden,
         logits,
-        runtime::TransformerKVCache(cache_steps, step_elems, std::move(cache_keys), std::move(cache_values)),
+        std::move(hidden_out.cache),
     };
 }
 

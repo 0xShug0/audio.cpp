@@ -527,6 +527,110 @@
       ]
     },
     {
+      "id": "neutts_default_neutral_single",
+      "coverage": "NeuTTS-2E default speaker and neutral no-emotion prompt path",
+      "family": "neutts",
+      "model": "models/NeuTTS-2E-GGUF/neutts-2e-orig.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "default_neutral_product_note",
+          "text": "The assistant gives a clear product update, explains that the new queue is stable, and asks the listener to confirm the deployment window before noon.",
+          "seed": 1234,
+          "temperature": 1.0,
+          "top_k": 50
+        }
+      ]
+    },
+    {
+      "id": "neutts_builtin_emotions_multi_request",
+      "coverage": "NeuTTS-2E built-in speakers and emotion-token prompt paths in one loaded session",
+      "family": "neutts",
+      "model": "models/NeuTTS-2E-GGUF/neutts-2e-orig.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "emily_happy_agent_intro",
+          "text": "The assistant greets the caller with warm energy, explains the next step clearly, and keeps the conversation moving without sounding rushed.",
+          "emotion": "happy",
+          "options": {
+            "voice_id": "emily"
+          },
+          "seed": 1234,
+          "temperature": 1.0,
+          "top_k": 50
+        },
+        {
+          "id": "paul_sad_status_update",
+          "text": "The field report is calm but disappointed, because the team arrived early, checked every sensor, and still found the network offline.",
+          "emotion": "sad",
+          "options": {
+            "voice_id": "paul"
+          },
+          "seed": 1235,
+          "temperature": 1.0,
+          "top_k": 50
+        },
+        {
+          "id": "sophie_surprised_product_note",
+          "text": "The prototype suddenly answered in a clearer voice than expected, and the whole room paused before anyone remembered to press record.",
+          "emotion": "surprised",
+          "options": {
+            "voice_id": "sophie"
+          },
+          "seed": 1236,
+          "temperature": 1.0,
+          "top_k": 50
+        },
+        {
+          "id": "steven_angry_incident_review",
+          "text": "The supervisor is frustrated because the same deployment warning was ignored twice, even after the checklist marked it as blocking.",
+          "emotion": "angry",
+          "options": {
+            "voice_id": "steven"
+          },
+          "seed": 1237,
+          "temperature": 1.0,
+          "top_k": 50
+        }
+      ]
+    },
+    {
+      "id": "neutts_streaming_longform_chunks",
+      "coverage": "NeuTTS-2E streaming pull-events path, long-form chunking, named segment audio, and final merged audio",
+      "family": "neutts",
+      "model": "models/NeuTTS-2E-GGUF/neutts-2e-orig.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": [
+        "audio",
+        "named_audio"
+      ],
+      "requests": [
+        {
+          "id": "streaming_emily_happy_longform",
+          "text": "The support agent starts with a warm greeting, then explains that the account migration finished overnight without losing any customer records. She pauses to summarize the next two checks, confirms that billing data is still being verified, and closes by asking the operations team to report anything unusual before the evening handoff.",
+          "emotion": "happy",
+          "options": {
+            "voice_id": "emily"
+          },
+          "text_chunk_size": 120,
+          "text_chunk_mode": "default",
+          "seed": 1240,
+          "temperature": 1.0,
+          "top_k": 50
+        }
+      ]
+    },
+    {
       "id": "miocodec_voice_conversion",
       "coverage": "MioCodec voice conversion path, WavLM feature extraction, content/global encoders, wave decoder, and waveform reconstruction",
       "family": "miocodec",
@@ -2433,6 +2537,376 @@
             "guidance_rescale": "auto"
           },
           "seed": 52
+        }
+      ]
+    },
+    {
+      "id": "dots_tts_soar_python_baseline_paths",
+      "coverage": "DotTTS SOAR prompt-prefill path coverage matching the Python baseline: short warmup, offline clone, streaming clone, instruction template, text-to-audio template, English language tag, and Chinese language tag",
+      "family": "dots_tts",
+      "model": "models/DotTTS-SOAR",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup",
+          "text": "This short warmup prepares the DotTTS reference session.",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "options": {
+            "template_name": "tts",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        },
+        {
+          "id": "soar_offline_clone_prefill",
+          "text": "Our field team finished the morning inspection, logged the sensor readings, and prepared a concise update for the afternoon review.",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "options": {
+            "template_name": "tts",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        },
+        {
+          "id": "soar_stream_clone_prefill",
+          "text": "During the workshop, Maya explained the prototype clearly while the group compared audio quality, latency, and memory use.",
+          "voice_ref": "resources/b.wav",
+          "reference_text": "Some call me nature. Others call me Mother Nature.",
+          "options": {
+            "template_name": "tts",
+            "mode": "generate_stream",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "reference_duration_sec": 5.0,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        },
+        {
+          "id": "soar_instruction_template_clone",
+          "text": "The museum guide welcomed visitors, described the restored hall, and invited questions.",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "options": {
+            "template_name": "instruction_tts",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        },
+        {
+          "id": "soar_text_to_audio_template_clone",
+          "text": "A quiet office recording with a focused speaker explaining the next project milestone, natural pauses, and steady pacing.",
+          "voice_ref": "resources/b.wav",
+          "reference_text": "Some call me nature. Others call me Mother Nature.",
+          "options": {
+            "template_name": "text_to_audio",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "reference_duration_sec": 5.0,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        },
+        {
+          "id": "soar_language_tag_clone",
+          "text": "Please read this English status update with clear pronunciation, measured pacing, and a confident but friendly tone.",
+          "language": "EN",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "options": {
+            "template_name": "tts",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        },
+        {
+          "id": "soar_chinese_language_clone",
+          "text": "\u4eca\u5929\u7684\u672c\u5730\u9a8c\u8bc1\u5df2\u7ecf\u5b8c\u6210\uff0c\u56e2\u961f\u8bb0\u5f55\u4e86\u97f3\u9891\u8d28\u91cf\u3001\u63a8\u7406\u901f\u5ea6\u548c\u663e\u5b58\u5360\u7528\uff0c\u5e76\u51c6\u5907\u628a\u8fd9\u4e9b\u7ed3\u679c\u7528\u4e8e\u540e\u7eed\u7248\u672c\u7684\u57fa\u7ebf\u6bd4\u8f83\u3002\u4f1a\u8bae\u5f00\u59cb\u524d\uff0c\u8d1f\u8d23\u4eba\u8fd8\u4f1a\u590d\u6838\u6bcf\u4e2a\u6837\u672c\u7684\u957f\u5ea6\u3001\u97f3\u91cf\u548c\u505c\u987f\uff0c\u786e\u4fdd\u62a5\u544a\u6e05\u695a\u53ef\u9760\uff0c\u540c\u65f6\u4fdd\u7559\u539f\u59cb\u65e5\u5fd7\uff0c\u65b9\u4fbf\u4e4b\u540e\u8ffd\u8e2a\u7ec6\u8282\u3002",
+          "language": "ZH",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "options": {
+            "template_name": "tts",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        }
+      ]
+    },
+    {
+      "id": "dots_tts_soar_prefill_parity_single",
+      "coverage": "DotTTS SOAR single prompt-prefill request for component-boundary parity dumps against the Python reference",
+      "family": "dots_tts",
+      "model": "models/DotTTS-SOAR",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "soar_offline_clone_prefill",
+          "text": "Our field team finished the morning inspection, logged the sensor readings, and prepared a concise update for the afternoon review.",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "options": {
+            "template_name": "tts",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        }
+      ]
+    },
+    {
+      "id": "dots_tts_mf_python_baseline_meanflow",
+      "coverage": "DotTTS MF prompt-prefill MeanFlow path matching the Python baseline",
+      "family": "dots_tts",
+      "model": "models/DotTTS-MF",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "mf_offline_clone_meanflow",
+          "text": "The release candidate passed the local checks, so the team prepared baseline audio for comparison with future builds.",
+          "voice_ref": "resources/b.wav",
+          "reference_text": "Some call me nature. Others call me Mother Nature.",
+          "options": {
+            "template_name": "tts",
+            "num_inference_steps": 4,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "reference_duration_sec": 5.0,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        }
+      ]
+    },
+    {
+      "id": "dots_tts_soar_stream_python_baseline_path",
+      "coverage": "DotTTS SOAR proper CLI streaming-mode path for the same streaming request used in the Python baseline; kept separate because path-test streaming cases accept one request",
+      "family": "dots_tts",
+      "model": "models/DotTTS-SOAR",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": [
+        "audio",
+        "named_audio"
+      ],
+      "requests": [
+        {
+          "id": "soar_stream_clone_prefill",
+          "text": "During the workshop, Maya explained the prototype clearly while the group compared audio quality, latency, and memory use.",
+          "voice_ref": "resources/b.wav",
+          "reference_text": "Some call me nature. Others call me Mother Nature.",
+          "options": {
+            "template_name": "tts",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "reference_duration_sec": 5.0,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        }
+      ],
+      "chunk_size": 512
+    },
+    {
+      "id": "dots_tts_soar_interleave_template",
+      "coverage": "DotTTS SOAR tts_interleave schedule with prompt-audio speaker conditioning and no prompt transcript",
+      "family": "dots_tts",
+      "model": "models/DotTTS-SOAR",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup_short",
+          "text": "A short calibration sentence prepares the DotTTS interleave session.",
+          "voice_ref": "resources/a.wav",
+          "options": {
+            "template_name": "tts",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        },
+        {
+          "id": "interleave_speaker_conditioned",
+          "text": "The interleave template should produce clear audio while testing the streaming schedule behavior.",
+          "voice_ref": "resources/b.wav",
+          "options": {
+            "template_name": "tts_interleave",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "reference_duration_sec": 5.0,
+            "sampler_mode": "euler",
+            "max_tokens": 160
+          },
+          "seed": 42
+        }
+      ]
+    },
+    {
+      "id": "dots_tts_soar_longform_chunking",
+      "coverage": "DotTTS SOAR long-form voice clone path using framework text chunking and merged audio output",
+      "family": "dots_tts",
+      "model": "models/DotTTS-SOAR",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup_short",
+          "text": "A short warmup sentence prepares the DotTTS long-form session.",
+          "voice_ref": "resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "options": {
+            "template_name": "tts",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        },
+        {
+          "id": "longform_chunked_clone",
+          "text": "This long-form DotTTS request checks that the framework chunker can split a larger passage while preserving the same reference voice. The first section describes a product team reviewing latency, memory use, and speech quality after a release candidate. The second section adds a customer support story with realistic names, dates, and follow-up actions so the generated audio sounds like normal narration. The final section confirms that the ending remains clear after several chunks have been synthesized and merged.",
+          "voice_ref": "resources/b.wav",
+          "reference_text": "Some call me nature. Others call me Mother Nature.",
+          "text_chunk_size": 160,
+          "options": {
+            "template_name": "tts",
+            "text_chunk_mode": "tag_aware",
+            "num_inference_steps": 10,
+            "guidance_scale": 1.2,
+            "speaker_scale": 1.5,
+            "reference_duration_sec": 5.0,
+            "sampler_mode": "euler"
+          },
+          "seed": 42
+        }
+      ]
+    },
+    {
+      "id": "muscriptor_sampling_cfg_batched_then_beam",
+      "coverage": "MuScriptor two-request session covering sampling, CFG, batched chunk decoding with prelude forcing disabled, then beam search",
+      "family": "muscriptor",
+      "model": "models/MuScriptor-Small-GGUF/muscriptor-small-f32.gguf",
+      "task": "midi",
+      "mode": "offline",
+      "outputs": [
+        "text",
+        "artifact"
+      ],
+      "requests": [
+        {
+          "id": "headache_by_lost_deposit_sampling_cfg_batched",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "options": {
+            "instruments": "drums,electric_bass",
+            "do_sample": true,
+            "temperature": 1e-06,
+            "guidance_scale": 1.2,
+            "num_beams": 1,
+            "batch_size": 4,
+            "prelude_forcing": false,
+            "seed": 3234
+          }
+        },
+        {
+          "id": "headache_by_lost_deposit_beam",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "options": {
+            "instruments": "drums,electric_bass",
+            "do_sample": false,
+            "temperature": 1.0,
+            "guidance_scale": 1.0,
+            "num_beams": 2,
+            "batch_size": 1,
+            "prelude_forcing": false,
+            "seed": 3234
+          }
+        },
+        {
+          "id": "headache_by_lost_deposit_prelude_forcing",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "options": {
+            "instruments": "drums,electric_bass",
+            "do_sample": false,
+            "temperature": 0.0,
+            "guidance_scale": 1.0,
+            "num_beams": 1,
+            "batch_size": 1,
+            "prelude_forcing": true,
+            "seed": 3234
+          }
+        }
+      ]
+    },
+    {
+      "id": "muscriptor_streaming_events",
+      "coverage": "MuScriptor streaming audio-chunk route with final MIDI-json text output",
+      "family": "muscriptor",
+      "model": "models/MuScriptor-Small-GGUF/muscriptor-small-f32.gguf",
+      "task": "midi",
+      "mode": "streaming",
+      "outputs": [
+        "text"
+      ],
+      "chunk_size": 4096,
+      "requests": [
+        {
+          "id": "headache_by_lost_deposit_streaming",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "options": {
+            "instruments": "drums,electric_bass",
+            "do_sample": false,
+            "temperature": 0.0,
+            "guidance_scale": 1.0,
+            "num_beams": 1,
+            "batch_size": 1,
+            "prelude_forcing": true,
+            "seed": 3234
+          }
         }
       ]
     }

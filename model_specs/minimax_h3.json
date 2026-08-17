@@ -1,0 +1,364 @@
+{
+  "schema_version": 1,
+  "family": "minimax_h3",
+  "display_name": "MiniMax-H3",
+  "description": "MiniMax-H3 text-to-audio/video generation through the official T2VA pipeline: Qwen3-VL text conditioning, joint audio/video DiT denoising, and MiniMax-H3 audio/video VAE decode.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "tts",
+    "music",
+    "sfx"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "capabilities": {
+    "tts": [
+      "style_control",
+      "multi_speaker"
+    ],
+    "music": [
+      "instrumental",
+      "style_control"
+    ],
+    "sfx": [
+      "prompt_generation"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "cuda",
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "minimax_h3_q4_k",
+    "tags": [
+      "TTS",
+      "Music",
+      "SFX",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/minimax_h3.md",
+      "docs/reports/minimax_h3_performance.md"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Joint DiT denoising steps.",
+        "required": false,
+        "min": 1,
+        "default": 50
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed for deterministic initial latents.",
+        "required": false,
+        "min": 0,
+        "default": 42
+      },
+      {
+        "name": "height",
+        "type": "int",
+        "description": "Target video canvas height used by the joint T2VA latent layout.",
+        "required": false,
+        "min": 32,
+        "default": 768
+      },
+      {
+        "name": "width",
+        "type": "int",
+        "description": "Target video canvas width used by the joint T2VA latent layout.",
+        "required": false,
+        "min": 32,
+        "default": 1344
+      },
+      {
+        "name": "num_frames",
+        "type": "int",
+        "description": "Target video frame count before H3 alignment. MiniMax-H3 video is 24 fps.",
+        "required": false,
+        "min": 5,
+        "default": 124
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale; 1.0 matches the baseline T2VA audio run.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "sampler",
+        "type": "enum",
+        "description": "Joint DiT sampler: euler, res_multistep, dpmpp_2m, or unipc.",
+        "values": [
+          "euler",
+          "res_multistep",
+          "dpmpp_2m",
+          "unipc"
+        ],
+        "required": false,
+        "default": "euler"
+      },
+      {
+        "name": "negative_prompt",
+        "type": "string",
+        "description": "Negative prompt used by classifier-free guidance when guidance_scale is not 1.0.",
+        "required": false,
+        "default": " "
+      },
+      {
+        "name": "flow_shift",
+        "type": "float",
+        "description": "Video FlowMatch scheduler shift.",
+        "required": false,
+        "default": 12.0
+      },
+      {
+        "name": "audio_flow_shift",
+        "type": "float",
+        "description": "Audio FlowMatch scheduler shift.",
+        "required": false,
+        "default": 3.0
+      },
+      {
+        "name": "return_video",
+        "type": "bool",
+        "description": "Decode and return RGB24 video frames as an output artifact.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "text_layerwise",
+        "type": "bool",
+        "description": "Run the prompt encoder with scoped layer-group weights instead of a full prompt encoder weight store.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "text_layerwise_batch",
+        "type": "int",
+        "description": "Prompt encoder layer-group size when text_layerwise is enabled.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "dit_layerwise",
+        "type": "bool",
+        "description": "Run the DiT denoiser with scoped prelude, block-group, and final weights instead of a full DiT weight store.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "dit_layerwise_batch",
+        "type": "int",
+        "description": "DiT block-group size when dit_layerwise is enabled.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "dit_mlp_chunk_tokens",
+        "type": "int",
+        "description": "Token chunk size for the per-token DiT MLP in layerwise high-resolution mode. Zero disables chunking.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "dit_acceleration",
+        "type": "string",
+        "description": "Optional DiT acceleration mode: none, first_block_cache, or spectrum.",
+        "required": false,
+        "default": "none"
+      },
+      {
+        "name": "first_block_cache_threshold",
+        "type": "float",
+        "description": "First-block cache residual-difference threshold.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.1
+      },
+      {
+        "name": "first_block_cache_start_sigma",
+        "type": "float",
+        "description": "Largest video sigma where first-block cache may be used.",
+        "required": false,
+        "default": 0.95
+      },
+      {
+        "name": "first_block_cache_end_sigma",
+        "type": "float",
+        "description": "Smallest video sigma where first-block cache may be used.",
+        "required": false,
+        "default": 0.1
+      },
+      {
+        "name": "first_block_cache_max_consecutive",
+        "type": "int",
+        "description": "Maximum consecutive first-block cache hits before forcing a full DiT step.",
+        "required": false,
+        "min": 1,
+        "default": 2
+      },
+      {
+        "name": "spectrum_warmup_steps",
+        "type": "int",
+        "description": "Full DiT warmup steps before spectrum forecasting may skip steps.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "spectrum_initial_window",
+        "type": "float",
+        "description": "Initial spectrum forecast scheduling window.",
+        "required": false,
+        "min": 1.0,
+        "default": 2.0
+      },
+      {
+        "name": "spectrum_flex_window",
+        "type": "float",
+        "description": "Spectrum forecast window growth after actual DiT steps.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.75
+      },
+      {
+        "name": "spectrum_degree",
+        "type": "int",
+        "description": "Chebyshev polynomial degree for spectrum forecasting.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "spectrum_history_size",
+        "type": "int",
+        "description": "Maximum spectrum forecast history rows.",
+        "required": false,
+        "min": 1,
+        "default": 8
+      },
+      {
+        "name": "spectrum_ridge_lambda",
+        "type": "float",
+        "description": "Ridge regularization for spectrum forecasting.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.1
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "MiniMax-H3 staged weight context size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release staged DiT, audio VAE, and video VAE weights after their request phase instead of keeping them resident for the session. Prompt encoder weights are always request-scoped.",
+        "required": false,
+        "default": true
+      }
+    ],
+    "load": []
+  },
+  "dependencies": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "minimax_h3_q4_k",
+      "display_name": "MiniMax-H3 Q4_K GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "MiniMax-H3-Q4-GGUF",
+      "files": [
+        "MiniMax-H3-Q4-GGUF/configuration.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/chat_template.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/merges.txt",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/preprocessor_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/tokenizer.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/tokenizer_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/video_preprocessor_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/vocab.json",
+        "MiniMax-H3-Q4-GGUF/text_encoder_q4_k.gguf",
+        "MiniMax-H3-Q4-GGUF/dit.gguf",
+        "MiniMax-H3-Q4-GGUF/audio_vae_folded_f16.gguf",
+        "MiniMax-H3-Q4-GGUF/video_vae.gguf"
+      ],
+      "strip_prefix": "MiniMax-H3-Q4-GGUF"
+    },
+    {
+      "id": "minimax_h3_q4_k_int8_dit",
+      "display_name": "MiniMax-H3 Q4_K GGUF + INT8 ConvRot DiT",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "MiniMax-H3-Q4-GGUF",
+      "files": [
+        "MiniMax-H3-Q4-GGUF/configuration.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/chat_template.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/merges.txt",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/preprocessor_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/tokenizer.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/tokenizer_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/video_preprocessor_config.json",
+        "MiniMax-H3-Q4-GGUF/FL2VA/processor/vocab.json",
+        "MiniMax-H3-Q4-GGUF/text_encoder_q4_k.gguf",
+        "MiniMax-H3-Q4-GGUF/dit_int8.gguf",
+        "MiniMax-H3-Q4-GGUF/audio_vae_folded_f16.gguf",
+        "MiniMax-H3-Q4-GGUF/video_vae.gguf"
+      ],
+      "strip_prefix": "MiniMax-H3-Q4-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "configuration": "model:configuration.json",
+        "tokenizer_config": "model:FL2VA/processor/tokenizer_config.json",
+        "tokenizer_json": "model:FL2VA/processor/tokenizer.json",
+        "vocab": "model:FL2VA/processor/vocab.json",
+        "merges": "model:FL2VA/processor/merges.txt",
+        "preprocessor_config": "model:FL2VA/processor/preprocessor_config.json"
+      },
+      "tensors": {
+        "text_encoder_weights": "model:text_encoder_q4_k.gguf",
+        "dit_weights": "model:dit.gguf",
+        "audio_vae_weights": "model:audio_vae_folded_f16.gguf",
+        "video_vae_weights": "model:video_vae.gguf"
+      }
+    }
+  ]
+}

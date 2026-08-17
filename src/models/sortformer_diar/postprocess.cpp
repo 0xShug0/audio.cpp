@@ -356,6 +356,7 @@ std::vector<runtime::SpeakerTurn> decode_sortformer_speaker_turns(
                 },
                 speaker_id_for_index(speaker),
                 0.0f,
+                "",
             });
         }
     }

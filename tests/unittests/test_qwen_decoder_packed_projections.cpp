@@ -2,6 +2,7 @@
 #include "engine/framework/modules/transformers/qwen_causal_decoder.h"
 #include "engine/framework/modules/transformers/qwen_decoder.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
+#include "engine/framework/modules/optimizations/fast_projection_modules.h"
 
 #include <cmath>
 #include <initializer_list>
@@ -398,6 +399,74 @@ std::string graph_ops(ggml_cgraph * graph) {
     return out.str();
 }
 
+void test_fast_projection_accepts_cuda_or_hip_backends() {
+    constexpr int64_t in_features = 8;
+    constexpr int64_t out_features = 12;
+    for (const auto backend_type : {
+             engine::core::BackendType::Cuda,
+             engine::core::BackendType::Hip,
+         }) {
+        ggml_init_params params{kGraphBytes, nullptr, true};
+        ggml_context * ggml = ggml_init(params);
+        if (ggml == nullptr) {
+            throw std::runtime_error("failed to initialize fast projection graph test context");
+        }
+        try {
+            engine::core::ModuleBuildContext ctx{ggml, "fast_projection_cuda_or_hip_test", backend_type};
+            const auto input = engine::core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                engine::core::TensorShape::from_dims({1, in_features}));
+            const auto weight = engine::core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                engine::core::TensorShape::from_dims({out_features, in_features}));
+            const auto output = engine::modules::FastPackedProjection4Module({in_features, out_features})
+                                    .build(ctx, input, {weight, std::nullopt});
+            if (output.shape.rank != 2 || output.shape.dims[0] != 1 || output.shape.dims[1] != out_features) {
+                throw std::runtime_error("fast projection CUDA/HIP output shape mismatch");
+            }
+            ggml_free(ggml);
+        } catch (...) {
+            ggml_free(ggml);
+            throw;
+        }
+    }
+
+    for (const auto rejected_backend : {engine::core::BackendType::Cpu, engine::core::BackendType::Metal}) {
+        ggml_init_params params{kGraphBytes, nullptr, true};
+        ggml_context * ggml = ggml_init(params);
+        if (ggml == nullptr) {
+            throw std::runtime_error("failed to initialize fast projection rejection test context");
+        }
+        bool rejected = false;
+        try {
+            engine::core::ModuleBuildContext ctx{ggml, "fast_projection_rejection_test", rejected_backend};
+            const auto input = engine::core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                engine::core::TensorShape::from_dims({1, in_features}));
+            const auto weight = engine::core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                engine::core::TensorShape::from_dims({out_features, in_features}));
+            try {
+                (void) engine::modules::FastPackedProjection4Module({in_features, out_features})
+                    .build(ctx, input, {weight, std::nullopt});
+            } catch (const std::runtime_error &) {
+                rejected = true;
+            }
+            ggml_free(ggml);
+        } catch (...) {
+            ggml_free(ggml);
+            throw;
+        }
+        if (!rejected) {
+            throw std::runtime_error("fast projection must reject non-CUDA/HIP backends");
+        }
+    }
+}
+
 void test_higgs_decode_graph_exposes_cuda_fast_paths() {
     constexpr int64_t hidden = 8;
     constexpr int64_t heads = 2;
@@ -504,6 +573,7 @@ int main() {
         test_suffix_causal_mask();
         test_f16_kv_set_rows();
         test_f16_kv_set_rows_batched();
+        test_fast_projection_accepts_cuda_or_hip_backends();
         test_higgs_decode_graph_exposes_cuda_fast_paths();
         std::cout << "qwen_decoder_packed_projection_test: ok\n";
         return 0;

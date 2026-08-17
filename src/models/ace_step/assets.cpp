@@ -101,8 +101,35 @@ AceStepDiffusionConfig parse_diffusion_config(const engine::io::json::Value & va
     config.use_sliding_window = json::optional_bool(value, "use_sliding_window", false);
     config.layer_types = json::optional_string_array(value, "layer_types");
     config.is_turbo = json::optional_bool(value, "is_turbo", config.is_turbo);
+    // `encoder_hidden_size` is what upstream's XL modeling class reads without a
+    // fallback, so a config that declares it is an XL-class package: the encoder
+    // stack is a different width from the DiT, and the timbre encoder is the
+    // variant that actually uses its CLS token.
+    config.has_separate_encoder = value.find("encoder_hidden_size") != nullptr;
+    config.timbre_special_token = config.has_separate_encoder;
     config.rms_norm_eps = json::optional_f32(value, "rms_norm_eps", config.rms_norm_eps);
     config.rope_theta = json::optional_f32(value, "rope_theta", config.rope_theta);
+    return config;
+}
+
+// Upstream builds the condition encoder, audio tokenizer and detokenizer from a
+// copy of the config with four values substituted (copy.deepcopy in
+// AceStepConditionGenerationModel.__init__). Doing the same here keeps every
+// encoder-side shape derived from one place instead of spreading `is this XL?`
+// across the weight loaders.
+AceStepDiffusionConfig derive_encoder_config(
+    const AceStepDiffusionConfig & diffusion,
+    const engine::io::json::Value & value) {
+    AceStepDiffusionConfig config = diffusion;
+    if (!diffusion.has_separate_encoder) {
+        return config;
+    }
+    config.hidden_size = json::require_i64(value, "encoder_hidden_size");
+    config.intermediate_size = json::optional_i64(value, "encoder_intermediate_size", diffusion.intermediate_size);
+    config.num_attention_heads =
+        json::optional_i64(value, "encoder_num_attention_heads", diffusion.num_attention_heads);
+    config.num_key_value_heads =
+        json::optional_i64(value, "encoder_num_key_value_heads", diffusion.num_key_value_heads);
     return config;
 }
 
@@ -118,14 +145,38 @@ AceStepVAEConfig parse_vae_config(const engine::io::json::Value & value) {
     return config;
 }
 
+// Directory inside the package -> prefix of the resource ids the model spec
+// registers for it. The XL variants are optional resources, so a package may
+// name a variant here that it does not ship; that is caught when the resources
+// are opened, with a message that says which directory is missing.
+constexpr std::pair<std::string_view, std::string_view> kDitVariants[] = {
+    {"acestep-v15-turbo", "dit_turbo_"},
+    {"acestep-v15-base", "dit_base_"},
+    {"acestep-v15-xl-turbo", "dit_xl_turbo_"},
+    {"acestep-v15-xl-sft", "dit_xl_sft_"},
+};
+
+std::string known_dit_variants() {
+    std::string names;
+    for (const auto & [directory, prefix] : kDitVariants) {
+        (void)prefix;
+        if (!names.empty()) {
+            names += ", ";
+        }
+        names += directory;
+    }
+    return names;
+}
+
 std::string dit_resource_id(const AceStepModelSelection & selection, std::string_view suffix) {
-    if (selection.dit_model_path == "acestep-v15-turbo") {
-        return "dit_turbo_" + std::string(suffix);
+    for (const auto & [directory, prefix] : kDitVariants) {
+        if (selection.dit_model_path == directory) {
+            return std::string(prefix) + std::string(suffix);
+        }
     }
-    if (selection.dit_model_path == "acestep-v15-base") {
-        return "dit_base_" + std::string(suffix);
-    }
-    throw std::runtime_error("ACE-Step package spec supports only acestep-v15-turbo and acestep-v15-base DiT variants");
+    throw std::runtime_error(
+        "unknown ACE-Step DiT variant '" + selection.dit_model_path + "'; the package spec knows " +
+        known_dit_variants());
 }
 
 void validate_selection(const AceStepModelSelection & selection) {
@@ -134,11 +185,27 @@ void validate_selection(const AceStepModelSelection & selection) {
 
 AceStepConfig parse_config(const assets::ResourceBundle & resources, const AceStepModelSelection & selection) {
     AceStepConfig config;
-    config.diffusion = parse_diffusion_config(resources.parse_json(dit_resource_id(selection, "config")));
+    const auto diffusion_json = resources.parse_json(dit_resource_id(selection, "config"));
+    config.diffusion = parse_diffusion_config(diffusion_json);
+    config.encoder = derive_encoder_config(config.diffusion, diffusion_json);
     config.planner = parse_planner_config(resources.parse_json("lm_config"));
     config.text_encoder = parse_text_encoder_config(resources.parse_json("text_encoder_config"));
     config.vae = parse_vae_config(resources.parse_json("vae_config"));
     return config;
+}
+
+// The XL variants are registered as optional package resources so that a
+// package holding only turbo does not have to ship 20 GB it will never load.
+// The cost is that "not installed" surfaces here rather than at spec-load time,
+// where a bare "missing asset resource: dit_xl_turbo_config" would not say why.
+void require_installed_variant(const assets::ResourceBundle & resources, const AceStepModelSelection & selection) {
+    if (resources.has_file(dit_resource_id(selection, "config"))) {
+        return;
+    }
+    throw std::runtime_error(
+        "ACE-Step DiT variant '" + selection.dit_model_path + "' is not installed in this package: " +
+        (resources.model_root() / selection.dit_model_path).string() +
+        " is missing. Download that variant, or load one of the variants the package ships.");
 }
 
 void validate_config(const AceStepConfig & config) {
@@ -167,6 +234,7 @@ std::shared_ptr<const AceStepAssets> load_ace_step_assets(
     assets->resources = engine::model_spec::load_resource_bundle(
         model_path,
         engine::model_spec::default_spec_path("ace_step"));
+    require_installed_variant(assets->resources, assets->selection);
     assets->config = parse_config(assets->resources, assets->selection);
     validate_config(assets->config);
     assets->dit_weights = assets->resources.open_tensor_source(dit_resource_id(assets->selection, "weights"));

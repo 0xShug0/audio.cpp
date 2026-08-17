@@ -67,6 +67,8 @@ struct ServerConfig {
     std::string host = "127.0.0.1";
     int port = 8080;
     std::string cors_origins = "";
+    bool ui_enabled = true;
+    bool ui_management = false;
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
     int device = 0;
     int threads = 1;
@@ -85,6 +87,10 @@ struct ServerConfig {
     // in LiveIngestLimits; a model entry may override any subset of them.
     LiveIngestLimits live_ingest;
     std::optional<std::filesystem::path> model_spec_override;
+    // Voice library shared across all TTS models: *.wav files plus a `prompt_text`
+    // mapping file (<basename>|<transcript>). A request `voice` name that is not a
+    // model preset resolves to <voice_dir>/<name>.wav as the cloning reference.
+    std::optional<std::filesystem::path> voice_dir;
     std::vector<ServerModelConfig> models;
 };
 

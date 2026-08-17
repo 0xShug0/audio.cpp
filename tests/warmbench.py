@@ -309,6 +309,33 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "case_catalog": "tests/nemotron_asr/nemotron_asr_warm_bench_cases.json",
         "default_requests_per_session": 1,
     },
+    "muscriptor": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/muscriptor_warm_bench",
+        "python_script": "tests/muscriptor/muscriptor_python_warm_bench.py",
+        "model": "models/muscriptor-small",
+        "python_model": "models/muscriptor-small/model.safetensors",
+        "case_catalog": "tests/muscriptor/muscriptor_warm_bench_cases.json",
+        "default_case_name": "known_wav_multi_request",
+        "default_requests_per_session": 4,
+    },
+    "neutts": {
+        "kind": "neutts",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/neutts_warm_bench",
+        "python_script": "tests/neutts/neutts_2e_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "/media/leo/Share/models/audio.cpp-gguf/NeuTTS-2E-GGUF/neutts-2e-orig.gguf",
+        "python_model": "models/NeuTTS-2E",
+        "case_catalog": "tests/neutts/neutts_2e_warm_bench_cases.json",
+        "default_case_name": "neutts_builtin_emotions",
+        "default_requests_per_session": 4,
+        "default_warmup": 1,
+        "wav_cosine_min": 0.90,
+        "log_mel_cosine_min": 0.90,
+        "length_ratio_min": 0.90,
+    },
     "vibevoice_asr": {
         "kind": "asr",
         "modes": ["offline"],
@@ -975,6 +1002,38 @@ def resolve_vevo2_case(config: dict[str, Any], args: argparse.Namespace) -> tupl
         for request in selected:
             request["seed"] = args.seed
     return selected, {"case_name": case_name, "requests": selected}
+
+
+def resolve_neutts_case(config: dict[str, Any], args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    if len(args.case_names) > 1:
+        raise RuntimeError("NeuTTS warmbench accepts at most one --case-name")
+    if args.texts:
+        raise RuntimeError("NeuTTS warmbench uses JSON case requests; --text is not supported")
+    case_name = args.case_names[0] if args.case_names else str(config.get("default_case_name", ""))
+    catalog_path = REPO_ROOT / str(config["case_catalog"])
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    cases = catalog.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise RuntimeError(f"NeuTTS case catalog has no cases: {catalog_path}")
+    case = next((item for item in cases if item.get("id") == case_name), None)
+    if not isinstance(case, dict):
+        available = ", ".join(sorted(str(item.get("id", "")) for item in cases if isinstance(item, dict)))
+        raise RuntimeError(f"unknown NeuTTS case name {case_name!r}; available: {available}")
+    warmup = case.get("warmup")
+    requests = case.get("requests")
+    if not isinstance(warmup, dict):
+        raise RuntimeError(f"NeuTTS case {case_name!r} is missing warmup request")
+    if not isinstance(requests, list) or not requests:
+        raise RuntimeError(f"NeuTTS case {case_name!r} has no requests")
+    if len(requests) < args.requests_per_session:
+        raise RuntimeError(
+            f"NeuTTS case {case_name!r} needs at least {args.requests_per_session} requests, only has {len(requests)}"
+        )
+    selected = [dict(request) for request in requests[: args.requests_per_session]]
+    if getattr(args, "seed_was_explicit", False):
+        for request in selected:
+            request["seed"] = args.seed
+    return dict(warmup), selected, {"case_name": case_name, "warmup": warmup, "requests": selected}
 
 
 def resolve_miocodec_case(config: dict[str, Any], args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
@@ -3516,12 +3575,94 @@ def csv_values(cases: list[dict[str, Any]], key: str, default: Any = "") -> str:
     return ",".join(str(case.get(key, default)) for case in cases)
 
 
+def json_string_values(cases: list[dict[str, Any]], key: str, default: str = "") -> str:
+    return json.dumps([str(case.get(key, default)) for case in cases], separators=(",", ":"))
+
+
 def csv_bools(cases: list[dict[str, Any]], key: str, default: bool) -> str:
     return ",".join("true" if bool(case.get(key, default)) else "false" for case in cases)
 
 
 def catalog_asr_model_path(config: dict[str, Any], args: argparse.Namespace) -> str:
     return args.model or str(config["model"])
+
+
+def rounded_json_events(text: str) -> list[dict[str, Any]]:
+    events = json.loads(text)
+    if not isinstance(events, list):
+        raise RuntimeError("MuScriptor text_output is not a JSON event list")
+    rounded = []
+    for event in events:
+        if not isinstance(event, dict):
+            raise RuntimeError("MuScriptor event is not an object")
+        rounded.append({
+            key: (round(value, 6) if isinstance(value, float) else value)
+            for key, value in event.items()
+        })
+    return rounded
+
+
+MUSCRIPTOR_TIME_TOLERANCE_SEC = 0.05
+
+
+def compare_muscriptor_step(cpp_step: dict[str, Any], py_step: dict[str, Any]) -> dict[str, Any]:
+    mismatches: list[str] = []
+    metrics: dict[str, Any] = {}
+    try:
+        cpp_events = rounded_json_events(str(cpp_step.get("text_output", "")))
+        py_events = rounded_json_events(str(py_step.get("text_output", "")))
+    except (json.JSONDecodeError, RuntimeError) as exc:
+        return {
+            "ok": False,
+            "reason": "mismatch:invalid_json",
+            "mismatches": ["invalid_json"],
+            "metrics": {"error": str(exc)},
+        }
+    metrics["cpp_events"] = len(cpp_events)
+    metrics["python_events"] = len(py_events)
+    max_time_abs_diff = 0.0
+    first_mismatch: tuple[int, dict[str, Any], dict[str, Any]] | None = None
+    if len(cpp_events) == len(py_events):
+        for index, (cpp_event, py_event) in enumerate(zip(cpp_events, py_events)):
+            if cpp_event == py_event:
+                continue
+            same_event = True
+            for key in set(cpp_event) | set(py_event):
+                if key in {"start_time", "end_time"}:
+                    continue
+                if cpp_event.get(key) != py_event.get(key):
+                    same_event = False
+                    break
+            for key in {"start_time", "end_time"}:
+                if key not in cpp_event and key not in py_event:
+                    continue
+                if key not in cpp_event or key not in py_event:
+                    same_event = False
+                    break
+                diff = abs(float(cpp_event[key]) - float(py_event[key]))
+                max_time_abs_diff = max(max_time_abs_diff, diff)
+                if diff > MUSCRIPTOR_TIME_TOLERANCE_SEC + 1e-7:
+                    same_event = False
+                    break
+            if not same_event:
+                first_mismatch = (index, cpp_event, py_event)
+                break
+    if max_time_abs_diff > 0.0:
+        metrics["max_time_abs_diff"] = max_time_abs_diff
+    if len(cpp_events) != len(py_events) or first_mismatch is not None:
+        mismatches.append("events")
+        if first_mismatch is not None:
+            metrics["first_mismatch_index"] = first_mismatch[0]
+            metrics["cpp_first_mismatch"] = first_mismatch[1]
+            metrics["python_first_mismatch"] = first_mismatch[2]
+        if len(cpp_events) != len(py_events):
+            metrics["event_count_mismatch"] = True
+    return {
+        "ok": not mismatches,
+        "reason": "ok" if not mismatches else f"mismatch:{mismatches[0]}",
+        "mismatches": mismatches,
+        "metrics": metrics,
+    }
 
 
 def build_catalog_asr_commands(
@@ -3539,6 +3680,7 @@ def build_catalog_asr_commands(
         for index, case in enumerate(request_cases)
     ]
     model_path = catalog_asr_model_path(config, args)
+    python_model_path = args.python_model or str(config.get("python_model", model_path))
     common = [
         "--model",
         model_path,
@@ -3645,6 +3787,41 @@ def build_catalog_asr_commands(
             "--keep-language-tags-sequence",
             csv_bools(request_cases, "keep_language_tags", bool(warmup_case.get("keep_language_tags", False))),
         ])
+    elif family == "muscriptor":
+        common.extend([
+            "--instruments",
+            str(warmup_case.get("instruments", "")),
+            "--instruments-sequence",
+            json_string_values(request_cases, "instruments", str(warmup_case.get("instruments", ""))),
+            "--use-sampling",
+            "true" if bool(warmup_case.get("use_sampling", False)) else "false",
+            "--use-sampling-sequence",
+            csv_bools(request_cases, "use_sampling", bool(warmup_case.get("use_sampling", False))),
+            "--temperature",
+            str(warmup_case.get("temperature", 1.0)),
+            "--temperature-sequence",
+            csv_values(request_cases, "temperature", warmup_case.get("temperature", 1.0)),
+            "--cfg-coef",
+            str(warmup_case.get("cfg_coef", 1.0)),
+            "--cfg-coef-sequence",
+            csv_values(request_cases, "cfg_coef", warmup_case.get("cfg_coef", 1.0)),
+            "--batch-size",
+            str(warmup_case.get("batch_size", 0)),
+            "--batch-size-sequence",
+            csv_values(request_cases, "batch_size", warmup_case.get("batch_size", 0)),
+            "--beam-size",
+            str(warmup_case.get("beam_size", 1)),
+            "--beam-size-sequence",
+            csv_values(request_cases, "beam_size", warmup_case.get("beam_size", 1)),
+            "--prelude-forcing",
+            "true" if bool(warmup_case.get("prelude_forcing", True)) else "false",
+            "--prelude-forcing-sequence",
+            csv_bools(request_cases, "prelude_forcing", bool(warmup_case.get("prelude_forcing", True))),
+            "--seed",
+            str(warmup_case.get("seed", args.seed)),
+            "--seed-sequence",
+            csv_values(request_cases, "seed", args.seed),
+        ])
     elif family == "voxtral_realtime":
         common.extend([
             "--streaming",
@@ -3710,7 +3887,7 @@ def build_catalog_asr_commands(
         str(REPO_ROOT / config["python_script"]),
         "--timing-file",
         str(scenario_dir / "python.timing.log"),
-    ] + python_extra + common
+    ] + python_extra + ["--model", python_model_path] + common[2:]
     cpp_command = [
         str(REPO_ROOT / config["cpp_bin"]),
         "--timing-file",
@@ -4248,6 +4425,100 @@ def build_heartmula_commands(
     return python_command, cpp_command
 
 
+def build_neutts_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    warmup_request: dict[str, Any],
+    requests: list[dict[str, Any]],
+    case_name: str,
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("NeuTTS warmbench is CUDA-only")
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    warmup_request_json = json.dumps(warmup_request, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    selected_cases_path = scenario_dir / "neutts_selected_cases.json"
+    selected_cases_path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "id": case_name,
+                        "family": "neutts",
+                        "task": "tts",
+                        "mode": "offline",
+                        "warmup": warmup_request,
+                        "requests": requests,
+                    }
+                ]
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--backbone",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        "cuda",
+        "--codec-device",
+        "cuda",
+        "--cases",
+        str(selected_cases_path),
+        "--only",
+        case_name,
+        "--out-root",
+        str(scenario_dir / "python_audio"),
+    ]
+    cpp_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--warmup-request-json",
+        warmup_request_json,
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
 def build_confucius4_tts_commands(
     config: dict[str, Any],
     backend: str,
@@ -4722,6 +4993,18 @@ def run_scenario(
         heartmula_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(heartmula_requests)
         python_command, cpp_command = build_heartmula_commands(scenario_config, backend, args, scenario_dir, heartmula_requests)
+    elif scenario_config["kind"] == "neutts":
+        neutts_warmup, neutts_requests, request_manifest = resolve_neutts_case(config, args)
+        args.requests_per_session = len(neutts_requests)
+        python_command, cpp_command = build_neutts_commands(
+            scenario_config,
+            backend,
+            args,
+            scenario_dir,
+            neutts_warmup,
+            neutts_requests,
+            str(request_manifest["case_name"]),
+        )
     elif scenario_config["kind"] == "confucius4_tts":
         confucius_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(confucius_requests)
@@ -4855,7 +5138,7 @@ def run_scenario(
                 "transcripts": args.qwen3_forced_aligner_request_transcripts,
                 "expected_words": [item.get("expected_words", []) for item in request_cases],
             }
-        elif family in {"higgs_audio_stt", "hviske_asr", "nemotron_asr", "vibevoice_asr", "voxtral_realtime"}:
+        elif family in {"higgs_audio_stt", "hviske_asr", "nemotron_asr", "muscriptor", "vibevoice_asr", "voxtral_realtime"}:
             if len(args.case_names) > 1:
                 raise RuntimeError(f"{family} warmbench accepts at most one --case-name")
             case_name = args.case_names[0] if args.case_names else str(config.get("default_case_name", ""))
@@ -4909,7 +5192,7 @@ def run_scenario(
                 "warmup_audio": str(warmup_audio),
                 "audio_sequence": [str(path) for path in audio_requests],
             }
-        if family not in {"miocodec", "voxcpm2", "higgs_audio_stt", "hviske_asr", "nemotron_asr", "vibevoice_asr", "voxtral_realtime"}:
+        if family not in {"miocodec", "voxcpm2", "higgs_audio_stt", "hviske_asr", "nemotron_asr", "muscriptor", "vibevoice_asr", "voxtral_realtime"}:
             python_command, cpp_command = build_audio_commands(family, scenario_config, backend, mode, args, scenario_dir, warmup_audio, audio_requests)
     (scenario_dir / "request_manifest.json").write_text(json.dumps(request_manifest, indent=2), encoding="utf-8")
 
@@ -5089,7 +5372,7 @@ def run_scenario(
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
             append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
-    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox"}:
+    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "neutts", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox"}:
         python_valid = validate_sequence_result(python_summary, args.requests_per_session, scenario_config["kind"])
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, scenario_config["kind"])
         python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
@@ -5138,7 +5421,12 @@ def run_scenario(
             elif request_index >= len(cpp_summary.get("sequence_steps", [])):
                 parity = missing_parity(request_index, request_manifest["audio_sequence"][request_index], "missing_cpp_step")
             else:
-                if family in {"qwen3_asr", "voxtral_realtime"}:
+                if family == "muscriptor":
+                    parity = compare_muscriptor_step(
+                        cpp_summary["sequence_steps"][request_index],
+                        python_summary["sequence_steps"][request_index],
+                    )
+                elif family in {"qwen3_asr", "voxtral_realtime"}:
                     expected_fragments = request_manifest.get("expected_fragments", [])
                     parity = compare_qwen3_asr_step(
                         cpp_summary["sequence_steps"][request_index],
