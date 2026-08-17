@@ -67,6 +67,16 @@ inline const core::ModuleSchema kGatedFeedForwardSchema = {
     "Applies a gated feed-forward block using gate, up, and down projections.",
 };
 
+inline const core::ModuleSchema kConvFeedForwardSchema = {
+    "ConvFeedForward",
+    "nn.block",
+    kInputOutputInputs,
+    1,
+    kSingleOutput,
+    1,
+    "Applies a convolutional feed-forward block to [batch, frames, hidden] inputs.",
+};
+
 inline const core::ModuleSchema kSelfAttentionSchema = {
     "SelfAttention",
     "nn.attention",
