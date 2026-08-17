@@ -685,10 +685,12 @@ audiocpp_add_model(voxcpm2
     SOURCES
         src/models/voxcpm2/assets.cpp
         src/models/voxcpm2/audiovae.cpp
+        src/models/voxcpm2/config_gguf.cpp
         src/models/voxcpm2/generator.cpp
         src/models/voxcpm2/loader.cpp
         src/models/voxcpm2/minicpm.cpp
         src/models/voxcpm2/session.cpp
+        src/models/voxcpm2/tokenizer_gguf.cpp
         src/models/voxcpm2/tokenizer_text.cpp
     INCLUDES
         engine/models/voxcpm2/loader.h
@@ -700,10 +702,12 @@ audiocpp_add_model(voxcpm1
     SOURCES
         src/models/voxcpm2/assets.cpp
         src/models/voxcpm2/audiovae.cpp
+        src/models/voxcpm2/config_gguf.cpp
         src/models/voxcpm2/generator.cpp
         src/models/voxcpm2/loader.cpp
         src/models/voxcpm2/minicpm.cpp
         src/models/voxcpm2/session.cpp
+        src/models/voxcpm2/tokenizer_gguf.cpp
         src/models/voxcpm2/tokenizer_text.cpp
     INCLUDES
         engine/models/voxcpm2/loader.h

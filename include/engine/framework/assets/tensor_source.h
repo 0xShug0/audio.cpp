@@ -119,6 +119,35 @@ public:
         std::initializer_list<std::string_view> candidates) const;
     [[nodiscard]] virtual int64_t require_i64_scalar(std::string_view name) const = 0;
     [[nodiscard]] virtual bool is_synthesized(std::string_view name) const noexcept { return false; }
+
+    // GGUF metadata access (optional, only implemented by GgufTensorSource)
+    [[nodiscard]] virtual std::optional<std::string> optional_string(std::string_view key) const {
+        return std::nullopt;
+    }
+    [[nodiscard]] virtual std::optional<uint32_t> optional_u32(std::string_view key) const {
+        return std::nullopt;
+    }
+    [[nodiscard]] virtual std::optional<std::vector<std::string>> optional_string_array(std::string_view key) const {
+        return std::nullopt;
+    }
+    [[nodiscard]] virtual std::optional<std::vector<int32_t>> optional_i32_array(std::string_view key) const {
+        return std::nullopt;
+    }
+    [[nodiscard]] virtual std::optional<std::vector<float>> optional_f32_array(std::string_view key) const {
+        return std::nullopt;
+    }
+    [[nodiscard]] virtual std::string require_string(std::string_view key) const {
+        throw std::runtime_error("require_string not supported by this TensorSource");
+    }
+    [[nodiscard]] virtual uint32_t require_u32(std::string_view key) const {
+        throw std::runtime_error("require_u32 not supported by this TensorSource");
+    }
+    [[nodiscard]] virtual std::vector<std::string> require_string_array(std::string_view key) const {
+        throw std::runtime_error("require_string_array not supported by this TensorSource");
+    }
+    [[nodiscard]] virtual std::vector<int32_t> require_i32_array(std::string_view key) const {
+        throw std::runtime_error("require_i32_array not supported by this TensorSource");
+    }
 };
 
 [[nodiscard]] TensorStorageType parse_tensor_storage_type(std::string_view value);

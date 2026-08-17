@@ -56,10 +56,7 @@
       "precision": "q8_0",
       "target_directory": "VoxCPM1-GGUF",
       "files": [
-        "VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf",
-        "VoxCPM1-GGUF/config.json",
-        "VoxCPM1-GGUF/tokenizer.json",
-        "VoxCPM1-GGUF/tokenizer_config.json"
+        "VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf"
       ],
       "strip_prefix": "VoxCPM1-GGUF"
     },
@@ -70,10 +67,7 @@
       "precision": "q4_k",
       "target_directory": "VoxCPM1.5-GGUF",
       "files": [
-        "VoxCPM1.5-GGUF/voxcpm1.5-q4_k-audiovae-f16.gguf",
-        "VoxCPM1.5-GGUF/config.json",
-        "VoxCPM1.5-GGUF/tokenizer.json",
-        "VoxCPM1.5-GGUF/tokenizer_config.json"
+        "VoxCPM1.5-GGUF/voxcpm1.5-q4_k-audiovae-f16.gguf"
       ],
       "strip_prefix": "VoxCPM1.5-GGUF"
     },
@@ -84,10 +78,7 @@
       "precision": "q8_0",
       "target_directory": "VoxCPM1.5-GGUF",
       "files": [
-        "VoxCPM1.5-GGUF/voxcpm1.5-q8_0.gguf",
-        "VoxCPM1.5-GGUF/config.json",
-        "VoxCPM1.5-GGUF/tokenizer.json",
-        "VoxCPM1.5-GGUF/tokenizer_config.json"
+        "VoxCPM1.5-GGUF/voxcpm1.5-q8_0.gguf"
       ],
       "strip_prefix": "VoxCPM1.5-GGUF"
     }
@@ -99,13 +90,8 @@
         "model": ".",
         "weights": "$gguf"
       },
-      "files": {
-        "config": "model:config.json",
-        "tokenizer_config": "model:tokenizer_config.json",
-        "tokenizer_json": "model:tokenizer.json",
-        "special_tokens_map": "model:special_tokens_map.json"
-      },
-"tensors": {
+      "files": {},
+      "tensors": {
         "weights": {
           "source": "weights:"
         },

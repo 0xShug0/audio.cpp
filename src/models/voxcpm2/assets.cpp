@@ -1,4 +1,6 @@
 #include "engine/models/voxcpm2/assets.h"
+#include "engine/models/voxcpm2/tokenizer_gguf.h"
+#include "engine/models/voxcpm2/config_gguf.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/resource_bundle.h"
@@ -906,8 +908,32 @@ std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(const std::filesystem::
     out->resources = engine::model_spec::load_resource_bundle(
         model_path,
         engine::model_spec::default_spec_path(is_v1 ? "voxcpm1" : "voxcpm2"));
-    out->config = parse_config(out->resources);
-    out->config.v1 = is_v1;
+    
+    // For VoxCPM1, try to load config and tokenizer from GGUF metadata
+    if (is_v1) {
+        auto raw_model_weights = out->resources.open_tensor_source("weights");
+        
+        // Check if GGUF has tokenizer metadata
+        bool has_tokenizer = VoxCPM1GgufTokenizer::has_tokenizer_metadata(*raw_model_weights);
+        bool has_config = has_voxcpm1_config_metadata(*raw_model_weights);
+        
+        if (has_tokenizer && has_config) {
+            // Load config from GGUF metadata
+            out->config = load_voxcpm1_config_from_gguf(*raw_model_weights);
+            out->config.v1 = true;
+            
+            // Create GGUF-native tokenizer
+            out->gguf_tokenizer = std::make_shared<VoxCPM1GgufTokenizer>(raw_model_weights);
+        } else {
+            // Fall back to external files
+            out->config = parse_config(out->resources);
+            out->config.v1 = true;
+        }
+    } else {
+        out->config = parse_config(out->resources);
+        out->config.v1 = false;
+    }
+    
     auto raw_model_weights = out->resources.open_tensor_source("weights");
     auto raw_audiovae_weights = out->resources.open_tensor_source("audiovae_weights");
     if (is_v1) {
