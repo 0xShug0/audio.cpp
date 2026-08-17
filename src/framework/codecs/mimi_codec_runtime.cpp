@@ -2028,6 +2028,9 @@ struct MimiEncoderRuntime::Impl {
     int threads = 1;
     size_t graph_arena_bytes = 0;
     RuntimeCache cache;
+    std::optional<MimiEncoderState> streaming_state;
+    bool streaming_transformer_initialized = false;
+    std::vector<float> streaming_partial;
 };
 
 MimiEncoderRuntime::MimiEncoderRuntime(
@@ -2063,6 +2066,48 @@ std::vector<int32_t> MimiEncoderRuntime::encode(const runtime::AudioBuffer & aud
     auto state = make_mimi_encoder_state(impl_->config);
     bool transformer_initialized = false;
     return impl_->encode_streaming_with_state(mono, state, transformer_initialized);
+}
+
+void MimiEncoderRuntime::reset_streaming() {
+    impl_->streaming_state = make_mimi_encoder_state(impl_->config);
+    impl_->streaming_transformer_initialized = false;
+    impl_->streaming_partial.clear();
+}
+
+std::vector<int32_t> MimiEncoderRuntime::encode_streaming(const runtime::AudioBuffer & audio, bool flush) {
+    if (!impl_->streaming_state.has_value()) {
+        reset_streaming();
+    }
+    if (audio.sample_rate <= 0 || audio.channels <= 0) {
+        throw std::runtime_error("Mimi codec streaming encoder received invalid audio format");
+    }
+    auto mono = engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
+        audio.samples,
+        audio.sample_rate,
+        audio.channels,
+        impl_->config.sample_rate);
+    impl_->streaming_partial.insert(impl_->streaming_partial.end(), mono.begin(), mono.end());
+    const int64_t available = static_cast<int64_t>(impl_->streaming_partial.size());
+    int64_t encode_samples = (available / kMimiFrameSamples) * kMimiFrameSamples;
+    if (flush && available > encode_samples) {
+        encode_samples += kMimiFrameSamples;
+    }
+    if (encode_samples == 0) {
+        return {};
+    }
+    std::vector<float> encode_input(
+        impl_->streaming_partial.begin(),
+        impl_->streaming_partial.begin() + static_cast<std::ptrdiff_t>(
+            std::min<int64_t>(available, encode_samples)));
+    encode_input.resize(static_cast<size_t>(encode_samples), 0.0F);
+    impl_->streaming_partial.erase(
+        impl_->streaming_partial.begin(),
+        impl_->streaming_partial.begin() + static_cast<std::ptrdiff_t>(
+            std::min<int64_t>(available, encode_samples)));
+    return impl_->encode_streaming_with_state(
+        encode_input,
+        *impl_->streaming_state,
+        impl_->streaming_transformer_initialized);
 }
 
 }  // namespace engine::codecs

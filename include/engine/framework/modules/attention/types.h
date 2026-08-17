@@ -18,6 +18,12 @@ struct AttentionConfig {
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     ggml_prec attention_precision = GGML_PREC_DEFAULT;
     AttentionPrefixCacheLayout prefix_cache_layout = AttentionPrefixCacheLayout::SequenceHeads;
+    bool use_packed_qkv = false;
+    bool causal = false;
+    bool use_packed_kv = false;
+    int64_t key_value_size = 0;
+    int64_t attention_size = 0;
+    int64_t head_dim = 0;
 };
 
 struct RelativeAttentionConfig {

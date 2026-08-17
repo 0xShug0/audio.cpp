@@ -203,6 +203,8 @@ public:
     ~MimiEncoderRuntime();
 
     std::vector<int32_t> encode(const runtime::AudioBuffer & audio);
+    void reset_streaming();
+    std::vector<int32_t> encode_streaming(const runtime::AudioBuffer & audio, bool flush);
 
 private:
     struct Impl;

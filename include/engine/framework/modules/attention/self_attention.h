@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/attention/types.h"
+#include "engine/framework/modules/optimizations/fast_kv_modules.h"
 
 #include <optional>
 
@@ -18,6 +19,22 @@ public:
         core::ModuleBuildContext & ctx,
         const core::TensorValue & input,
         const AttentionWeights & weights) const;
+
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const AttentionWeights & weights,
+        const std::optional<core::TensorValue> & attention_mask) const;
+
+    StreamingAttentionOutputs build_cached_tail(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const AttentionWeights & weights,
+        const core::TensorValue & cache_key,
+        const core::TensorValue & cache_value,
+        const core::TensorValue & cache_slot,
+        const core::TensorValue & attention_mask,
+        FastKVSetRowsMode set_rows_mode = FastKVSetRowsMode::BackendViewOptimized) const;
 
     static const core::ModuleSchema & static_schema() noexcept;
 

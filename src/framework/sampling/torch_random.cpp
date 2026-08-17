@@ -444,6 +444,29 @@ float torch_cuda_tensor_iterator_exponential_element(
     uint64_t call_index,
     int64_t multiprocessor_count,
     int64_t max_threads_per_multiprocessor) {
+    const uint64_t offset_blocks =
+        call_index * torch_cuda_tensor_iterator_offset_blocks(total_elements, TorchCudaSamplingPolicy{
+            multiprocessor_count,
+            max_threads_per_multiprocessor,
+            false,
+            0,
+        });
+    return torch_cuda_tensor_iterator_exponential_element_at_offset(
+        seed,
+        total_elements,
+        element_index,
+        offset_blocks,
+        multiprocessor_count,
+        max_threads_per_multiprocessor);
+}
+
+float torch_cuda_tensor_iterator_exponential_element_at_offset(
+    uint64_t seed,
+    uint64_t total_elements,
+    uint64_t element_index,
+    uint64_t offset_blocks,
+    int64_t multiprocessor_count,
+    int64_t max_threads_per_multiprocessor) {
     if (total_elements == 0 || element_index >= total_elements) {
         throw std::invalid_argument("torch CUDA TensorIterator exponential element index is out of range");
     }
@@ -465,8 +488,9 @@ float torch_cuda_tensor_iterator_exponential_element(
     const int component = static_cast<int>(chunk % unroll_factor);
     const uint64_t loop_index = chunk / unroll_factor;
     const uint64_t sequence = element_index % stride;
-    const uint64_t offset_blocks = call_index * (counter_offset / unroll_factor) + loop_index;
-    const float uniform = torch_cuda_uniform_tensor_iterator_element(seed, sequence, offset_blocks, component);
+    (void)counter_offset;
+    const float uniform =
+        torch_cuda_uniform_tensor_iterator_element(seed, sequence, offset_blocks + loop_index, component);
     return -std::log(uniform);
 }
 
