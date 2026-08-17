@@ -251,7 +251,7 @@ jobs:
       - windows-cpu
       - windows-vulkan
       - windows-cuda
-    if: ${{ needs.check-release.outputs.should_release == 'true' && always() }}
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
