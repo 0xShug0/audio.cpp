@@ -1,12 +1,13 @@
 # audio.cpp — release.yml
 #
-# Adapted from llama.cpp's release workflow: the backend matrix is stripped down
-# to the backends audio.cpp actually ships (CPU, CUDA, Vulkan, Metal; HIP is a
-# stub), and the build is retargeted to audio.cpp's binaries (audiocpp_cli,
-# audiocpp_server, audiocpp_gguf). AUDIOCPP_DEPLOYMENT_BUILD embeds the model
-# specs so the prebuilt binaries are self-contained.
+# Modeled on llama.cpp's release workflow but stripped to the backends audio.cpp
+# ships (CPU, CUDA, Vulkan, Metal). Windows artifacts are packed with 7-Zip (zip
+# is not on Windows runners); Linux/macOS use tar. Windows CUDA builds are a
+# 2-version matrix (12.4 / 13.3) that configure CMake directly with OpenMP off
+# (audio.cpp's build_windows.ps1 hard-requires OpenMP and asserts on the CUDA
+# toolchain), matching how llama.cpp decouples backend builds.
 #
-# Triggered manually or on a push to `main` touching source files. A commit
+# Triggers on manual dispatch or a push to `main` touching source files. A commit
 # message containing "[no release]" skips the release (same gate as llama.cpp).
 
 name: Release
@@ -28,6 +29,7 @@ on:
 env:
   GH_TOKEN: ${{ github.token }}
   BUILD_TARGETS: audiocpp_cli audiocpp_server audiocpp_gguf
+  VULKAN_VERSION: '1.4.304.0'
   CMAKE_ARGS: "-DAUDIOCPP_DEPLOYMENT_BUILD=ON -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_CUDA_GRAPHS=ON"
 
 concurrency:
@@ -91,7 +93,7 @@ jobs:
             arch: 'x64'
             os: macos-15-intel
             # Metal disabled on x64 (GitHub Intel runners have no usable GPU)
-            defines: '-DGGML_METAL=OFF -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF'
+            defines: '-DGGML_METAL=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,18 +101,19 @@ jobs:
       - name: Configure
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_RPATH='@loader_path' -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
             -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF \
             ${{ matrix.defines }} ${{ env.CMAKE_ARGS }}
       - name: Build
         run: cmake --build build --config Release --parallel "$(sysctl -n hw.logicalcpu)" --target ${{ env.BUILD_TARGETS }}
       - name: Pack
         run: |
-          cd build/bin
-          zip -r ../../audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal.zip .
+          cp LICENSE build/bin/ 2>/dev/null || true
+          tar -czvf audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal
-          path: audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal.zip
+          path: audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal.tar.gz
 
   linux-cpu:
     name: Ubuntu x64 (CPU)
@@ -131,7 +134,8 @@ jobs:
         run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
       - name: Pack
         run: |
-          cd build/bin && tar -czf ../../audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-cpu.tar.gz .
+          cp LICENSE build/bin/ 2>/dev/null || true
+          tar -czf audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-cpu.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-cpu
@@ -156,12 +160,12 @@ jobs:
         run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
       - name: Pack
         run: |
-          cd build/bin && tar -czf ../../audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan.tar.gz .
+          cp LICENSE build/bin/ 2>/dev/null || true
+          tar -czf audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan
           path: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan.tar.gz
-
   windows-cpu:
     name: Windows x64 (CPU)
     needs: [check-release, get-version]
@@ -178,10 +182,11 @@ jobs:
           .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server
           .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf
       - name: Pack
-        shell: bash
+        shell: pwsh
+        working-directory: build/windows-cpu-release/bin
         run: |
-          cd build/windows-cpu-release/bin
-          zip -r ../../../audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cpu.zip .
+          cp ..\..\..\LICENSE . 2>$null
+          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cpu.zip *
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cpu
@@ -199,12 +204,10 @@ jobs:
       - name: Install Vulkan SDK
         shell: pwsh
         run: |
-          $installer = "$env:TEMP\vulkansdk.exe"
-          $vulkanVersion = "1.3.296.0"
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$vulkanVersion/windows/VulkanSDK-$vulkanVersion-Installer.exe" -OutFile $installer
-          & $installer --accept-licenses --default-answer --confirm-command install
-          $sdkRoot = "C:\VulkanSDK\$vulkanVersion"
-          "VULKAN_SDK=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          curl.exe -o "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" -L "https://sdk.lunarg.com/sdk/download/${env:VULKAN_VERSION}/windows/vulkansdk-windows-X64-${env:VULKAN_VERSION}.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\\VulkanSDK\\${env:VULKAN_VERSION}"
+          Add-Content $env:GITHUB_PATH "C:\\VulkanSDK\\${env:VULKAN_VERSION}\\bin"
       - name: Build
         shell: pwsh
         run: |
@@ -212,20 +215,25 @@ jobs:
           .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_server
           .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_gguf
       - name: Pack
-        shell: bash
+        shell: pwsh
+        working-directory: build/windows-vulkan-release/bin
         run: |
-          cd build/windows-vulkan-release/bin
-          zip -r ../../../audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan.zip .
+          cp ..\..\..\LICENSE . 2>$null
+          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan.zip *
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan
           path: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan.zip
 
   windows-cuda:
-    name: Windows x64 (CUDA)
+    name: Windows x64 (CUDA ${{ matrix.cuda }})
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [ '12.4', '13.3' ]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -233,23 +241,40 @@ jobs:
       - name: Install CUDA build tools
         uses: Jimver/cuda-toolkit@v0.2.21
         with:
-          cuda: '12.4.1'
+          cuda: ${{ matrix.cuda }}
           update-github-env: true
+      - name: Configure (OpenMP off)
+        shell: pwsh
+        # Direct CMake (bypass build_windows.ps1, which hard-requires OpenMP and
+        # aborts under the CUDA toolchain). OpenMP off matches how llama.cpp
+        # builds the CUDA path.
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF `
+            -DENGINE_ENABLE_CUDA_GRAPHS=ON -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_METAL=OFF `
+            -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_NATIVE_CPU=ON -DENGINE_BUILD_TESTS=OFF `
+            -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DCUDAToolkit_ROOT="$env:CUDA_PATH"
       - name: Build
         shell: pwsh
+        run: cmake --build build --config Release --parallel $env:NUMBER_OF_PROCESSORS --target ${{ env.BUILD_TARGETS }}
+      - name: Bundle CUDA runtime
+        shell: pwsh
         run: |
-          .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli
-          .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_server
-          .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_gguf
+          $dst = "build\bin\cudart"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          robocopy "$env:CUDA_PATH\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          exit $LASTEXITCODE
       - name: Pack
-        shell: bash
+        shell: pwsh
+        working-directory: build/bin
         run: |
-          cd build/windows-cuda-release/bin
-          zip -r ../../../audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda.zip .
+          cp ..\..\LICENSE . 2>$null
+          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.cuda }}.zip * cudart\*
+          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-cudart-windows-x64-cuda${{ matrix.cuda }}.zip cudart\*
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda
-          path: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda.zip
+          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.cuda }}
+          path: 'audio-${{ needs.get-version.outputs.version }}-*cuda${{ matrix.cuda }}.zip'
 
   release:
     name: Create release
@@ -281,5 +306,4 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: assets/**
-
 
