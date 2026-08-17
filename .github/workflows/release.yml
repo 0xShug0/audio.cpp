@@ -262,11 +262,15 @@ jobs:
           cmake --build build --config Release -j %NUMBER_OF_PROCESSORS% --target ${{ env.BUILD_TARGETS }}
       - name: Bundle CUDA runtime
         shell: pwsh
+        # robocopy exit codes are a bitmask: 0-7 are success/extras/mismatch, only
+        # >=8 is a real failure. Map to a single pass/fail so "files copied" (1)
+        # doesn't fail the step.
         run: |
           $dst = "build\bin\cudart"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           robocopy "$env:CUDA_PATH\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          exit $LASTEXITCODE
+          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          exit 0
       - name: Pack
         shell: pwsh
         working-directory: build/bin
