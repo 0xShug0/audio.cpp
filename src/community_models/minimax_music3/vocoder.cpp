@@ -234,16 +234,22 @@ struct MiniMaxMusic3VocoderRuntime::Impl {
             const int64_t stride = config.upsample_ratios[i];
             const int64_t padding = stride / 2;
             x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
-            x = modules::ConvTranspose1dModule({
+            modules::ConvTranspose1dConfig conv_t_config{
                 channels,
                 out_channels,
                 stride * 2,
                 static_cast<int>(stride),
-                0,
+                static_cast<int>(padding),
                 1,
                 true,
-            }).build(ctx, x, block.conv_t);
-            if (padding > 0) {
+            };
+            const bool lower_padding_as_crop =
+                !modules::is_conv_transpose1d_col2im_fast_path_eligible(ctx, conv_t_config);
+            if (lower_padding_as_crop) {
+                conv_t_config.padding = 0;
+            }
+            x = modules::ConvTranspose1dModule(conv_t_config).build(ctx, x, block.conv_t);
+            if (lower_padding_as_crop && padding > 0) {
                 const int64_t cropped_frames = x.shape.dims[2] - 2 * padding;
                 if (cropped_frames <= 0) {
                     throw std::runtime_error("MiniMax Music 3 vocoder ConvTranspose1d crop would produce empty output");
