@@ -1,0 +1,268 @@
+# audio.cpp — release.yml
+#
+# Adapted from llama.cpp's release workflow: the backend matrix is stripped down
+# to the backends audio.cpp actually ships (CPU, CUDA, Vulkan, Metal; HIP is a
+# stub), and the build is retargeted to audio.cpp's binaries (audiocpp_cli,
+# audiocpp_server, audiocpp_gguf). AUDIOCPP_DEPLOYMENT_BUILD embeds the model
+# specs so the prebuilt binaries are self-contained.
+#
+# Triggered manually or on a push to `main` touching source files. A commit
+# message containing "[no release]" skips the release (same gate as llama.cpp).
+
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '**/CMakeLists.txt'
+      - '**/*.h'
+      - '**/*.hpp'
+      - '**/*.cpp'
+      - '**/*.cu'
+      - '**/*.cuh'
+      - '**/*.metal'
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  BUILD_TARGETS: audiocpp_cli audiocpp_server audiocpp_gguf
+  CMAKE_ARGS: "-DAUDIOCPP_DEPLOYMENT_BUILD=ON -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_CUDA_GRAPHS=ON"
+
+concurrency:
+  group: release
+  queue: max
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - id: check
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            if echo "$COMMIT_MESSAGE" | grep -q '\[no release\]'; then
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    needs: check-release
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        run: |
+          TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
+          if [[ -n "$TAG" ]]; then
+            echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git rev-parse --short HEAD)-$(date +%s)" >> "$GITHUB_OUTPUT"
+          fi
+  macos-metal:
+    name: macOS (${{ matrix.build }})
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build: 'arm64'
+            arch: 'arm64'
+            os: macos-26
+            defines: ''
+          - build: 'x64'
+            arch: 'x64'
+            os: macos-15-intel
+            # Metal disabled on x64 (GitHub Intel runners have no usable GPU)
+            defines: '-DGGML_METAL=OFF'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF \
+            ${{ matrix.defines }} ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(sysctl -n hw.logicalcpu)" --target ${{ env.BUILD_TARGETS }}
+      - name: Pack
+        run: |
+          cd build/bin
+          zip -r ../../audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal
+          path: audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal.zip
+
+  linux-cpu:
+    name: Ubuntu x64 (CPU)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake make glslc libvulkan-dev spirv-headers
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Pack
+        run: |
+          cd build/bin && tar -czf ../../audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-cpu.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-cpu
+          path: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-cpu.tar.gz
+
+  linux-vulkan:
+    name: Ubuntu x64 (Vulkan)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake make glslc libvulkan-dev spirv-headers
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Pack
+        run: |
+          cd build/bin && tar -czf ../../audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan
+          path: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan.tar.gz
+
+  windows-cpu:
+    name: Windows x64 (CPU)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        shell: pwsh
+        run: |
+          $assets = ${{ env.BUILD_TARGETS }} -split ' '
+          foreach ($t in $assets) { .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target $t }
+      - name: Pack
+        shell: bash
+        run: |
+          cd build/windows-cpu-release/bin
+          zip -r ../../../audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cpu.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cpu
+          path: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cpu.zip
+
+  windows-vulkan:
+    name: Windows x64 (Vulkan)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        shell: pwsh
+        run: |
+          $assets = ${{ env.BUILD_TARGETS }} -split ' '
+          foreach ($t in $assets) { .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target $t }
+      - name: Pack
+        shell: bash
+        run: |
+          cd build/windows-vulkan-release/bin
+          zip -r ../../../audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan
+          path: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan.zip
+
+  windows-cuda:
+    name: Windows x64 (CUDA)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        shell: pwsh
+        run: |
+          $assets = ${{ env.BUILD_TARGETS }} -split ' '
+          foreach ($t in $assets) { .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target $t }
+      - name: Pack
+        shell: bash
+        run: |
+          cd build/windows-cuda-release/bin
+          zip -r ../../../audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda
+          path: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda.zip
+
+  release:
+    name: Create release
+    needs:
+      - check-release
+      - get-version
+      - macos-metal
+      - linux-cpu
+      - linux-vulkan
+      - windows-cpu
+      - windows-vulkan
+      - windows-cuda
+    if: ${{ needs.check-release.outputs.should_release == 'true' && always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Collect artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.get-version.outputs.version }}
+          name: ${{ needs.get-version.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: assets/**
+
+
