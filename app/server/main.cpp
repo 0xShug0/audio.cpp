@@ -94,6 +94,7 @@ void print_help() {
         << "  GET  /v1/audio/voices?model=<id>\n"
         << "  POST /v1/audio/speech\n"
         << "  POST /v1/audio/transcriptions\n"
+        << "       fields: file, model, language, prompt, stream\n"
         << "       OpenAI-style streaming: speech stream_format=sse|audio, transcription stream=true\n"
         << "  POST /v1/audio/transcriptions/live?model=<id>\n"
         << "       raw PCM in a chunked body, transcript deltas as SSE on the same connection\n"
