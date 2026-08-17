@@ -480,9 +480,23 @@ const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(
 VoxCPM2GenerationOptions VoxCPM2SessionBase::generation_options_from_request(
     const runtime::TaskRequest &request) const {
   VoxCPM2GenerationOptions options;
+  bool min_tokens_explicit = false;
   if (const auto value = runtime::parse_i64_option(
           request.options, {"voxcpm2.min_tokens", "min_tokens"})) {
     options.min_tokens = *value;
+    min_tokens_explicit = true;
+  }
+  // Set V1-specific default min_tokens if not explicitly provided
+  if (!min_tokens_explicit && assets_->config.v1) {
+    // VoxCPM1 (0.5B) has patch_size=2, VoxCPM1.5 (1.5B) has patch_size=4
+    // Use model-specific defaults for optimal speech speed
+    if (assets_->config.patch_size == 2) {
+      options.min_tokens = 20;  // 20, VoxCPM1 0.5B
+    } else if (assets_->config.patch_size == 4) {
+      options.min_tokens = 12;  // VoxCPM1.5 1.5B
+    } else {
+      options.min_tokens = 15;  // Other V1 models
+    }
   }
   if (const auto value = runtime::parse_i64_option(
           request.options, {"max_tokens", "voxcpm2.max_tokens"})) {

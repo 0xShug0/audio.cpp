@@ -127,8 +127,12 @@ VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource &
     config.audio_vae.decoder_dim = get_optional_i64("voxcpm_audio_vae_config_decoder_dim").value_or(512);
     config.audio_vae.decoder_rates = get_optional_i64_array("voxcpm_audio_vae_config_decoder_rates").value_or(std::vector<int64_t>{2, 2, 2, 2});
     config.audio_vae.sample_rate_bin_boundaries = get_optional_i64_array("voxcpm_audio_vae_config_sr_bin_boundaries").value_or(std::vector<int64_t>{});
-    config.audio_vae.sample_rate = static_cast<int>(get_optional_i64("voxcpm_audio_vae_config_sample_rate").value_or(16000));
-    config.audio_vae.output_sample_rate = static_cast<int>(get_optional_i64("voxcpm_audio_vae_config_out_sample_rate").value_or(16000));
+    auto sample_rate_opt = get_optional_i64("voxcpm_audio_vae_config_sample_rate");
+    config.audio_vae.sample_rate = static_cast<int>(sample_rate_opt.value_or(16000));
+    config.audio_vae.output_sample_rate = static_cast<int>(
+        get_optional_i64("voxcpm_audio_vae_config_out_sample_rate")
+            .value_or(sample_rate_opt.value_or(16000))
+    );
 
     // Max length
     config.max_length = get_optional_i64("voxcpm_max_length").value_or(2048);
