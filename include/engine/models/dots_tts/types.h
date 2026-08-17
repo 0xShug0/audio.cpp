@@ -87,12 +87,19 @@ enum class DotsTemplateName {
     InstructionTts,
     TextToAudio,
     TtsInterleave,
+    Edit,
 };
 
 enum class DotsOdeMethod {
     Euler,
     Midpoint,
     Rk4,
+};
+
+enum class DotsEditXVectorMode {
+    Auto,
+    On,
+    Off,
 };
 
 struct DotsGenerationOptions {
@@ -115,10 +122,19 @@ struct DotsPromptReference {
     std::optional<float> duration_seconds;
 };
 
+struct DotsEditOptions {
+    std::optional<runtime::AudioBuffer> source_audio;
+    std::string instruction;
+    std::string source_text;
+    std::string target_text;
+    DotsEditXVectorMode use_xvector = DotsEditXVectorMode::Auto;
+};
+
 struct DotsRequest {
     std::string text;
     DotsPromptReference reference;
     DotsGenerationOptions generation;
+    DotsEditOptions edit;
 };
 
 struct DotsGenerationSchedule {

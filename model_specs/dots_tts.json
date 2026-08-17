@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "dots_tts",
   "display_name": "DotTTS",
-  "description": "DotTTS is a multilingual zero-shot TTS and voice-cloning model family packaged for audio.cpp with SOAR and MeanFlow generation, prompt-audio plus prompt-text prefill, speaker-reference conditioning, language tags, multiple synthesis templates, long-form text chunking, and true streaming audio output.",
+  "description": "DotTTS is a multilingual zero-shot TTS, voice-cloning, and speech-editing model family packaged for audio.cpp with SOAR and MeanFlow generation, prompt-audio plus prompt-text prefill, speaker-reference conditioning, language tags, multiple synthesis templates, long-form text chunking, and true streaming audio output.",
   "category": "tts",
   "status": "supported",
   "tasks": [
@@ -52,15 +52,58 @@
       {
         "name": "template_name",
         "type": "enum",
-        "description": "DotTTS synthesis template. tts is normal text-to-speech; instruction_tts adds instruction conditioning; text_to_audio uses a sound-description template; tts_interleave uses the streaming interleave schedule.",
+        "description": "DotTTS synthesis template. tts is normal text-to-speech; instruction_tts adds instruction conditioning; text_to_audio uses a sound-description template; tts_interleave uses the streaming interleave schedule; edit uses the DotTTS Edit source-audio editing schedule.",
         "values": [
           "tts",
           "instruction_tts",
           "text_to_audio",
-          "tts_interleave"
+          "tts_interleave",
+          "edit"
         ],
         "required": false,
         "default": "tts"
+      },
+      {
+        "name": "source_audio",
+        "type": "audio_path",
+        "description": "Source WAV path for DotTTS Edit. Required when template_name=edit unless audio_input is supplied by the caller.",
+        "required": false
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Structured DotTTS Edit instruction. If omitted with template_name=edit, the request text is used as the instruction.",
+        "required": false
+      },
+      {
+        "name": "instruct",
+        "type": "string",
+        "description": "Alias for instruction for CLI compatibility.",
+        "required": false
+      },
+      {
+        "name": "source_text",
+        "type": "string",
+        "description": "Optional source transcript override for DotTTS Edit. If omitted, it is rendered from instruction tags.",
+        "required": false
+      },
+      {
+        "name": "target_text",
+        "type": "string",
+        "description": "Optional target transcript override for DotTTS Edit. If omitted, it is rendered from instruction tags.",
+        "required": false
+      },
+      {
+        "name": "use_xvector",
+        "type": "enum",
+        "description": "DotTTS Edit speaker conditioning mode. auto follows the upstream tag-based behavior; on/off force or disable source-audio speaker conditioning.",
+        "values": [
+          "auto",
+          "on",
+          "off"
+        ],
+        "required": false,
+        "default": "auto"
       },
       {
         "name": "language",
@@ -277,6 +320,30 @@
         "DotTTS-MF-GGUF/dots-tts-mf-bf16.gguf"
       ],
       "strip_prefix": "DotTTS-MF-GGUF"
+    },
+    {
+      "id": "dots_tts_edit_q8_0",
+      "display_name": "DotTTS Edit Q8_0 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "DotTTS-Edit-GGUF",
+      "files": [
+        "DotTTS-Edit-GGUF/dots-tts-edit-q8_0.gguf"
+      ],
+      "strip_prefix": "DotTTS-Edit-GGUF"
+    },
+    {
+      "id": "dots_tts_edit_bf16",
+      "display_name": "DotTTS Edit BF16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "DotTTS-Edit-GGUF",
+      "files": [
+        "DotTTS-Edit-GGUF/dots-tts-edit-bf16.gguf"
+      ],
+      "strip_prefix": "DotTTS-Edit-GGUF"
     }
   ],
   "dependencies": [],

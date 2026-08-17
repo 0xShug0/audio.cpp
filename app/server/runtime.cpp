@@ -1955,6 +1955,7 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
     const MultipartPart * file_part = nullptr;
     std::string model_id;
     std::string language;
+    std::string prompt;
     std::optional<int> busy_timeout_ms;
     bool stream = false;
     for (const auto & part : parts) {
@@ -1964,6 +1965,11 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
             model_id = part.data;
         } else if (part.name == "language") {
             language = part.data;
+        } else if (part.name == "prompt" || part.name == "text") {
+            // Recognition-context biasing. "prompt" is the OpenAI
+            // transcription field name; "text" matches the JSON request
+            // builder, which already forwards it to request.text_input.
+            prompt = part.data;
         } else if (part.name == "busy_timeout_ms") {
             try {
                 busy_timeout_ms = std::stoi(part.data);
@@ -2000,6 +2006,9 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
     fields.emplace("model", engine::io::json::Value::make_string(model_id));
     if (!language.empty()) {
         fields.emplace("language", engine::io::json::Value::make_string(language));
+    }
+    if (!prompt.empty()) {
+        fields.emplace("text", engine::io::json::Value::make_string(prompt));
     }
     const auto body = engine::io::json::Value::make_object(std::move(fields));
 
