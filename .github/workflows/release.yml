@@ -247,20 +247,19 @@ jobs:
         with:
           cuda: ${{ matrix.cuda }}
           method: 'local'
-      - name: Configure (OpenMP off)
-        shell: pwsh
+      - name: Configure + Build (OpenMP off)
+        shell: cmd
         # Direct CMake (bypass build_windows.ps1, which hard-requires OpenMP and
         # aborts under the CUDA toolchain). OpenMP off matches how llama.cpp
-        # builds the CUDA path.
+        # builds the CUDA path. vcvarsall.bat puts cl.exe on PATH for nvcc.
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-            -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF `
-            -DENGINE_ENABLE_CUDA_GRAPHS=ON -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_METAL=OFF `
-            -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_NATIVE_CPU=ON -DENGINE_BUILD_TESTS=OFF `
-            -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DCUDAToolkit_ROOT="$env:CUDA_PATH"
-      - name: Build
-        shell: pwsh
-        run: cmake --build build --config Release --parallel $env:NUMBER_OF_PROCESSORS --target ${{ env.BUILD_TARGETS }}
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64 >nul
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+            -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF ^
+            -DENGINE_ENABLE_CUDA_GRAPHS=ON -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_METAL=OFF ^
+            -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_NATIVE_CPU=ON -DENGINE_BUILD_TESTS=OFF ^
+            -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DCUDAToolkit_ROOT="%CUDA_PATH%"
+          cmake --build build --config Release -j %NUMBER_OF_PROCESSORS% --target ${{ env.BUILD_TARGETS }}
       - name: Bundle CUDA runtime
         shell: pwsh
         run: |
