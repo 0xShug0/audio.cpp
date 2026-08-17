@@ -96,6 +96,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Install deps
+        run: |
+          brew install libomp
       - name: Configure
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
@@ -174,8 +177,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          $assets = ${{ env.BUILD_TARGETS }} -split ' '
-          foreach ($t in $assets) { .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target $t }
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf
       - name: Pack
         shell: bash
         run: |
@@ -198,8 +202,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          $assets = ${{ env.BUILD_TARGETS }} -split ' '
-          foreach ($t in $assets) { .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target $t }
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_server
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_gguf
       - name: Pack
         shell: bash
         run: |
@@ -222,8 +227,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          $assets = ${{ env.BUILD_TARGETS }} -split ' '
-          foreach ($t in $assets) { .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target $t }
+          .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli
+          .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_server
+          .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_gguf
       - name: Pack
         shell: bash
         run: |
