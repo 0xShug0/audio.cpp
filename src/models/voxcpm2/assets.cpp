@@ -233,6 +233,11 @@ public:
         return false;
     }
 
+    [[nodiscard]] bool is_synthesized(std::string_view name) const noexcept override {
+        const std::string key{std::string(name)};
+        return synthesized_tensors_.find(key) != synthesized_tensors_.end();
+    }
+
     assets::TensorMetadata require_metadata(std::string_view name) const override {
         const auto it = synthesized_tensors_.find(std::string(name));
         if (it != synthesized_tensors_.end()) {
@@ -406,6 +411,32 @@ public:
             engine::assets::set_backend_tensor_from_f32_parallel(tensor, name, values, shape, type);
             return;
         }
+        // Special handling for V1 embedding weight: token_embd.weight is transposed in GGUF
+        // V1 GGUF stores [hidden_size, vocab_size] but we need [vocab_size, hidden_size]
+        if (is_v1_ && logical_name == "base_lm.embed_tokens.weight") {
+            const auto source_values = source_->require_f32(route_it->second, std::nullopt);
+            const auto source_meta = source_->require_metadata(route_it->second);
+            if (source_meta.shape.size() == 2) {
+                const int64_t src_rows = source_meta.shape[0];
+                const int64_t src_cols = source_meta.shape[1];
+                const int64_t dst_rows = expected_shape.size() > 0 ? expected_shape[0] : src_cols;
+                const int64_t dst_cols = expected_shape.size() > 1 ? expected_shape[1] : src_rows;
+                if (src_rows == dst_cols && src_cols == dst_rows) {
+                    // Transpose the weight matrix
+                    std::vector<float> transposed(static_cast<size_t>(dst_rows * dst_cols));
+                    for (int64_t i = 0; i < src_rows; ++i) {
+                        for (int64_t j = 0; j < src_cols; ++j) {
+                            transposed[static_cast<size_t>(j * dst_rows + i)] = source_values[static_cast<size_t>(i * src_cols + j)];
+                        }
+                    }
+                    const auto shape = make_tensor_shape(expected_shape);
+                    const ggml_type type = engine::assets::ggml_type_for_tensor_storage(
+                        engine::assets::resolve_tensor_storage_type(*this, name, storage_type));
+                    engine::assets::set_backend_tensor_from_f32_parallel(tensor, name, transposed, shape, type);
+                    return;
+                }
+            }
+        }
         source_->set_backend_tensor(tensor, route_it->second, storage_type, expected_shape);
     }
 
@@ -482,6 +513,9 @@ private:
             {"proj.lm_to_dit.bias", "lm_to_dit_proj.bias"},
             {"proj.res_to_dit.weight", "res_to_dit_proj.weight"},
             {"proj.res_to_dit.bias", "res_to_dit_proj.bias"},
+            // V1→V2 mapping for fusion_concat_proj (critical for V1 models with fusion)
+            {"proj.fusion_concat.weight", "fusion_concat_proj.weight"},
+            {"proj.fusion_concat.bias", "fusion_concat_proj.bias"},
             {"fusion_concat_proj.weight", "fusion_concat_proj.weight"},
             {"stop.stop_proj.weight", "stop_proj.weight"},
             {"stop.stop_proj.bias", "stop_proj.bias"},
@@ -622,10 +656,6 @@ private:
             assets::TensorMetadata{"fusion_concat_proj.weight", "F32", {lm_hidden, lm_hidden * 2}};
         synthesized_tensors_["fusion_concat_proj.bias"] =
             assets::TensorMetadata{"fusion_concat_proj.bias", "F32", {lm_hidden}};
-        synthesized_tensors_["stop_proj.weight"] =
-            assets::TensorMetadata{"stop_proj.weight", "F32", {lm_hidden, lm_hidden}};
-        synthesized_tensors_["stop_head.weight"] =
-            assets::TensorMetadata{"stop_head.weight", "F32", {2, lm_hidden}};
     }
 
     std::vector<float> fold_weight_norm(
@@ -693,6 +723,17 @@ private:
             // Fill with small values
             for (size_t i = 0; i < out.size(); ++i) {
                 out[i] = 0.01F;
+            }
+            return out;
+        }
+        if (name == "fusion_concat_proj.weight") {
+            // Xavier/Glorot initialization for fusion_concat_proj weight
+            // shape is [lm_hidden, lm_hidden * 2]
+            std::vector<float> out(num_elements);
+            const float scale = std::sqrt(2.0f / (config_.lm.hidden_size + config_.lm.hidden_size * 2));
+            for (size_t i = 0; i < out.size(); ++i) {
+                // Simple uniform distribution in [-scale, scale]
+                out[i] = (static_cast<float>(std::rand()) / RAND_MAX * 2.0f - 1.0f) * scale;
             }
             return out;
         }

@@ -413,14 +413,15 @@ private:
               .build(ctx, fsq, proj.fsq_out_proj);
     fsq_hidden_output_ = fsq.tensor;
 
-    if (config.v1) {
-      current_residual_input_output_ =
-          engine::modules::AddModule()
-              .build(ctx, lm_hidden, current_embed)
-              .tensor;
-      residual_input_output_ =
-          engine::modules::AddModule().build(ctx, fsq, current_embed).tensor;
-    } else {
+    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+    // This matches VoxCPM.cpp behavior which checks weight existence
+    // For V1 models, synthesized weights (Xavier init) should not count as present
+    const bool has_fusion_proj =
+        proj.fusion_concat_proj.weight.tensor != nullptr &&
+        !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
+
+    if (has_fusion_proj) {
+      // Concat + Linear (used by V2 and some V1 models trained with fusion)
       auto current_residual_concat =
           engine::modules::ConcatModule({1}).build(ctx, lm_hidden, current_embed);
       auto current_residual_input =
@@ -438,6 +439,14 @@ private:
                                      config.lm.hidden_size, true))
               .build(ctx, residual_concat, proj.fusion_concat_proj);
       residual_input_output_ = residual_input.tensor;
+    } else {
+      // Simple ADD (true V1 without fusion_concat_proj)
+      current_residual_input_output_ =
+          engine::modules::AddModule()
+              .build(ctx, lm_hidden, current_embed)
+              .tensor;
+      residual_input_output_ =
+          engine::modules::AddModule().build(ctx, fsq, current_embed).tensor;
     }
 
     auto current_lm_dit =
@@ -758,6 +767,12 @@ public:
                          const std::vector<float> &time_embedding,
                          const std::vector<float> &delta_time_embedding) {
     const auto &config = weights_->assets().config;
+    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+    // This matches VoxCPM.cpp behavior which checks weight existence
+    // For V1 models, synthesized weights (Xavier init) should not count as present
+    const bool has_fusion_proj =
+        weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
+        !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
     const int64_t patch_elems = 2 * config.feat_dim * config.patch_size;
     if (static_cast<int64_t>(x.size()) != patch_elems) {
       throw std::runtime_error("VoxCPM2 DiT estimator x size mismatch");
@@ -765,7 +780,9 @@ public:
     if (static_cast<int64_t>(cond.size()) != patch_elems) {
       throw std::runtime_error("VoxCPM2 DiT estimator cond size mismatch");
     }
-    if (static_cast<int64_t>(mu.size()) != 2 * config.dit.hidden_dim * 2) {
+    const int64_t expected_mu =
+        has_fusion_proj ? 2 * config.dit.hidden_dim * 2 : 2 * config.dit.hidden_dim;
+    if (static_cast<int64_t>(mu.size()) != expected_mu) {
       throw std::runtime_error("VoxCPM2 DiT estimator mu size mismatch");
     }
     if (static_cast<int64_t>(time_embedding.size()) !=
@@ -795,6 +812,125 @@ public:
     std::vector<float> output(static_cast<size_t>(patch_elems), 0.0F);
     ggml_backend_tensor_get(output_, output.data(), 0,
                             output.size() * sizeof(float));
+    if (std::getenv("VOXCPM_DUMP_NORM0") != nullptr) {
+      ggml_tensor *tn = ggml_get_tensor(ctx_.get(), "dump_norm0");
+      if (tn != nullptr) {
+        const size_t nn = static_cast<size_t>(ggml_nelements(tn));
+        std::vector<float> buf(nn, 0.0F);
+        ggml_backend_tensor_get(tn, buf.data(), 0, buf.size() * sizeof(float));
+        FILE *f = std::fopen("/tmp/opencode/ours_norm0.bin", "wb");
+        if (f != nullptr) {
+          std::fwrite(buf.data(), sizeof(float), std::min<size_t>(nn, 5120), f);
+          std::fclose(f);
+        }
+      }
+    }
+    if (std::getenv("VOXCPM_DUMP_DECODER_LAYERS") != nullptr) {
+      for (int li = 0; li < 8; ++li) {
+        char name[32];
+        snprintf(name, sizeof(name), "dump_layer_%d", li);
+        ggml_tensor *t = ggml_get_tensor(ctx_.get(), name);
+        if (t == nullptr) {
+          continue;
+        }
+        const size_t n = static_cast<size_t>(ggml_nelements(t));
+        std::vector<float> buf(n, 0.0F);
+        ggml_backend_tensor_get(t, buf.data(), 0, buf.size() * sizeof(float));
+        if (li == 0) {
+          FILE *f = std::fopen("/tmp/opencode/ours_branch0.bin", "wb");
+          if (f != nullptr) {
+            std::fwrite(buf.data(), sizeof(float), std::min<size_t>(n, 5120), f);
+            std::fclose(f);
+          }
+        } else if (li == 1) {
+          FILE *f = std::fopen("/tmp/opencode/ours_branch1.bin", "wb");
+          if (f != nullptr) {
+            std::fwrite(buf.data(), sizeof(float), std::min<size_t>(n, 5120), f);
+            std::fclose(f);
+          }
+        }
+        double s = 0.0, l2 = 0.0;
+        for (float v : buf) {
+          s += v;
+          l2 += static_cast<double>(v) * v;
+        }
+        // batch-local stats for the branch-0 (first ne1*ne0 elements)
+        double s0 = 0.0, l20 = 0.0;
+        const size_t branch_elems = static_cast<size_t>(t->ne[0]) * static_cast<size_t>(t->ne[1]);
+        for (size_t i = 0; i < std::min(branch_elems, buf.size()); ++i) {
+          s0 += buf[i];
+          l20 += static_cast<double>(buf[i]) * buf[i];
+        }
+        fprintf(stderr,
+                "[DEC_LAYER] input#%d ne0=%lld ne1=%lld ne2=%lld ne3=%lld "
+                "sum=%.6g l2=%.6g branch0_sum=%.6g branch0_l2=%.6g "
+                "first4=%.6g %.6g %.6g %.6g\n",
+                li, static_cast<long long>(t->ne[0]),
+                static_cast<long long>(t->ne[1]),
+                static_cast<long long>(t->ne[2]),
+                static_cast<long long>(t->ne[3]), s, std::sqrt(l2), s0,
+                std::sqrt(l20),
+                buf.empty() ? 0.0 : static_cast<double>(buf[0]),
+                buf.size() < 2 ? 0.0 : static_cast<double>(buf[1]),
+                buf.size() < 3 ? 0.0 : static_cast<double>(buf[2]),
+                buf.size() < 4 ? 0.0 : static_cast<double>(buf[3]));
+      }
+    }
+    if (std::getenv("VOXCPM_DUMP_LOCDIT_WEIGHTS") != nullptr) {
+      const auto &dw = weights_->weights().dit;
+      auto dump_w = [](const char *tag, ggml_tensor *t) {
+        if (t == nullptr) {
+          fprintf(stderr, "[LOCDIT_W] %s <null>\n", tag);
+          return;
+        }
+        const size_t nbytes = static_cast<size_t>(ggml_nbytes(t));
+        const size_t nelems = static_cast<size_t>(ggml_nelements(t));
+        std::vector<uint8_t> raw(nbytes, 0);
+        ggml_backend_tensor_get(t, raw.data(), 0, nbytes);
+        fprintf(stderr, "[LOCDIT_W] %s ne0=%lld ne1=%lld type=%d nbytes=%zu "
+                        "v[0..7]=",
+                tag, static_cast<long long>(t->ne[0]),
+                static_cast<long long>(t->ne[1]), static_cast<int>(t->type),
+                nbytes);
+        double vals[8];
+        for (size_t i = 0; i < 8; ++i) {
+          if (t->type == GGML_TYPE_Q8_0) {
+            const size_t block = i / 32;
+            const size_t in_block = i % 32;
+            const float scale =
+                ggml_fp16_to_fp32(
+                    *reinterpret_cast<const ggml_fp16_t *>(
+                        raw.data() + block * 34));
+            vals[i] = static_cast<double>(
+                scale *
+                static_cast<float>(
+                    *reinterpret_cast<const int8_t *>(
+                        raw.data() + block * 34 + 2 + in_block)));
+          } else if (t->type == GGML_TYPE_F32) {
+            vals[i] = static_cast<double>(
+                *reinterpret_cast<const float *>(raw.data() + i * 4));
+          } else if (t->type == GGML_TYPE_F16) {
+            vals[i] = static_cast<double>(ggml_fp16_to_fp32(
+                *reinterpret_cast<const ggml_fp16_t *>(raw.data() + i * 2)));
+          } else {
+            vals[i] = 0.0;
+          }
+        }
+        (void)nelems;
+        for (size_t i = 0; i < 8; ++i) {
+          fprintf(stderr, "%.6g ", vals[i]);
+        }
+        fprintf(stderr, "\n");
+      };
+      dump_w("in_proj", dw.in_proj.weight.tensor);
+      dump_w("cond_proj", dw.cond_proj.weight.tensor);
+      dump_w("out_proj", dw.out_proj.weight.tensor);
+      dump_w("time_mlp1", dw.time_mlp_1.weight.tensor);
+      dump_w("decoder.l0.q", dw.decoder.layers[0].q_proj.weight.tensor);
+      dump_w("decoder.l0.k", dw.decoder.layers[0].k_proj.weight.tensor);
+      dump_w("decoder.l0.o", dw.decoder.layers[0].o_proj.weight.tensor);
+      dump_w("decoder.norm", dw.decoder.norm.weight->tensor);
+    }
     return output;
   }
 
@@ -830,9 +966,19 @@ private:
     if (mem_saver_) {
       ggml_set_input(cond_);
     }
+    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+    // This matches VoxCPM.cpp behavior which checks weight existence
+    // For V1 models, synthesized weights (Xavier init) should not count as present
+    const bool has_fusion_proj =
+        weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
+        !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
     mu_ = engine::core::make_tensor(
               ctx, GGML_TYPE_F32,
-              engine::core::TensorShape::from_dims({2, 2, config.hidden_dim}))
+              has_fusion_proj
+                  ? engine::core::TensorShape::from_dims(
+                        {2, 2, config.hidden_dim})
+                  : engine::core::TensorShape::from_dims(
+                        {2, config.hidden_dim}))
               .tensor;
     if (mem_saver_) {
       ggml_set_input(mu_);
@@ -902,19 +1048,38 @@ private:
              binding::linear_config(config.hidden_dim, config.hidden_dim, true))
              .build(ctx, dt, weights.delta_time_mlp_2);
     time = engine::modules::AddModule{}.build(ctx, time, dt);
-    time = engine::core::reshape_tensor(
-        ctx, time,
-        engine::core::TensorShape::from_dims({2, 1, config.hidden_dim}));
 
-    auto mu = engine::core::wrap_tensor(
-        mu_, engine::core::TensorShape::from_dims({2, 2, config.hidden_dim}),
-        GGML_TYPE_F32);
-    auto hidden = engine::modules::ConcatModule({1}).build(ctx, mu, time);
+    const int64_t prefix_token_count =
+        has_fusion_proj ? 2 + 1 : 1;
+    auto hidden = time;
+    if (!has_fusion_proj) {
+      // True V1 (no fusion projection): the DiT conditioning mu is a single
+      // hidden vector that is ADDED into the timestep token. Batch 0 carries
+      // mu (conditioned branch); batch 1 carries zeros (unconditioned branch),
+      // mirroring LocDiTModel::forward_cfg_pair_projected with mu_tokens == 1.
+      auto mu = engine::core::wrap_tensor(
+          mu_, engine::core::TensorShape::from_dims({2, config.hidden_dim}),
+          GGML_TYPE_F32);
+      hidden = engine::modules::AddModule{}.build(ctx, hidden, mu);
+    }
+    hidden = engine::core::reshape_tensor(
+        ctx, hidden,
+        engine::core::TensorShape::from_dims({2, 1, config.hidden_dim}));
+    if (has_fusion_proj) {
+      // V2 (or V1 with fusion projection): mu is two hidden vectors concatenated as
+      // separate prefix tokens before the timestep token, matching
+      // LocDiTModel with mu_tokens == 2.
+      auto mu = engine::core::wrap_tensor(
+          mu_, engine::core::TensorShape::from_dims({2, 2, config.hidden_dim}),
+          GGML_TYPE_F32);
+      hidden = engine::modules::ConcatModule({1}).build(ctx, mu, hidden);
+    }
     hidden = engine::modules::ConcatModule({1}).build(ctx, hidden, cond);
     hidden = engine::modules::ConcatModule({1}).build(ctx, hidden, x);
 
-    positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32,
-                                    2 + 1 + root_config.patch_size * 2);
+    positions_ = ggml_new_tensor_1d(
+        ctx_.get(), GGML_TYPE_I32,
+        prefix_token_count + root_config.patch_size * 2);
     if (mem_saver_) {
       ggml_set_input(positions_);
       ggml_set_output(positions_);
@@ -922,12 +1087,14 @@ private:
     auto positions =
         engine::core::wrap_tensor(positions_,
                                   engine::core::TensorShape::from_dims(
-                                      {2 + 1 + root_config.patch_size * 2}),
+                                      {prefix_token_count +
+                                       root_config.patch_size * 2}),
                                   GGML_TYPE_I32);
     hidden =
         minicpm_transformer(ctx, hidden, positions, weights.decoder, false);
     hidden = engine::modules::SliceModule(
-                 {1, 2 + 1 + root_config.patch_size, root_config.patch_size})
+                 {1, prefix_token_count + root_config.patch_size,
+                  root_config.patch_size})
                  .build(ctx, hidden);
     hidden = engine::modules::LinearModule(
                  binding::linear_config(config.hidden_dim, root_config.feat_dim,
@@ -963,7 +1130,8 @@ private:
           "failed to allocate VoxCPM2 DiT estimator graph");
     }
     std::vector<int32_t> positions_data(
-        static_cast<size_t>(2 + 1 + root_config.patch_size * 2), 0);
+        static_cast<size_t>(prefix_token_count + root_config.patch_size * 2),
+        0);
     for (int64_t i = 0; i < static_cast<int64_t>(positions_data.size()); ++i) {
       positions_data[static_cast<size_t>(i)] = static_cast<int32_t>(i);
     }
@@ -1038,6 +1206,12 @@ public:
                                     const std::string &noise_file,
                                     float temperature) {
     const auto &config = weights_->assets().config;
+    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+    // This matches VoxCPM.cpp behavior which checks weight existence
+    // For V1 models, synthesized weights (Xavier init) should not count as present
+    const bool has_fusion_proj =
+        weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
+        !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
     if (timesteps <= 0) {
       throw std::runtime_error("VoxCPM2 CFM requires positive timesteps");
     }
@@ -1045,7 +1219,7 @@ public:
       throw std::runtime_error("VoxCPM2 CFM received non-finite scalar input");
     }
     const int64_t patch_elems = config.feat_dim * config.patch_size;
-    const int64_t mu_dim = config.dit.hidden_dim * (config.v1 ? 1 : 2);
+    const int64_t mu_dim = config.dit.hidden_dim * (has_fusion_proj ? 2 : 1);
     if (static_cast<int64_t>(mu.size()) != mu_dim) {
       throw std::runtime_error("VoxCPM2 CFM mu size mismatch");
     }
@@ -1077,12 +1251,18 @@ public:
     for (float &value : x) {
       value *= temperature;
     }
+    x = patch_major_to_channel_major(x);
     const std::vector<float> cond = patch_major_to_channel_major(cond_patch);
     std::vector<float> x_in(static_cast<size_t>(2 * patch_elems), 0.0F);
     std::vector<float> cond_in(static_cast<size_t>(2 * patch_elems), 0.0F);
-    std::vector<float> mu_in(static_cast<size_t>(4 * config.dit.hidden_dim),
-                             0.0F);
+    const int64_t mu_elements =
+        has_fusion_proj ? 4 * config.dit.hidden_dim : 2 * config.dit.hidden_dim;
+    std::vector<float> mu_in(static_cast<size_t>(mu_elements), 0.0F);
     std::copy(mu.begin(), mu.end(), mu_in.begin());
+    if (std::getenv("VOXCPM_TEST_BATCH_MU") != nullptr) {
+      std::copy(mu.begin(), mu.end(),
+                mu_in.begin() + static_cast<std::ptrdiff_t>(mu.size()));
+    }
     std::copy(cond.begin(), cond.end(), cond_in.begin());
     std::copy(cond.begin(), cond.end(),
               cond_in.begin() + static_cast<std::ptrdiff_t>(patch_elems));
@@ -1127,6 +1307,29 @@ public:
         const auto estimator = estimator_.run(x_in, mu_in, cond_in,
                                               time_embedding, delta_embedding);
         const float scale = optimized_cfg_scale(estimator, patch_elems);
+        if (std::getenv("VOXCPM_DUMP_DPHI") != nullptr &&
+            step == 2) {
+          double s0 = 0.0, s1 = 0.0, n0 = 0.0, n1 = 0.0;
+          std::vector<double> combined(static_cast<size_t>(patch_elems));
+          double c2 = 0.0;
+          for (int64_t i = 0; i < patch_elems; ++i) {
+            const float p = estimator[static_cast<size_t>(i)];
+            const float m = estimator[static_cast<size_t>(patch_elems + i)];
+            const double d = static_cast<double>(m) * scale +
+                             cfg_value * (static_cast<double>(p) -
+                                          static_cast<double>(m) * scale);
+            combined[static_cast<size_t>(i)] = d;
+            s0 += p; s1 += m; n0 += p * p; n1 += m * m;
+            c2 += d * d;
+          }
+          fprintf(stderr,
+                  "[DUMP_DPHI] t=%.6f dt=%.6f pos_l2=%.6g neg_l2=%.6g "
+                  "combined_l2=%.6g scale=%.6g combined[0..3]=%.6g %.6g %.6g %.6g\n",
+                  static_cast<double>(t), static_cast<double>(dt),
+                  std::sqrt(n0), std::sqrt(n1), std::sqrt(c2),
+                  static_cast<double>(scale), combined[0], combined[1],
+                  combined[2], combined[3]);
+        }
         for (int64_t i = 0; i < patch_elems; ++i) {
           const size_t index = static_cast<size_t>(i);
           const float positive = estimator[index];
@@ -1552,6 +1755,24 @@ private:
       prefill_input.audio_mask.push_back(row.audio_mask ? 1.0F : 0.0F);
     }
     const auto prefill_output = prefill_.run(prefill_input);
+    if (std::getenv("VOXCPM_DUMP_PREFILL") != nullptr) {
+      auto dump_vec = [](const char *tag, const std::vector<float> &v) {
+        double sum = 0.0;
+        double sum2 = 0.0;
+        for (float x : v) {
+          sum += x;
+          sum2 += static_cast<double>(x) * x;
+        }
+        fprintf(stderr, "[DUMP_PREFILL] %s n=%zu sum=%.6g l2=%.6g", tag,
+                v.size(), sum, std::sqrt(sum2));
+        for (size_t i = 0; i < std::min<size_t>(8, v.size()); ++i) {
+          fprintf(stderr, " v[%zu]=%.6g", i, static_cast<double>(v[i]));
+        }
+        fprintf(stderr, "\n");
+      };
+      dump_vec("lm_hidden", prefill_output.lm_hidden);
+      dump_vec("residual_hidden", prefill_output.residual_hidden);
+    }
     base_lm_.import_state(prefill_output.base_state);
     residual_lm_.import_state(prefill_output.residual_state);
     std::vector<float> lm_hidden = prefill_output.lm_hidden;
@@ -1578,14 +1799,45 @@ private:
     for (int64_t index = 0; index < max_tokens; ++index) {
       const auto projected =
           projection_.run(lm_hidden, residual_hidden, zero_hidden);
-      const auto mu = assets_->config.v1
-                          ? add_dit_mu(projected.current_lm_dit_hidden,
-                                       projected.residual_dit_hidden)
-                          : concat_dit_mu(projected.current_lm_dit_hidden,
-                                          projected.residual_dit_hidden);
+      if (index == 0 && std::getenv("VOXCPM_DUMP_PREFILL") != nullptr) {
+        auto dump_vec = [](const char *tag, const std::vector<float> &v) {
+          double sum = 0.0;
+          double sum2 = 0.0;
+          for (float x : v) {
+            sum += x;
+            sum2 += static_cast<double>(x) * x;
+          }
+          fprintf(stderr, "[DUMP_PREFILL] %s n=%zu sum=%.6g l2=%.6g", tag,
+                  v.size(), sum, std::sqrt(sum2));
+          for (size_t i = 0; i < std::min<size_t>(8, v.size()); ++i) {
+            fprintf(stderr, " v[%zu]=%.6g", i, static_cast<double>(v[i]));
+          }
+          fprintf(stderr, "\n");
+        };
+        dump_vec("lm_to_dit", projected.current_lm_dit_hidden);
+        dump_vec("res_to_dit", projected.residual_dit_hidden);
+      }
+      // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+      // This matches VoxCPM.cpp behavior which checks weight existence
+      // For V1 models, synthesized weights (Xavier init) should not count as present
+      const bool has_fusion_proj =
+          weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
+          !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
+      const auto mu = has_fusion_proj
+                          ? concat_dit_mu(projected.current_lm_dit_hidden,
+                                          projected.residual_dit_hidden)
+                          : add_dit_mu(projected.current_lm_dit_hidden,
+                                       projected.residual_dit_hidden);
       const auto patch = cfm_.generate_patch(
           mu, prefix_cond, options.num_inference_steps, options.guidance_scale,
           options.seed, patch_noise_start, options.cfm_noise_file);
+      if (const char *patch_dump_path = std::getenv("VOXCPM_DUMP_PATCH")) {
+        FILE *patch_file = std::fopen(patch_dump_path, "ab");
+        if (patch_file != nullptr) {
+          std::fwrite(patch.data(), sizeof(float), patch.size(), patch_file);
+          std::fclose(patch_file);
+        }
+      }
       patch_noise_start += static_cast<uint64_t>(patch_elems);
       append_patch(result.generated_features, patch, patch_elems);
       ++result.generated_patches;
@@ -1608,6 +1860,13 @@ private:
       if (index > options.min_tokens &&
           stop_class(projected.current_stop_logits) == 1) {
         break;
+      }
+      if (std::getenv("VOXCPM1_LOG_STOP") != nullptr) {
+        const auto &sl = projected.current_stop_logits;
+        fprintf(stderr, "[stop_logits] pos=%lld pre stop0=%.5f stop1=%.5f\n",
+                static_cast<long long>(index),
+                sl.empty() ? 0.0 : static_cast<double>(sl[0]),
+                sl.size() < 2 ? 0.0 : static_cast<double>(sl[1]));
       }
 
       const auto curr_embed = local_encoder_.encode_patch(patch);
