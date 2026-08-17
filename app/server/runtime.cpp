@@ -11,6 +11,7 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/registry.h"
 
 #include <algorithm>
@@ -1001,6 +1002,12 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else {
         response = error_response(404, "unknown endpoint: " + request.path, "not_found");
     }
+  } catch (const engine::runtime::CapacityError & ex) {
+    // The request is too big for the device, which is the caller's to fix --
+    // reporting it as 500 sends them looking for a server fault that is not
+    // there. Checked before ServerBusyError only because both are
+    // runtime_error; the two conditions are disjoint.
+    response = error_response(400, ex.what(), "invalid_request_error");
   } catch (const ServerBusyError & ex) {
     // Non-streaming requests surface the busy state as 503 before any response is
     // sent. (Streaming requests acquire the lock inside the stream body, after
