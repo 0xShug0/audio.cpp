@@ -64,7 +64,7 @@ std::shared_ptr<const AceStepConditionEncoderWeights> load_condition_encoder_wei
     const std::shared_ptr<core::BackendWeightStore> & store,
     const AceStepAssets & assets,
     assets::TensorStorageType storage_type) {
-    const auto & config = assets.config.diffusion;
+    const auto & config = assets.config.encoder;
     const auto & source = *assets.dit_weights;
     auto weights = std::make_shared<AceStepConditionEncoderWeights>();
     weights->store = store;
@@ -116,6 +116,14 @@ std::shared_ptr<const AceStepConditionEncoderWeights> load_condition_encoder_wei
             config));
     }
     weights->timbre_norm = store->load_f32_tensor(source, "encoder.timbre_encoder.norm.weight", {config.hidden_size});
+    // Every ACE-Step package carries this parameter; only the XL class prepends
+    // it to the reference frames, so loading it anywhere else would pin a tensor
+    // the graph never reads.
+    if (config.timbre_special_token) {
+        weights->timbre_special_token_host = source.require_f32(
+            "encoder.timbre_encoder.special_token",
+            {1, 1, config.hidden_size});
+    }
     return weights;
 }
 
@@ -123,7 +131,7 @@ std::shared_ptr<const AceStepDetokenizerWeights> load_detokenizer_weights(
     const std::shared_ptr<core::BackendWeightStore> & store,
     const AceStepAssets & assets,
     assets::TensorStorageType storage_type) {
-    const auto & config = assets.config.diffusion;
+    const auto & config = assets.config.encoder;
     const auto & source = *assets.dit_weights;
     const int64_t dim = config.head_dim;
 
@@ -230,6 +238,9 @@ std::shared_ptr<const AceStepDiffusionWeights> load_diffusion_weights(
     const AceStepAssets & assets,
     assets::TensorStorageType storage_type) {
     const auto & config = assets.config.diffusion;
+    // The two places the DiT meets the condition encoder, and the only shapes in
+    // this function that are not square in the DiT's own width.
+    const int64_t encoder_hidden_size = assets.config.encoder.hidden_size;
     const auto & source = *assets.dit_weights;
     auto weights = std::make_shared<AceStepDiffusionWeights>();
     weights->store = store;
@@ -241,11 +252,14 @@ std::shared_ptr<const AceStepDiffusionWeights> load_diffusion_weights(
     weights->time_embed = load_time_embedding_weights(*store, source, "decoder.time_embed", storage_type, config.hidden_size);
     weights->time_embed_r = load_time_embedding_weights(*store, source, "decoder.time_embed_r", storage_type, config.hidden_size);
     weights->condition_embedder = {
-        store->load_tensor(source, "decoder.condition_embedder.weight", storage_type, {config.hidden_size, config.hidden_size}),
+        store->load_tensor(source, "decoder.condition_embedder.weight", storage_type, {config.hidden_size, encoder_hidden_size}),
         store->load_tensor(source, "decoder.condition_embedder.bias", assets::TensorStorageType::F32, {config.hidden_size}),
     };
     if (!config.is_turbo) {
-        weights->null_condition_emb_host = source.require_f32("null_condition_emb", {1, 1, config.hidden_size});
+        // Stands in for the encoder output under classifier-free guidance, so it
+        // is sized in the encoder's width and the condition embedder projects it
+        // like any other conditioning.
+        weights->null_condition_emb_host = source.require_f32("null_condition_emb", {1, 1, encoder_hidden_size});
     }
     weights->layers.reserve(static_cast<size_t>(config.num_hidden_layers));
     for (int64_t i = 0; i < config.num_hidden_layers; ++i) {

@@ -314,6 +314,19 @@ std::vector<std::string> validate_candidate(const PackageSpecCandidate & candida
             (void)unused;
             expected_prefixes.insert(tensor_prefix(value));
         }
+        // A namespace in `optional_tensors` is one the family's packages may or
+        // may not ship — an ACE-Step XL DiT against a turbo-only package. It
+        // cannot be required of every conversion, but a conversion that does
+        // supply it is building exactly the package the spec describes, so it
+        // is not unexpected either.
+        std::set<std::string> optional_prefixes;
+        if (const auto * optional_tensors = source.find("optional_tensors");
+            optional_tensors != nullptr && !optional_tensors->is_null()) {
+            for (const auto & [unused, value] : optional_tensors->as_object()) {
+                (void)unused;
+                optional_prefixes.insert(tensor_prefix(value));
+            }
+        }
         for (const auto & prefix : expected_prefixes) {
             if (actual_prefixes.find(prefix) == actual_prefixes.end()) {
                 errors.push_back("missing tensor namespace '" + (prefix.empty() ? std::string("<root>") : prefix) +
@@ -321,7 +334,8 @@ std::vector<std::string> validate_candidate(const PackageSpecCandidate & candida
             }
         }
         for (const auto & prefix : actual_prefixes) {
-            if (expected_prefixes.find(prefix) == expected_prefixes.end()) {
+            if (expected_prefixes.find(prefix) == expected_prefixes.end() &&
+                optional_prefixes.find(prefix) == optional_prefixes.end()) {
                 errors.push_back("unexpected tensor namespace '" + (prefix.empty() ? std::string("<root>") : prefix) +
                                  "'");
             }

@@ -75,6 +75,18 @@ struct AceStepDiffusionConfig {
     int64_t sliding_window = 0;
     bool use_sliding_window = false;
     bool is_turbo = true;
+    // XL packages size the condition encoder, audio tokenizer and detokenizer
+    // independently of the DiT (2048 against 2560), which upstream expresses by
+    // handing those submodules a copy of the config with the encoder_* values
+    // substituted. The same copy lives in AceStepConfig::encoder, and this flag
+    // marks the two configs as genuinely different so the code that has to
+    // bridge them — the condition embedder, the cross-attention KV — can say so.
+    bool has_separate_encoder = false;
+    // XL's timbre encoder prepends a CLS token to the reference frames and reads
+    // position 0 back as the timbre embedding; the pre-XL class carries the same
+    // parameter but leaves that line commented out, so the tensor's presence says
+    // nothing and the config has to.
+    bool timbre_special_token = false;
     float rms_norm_eps = 1.0e-6F;
     float rope_theta = 1000000.0F;
     std::vector<int64_t> fsq_input_levels;
@@ -94,7 +106,12 @@ struct AceStepVAEConfig {
 struct AceStepConfig {
     AceStepPlannerConfig planner;
     AceStepTextEncoderConfig text_encoder;
+    // The DiT itself.
     AceStepDiffusionConfig diffusion;
+    // Everything that feeds it: the condition encoder, the audio tokenizer and
+    // the detokenizer. Identical to `diffusion` except for the four attention and
+    // MLP dimensions, and identical outright on packages that do not split them.
+    AceStepDiffusionConfig encoder;
     AceStepVAEConfig vae;
 };
 

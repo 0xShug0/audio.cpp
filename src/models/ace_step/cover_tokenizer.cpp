@@ -94,7 +94,7 @@ std::shared_ptr<const AceStepCoverTokenizerWeights> load_cover_tokenizer_weights
         backend_type,
         "ace_step.cover_tokenizer.weights",
         256ull * 1024ull * 1024ull);
-    const auto & config = assets.config.diffusion;
+    const auto & config = assets.config.encoder;
     const auto & source = *assets.dit_weights;
     auto weights = std::make_shared<AceStepCoverTokenizerWeights>();
     weights->store = store;
@@ -215,7 +215,7 @@ public:
             int64_t silence_channels,
             std::vector<float> & input_buffer) const {
             const auto total_start = Clock::now();
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
             if (code_count <= 0 || code_count > code_capacity_) {
                 throw std::runtime_error("ACE-Step cover tokenizer chunk exceeds graph capacity");
             }
@@ -272,7 +272,7 @@ public:
 
     private:
         void build() {
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
             const int64_t patch_tokens = config.pool_window_size + 1;
             ggml_init_params params{128ull * 1024ull * 1024ull, nullptr, true};
             ctx_.reset(ggml_init(params));
@@ -423,7 +423,7 @@ public:
           threads_(std::max(1, execution.config().threads)),
           storage_type_(storage_type),
           quantizer_(ace_step_build_fsq_quantizer_table(
-              assets_->config.diffusion,
+              assets_->config.encoder,
               "ACE-Step native cover tokenizer")) {
         if (assets_ == nullptr) {
             throw std::runtime_error("ACE-Step cover tokenizer requires assets");
@@ -439,7 +439,7 @@ public:
         int64_t silence_frames,
         int64_t silence_channels) const {
         const auto total_start = Clock::now();
-        const auto & config = assets_->config.diffusion;
+        const auto & config = assets_->config.encoder;
         if (latents.frames <= 0 || latents.channels != config.latent_channels) {
             throw std::runtime_error("ACE-Step cover tokenizer requires positive latent frames and matching channels");
         }

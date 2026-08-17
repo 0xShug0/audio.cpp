@@ -132,6 +132,27 @@
     document.documentElement.lang = uiLanguage;
   }
 
+  async function clearLegacyUiCaches() {
+    // This server commonly reuses localhost:8080. Remove workers and Cache
+    // Storage left by an older application on that origin before Native Studio
+    // starts making requests. Do not clear localStorage or IndexedDB: they hold
+    // saved voices, model-folder selection, and UI preferences.
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((registration) => registration.unregister()));
+      }
+      if ('caches' in window) {
+        const cacheNames = await window.caches.keys();
+        await Promise.all(cacheNames.map((name) => window.caches.delete(name)));
+      }
+    } catch (error) {
+      // Cache cleanup must not prevent an offline/local UI from starting when a
+      // browser restricts either API. The no-store response headers still apply.
+      console.warn('Unable to clear legacy WebUI caches:', error);
+    }
+  }
+
   function workflowLabel(id: string, fallback: string, translate = tr) {
     const translationId = id === 'conversion' ? 'vc' : id === 'separation' ? 'sep' : id;
     return translate(`workflow.${translationId}`, {}, fallback);
@@ -183,10 +204,6 @@
     }
   }
 
-  function loadedModelName(model: LoadedModel) {
-    return catalog.find((entry) => entry.id === model.id)?.display_name || model.id;
-  }
-
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
     { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
@@ -215,13 +232,53 @@
     seed_vc: 'Seed-VC'
   };
 
+  function pathVariantLabel(path: string) {
+    const normalized = path.replace(/\\/g, '/');
+    const filename = normalized.split('/').filter(Boolean).pop() || '';
+    const match = filename.match(/(?:^|[-_])(\d+(?:\.\d+)?[bm])(?:[-_]|$)/i);
+    return match ? match[1].toUpperCase() : '';
+  }
+
+  function catalogPathMatches(expectedPath: string, actualPath: string) {
+    const actual = comparablePath(actualPath);
+    const expected = comparablePath(resolveCatalogPath(expectedPath));
+    if (actual === expected) return true;
+    const relative = comparablePath(expectedPath).replace(/^models\//, '');
+    return actual === relative || actual.endsWith(`/${relative}`);
+  }
+
+  function catalogEntryMatchesLoadedModel(entry: CatalogEntry, model: LoadedModel) {
+    if (entry.family !== model.family || entry.task !== model.task) return false;
+    if (catalogPathMatches(entry.path, model.path)) return true;
+    return Boolean((entry.install_packages || []).some((choice) =>
+      catalogPathMatches(choice.path, model.path)));
+  }
+
+  function loadedCatalogEntry(model: LoadedModel) {
+    const exact = catalog.find((entry) => entry.id === model.id);
+    if (exact && catalogEntryMatchesLoadedModel(exact, model)) return exact;
+    return catalog.find((entry) => catalogEntryMatchesLoadedModel(entry, model));
+  }
+
+  function inferredLoadedModelName(model: LoadedModel, base?: CatalogEntry) {
+    const variant = pathVariantLabel(model.path);
+    const familyName = familyLabels[model.family] || base?.display_name || model.family;
+    return variant && !familyName.toLowerCase().includes(variant.toLowerCase())
+      ? `${familyName} ${variant}`
+      : familyName;
+  }
+
+  function loadedModelName(model: LoadedModel) {
+    return loadedCatalogEntry(model)?.display_name || inferredLoadedModelName(model);
+  }
+
   function compareModelNames(left: string, right: string) {
     return left.localeCompare(right, 'en', { sensitivity: 'base', numeric: true });
   }
 
   function configuredCatalogEntries() {
     return loadedModels.map((model) => {
-      const exact = catalog.find((entry) => entry.id === model.id);
+      const exact = loadedCatalogEntry(model);
       const familyMatch = catalog.find((entry) =>
         entry.family === model.family && entry.task === model.task);
       const base = exact || familyMatch;
@@ -235,7 +292,7 @@
           mode: model.mode
         }),
         id: model.id,
-        display_name: exact ? exact.display_name : base ? `${base.display_name} (${model.id})` : model.id,
+        display_name: exact ? exact.display_name : inferredLoadedModelName(model, base),
         display_name_en: exact ? exact.display_name_en : base?.display_name_en,
         family: model.family,
         path: model.path,
@@ -353,11 +410,7 @@
   }
 
   function packagePathMatches(choice: InstallPackageChoice, path: string) {
-    const actual = comparablePath(path);
-    const expected = comparablePath(resolveCatalogPath(choice.path));
-    if (actual === expected) return true;
-    const relative = comparablePath(choice.path).replace(/^models\//, '');
-    return actual === relative || actual.endsWith(`/${relative}`);
+    return catalogPathMatches(choice.path, path);
   }
 
   function residentModel(entry: CatalogEntry, models = loadedModels) {
@@ -1017,7 +1070,7 @@
       ? 44100
       : ['asr', 'vad', 'diar', 'align', 'midi'].includes(selected.task) ? 16000 : undefined;
     const wav = await browserDecodeToWav(file, targetSampleRate);
-    return uploadWav(wav, file.name.replace(/\.[^.]+$/, '') + '.wav', aborter?.signal);
+    return uploadWav(wav, aborter?.signal);
   }
 
   function requestOptions() {
@@ -1205,7 +1258,7 @@
     if (!blob.size) return;
     const file = new File([blob], `live-${liveChunkNumber}.webm`, { type: blob.type });
     const wav = await browserDecodeToWav(file, 16000);
-    const audio = await uploadWav(wav, `live-${liveChunkNumber}.wav`);
+    const audio = await uploadWav(wav);
     const result = await transcription({
       model: selected.id,
       audio,
@@ -1675,6 +1728,7 @@
   }
 
   onMount(async () => {
+    await clearLegacyUiCaches();
     const savedLanguage = localStorage.getItem('audiocpp.ui.language');
     uiLanguage = resolveUiLanguage(savedLanguage ? [savedLanguage] : navigator.languages);
     document.documentElement.lang = uiLanguage;
