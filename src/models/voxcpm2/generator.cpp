@@ -11,6 +11,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/cache_slots.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/voxcpm2/assets.h"
 #include "engine/models/voxcpm2/minicpm.h"
@@ -1373,7 +1374,12 @@ private:
 
     if (sequence.rows.empty() ||
         static_cast<int64_t>(sequence.rows.size()) >= config.max_length) {
-      throw std::runtime_error("VoxCPM2 prompt exceeds model cache length");
+      // Caller-controlled: the prompt audio/text decides how many rows this
+      // is. Report the numbers so the remedy is arithmetic, not guesswork.
+      throw engine::runtime::CapacityError(
+          "VoxCPM2 prompt exceeds the model cache length ("
+          + std::to_string(sequence.rows.size()) + " rows, limit "
+          + std::to_string(config.max_length) + "); shorten the prompt");
     }
     return sequence;
   }
@@ -1487,7 +1493,13 @@ private:
     const int64_t patch_elems = config.patch_size * config.feat_dim;
     if (static_cast<int64_t>(prefill.rows.size()) + max_tokens >
         config.max_length) {
-      throw std::runtime_error("VoxCPM2 generation exceeds model cache length");
+      // Same: prefill rows come from the input text, max_tokens from the
+      // request. Both are the caller's to reduce.
+      throw engine::runtime::CapacityError(
+          "VoxCPM2 generation exceeds the model cache length ("
+          + std::to_string(prefill.rows.size()) + " prefill rows + "
+          + std::to_string(max_tokens) + " requested tokens, limit "
+          + std::to_string(config.max_length) + "); shorten the input text");
     }
     base_lm_.reset();
     residual_lm_.reset();

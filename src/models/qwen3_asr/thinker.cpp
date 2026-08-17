@@ -12,6 +12,7 @@
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/sampling/decode_modules.h"
 
@@ -334,7 +335,14 @@ public:
         ggml_build_forward_expand(graph_, logits_);
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
         if (buffer_ == nullptr) {
-            throw std::runtime_error("failed to allocate Qwen3 ASR thinker prefill graph");
+            // Size, not a fault: the graph scales with prompt_steps_, which the
+            // caller controls through the transcription prompt and the length of
+            // the audio. Say which, and by how much, so the remedy is obvious.
+            throw engine::runtime::CapacityError(
+                "Qwen3 ASR prefill graph does not fit in device memory at this size ("
+                + std::to_string(prompt_steps_) + " prompt steps, of which "
+                + std::to_string(audio_tokens_) + " are audio tokens); "
+                "shorten the transcription prompt or the audio");
         }
         const auto pos = modules::qwen_position_ids(prompt_steps_);
         ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
