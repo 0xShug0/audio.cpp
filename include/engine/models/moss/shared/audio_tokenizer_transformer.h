@@ -100,6 +100,8 @@ public:
         throw std::runtime_error("MOSS codec tensor not found: " + name);
     }
 
+    bool has(const std::string & name) const noexcept { return source_.has_tensor(name); }
+
 private:
     const assets::TensorSource & source_;
 };
@@ -123,19 +125,42 @@ inline TransformerWeights load_transformer(
     TransformerWeights weights;
     weights.spec = spec;
     weights.input_proj = load(prefix + ".input_proj.weight", {spec.d_model, spec.input_dim});
-    weights.output_proj = load(prefix + ".output_proj.weight", {spec.output_dim, spec.d_model});
+    // Upstream's ProjectedTransformer only creates an output projection when the stage
+    // changes width. v2 ships one on every module; v1 leaves it out wherever
+    // output_dimension already equals d_model, so treat it as optional and fall through to
+    // the identity in that case.
+    const std::string output_proj_name = prefix + ".output_proj.weight";
+    if (codec_weights.has(output_proj_name)) {
+        weights.output_proj = load(output_proj_name, {spec.output_dim, spec.d_model});
+    } else if (spec.output_dim != spec.d_model) {
+        throw std::runtime_error(
+            "MOSS codec stage " + prefix + " changes width but carries no output projection");
+    }
     weights.layers.reserve(static_cast<size_t>(spec.num_layers));
     for (int64_t layer = 0; layer < spec.num_layers; ++layer) {
         const std::string lp = prefix + ".transformer.layers." + std::to_string(layer);
         LayerWeights w;
         w.norm1_w = load_f32(lp + ".norm1.weight", {spec.d_model});
         w.norm1_b = load_f32(lp + ".norm1.bias", {spec.d_model});
-        w.in_proj = load(lp + ".self_attn.in_proj.weight", {3 * spec.d_model, spec.d_model});
-        w.out_proj = load(lp + ".self_attn.out_proj.weight", {spec.d_model, spec.d_model});
+        // v2 stores one attention projection per layer; v1 keeps them in an indexed
+        // ModuleList (`in_projs.0`). Same tensor either way.
+        // v1 names the feed-forward layers linear1/linear2 where v2 uses an nn.Sequential.
+        const auto ffn_name = [&](const std::string & sequential, const std::string & named) {
+            return codec_weights.has(lp + sequential) ? lp + sequential : lp + named;
+        };
+        const auto attention_name = [&](const std::string & single, const std::string & indexed) {
+            return codec_weights.has(lp + single) ? lp + single : lp + indexed;
+        };
+        w.in_proj = load(
+            attention_name(".self_attn.in_proj.weight", ".self_attn.in_projs.0.weight"),
+            {3 * spec.d_model, spec.d_model});
+        w.out_proj = load(
+            attention_name(".self_attn.out_proj.weight", ".self_attn.out_projs.0.weight"),
+            {spec.d_model, spec.d_model});
         w.norm2_w = load_f32(lp + ".norm2.weight", {spec.d_model});
         w.norm2_b = load_f32(lp + ".norm2.bias", {spec.d_model});
-        w.fc1 = load(lp + ".ffn.0.weight", {spec.intermediate_size, spec.d_model});
-        w.fc2 = load(lp + ".ffn.2.weight", {spec.d_model, spec.intermediate_size});
+        w.fc1 = load(ffn_name(".ffn.0.weight", ".linear1.weight"), {spec.intermediate_size, spec.d_model});
+        w.fc2 = load(ffn_name(".ffn.2.weight", ".linear2.weight"), {spec.d_model, spec.intermediate_size});
         w.layer_scale1 = load_f32(lp + ".layer_scale_1.scale", {spec.d_model});
         w.layer_scale2 = load_f32(lp + ".layer_scale_2.scale", {spec.d_model});
         weights.layers.push_back(std::move(w));
@@ -272,6 +297,9 @@ inline core::TensorValue run_transformer(
                  .build(ctx, input, binding::linear_data(ctx, weights.input_proj));
     for (const auto & layer : weights.layers) {
         x = transformer_layer(ctx, x, layer, spec, positions, mask, windows, steps);
+    }
+    if (!weights.output_proj.valid()) {
+        return x;
     }
     return modules::LinearModule(binding::linear_config(spec.d_model, spec.output_dim, false))
         .build(ctx, x, binding::linear_data(ctx, weights.output_proj));
