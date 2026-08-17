@@ -236,14 +236,14 @@ jobs:
         include:
           - cuda: '12.4.1'
             label: '12.4'
-          - cuda: '13.3.0'
-            label: '13.3'
+          - cuda: '13.2.0'
+            label: '13.2'
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Install CUDA build tools
-        uses: Jimver/cuda-toolkit@v0.2.21
+        uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: ${{ matrix.cuda }}
           method: 'local'
