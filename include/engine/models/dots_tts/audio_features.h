@@ -26,6 +26,11 @@ DotsPreparedReferenceAudio prepare_dots_reference_audio(
     int64_t samples_per_patch,
     std::optional<float> max_duration_seconds = std::nullopt);
 
+std::vector<float> prepare_dots_edit_source_audio(
+    const runtime::AudioBuffer & audio,
+    int vocoder_sample_rate,
+    int64_t samples_per_patch);
+
 DotsFbankOutput compute_dots_speaker_fbank_16k(const std::vector<float> & waveform_16k);
 
 }  // namespace engine::models::dots_tts

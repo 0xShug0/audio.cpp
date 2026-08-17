@@ -76,7 +76,11 @@ private:
         const std::string & text,
         PromptConditioning & conditioning,
         const std::function<void(const DotsLatentMatrix &, int64_t)> & on_payload_patch = {});
+    std::vector<DotsLatentMatrix> generate_edit_latent_patches(
+        const DotsRequest & request,
+        const std::function<void(const DotsLatentMatrix &, int64_t)> & on_payload_patch = {});
     runtime::AudioBuffer synthesize_segment(const DotsRequest & request, const std::string & text);
+    runtime::AudioBuffer synthesize_edit(const DotsRequest & request);
     runtime::AudioBuffer synthesize_streaming_segment(
         const DotsRequest & request,
         const std::string & text,

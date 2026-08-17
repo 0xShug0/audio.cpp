@@ -1,9 +1,11 @@
 #include "engine/models/dots_tts/request.h"
 
+#include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 
 #include <cmath>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 
@@ -23,7 +25,10 @@ DotsTemplateName parse_template_name(const std::string & value) {
     if (value == "tts_interleave") {
         return DotsTemplateName::TtsInterleave;
     }
-    throw std::runtime_error("DotTTS template_name must be tts, instruction_tts, text_to_audio, or tts_interleave");
+    if (value == "edit") {
+        return DotsTemplateName::Edit;
+    }
+    throw std::runtime_error("DotTTS template_name must be tts, instruction_tts, text_to_audio, tts_interleave, or edit");
 }
 
 DotsOdeMethod parse_sampler_mode(const std::string & value) {
@@ -37,6 +42,24 @@ DotsOdeMethod parse_sampler_mode(const std::string & value) {
         return DotsOdeMethod::Rk4;
     }
     throw std::runtime_error("DotTTS sampler_mode must be euler, midpoint, or rk4");
+}
+
+DotsEditXVectorMode parse_edit_xvector_mode(const std::string & value) {
+    if (value == "auto") {
+        return DotsEditXVectorMode::Auto;
+    }
+    if (value == "on" || value == "true" || value == "1") {
+        return DotsEditXVectorMode::On;
+    }
+    if (value == "off" || value == "false" || value == "0") {
+        return DotsEditXVectorMode::Off;
+    }
+    throw std::runtime_error("DotTTS use_xvector must be auto, on, or off");
+}
+
+runtime::AudioBuffer read_audio_buffer(const std::filesystem::path & path) {
+    const auto wav = engine::audio::read_wav_f32(path);
+    return runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples};
 }
 
 DotsGenerationOptions generation_options(
@@ -76,6 +99,30 @@ DotsGenerationOptions generation_options(
         throw std::runtime_error("DotTTS speaker_scale must be finite and non-negative");
     }
     return defaults;
+}
+
+void apply_edit_options(DotsRequest & out, const runtime::TaskRequest & request) {
+    out.edit.instruction = runtime::find_option(request.options, {"instruction", "instruct"}).value_or(std::string{});
+    out.edit.source_text = runtime::find_option(request.options, {"source_text"}).value_or(std::string{});
+    out.edit.target_text = runtime::find_option(request.options, {"target_text"}).value_or(std::string{});
+    if (const auto value = runtime::find_option(request.options, {"use_xvector"})) {
+        out.edit.use_xvector = parse_edit_xvector_mode(*value);
+    }
+    if (const auto source_path = runtime::find_option(request.options, {"source_audio"})) {
+        out.edit.source_audio = read_audio_buffer(*source_path);
+    } else if (request.audio_input.has_value()) {
+        out.edit.source_audio = request.audio_input;
+    }
+    if (out.generation.template_name != DotsTemplateName::Edit) {
+        return;
+    }
+    const bool has_instruction_option = !out.edit.instruction.empty();
+    if (!has_instruction_option) {
+        out.edit.instruction = out.text;
+    }
+    if (out.edit.target_text.empty() && has_instruction_option) {
+        out.edit.target_text = out.text;
+    }
 }
 
 std::optional<DotsPromptReference> voice_reference(const std::optional<runtime::VoiceCondition> & voice) {
@@ -142,12 +189,20 @@ DotsRequest make_dots_request(
         }
     }
     out.generation = generation_options(assets.config, request.options, out.generation);
+    apply_edit_options(out, request);
     if (auto reference = voice_reference(request.voice)) {
         out.reference = std::move(*reference);
     }
     apply_reference_text(out.reference, request.options);
     apply_reference_duration(out.reference, request.options);
-    if (out.text.empty()) {
+    if (out.generation.template_name == DotsTemplateName::Edit) {
+        if (!out.edit.source_audio.has_value()) {
+            throw std::runtime_error("DotTTS edit requires source_audio or audio_input");
+        }
+        if (out.edit.instruction.empty()) {
+            throw std::runtime_error("DotTTS edit requires instruction or request text");
+        }
+    } else if (out.text.empty()) {
         throw std::runtime_error("DotTTS request text must not be empty");
     }
     if (!out.reference.reference_text.empty() && !out.reference.audio.has_value()) {
