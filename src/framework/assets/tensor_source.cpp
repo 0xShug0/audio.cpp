@@ -15,6 +15,7 @@
 #include <functional>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <set>
 #include <sstream>
@@ -71,12 +72,25 @@ core::TensorShape shape_from_dims(const std::vector<int64_t> & dims) {
 void validate_expected_shape(
     std::string_view name,
     const std::vector<int64_t> & actual_shape,
-    const std::optional<std::vector<int64_t>> & expected_shape) {
+    const std::optional<std::vector<int64_t>> & expected_shape,
+    bool relaxed_rank) {
     if (expected_shape.has_value() && actual_shape != *expected_shape) {
-        throw std::runtime_error("tensor shape mismatch for " + std::string(name));
+        if (!relaxed_rank) {
+            throw std::runtime_error("tensor shape mismatch for " + std::string(name));
+        }
+        int64_t expected_elems = 1;
+        for (const int64_t dim : *expected_shape) {
+            expected_elems *= dim;
+        }
+        int64_t actual_elems = 1;
+        for (const int64_t dim : actual_shape) {
+            actual_elems *= dim;
+        }
+        if (actual_elems != expected_elems) {
+            throw std::runtime_error("tensor element count mismatch for " + std::string(name));
+        }
     }
 }
-
 std::string lower_ascii(std::string_view value) {
     std::string out(value);
     for (char & ch : out) {
@@ -565,7 +579,7 @@ public:
         if (info == nullptr) {
             throw std::runtime_error("missing tensor: " + std::string(name));
         }
-        validate_expected_shape(name, info->shape, expected_shape);
+        validate_expected_shape(name, info->shape, expected_shape, false);
         const auto shape = shape_from_dims(expected_shape);
         const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
         const auto [data, byte_size] = require_data_range(*info);
@@ -594,7 +608,7 @@ public:
         std::string_view name,
         const std::optional<std::vector<int64_t>> & expected_shape) const override {
         const auto tensor = require_tensor_data(name);
-        validate_expected_shape(name, tensor.metadata.shape, expected_shape);
+        validate_expected_shape(name, tensor.metadata.shape, expected_shape, false);
         const ggml_type type = ggml_type_for_tensor_dtype(tensor.metadata.dtype);
         const auto physical_shape = tensor.metadata.shape.empty()
             ? shape_from_dims({1})
@@ -803,7 +817,7 @@ public:
         TensorStorageType storage_type,
         const std::vector<int64_t> & expected_shape) const override {
         const auto & info = require_info(name);
-        validate_expected_shape(name, info.shape, expected_shape);
+        validate_expected_shape(name, info.shape, expected_shape, false);
         const auto shape = shape_from_dims(expected_shape);
         const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
         const auto [data, byte_size] = require_data_range(info);
@@ -831,7 +845,7 @@ public:
         std::string_view name,
         const std::optional<std::vector<int64_t>> & expected_shape) const override {
         const auto tensor = require_tensor_data(name);
-        validate_expected_shape(name, tensor.metadata.shape, expected_shape);
+        validate_expected_shape(name, tensor.metadata.shape, expected_shape, false);
         const auto physical_shape = tensor.metadata.shape.empty()
             ? shape_from_dims({1})
             : shape_from_dims(tensor.metadata.shape);
@@ -1234,7 +1248,7 @@ TensorData TensorSource::require_tensor(
     const core::TensorShape shape = shape_from_dims(expected_shape);
     const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
     const auto raw = require_tensor_data(name);
-    validate_expected_shape(name, raw.metadata.shape, expected_shape);
+    validate_expected_shape(name, raw.metadata.shape, expected_shape, false);
     if (raw_dtype_matches_ggml_type(raw.metadata.dtype, type)) {
         validate_raw_tensor_byte_size(name, shape, type, raw.bytes.size());
         return TensorData{shape, type, raw.bytes};
@@ -1257,7 +1271,7 @@ TensorData TensorSource::require_tensor_as_shape(
     const core::TensorShape source_shape = shape_from_dims(expected);
     const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
     const auto raw = require_tensor_data(name);
-    validate_expected_shape(name, raw.metadata.shape, expected);
+    validate_expected_shape(name, raw.metadata.shape, expected, false);
     if (raw.metadata.shape == std::vector<int64_t>(tensor_shape) &&
         raw_dtype_matches_ggml_type(raw.metadata.dtype, type)) {
         validate_raw_tensor_byte_size(name, shape, type, raw.bytes.size());

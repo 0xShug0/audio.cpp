@@ -437,6 +437,23 @@ public:
                 }
             }
         }
+        // V1 relaxed rank: if expected element count matches actual but shapes differ,
+        // fetch data without expected_shape and set manually
+        if (is_v1_) {
+            const auto source_meta = source_->require_metadata(route_it->second);
+            int64_t expected_elems = 1;
+            for (const int64_t dim : expected_shape) expected_elems *= dim;
+            int64_t actual_elems = 1;
+            for (const int64_t dim : source_meta.shape) actual_elems *= dim;
+            if (expected_elems == actual_elems && source_meta.shape != expected_shape) {
+                const auto values = source_->require_f32(route_it->second, std::nullopt);
+                const auto shape = make_tensor_shape(expected_shape);
+                const ggml_type type = engine::assets::ggml_type_for_tensor_storage(
+                    engine::assets::resolve_tensor_storage_type(*this, name, storage_type));
+                engine::assets::set_backend_tensor_from_f32_parallel(tensor, name, values, shape, type);
+                return;
+            }
+        }
         source_->set_backend_tensor(tensor, route_it->second, storage_type, expected_shape);
     }
 
@@ -621,17 +638,24 @@ private:
         synthesized_tensors_["feat_encoder.diag"] =
             assets::TensorMetadata{"feat_encoder.diag", "F32", {feat_dim}};
 
-        // feat_encoder.special_token (from token_embd)
-        synthesized_tensors_["feat_encoder.special_token"] =
-            assets::TensorMetadata{"feat_encoder.special_token", "F32", {1, 1, 1, encoder_hidden}};
+        // feat_encoder.special_token: V1 GGUF stores as 1D [1024], model code handles reshaping
+        // Only synthesize if not present in GGUF
+        if (routes_.find("feat_encoder.special_token") == routes_.end()) {
+            synthesized_tensors_["feat_encoder.special_token"] =
+                assets::TensorMetadata{"feat_encoder.special_token", "F32", {encoder_hidden}};
+        }
 
         // token_embd.extra_bias (from logit_scale or zeros)
-        synthesized_tensors_["token_embd.extra_bias"] =
-            assets::TensorMetadata{"token_embd.extra_bias", "F32", {lm_hidden}};
+        if (routes_.find("token_embd.extra_bias") == routes_.end()) {
+            synthesized_tensors_["token_embd.extra_bias"] =
+                assets::TensorMetadata{"token_embd.extra_bias", "F32", {lm_hidden}};
+        }
 
         // feat_encoder.merge (zeros)
-        synthesized_tensors_["feat_encoder.merge.weight"] =
-            assets::TensorMetadata{"feat_encoder.merge.weight", "F32", {encoder_hidden, feat_dim}};
+        if (routes_.find("feat_encoder.merge.weight") == routes_.end()) {
+            synthesized_tensors_["feat_encoder.merge.weight"] =
+                assets::TensorMetadata{"feat_encoder.merge.weight", "F32", {encoder_hidden, feat_dim}};
+        }
 
         // Identity SR-condition embeddings for V1 decoder blocks. VoxCPM1
         // GGUFs contain no sr_cond_model tensors (no SR conditioning), but the
@@ -644,18 +668,26 @@ private:
                     vae.decoder_dim / (int64_t{1} << static_cast<int>(i));
                 const std::string prefix =
                     "decoder.sr_cond_model." + std::to_string(i + 2) + ".";
-                synthesized_tensors_[prefix + "scale_embed.weight"] =
-                    assets::TensorMetadata{prefix + "scale_embed.weight", "F32", {1, input_channels}};
-                synthesized_tensors_[prefix + "bias_embed.weight"] =
-                    assets::TensorMetadata{prefix + "bias_embed.weight", "F32", {1, input_channels}};
+                if (routes_.find(prefix + "scale_embed.weight") == routes_.end()) {
+                    synthesized_tensors_[prefix + "scale_embed.weight"] =
+                        assets::TensorMetadata{prefix + "scale_embed.weight", "F32", {1, input_channels}};
+                }
+                if (routes_.find(prefix + "bias_embed.weight") == routes_.end()) {
+                    synthesized_tensors_[prefix + "bias_embed.weight"] =
+                        assets::TensorMetadata{prefix + "bias_embed.weight", "F32", {1, input_channels}};
+                }
             }
         }
 
         // Missing projection weights for V1 (not in VoxCPM1 GGUF)
-        synthesized_tensors_["fusion_concat_proj.weight"] =
-            assets::TensorMetadata{"fusion_concat_proj.weight", "F32", {lm_hidden, lm_hidden * 2}};
-        synthesized_tensors_["fusion_concat_proj.bias"] =
-            assets::TensorMetadata{"fusion_concat_proj.bias", "F32", {lm_hidden}};
+        if (routes_.find("fusion_concat_proj.weight") == routes_.end()) {
+            synthesized_tensors_["fusion_concat_proj.weight"] =
+                assets::TensorMetadata{"fusion_concat_proj.weight", "F32", {lm_hidden, lm_hidden * 2}};
+        }
+        if (routes_.find("fusion_concat_proj.bias") == routes_.end()) {
+            synthesized_tensors_["fusion_concat_proj.bias"] =
+                assets::TensorMetadata{"fusion_concat_proj.bias", "F32", {lm_hidden}};
+        }
     }
 
     std::vector<float> fold_weight_norm(
@@ -840,7 +872,7 @@ void validate_weight_anchors(const VoxCPM2Assets & assets) {
         {config.lm.num_key_value_heads * config.lm.kv_channels, config.lm.hidden_size});
     assets::require_tensor_shape(weights, "base_lm.layers.0.mlp.gate_proj.weight", {config.lm.intermediate_size, config.lm.hidden_size});
     assets::require_tensor_shape(weights, "residual_lm.norm.weight", {config.lm.hidden_size});
-    assets::require_tensor_shape(weights, "feat_encoder.special_token", {1, 1, 1, config.encoder.hidden_dim});
+    require_vae_weight_v_shape(weights, "feat_encoder.special_token", {1, 1, 1, config.encoder.hidden_dim}, config.v1);
     assets::require_tensor_shape(weights, "feat_encoder.in_proj.weight", {config.encoder.hidden_dim, config.feat_dim});
     assets::require_tensor_shape(weights, "feat_encoder.encoder.norm.weight", {config.encoder.hidden_dim});
     assets::require_tensor_shape(weights, "feat_decoder.estimator.in_proj.weight", {config.dit.hidden_dim, config.feat_dim});
