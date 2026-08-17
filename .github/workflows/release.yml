@@ -29,7 +29,7 @@ on:
 env:
   GH_TOKEN: ${{ github.token }}
   BUILD_TARGETS: audiocpp_cli audiocpp_server audiocpp_gguf
-  VULKAN_VERSION: '1.4.304.0'
+  VULKAN_VERSION: '1.4.357.0'
   CMAKE_ARGS: "-DAUDIOCPP_DEPLOYMENT_BUILD=ON -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_CUDA_GRAPHS=ON"
 
 concurrency:
@@ -226,14 +226,18 @@ jobs:
           path: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan.zip
 
   windows-cuda:
-    name: Windows x64 (CUDA ${{ matrix.cuda }})
+    name: 'Windows x64 (CUDA ${{ matrix.label }})'
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
     runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
-        cuda: [ '12.4', '13.3' ]
+        include:
+          - cuda: '12.4.1'
+            label: '12.4'
+          - cuda: '13.3.0'
+            label: '13.3'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -242,7 +246,7 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.21
         with:
           cuda: ${{ matrix.cuda }}
-          update-github-env: true
+          method: 'local'
       - name: Configure (OpenMP off)
         shell: pwsh
         # Direct CMake (bypass build_windows.ps1, which hard-requires OpenMP and
@@ -269,12 +273,12 @@ jobs:
         working-directory: build/bin
         run: |
           cp ..\..\LICENSE . 2>$null
-          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.cuda }}.zip * cudart\*
-          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-cudart-windows-x64-cuda${{ matrix.cuda }}.zip cudart\*
+          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.label }}.zip * cudart\*
+          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-cudart-windows-x64-cuda${{ matrix.label }}.zip cudart\*
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.cuda }}
-          path: 'audio-${{ needs.get-version.outputs.version }}-*cuda${{ matrix.cuda }}.zip'
+          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.label }}
+          path: 'audio-${{ needs.get-version.outputs.version }}-*cuda${{ matrix.label }}.zip'
 
   release:
     name: Create release
