@@ -276,8 +276,8 @@ jobs:
         working-directory: build/bin
         run: |
           cp ..\..\LICENSE . 2>$null
-          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.label }}.zip * cudart\*
-          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-cudart-windows-x64-cuda${{ matrix.label }}.zip cudart\*
+          7z a -snl ..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.label }}.zip * cudart\*
+          7z a -snl ..\..\audio-${{ needs.get-version.outputs.version }}-cudart-windows-x64-cuda${{ matrix.label }}.zip cudart\*
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.label }}
