@@ -18,9 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: 'Create a GitHub release (only effective on main)'
-        required: true
-        default: false
+        description: 'Publish a GitHub Release (only effective on main). Leave checked for a normal release; uncheck to build binaries without publishing.'
+        required: false
+        default: true
         type: boolean
   push:
     branches:
