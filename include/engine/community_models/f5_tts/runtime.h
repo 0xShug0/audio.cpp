@@ -36,6 +36,13 @@ struct F5SampleOptions {
     uint32_t seed = 0;
 };
 
+// Compute device for the DiT forward: CUDA device index or CPU threads.
+struct F5ComputeDevice {
+    bool use_cuda = false;
+    int device = 0;   // CUDA device index
+    int threads = 0;  // CPU threads; 0 = hardware concurrency
+};
+
 // Debug taps for parity testing: when non-null, intermediate stage outputs are
 // appended (column layout, [features, T] flattened feature-major).
 struct F5DebugTaps {
@@ -61,6 +68,7 @@ std::vector<float> f5_dit_forward(
     const F5Architecture & arch,
     bool drop_audio_cond,
     bool drop_text,
-    const F5DebugTaps * taps = nullptr);
+    const F5DebugTaps * taps = nullptr,
+    const F5ComputeDevice * device = nullptr);
 
 }  // namespace engine::models::f5_tts

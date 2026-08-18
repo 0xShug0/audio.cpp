@@ -20,6 +20,8 @@ struct F5SynthesisRequest {
     uint32_t seed = 0;
     bool fixed_seed = false;
     int threads = 0;  // 0 = hardware concurrency
+    bool use_cuda = false;
+    int cuda_device = 0;
 };
 
 struct F5SynthesisResult {

@@ -77,8 +77,12 @@ int main() {
     taps.block0 = &t_block0;
     taps.block21 = &t_block21;
 
+    const bool use_cuda = std::getenv("F5_CUDA") != nullptr;
+    engine::models::f5_tts::F5ComputeDevice dev;
+    dev.use_cuda = use_cuda;
+    dev.device = 1;  // GPU 1 is the TTS GPU on this rig
     const auto out = engine::models::f5_tts::f5_dit_forward(
-        ckpt, x, cond, ids, 0.42F, 64, arch, false, false, &taps);
+        ckpt, x, cond, ids, 0.42F, 64, arch, false, false, &taps, &dev);
 
     int failures = 0;
     auto check = [&](const char * name, const std::vector<float> & mine_col, const std::vector<float> & golden_row, int T, int F) {
@@ -88,8 +92,9 @@ int main() {
         // the final output; stage taps keep the same [t][f] memory.)
         const double c = cosine(mine_col, golden_row);
         const double m = max_abs(mine_col, golden_row);
-        std::printf("%-18s cosine=%.6f maxabs=%.5f %s\n", name, c, m, c >= 0.999 ? "OK" : "FAIL");
-        if (c < 0.999) failures++;
+        const bool ok = c >= 0.999 && std::isfinite(c);
+        std::printf("%-18s cosine=%.6f maxabs=%.5f %s\n", name, c, m, ok ? "OK" : "FAIL");
+        if (!ok) failures++;
     };
 
     check("01_text_embed", t_text_embed, load_bin(gold + "/01_text_embed.bin", 24 * 512), 24, 512);

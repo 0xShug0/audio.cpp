@@ -545,16 +545,20 @@ F5SynthesisResult f5_synthesize(
     // 6. CFM Euler steps with CFG (cond / uncond pair)
     const auto ts = sway_timesteps(request.steps, request.sway_sampling_coef);
     const F5Architecture arch;
+    F5ComputeDevice dev;
+    dev.use_cuda = request.use_cuda;
+    dev.device = request.cuda_device;
+    dev.threads = request.threads;
     for (size_t i = 0; i + 1 < ts.size(); ++i) {
         const float t = ts[i];
         const float dt = ts[i + 1] - ts[i];
         // batched CFG: run twice (drop_text false/true), combine
         const auto v_cond = f5_dit_forward(
-            model_path, y, cond, text_ids, t, duration, arch, false, false);
+            model_path, y, cond, text_ids, t, duration, arch, false, false, nullptr, &dev);
         std::vector<float> v;
         if (request.cfg_strength > 1e-5F) {
             const auto v_null = f5_dit_forward(
-                model_path, y, cond, text_ids, t, duration, arch, false, true);
+                model_path, y, cond, text_ids, t, duration, arch, false, true, nullptr, &dev);
             v.resize(v_cond.size());
             for (size_t k = 0; k < v.size(); ++k) {
                 v[k] = v_cond[k] + (v_cond[k] - v_null[k]) * request.cfg_strength;

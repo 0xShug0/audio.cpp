@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <algorithm>
 #include <cstring>
@@ -110,6 +111,8 @@ int main(int argc, char ** argv) {
     req.cfg_strength = 2.0F;
     req.seed = 42;
     req.fixed_seed = true;
+    req.use_cuda = std::getenv("F5_CUDA") != nullptr;
+    req.cuda_device = 1;
 
     std::printf("synthesizing...\n");
     fflush(stdout);
