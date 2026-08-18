@@ -1,0 +1,34 @@
+{
+  "warmup": {
+    "id": "warmup_short_english_sofia",
+    "text": "The warmup request checks that Magpie speaks clearly.",
+    "language": "en",
+    "voice_id": "Sofia",
+    "speaker_index": 4,
+    "seed": 9100,
+    "apply_text_normalization": true,
+    "use_cfg": true
+  },
+  "requests": [
+    {
+      "id": "english_sofia_status_update",
+      "text": "The production coordinator reviewed the overnight audio report, confirmed that the backup recorder stayed online, and asked the team to send one clear status update before the inspection window opened.",
+      "language": "en",
+      "voice_id": "Sofia",
+      "speaker_index": 4,
+      "seed": 9101,
+      "apply_text_normalization": true,
+      "use_cfg": true
+    },
+    {
+      "id": "german_jason_operations_note",
+      "text": "Das Team überprüfte am Morgen die Aufzeichnungen, bestätigte die stabile Verbindung und bereitete einen kurzen Bericht für die nächste Produktionsbesprechung vor.",
+      "language": "de",
+      "voice_id": "Jason",
+      "speaker_index": 1,
+      "seed": 9102,
+      "apply_text_normalization": true,
+      "use_cfg": true
+    }
+  ]
+}

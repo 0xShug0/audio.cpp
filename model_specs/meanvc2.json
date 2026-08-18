@@ -1,0 +1,106 @@
+{
+  "family": "meanvc2",
+  "schema_version": 1,
+  "display_name": "MeanVC2",
+  "description": "MeanVC2 is a lightweight streaming zero-shot voice conversion model. The current audio.cpp preview package covers the recommended 120ms/40ms quality path.",
+  "category": "voice_conversion",
+  "status": "experimental",
+  "tasks": [
+    "vc"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "vc": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Random seed for MeanVC2 flow noise; default 42.",
+        "required": false,
+        "min": 0,
+        "default": 42
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "meanvc2_120ms_40ms_fp32",
+      "display_name": "MeanVC2 120ms/40ms FP32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "MeanVC2-GGUF",
+      "files": [
+        "MeanVC2-GGUF/meanvc2-120ms-40ms-fp32.gguf"
+      ],
+      "strip_prefix": "MeanVC2-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "meanvc2_120ms_40ms_fp32",
+    "tags": [
+      "VC",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/audio_tools.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "weights": "$gguf"
+      },
+      "tensors": {
+        "vc": {
+          "source": "weights:",
+          "prefix": "vc"
+        },
+        "vocos": {
+          "source": "weights:",
+          "prefix": "vocos"
+        },
+        "asr": {
+          "source": "weights:",
+          "prefix": "asr"
+        },
+        "speaker_wavlm": {
+          "source": "weights:",
+          "prefix": "speaker_wavlm"
+        },
+        "speaker_ecapa": {
+          "source": "weights:",
+          "prefix": "speaker_ecapa"
+        }
+      }
+    }
+  ]
+}

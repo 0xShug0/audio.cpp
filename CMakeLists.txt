@@ -545,6 +545,19 @@ audiocpp_add_model(parakeet_tdt
         engine::community_models::parakeet_tdt::make_parakeet_tdt_loader
 )
 
+audiocpp_add_model(personaplex
+    SOURCES
+        src/models/personaplex/assets.cpp
+        src/models/personaplex/depformer.cpp
+        src/models/personaplex/lm_runtime.cpp
+        src/models/personaplex/request.cpp
+        src/models/personaplex/session.cpp
+    INCLUDES
+        engine/models/personaplex/session.h
+    LOADERS
+        engine::models::personaplex::make_personaplex_loader
+)
+
 audiocpp_add_model(inflect_v2
     SOURCES
         src/community_models/inflect_v2/assets.cpp
@@ -799,6 +812,23 @@ audiocpp_add_model(fish_audio
         engine/models/fish_audio/loader.h
     LOADERS
         engine::models::fish_audio::make_fish_audio_loader
+)
+
+audiocpp_add_model(magpie_tts
+    SOURCES
+        src/models/magpie_tts/assets.cpp
+        src/models/magpie_tts/request.cpp
+        src/models/magpie_tts/runtime.cpp
+        src/models/magpie_tts/session.cpp
+        src/models/magpie_tts/tokenizer_text.cpp
+    INCLUDES
+        engine/models/magpie_tts/request.h
+        engine/models/magpie_tts/runtime.h
+        engine/models/magpie_tts/session.h
+        engine/models/magpie_tts/tokenizer_text.h
+        engine/models/magpie_tts/types.h
+    LOADERS
+        engine::models::magpie_tts::make_magpie_tts_loader
 )
 
 audiocpp_add_model(confucius4_tts
@@ -1160,6 +1190,27 @@ audiocpp_add_model(seed_vc
         engine/models/seed_vc/session.h
     LOADERS
         engine::models::seed_vc::make_seed_vc_loader
+)
+
+audiocpp_add_model(meanvc2
+    SOURCES
+        src/models/meanvc2/assets.cpp
+        src/models/meanvc2/asr_encoder.cpp
+        src/models/meanvc2/audio_pipeline.cpp
+        src/models/meanvc2/session.cpp
+        src/models/meanvc2/speaker_encoder.cpp
+        src/models/meanvc2/flow_sampler_runtime.cpp
+        src/models/meanvc2/vocoder.cpp
+    INCLUDES
+        engine/models/meanvc2/assets.h
+        engine/models/meanvc2/asr_encoder.h
+        engine/models/meanvc2/audio_pipeline.h
+        engine/models/meanvc2/session.h
+        engine/models/meanvc2/speaker_encoder.h
+        engine/models/meanvc2/flow_sampler_runtime.h
+        engine/models/meanvc2/vocoder.h
+    LOADERS
+        engine::models::meanvc2::make_meanvc2_loader
 )
 
 audiocpp_add_model(rvc
@@ -1587,6 +1638,15 @@ if (ENGINE_BUILD_TESTS)
     target_link_libraries(codec_encode_parity PRIVATE engine_runtime ggml)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(personaplex_ring_kv_cache_parity
+        tests/personaplex/personaplex_ring_kv_cache_parity.cpp
+    )
+
+    target_link_libraries(personaplex_ring_kv_cache_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(personaplex_ring_kv_cache_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
 endif()
 

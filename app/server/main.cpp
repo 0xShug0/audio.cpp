@@ -93,6 +93,8 @@ void print_help() {
         << "  GET  /v1/ui/models/package-sizes package sizes from metadata-only checks\n"
         << "  GET  /v1/audio/voices?model=<id>\n"
         << "  POST /v1/audio/speech\n"
+        << "  POST /v1/audio/speech/live?model=<id>\n"
+        << "       raw PCM in a chunked body, speech audio deltas as SSE on the same connection\n"
         << "  POST /v1/audio/transcriptions\n"
         << "       fields: file, model, language, prompt, stream\n"
         << "       OpenAI-style streaming: speech stream_format=sse|audio, transcription stream=true\n"

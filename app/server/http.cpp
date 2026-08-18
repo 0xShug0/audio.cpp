@@ -178,10 +178,11 @@ void set_send_timeout(SocketHandle socket, int timeout_ms) {
 #endif
 }
 
-// The one endpoint that consumes its body incrementally. Gating on the path as
+// The endpoints that consume their body incrementally. Gating on the path as
 // well as the encoding keeps every other endpoint's request handling bit-for-bit
 // unchanged, instead of silently altering how any chunked request is read.
-constexpr std::string_view kLiveIngestPath = "/v1/audio/transcriptions/live";
+constexpr std::string_view kLiveTranscriptionPath = "/v1/audio/transcriptions/live";
+constexpr std::string_view kLiveSpeechPath = "/v1/audio/speech/live";
 
 // True only when the header names exactly one transfer-coding and that coding is
 // "chunked". A substring test would accept "notchunked" as well as chains like
@@ -209,7 +210,7 @@ bool is_chunked_only(std::string_view value) {
 }
 
 bool wants_incremental_body(const HttpRequest & request) {
-    if (request.path != kLiveIngestPath) {
+    if (request.path != kLiveTranscriptionPath && request.path != kLiveSpeechPath) {
         return false;
     }
     const auto it = request.headers.find("transfer-encoding");
