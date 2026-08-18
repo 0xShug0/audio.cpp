@@ -25,6 +25,7 @@ export interface CatalogEntry {
   load_options?: StringMap;
   session_options?: StringMap;
   request_options?: string[];
+  required_request_options?: string[];
   builtin_voices?: string[];
   default_voice?: string;
 }
