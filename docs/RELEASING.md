@@ -54,9 +54,3 @@ Notes:
    device (`ggml_cuda_init` / "found N CUDA devices"). GitHub CI runners have
    **no GPU**, so a green build does not prove GPU runtime attach — this check
    is required.
-
-## Optional CLI convenience (not required)
-
-For maintainers who prefer the terminal, `scripts/release.sh` wraps the same
-flow (`--watch` to monitor, `--dry-run` to build only). The GitHub UI flow
-above is equivalent.
