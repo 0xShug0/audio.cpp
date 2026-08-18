@@ -1689,6 +1689,16 @@ if (ENGINE_BUILD_TESTS)
         COMMAND chinese_normalization_test
     )
 
+    add_engine_unittest(index_tts_tn_corpus_test tests/unittests/test_index_tts_tn_corpus.cpp)
+    target_compile_definitions(index_tts_tn_corpus_test PRIVATE
+        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+    )
+
+    add_test(
+        NAME index_tts_tn_corpus_test
+        COMMAND index_tts_tn_corpus_test
+    )
+
     add_engine_unittest(unicode_normalization_test tests/unittests/test_unicode_normalization.cpp)
 
     add_test(
