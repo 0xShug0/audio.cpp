@@ -357,12 +357,24 @@ jobs:
             git tag "${TAG}"
             git push origin "${TAG}"
           fi
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.get-version.outputs.tag }}
-          name: ${{ needs.get-version.outputs.tag }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: assets/**
+      - name: Check for existing release
+        id: relstate
+        run: |
+          TAG="${{ needs.get-version.outputs.tag }}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Existing release (e.g. one the maintainer drafted and published):
+      # attach the built binaries only, preserving its pre-release flag and
+      # hand-written notes. --clobber allows rebuilding the same version.
+      - name: Upload binaries to existing release
+        if: ${{ steps.relstate.outputs.exists == 'true' }}
+        run: |
+          gh release upload "${{ needs.get-version.outputs.tag }}" assets/* --clobber --repo "$GITHUB_REPOSITORY"
+      # Newly-created tag with no release yet: create the release w/ notes.
+      - name: Create release
+        if: ${{ steps.relstate.outputs.exists != 'true' }}
+        run: |
+          gh release create "${{ needs.get-version.outputs.tag }}" assets/* --title "${{ needs.get-version.outputs.tag }}" --generate-notes --repo "$GITHUB_REPOSITORY"
