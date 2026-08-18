@@ -433,6 +433,77 @@ std::string normalize_index_tts_punctuation(std::string text) {
 }
 
 std::string normalize_english_numbers(std::string text) {
+    // URLs before anything else: "https://example.com" ->
+    // "https comma slash slash example dot com" (wetext en verbalizes the
+    // punctuation). The domain dots must not become decimal points later.
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\b(https?)://([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*))", std::regex_constants::icase),
+        [](const std::smatch & match) {
+            std::string domain = match[2].str();
+            return match[1].str() + " comma slash slash " +
+                   std::regex_replace(domain, std::regex(R"(\.)"), " dot ");
+        });
+    // Telephone runs: "135-4567-8900" -> digit-by-digit groups (wetext en).
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\b(\d{3})-(\d{4})-(\d{4})\b)"),
+        [](const std::smatch & match) {
+            return english_digits_individually(match[1].str()) + ", " +
+                   english_digits_individually(match[2].str()) + ", " +
+                   english_digits_individually(match[3].str());
+        });
+    // o'clock times: "3:00" -> "three,oh zero" (wetext en output, comma included).
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\b(\d{1,2}):00\b)"),
+        [](const std::smatch & match) {
+            return english_cardinal_from_digits(match[1].str()) + ",oh zero";
+        });
+    // Numeric dates: "2024/10/01" -> "the first of october twenty twenty four".
+    static const char * const kMonths[] = {
+        "january", "february", "march", "april", "may", "june",
+        "july", "august", "september", "october", "november", "december",
+    };
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\b(\d{4})/(\d{1,2})/(\d{1,2})\b)"),
+        [](const std::smatch & match) {
+            int64_t year = 0;
+            int64_t month = 0;
+            int64_t day = 0;
+            if (!parse_non_negative_i64(match[1].str(), year) ||
+                !parse_non_negative_i64(match[2].str(), month) || month < 1 || month > 12 ||
+                !parse_non_negative_i64(match[3].str(), day) || day < 1 || day > 31) {
+                return match[0].str();
+            }
+            return "the " + english_ordinal(day) + " of " + kMonths[month - 1] + " " +
+                   english_year(static_cast<int>(year));
+        });
+    // Currency: "$50" -> "fifty dollars".
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"(\$(\d+(?:\.\d+)?))"),
+        [](const std::smatch & match) {
+            std::string amount;
+            const std::string value = match[1].str();
+            const size_t dot = value.find('.');
+            if (dot == std::string::npos) {
+                amount = english_cardinal_from_digits(value);
+            } else {
+                amount = english_cardinal_from_digits(value.substr(0, dot)) + " point " +
+                         english_digits_individually(value.substr(dot + 1));
+            }
+            return amount + (value == "1" ? " dollar" : " dollars");
+        });
+    // Negative numbers: "-5 degrees" -> "negative five degrees". The minus is
+    // only a sign when not attached to a word/number ("GPT-5" stays intact).
+    text = normalize_english_regex(
+        std::move(text),
+        std::regex(R"((^|[^A-Za-z0-9])-(\d+))"),
+        [](const std::smatch & match) {
+            return match[1].str() + "negative " + english_cardinal_from_digits(match[2].str());
+        });
     text = normalize_english_dates(std::move(text));
     text = normalize_english_regex(
         std::move(text),

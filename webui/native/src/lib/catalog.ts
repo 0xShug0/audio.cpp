@@ -18,7 +18,7 @@ interface PackageSpec {
   family: string;
   packages?: Array<Omit<PackageEntry, 'family'>>;
   options?: {
-    request?: Array<{ name: string }>;
+    request?: Array<{ name: string; required?: boolean }>;
   };
   ui?: {
     builtin_voices?: string[];
@@ -130,6 +130,12 @@ function packageModelPath(entry: PackageEntry): string {
   if (entry.format === 'gguf' && entry.family === 'minimax_h3') {
     const entryName = entry.id.includes('int8_dit') ? 'dit_int8.gguf' : 'dit.gguf';
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith(`/${entryName}`));
+  } else if (entry.format === 'gguf' && entry.family === 'minimax_music3') {
+    // Multi-component package; the language_model_*.gguf matching the package
+    // precision is the entry file.
+    modelFile = entry.files?.find((file) =>
+      new RegExp(`/language_model_${entry.precision}\\.gguf$`).test(file.toLowerCase())) ||
+      entry.files?.find((file) => /\/language_model_[^/]*\.gguf$/.test(file.toLowerCase()));
   } else if (entry.format === 'gguf') {
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'));
   }
@@ -196,6 +202,9 @@ export const catalog = (rawCatalog.models as CatalogEntry[]).flatMap((entry) => 
     install_packages: choices,
     path: installPackage?.path || entry.path,
     request_options: spec?.options?.request?.map((option) => option.name),
+    required_request_options: spec?.options?.request
+      ?.filter((option) => option.required === true)
+      .map((option) => option.name),
     builtin_voices: spec?.ui?.builtin_voices,
     default_voice: spec?.ui?.default_voice
   }];
