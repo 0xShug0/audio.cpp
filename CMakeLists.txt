@@ -541,6 +541,18 @@ audiocpp_add_model(inflect_v2
         engine::models::inflect_v2::make_inflect_v2_loader
 )
 
+audiocpp_add_model(f5_tts
+    SOURCES
+        src/community_models/f5_tts/session.cpp
+    INCLUDES
+        engine/community_models/f5_tts/session.h
+    LOADERS
+        engine::models::f5_tts::make_f5_tts_loader
+    ALIASES
+        habibi
+        habibi_tts
+)
+
 audiocpp_add_model(minimax_h3
     SOURCES
         src/community_models/minimax_h3/assets.cpp

@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "family": "f5_tts",
+  "display_name": "F5-TTS",
+  "description": "Community F5-TTS flow-matching diffusion transformer for zero-shot voice cloning, including Arabic via the Habibi-TTS finetune (SWivid). Text conv conditioner, RoPE DiT, CFM sampler, Vocos vocoder. M0 scaffolding: inference not implemented yet.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "ar"
+  ],
+  "runtime": {
+    "tags": [
+      "server"
+    ]
+  },
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript matching the reference voice audio; required by F5-TTS zero-shot cloning.",
+        "required": false
+      },
+      {
+        "name": "cfg_strength",
+        "type": "float",
+        "description": "Classifier-free guidance strength; default 2.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 10.0,
+        "default": 2.0
+      },
+      {
+        "name": "sway_sampling_coef",
+        "type": "float",
+        "description": "Sway sampling coefficient for inference timesteps; default -1.0.",
+        "required": false,
+        "min": -5.0,
+        "max": 5.0,
+        "default": -1.0
+      },
+      {
+        "name": "speed",
+        "type": "float",
+        "description": "Speech speed multiplier applied via the F5 fix_duration parameter; default 1.0.",
+        "required": false,
+        "min": 0.5,
+        "max": 2.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Non-negative noise seed; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "SWivid/Habibi-TTS",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "habibi_unified",
+      "display_name": "Habibi-TTS Unified (Arabic, multi-dialect)",
+      "description": "Unified multi-dialect Arabic checkpoint from SWivid/Habibi-TTS.",
+      "default": true,
+      "format": "safetensors",
+      "precision": "orig",
+      "target_directory": "Habibi-TTS/Unified",
+      "files": [
+        "Habibi-TTS/Unified/model_200000.safetensors",
+        "Habibi-TTS/Unified/vocab.txt"
+      ],
+      "strip_prefix": "Habibi-TTS/Unified"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "habibi_unified",
+    "tags": [
+      "TTS",
+      "Clone"
+    ],
+    "docs": [
+      "docs/community_models/f5_tts.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:merged_XXXXXX.json",
+        "vocab": "model:vocab.txt"
+      },
+      "tensors": {
+        "transformer": {
+          "source": "model:model_200000.safetensors",
+          "prefix": "transformer"
+        },
+        "vocos_vocoder": {
+          "source": "model:vocos.safetensors",
+          "prefix": "vocos"
+        }
+      }
+    }
+  ]
+}
