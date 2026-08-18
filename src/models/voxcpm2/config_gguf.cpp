@@ -79,11 +79,32 @@ VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource &
 
     // Rope scaling (longrope for VoxCPM1)
     config.lm.rope_scaling.type = "longrope";
-    // GGUF doesn't have native float arrays, use defaults
     const int64_t head_dim = config.lm.hidden_size / config.lm.num_attention_heads;
     const int64_t factor_size = head_dim / 2;
-    config.lm.rope_scaling.long_factor.assign(factor_size, 1.0f);
-    config.lm.rope_scaling.short_factor.assign(factor_size, 1.0f);
+    // The GGUF stores the real longrope factor arrays as F32 metadata arrays
+    // (32 values for a 64-dim head, ~1.0004 to ~49.85 for VoxCPM1). Read them
+    // instead of the old identity fallback: identity factors silently degrade
+    // every RoPE computation across all four transformers.
+    auto short_factor =
+        source.optional_f32_array("voxcpm_lm_config_rope_scaling_short_factor");
+    auto long_factor =
+        source.optional_f32_array("voxcpm_lm_config_rope_scaling_long_factor");
+    if (short_factor &&
+        static_cast<int64_t>(short_factor->size()) != factor_size) {
+        throw std::runtime_error(
+            "voxcpm_lm_config_rope_scaling_short_factor must have head_dim / 2 "
+            "elements");
+    }
+    if (long_factor &&
+        static_cast<int64_t>(long_factor->size()) != factor_size) {
+        throw std::runtime_error(
+            "voxcpm_lm_config_rope_scaling_long_factor must have head_dim / 2 "
+            "elements");
+    }
+    config.lm.rope_scaling.short_factor =
+        short_factor.value_or(std::vector<float>(factor_size, 1.0f));
+    config.lm.rope_scaling.long_factor =
+        long_factor.value_or(std::vector<float>(factor_size, 1.0f));
     config.lm.rope_scaling.original_max_position_embeddings = 
         get_optional_i64("voxcpm_lm_config_rope_scaling_original_max_position_embeddings").value_or(2048);
 
