@@ -22,6 +22,7 @@ enum class QwenCausalDecoderLogitsMode {
 struct QwenDecoderHiddenConfig {
     QwenDecoderStackConfig stack;
     QwenCausalDecoderLogitsMode hidden_mode = QwenCausalDecoderLogitsMode::LastStep;
+    ggml_type static_cache_type = GGML_TYPE_F32;
 };
 
 struct QwenCausalDecoderConfig {
@@ -31,6 +32,7 @@ struct QwenCausalDecoderConfig {
     bool use_lm_head_bias = false;
     ggml_prec lm_head_precision = GGML_PREC_DEFAULT;
     std::optional<ggml_type> lm_head_input_type;
+    ggml_type static_cache_type = GGML_TYPE_F32;
 };
 
 struct QwenCausalDecoderWeights {
@@ -56,6 +58,12 @@ struct QwenDecoderHiddenStaticCacheOutputs {
     runtime::TransformerKVCache cache;
 };
 
+struct QwenDecoderHiddenBatchedStaticCacheOutputs {
+    core::TensorValue sequence;
+    core::TensorValue hidden;
+    runtime::TransformerBatchedKVCache cache;
+};
+
 struct QwenCausalDecoderOutputs {
     core::TensorValue sequence;
     core::TensorValue hidden;
@@ -68,6 +76,13 @@ struct QwenCausalDecoderStaticCacheOutputs {
     core::TensorValue hidden;
     core::TensorValue logits;
     runtime::TransformerKVCache cache;
+};
+
+struct QwenCausalDecoderBatchedStaticCacheOutputs {
+    core::TensorValue sequence;
+    core::TensorValue hidden;
+    core::TensorValue logits;
+    runtime::TransformerBatchedKVCache cache;
 };
 
 class QwenDecoderHiddenModule {
@@ -93,6 +108,16 @@ public:
         int64_t cache_steps,
         const core::TensorValue & attention_mask,
         const std::optional<core::TensorValue> & cache_slot = std::nullopt) const;
+
+    QwenDecoderHiddenBatchedStaticCacheOutputs build_static_cache_tail_batched(
+        core::ModuleBuildContext & ctx,
+        ggml_cgraph * graph,
+        const core::TensorValue & input,
+        const core::TensorValue & positions,
+        const QwenDecoderHiddenWeights & weights,
+        int64_t cache_steps,
+        const core::TensorValue & attention_mask,
+        const core::TensorValue & cache_slot) const;
 
 private:
     QwenDecoderHiddenConfig config_;
@@ -122,6 +147,16 @@ public:
         const core::TensorValue & attention_mask,
         const std::optional<core::TensorValue> & cache_slot = std::nullopt) const;
 
+    QwenCausalDecoderBatchedStaticCacheOutputs build_static_cache_tail_batched(
+        core::ModuleBuildContext & ctx,
+        ggml_cgraph * graph,
+        const core::TensorValue & input,
+        const core::TensorValue & positions,
+        const QwenCausalDecoderWeights & weights,
+        int64_t cache_steps,
+        const core::TensorValue & attention_mask,
+        const core::TensorValue & cache_slot) const;
+
 private:
     QwenCausalDecoderConfig config_;
 };
@@ -143,6 +178,14 @@ void write_qwen_causal_prefill_mask(
 void write_qwen_cached_step_mask(
     ggml_tensor * tensor,
     std::vector<ggml_fp16_t> & scratch,
+    int64_t mask_steps,
+    int64_t visible_prefix_steps,
+    int64_t current_slot);
+
+void write_qwen_batched_cached_step_mask(
+    ggml_tensor * tensor,
+    std::vector<ggml_fp16_t> & scratch,
+    int64_t batch_size,
     int64_t mask_steps,
     int64_t visible_prefix_steps,
     int64_t current_slot);

@@ -21,6 +21,23 @@ public:
     static const core::ModuleSchema & static_schema() noexcept;
 };
 
+struct LeakyReluConfig {
+    float negative_slope = 0.01F;
+};
+
+class LeakyReluModule {
+public:
+    explicit LeakyReluModule(LeakyReluConfig config = {});
+
+    const LeakyReluConfig & config() const noexcept;
+    const core::ModuleSchema & schema() const noexcept;
+    core::TensorValue build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    LeakyReluConfig config_;
+};
+
 class SigmoidModule {
 public:
     const core::ModuleSchema & schema() const noexcept;

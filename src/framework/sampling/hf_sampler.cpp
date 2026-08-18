@@ -386,13 +386,21 @@ int32_t HfTokenSampler::sample_from_processed_scores(
         int32_t best_token = -1;
         for (size_t index = 0; index < scratch.candidates_.size(); ++index) {
             const int32_t token = scratch.candidates_[index];
-            const float exponential = torch_cuda_tensor_iterator_exponential_element(
-                torch_state->seed,
-                static_cast<uint64_t>(scores.size()),
-                static_cast<uint64_t>(token),
-                torch_state->call_index,
-                torch_state->policy->multiprocessor_count,
-                torch_state->policy->max_threads_per_multiprocessor);
+            const float exponential = torch_state->use_offset_blocks
+                ? torch_cuda_tensor_iterator_exponential_element_at_offset(
+                      torch_state->seed,
+                      static_cast<uint64_t>(scores.size()),
+                      static_cast<uint64_t>(token),
+                      torch_state->offset_blocks,
+                      torch_state->policy->multiprocessor_count,
+                      torch_state->policy->max_threads_per_multiprocessor)
+                : torch_cuda_tensor_iterator_exponential_element(
+                      torch_state->seed,
+                      static_cast<uint64_t>(scores.size()),
+                      static_cast<uint64_t>(token),
+                      torch_state->call_index,
+                      torch_state->policy->multiprocessor_count,
+                      torch_state->policy->max_threads_per_multiprocessor);
             const double rank = scratch.weights_[index] / static_cast<double>(exponential);
             if (rank > best_rank) {
                 best_rank = rank;

@@ -628,7 +628,7 @@ Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy 
 - [GuideAnts](https://github.com/Elumenotion/GuideAnts) uses audio.cpp as the default local AI stack path for basic ASR and TTS, with planned reusable skills for audio.cpp scenarios and model configurations.
 - [audio.cpp-webui](https://github.com/kigner/audio.cpp-webui) provides a full-task Python/Gradio WebUI for audio.cpp, focused on browser-based model downloads and common TTS, ASR, voice conversion, diarization, music, and audio workflows.
 - [audio.cpp-hub](https://github.com/IIIIIllllIIIIIlllll/audio.cpp-hub) is a Web GUI for audio.cpp that packages model-oriented workflows around the native runtime.
-- [delusion audio.cpp wrappers](https://github.com/Tremeschin/delusion) provide Pythonic, strongly typed wrapper classes around audio.cpp usage, including model download/cache helpers and typed request surfaces.
+- [Delusion](https://github.com/BrokenSource/Delusion) provide Pythonic, strongly typed wrapper classes around audio.cpp usage, including model download/cache helpers and typed request surfaces.
 - [AudioCppTray](https://github.com/spicchio72/AudioCppTray) is a Windows tray management tool for `audiocpp_server.exe`, with start/stop/restart controls, notifications, log viewing, log rotation, and server configuration shortcuts.
 
 

@@ -21,6 +21,10 @@ void validate_config(const QwenCausalDecoderConfig & config) {
     if (config.stack.layers <= 0) {
         throw std::runtime_error("QwenCausalDecoderConfig requires a positive layer count");
     }
+    if (config.static_cache_type != GGML_TYPE_F32 && config.static_cache_type != GGML_TYPE_F16 &&
+        config.static_cache_type != GGML_TYPE_BF16) {
+        throw std::runtime_error("QwenCausalDecoderConfig static cache type must be f32, f16, or bf16");
+    }
 }
 
 void validate_hidden_config(const QwenDecoderHiddenConfig & config) {
@@ -30,12 +34,23 @@ void validate_hidden_config(const QwenDecoderHiddenConfig & config) {
     if (config.stack.layers <= 0) {
         throw std::runtime_error("QwenDecoderHiddenConfig requires a positive layer count");
     }
+    if (config.static_cache_type != GGML_TYPE_F32 && config.static_cache_type != GGML_TYPE_F16 &&
+        config.static_cache_type != GGML_TYPE_BF16) {
+        throw std::runtime_error("QwenDecoderHiddenConfig static cache type must be f32, f16, or bf16");
+    }
 }
 
 void validate_steps(int64_t steps, const char * label) {
     if (steps <= 0) {
         throw std::runtime_error(std::string(label) + " requires positive step count");
     }
+}
+
+runtime::TransformerKVCacheOptions transformer_cache_options(ggml_type type) {
+    runtime::TransformerKVCacheOptions out;
+    out.allow_f16_storage = type == GGML_TYPE_F16;
+    out.allow_bf16_storage = type == GGML_TYPE_BF16;
+    return out;
 }
 
 core::TensorValue select_hidden_steps(
@@ -53,6 +68,7 @@ QwenDecoderHiddenConfig hidden_config_from_causal(const QwenCausalDecoderConfig 
     QwenDecoderHiddenConfig out;
     out.stack = config.stack;
     out.hidden_mode = config.logits_mode;
+    out.static_cache_type = config.static_cache_type;
     return out;
 }
 
@@ -127,11 +143,11 @@ QwenDecoderHiddenStaticCacheOutputs QwenDecoderHiddenModule::build_static_cache_
     for (const auto & layer : weights.stack.layers) {
         cache_keys.push_back(core::make_tensor(
             ctx,
-            GGML_TYPE_F32,
+            config_.static_cache_type,
             core::TensorShape::from_dims({1, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
         cache_values.push_back(core::make_tensor(
             ctx,
-            GGML_TYPE_F32,
+            config_.static_cache_type,
             core::TensorShape::from_dims({1, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
         auto out = layer_module.build_with_static_cache_tail(
             ctx,
@@ -151,7 +167,81 @@ QwenDecoderHiddenStaticCacheOutputs QwenDecoderHiddenModule::build_static_cache_
     return {
         std::move(x),
         hidden,
-        runtime::TransformerKVCache(cache_steps, step_elems, std::move(cache_keys), std::move(cache_values)),
+        runtime::TransformerKVCache(
+            cache_steps,
+            step_elems,
+            std::move(cache_keys),
+            std::move(cache_values),
+            transformer_cache_options(config_.static_cache_type)),
+    };
+}
+
+QwenDecoderHiddenBatchedStaticCacheOutputs QwenDecoderHiddenModule::build_static_cache_tail_batched(
+    core::ModuleBuildContext & ctx,
+    ggml_cgraph * graph,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const QwenDecoderHiddenWeights & weights,
+    int64_t cache_steps,
+    const core::TensorValue & attention_mask,
+    const core::TensorValue & cache_slot) const {
+    if (graph == nullptr) {
+        throw std::runtime_error("QwenDecoderHiddenModule batched static-cache build requires a graph");
+    }
+    validate_steps(cache_steps, "QwenDecoderHiddenModule batched static-cache build");
+    if (input.shape.rank != 3 || input.shape.dims[0] <= 0 || input.shape.dims[1] != 1 ||
+        input.shape.dims[2] != config_.stack.hidden_size) {
+        throw std::runtime_error("QwenDecoderHiddenModule batched static-cache input shape must be [batch, 1, hidden]");
+    }
+    if (static_cast<int64_t>(weights.stack.layers.size()) != config_.stack.layers) {
+        throw std::runtime_error("QwenDecoderHiddenWeights layer count does not match config");
+    }
+
+    const int64_t batch_size = input.shape.dims[0];
+    const int64_t row_elems = config_.stack.num_key_value_heads * config_.stack.head_dim;
+    std::vector<core::TensorValue> cache_keys;
+    std::vector<core::TensorValue> cache_values;
+    cache_keys.reserve(weights.stack.layers.size());
+    cache_values.reserve(weights.stack.layers.size());
+
+    auto x = input;
+    const QwenDecoderLayerModule layer_module(qwen_decoder_layer_config_from_stack(config_.stack));
+    for (const auto & layer : weights.stack.layers) {
+        cache_keys.push_back(core::make_tensor(
+            ctx,
+            config_.static_cache_type,
+            core::TensorShape::from_dims(
+                {batch_size, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
+        cache_values.push_back(core::make_tensor(
+            ctx,
+            config_.static_cache_type,
+            core::TensorShape::from_dims(
+                {batch_size, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
+        auto out = layer_module.build_with_static_cache_tail_batched(
+            ctx,
+            graph,
+            x,
+            positions,
+            layer,
+            cache_keys.back(),
+            cache_values.back(),
+            cache_slot,
+            attention_mask);
+        x = out.output;
+    }
+
+    auto hidden = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false})
+                      .build(ctx, x, weights.final_norm);
+    return {
+        std::move(x),
+        hidden,
+        runtime::TransformerBatchedKVCache(
+            cache_steps,
+            batch_size,
+            row_elems,
+            std::move(cache_keys),
+            std::move(cache_values),
+            transformer_cache_options(config_.static_cache_type)),
     };
 }
 
@@ -223,6 +313,56 @@ QwenCausalDecoderStaticCacheOutputs QwenCausalDecoderModule::build_static_cache_
 
     auto hidden_out = QwenDecoderHiddenModule(hidden_config_from_causal(config_))
                           .build_static_cache_tail(
+                              ctx,
+                              graph,
+                              input,
+                              positions,
+                              hidden_weights_from_causal(weights),
+                              cache_steps,
+                              attention_mask,
+                              cache_slot);
+    auto logits_input = hidden_out.hidden;
+    if (config_.lm_head_input_type.has_value() && logits_input.type != *config_.lm_head_input_type) {
+        logits_input = core::wrap_tensor(
+            ggml_cast(ctx.ggml, logits_input.tensor, *config_.lm_head_input_type),
+            logits_input.shape,
+            *config_.lm_head_input_type);
+    }
+    const auto logits = LinearModule({
+                            config_.stack.hidden_size,
+                            config_.logits_size,
+                            config_.use_lm_head_bias,
+                            config_.lm_head_precision,
+                        })
+                            .build(ctx, logits_input, weights.lm_head);
+    return {
+        std::move(hidden_out.sequence),
+        hidden_out.hidden,
+        logits,
+        std::move(hidden_out.cache),
+    };
+}
+
+QwenCausalDecoderBatchedStaticCacheOutputs QwenCausalDecoderModule::build_static_cache_tail_batched(
+    core::ModuleBuildContext & ctx,
+    ggml_cgraph * graph,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const QwenCausalDecoderWeights & weights,
+    int64_t cache_steps,
+    const core::TensorValue & attention_mask,
+    const core::TensorValue & cache_slot) const {
+    if (graph == nullptr) {
+        throw std::runtime_error("QwenCausalDecoderModule batched static-cache build requires a graph");
+    }
+    validate_steps(cache_steps, "QwenCausalDecoderModule batched static-cache build");
+    if (input.shape.rank != 3 || input.shape.dims[0] <= 0 || input.shape.dims[1] != 1 ||
+        input.shape.dims[2] != config_.stack.hidden_size) {
+        throw std::runtime_error("QwenCausalDecoderModule batched static-cache input shape must be [batch, 1, hidden]");
+    }
+
+    auto hidden_out = QwenDecoderHiddenModule(hidden_config_from_causal(config_))
+                          .build_static_cache_tail_batched(
                               ctx,
                               graph,
                               input,
@@ -354,6 +494,47 @@ void write_qwen_cached_step_mask(
         scratch[static_cast<size_t>(i)] = visible;
     }
     scratch[static_cast<size_t>(current_slot)] = visible;
+    ggml_backend_tensor_set(tensor, scratch.data(), 0, scratch.size() * sizeof(ggml_fp16_t));
+}
+
+void write_qwen_batched_cached_step_mask(
+    ggml_tensor * tensor,
+    std::vector<ggml_fp16_t> & scratch,
+    int64_t batch_size,
+    int64_t mask_steps,
+    int64_t visible_prefix_steps,
+    int64_t current_slot) {
+    if (tensor == nullptr) {
+        throw std::runtime_error("write_qwen_batched_cached_step_mask requires a tensor");
+    }
+    if (batch_size <= 0) {
+        throw std::runtime_error("write_qwen_batched_cached_step_mask requires positive batch size");
+    }
+    validate_steps(mask_steps, "write_qwen_batched_cached_step_mask");
+    if (visible_prefix_steps < 0 || visible_prefix_steps > mask_steps) {
+        throw std::runtime_error("write_qwen_batched_cached_step_mask visible prefix is out of range");
+    }
+    if (current_slot < 0 || current_slot >= mask_steps) {
+        throw std::runtime_error("write_qwen_batched_cached_step_mask current slot is out of range");
+    }
+    const auto masked = ggml_fp32_to_fp16(-INFINITY);
+    const auto visible = ggml_fp32_to_fp16(0.0F);
+    const size_t row_size = static_cast<size_t>(mask_steps);
+    const size_t total_size = static_cast<size_t>(batch_size) * row_size;
+    if (scratch.size() != total_size) {
+        scratch.resize(total_size);
+    }
+    for (int64_t batch = 0; batch < batch_size; ++batch) {
+        const size_t offset = static_cast<size_t>(batch) * row_size;
+        std::fill(
+            scratch.begin() + static_cast<std::ptrdiff_t>(offset),
+            scratch.begin() + static_cast<std::ptrdiff_t>(offset + row_size),
+            masked);
+        for (int64_t i = 0; i < visible_prefix_steps; ++i) {
+            scratch[offset + static_cast<size_t>(i)] = visible;
+        }
+        scratch[offset + static_cast<size_t>(current_slot)] = visible;
+    }
     ggml_backend_tensor_set(tensor, scratch.data(), 0, scratch.size() * sizeof(ggml_fp16_t));
 }
 

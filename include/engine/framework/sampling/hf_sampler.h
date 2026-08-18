@@ -23,6 +23,8 @@ struct HfTorchSamplingState {
     const TorchCudaSamplingPolicy * policy = nullptr;
     uint64_t seed = 0;
     uint64_t call_index = 0;
+    uint64_t offset_blocks = 0;
+    bool use_offset_blocks = false;
 };
 
 class HfSamplerScratch {

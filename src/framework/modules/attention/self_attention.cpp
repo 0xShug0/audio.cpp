@@ -1,8 +1,77 @@
 #include "attention_internal.h"
 
+#include "engine/framework/modules/attention/grouped_query_attention.h"
+
 namespace engine::modules {
 
 using namespace attention::internal;
+
+namespace {
+
+void require_packed_self_attention_config(const AttentionConfig & config) {
+    if (!config.use_packed_qkv) {
+        throw std::runtime_error("SelfAttentionModule packed QKV path requires use_packed_qkv");
+    }
+}
+
+LinearWeights require_packed_qkv_weights(const AttentionWeights & weights, bool use_bias) {
+    if (!weights.qkv_weight.has_value()) {
+        throw std::runtime_error("SelfAttentionModule packed QKV path requires qkv_weight");
+    }
+    if (use_bias && !weights.qkv_bias.has_value()) {
+        throw std::runtime_error("SelfAttentionModule packed QKV path requires qkv_bias when bias is enabled");
+    }
+    return {*weights.qkv_weight, weights.qkv_bias};
+}
+
+struct PackedQkvHeads {
+    core::TensorValue q;
+    core::TensorValue k;
+    core::TensorValue v;
+};
+
+PackedQkvHeads build_packed_qkv_heads(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const AttentionConfig & config,
+    const AttentionWeights & weights) {
+    const int64_t head_dim = config.hidden_size / config.num_heads;
+    auto qkv = LinearModule({
+        config.hidden_size,
+        3 * config.hidden_size,
+        config.use_bias,
+        config.projection_precision,
+    }).build(ctx, input, require_packed_qkv_weights(weights, config.use_bias));
+
+    auto q = SliceModule({2, 0, config.hidden_size}).build(ctx, qkv);
+    q = reshape_heads(ctx, ensure_contiguous_layout(ctx, q), config.num_heads, head_dim);
+    auto k = SliceModule({2, config.hidden_size, config.hidden_size}).build(ctx, qkv);
+    k = reshape_heads(ctx, ensure_contiguous_layout(ctx, k), config.num_heads, head_dim);
+    auto v = SliceModule({2, 2 * config.hidden_size, config.hidden_size}).build(ctx, qkv);
+    v = reshape_heads(ctx, ensure_contiguous_layout(ctx, v), config.num_heads, head_dim);
+    return {q, k, v};
+}
+
+core::TensorValue project_attention_output(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & context,
+    const core::TensorShape & input_shape,
+    const AttentionConfig & config,
+    const AttentionWeights & weights) {
+    auto output = ensure_contiguous_layout(ctx, context);
+    output = core::reshape_tensor(
+        ctx,
+        output,
+        core::TensorShape::from_dims({input_shape.dims[0], input_shape.dims[1], config.hidden_size}));
+    return LinearModule({
+        config.hidden_size,
+        config.hidden_size,
+        config.use_bias,
+        config.projection_precision,
+    }).build(ctx, output, make_linear_weights(weights.out_weight, weights.out_bias));
+}
+
+}  // namespace
 
 SelfAttentionModule::SelfAttentionModule(AttentionConfig config) : config_(config) {
     validate_attention_config(config_);
@@ -20,7 +89,86 @@ core::TensorValue SelfAttentionModule::build(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const AttentionWeights & weights) const {
-    return build_attention_impl(ctx, input, input, config_, require_attention_weights(weights, config_.use_bias));
+    return build(ctx, input, weights, std::nullopt);
+}
+
+core::TensorValue SelfAttentionModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const AttentionWeights & weights,
+    const std::optional<core::TensorValue> & attention_mask) const {
+    if (!config_.use_packed_qkv) {
+        if (attention_mask.has_value()) {
+            throw std::runtime_error("SelfAttentionModule attention_mask requires packed QKV path");
+        }
+        return build_attention_impl(ctx, input, input, config_, require_attention_weights(weights, config_.use_bias));
+    }
+    require_packed_self_attention_config(config_);
+    validate_sequence_input(input, config_.hidden_size, "input");
+    const int64_t head_dim = config_.hidden_size / config_.num_heads;
+    const auto qkv = build_packed_qkv_heads(ctx, input, config_, weights);
+    auto q_heads = permute_tensor(ctx, qkv.q, {0, 2, 1, 3});
+    q_heads = ensure_contiguous_layout(ctx, q_heads);
+    auto k_heads = permute_tensor(ctx, qkv.k, {0, 2, 1, 3});
+    auto v_heads = permute_tensor(ctx, qkv.v, {0, 2, 1, 3});
+    core::TensorValue context;
+    if (attention_mask.has_value()) {
+        context = GroupedQueryAttentionModule({
+            head_dim,
+            GroupedQueryAttentionLowering::FlashGroupedViewKV,
+            config_.attention_precision,
+            config_.causal ? AttentionCausality::Causal : AttentionCausality::NonCausal,
+        }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
+    } else {
+        auto kt = permute_tensor(ctx, k_heads, {0, 1, 3, 2});
+        auto scores = MatMulModule().build(ctx, q_heads, kt);
+        if (config_.causal) {
+            scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
+        }
+        scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(head_dim))), scores.shape, GGML_TYPE_F32);
+        auto probs = SoftmaxModule().build(ctx, scores);
+        context = MatMulModule().build(ctx, probs, v_heads);
+        context = permute_tensor(ctx, context, {0, 2, 1, 3});
+    }
+    return project_attention_output(ctx, context, input.shape, config_, weights);
+}
+
+StreamingAttentionOutputs SelfAttentionModule::build_cached_tail(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const AttentionWeights & weights,
+    const core::TensorValue & cache_key,
+    const core::TensorValue & cache_value,
+    const core::TensorValue & cache_slot,
+    const core::TensorValue & attention_mask,
+    FastKVSetRowsMode set_rows_mode) const {
+    require_packed_self_attention_config(config_);
+    if (!config_.causal) {
+        throw std::runtime_error("SelfAttentionModule cached packed tail requires causal attention");
+    }
+    validate_sequence_input(input, config_.hidden_size, "input");
+    const int64_t head_dim = config_.hidden_size / config_.num_heads;
+    auto qkv = build_packed_qkv_heads(ctx, input, config_, weights);
+    qkv.k = ensure_contiguous_layout(ctx, qkv.k);
+    qkv.v = ensure_contiguous_layout(ctx, qkv.v);
+    const FastKVSetRowsModule set_rows({set_rows_mode});
+    auto updated_key = set_rows.build(ctx, cache_key, qkv.k, cache_slot);
+    auto updated_value = set_rows.build(ctx, cache_value, qkv.v, cache_slot);
+    auto q_heads = permute_tensor(ctx, qkv.q, {0, 2, 1, 3});
+    q_heads = ensure_contiguous_layout(ctx, q_heads);
+    auto k_heads = permute_tensor(ctx, updated_key, {0, 2, 1, 3});
+    auto v_heads = permute_tensor(ctx, updated_value, {0, 2, 1, 3});
+    auto context = GroupedQueryAttentionModule({
+        head_dim,
+        GroupedQueryAttentionLowering::FlashGroupedViewKV,
+        config_.attention_precision,
+        AttentionCausality::Causal,
+    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
+    return {
+        project_attention_output(ctx, context, input.shape, config_, weights),
+        updated_key,
+        updated_value,
+    };
 }
 
 const core::ModuleSchema & SelfAttentionModule::static_schema() noexcept {

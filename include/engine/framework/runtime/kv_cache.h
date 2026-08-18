@@ -70,6 +70,62 @@ private:
     std::vector<LayerCache> layers_;
 };
 
+struct BatchedKVLayerState {
+    int64_t valid_steps = 0;
+    std::vector<float> key;
+    std::vector<float> value;
+};
+
+struct TransformerBatchedKVState {
+    int64_t batch_size = 0;
+    int64_t current_end = 0;
+    std::vector<BatchedKVLayerState> layers;
+};
+
+class TransformerBatchedKVCache {
+public:
+    TransformerBatchedKVCache() = default;
+    TransformerBatchedKVCache(
+        int64_t cache_steps,
+        int64_t batch_size,
+        int64_t row_elems,
+        std::vector<core::TensorValue> keys,
+        std::vector<core::TensorValue> values);
+    TransformerBatchedKVCache(
+        int64_t cache_steps,
+        int64_t batch_size,
+        int64_t row_elems,
+        std::vector<core::TensorValue> keys,
+        std::vector<core::TensorValue> values,
+        TransformerKVCacheOptions options);
+
+    void import_state(const TransformerBatchedKVState & state);
+    TransformerBatchedKVState export_state() const;
+
+    void advance_after_direct_append(int64_t steps);
+
+    int64_t batch_size() const noexcept;
+    int64_t valid_steps() const noexcept;
+    int64_t current_end() const noexcept;
+    int64_t cache_steps() const noexcept;
+
+private:
+    struct LayerCache {
+        core::TensorValue key_tensor;
+        core::TensorValue value_tensor;
+        std::vector<float> import_key_scratch;
+        std::vector<float> import_value_scratch;
+    };
+
+    int64_t cache_steps_ = 0;
+    int64_t batch_size_ = 0;
+    int64_t row_elems_ = 0;
+    int64_t valid_steps_ = 0;
+    int64_t current_end_ = 0;
+    TransformerKVCacheOptions options_;
+    std::vector<LayerCache> layers_;
+};
+
 core::TensorValue view_transformer_kv_cache_steps(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & cache,

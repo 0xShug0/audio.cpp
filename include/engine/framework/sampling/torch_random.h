@@ -81,4 +81,12 @@ float torch_cuda_tensor_iterator_exponential_element(
     int64_t multiprocessor_count,
     int64_t max_threads_per_multiprocessor);
 
+float torch_cuda_tensor_iterator_exponential_element_at_offset(
+    uint64_t seed,
+    uint64_t total_elements,
+    uint64_t element_index,
+    uint64_t offset_blocks,
+    int64_t multiprocessor_count,
+    int64_t max_threads_per_multiprocessor);
+
 }  // namespace engine::sampling

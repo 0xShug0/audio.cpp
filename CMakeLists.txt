@@ -327,6 +327,7 @@ add_library(engine_core OBJECT
     src/framework/modules/speech_encoders/whisper_embedding.cpp
     src/framework/modules/speech_encoders/whisper_frontend.cpp
     src/framework/modules/speech_encoders/campplus_encoder.cpp
+    src/framework/modules/codecs/nemo_nano_codec.cpp
     src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
     src/framework/modules/vocoders/bigvgan_vocoder.cpp
     src/framework/modules/vocoders/hift_vocoder.cpp
