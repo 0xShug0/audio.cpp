@@ -2,41 +2,38 @@
 #
 # Ported from llama.cpp's release workflow and stripped to the backends
 # audio.cpp ships: CPU, CUDA, Vulkan, Metal (ROCm kept as best-effort,
-# disabled like llama.cpp). Naming follows llama.cpp (get-tag-name -> b<N>),
-# Windows CUDA uses the GGML_BACKEND_DL model so the CUDA backend is shipped
-# once as ggml-cuda.dll (thin cli/server/gguf shells) with the heavy CUDA
-# runtime DLLs in a separate cudart...zip, and the release job publishes.
+# disabled like llama.cpp). Windows CUDA uses the GGML_BACKEND_DL model so the
+# CUDA backend is shipped once as ggml-cuda.dll (thin cli/server/gguf shells)
+# with the heavy CUDA runtime DLLs in a separate cudart...zip, and the release
+# job publishes.
 #
-# Triggers on manual dispatch or a push to `main` touching source files. A
-# commit message containing "[no release]" skips the release (same gate as
-# llama.cpp). Publishing is gated to `main`, so branch validation runs build
-# + upload artifacts without creating a release/tag.
+# Semantic-version, tag-driven releases. The workflow runs when a `v*` (semver)
+# tag is pushed (drafting a Release and Publishing it) or when run manually
+# from the Actions UI with an explicit version. Publishing attaches the built
+# binaries to that version's GitHub Release. There is NO auto-release on every
+# push to `main`.
 
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Semantic version to release, e.g. 1.2.0 or v1.2.0 (used for manual runs; tag-triggered runs use the pushed tag).'
+        required: true
+        default: ''
+        type: string
       publish:
-        description: 'Publish a GitHub Release (only effective on main). Leave checked for a normal release; uncheck to build binaries without publishing.'
+        description: 'Publish a GitHub Release after the build. Leave unchecked for a build-only dry run.'
         required: false
-        default: true
+        default: false
         type: boolean
   push:
-    branches:
-      - main
-    paths:
-      - '**/CMakeLists.txt'
-      - '**/*.h'
-      - '**/*.hpp'
-      - '**/*.cpp'
-      - '**/*.cu'
-      - '**/*.cuh'
-      - '**/*.metal'
+    tags:
+      - 'v*'
 
 env:
   GH_TOKEN: ${{ github.token }}
-  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
   BUILD_TARGETS: audiocpp_cli audiocpp_server audiocpp_gguf
   VULKAN_VERSION: '1.4.357.0'
   CMAKE_ARGS: "-DAUDIOCPP_DEPLOYMENT_BUILD=ON -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_CUDA_GRAPHS=ON"
@@ -52,34 +49,34 @@ jobs:
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
     steps:
+      # The only triggers are a manually-run workflow or a pushed `v*` tag -
+      # both are intentional, so always proceed.
       - id: check
-        env:
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            if echo "$COMMIT_MESSAGE" | grep -q '\[no release\]'; then
-              echo "should_release=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "should_release=true" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: echo "should_release=true" >> "$GITHUB_OUTPUT"
 
   get-version:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.tag.outputs.name }}
+      tag: ${{ steps.version.outputs.tag }}
     needs: check-release
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - id: tag
-        uses: ./.github/actions/get-tag-name
+      - name: Resolve release tag
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            TAG="${{ inputs.version }}"
+          else
+            echo "::error::No semver tag or version provided (push a v* tag, or run manually with a version)."
+            exit 1
+          fi
+          [[ "$TAG" == v* ]] || TAG="v${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
   macos-metal:
     name: macOS (${{ matrix.build }})
@@ -338,7 +335,7 @@ jobs:
       - windows-cpu
       - windows-vulkan
       - windows-cuda
-    if: ${{ needs.check-release.outputs.should_release == 'true' && github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.publish == 'true') }}
+    if: ${{ needs.check-release.outputs.should_release == 'true' && (github.ref_type == 'tag' || inputs.publish == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

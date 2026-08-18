@@ -1,24 +1,29 @@
 # Releasing audio.cpp prebuilt binaries
 
-Everything is driven from the **GitHub Actions UI** — no command line needed.
-Building + publishing a release is a single click; a dry run is a check-box
-away. Publishing is gated to `main`.
+Everything is driven from the **GitHub UI** — no command line needed. Releases
+are **semantic-version and tag-driven**: there is no auto-release on pushes to
+`main`. You release by tagging a version; the built binaries are then attached
+to that version's Release.
 
-## Release via the GitHub UI (recommended)
+## Release a version (recommended)
 
-1. Open the repository on GitHub.
-2. Go to the **Actions** tab.
-3. In the left sidebar pick **Release**.
-4. Click **Run workflow** (top right).
-   - **Branch:** keep `main`.
-   - **Publish a GitHub Release:** leave it **checked** for a normal release.
-     Uncheck it to build the binaries without publishing (a dry run).
-5. Click **Run workflow** → wait for `Create release` to finish (~1–2 h; the
-   Windows CUDA jobs dominate).
+1. Open the repository → **Releases** → **Draft a new release**.
+2. **Choose a tag** → create a new `v*` tag, e.g. `v1.2.0` (or `v1.2.0-rc1`).
+3. Add a title/notes; check **"Set as a pre-release"** if it's a candidate.
+4. **Publish release.**
 
-When it completes, the new GitHub Release appears on the **Releases** page
-with all prebuilt binaries attached. The tag is `b<N>` (a monotonic build
-number derived from commit count).
+Publishing pushes the tag, which starts the build. When it finishes (~1–2 h;
+the Windows CUDA jobs dominate), the prebuilt binaries are attached to that
+Release.
+
+## Build a version without publishing (dry run)
+
+1. **Actions** tab → **Release** → **Run workflow**.
+2. **Version:** enter `1.2.0` (or `v1.2.0`).
+3. Leave the **Publish a GitHub Release** box **unchecked**.
+4. **Run workflow** → builds all backends and uploads them as workflow
+   artifacts, but creates no tag or Release. Use this to validate before
+   cutting a release.
 
 ## What gets shipped
 
@@ -41,10 +46,11 @@ Notes:
 
 ## When the workflow runs
 
-- **Push to `main`** touching source/CMake files → builds **and** publishes.
-- **Manual run from the Actions UI** → builds; publishes if **Publish** is
-  checked (effective only on `main`).
-- A commit message containing `[no release]` skips the release entirely.
+- **Pushing a `v*` tag** (e.g. by drafting + Publishing a Release) → builds and
+  attaches the binaries to that tag's Release.
+- **Manual run from the Actions UI** (with a version) → builds; publishes only
+  if **Publish** is checked.
+- `main` pushes do **not** trigger a release.
 
 ## Verification
 
