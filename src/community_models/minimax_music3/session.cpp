@@ -49,7 +49,7 @@ std::filesystem::path resolve_component_gguf_path(
     if (path.extension() != ".gguf") {
         throw std::runtime_error(std::string(option_name) + " must point to a GGUF file");
     }
-    return std::filesystem::weakly_canonical(path);
+    return path;
 }
 
 std::shared_ptr<const MiniMaxMusic3Assets> select_component_assets(
