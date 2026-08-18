@@ -242,10 +242,10 @@ jobs:
         include:
           - cuda: '12.4.1'
             label: '12.4'
-            cuda_archs: '70;75;80;86;89;90'
+            cuda_archs: '70-virtual;75-virtual;80-virtual;86-real;89-real;90-virtual'
           - cuda: '13.3.0'
             label: '13.3'
-            cuda_archs: '75;80;86;89;90;120'
+            cuda_archs: '75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -291,12 +291,15 @@ jobs:
         # (llama's step ends on the successful 7z). Mirror that here -- copy
         # from whichever dir exists and terminate on exit 0. The trailing guard
         # only trips if NO cudart was copied at all (a broken/empty toolkit).
+        # cufft64_*.dll is included because engine_runtime links CUDA::cufft
+        # for its CUDA inverse-STFT kernel (CMakeLists.txt).
         run: |
           $dst = "build\bin\cudart"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          robocopy "$env:CUDA_PATH\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          robocopy "$env:CUDA_PATH\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          robocopy "$env:CUDA_PATH\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          $dlls = "cudart64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll", "cufft64_*.dll"
+          robocopy "$env:CUDA_PATH\bin" $dst $dlls
+          robocopy "$env:CUDA_PATH\lib" $dst $dlls
+          robocopy "$env:CUDA_PATH\bin\x64" $dst $dlls
           if (-not (Get-ChildItem -Path $dst -Filter 'cudart64_*.dll' -ErrorAction SilentlyContinue)) {
             Write-Error "CUDA runtime DLLs were not found under $env:CUDA_PATH"
             exit 1
