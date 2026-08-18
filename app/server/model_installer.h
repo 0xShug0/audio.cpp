@@ -6,10 +6,10 @@
 
 namespace minitts::server {
 
-// Runs the repository model manager outside the request thread.  The native UI
-// owns the workflow and status display. Normal packages use model_manager_v2;
-// requests with converter inputs use the deprecated manager until those legacy
-// preparation workflows have migrated to package specs.
+// Runs model package work outside the request thread. Normal package downloads,
+// inventory, version checks, cancellation, cleanup, and uninstall are native C++.
+// Requests with explicit converter inputs retain the deprecated Python helper
+// until those checkpoint-conversion workflows migrate to native tools.
 class ModelInstaller {
 public:
     ModelInstaller(std::filesystem::path repository_root, std::filesystem::path models_root);

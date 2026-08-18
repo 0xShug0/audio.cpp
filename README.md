@@ -144,6 +144,19 @@ Use `tools/model_manager_v2.py` for normal model downloads. It reads
 `model_specs/*.json` and installs the default package for each family, preferring
 ready-to-use GGUF packages when they are available.
 
+Native builds configured with `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` also
+provide `audiocpp_model_manager`, a standalone headless
+frontend over the same reusable C++ package-management library used by the
+server and embedded WebUI. It supports list, info, install, clean, and remove
+without starting `audiocpp_server`; this is the preferred native path for CLI,
+Docker, remote provisioning, and other scripted environments. The Python v2
+manager remains available as an alternative during migration.
+
+```bash
+audiocpp_model_manager list
+audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-dir models
+```
+
 The old safetensors/converter catalog has been renamed to
 `tools/model_manager_deprecated.py`. Use it only for legacy model layouts that
 have not moved to spec-backed GGUF packages yet.
@@ -384,6 +397,8 @@ Run with `--backend hip` (`rocm` is accepted as an alias). For GPU target select
 | `ENGINE_BUILD_EXAMPLES` | Build example binaries. | `OFF` |
 | `ENGINE_BUILD_TESTS` | Build framework unit tests. | `OFF` |
 | `ENGINE_BUILD_WARMBENCH` | Build warmbench helper binaries. | `OFF` |
+| `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER` | Build the standalone native model manager and enable server-side WebUI downloads/install management. This opt-in feature builds the HTTP/TLS dependency. | `OFF` |
+| `AUDIOCPP_USE_SYSTEM_OPENSSL` | Use system OpenSSL instead of bundled BoringSSL when native model management is enabled. | `OFF` |
 | `AUDIOCPP_DEPLOYMENT_BUILD` | Compile package specs into CLI/server binaries for standalone GGUF and package-spec fallback loading. Script builds expose this as `--deployment-build` on Linux/macOS and `-DeploymentBuild` on Windows. | `OFF` |
 | `AUDIOCPP_MODEL_SET` | Model composite to build: `full`, `core`, or `custom`. Script builds expose this as `--model-set` on Linux/macOS and `-ModelSet` on Windows. | `full` |
 | `AUDIOCPP_MODELS` | Comma or semicolon separated model target names when `AUDIOCPP_MODEL_SET=custom`, such as `qwen3_tts,pocket_tts,qwen3_asr`. Script builds expose this as `--models` on Linux/macOS and `-Models` on Windows. | empty |
