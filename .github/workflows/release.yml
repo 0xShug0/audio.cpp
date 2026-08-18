@@ -242,10 +242,10 @@ jobs:
         include:
           - cuda: '12.4.1'
             label: '12.4'
-            cuda_archs: '70-virtual;75-virtual;80-virtual;86-real;89-real;90-virtual'
+            cuda_archs: '70;75;80;86;89;90'
           - cuda: '13.3.0'
             label: '13.3'
-            cuda_archs: '75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real'
+            cuda_archs: '75;80;86;89;90;120'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -338,7 +338,7 @@ jobs:
       - windows-cpu
       - windows-vulkan
       - windows-cuda
-    if: ${{ github.ref == 'refs/heads/main' && needs.check-release.outputs.should_release == 'true' }}
+    if: ${{ needs.check-release.outputs.should_release == 'true' && github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.publish == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
