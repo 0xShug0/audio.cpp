@@ -1,19 +1,27 @@
-# audio.cpp — release.yml
+# audio.cpp - release.yml
 #
-# Modeled on llama.cpp's release workflow but stripped to the backends audio.cpp
-# ships (CPU, CUDA, Vulkan, Metal). Windows artifacts are packed with 7-Zip (zip
-# is not on Windows runners); Linux/macOS use tar. Windows CUDA builds are a
-# 2-version matrix (12.4 / 13.3) that configure CMake directly with OpenMP off
-# (audio.cpp's build_windows.ps1 hard-requires OpenMP and asserts on the CUDA
-# toolchain), matching how llama.cpp decouples backend builds.
+# Ported from llama.cpp's release workflow and stripped to the backends
+# audio.cpp ships: CPU, CUDA, Vulkan, Metal (ROCm kept as best-effort,
+# disabled like llama.cpp). Naming follows llama.cpp (get-tag-name -> b<N>),
+# Windows CUDA uses the GGML_BACKEND_DL model so the CUDA backend is shipped
+# once as ggml-cuda.dll (thin cli/server/gguf shells) with the heavy CUDA
+# runtime DLLs in a separate cudart...zip, and the release job publishes.
 #
-# Triggers on manual dispatch or a push to `main` touching source files. A commit
-# message containing "[no release]" skips the release (same gate as llama.cpp).
+# Triggers on manual dispatch or a push to `main` touching source files. A
+# commit message containing "[no release]" skips the release (same gate as
+# llama.cpp). Publishing is gated to `main`, so branch validation runs build
+# + upload artifacts without creating a release/tag.
 
 name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Create a GitHub release (only effective on main)'
+        required: true
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -28,10 +36,12 @@ on:
 
 env:
   GH_TOKEN: ${{ github.token }}
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
   BUILD_TARGETS: audiocpp_cli audiocpp_server audiocpp_gguf
   VULKAN_VERSION: '1.4.357.0'
   CMAKE_ARGS: "-DAUDIOCPP_DEPLOYMENT_BUILD=ON -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_CUDA_GRAPHS=ON"
 
+# note: run this workflow one at a time for better cache reuse
 concurrency:
   group: release
   queue: max
@@ -61,21 +71,16 @@ jobs:
   get-version:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.tag.outputs.name }}
     needs: check-release
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - id: version
-        run: |
-          TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
-          if [[ -n "$TAG" ]]; then
-            echo "version=${TAG}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=$(git rev-parse --short HEAD)-$(date +%s)" >> "$GITHUB_OUTPUT"
-          fi
+      - id: tag
+        uses: ./.github/actions/get-tag-name
+
   macos-metal:
     name: macOS (${{ matrix.build }})
     needs: [check-release, get-version]
@@ -109,11 +114,11 @@ jobs:
       - name: Pack
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
-          tar -czvf audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal.tar.gz -C build/bin .
+          tar -czvf audio-${{ needs.get-version.outputs.tag }}-bin-macos-${{ matrix.arch }}-metal.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal
-          path: audio-${{ needs.get-version.outputs.version }}-bin-macos-${{ matrix.arch }}-metal.tar.gz
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-macos-${{ matrix.arch }}-metal
+          path: audio-${{ needs.get-version.outputs.tag }}-bin-macos-${{ matrix.arch }}-metal.tar.gz
 
   linux-cpu:
     name: Ubuntu x64 (CPU)
@@ -135,11 +140,11 @@ jobs:
       - name: Pack
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
-          tar -czf audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-cpu.tar.gz -C build/bin .
+          tar -czf audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-cpu
-          path: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-cpu.tar.gz
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu
+          path: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu.tar.gz
 
   linux-vulkan:
     name: Ubuntu x64 (Vulkan)
@@ -161,11 +166,12 @@ jobs:
       - name: Pack
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
-          tar -czf audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan.tar.gz -C build/bin .
+          tar -czf audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan
-          path: audio-${{ needs.get-version.outputs.version }}-bin-ubuntu-x64-vulkan.tar.gz
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan
+          path: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan.tar.gz
+
   windows-cpu:
     name: Windows x64 (CPU)
     needs: [check-release, get-version]
@@ -186,11 +192,11 @@ jobs:
         working-directory: build/windows-cpu-release/bin
         run: |
           cp ..\..\..\LICENSE . 2>$null
-          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cpu.zip *
+          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu.zip *
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cpu
-          path: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cpu.zip
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu
+          path: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu.zip
 
   windows-vulkan:
     name: Windows x64 (Vulkan)
@@ -219,11 +225,11 @@ jobs:
         working-directory: build/windows-vulkan-release/bin
         run: |
           cp ..\..\..\LICENSE . 2>$null
-          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan.zip *
+          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-vulkan.zip *
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan
-          path: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-vulkan.zip
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-vulkan
+          path: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-vulkan.zip
 
   windows-cuda:
     name: 'Windows x64 (CUDA ${{ matrix.label }})'
@@ -249,15 +255,15 @@ jobs:
           method: 'local'
       - name: Configure + Build (OpenMP off)
         shell: cmd
-        # Direct CMake (bypass build_windows.ps1, which hard-requires OpenMP and
-        # aborts under the CUDA toolchain). OpenMP off matches how llama.cpp
-        # builds the CUDA path. vcvarsall.bat puts cl.exe on PATH for nvcc.
+        # Direct CMake (bypasses build_windows.ps1, which hard-requires OpenMP and
+        # asserts under the CUDA toolchain). OpenMP off matches llama.cpp's CUDA
+        # path. vcvarsall.bat puts cl.exe on PATH for nvcc.
         #
         # ENGINE_ENABLE_CPU_ALL_VARIANTS flips BUILD_SHARED_LIBS=ON +
-        # GGML_BACKEND_DL=ON (audio.cpp/CMakeLists.txt), thus building the CUDA
-        # backend once as ggml-cuda.dll and keeping cli/server/gguf as thin
-        # shells that load backends at runtime -- the same distribution model
-        # llama.cpp uses. CUDA kernels are no longer duplicated into 3 exes.
+        # GGML_BACKEND_DL=ON (audio.cpp/CMakeLists.txt), building the CUDA backend
+        # once as ggml-cuda.dll and keeping cli/server/gguf as thin shells that
+        # load backends at runtime -- the same distribution model llama.cpp uses.
+        # CUDA kernels are no longer duplicated into 3 executables.
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64 >nul
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
@@ -269,33 +275,44 @@ jobs:
           cmake --build build --config Release -j %NUMBER_OF_PROCESSORS% --target ${{ env.BUILD_TARGETS }}
       - name: Bundle CUDA runtime
         shell: pwsh
-        # robocopy exit codes are a bitmask: 0-7 are success/extras/mismatch, only
-        # >=8 is a real failure. Map to a single pass/fail so "files copied" (1)
-        # doesn't fail the step. CUDA <13 keeps the runtime DLLs in bin/ and lib/,
-        # but CUDA 13.x moved them to bin/x64/, so probe all three source dirs
-        # (same as llama.cpp's release workflow) so every matrix row bundles them.
+        # llama.cpp copies the runtime DLLs from every candidate dir without
+        # looking at robocopy's exit code: bin\x64 is a CUDA 13 layout, so on
+        # CUDA 12.x robocopy returns 16 for that missing dir, which is benign
+        # (llama's step ends on the successful 7z). Mirror that here -- copy
+        # from whichever dir exists and terminate on exit 0. The trailing guard
+        # only trips if NO cudart was copied at all (a broken/empty toolkit).
         run: |
           $dst = "build\bin\cudart"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          $dlls = "cudart64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll"
-          foreach ($src in @("$env:CUDA_PATH\bin", "$env:CUDA_PATH\lib", "$env:CUDA_PATH\bin\x64")) {
-            robocopy $src $dst $dlls
-            if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          robocopy "$env:CUDA_PATH\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          robocopy "$env:CUDA_PATH\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          robocopy "$env:CUDA_PATH\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if (-not (Get-ChildItem -Path $dst -Filter 'cudart64_*.dll' -ErrorAction SilentlyContinue)) {
+            Write-Error "CUDA runtime DLLs were not found under $env:CUDA_PATH"
+            exit 1
           }
           exit 0
       - name: Pack
         shell: pwsh
         working-directory: build/bin
-        # -x!cudart keeps the heavy CUDA runtime DLLs out of the bin zip so they are
-        # shipped exactly once (in the separate cudart...zip), matching llama.cpp.
+        # -x!cudart keeps the heavy CUDA runtime DLLs out of the bin zip so they
+        # are shipped exactly once (in the separate cudart...zip), matching
+        # llama.cpp.
         run: |
           cp ..\..\LICENSE . 2>$null
-          7z a -snl ..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.label }}.zip * -x!cudart
-          7z a -snl ..\..\audio-${{ needs.get-version.outputs.version }}-cudart-windows-x64-cuda${{ matrix.label }}.zip cudart\*
+          7z a -snl ..\..\audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cuda${{ matrix.label }}.zip * -x!cudart
+          7z a -snl ..\..\audio-${{ needs.get-version.outputs.tag }}-cudart-windows-x64-cuda${{ matrix.label }}.zip cudart\*
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.label }}
-          path: 'audio-${{ needs.get-version.outputs.version }}-*cuda${{ matrix.label }}.zip'
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cuda${{ matrix.label }}
+          path: 'audio-${{ needs.get-version.outputs.tag }}-*cuda${{ matrix.label }}.zip'
+
+  # Best-effort ROCm builds. Kept OUT of the release `needs` and commented by
+  # default (llama.cpp ships its ROCm job disabled as well) because GitHub
+  # runners have no AMD GPU and HIP toolchain provisioning is heavy. Enable by
+  # uncommenting and pointing at a runner that can provide a ROCm/HIP runtime.
+  #   linux-rocm:
+  #     ...
 
   release:
     name: Create release
@@ -308,23 +325,34 @@ jobs:
       - windows-cpu
       - windows-vulkan
       - windows-cuda
-    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    if: ${{ github.ref == 'refs/heads/main' && needs.check-release.outputs.should_release == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Collect artifacts
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: assets
           merge-multiple: true
+      - name: Create and push git tag
+        run: |
+          TAG="${{ needs.get-version.outputs.tag }}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists, skipping creation"
+          else
+            git tag "${TAG}"
+            git push origin "${TAG}"
+          fi
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.get-version.outputs.version }}
-          name: ${{ needs.get-version.outputs.version }}
+          tag_name: ${{ needs.get-version.outputs.tag }}
+          name: ${{ needs.get-version.outputs.tag }}
           draft: false
           prerelease: false
           generate_release_notes: true
           files: assets/**
-
