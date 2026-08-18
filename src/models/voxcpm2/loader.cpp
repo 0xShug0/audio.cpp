@@ -105,7 +105,7 @@ runtime::CapabilitySet capabilities_v1(const VoxCPM2Assets &) {
   runtime::CapabilitySet out;
   out.supported_tasks = {
       {runtime::VoiceTaskKind::Tts,
-       {runtime::RunMode::Offline}},
+       {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
   };
   out.languages = {"Auto"};
   out.supports_speaker_reference = true;
@@ -150,7 +150,7 @@ public:
     runtime::CapabilitySet out;
     out.supported_tasks = {
         {runtime::VoiceTaskKind::Tts,
-         {runtime::RunMode::Offline}},
+         {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.supports_speaker_reference = true;
     return out;
@@ -219,13 +219,14 @@ std::unique_ptr<runtime::IVoiceTaskSession>
 VoxCPM2LoadedModel::create_task_session(
     const runtime::TaskSpec &task,
     const runtime::SessionOptions &options) const {
+  const std::string family_label = metadata_.family == "voxcpm1" ? "VoxCPM1" : "VoxCPM2";
   if (task.mode != runtime::RunMode::Offline &&
       task.mode != runtime::RunMode::Streaming) {
-    throw std::runtime_error(
-        "VoxCPM2 only supports offline and streaming sessions");
+    throw std::runtime_error(family_label +
+                             " only supports offline and streaming sessions");
   }
   if (task.task != runtime::VoiceTaskKind::Tts) {
-    throw std::runtime_error("VoxCPM2 only supports the Tts task");
+    throw std::runtime_error(family_label + " only supports the Tts task");
   }
   if (task.mode == runtime::RunMode::Streaming) {
     return std::make_unique<VoxCPM2StreamingSession>(task, options, assets_);

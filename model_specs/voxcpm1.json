@@ -1,7 +1,7 @@
 {
   "family": "voxcpm1",
   "display_name": "VoxCPM1",
-  "description": "OpenBMB VoxCPM 0.5B and 1.5B tokenizer-free TTS models with 24kHz output.",
+  "description": "OpenBMB VoxCPM 0.5B and 1.5B tokenizer-free TTS models supporting short-reference voice cloning and streaming output (16kHz for 0.5B, 44.1kHz for 1.5B).",
   "category": "tts",
   "status": "supported",
   "tasks": [
@@ -9,7 +9,8 @@
     "clone"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "zh",
@@ -24,7 +25,8 @@
   },
   "runtime": {
     "tags": [
-      "gguf"
+      "gguf",
+      "stream"
     ]
   },
   "ui": {
@@ -32,7 +34,8 @@
     "tags": [
       "TTS",
       "Clone",
-      "GGUF"
+      "GGUF",
+      "Stream"
     ],
     "docs": [
       "docs/tts.md",
