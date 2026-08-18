@@ -264,19 +264,26 @@ jobs:
         shell: pwsh
         # robocopy exit codes are a bitmask: 0-7 are success/extras/mismatch, only
         # >=8 is a real failure. Map to a single pass/fail so "files copied" (1)
-        # doesn't fail the step.
+        # doesn't fail the step. CUDA <13 keeps the runtime DLLs in bin/ and lib/,
+        # but CUDA 13.x moved them to bin/x64/, so probe all three source dirs
+        # (same as llama.cpp's release workflow) so every matrix row bundles them.
         run: |
           $dst = "build\bin\cudart"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          robocopy "$env:CUDA_PATH\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          $dlls = "cudart64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll"
+          foreach ($src in @("$env:CUDA_PATH\bin", "$env:CUDA_PATH\lib", "$env:CUDA_PATH\bin\x64")) {
+            robocopy $src $dst $dlls
+            if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          }
           exit 0
       - name: Pack
         shell: pwsh
         working-directory: build/bin
+        # -x!cudart keeps the heavy CUDA runtime DLLs out of the bin zip so they are
+        # shipped exactly once (in the separate cudart...zip), matching llama.cpp.
         run: |
           cp ..\..\LICENSE . 2>$null
-          7z a -snl ..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.label }}.zip * cudart\*
+          7z a -snl ..\..\audio-${{ needs.get-version.outputs.version }}-bin-windows-x64-cuda${{ matrix.label }}.zip * -x!cudart
           7z a -snl ..\..\audio-${{ needs.get-version.outputs.version }}-cudart-windows-x64-cuda${{ matrix.label }}.zip cudart\*
       - uses: actions/upload-artifact@v4
         with:
