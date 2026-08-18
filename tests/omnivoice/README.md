@@ -1,6 +1,6 @@
 # OmniVoice tests
 
-Voice-clone benchmark scripts for the
+Voice-clone benchmark scripts and a Python-to-C++ integration test for the
 `omnivoice` family. All scripts resolve the repository root themselves, so they
 can be run from any directory.
 
@@ -49,6 +49,12 @@ ref_audio_01.wav  ref_text_01.txt   longer reference voice
 ref_audio_02.wav  ref_text_02.txt   reference voice used by default
 clone_batch_prompts.txt             10 prompts, one request per line
 ```
+
+## Python-to-C++ integration
+
+[`python_cpp_simple/`](python_cpp_simple/) drives OmniVoice from Python while
+keeping inference in C++, by sending HTTP requests to `audiocpp_server` using
+only the Python standard library.
 
 ## Warm benchmark
 
