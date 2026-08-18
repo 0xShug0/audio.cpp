@@ -544,8 +544,11 @@ audiocpp_add_model(inflect_v2
 audiocpp_add_model(f5_tts
     SOURCES
         src/community_models/f5_tts/session.cpp
+        src/community_models/f5_tts/runtime.cpp
+        src/community_models/f5_tts/synthesize.cpp
     INCLUDES
         engine/community_models/f5_tts/session.h
+        engine/community_models/f5_tts/runtime.h
     LOADERS
         engine::models::f5_tts::make_f5_tts_loader
     ALIASES

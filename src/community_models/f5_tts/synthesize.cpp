@@ -1,0 +1,598 @@
+#include "engine/community_models/f5_tts/synthesize.h"
+
+#include "engine/community_models/f5_tts/runtime.h"
+#include "engine/framework/assets/tensor_source.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
+
+namespace engine::models::f5_tts {
+namespace {
+
+// ---- mel filterbank (librosa-compatible, htk-free slaney, 24 kHz) ----------
+constexpr int kSampleRate = 24000;
+constexpr int kNfft = 1024;
+constexpr int kHop = 256;
+constexpr int kNMel = 100;
+constexpr float kFMin = 0.0F;
+constexpr float kFMax = 12000.0F;
+
+// torchaudio defaults used by F5: htk mel scale, norm=None (no slaney
+// normalization), power=1 (magnitude), f_max=sample_rate/2.
+float hz_to_mel_htk(float hz) { return 2595.0F * std::log10(1.0F + hz / 700.0F); }
+float mel_to_hz_htk(float mel) { return 700.0F * (std::pow(10.0F, mel / 2595.0F) - 1.0F); }
+
+const std::vector<float> & mel_filterbank() {
+    static std::vector<float> fb;  // [n_freqs, kNMel] like torch fb (freq-major)
+    static std::once_flag once;
+    std::call_once(once, [] {
+        const int n_freqs = kNfft / 2 + 1;
+        const float m_min = hz_to_mel_htk(kFMin);
+        const float m_max = hz_to_mel_htk(kFMax);
+        std::vector<float> mels(kNMel + 2);
+        for (int i = 0; i < kNMel + 2; ++i) {
+            mels[i] = mel_to_hz_htk(m_min + (m_max - m_min) * i / (kNMel + 1));
+        }
+        fb.assign(static_cast<size_t>(n_freqs) * kNMel, 0.0F);
+        for (int m = 0; m < kNMel; ++m) {
+            const float lo = mels[m];
+            const float mid = mels[m + 1];
+            const float hi = mels[m + 2];
+            for (int f = 0; f < n_freqs; ++f) {
+                const float freq = static_cast<float>(f) * kSampleRate / kNfft;
+                if (freq <= lo || freq >= hi) continue;
+                const float w = freq <= mid
+                    ? (freq - lo) / (mid - lo)
+                    : (hi - freq) / (hi - mid);
+                fb[static_cast<size_t>(f) * kNMel + m] = w;  // freq-major like torch
+            }
+        }
+    });
+    return fb;
+}
+
+void fft_inplace(std::vector<float> & re, std::vector<float> & im, bool inverse) {
+    const size_t n = re.size();
+    for (size_t i = 1, j = 0; i < n; ++i) {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            std::swap(re[i], re[j]);
+            std::swap(im[i], im[j]);
+        }
+    }
+    for (size_t len = 2; len <= n; len <<= 1) {
+        const float ang = static_cast<float>(2.0 * M_PI / static_cast<double>(len)) * (inverse ? 1 : -1);
+        for (size_t i = 0; i < n; i += len) {
+            for (size_t k = 0; k < len / 2; ++k) {
+                const float wr = std::cos(ang * static_cast<float>(k));
+                const float wi = std::sin(ang * static_cast<float>(k));
+                const size_t a = i + k;
+                const size_t b = i + k + len / 2;
+                const float vr = re[b] * wr - im[b] * wi;
+                const float vi = re[b] * wi + im[b] * wr;
+                const float ur = re[a];
+                const float ui = im[a];
+                re[a] = ur + vr;
+                im[a] = ui + vi;
+                re[b] = ur - vr;
+                im[b] = ui - vi;
+            }
+        }
+    }
+    if (inverse) {
+        for (size_t i = 0; i < n; ++i) {
+            re[i] /= static_cast<float>(n);
+            im[i] /= static_cast<float>(n);
+        }
+    }
+}
+
+// log-mel with reflect-padded center STFT (librosa semantics), log clamp 1e-5.
+std::vector<float> compute_mel(const std::vector<float> & wav) {
+    const int n_freqs = kNfft / 2 + 1;
+    // torchaudio center=True: n_frames = 1 + floor(len / hop)
+    const int frames = std::max(1, 1 + static_cast<int>(wav.size() / kHop));
+    std::vector<float> hann(kNfft);
+    for (int i = 0; i < kNfft; ++i) {
+        hann[i] = 0.5F * (1.0F - std::cos(2.0F * static_cast<float>(M_PI) * i / kNfft));
+    }
+    const auto & fb = mel_filterbank();
+    std::vector<float> mel(static_cast<size_t>(kNMel) * frames);
+    std::vector<float> re(kNfft), im(kNfft);
+    std::vector<float> spec_pow(n_freqs);
+    for (int t = 0; t < frames; ++t) {
+        std::fill(re.begin(), re.end(), 0.0F);
+        std::fill(im.begin(), im.end(), 0.0F);
+        // torchaudio center=True alignment: frame t center = t*hop, achieved by
+        // starting one hop earlier than librosa's default convention.
+        const int start = (t - 2) * kHop;
+        for (int i = 0; i < kNfft; ++i) {
+            int r = start + i;
+            // torch reflect pad: wav[-k] = wav[k], wav[L+k] = wav[L-2-k]
+            if (r < 0) r = -r;
+            if (r >= static_cast<int>(wav.size())) r = 2 * static_cast<int>(wav.size()) - 2 - r;
+            r = std::clamp(r, 0, static_cast<int>(wav.size()) - 1);
+            re[i] = wav[r] * hann[i];
+        }
+        fft_inplace(re, im, false);
+        for (int f = 0; f < n_freqs; ++f) {
+            spec_pow[f] = std::sqrt(re[f] * re[f] + im[f] * im[f]);  // power=1 magnitude
+        }
+        for (int m = 0; m < kNMel; ++m) {
+            float acc = 0.0F;
+            for (int f = 0; f < n_freqs; ++f) {
+                acc += fb[static_cast<size_t>(f) * kNMel + m] * spec_pow[f];
+            }
+            mel[static_cast<size_t>(m) * frames + t] = std::log(std::max(acc, 1e-5F));
+        }
+    }
+    return mel;  // [mel, frames] feature-fastest memory
+}
+
+std::vector<float> resample(const std::vector<float> & in, int sr_in, int sr_out) {
+    if (sr_in == sr_out || in.empty()) return in;
+    const double ratio = static_cast<double>(sr_out) / sr_in;
+    const size_t out_n = static_cast<size_t>(static_cast<double>(in.size()) * ratio);
+    std::vector<float> out(out_n);
+    for (size_t i = 0; i < out_n; ++i) {
+        const double pos = static_cast<double>(i) / ratio;
+        const size_t i0 = static_cast<size_t>(pos);
+        const size_t i1 = std::min(i0 + 1, in.size() - 1);
+        const double frac = pos - i0;
+        out[i] = static_cast<float>(in[i0] * (1 - frac) + in[i1] * frac);
+    }
+    return out;
+}
+
+std::unordered_map<std::string, int32_t> load_vocab(const std::string & dir) {
+    std::unordered_map<std::string, int32_t> map;
+    std::ifstream f(dir + "/vocab.txt", std::ios::binary);
+    if (!f) throw std::runtime_error("cannot open vocab.txt in " + dir);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::vector<std::string> lines;
+    std::string cur;
+    for (size_t i = 0; i < content.size();) {
+        if (content[i] == '\n') {
+            lines.push_back(cur);
+            cur.clear();
+            ++i;
+            continue;
+        }
+        size_t len = 1;
+        const auto c = static_cast<unsigned char>(content[i]);
+        if (c >= 0xF0) len = 4;
+        else if (c >= 0xE0) len = 3;
+        else if (c >= 0xC0) len = 2;
+        cur.append(content, i, len);
+        i += len;
+    }
+    if (!cur.empty()) lines.push_back(cur);
+    for (size_t i = 0; i < lines.size(); ++i) {
+        if (!lines[i].empty()) map.emplace(lines[i], static_cast<int32_t>(i));
+    }
+    return map;
+}
+
+const char * dialect_token(const std::string & dialect) {
+    if (dialect == "MSA") return "\xE2\x91\xA0";
+    if (dialect == "SAU") return "\xE2\x91\xA1";
+    if (dialect == "UAE") return "\xE2\x91\xA2";
+    if (dialect == "ALG") return "\xE2\x91\xA3";
+    if (dialect == "IRQ") return "\xE2\x91\xA4";
+    if (dialect == "EGY") return "\xE2\x91\xA5";
+    if (dialect == "MAR") return "\xE2\x91\xA6";
+    if (dialect == "OMN") return "\xE2\x91\xA7";
+    if (dialect == "TUN") return "\xE2\x91\xA8";
+    if (dialect == "LEV") return "\xE2\x91\xA9";
+    if (dialect == "SDN") return "\xE2\x91\xAA";
+    if (dialect == "LBY") return "\xE2\x91\xAB";
+    return "\xE2\x93\xAA";  // ⓪ UNK
+}
+
+std::vector<std::string> utf8_chars(const std::string & s) {
+    std::vector<std::string> out;
+    for (size_t i = 0; i < s.size();) {
+        size_t len = 1;
+        const auto c = static_cast<unsigned char>(s[i]);
+        if (c >= 0xF0) len = 4;
+        else if (c >= 0xE0) len = 3;
+        else if (c >= 0xC0) len = 2;
+        out.emplace_back(s, i, len);
+        i += len;
+    }
+    return out;
+}
+
+struct Rng {
+    uint64_t state;
+    explicit Rng(uint64_t seed) : state(seed ? seed : 0x9E3779B97F4A7C15ULL) {}
+    uint64_t next_u64() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    }
+    float next_f32() {
+        return static_cast<float>(static_cast<double>(next_u64() >> 11) / 9007199254740992.0);
+    }
+    float normal() {
+        // Box-Muller
+        float u1 = std::max(next_f32(), 1e-7F);
+        float u2 = next_f32();
+        return std::sqrt(-2.0F * std::log(u1)) * std::cos(2.0F * static_cast<float>(M_PI) * u2);
+    }
+};
+
+std::vector<float> sway_timesteps(int steps, float coef) {
+    std::vector<float> t(static_cast<size_t>(steps) + 1);
+    for (int i = 0; i <= steps; ++i) {
+        const float v = static_cast<float>(i) / steps;
+        t[static_cast<size_t>(i)] = v + coef * (std::cos(static_cast<float>(M_PI) / 2 * v) - 1 + v);
+    }
+    return t;
+}
+
+// ---- vocos vocoder ----------------------------------------------------------
+// Loads vocos.safetensors and decodes [frames][100] log-mel -> waveform.
+struct VocosWeights {
+    std::shared_ptr<const assets::TensorSource> source;
+    std::vector<float> embed_w;   // [512, 100, 7] torch
+    std::vector<float> embed_b;   // [512]
+    std::vector<float> input_nw, input_nb;  // backbone.norm (pre-blocks)
+    struct Block {
+        std::vector<float> dw_w, dw_b, n_w, n_b, p1w, p1b, p2w, p2b, gamma;
+    };
+    std::vector<Block> blocks;    // 8
+    std::vector<float> final_nw, final_nb;  // [512]
+    std::vector<float> head_w, head_b;      // [1026, 512], [1026]
+};
+
+const VocosWeights & load_vocos_once(const std::string & path) {
+    static std::unordered_map<std::string, VocosWeights> cache;
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (const auto it = cache.find(path); it != cache.end()) return it->second;
+    VocosWeights v;
+    v.source = assets::open_tensor_source(path);
+    const auto f32 = [&](const char * n) { return v.source->require_f32(n); };
+    v.embed_w = f32("backbone.embed.weight");
+    v.embed_b = f32("backbone.embed.bias");
+    v.input_nw = f32("backbone.norm.weight");
+    v.input_nb = f32("backbone.norm.bias");
+    v.blocks.resize(8);
+    for (int i = 0; i < 8; ++i) {
+        const std::string p = "backbone.convnext." + std::to_string(i) + ".";
+        auto & b = v.blocks[i];
+        b.dw_w = f32((p + "dwconv.weight").c_str());
+        b.dw_b = f32((p + "dwconv.bias").c_str());
+        b.n_w = f32((p + "norm.weight").c_str());
+        b.n_b = f32((p + "norm.bias").c_str());
+        b.p1w = f32((p + "pwconv1.weight").c_str());
+        b.p1b = f32((p + "pwconv1.bias").c_str());
+        b.p2w = f32((p + "pwconv2.weight").c_str());
+        b.p2b = f32((p + "pwconv2.bias").c_str());
+        b.gamma = f32((p + "gamma").c_str());
+    }
+    v.final_nw = f32("backbone.final_layer_norm.weight");
+    v.final_nb = f32("backbone.final_layer_norm.bias");
+    v.head_w = f32("head.out.weight");
+    v.head_b = f32("head.out.bias");
+    return cache.emplace(path, std::move(v)).first->second;
+}
+
+// CPU decode (pure host math, no graph): frames x 100 -> samples
+std::vector<float> vocos_decode(const std::string & vocos_path, const std::vector<float> & mel_rows) {
+    const auto & v = load_vocos_once(vocos_path);
+    const int T = static_cast<int>(mel_rows.size()) / kNMel;
+    const int D = 512;
+    const int IM = 1536;
+
+    // embed conv k7 pad 3 groups 1: out[t, o] = sum_i sum_k w[o, i, k] * x[t+k-3, i] + b[o]
+    std::vector<float> h(static_cast<size_t>(T) * D);
+    for (int t = 0; t < T; ++t) {
+        for (int o = 0; o < D; ++o) {
+            float acc = v.embed_b[o];
+            const float * w = v.embed_w.data() + static_cast<size_t>(o) * kNMel * 7;
+            for (int k = 0; k < 7; ++k) {
+                const int tt = t + k - 3;
+                if (tt < 0 || tt >= T) continue;
+                const float * x = mel_rows.data() + static_cast<size_t>(tt) * kNMel;
+                for (int i = 0; i < kNMel; ++i) {
+                    acc += w[static_cast<size_t>(i) * 7 + k] * x[i];
+                }
+            }
+            h[static_cast<size_t>(t) * D + o] = acc;
+        }
+    }
+
+    // input layernorm (backbone.norm) after embed — VocosBackbone.forward applies
+    // norm BEFORE the convnext stack (easy to miss; verified against torch hook).
+    for (int t = 0; t < T; ++t) {
+        float * x = h.data() + static_cast<size_t>(t) * D;
+        float mu = 0, var = 0;
+        for (int c = 0; c < D; ++c) mu += x[c];
+        mu /= D;
+        for (int c = 0; c < D; ++c) {
+            const float d = x[c] - mu;
+            var += d * d;
+        }
+        var /= D;
+        const float inv = 1.0F / std::sqrt(var + 1e-6F);
+        for (int c = 0; c < D; ++c) {
+            x[c] = (x[c] - mu) * inv * v.input_nw[c] + v.input_nb[c];
+        }
+    }
+
+    // 8 convnext blocks
+#ifdef F5_MEL_TEST
+    { std::ofstream f("/tmp/cpp_vocos_embed.bin", std::ios::binary);
+      f.write(reinterpret_cast<const char*>(h.data()), h.size() * 4); }
+#endif
+    for (int bi = 0; bi < 8; ++bi) {
+        const auto & B = v.blocks[bi];
+        std::vector<float> dw(static_cast<size_t>(T) * D);
+        for (int t = 0; t < T; ++t) {
+            for (int c = 0; c < D; ++c) {
+                float acc = B.dw_b[c];
+                const float * w = B.dw_w.data() + static_cast<size_t>(c) * 7;
+                for (int k = 0; k < 7; ++k) {
+                    const int tt = t + k - 3;
+                    if (tt < 0 || tt >= T) continue;
+                    acc += w[k] * h[static_cast<size_t>(tt) * D + c];
+                }
+                dw[static_cast<size_t>(t) * D + c] = acc;
+            }
+        }
+        // ln -> gelu -> pw1 -> pw2 -> gamma -> +residual
+        std::vector<float> ln_buf(static_cast<size_t>(T) * D);
+        for (int t = 0; t < T; ++t) {
+            const float * x = dw.data() + static_cast<size_t>(t) * D;
+            float mu = 0, var = 0;
+            for (int c = 0; c < D; ++c) mu += x[c];
+            mu /= D;
+            for (int c = 0; c < D; ++c) {
+                const float d = x[c] - mu;
+                var += d * d;
+            }
+            var /= D;
+            const float inv = 1.0F / std::sqrt(var + 1e-6F);
+            for (int c = 0; c < D; ++c) {
+                ln_buf[static_cast<size_t>(t) * D + c] = (x[c] - mu) * inv * B.n_w[c] + B.n_b[c];
+            }
+        }
+        std::vector<float> mid(static_cast<size_t>(T) * IM);
+        for (int t = 0; t < T; ++t) {
+            for (int o = 0; o < IM; ++o) {
+                const float * w = B.p1w.data() + static_cast<size_t>(o) * D;
+                const float * x = ln_buf.data() + static_cast<size_t>(t) * D;
+                float acc = B.p1b[o];
+                for (int c = 0; c < D; ++c) acc += w[c] * x[c];
+                // gelu exact
+                const float xg = acc;
+                const float k0 = 0.7978845608028654F;
+                const float inner = k0 * xg * (1.0F + 0.044715F * xg * xg);
+                acc = 0.5F * xg * (1.0F + std::tanh(inner));
+                mid[static_cast<size_t>(t) * IM + o] = acc;
+            }
+        }
+        for (int t = 0; t < T; ++t) {
+            for (int o = 0; o < D; ++o) {
+                const float * w = B.p2w.data() + static_cast<size_t>(o) * IM;
+                const float * x = mid.data() + static_cast<size_t>(t) * IM;
+                float acc = B.p2b[o];
+                for (int c = 0; c < IM; ++c) acc += w[c] * x[c];
+                h[static_cast<size_t>(t) * D + o] += B.gamma[o] * acc;
+            }
+        }
+#ifdef F5_MEL_TEST
+        if (bi == 0) { std::ofstream f("/tmp/cpp_vocos_blk0.bin", std::ios::binary);
+          f.write(reinterpret_cast<const char*>(h.data()), h.size() * 4); }
+#endif
+    }
+
+    // final layernorm
+#ifdef F5_MEL_TEST
+    {
+        std::ofstream f("/tmp/cpp_vocos_h.bin", std::ios::binary);
+        f.write(reinterpret_cast<const char*>(h.data()), h.size() * 4);
+    }
+#endif
+    for (int t = 0; t < T; ++t) {
+        float * x = h.data() + static_cast<size_t>(t) * D;
+        float mu = 0, var = 0;
+        for (int c = 0; c < D; ++c) mu += x[c];
+        mu /= D;
+        for (int c = 0; c < D; ++c) {
+            const float d = x[c] - mu;
+            var += d * d;
+        }
+        var /= D;
+        const float inv = 1.0F / std::sqrt(var + 1e-6F);
+        for (int c = 0; c < D; ++c) {
+            x[c] = (x[c] - mu) * inv * v.final_nw[c] + v.final_nb[c];
+        }
+    }
+#ifdef F5_MEL_TEST
+    { std::ofstream f("/tmp/cpp_vocos_fln.bin", std::ios::binary);
+      f.write(reinterpret_cast<const char*>(h.data()), h.size() * 4); }
+#endif
+
+    // head: [T, 1026] -> (mag 513, phase 513)
+    const int n_freqs = kNfft / 2 + 1;
+    std::vector<float> spec(static_cast<size_t>(T) * (2 * n_freqs));
+    for (int t = 0; t < T; ++t) {
+        const float * x = h.data() + static_cast<size_t>(t) * D;
+        for (int o = 0; o < 2 * n_freqs; ++o) {
+            const float * w = v.head_w.data() + static_cast<size_t>(o) * D;
+            float acc = v.head_b[o];
+            for (int c = 0; c < D; ++c) acc += w[c] * x[c];
+            spec[static_cast<size_t>(t) * (2 * n_freqs) + o] = acc;
+        }
+    }
+
+#ifdef F5_MEL_TEST
+    { std::ofstream f("/tmp/cpp_head_spec.bin", std::ios::binary);
+      f.write(reinterpret_cast<const char*>(spec.data()), spec.size() * 4); }
+#endif
+    // ISTFT (center, hann) — build full spectrum frames then overlap-add
+    const int out_len = (T - 1) * kHop + kNfft;
+    std::vector<float> out(static_cast<size_t>(out_len), 0.0F);
+    std::vector<float> wsum(static_cast<size_t>(out_len), 0.0F);
+    std::vector<float> hann(kNfft);
+    for (int i = 0; i < kNfft; ++i) {
+        hann[i] = 0.5F * (1.0F - std::cos(2.0F * static_cast<float>(M_PI) * i / kNfft));
+    }
+    std::vector<float> re(kNfft), im(kNfft);
+    for (int t = 0; t < T; ++t) {
+        const float * row = spec.data() + static_cast<size_t>(t) * (2 * n_freqs);
+        std::fill(re.begin(), re.end(), 0.0F);
+        std::fill(im.begin(), im.end(), 0.0F);
+        for (int f = 0; f < n_freqs; ++f) {
+            const float mag = std::min(std::exp(row[f]), 100.0F);
+            const float ph = row[n_freqs + f];
+            re[f] = mag * std::cos(ph);
+            im[f] = mag * std::sin(ph);
+            if (f > 0 && f < n_freqs - 1) {
+                re[kNfft - f] = re[f];
+                im[kNfft - f] = -im[f];
+            }
+        }
+        re[n_freqs - 1] = im[n_freqs - 1] = 0.0F;  // nyquist bin real
+        fft_inplace(re, im, true);
+        const int start = t * kHop;
+        for (int i = 0; i < kNfft; ++i) {
+            out[static_cast<size_t>(start + i)] += re[i] * hann[i];
+            wsum[static_cast<size_t>(start + i)] += hann[i] * hann[i];
+        }
+    }
+#ifdef F5_MEL_TEST
+    { std::ofstream f("/tmp/cpp_istft_raw.bin", std::ios::binary);
+      f.write(reinterpret_cast<const char*>(out.data()), out.size() * 4); }
+#endif
+    std::vector<float> audio(static_cast<size_t>(T - 1) * kHop + 1);
+    const int keep = static_cast<int>(audio.size());
+    for (int i = 0; i < keep; ++i) {
+        const size_t idx = i + kNfft / 2;  // center: drop first half-frame
+        audio[static_cast<size_t>(i)] =
+            idx < out.size() && wsum[idx] > 1e-8F ? out[idx] / wsum[idx] : 0.0F;
+    }
+    return audio;
+}
+
+}  // namespace
+
+F5SynthesisResult f5_synthesize(
+    const std::string & model_path,
+    const std::string & vocos_path,
+    const F5SynthesisRequest & request) {
+    const auto t0 = std::chrono::steady_clock::now();
+    F5SynthesisResult result;
+
+    // 1. tokenize: 〈dialect ref_text+text〉
+    const std::string dir = std::filesystem::path(model_path).parent_path().string();
+    const auto vocab = load_vocab(dir);
+    std::vector<int32_t> text_ids;
+    {
+        const std::string full = std::string(dialect_token(request.dialect))
+            + "\xE3\x80\x88" + request.ref_text + request.text + "\xE3\x80\x89";
+        for (const auto & ch : utf8_chars(full)) {
+            const auto it = vocab.find(ch);
+            text_ids.push_back(it != vocab.end() ? it->second : 0);
+        }
+    }
+
+    // 2. ref audio -> 24k mono -> mel
+    auto ref24 = resample(request.ref_audio, request.ref_sample_rate, kSampleRate);
+    const auto ref_mel = compute_mel(ref24);
+    const int ref_frames = static_cast<int>(ref_mel.size()) / kNMel;
+
+    // 3. duration heuristic (F5 infer_process)
+    const int ref_text_len = static_cast<int>(request.ref_text.size());
+    const int gen_text_len = static_cast<int>(request.text.size());
+    float local_speed = request.speed;
+    if (request.text.size() < 10) local_speed = 0.3F;
+    int duration = ref_frames + static_cast<int>(
+        static_cast<double>(ref_frames) / std::max(1, ref_text_len)
+        * static_cast<double>(gen_text_len) / local_speed);
+    duration = std::max(duration, static_cast<int>(text_ids.size()) + 1);
+    // TODO(M4): chunk long texts like F5's chunk_text and crossfade. For now
+    // cap the DiT sequence at 1024 frames (~11 s) to bound graph memory.
+    duration = std::min(duration, 1024);
+
+    // 4. cond: zeros + ref mel in [0, ref_frames)
+    std::vector<float> cond(static_cast<size_t>(duration) * kNMel, 0.0F);
+    for (int t = 0; t < ref_frames && t < duration; ++t) {
+        for (int m = 0; m < kNMel; ++m) {
+            cond[static_cast<size_t>(t) * kNMel + m] = ref_mel[static_cast<size_t>(m) * ref_frames + t];
+        }
+    }
+
+    // 5. noise init
+    Rng rng(request.seed ? request.seed : 0x9E3779B97F4A7C15ULL);
+    std::vector<float> y(static_cast<size_t>(duration) * kNMel);
+    for (auto & val : y) val = rng.normal();
+
+    // 6. CFM Euler steps with CFG (cond / uncond pair)
+    const auto ts = sway_timesteps(request.steps, request.sway_sampling_coef);
+    const F5Architecture arch;
+    for (size_t i = 0; i + 1 < ts.size(); ++i) {
+        const float t = ts[i];
+        const float dt = ts[i + 1] - ts[i];
+        // batched CFG: run twice (drop_text false/true), combine
+        const auto v_cond = f5_dit_forward(
+            model_path, y, cond, text_ids, t, duration, arch, false, false);
+        std::vector<float> v;
+        if (request.cfg_strength > 1e-5F) {
+            const auto v_null = f5_dit_forward(
+                model_path, y, cond, text_ids, t, duration, arch, false, true);
+            v.resize(v_cond.size());
+            for (size_t k = 0; k < v.size(); ++k) {
+                v[k] = v_cond[k] + (v_cond[k] - v_null[k]) * request.cfg_strength;
+            }
+        } else {
+            v = v_cond;
+        }
+        for (size_t k = 0; k < y.size(); ++k) {
+            y[k] += dt * v[k];
+        }
+    }
+    // paste back the reference region (grounding)
+    for (int t = 0; t < ref_frames && t < duration; ++t) {
+        for (int m = 0; m < kNMel; ++m) {
+            y[static_cast<size_t>(t) * kNMel + m] = cond[static_cast<size_t>(t) * kNMel + m];
+        }
+    }
+
+    // 7. splice generated region and decode
+    const int gen_frames = duration - ref_frames;
+    std::vector<float> gen_mel(static_cast<size_t>(gen_frames) * kNMel);
+    for (int t = 0; t < gen_frames; ++t) {
+        for (int m = 0; m < kNMel; ++m) {
+            gen_mel[static_cast<size_t>(t) * kNMel + m] =
+                y[static_cast<size_t>(ref_frames + t) * kNMel + m];
+        }
+    }
+    result.audio = vocos_decode(vocos_path, gen_mel);
+    result.sample_rate = kSampleRate;
+    result.generation_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t0).count();
+    return result;
+}
+
+
+#ifdef F5_MEL_TEST
+std::vector<float> f5_test_mel(const std::vector<float> & wav) { return compute_mel(wav); }
+std::vector<float> f5_test_vocos(const std::string & vp, const std::vector<float> & mel) { return vocos_decode(vp, mel); }
+#endif
+
+}  // namespace engine::models::f5_tts
