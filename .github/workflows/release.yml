@@ -372,9 +372,9 @@ jobs:
       - name: Upload binaries to existing release
         if: ${{ steps.relstate.outputs.exists == 'true' }}
         run: |
-          gh release upload "${{ needs.get-version.outputs.tag }}" assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "${{ needs.get-version.outputs.tag }}" assets/*.zip assets/*.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
       # Newly-created tag with no release yet: create the release w/ notes.
       - name: Create release
         if: ${{ steps.relstate.outputs.exists != 'true' }}
         run: |
-          gh release create "${{ needs.get-version.outputs.tag }}" assets/* --title "${{ needs.get-version.outputs.tag }}" --generate-notes --repo "$GITHUB_REPOSITORY"
+          gh release create "${{ needs.get-version.outputs.tag }}" assets/*.zip assets/*.tar.gz --title "${{ needs.get-version.outputs.tag }}" --generate-notes --repo "$GITHUB_REPOSITORY"
