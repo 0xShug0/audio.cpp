@@ -27,25 +27,7 @@ void validate_storage_type(assets::TensorStorageType storage_type) {
 
 modules::QwenDecoderActivationCastPolicy activation_cast_policy(core::BackendType backend_type) {
     modules::QwenDecoderActivationCastPolicy policy;
-    if (backend_type == core::BackendType::Cpu || backend_type == core::BackendType::Vulkan ||
-        backend_type == core::BackendType::Metal) {
-        return policy;
-    }
-    policy.enabled = true;
-    policy.type = GGML_TYPE_BF16;
-    policy.after_input_norm = true;
-    policy.after_qkv_projection = true;
-    policy.after_qk_norm = true;
-    policy.after_rope = true;
-    policy.after_static_cache_update = true;
-    policy.after_attention = true;
-    policy.after_attention_output = true;
-    policy.after_residual = true;
-    policy.after_ffn_norm = true;
-    policy.after_mlp_projection = true;
-    policy.after_mlp_silu = true;
-    policy.after_mlp_mul = true;
-    policy.after_output = true;
+    (void)backend_type;
     return policy;
 }
 
