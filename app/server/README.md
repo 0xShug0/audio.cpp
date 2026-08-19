@@ -11,6 +11,22 @@ cmake --build build --parallel --target audiocpp_server
 
 Enable the backend you plan to run: `ENGINE_ENABLE_CUDA=ON` for CUDA, `ENGINE_ENABLE_VULKAN=ON` for Vulkan, or `ENGINE_ENABLE_METAL=ON` for Metal. CPU support is always available.
 
+### Choose a server mode
+
+Pick the mode that matches the behavior you want:
+
+| If you want... | Build with... | Run with... | Behavior |
+|---|---|---|
+| API/config-driven server | default build | `audiocpp_server --config server.json` | Uses models declared in the config. The UI is available unless disabled by config or `--no-ui`. |
+| Read-only UI for configured models | default build | `audiocpp_server --config server.json --ui` | Browser UI is available for configured models, without downloads, deletes, or dynamic package management. |
+| Full UI with downloads and model switching | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | UI can browse packages, download models, load/unload models, delete packages, and use temporary uploads. |
+| Standalone deployed binary without local `model_specs/` | `-DAUDIOCPP_DEPLOYMENT_BUILD=ON` | `audiocpp_server --config server.json` | Binary carries compiled package specs for fallback model-spec lookup. |
+| Offline/reproducible native-manager build | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_BORINGSSL_ARCHIVE=/path/to/boringssl.tar.gz` | `audiocpp_server --ui --ui-management --backend <backend>` | Configure does not fetch BoringSSL from the network. |
+| Distro-packaged TLS instead of bundled BoringSSL | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | Uses system OpenSSL; useful for packagers. |
+
+Native model management uses bundled BoringSSL by default. Normal server builds
+do not build or link that HTTP/TLS dependency.
+
 ## Config
 
 ```bash

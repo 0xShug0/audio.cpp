@@ -6,8 +6,8 @@ inference and normal UI operation.
 
 ## Run
 
-Configure the optional native manager, build `audiocpp_server`, then start it
-with UI management enabled:
+Configure the optional native manager when you want model downloads and dynamic
+model management from the browser:
 
 ```bash
 cmake -S . -B build -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON
@@ -15,16 +15,20 @@ cmake --build build --target audiocpp_server
 ```
 
 ```powershell
-.\build\windows-cuda-release\bin\audiocpp_server.exe --ui --ui-management --backend cuda
+.\build\windows-cuda-release\bin\audiocpp_server.exe --ui --ui-management --backend <backend>
 ```
 
 ```bash
-./build/bin/audiocpp_server --ui --ui-management --backend cuda
+./build/bin/audiocpp_server --ui --ui-management --backend <backend>
 ```
 
 Open **http://127.0.0.1:8080**. `--ui-management` enables on-demand model loading,
 unloading, package management, and temporary browser uploads. Models default to a `models/` directory
 beside the server executable. The Models page can select and remember a different directory.
+
+Without `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON`, the server can still serve the
+embedded UI with `--ui`, but the model-management endpoints are unavailable. Use
+that mode for config-driven deployments or direct model paths.
 
 An existing server configuration exposes the embedded UI by default:
 
@@ -56,12 +60,17 @@ Saved voices remain in the current browser profile and are only uploaded when se
 
 ## Model downloads
 
-Inference and the embedded interface do not require Python. Model installation currently invokes the
-repository-level `tools/model_manager_v2.py`; legacy checkpoint conversion packages may invoke
-`tools/model_manager_deprecated.py`. These are general model-management utilities, not UI code.
+Inference and normal embedded UI operation do not require Python. When native
+model management is enabled, browser downloads use the same C++ package manager
+as `audiocpp_model_manager`.
 
-Set `AUDIOCPP_PYTHON` if the desired interpreter is not `python` on Windows or `python3` on Unix.
-Loading an existing model directory or standalone GGUF does not invoke either helper.
+The Python managers remain available for CLI workflows and legacy conversion
+packages:
+
+- `tools/model_manager_v2.py` can install spec-backed packages from the command line.
+- `tools/model_manager_deprecated.py` is only for legacy checkpoint conversion layouts.
+
+Loading an existing model directory or standalone GGUF does not invoke Python.
 
 ## Frontend development
 

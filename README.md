@@ -150,7 +150,8 @@ frontend over the same reusable C++ package-management library used by the
 server and embedded WebUI. It supports list, info, install, clean, and remove
 without starting `audiocpp_server`; this is the preferred native path for CLI,
 Docker, remote provisioning, and other scripted environments. The Python v2
-manager remains available as an alternative during migration.
+manager remains available as an alternative during migration. The native path
+uses bundled TLS by default and does not require libcurl.
 
 ```bash
 audiocpp_model_manager list
@@ -184,6 +185,9 @@ Open `http://127.0.0.1:8080`. `--ui-management` enables catalog browsing, downlo
 uploads, and dynamic model switching, so this is the easiest way to try audio.cpp without writing a
 server config first. For a locked-down config-driven instance, start with `--ui` and a server config
 instead; in that mode the UI only offers models declared by the config unless management is enabled.
+
+For Docker UI downloads, mount a writable models directory at `/app/models` and
+use `--ui-management`. See [docker.md](docs/docker.md#native-webui).
 
 The native UI also exposes background model download/preparation, long-text split-and-merge synthesis, a
 browser-local saved voice library, microphone recording, and near-live ASR input. Some model preparation jobs invoke
