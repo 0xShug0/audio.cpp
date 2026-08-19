@@ -351,7 +351,8 @@
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: referenceVoiceRequired = !quickStartVoice && (
+  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task);
+  $: referenceVoiceRequired = !(allowsQuickStartVoice && quickStartVoice) && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
   $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
@@ -1443,7 +1444,7 @@
           request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
           request.seed = resolvedSeed;
-          request.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         }
         if (audio) request.audio = audio;
         if (voiceRef) request.voice_ref = voiceRef;
@@ -2028,7 +2029,7 @@
         {/if}
 
         {#if needsVoice}
-          {#if quickStartVoices.length}
+          {#if allowsQuickStartVoice && quickStartVoices.length}
             <label for="quick-start-voice">{server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>

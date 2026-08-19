@@ -113,6 +113,7 @@
       "input_hint_en": "**RVC**: the selected GGUF is the target voice; upload source speech to convert. Index and pitch options can be passed through the JSON box." },
     { "id": "miocodec",               "display_name": "MioCodec (vc; codec dependency)",       "family": "miocodec",             "path": "models/MioCodec-25Hz-44.1kHz-v2",        "task": "vc",    "mode": "offline", "download_id": "miocodec_25hz_44k_v2",    "min_vram_gb": 3 },
     { "id": "personaplex",            "display_name": "PersonaPlex 7B v1 (speech conversation)", "display_name_en": "PersonaPlex 7B v1 (speech conversation)", "family": "personaplex", "path": "models/PersonaPlex-GGUF", "task": "s2s", "mode": "offline", "download_id": "personaplex_7b_v1_q4_k", "min_vram_gb": 8,
+      "request_options": ["voice_id", "system_prompt", "temperature", "text_temperature", "top_k", "text_top_k", "do_sample", "seed"],
       "input_hint": "**PersonaPlex**：上传用户语音，模型返回语音回复；文本框可填写 assistant system/persona prompt；`voice_id` 选择打包音色，也可上传参考音色覆盖。",
       "input_hint_en": "**PersonaPlex**: upload user speech and receive a spoken response. The text box provides the assistant system/persona prompt; `voice_id` selects a packaged voice, and an uploaded reference voice overrides it." },
 
