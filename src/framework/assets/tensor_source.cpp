@@ -15,7 +15,6 @@
 #include <functional>
 #include <iomanip>
 #include <limits>
-#include <memory>
 #include <numeric>
 #include <set>
 #include <sstream>
@@ -72,25 +71,12 @@ core::TensorShape shape_from_dims(const std::vector<int64_t> & dims) {
 void validate_expected_shape(
     std::string_view name,
     const std::vector<int64_t> & actual_shape,
-    const std::optional<std::vector<int64_t>> & expected_shape,
-    bool relaxed_rank) {
+    const std::optional<std::vector<int64_t>> & expected_shape) {
     if (expected_shape.has_value() && actual_shape != *expected_shape) {
-        if (!relaxed_rank) {
-            throw std::runtime_error("tensor shape mismatch for " + std::string(name));
-        }
-        int64_t expected_elems = 1;
-        for (const int64_t dim : *expected_shape) {
-            expected_elems *= dim;
-        }
-        int64_t actual_elems = 1;
-        for (const int64_t dim : actual_shape) {
-            actual_elems *= dim;
-        }
-        if (actual_elems != expected_elems) {
-            throw std::runtime_error("tensor element count mismatch for " + std::string(name));
-        }
+        throw std::runtime_error("tensor shape mismatch for " + std::string(name));
     }
 }
+
 std::string lower_ascii(std::string_view value) {
     std::string out(value);
     for (char & ch : out) {
@@ -579,7 +565,7 @@ public:
         if (info == nullptr) {
             throw std::runtime_error("missing tensor: " + std::string(name));
         }
-        validate_expected_shape(name, info->shape, expected_shape, false);
+        validate_expected_shape(name, info->shape, expected_shape);
         const auto shape = shape_from_dims(expected_shape);
         const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
         const auto [data, byte_size] = require_data_range(*info);
@@ -608,7 +594,7 @@ public:
         std::string_view name,
         const std::optional<std::vector<int64_t>> & expected_shape) const override {
         const auto tensor = require_tensor_data(name);
-        validate_expected_shape(name, tensor.metadata.shape, expected_shape, false);
+        validate_expected_shape(name, tensor.metadata.shape, expected_shape);
         const ggml_type type = ggml_type_for_tensor_dtype(tensor.metadata.dtype);
         const auto physical_shape = tensor.metadata.shape.empty()
             ? shape_from_dims({1})
@@ -691,8 +677,6 @@ class GgufTensorSource final : public TensorSource {
 public:
     explicit GgufTensorSource(std::filesystem::path path)
         : source_path_(std::filesystem::weakly_canonical(path)) {
-        // Read tokenizer metadata during initialization
-        read_metadata(path);
         ggml_context * tensor_context = nullptr;
         gguf_context * gguf = gguf_init_from_file(
             source_path_.string().c_str(),
@@ -777,7 +761,6 @@ public:
         gguf_free(gguf);
         ggml_free(tensor_context);
         bytes_ = engine::io::read_binary_blob(source_path_);
-        read_metadata(source_path_);
     }
 
     const std::filesystem::path & source_path() const noexcept override { return source_path_; }
@@ -820,7 +803,7 @@ public:
         TensorStorageType storage_type,
         const std::vector<int64_t> & expected_shape) const override {
         const auto & info = require_info(name);
-        validate_expected_shape(name, info.shape, expected_shape, false);
+        validate_expected_shape(name, info.shape, expected_shape);
         const auto shape = shape_from_dims(expected_shape);
         const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
         const auto [data, byte_size] = require_data_range(info);
@@ -848,7 +831,7 @@ public:
         std::string_view name,
         const std::optional<std::vector<int64_t>> & expected_shape) const override {
         const auto tensor = require_tensor_data(name);
-        validate_expected_shape(name, tensor.metadata.shape, expected_shape, false);
+        validate_expected_shape(name, tensor.metadata.shape, expected_shape);
         const auto physical_shape = tensor.metadata.shape.empty()
             ? shape_from_dims({1})
             : shape_from_dims(tensor.metadata.shape);
@@ -897,248 +880,6 @@ private:
     std::vector<GgufTensorInfo> infos_;
     std::unordered_map<std::string, size_t> info_by_name_;
     mutable engine::io::BinaryBlob bytes_;
-    // Tokenizer metadata
-    std::optional<std::string> tokenizer_model_;
-    std::optional<std::string> tokenizer_pre_;
-    std::optional<std::vector<std::string>> tokenizer_tokens_;
-    std::optional<std::vector<int32_t>> tokenizer_token_type_;
-    std::optional<std::vector<std::string>> tokenizer_merges_;
-    std::optional<uint32_t> tokenizer_bos_token_id_;
-    std::optional<uint32_t> tokenizer_eos_token_id_;
-    std::optional<uint32_t> tokenizer_unknown_token_id_;
-    
-    // Config metadata (voxcpm_*)
-    std::unordered_map<std::string, std::string> config_string_metadata_;
-    std::unordered_map<std::string, uint32_t> config_u32_metadata_;
-    std::unordered_map<std::string, std::vector<int32_t>> config_i32_array_metadata_;
-    std::unordered_map<std::string, std::vector<float>> config_f32_array_metadata_;
-    
-    void read_metadata(const std::filesystem::path & path) {
-        ggml_context * tensor_context = nullptr;
-        gguf_context * gguf = gguf_init_from_file(
-            path.string().c_str(),
-            gguf_init_params{true, &tensor_context});
-        if (gguf == nullptr) {
-            if (tensor_context != nullptr) ggml_free(tensor_context);
-            return;
-        }
-        
-        const auto get_string = [&](const char* key) -> std::optional<std::string> {
-            const int idx = gguf_find_key(gguf, key);
-            if (idx < 0 || gguf_get_kv_type(gguf, idx) != GGUF_TYPE_STRING) {
-                return std::nullopt;
-            }
-            const char* data = gguf_get_val_str(gguf, idx);
-            if (!data) return std::nullopt;
-            return std::string(data);
-        };
-        
-        const auto get_u32 = [&](const char* key) -> std::optional<uint32_t> {
-            const int idx = gguf_find_key(gguf, key);
-            if (idx < 0) return std::nullopt;
-            return gguf_get_val_u32(gguf, idx);
-        };
-        
-        const auto get_f32 = [&](const char* key) -> std::optional<float> {
-            const int idx = gguf_find_key(gguf, key);
-            if (idx < 0 || gguf_get_kv_type(gguf, idx) != GGUF_TYPE_FLOAT32) {
-                return std::nullopt;
-            }
-            return gguf_get_val_f32(gguf, idx);
-        };
-        
-        const auto get_i32_array = [&](const char* key) -> std::optional<std::vector<int32_t>> {
-            const int idx = gguf_find_key(gguf, key);
-            if (idx < 0) return std::nullopt;
-            const int32_t* data = static_cast<const int32_t*>(gguf_get_arr_data(gguf, idx));
-            const size_t n = gguf_get_arr_n(gguf, idx);
-            if (!data && n != 0) return std::nullopt;
-            return std::vector<int32_t>(data, data + n);
-        };
-        
-        const auto get_f32_array = [&](const char* key) -> std::optional<std::vector<float>> {
-            const int idx = gguf_find_key(gguf, key);
-            if (idx < 0 || gguf_get_arr_type(gguf, idx) != GGUF_TYPE_FLOAT32) {
-                return std::nullopt;
-            }
-            const float* data = static_cast<const float*>(gguf_get_arr_data(gguf, idx));
-            const size_t n = gguf_get_arr_n(gguf, idx);
-            if (!data && n != 0) return std::nullopt;
-            return std::vector<float>(data, data + n);
-        };
-        
-        const auto get_string_array = [&](const char* key) -> std::optional<std::vector<std::string>> {
-            const int idx = gguf_find_key(gguf, key);
-            if (idx < 0 || gguf_get_arr_type(gguf, idx) != GGUF_TYPE_STRING) {
-                return std::nullopt;
-            }
-            const size_t n = gguf_get_arr_n(gguf, idx);
-            std::vector<std::string> values;
-            values.reserve(n);
-            for (size_t i = 0; i < n; ++i) {
-                const char* v = gguf_get_arr_str(gguf, idx, i);
-                values.emplace_back(v ? v : "");
-            }
-            return values;
-        };
-        
-        // Tokenizer metadata
-        tokenizer_model_ = get_string("tokenizer.ggml.model");
-        tokenizer_pre_ = get_string("tokenizer.ggml.pre");
-        tokenizer_tokens_ = get_string_array("tokenizer.ggml.tokens");
-        tokenizer_token_type_ = get_i32_array("tokenizer.ggml.token_type");
-        tokenizer_merges_ = get_string_array("tokenizer.ggml.merges");
-        tokenizer_bos_token_id_ = get_u32("tokenizer.ggml.bos_token_id");
-        tokenizer_eos_token_id_ = get_u32("tokenizer.ggml.eos_token_id");
-        tokenizer_unknown_token_id_ = get_u32("tokenizer.ggml.unknown_token_id");
-        
-        // Config metadata (voxcpm_*) - read all voxcpm_* keys
-        // We read known keys, but also could iterate all keys if needed
-        static constexpr const char* config_string_keys[] = {
-            "voxcpm_architecture",
-            "voxcpm_device",
-            "voxcpm_dtype",
-            "voxcpm_lm_config_rope_scaling_type",
-            "voxcpm_dit_config_cfm_config_solver",
-            "voxcpm_dit_config_cfm_config_t_scheduler",
-        };
-        for (const char* key : config_string_keys) {
-            if (auto val = get_string(key)) {
-                config_string_metadata_[key] = *val;
-            }
-        }
-        
-        static constexpr const char* config_u32_keys[] = {
-            "voxcpm_lm_config_bos_token_id",
-            "voxcpm_lm_config_eos_token_id",
-            "voxcpm_lm_config_hidden_size",
-            "voxcpm_lm_config_intermediate_size",
-            "voxcpm_lm_config_max_position_embeddings",
-            "voxcpm_lm_config_num_attention_heads",
-            "voxcpm_lm_config_num_hidden_layers",
-            "voxcpm_lm_config_num_key_value_heads",
-            "voxcpm_lm_config_dim_model_base",
-            "voxcpm_lm_config_scale_emb",
-            "voxcpm_lm_config_rope_theta",
-            "voxcpm_lm_config_use_mup",
-            "voxcpm_lm_config_vocab_size",
-            "voxcpm_patch_size",
-            "voxcpm_feat_dim",
-            "voxcpm_residual_lm_num_layers",
-            "voxcpm_residual_lm_no_rope",
-            "voxcpm_scalar_quantization_latent_dim",
-            "voxcpm_scalar_quantization_scale",
-            "voxcpm_encoder_config_hidden_dim",
-            "voxcpm_encoder_config_ffn_dim",
-            "voxcpm_encoder_config_num_heads",
-            "voxcpm_encoder_config_num_layers",
-            "voxcpm_dit_config_hidden_dim",
-            "voxcpm_dit_config_ffn_dim",
-            "voxcpm_dit_config_num_heads",
-            "voxcpm_dit_config_num_layers",
-            "voxcpm_dit_config_mean_mode",
-            "voxcpm_audio_vae_config_encoder_dim",
-            "voxcpm_audio_vae_config_decoder_dim",
-            "voxcpm_audio_vae_config_latent_dim",
-            "voxcpm_audio_vae_config_sample_rate",
-            "voxcpm_audio_vae_config_out_sample_rate",
-            "voxcpm_max_length",
-        };
-        for (const char* key : config_u32_keys) {
-            if (auto val = get_u32(key)) {
-                config_u32_metadata_[key] = *val;
-            }
-        }
-        
-        static constexpr const char* config_i32_array_keys[] = {
-            "voxcpm_audio_vae_config_encoder_rates",
-            "voxcpm_audio_vae_config_decoder_rates",
-            "voxcpm_audio_vae_config_sr_bin_boundaries",
-        };
-        for (const char* key : config_i32_array_keys) {
-            if (auto val = get_i32_array(key)) {
-                config_i32_array_metadata_[key] = *val;
-            }
-        }
-        
-        static constexpr const char* config_f32_array_keys[] = {
-            "voxcpm_lm_config_rope_scaling_long_factor",
-            "voxcpm_lm_config_rope_scaling_short_factor",
-        };
-        for (const char* key : config_f32_array_keys) {
-            if (auto val = get_f32_array(key)) {
-                config_f32_array_metadata_[key] = *val;
-            }
-        }
-        
-        gguf_free(gguf);
-        if (tensor_context != nullptr) ggml_free(tensor_context);
-    }
-    
-    // GGUF metadata access implementations
-    std::optional<std::string> optional_string(std::string_view key) const override {
-        if (key == "tokenizer.ggml.model") return tokenizer_model_;
-        if (key == "tokenizer.ggml.pre") return tokenizer_pre_;
-        // Check config metadata
-        auto it = config_string_metadata_.find(std::string(key));
-        if (it != config_string_metadata_.end()) return it->second;
-        return std::nullopt;
-    }
-    
-    std::optional<uint32_t> optional_u32(std::string_view key) const override {
-        if (key == "tokenizer.ggml.bos_token_id") return tokenizer_bos_token_id_;
-        if (key == "tokenizer.ggml.eos_token_id") return tokenizer_eos_token_id_;
-        if (key == "tokenizer.ggml.unknown_token_id") return tokenizer_unknown_token_id_;
-        // Check config metadata
-        auto it = config_u32_metadata_.find(std::string(key));
-        if (it != config_u32_metadata_.end()) return it->second;
-        return std::nullopt;
-    }
-    
-    std::optional<std::vector<std::string>> optional_string_array(std::string_view key) const override {
-        if (key == "tokenizer.ggml.tokens") return tokenizer_tokens_;
-        if (key == "tokenizer.ggml.merges") return tokenizer_merges_;
-        return std::nullopt;
-    }
-    
-    std::optional<std::vector<int32_t>> optional_i32_array(std::string_view key) const override {
-        if (key == "tokenizer.ggml.token_type") return tokenizer_token_type_;
-        // Check config metadata
-        auto it = config_i32_array_metadata_.find(std::string(key));
-        if (it != config_i32_array_metadata_.end()) return it->second;
-        return std::nullopt;
-    }
-    
-    std::optional<std::vector<float>> optional_f32_array(std::string_view key) const override {
-        // Check config metadata
-        auto it = config_f32_array_metadata_.find(std::string(key));
-        if (it != config_f32_array_metadata_.end()) return it->second;
-        return std::nullopt;
-    }
-    
-    std::string require_string(std::string_view key) const override {
-        auto opt = optional_string(key);
-        if (opt) return *opt;
-        throw std::runtime_error("GGUF metadata key not found: " + std::string(key));
-    }
-    
-    uint32_t require_u32(std::string_view key) const override {
-        auto opt = optional_u32(key);
-        if (opt) return *opt;
-        throw std::runtime_error("GGUF metadata key not found: " + std::string(key));
-    }
-    
-    std::vector<std::string> require_string_array(std::string_view key) const override {
-        auto opt = optional_string_array(key);
-        if (opt) return *opt;
-        throw std::runtime_error("GGUF metadata key not found: " + std::string(key));
-    }
-    
-    std::vector<int32_t> require_i32_array(std::string_view key) const override {
-        auto opt = optional_i32_array(key);
-        if (opt) return *opt;
-        throw std::runtime_error("GGUF metadata key not found: " + std::string(key));
-    }
 };
 
 std::unordered_map<std::string, std::string> parse_indexed_tensor_weight_map(
@@ -1493,7 +1234,7 @@ TensorData TensorSource::require_tensor(
     const core::TensorShape shape = shape_from_dims(expected_shape);
     const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
     const auto raw = require_tensor_data(name);
-    validate_expected_shape(name, raw.metadata.shape, expected_shape, false);
+    validate_expected_shape(name, raw.metadata.shape, expected_shape);
     if (raw_dtype_matches_ggml_type(raw.metadata.dtype, type)) {
         validate_raw_tensor_byte_size(name, shape, type, raw.bytes.size());
         return TensorData{shape, type, raw.bytes};
@@ -1516,7 +1257,7 @@ TensorData TensorSource::require_tensor_as_shape(
     const core::TensorShape source_shape = shape_from_dims(expected);
     const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
     const auto raw = require_tensor_data(name);
-    validate_expected_shape(name, raw.metadata.shape, expected, false);
+    validate_expected_shape(name, raw.metadata.shape, expected);
     if (raw.metadata.shape == std::vector<int64_t>(tensor_shape) &&
         raw_dtype_matches_ggml_type(raw.metadata.dtype, type)) {
         validate_raw_tensor_byte_size(name, shape, type, raw.bytes.size());

@@ -1,6 +1,7 @@
 #include "engine/models/voxcpm2/config_gguf.h"
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/models/voxcpm2/gguf_metadata.h"
 
 #include <stdexcept>
 #include <string>
@@ -8,20 +9,22 @@
 namespace engine::models::voxcpm2 {
 
 bool has_voxcpm1_config_metadata(const engine::assets::TensorSource & source) {
+    const GgufMetadataReader metadata(source);
     // Check for at least one VoxCPM1-specific metadata key
-    return source.optional_string("voxcpm_architecture").has_value() ||
-           source.optional_string("voxcpm_lm_config_hidden_size").has_value() ||
-           source.optional_u32("voxcpm_lm_config_hidden_size").has_value();
+    return metadata.optional_string("voxcpm_architecture").has_value() ||
+           metadata.optional_string("voxcpm_lm_config_hidden_size").has_value() ||
+           metadata.optional_u32("voxcpm_lm_config_hidden_size").has_value();
 }
 
 VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource & source) {
     VoxCPM2Config config;
+    const GgufMetadataReader metadata(source);
     config.v1 = true;
     config.architecture = "voxcpm";
 
     // Helper lambda to get optional i64 from GGUF metadata (via u32 or i64)
-    auto get_optional_i64 = [&source](const char * key) -> std::optional<int64_t> {
-        auto u32 = source.optional_u32(key);
+    auto get_optional_i64 = [&source, &metadata](const char * key) -> std::optional<int64_t> {
+        auto u32 = metadata.optional_u32(key);
         if (u32) return static_cast<int64_t>(*u32);
         // Try i64 scalar if it's a tensor
         if (source.has_tensor(key)) {
@@ -35,15 +38,15 @@ VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource &
     };
 
     // Helper lambda to get optional bool from GGUF metadata
-    auto get_optional_bool = [&source](const char * key) -> std::optional<bool> {
-        auto u32 = source.optional_u32(key);
+    auto get_optional_bool = [&metadata](const char * key) -> std::optional<bool> {
+        auto u32 = metadata.optional_u32(key);
         if (u32) return *u32 != 0;
         return std::nullopt;
     };
 
     // Helper lambda to get optional int64 array from GGUF metadata
-    auto get_optional_i64_array = [&source](const char * key) -> std::optional<std::vector<int64_t>> {
-        auto i32_arr = source.optional_i32_array(key);
+    auto get_optional_i64_array = [&metadata](const char * key) -> std::optional<std::vector<int64_t>> {
+        auto i32_arr = metadata.optional_i32_array(key);
         if (i32_arr) {
             std::vector<int64_t> result;
             result.reserve(i32_arr->size());
@@ -56,7 +59,7 @@ VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource &
     };
 
     // Architecture
-    auto arch = source.optional_string("voxcpm_architecture");
+    auto arch = metadata.optional_string("voxcpm_architecture");
     if (arch) config.architecture = *arch;
 
     // LM Config
@@ -86,9 +89,9 @@ VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource &
     // instead of the old identity fallback: identity factors silently degrade
     // every RoPE computation across all four transformers.
     auto short_factor =
-        source.optional_f32_array("voxcpm_lm_config_rope_scaling_short_factor");
+        metadata.optional_f32_array("voxcpm_lm_config_rope_scaling_short_factor");
     auto long_factor =
-        source.optional_f32_array("voxcpm_lm_config_rope_scaling_long_factor");
+        metadata.optional_f32_array("voxcpm_lm_config_rope_scaling_long_factor");
     if (short_factor &&
         static_cast<int64_t>(short_factor->size()) != factor_size) {
         throw std::runtime_error(
@@ -159,8 +162,8 @@ VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource &
     config.max_length = get_optional_i64("voxcpm_max_length").value_or(2048);
 
     // Device and dtype
-    config.device = source.optional_string("voxcpm_device").value_or("cpu");
-    config.dtype = source.optional_string("voxcpm_dtype").value_or("fp16");
+    config.device = metadata.optional_string("voxcpm_device").value_or("cpu");
+    config.dtype = metadata.optional_string("voxcpm_dtype").value_or("fp16");
 
     // Validate required fields
     if (config.lm.hidden_size <= 0) {

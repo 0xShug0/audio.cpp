@@ -1,6 +1,7 @@
 #include "engine/models/voxcpm2/tokenizer_gguf.h"
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/models/voxcpm2/gguf_metadata.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -196,18 +197,22 @@ VoxCPM1GgufTokenizer::VoxCPM1GgufTokenizer(std::shared_ptr<const engine::assets:
     if (!gguf_source) {
         throw std::runtime_error("VoxCPM1 GGUF tokenizer requires a valid GGUF tensor source");
     }
+    const GgufMetadataReader metadata(*gguf_source);
+    if (!metadata.valid()) {
+        throw std::runtime_error("VoxCPM1 GGUF tokenizer requires a GGUF tensor source");
+    }
     impl_ = std::make_shared<Impl>();
     auto & impl = *impl_;
 
     // Read tokenizer metadata from GGUF directly in constructor
-    const std::string tokenizer_model = gguf_source->require_string("tokenizer.ggml.model");
-    const std::string tokenizer_pre = gguf_source->require_string("tokenizer.ggml.pre");
-    const std::vector<std::string> tokens = gguf_source->require_string_array("tokenizer.ggml.tokens");
-    const std::vector<int32_t> token_types = gguf_source->require_i32_array("tokenizer.ggml.token_type");
-    const std::vector<std::string> merges = gguf_source->require_string_array("tokenizer.ggml.merges");
-    const uint32_t bos_id = gguf_source->require_u32("tokenizer.ggml.bos_token_id");
-    const uint32_t eos_id = gguf_source->require_u32("tokenizer.ggml.eos_token_id");
-    const uint32_t unk_id = gguf_source->require_u32("tokenizer.ggml.unknown_token_id");
+    const std::string tokenizer_model = metadata.require_string("tokenizer.ggml.model");
+    const std::string tokenizer_pre = metadata.require_string("tokenizer.ggml.pre");
+    const std::vector<std::string> tokens = metadata.require_string_array("tokenizer.ggml.tokens");
+    const std::vector<int32_t> token_types = metadata.require_i32_array("tokenizer.ggml.token_type");
+    const std::vector<std::string> merges = metadata.require_string_array("tokenizer.ggml.merges");
+    const uint32_t bos_id = metadata.require_u32("tokenizer.ggml.bos_token_id");
+    const uint32_t eos_id = metadata.require_u32("tokenizer.ggml.eos_token_id");
+    const uint32_t unk_id = metadata.require_u32("tokenizer.ggml.unknown_token_id");
 
     if (tokenizer_model != "gpt2" || tokens.empty() || merges.empty() || token_types.size() != tokens.size()) {
         throw std::runtime_error("Invalid VoxCPM1 GGUF tokenizer metadata");
@@ -350,9 +355,10 @@ int32_t VoxCPM1GgufTokenizer::unk_token_id() const noexcept {
 }
 
 bool VoxCPM1GgufTokenizer::has_tokenizer_metadata(const engine::assets::TensorSource & source) {
-    return source.optional_string("tokenizer.ggml.model").has_value() &&
-           source.optional_string_array("tokenizer.ggml.tokens").has_value() &&
-           source.optional_string_array("tokenizer.ggml.merges").has_value();
+    const GgufMetadataReader metadata(source);
+    return metadata.optional_string("tokenizer.ggml.model").has_value() &&
+           metadata.optional_string_array("tokenizer.ggml.tokens").has_value() &&
+           metadata.optional_string_array("tokenizer.ggml.merges").has_value();
 }
 
 }  // namespace engine::models::voxcpm2

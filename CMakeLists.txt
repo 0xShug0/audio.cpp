@@ -707,6 +707,7 @@ audiocpp_add_model(voxcpm2
         src/models/voxcpm2/audiovae.cpp
         src/models/voxcpm2/config_gguf.cpp
         src/models/voxcpm2/generator.cpp
+        src/models/voxcpm2/gguf_metadata.cpp
         src/models/voxcpm2/loader.cpp
         src/models/voxcpm2/minicpm.cpp
         src/models/voxcpm2/session.cpp
@@ -724,6 +725,7 @@ audiocpp_add_model(voxcpm1
         src/models/voxcpm2/audiovae.cpp
         src/models/voxcpm2/config_gguf.cpp
         src/models/voxcpm2/generator.cpp
+        src/models/voxcpm2/gguf_metadata.cpp
         src/models/voxcpm2/loader.cpp
         src/models/voxcpm2/minicpm.cpp
         src/models/voxcpm2/session.cpp

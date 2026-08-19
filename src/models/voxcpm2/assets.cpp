@@ -720,7 +720,7 @@ private:
     }
 
     assets::RawTensorData reshape_tensor_data(const assets::RawTensorData & data,
-                                               const std::vector<int64_t> & target_shape) const {
+                                               const std::vector<int64_t> &) const {
         // For now, just return the data as-is (validation happens elsewhere)
         // The actual reshape happens in require_f32
         return data;
