@@ -78,8 +78,9 @@ std::vector<float> f5_dit_forward(
     const F5ComputeDevice * device = nullptr);
 
 // Batched CFG: one ne3=2 graph compute returning {conditioned, unconditioned}
-// velocities (drop_text applies to the second half). Halves share weights,
-// time embedding and positions; only text ids differ.
+// velocities. Matches python cfg_infer: the uncond half runs with
+// drop_audio_cond (zeroed cond) and drop_text (filler text id 0); the host
+// upload in runtime.cpp prepares both halves accordingly.
 std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
     const std::string & weights_path,
     const std::vector<float> & x,

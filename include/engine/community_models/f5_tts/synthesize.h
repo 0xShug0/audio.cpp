@@ -42,6 +42,13 @@ F5SynthesisResult f5_synthesize(
 std::vector<float> f5_test_mel(const std::vector<float> & wav);
 std::vector<float> f5_test_vocos(const std::string & vocos_path, const std::vector<float> & mel);
 std::vector<float> f5_test_vocos_gpu(const std::string & vocos_path, const std::vector<float> & mel, const F5ComputeDevice & dev);
+// test hook: full text pipeline (dialect wrap + ref trailing-space rule +
+// UTF-8 char tokenization) -> vocab ids, for parity vs python list_str_to_idx
+std::vector<int32_t> f5_test_token_ids(
+    const std::string & model_path,
+    const std::string & dialect,
+    const std::string & ref_text,
+    const std::string & gen_text);
 #endif
 
 }  // namespace engine::models::f5_tts

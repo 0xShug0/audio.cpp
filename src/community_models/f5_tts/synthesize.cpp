@@ -220,6 +220,31 @@ std::vector<std::string> utf8_chars(const std::string & s) {
     return out;
 }
 
+// Python: if ref_text ends with a single-byte char (ASCII), a space is
+// appended so ref and gen text do not fuse into one token stream.
+std::string apply_ref_trailing_space(std::string ref_text) {
+    if (!ref_text.empty() && (static_cast<unsigned char>(ref_text.back()) & 0x80) == 0) {
+        ref_text += " ";
+    }
+    return ref_text;
+}
+
+// Habibi prompt assembly: dialect token + 〈ref_text + gen_chunk〉.
+std::string assemble_chunk_text(
+    const std::string & dialect, const std::string & ref_text, const std::string & chunk) {
+    return std::string(dialect_token(dialect)) + "\xE3\x80\x88" + ref_text + chunk + "\xE3\x80\x89";
+}
+
+std::vector<int32_t> tokenize_text(
+    const std::unordered_map<std::string, int32_t> & vocab, const std::string & s) {
+    std::vector<int32_t> ids;
+    for (const auto & ch : utf8_chars(s)) {
+        const auto it = vocab.find(ch);
+        ids.push_back(it != vocab.end() ? it->second : 0);
+    }
+    return ids;
+}
+
 struct Rng {
     uint64_t state;
     explicit Rng(uint64_t seed) : state(seed ? seed : 0x9E3779B97F4A7C15ULL) {}
@@ -240,11 +265,30 @@ struct Rng {
     }
 };
 
+// Python F5 uses Empirically Pruned Step Sampling (EPSS) for low NFE:
+// non-uniform grids on a 1/32 quantum (get_epss_timesteps); uniform
+// linspace otherwise. The sway transform is applied on top either way.
 std::vector<float> sway_timesteps(int steps, float coef) {
-    std::vector<float> t(static_cast<size_t>(steps) + 1);
-    for (int i = 0; i <= steps; ++i) {
-        const float v = static_cast<float>(i) / steps;
-        t[static_cast<size_t>(i)] = v + coef * (std::cos(static_cast<float>(M_PI) / 2 * v) - 1 + v);
+    static const std::map<int, std::vector<int>> kEpss = {
+        {5, {0, 2, 4, 8, 16, 32}},
+        {6, {0, 2, 4, 6, 8, 16, 32}},
+        {7, {0, 2, 4, 6, 8, 16, 24, 32}},
+        {10, {0, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32}},
+        {12, {0, 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32}},
+        {16, {0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32}},
+    };
+    std::vector<float> t;
+    const auto it = kEpss.find(steps);
+    if (steps == 32 || it == kEpss.end()) {
+        t.resize(static_cast<size_t>(steps) + 1);
+        for (int i = 0; i <= steps; ++i) {
+            t[static_cast<size_t>(i)] = static_cast<float>(i) / steps;
+        }
+    } else {
+        for (const int v : it->second) t.push_back(static_cast<float>(v) / 32.0F);
+    }
+    for (auto & v : t) {
+        v = v + coef * (std::cos(static_cast<float>(M_PI) / 2 * v) - 1 + v);
     }
     return t;
 }
@@ -985,14 +1029,6 @@ F5SynthesisResult f5_synthesize(
 
     const std::string dir = std::filesystem::path(model_path).parent_path().string();
     const auto vocab = load_vocab(dir);
-    const auto tokenize = [&](const std::string & s) {
-        std::vector<int32_t> ids;
-        for (const auto & ch : utf8_chars(s)) {
-            const auto it = vocab.find(ch);
-            ids.push_back(it != vocab.end() ? it->second : 0);
-        }
-        return ids;
-    };
 
     // ref audio -> 24k mono -> normalize to the training RMS -> mel
     // (Python F5: audio *= target_rms / rms when rms < target_rms; the
@@ -1049,16 +1085,16 @@ F5SynthesisResult f5_synthesize(
     }
     const auto chunks = chunk_text(request.text, chars_per_chunk);
     std::vector<float> all_rows;
+    const std::string ref_text = apply_ref_trailing_space(request.ref_text);
     // Every chunk is conditioned on the ORIGINAL reference (vanilla F5
     // chunking semantics): chained references drift the voice and decay
     // the energy chunk over chunk (observed: two voices + fade to silence).
     for (size_t ci = 0; ci < chunks.size(); ++ci) {
-        const std::string full = std::string(dialect_token(request.dialect))
-            + "\xE3\x80\x88" + request.ref_text + chunks[ci] + "\xE3\x80\x89";
-        const auto chunk_ids = tokenize(full);
+        const std::string full = assemble_chunk_text(request.dialect, ref_text, chunks[ci]);
+        const auto chunk_ids = tokenize_text(vocab, full);
         auto out = synthesize_chunk(
             model_path, request, ref_mel, ref_frames, chunk_ids,
-            chunks[ci], request.ref_text, dev,
+            chunks[ci], ref_text, dev,
             request.fixed_seed ? request.seed + static_cast<uint32_t>(ci) : 0,
             nullptr);
         all_rows.insert(all_rows.end(), out.gen_mel_rows.begin(), out.gen_mel_rows.end());
@@ -1088,6 +1124,17 @@ F5SynthesisResult f5_synthesize(
 std::vector<float> f5_test_mel(const std::vector<float> & wav) { return compute_mel(wav); }
 std::vector<float> f5_test_vocos(const std::string & vp, const std::vector<float> & mel) { return vocos_decode(vp, mel); }
 std::vector<float> f5_test_vocos_gpu(const std::string & vp, const std::vector<float> & mel, const F5ComputeDevice & dev) { return vocos_decode_gpu(vp, mel, dev); }
+std::vector<int32_t> f5_test_token_ids(
+    const std::string & model_path,
+    const std::string & dialect,
+    const std::string & ref_text,
+    const std::string & gen_text) {
+    const std::string dir = std::filesystem::path(model_path).parent_path().string();
+    const auto vocab = load_vocab(dir);
+    const std::string full = assemble_chunk_text(
+        dialect, apply_ref_trailing_space(ref_text), gen_text);
+    return tokenize_text(vocab, full);
+}
 #endif
 
 }  // namespace engine::models::f5_tts

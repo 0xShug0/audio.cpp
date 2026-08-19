@@ -489,7 +489,8 @@ F5DiTGraphBuild build_dit_modules_graph(
 
 
 // Batched-CFG variant: B=2 halves share every weight; halves differ only in
-// text ids (cond half: ids+1 offset embeds 〈ref+text〉, uncond half: pad id).
+// text ids (cond half: ids+1 offset embeds 〈ref+text〉, uncond half: filler
+// id 0 + zeroed cond, per python cfg_infer drop_audio_cond/drop_text).
 F5DiTGraphBuild build_dit_cfg_modules_graph(
     ggml_context * ggml,
     const F5DiTWeights & w,

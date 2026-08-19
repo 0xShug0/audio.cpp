@@ -424,10 +424,10 @@ ggml_tensor * grouped_conv1d(
 
 
 // Batched CFG forward: one graph, ne3=2 batch (half 0 = conditioned with
-// text_ids, half 1 = uncond with all-zero ids). Same per-half math as two
-// f5_dit_forward calls; halves share weights/time-embed/positions, differ
-// only in text ids (and optionally cond zeroing, which callers handle on the
-// host by uploading a zeroed cond for half 1 if drop_audio_cond).
+// text_ids, half 1 = uncond: filler text ids + zeroed cond, uploaded from
+// the host — matches python cfg_infer drop_audio_cond=True/drop_text=True).
+// Same per-half math as two f5_dit_forward calls; halves share
+// weights/time-embed/positions.
 // Returns {cond, null} mel-major [MEL*N] each.
 // ---- batched-CFG helpers (tensors carry B=2 at ne3) ----
 
@@ -621,13 +621,15 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         std::vector<float> xb(x_in.size() * 2);
         std::memcpy(xb.data(), x_in.data(), half_bytes);
         std::memcpy(xb.data() + x_in.size(), x_in.data(), half_bytes);
-        std::vector<float> cb(cond_in.size() * 2);
-        std::memcpy(cb.data(), cond_in.data(), half_bytes);
-        std::memcpy(cb.data() + cond_in.size(), cond_in.data(), half_bytes);
+        // Python cfg_infer: the uncond half runs with drop_audio_cond=True
+        // (cond = zeros) and drop_text=True (text zeroed AFTER the +1 offset,
+        // so the embedding sees the filler row 0, not space row 1).
+        std::vector<float> cb(cond_in.size() * 2, 0.0F);
+        std::memcpy(cb.data(), cond_in.data(), half_bytes);  // cond half only
         std::vector<int32_t> ids(NT * 2);
         for (int i = 0; i < NT; ++i) {
             ids[i] = text_in[i] + 1;          // cond half
-            ids[NT + i] = 1;                  // uncond: python zeros text then +1 -> token 1 (space)
+            ids[NT + i] = 0;                  // uncond: drop_text zeros -> filler token 0
         }
         std::vector<float> th(256);
         {
