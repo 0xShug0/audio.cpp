@@ -24,7 +24,9 @@ struct PersonaPlexLMWeights {
     std::vector<core::TensorValue> audio_embeddings;
 };
 
-modules::QwenCausalDecoderConfig personaplex_lm_decoder_config(const PersonaPlexConfig & config);
+modules::QwenCausalDecoderConfig personaplex_lm_decoder_config(
+    const PersonaPlexConfig & config,
+    core::BackendType backend_type);
 
 std::shared_ptr<const PersonaPlexLMWeights> load_personaplex_lm_weights(
     const PersonaPlexAssets & assets,

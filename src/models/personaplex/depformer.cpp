@@ -35,7 +35,9 @@ struct GgmlContextDeleter {
     }
 };
 
-modules::QwenDecoderLayerConfig depformer_layer_config(const PersonaPlexConfig & config) {
+modules::QwenDecoderLayerConfig depformer_layer_config(
+    const PersonaPlexConfig & config,
+    core::BackendType backend_type) {
     modules::QwenDecoderLayerConfig out;
     out.hidden_size = config.depformer.hidden_size;
     out.num_attention_heads = config.depformer.num_attention_heads;
@@ -46,7 +48,7 @@ modules::QwenDecoderLayerConfig depformer_layer_config(const PersonaPlexConfig &
     out.position_encoding = modules::QwenDecoderPositionEncoding::None;
     out.attention_precision = GGML_PREC_F32;
     out.projection_precision = GGML_PREC_DEFAULT;
-    out.activation_cast.enabled = true;
+    out.activation_cast.enabled = backend_type != core::BackendType::Vulkan;
     out.activation_cast.type = GGML_TYPE_BF16;
     out.activation_cast.after_input_norm = true;
     out.activation_cast.after_qkv_projection = true;
@@ -267,14 +269,15 @@ struct PersonaPlexDepformerRuntime::Impl {
 
         cache_keys.reserve(static_cast<size_t>(config.depformer.num_layers));
         cache_values.reserve(static_cast<size_t>(config.depformer.num_layers));
+        const ggml_type cache_type = backend_type == core::BackendType::Vulkan ? GGML_TYPE_F16 : GGML_TYPE_BF16;
         for (int64_t layer = 0; layer < config.depformer.num_layers; ++layer) {
             cache_keys.push_back(core::make_tensor(
                 build_ctx,
-                GGML_TYPE_BF16,
+                cache_type,
                 core::TensorShape::from_dims({1, config.lm.depformer_steps, config.depformer.num_attention_heads, config.depformer.head_dim})));
             cache_values.push_back(core::make_tensor(
                 build_ctx,
-                GGML_TYPE_BF16,
+                cache_type,
                 core::TensorShape::from_dims({1, config.lm.depformer_steps, config.depformer.num_attention_heads, config.depformer.head_dim})));
         }
 
@@ -312,7 +315,7 @@ struct PersonaPlexDepformerRuntime::Impl {
                 core::TensorShape::from_dims({1, 1, config.depformer.hidden_size}));
             hidden = core::wrap_tensor(ggml_add(ctx.get(), hidden.tensor, token_embedding.tensor), hidden.shape, GGML_TYPE_F32);
 
-            const auto layer_config = depformer_layer_config(config);
+            const auto layer_config = depformer_layer_config(config, backend_type);
             const modules::QwenDecoderLayerModule layer_module(layer_config);
             for (int64_t layer_index = 0; layer_index < config.depformer.num_layers; ++layer_index) {
                 const auto layer_weights = depformer_step_layer_weights(

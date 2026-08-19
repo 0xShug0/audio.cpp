@@ -74,7 +74,9 @@ struct GgmlContextDeleter {
 
 }  // namespace
 
-modules::QwenCausalDecoderConfig personaplex_lm_decoder_config(const PersonaPlexConfig & config) {
+modules::QwenCausalDecoderConfig personaplex_lm_decoder_config(
+    const PersonaPlexConfig & config,
+    core::BackendType backend_type) {
     modules::QwenCausalDecoderConfig out;
     out.stack.hidden_size = config.lm.hidden_size;
     out.stack.num_attention_heads = config.lm.num_attention_heads;
@@ -87,7 +89,7 @@ modules::QwenCausalDecoderConfig personaplex_lm_decoder_config(const PersonaPlex
     out.stack.rope_type = GGML_ROPE_TYPE_NORMAL;
     out.stack.attention_precision = GGML_PREC_DEFAULT;
     out.stack.projection_precision = GGML_PREC_DEFAULT;
-    out.stack.activation_cast.enabled = true;
+    out.stack.activation_cast.enabled = backend_type != core::BackendType::Vulkan;
     out.stack.activation_cast.type = GGML_TYPE_BF16;
     out.stack.activation_cast.after_input_norm = true;
     out.stack.activation_cast.after_qkv_projection = true;
@@ -237,7 +239,7 @@ public:
             ggml_add(ctx.get(), embedding_scaled.tensor, token_scaled.tensor),
             core::TensorShape::from_dims({1, 1, config.lm.hidden_size}),
             GGML_TYPE_F32);
-        auto decoder_out = modules::QwenCausalDecoderModule(personaplex_lm_decoder_config(config))
+        auto decoder_out = modules::QwenCausalDecoderModule(personaplex_lm_decoder_config(config, backend_type))
                                .build_static_cache_tail(
                                    build_ctx,
                                    graph,
