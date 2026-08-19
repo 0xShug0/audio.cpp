@@ -47,10 +47,17 @@
       },
       {
         "name": "voice_id",
-        "type": "string",
-        "description": "Baked voice id or name; default 0.",
+        "type": "enum",
+        "description": "Packaged MagpieTTS voice name; default Aria.",
+        "values": [
+          "Aria",
+          "Jason",
+          "John",
+          "Leo",
+          "Sofia"
+        ],
         "required": false,
-        "default": "0"
+        "default": "Aria"
       },
       {
         "name": "temperature",

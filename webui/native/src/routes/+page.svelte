@@ -229,7 +229,10 @@
     stable_audio: 'Stable Audio 3',
     qwen3_asr: 'Qwen3-ASR',
     vevo2: 'Vevo2',
-    seed_vc: 'Seed-VC'
+    seed_vc: 'Seed-VC',
+    magpie_tts: 'MagpieTTS',
+    meanvc2: 'MeanVC2',
+    personaplex: 'PersonaPlex'
   };
 
   function pathVariantLabel(path: string) {
@@ -344,6 +347,7 @@
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task);
   $: acceptsSource = needsSource || selected?.task === 'gen';
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
+    (selected?.task === 's2s' && selected?.family === 'personaplex') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
