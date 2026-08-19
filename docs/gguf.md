@@ -50,6 +50,7 @@ Status labels:
 | `Pass` | Covered by the path-test matrix with acceptable output. |
 | `Pass (TTS + clone)` | Both no-reference TTS and reference-audio voice cloning run successfully. |
 | `Pass (drift)` | Loads and runs, with known acceptable output drift. |
+| `Pass (bit-identical)` | Loads and runs, reproducing the F32/F16 reference timestamps exactly (0-sample boundary diff). |
 | `Pass (ASR match, drift)` | TTS output has similarity/frame drift but ASR transcript remains usable. |
 | `No (...)` | Known unsupported, failing, or too much output drift. |
 | `---` | Not tested in the current GGUF path-test matrix. |
@@ -76,6 +77,7 @@ Status labels:
 | `mel_band_roformer` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
 | `miotts` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
+| `mms_forced_aligner` | Done | Pass | --- | Pass | Pass (bit-identical) |
 | `moss_tts_local` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_tts_nano` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `muscriptor` | Done | Pass | Pass | --- | --- |

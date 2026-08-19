@@ -159,14 +159,15 @@ int64_t conv1d_output_frames(int64_t input_frames, int64_t kernel, int64_t strid
     return (input_frames + 2 * padding - kernel) / stride + 1;
 }
 
-std::vector<float> effective_weight_norm_conv1d(
+std::vector<float> fold_weight_norm_conv1d(
     const engine::assets::TensorSource & source,
-    const std::string & prefix,
+    const std::string & weight_g_name,
+    const std::string & weight_v_name,
     int64_t out_channels,
     int64_t in_channels,
     int64_t kernel_size) {
-    const auto g = source.require_f32(prefix + ".weight_g", {1, 1, kernel_size});
-    const auto v = source.require_f32(prefix + ".weight_v", {out_channels, in_channels, kernel_size});
+    const auto g = source.require_f32(weight_g_name, {1, 1, kernel_size});
+    const auto v = source.require_f32(weight_v_name, {out_channels, in_channels, kernel_size});
     std::vector<float> weight(v.size());
     for (int64_t k = 0; k < kernel_size; ++k) {
         double sum = 0.0;
@@ -189,6 +190,43 @@ std::vector<float> effective_weight_norm_conv1d(
         }
     }
     return weight;
+}
+
+std::vector<float> effective_weight_norm_conv1d(
+    const engine::assets::TensorSource & source,
+    const std::string & prefix,
+    int64_t out_channels,
+    int64_t in_channels,
+    int64_t kernel_size) {
+    // Prefer a pre-folded kernel, then fairseq legacy weight_g/weight_v, then
+    // PyTorch parametrizations (original0/original1). The fold is identical
+    // for the latter two layouts: per-kernel-column normalization over the
+    // flattened (out, in) dims with a {1, 1, kernel} scale vector.
+    if (source.has_tensor(prefix + ".weight")) {
+        return source.require_f32(prefix + ".weight", {out_channels, in_channels, kernel_size});
+    }
+    if (source.has_tensor(prefix + ".weight_g") && source.has_tensor(prefix + ".weight_v")) {
+        return fold_weight_norm_conv1d(
+            source,
+            prefix + ".weight_g",
+            prefix + ".weight_v",
+            out_channels,
+            in_channels,
+            kernel_size);
+    }
+    if (source.has_tensor(prefix + ".parametrizations.weight.original0") &&
+        source.has_tensor(prefix + ".parametrizations.weight.original1")) {
+        return fold_weight_norm_conv1d(
+            source,
+            prefix + ".parametrizations.weight.original0",
+            prefix + ".parametrizations.weight.original1",
+            out_channels,
+            in_channels,
+            kernel_size);
+    }
+    throw std::runtime_error(
+        "HuBERT positional-conv weights missing: expected " + prefix +
+        ".weight, .weight_g/.weight_v, or .parametrizations.weight.original0/.original1");
 }
 
 std::string join_name(const std::string & lhs, const std::string & rhs) {

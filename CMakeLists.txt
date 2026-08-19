@@ -1051,6 +1051,19 @@ audiocpp_add_model(qwen3_forced_aligner
         qwen3_asr
 )
 
+audiocpp_add_model(mms_forced_aligner
+    SOURCES
+        src/community_models/mms_forced_aligner/assets.cpp
+        src/community_models/mms_forced_aligner/ctc_alignment.cpp
+        src/community_models/mms_forced_aligner/emissions.cpp
+        src/community_models/mms_forced_aligner/session.cpp
+        src/community_models/mms_forced_aligner/text_processor.cpp
+    INCLUDES
+        engine/community_models/mms_forced_aligner/session.h
+    LOADERS
+        engine::community_models::mms_forced_aligner::make_mms_forced_aligner_loader
+)
+
 audiocpp_add_model(sortformer_diar
     SOURCES
         src/models/sortformer_diar/assets.cpp
@@ -1589,6 +1602,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(pocket_tts_warm_bench tests/pocket_tts/pocket_tts_warm_bench.cpp)
     add_engine_warmbench(qwen3_asr_warm_bench tests/qwen3_asr/qwen3_asr_warm_bench.cpp)
     add_engine_warmbench(qwen3_forced_aligner_warm_bench tests/qwen3_forced_aligner/qwen3_forced_aligner_warm_bench.cpp)
+    add_engine_warmbench(mms_forced_aligner_warm_bench tests/mms_forced_aligner/mms_forced_aligner_warm_bench.cpp)
     add_engine_warmbench(qwen3_tts_warm_bench tests/qwen3_tts/qwen3_tts_warm_bench.cpp)
     add_engine_warmbench(seed_vc_warm_bench tests/seed_vc/seed_vc_warm_bench.cpp)
     add_engine_warmbench(silero_vad_warm_bench tests/silero_vad/silero_vad_warm_bench.cpp)
@@ -1928,6 +1942,67 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME qwen3_forced_aligner_processor_test
         COMMAND qwen3_forced_aligner_processor_test
+    )
+
+    add_engine_unittest(mms_forced_aligner_assets_test tests/unittests/test_mms_forced_aligner_assets.cpp)
+    target_sources(mms_forced_aligner_assets_test PRIVATE src/community_models/mms_forced_aligner/assets.cpp)
+    target_include_directories(mms_forced_aligner_assets_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME mms_forced_aligner_assets_test
+        COMMAND mms_forced_aligner_assets_test
+    )
+
+    add_engine_unittest(mms_hubert_positional_conv_test tests/unittests/test_mms_hubert_positional_conv.cpp)
+    target_include_directories(mms_hubert_positional_conv_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME mms_hubert_positional_conv_test
+        COMMAND mms_hubert_positional_conv_test
+    )
+
+    add_engine_unittest(mms_emissions_test tests/unittests/test_mms_emissions.cpp)
+    target_sources(mms_emissions_test PRIVATE src/community_models/mms_forced_aligner/emissions.cpp)
+    target_include_directories(mms_emissions_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME mms_emissions_test
+        COMMAND mms_emissions_test
+    )
+
+    add_engine_unittest(mms_text_processor_test tests/unittests/test_mms_text_processor.cpp)
+    target_sources(mms_text_processor_test PRIVATE src/community_models/mms_forced_aligner/text_processor.cpp)
+    target_include_directories(mms_text_processor_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/llama_tokenizer)
+
+    add_test(
+        NAME mms_text_processor_test
+        COMMAND mms_text_processor_test
+    )
+
+    add_engine_unittest(mms_ctc_alignment_test tests/unittests/test_mms_ctc_alignment.cpp)
+    target_sources(mms_ctc_alignment_test PRIVATE src/community_models/mms_forced_aligner/ctc_alignment.cpp)
+    target_include_directories(mms_ctc_alignment_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME mms_ctc_alignment_test
+        COMMAND mms_ctc_alignment_test
+    )
+
+    add_engine_unittest(mms_forced_aligner_session_test tests/unittests/test_mms_forced_aligner_session.cpp)
+    target_sources(mms_forced_aligner_session_test PRIVATE
+        src/community_models/mms_forced_aligner/ctc_alignment.cpp
+        src/community_models/mms_forced_aligner/emissions.cpp
+        src/community_models/mms_forced_aligner/session.cpp
+        src/community_models/mms_forced_aligner/text_processor.cpp)
+    target_include_directories(mms_forced_aligner_session_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/llama_tokenizer)
+
+    add_test(
+        NAME mms_forced_aligner_session_test
+        COMMAND mms_forced_aligner_session_test
     )
 
     add_engine_unittest(fun_asr_nano_assets_test tests/unittests/test_fun_asr_nano_assets.cpp)
