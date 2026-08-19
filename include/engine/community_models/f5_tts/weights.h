@@ -48,6 +48,7 @@ struct F5BlockWeights {
 };
 
 struct F5DiTWeights {
+    int64_t vocab_size = 2731;  // from the checkpoint's text embedding
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue text_embedding;         // [vocab, 512]
     modules::LinearWeights input_proj;        // [1024, 712]

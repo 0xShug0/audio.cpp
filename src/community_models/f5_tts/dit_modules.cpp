@@ -265,7 +265,7 @@ F5DiTGraphBuild build_dit_modules_graph(
     io.time_input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 256}));
 
     // ---- text embed: lookup + sinusoidal pe (both halves share) ----
-    auto te = mod::EmbeddingModule({kVocab, kTextDim}).build(ctx, io.text_ids, w.text_embedding);
+    auto te = mod::EmbeddingModule({w.vocab_size, kTextDim}).build(ctx, io.text_ids, w.text_embedding);
     // batch the text stream: [NT, C] -> [1, NT, C]
     te = core::reshape_tensor(
         ctx, core::ensure_backend_addressable_layout(ctx, te),
@@ -477,7 +477,7 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
     auto ids_c = mod::SliceModule({0, 0, NT}).build(ctx, io.text_ids);
     auto ids_u = mod::SliceModule({0, NT, NT}).build(ctx, io.text_ids);
     auto emb = [&](const core::TensorValue & ids) {
-        auto e = mod::EmbeddingModule({kVocab, kTextDim}).build(ctx, ids, w.text_embedding);
+        auto e = mod::EmbeddingModule({w.vocab_size, kTextDim}).build(ctx, ids, w.text_embedding);
         return core::reshape_tensor(
             ctx, core::ensure_backend_addressable_layout(ctx, e),
             core::TensorShape::from_dims({1, NT, kTextDim}));

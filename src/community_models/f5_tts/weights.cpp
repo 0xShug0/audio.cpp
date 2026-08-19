@@ -36,7 +36,10 @@ F5DiTWeights load_dit_weights(
     constexpr int64_t kFF = 2048;
     constexpr int64_t kMel = 100;
 
-    w.text_embedding = tensor("text_embed.text_embed.weight", {kVocab, kTextDim});
+    w.text_embedding = w.store->load_f32_tensor(
+        source, "text_embed.text_embed.weight", source.require_metadata(
+            "text_embed.text_embed.weight").shape);  // vocab varies per checkpoint
+    w.vocab_size = w.text_embedding.shape.dims[0];
     w.input_proj = linear("input_embed.proj", kDim, kMel * 2 + kTextDim);
     w.cpe0.weight = tensor("input_embed.conv_pos_embed.conv1d.0.weight", {kDim, kDim / 16, 31});
     w.cpe0.bias = tensor("input_embed.conv_pos_embed.conv1d.0.bias", {kDim});
