@@ -335,7 +335,7 @@ jobs:
       - windows-cpu
       - windows-vulkan
       - windows-cuda
-    if: ${{ needs.check-release.outputs.should_release == 'true' && (github.ref_type == 'tag' || inputs.publish == 'true') }}
+    if: ${{ needs.check-release.outputs.should_release == 'true' && (github.ref_type == 'tag' || inputs.publish) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
