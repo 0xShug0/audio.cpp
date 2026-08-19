@@ -525,7 +525,7 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         auto gnew = std::make_unique<CfgGraph>();
         const size_t ctx_bytes = std::min<size_t>(
             std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (8ULL << 20)),
-            6144ULL << 20);
+            8192ULL << 20);
         gnew->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
         ggml_context * ctx = gnew->ctx;
         std::vector<std::pair<ggml_tensor *, std::vector<uint8_t>>> pending_uploads;
@@ -557,6 +557,13 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
             ctx, dit_w, arch, N, NT, model.backend_type);
         const_stage_end(stage);
         cfg_staged = stage;
+        // Mark I/O explicitly: without ggml_set_input/output the gallocr
+        // treats leaves as scratch and may clobber them across replays.
+        ggml_set_input(io.x.tensor);
+        ggml_set_input(io.cond.tensor);
+        ggml_set_input(io.text_ids.tensor);
+        ggml_set_input(io.time_input.tensor);
+        ggml_set_output(io.output.tensor);
         ggml_tensor * output = io.output.tensor;   // [2, N, 100]
         ggml_tensor * th_t = io.time_input.tensor;
         gnew->output = output;                     // cond half via view at read time
@@ -573,8 +580,9 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
             core::set_backend_threads(model.backend, threads);
         }
         if (is_cuda) {
-            // gallocr-only flow (see f5_dit_forward): no ctx-tensor buffer,
-            // the arena owns leaves + constants + intermediates.
+            // gallocr-only flow; constants first get PRIVATE buffers so the
+            // arena never aliases them (root cause of the noise regression)
+            const_stage_bind(cfg_staged, model.backend);
             gnew->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
             if (gnew->gallocr == nullptr || !ggml_gallocr_reserve(gnew->gallocr, gnew->graph) ||
                 !ggml_gallocr_alloc_graph(gnew->gallocr, gnew->graph)) {
@@ -584,9 +592,10 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
                 ggml_backend_tensor_set(leaf.first, leaf.second.data(), 0, leaf.second.size());
             }
             if (cfg_staged != nullptr) {
-                const_stage_upload(cfg_staged);
+                const_stage_upload(cfg_staged, is_cuda ? model.backend : nullptr);
                 const_stage_end(cfg_staged);
             }
+            (void)0;
         }
         it = cache->emplace(ckey, std::move(gnew)).first;
         // bound the graph cache: each entry holds a CUDA io buffer + gallocr
@@ -643,6 +652,9 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
     }
 
     // ---- compute + read both halves ----
+
+
+
     const auto status = is_cuda
         ? core::compute_backend_graph(model.backend, g.graph, nullptr, "f5_dit_cfg")
         : ggml_graph_compute_with_ctx(g.ctx, g.graph,
@@ -784,6 +796,11 @@ std::vector<float> f5_dit_forward(
     const_stage_end(stage);
     // staged constants upload after ggml_backend_alloc_ctx_tensors below
     staged_module_consts = stage;
+    ggml_set_input(io.x.tensor);
+    ggml_set_input(io.cond.tensor);
+    ggml_set_input(io.text_ids.tensor);
+    ggml_set_input(io.time_input.tensor);
+    ggml_set_output(io.output.tensor);
     output = io.output.tensor;
     gnew->x = io.x.tensor;
     gnew->cond = io.cond.tensor;
@@ -807,10 +824,7 @@ std::vector<float> f5_dit_forward(
             core::set_backend_threads(model.backend, threads);
         }
         if (is_cuda) {
-            // Standard no_alloc flow: the gallocr owns ALL tensors (leaves,
-            // constants, intermediates) in one arena sized by liveness; the
-            // former ggml_backend_alloc_ctx_tensors double-allocation was
-            // fatal for the module graph (~3x more ctx tensors).
+            const_stage_bind(staged_module_consts, model.backend);
             gnew->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
             if (gnew->gallocr == nullptr || !ggml_gallocr_reserve(gnew->gallocr, gnew->graph) ||
                 !ggml_gallocr_alloc_graph(gnew->gallocr, gnew->graph)) {
@@ -820,7 +834,7 @@ std::vector<float> f5_dit_forward(
                 ggml_backend_tensor_set(leaf.first, leaf.second.data(), 0, leaf.second.size());
             }
             if (staged_module_consts != nullptr) {
-                const_stage_upload(staged_module_consts);
+                const_stage_upload(staged_module_consts, is_cuda ? model.backend : nullptr);
                 const_stage_end(staged_module_consts);
                 staged_module_consts = nullptr;
             }

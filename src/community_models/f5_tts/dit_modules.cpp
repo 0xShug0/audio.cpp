@@ -6,6 +6,8 @@
 #include "engine/community_models/f5_tts/weights.h"
 
 #include "engine/framework/core/module.h"
+
+#include "ggml-backend.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conv_modules.h"
@@ -29,6 +31,7 @@ namespace engine::models::f5_tts {
 struct ConstStage {
     ggml_tensor * tensor;
     std::vector<uint8_t> bytes;
+    ggml_backend_buffer_t owned_buffer = nullptr;
 };
 thread_local std::vector<ConstStage> * t_const_stage = nullptr;
 
@@ -96,6 +99,7 @@ core::TensorValue ctx_store_f32(
     core::ModuleBuildContext & ctx, const core::TensorShape & shape,
     const std::vector<float> & values) {
     auto t = core::make_tensor(ctx, GGML_TYPE_F32, shape);
+    ggml_set_input(t.tensor);  // literal data: never scratch for the allocator
     if (t.tensor->data != nullptr) {
         std::memcpy(t.tensor->data, values.data(), values.size() * sizeof(float));
     } else if (t_const_stage != nullptr) {
@@ -208,7 +212,27 @@ std::vector<ConstStage> * const_stage_begin() {
     t_const_stage = new std::vector<ConstStage>();
     return t_const_stage;
 }
-void const_stage_upload(std::vector<ConstStage> * stage) {
+// Bind staged constants to private backend buffers BEFORE the gallocr
+// reserves the compute arena: a tensor with data already set is treated as
+// externally owned and never aliased by scratch reuse.
+void const_stage_bind(std::vector<ConstStage> * stage, ggml_backend_t backend) {
+    if (stage == nullptr || backend == nullptr) return;
+    for (auto & c : *stage) {
+        if (c.tensor->data != nullptr) continue;  // inline ctx already
+        const size_t nbytes = ggml_nbytes(c.tensor);
+        ggml_backend_buffer_t buf = ggml_backend_alloc_buffer(backend, nbytes);
+        if (buf == nullptr) continue;
+        c.tensor->buffer = buf;
+        c.tensor->data = ggml_backend_buffer_get_base(buf);
+        c.owned_buffer = buf;  // leaked with the graph (driver shutdown)
+    }
+}
+
+void const_stage_upload(std::vector<ConstStage> * stage, ggml_backend_t backend) {
+    // Give each constant its own backend buffer OUTSIDE the compute arena:
+    // the gallocr may reuse the arena slot of an early-consumed input for
+    // later intermediates, silently corrupting constants between computes.
+    // (Observed: pe table and per-block ones rows drifted after one compute.)
     for (auto & c : *stage) {
         ggml_backend_tensor_set(c.tensor, c.bytes.data(), 0, c.bytes.size());
     }
@@ -330,6 +354,7 @@ F5DiTGraphBuild build_dit_modules_graph(
             pos[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         }
         auto p = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({N}));
+        ggml_set_input(p.tensor);
         if (p.tensor->data != nullptr) {
             std::memcpy(p.tensor->data, pos.data(), pos.size() * sizeof(int32_t));
         } else if (t_const_stage != nullptr) {
@@ -369,11 +394,25 @@ F5DiTGraphBuild build_dit_modules_graph(
         q = to_heads(q);
         k = to_heads(k);
         v = to_heads(v);
+        // ggml_rope_ext on a strided view corrupts arena neighbors (root
+        // cause of the garbled-output regression): materialize q/k first.
+        q = core::wrap_tensor(ggml_cont(ctx.ggml, q.tensor), q.shape, GGML_TYPE_F32);
+        k = core::wrap_tensor(ggml_cont(ctx.ggml, k.tensor), k.shape, GGML_TYPE_F32);
         q = mod::RoPEModule({kHeadDim, GGML_ROPE_TYPE_NORMAL, 10000.0F}).build(ctx, q, positions);
         k = mod::RoPEModule({kHeadDim, GGML_ROPE_TYPE_NORMAL, 10000.0F}).build(ctx, k, positions);
         auto q_heads = mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, q);
         auto k_heads = mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, k);
         auto v_heads = mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, v);
+        // flash-attn requires dense, contiguous q/k/v: materialize the
+        // strided transposes explicitly (a strided input corrupts arena
+        // neighbors on replay — root cause of the noise regression)
+        auto dense4 = [&](const core::TensorValue & t) {
+            return core::wrap_tensor(
+                ggml_cont(ctx.ggml, t.tensor), t.shape, GGML_TYPE_F32);
+        };
+        q_heads = dense4(q_heads);
+        k_heads = dense4(k_heads);
+        v_heads = dense4(v_heads);
         auto attn = mod::ScaledDotProductAttentionModule({
             kHeadDim,
             mod::ScaledDotProductAttentionLowering::Flash,
@@ -542,6 +581,7 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
         std::vector<int32_t> pos(static_cast<size_t>(N));
         for (int64_t i = 0; i < N; ++i) pos[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         auto p = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({N}));
+        ggml_set_input(p.tensor);
         if (p.tensor->data != nullptr) {
             std::memcpy(p.tensor->data, pos.data(), pos.size() * sizeof(int32_t));
         } else if (t_const_stage != nullptr) {
@@ -580,6 +620,16 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
         auto q_heads = mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, q);
         auto k_heads = mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, k);
         auto v_heads = mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, v);
+        // flash-attn requires dense, contiguous q/k/v: materialize the
+        // strided transposes explicitly (a strided input corrupts arena
+        // neighbors on replay — root cause of the noise regression)
+        auto dense4 = [&](const core::TensorValue & t) {
+            return core::wrap_tensor(
+                ggml_cont(ctx.ggml, t.tensor), t.shape, GGML_TYPE_F32);
+        };
+        q_heads = dense4(q_heads);
+        k_heads = dense4(k_heads);
+        v_heads = dense4(v_heads);
         auto attn = mod::ScaledDotProductAttentionModule({
             kHeadDim,
             mod::ScaledDotProductAttentionLowering::Flash,

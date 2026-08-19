@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1003,7 +1004,8 @@ F5SynthesisResult f5_synthesize(
     ref_rms = std::sqrt(ref_rms / std::max<size_t>(1, ref24.size()));
     constexpr double kTargetRms = 0.1;
     float ref_gain = 1.0F;
-    if (ref_rms > 0.0 && ref_rms < kTargetRms) {
+    if (std::getenv("F5_NO_RMS_NORM") == nullptr &&
+        ref_rms > 0.0 && ref_rms < kTargetRms) {
         ref_gain = static_cast<float>(kTargetRms / ref_rms);
         for (auto & v : ref24) v *= ref_gain;
     }
@@ -1040,8 +1042,11 @@ F5SynthesisResult f5_synthesize(
     // estimate NEVER engages the 1024-frame cap (cap = compressed speech).
     // The absolute floor is small: a slow reference legitimately means short
     // chunks (its 5.5 s reference eats most of the frame budget).
-    const size_t chars_per_chunk = std::max<size_t>(
+    size_t chars_per_chunk = std::max<size_t>(
         12, static_cast<size_t>(gen_budget / rate0 * 0.92));
+    if (std::getenv("F5_SINGLE_CHUNK") != nullptr) {
+        chars_per_chunk = 1u << 30;  // debug: never chunk
+    }
     const auto chunks = chunk_text(request.text, chars_per_chunk);
     std::vector<float> all_rows;
     std::vector<float> chain_ref_cols;

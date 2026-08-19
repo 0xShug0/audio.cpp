@@ -30,7 +30,8 @@ namespace engine::models::f5_tts {
 // CUDA build-time constant staging (internal; used by runtime.cpp)
 struct ConstStage;
 std::vector<ConstStage> * const_stage_begin();
-void const_stage_upload(std::vector<ConstStage> * stage);
+void const_stage_bind(std::vector<ConstStage> * stage, ggml_backend_t backend);
+void const_stage_upload(std::vector<ConstStage> * stage, ggml_backend_t backend);
 void const_stage_end(std::vector<ConstStage> * stage);
 }  // namespace engine::models::f5_tts
 
