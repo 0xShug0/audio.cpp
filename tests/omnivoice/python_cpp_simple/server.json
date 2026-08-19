@@ -1,0 +1,28 @@
+{
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 1,
+  "lazy_load": false,
+
+  "models": [
+    {
+      "id": "omnivoice",
+      "family": "omnivoice",
+      "path": "../../../models/OmniVoice",
+      "task": "tts",
+      "mode": "offline",
+
+      "session_options": {
+        "omnivoice.generator_weight_type": "f16",
+        "omnivoice.audio_tokenizer_weight_type": "f16"
+      },
+
+      "default_voice_preset": {
+        "voice_ref": "../assets/ref_audio_02.wav",
+        "reference_text": "আমি যে পরিমাণ তহবিল স্থানান্তর করতে পারি, তার কি সর্বোচ্চ সীমা আছে?"
+      }
+    }
+  ]
+}

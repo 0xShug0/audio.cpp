@@ -110,8 +110,12 @@ The SSE stream emits `speech.audio.delta` events followed by `speech.audio.done`
 | `--request-option audio_chunk_threshold=<float>` | seconds | `30.0` | Estimated audio length threshold before model-side chunking is used. |
 | `--session-option omnivoice.mem_saver=true\|false` | bool | `false` | Release staged generator and audio-tokenizer runtime graphs after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 | `--session-option omnivoice.perf_mode=off\|flash_attention` | enum | `off` | Opt-in generator attention mode. `off` keeps the exact-safe path; `flash_attention` can improve CUDA throughput with small output drift. |
+| `--session-option omnivoice.generator_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for generator weights. Also accepted as `omnivoice.weight_type`. |
+| `--session-option omnivoice.audio_tokenizer_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for audio tokenizer weights. |
 
 `omnivoice.perf_mode=flash_attention` is only available on the normal graph path and cannot be combined with `omnivoice.mem_saver=true`.
+
+The two `weight_type` options quantize SafeTensors weights at load time, which is not the same as loading a prebuilt Q8 GGUF package. On CUDA, `omnivoice.generator_weight_type=f16` measured 1.26x faster than `native`, while runtime `omnivoice.audio_tokenizer_weight_type=q8_0` produced unusable audio without being faster. See the [OmniVoice weight-type benchmark](../reports/omnivoice_weight_type_benchmark.md).
 
 ## Tags
 

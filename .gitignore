@@ -16,6 +16,7 @@ __pycache__/
 /venv/
 /.venv/
 /tests/assets/**/*.safetensors
+/tests/omnivoice/outputs/
 /unittests/
 /models/
 /reference/

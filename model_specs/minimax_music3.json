@@ -148,7 +148,7 @@
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "audio-cpp/audio.cpp-gguf",
+      "repo": "audio-cpp/MiniMax-Music3-GGUF",
       "revision": "main",
       "gated": false
     }
@@ -162,26 +162,21 @@
       "precision": "q4_0",
       "target_directory": "MiniMax-Music3-GGUF",
       "files": [
-        "MiniMax-Music3-GGUF/config.json",
-        "MiniMax-Music3-GGUF/config/language_model.json",
-        "MiniMax-Music3-GGUF/config/rvq_depth_decoder.json",
-        "MiniMax-Music3-GGUF/config/condition_encoder.json",
-        "MiniMax-Music3-GGUF/config/transformer.json",
-        "MiniMax-Music3-GGUF/config/vocoder.json",
-        "MiniMax-Music3-GGUF/tokenizer/tokenizer.json",
-        "MiniMax-Music3-GGUF/tokenizer/tokenizer_config.json",
-        "MiniMax-Music3-GGUF/language_model_bf16.gguf",
-        "MiniMax-Music3-GGUF/language_model_q4_0.gguf",
-        "MiniMax-Music3-GGUF/language_model_q4_k.gguf",
-        "MiniMax-Music3-GGUF/rvq_depth_decoder_bf16.gguf",
-        "MiniMax-Music3-GGUF/rvq_depth_decoder_q4_k.gguf",
-        "MiniMax-Music3-GGUF/condition_encoder.gguf",
-        "MiniMax-Music3-GGUF/transformer_bf16.gguf",
-        "MiniMax-Music3-GGUF/transformer_q4_0.gguf",
-        "MiniMax-Music3-GGUF/transformer_q4_k.gguf",
-        "MiniMax-Music3-GGUF/vocoder.gguf"
+        "config.json",
+        "config/language_model.json",
+        "config/rvq_depth_decoder.json",
+        "config/condition_encoder.json",
+        "config/transformer.json",
+        "config/vocoder.json",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "language_model_q4_0.gguf",
+        "rvq_depth_decoder_q8_0.gguf",
+        "condition_encoder.gguf",
+        "transformer_q4_0.gguf",
+        "vocoder.gguf"
       ],
-      "strip_prefix": "MiniMax-Music3-GGUF"
+      "strip_prefix": ""
     }
   ],
   "dependencies": [],

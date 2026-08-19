@@ -4,6 +4,7 @@
 |---|---|---|---|
 | ACE-Step | `ace_step` | text-to-music, edit, cover, repaint | [ACE-Step](#ace-step) |
 | MiniMax-H3 | `minimax_h3` | text-to-audio, dialogue, video | [MiniMax-H3](#minimax-h3) |
+| MiniMax Music 3 | `minimax_music3` | text-to-music, lyrics conditioning | [MiniMax Music 3](#minimax-music-3) |
 | Stable Audio | `stable_audio` | music, SFX, init-audio, inpaint | [Stable Audio](#stable-audio) |
 | HeartMuLa | `heartmula` | lyrics/tags to music | [HeartMuLa](#heartmula) |
 
@@ -64,6 +65,29 @@ audiocpp_cli --task gen --family minimax_h3 \
 ```
 
 Set `--request-option return_video=true` and provide `--out-dir` when you also want video frames as an output artifact.
+
+## MiniMax Music 3
+
+MiniMax Music 3 generates songs from a detailed music caption plus lyrics. See
+[MiniMax Music 3](community_models/minimax_music3.md) for package layout,
+component GGUF selection, options, and current performance/memory notes.
+
+```bash
+CAPTION='A bright pop rock song with clean drums, crisp rhythm guitars, a clear female vocal, an energetic chorus, and polished studio production.'
+LYRICS='[verse] City lights are shining low. I keep moving with the glow. [chorus] Turn it up and let it fly. Sing the melody tonight.'
+
+audiocpp_cli --task gen --family minimax_music3 \
+  --model models/MiniMax-Music3-GGUF \
+  --backend cuda \
+  --text "$CAPTION" \
+  --request-option "lyrics=$LYRICS" \
+  --request-option duration_sec=30 \
+  --request-option num_inference_steps=30 \
+  --out music3.wav
+```
+
+`duration_sec` sets the AR frame budget rather than a strict final audio length.
+Larger values can produce longer songs and also increase VRAM use.
 
 ## Stable Audio
 
