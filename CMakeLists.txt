@@ -545,6 +545,8 @@ audiocpp_add_model(f5_tts
     SOURCES
         src/community_models/f5_tts/session.cpp
         src/community_models/f5_tts/runtime.cpp
+        src/community_models/f5_tts/weights.cpp
+        src/community_models/f5_tts/dit_modules.cpp
         src/community_models/f5_tts/synthesize.cpp
     INCLUDES
         engine/community_models/f5_tts/session.h

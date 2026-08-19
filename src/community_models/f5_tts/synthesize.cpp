@@ -792,6 +792,124 @@ std::vector<float> vocos_decode_gpu(
 
 }  // namespace
 
+namespace {
+
+// Split text into chunks of at most ~max_chars bytes, preferring sentence or
+// clause boundaries (F5's chunk_text heuristic; Arabic break chars included).
+std::vector<std::string> chunk_text(const std::string & text, size_t max_chars) {
+    std::vector<std::string> chunks;
+    if (text.size() <= max_chars) {
+        chunks.push_back(text);
+        return chunks;
+    }
+    static const std::string breaks = ".!?\xd8\x9b\xd8\x8c\n";  // .!? ؛ ، 
+
+    size_t start = 0;
+    while (start < text.size()) {
+        const size_t remaining = text.size() - start;
+        if (remaining <= max_chars) {
+            chunks.push_back(text.substr(start));
+            break;
+        }
+        size_t best = std::string::npos;
+        for (size_t i = start + max_chars; i > start + max_chars / 2; --i) {
+            if (i >= text.size()) continue;
+            if (breaks.find(text[i]) != std::string::npos) {
+                best = i + 1;
+                break;
+            }
+        }
+        if (best == std::string::npos) {
+            best = std::min(start + max_chars, text.size());
+            while (best > start + 1 &&
+                   (static_cast<unsigned char>(text[best]) & 0xC0) == 0x80) {
+                --best;  // do not split a UTF-8 sequence
+            }
+        }
+        chunks.push_back(text.substr(start, best - start));
+        start = best;
+    }
+    return chunks;
+}
+
+struct ChunkResult {
+    std::vector<float> gen_mel_rows;  // [gen][100]
+};
+
+// One CFM pass for a single chunk: the original pipeline verbatim.
+ChunkResult synthesize_chunk(
+    const std::string & model_path,
+    const F5SynthesisRequest & request,
+    const std::vector<float> & ref_mel_cols,  // [100][ref_frames]
+    int ref_frames,
+    const std::vector<int32_t> & chunk_ids,
+    const std::string & chunk_ref_text,
+    F5ComputeDevice & dev,
+    uint32_t seed,
+    std::vector<float> * out_final_latent_rows) {
+    const F5Architecture arch;
+    const int gen_text_len = static_cast<int>(chunk_ids.size());
+
+    const int ref_text_len = std::max(1, static_cast<int>(chunk_ref_text.size()));
+    float local_speed = request.speed;
+    if (gen_text_len < 10) local_speed = 0.3F;
+    int duration = ref_frames + static_cast<int>(
+        static_cast<double>(ref_frames) / ref_text_len
+        * static_cast<double>(gen_text_len) / local_speed);
+    duration = std::max(duration, gen_text_len + 1);
+    // per-chunk safety cap: a single chunk never exceeds the graph budget;
+    // longer inputs are split upstream by chunk_text instead of truncated.
+    constexpr int kChunkFrameCap = 1024;
+    if (duration > kChunkFrameCap) duration = kChunkFrameCap;
+    const int duration_real = duration;
+    duration = (duration + 63) / 64 * 64;  // graph bucket reuse
+
+    std::vector<float> cond(static_cast<size_t>(duration) * kNMel, 0.0F);
+    for (int t = 0; t < ref_frames && t < duration; ++t) {
+        for (int m = 0; m < kNMel; ++m) {
+            cond[static_cast<size_t>(t) * kNMel + m] =
+                ref_mel_cols[static_cast<size_t>(m) * ref_frames + t];
+        }
+    }
+    Rng rng(seed);
+    std::vector<float> y(static_cast<size_t>(duration) * kNMel);
+    for (auto & val : y) val = rng.normal();
+
+    const auto ts = sway_timesteps(request.steps, request.sway_sampling_coef);
+    for (size_t i = 0; i + 1 < ts.size(); ++i) {
+        const float t = ts[i];
+        const float dt = ts[i + 1] - ts[i];
+        const auto pair = f5_dit_forward_cfg(
+            model_path, y, cond, chunk_ids, t, duration, arch, &dev);
+        const auto & v_cond = pair.first;
+        const auto & v_null = pair.second;
+        for (size_t k = 0; k < y.size(); ++k) {
+            const float v = v_cond[k] + (v_cond[k] - v_null[k]) * request.cfg_strength;
+            y[k] += dt * v;
+        }
+    }
+    for (int t = 0; t < ref_frames && t < duration; ++t) {
+        for (int m = 0; m < kNMel; ++m) {
+            y[static_cast<size_t>(t) * kNMel + m] = cond[static_cast<size_t>(t) * kNMel + m];
+        }
+    }
+    if (out_final_latent_rows != nullptr) {
+        *out_final_latent_rows = y;
+    }
+    ChunkResult out;
+    const int gen_frames = std::max(0, duration_real - ref_frames);
+    out.gen_mel_rows.resize(static_cast<size_t>(gen_frames) * kNMel);
+    for (int t = 0; t < gen_frames; ++t) {
+        for (int m = 0; m < kNMel; ++m) {
+            out.gen_mel_rows[static_cast<size_t>(t) * kNMel + m] =
+                y[static_cast<size_t>(ref_frames + t) * kNMel + m];
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
 F5SynthesisResult f5_synthesize(
     const std::string & model_path,
     const std::string & vocos_path,
@@ -799,102 +917,89 @@ F5SynthesisResult f5_synthesize(
     const auto t0 = std::chrono::steady_clock::now();
     F5SynthesisResult result;
 
-    // 1. tokenize: 〈dialect ref_text+text〉
     const std::string dir = std::filesystem::path(model_path).parent_path().string();
     const auto vocab = load_vocab(dir);
-    std::vector<int32_t> text_ids;
-    {
-        const std::string full = std::string(dialect_token(request.dialect))
-            + "\xE3\x80\x88" + request.ref_text + request.text + "\xE3\x80\x89";
-        for (const auto & ch : utf8_chars(full)) {
+    const auto tokenize = [&](const std::string & s) {
+        std::vector<int32_t> ids;
+        for (const auto & ch : utf8_chars(s)) {
             const auto it = vocab.find(ch);
-            text_ids.push_back(it != vocab.end() ? it->second : 0);
+            ids.push_back(it != vocab.end() ? it->second : 0);
         }
-    }
+        return ids;
+    };
 
-    // 2. ref audio -> 24k mono -> mel
+    // ref audio -> 24k mono -> mel, clamped to ~5.5 s (F5 reference window)
     auto ref24 = resample(request.ref_audio, request.ref_sample_rate, kSampleRate);
-    const auto ref_mel = compute_mel(ref24);
-    const int ref_frames = static_cast<int>(ref_mel.size()) / kNMel;
-
-    // 3. duration heuristic (F5 infer_process)
-    const int ref_text_len = static_cast<int>(request.ref_text.size());
-    const int gen_text_len = static_cast<int>(request.text.size());
-    float local_speed = request.speed;
-    if (request.text.size() < 10) local_speed = 0.3F;
-    int duration = ref_frames + static_cast<int>(
-        static_cast<double>(ref_frames) / std::max(1, ref_text_len)
-        * static_cast<double>(gen_text_len) / local_speed);
-    duration = std::max(duration, static_cast<int>(text_ids.size()) + 1);
-    // TODO(M4): chunk long texts like F5's chunk_text and crossfade. For now
-    // cap the DiT sequence at 1024 frames (~11 s) to bound graph memory.
-    duration = std::min(duration, 1024);
-    // Round the DiT sequence up to a 64-frame bucket so cached graphs (and
-    // CUDA graph captures) are reused across requests instead of rebuilt per
-    // duration. Padded frames are zero-conditioned; only the first `duration`
-    // frames are kept after sampling.
-    const int duration_real = duration;
-    duration = (duration + 63) / 64 * 64;
-    (void)duration_real;
-
-    // 4. cond: zeros + ref mel in [0, ref_frames)
-    std::vector<float> cond(static_cast<size_t>(duration) * kNMel, 0.0F);
-    for (int t = 0; t < ref_frames && t < duration; ++t) {
-        for (int m = 0; m < kNMel; ++m) {
-            cond[static_cast<size_t>(t) * kNMel + m] = ref_mel[static_cast<size_t>(m) * ref_frames + t];
+    auto ref_mel = compute_mel(ref24);
+    int ref_frames = static_cast<int>(ref_mel.size()) / kNMel;
+    constexpr int kMaxRefFrames = 512;
+    if (ref_frames > kMaxRefFrames) {
+        std::vector<float> trimmed(static_cast<size_t>(kMaxRefFrames) * kNMel);
+        for (int t = 0; t < kMaxRefFrames; ++t) {
+            for (int m = 0; m < kNMel; ++m) {
+                trimmed[static_cast<size_t>(m) * kMaxRefFrames + t] =
+                    ref_mel[static_cast<size_t>(m) * ref_frames + t];
+            }
         }
+        ref_mel = std::move(trimmed);
+        ref_frames = kMaxRefFrames;
     }
 
-    // 5. noise init
-    Rng rng(request.seed ? request.seed : 0x9E3779B97F4A7C15ULL);
-    std::vector<float> y(static_cast<size_t>(duration) * kNMel);
-    for (auto & val : y) val = rng.normal();
-    // pad cond with zeros (silence) up to the graph bucket size
-    cond.resize(static_cast<size_t>(duration) * kNMel, 0.0F);
-
-    // 6. CFM Euler steps with CFG (cond / uncond pair)
-    const auto ts = sway_timesteps(request.steps, request.sway_sampling_coef);
-    const F5Architecture arch;
     F5ComputeDevice dev;
     dev.use_cuda = request.use_cuda;
     dev.device = request.cuda_device;
     dev.threads = request.threads;
-    for (size_t i = 0; i + 1 < ts.size(); ++i) {
-        const float t = ts[i];
-        const float dt = ts[i + 1] - ts[i];
-        // CFG pair computed in ONE batched (ne3=2) graph — same math as two
-        // sequential forwards (verified cosine 1.0), half the kernel launches.
-        const auto pair = f5_dit_forward_cfg(
-            model_path, y, cond, text_ids, t, duration, arch, &dev);
-        const auto & v_cond = pair.first;
-        const auto & v_null = pair.second;
-        std::vector<float> v(v_cond.size());
-        for (size_t k = 0; k < v.size(); ++k) {
-            v[k] = v_cond[k] + (v_cond[k] - v_null[k]) * request.cfg_strength;
-        }
-        for (size_t k = 0; k < y.size(); ++k) {
-            y[k] += dt * v[k];
-        }
-    }
-    // paste back the reference region (grounding)
-    for (int t = 0; t < ref_frames && t < duration; ++t) {
-        for (int m = 0; m < kNMel; ++m) {
-            y[static_cast<size_t>(t) * kNMel + m] = cond[static_cast<size_t>(t) * kNMel + m];
+
+    // ---- chunk long texts instead of truncating: each chunk fits the graph
+    // budget; chunk N+1 is conditioned on the tail of chunk N (voice and
+    // prosody continuity across seams) ----
+    constexpr size_t kMaxChunkBytes = 600;  // ~200 Arabic chars ≈ 5 s speech
+    const auto chunks = chunk_text(request.text, kMaxChunkBytes);
+    std::vector<float> all_rows;
+    std::vector<float> chain_ref_cols;
+    int chain_ref_frames = 0;
+    std::string chain_ref_text = request.ref_text;
+
+    for (size_t ci = 0; ci < chunks.size(); ++ci) {
+        const bool is_first = ci == 0;
+        const std::vector<float> & ref_cols = is_first ? ref_mel : chain_ref_cols;
+        const int cur_ref_frames = is_first ? ref_frames : chain_ref_frames;
+        const std::string full = std::string(dialect_token(request.dialect))
+            + "\xE3\x80\x88" + chain_ref_text + chunks[ci] + "\xE3\x80\x89";
+        const auto chunk_ids = tokenize(full);
+
+        std::vector<float> final_latent;
+        auto out = synthesize_chunk(
+            model_path, request, ref_cols, cur_ref_frames, chunk_ids,
+            chain_ref_text, dev,
+            request.fixed_seed ? request.seed + static_cast<uint32_t>(ci) : 0,
+            &final_latent);
+        all_rows.insert(all_rows.end(), out.gen_mel_rows.begin(), out.gen_mel_rows.end());
+
+        if (ci + 1 < chunks.size()) {
+            // next reference: last ~2 s of this chunk's generated latent
+            constexpr int kChainRefFrames = 192;
+            const int total_frames = static_cast<int>(final_latent.size()) / kNMel;
+            const int start = std::max(cur_ref_frames, total_frames - kChainRefFrames);
+            const int len = std::max(1, total_frames - start);
+            chain_ref_cols.assign(static_cast<size_t>(len) * kNMel, 0.0F);
+            for (int t = 0; t < len; ++t) {
+                for (int m = 0; m < kNMel; ++m) {
+                    chain_ref_cols[static_cast<size_t>(m) * len + t] =
+                        final_latent[static_cast<size_t>(start + t) * kNMel + m];
+                }
+            }
+            chain_ref_frames = len;
+            // reference transcript: tail of the spoken text (~window scale)
+            const std::string & prev = chunks[ci];
+            const size_t keep = std::min<size_t>(prev.size(), 60);
+            chain_ref_text = prev.substr(prev.size() - keep);
         }
     }
 
-    // 7. splice generated region and decode (real, un-bucketed duration)
-    const int gen_frames = duration_real - ref_frames;
-    std::vector<float> gen_mel(static_cast<size_t>(gen_frames) * kNMel);
-    for (int t = 0; t < gen_frames; ++t) {
-        for (int m = 0; m < kNMel; ++m) {
-            gen_mel[static_cast<size_t>(t) * kNMel + m] =
-                y[static_cast<size_t>(ref_frames + t) * kNMel + m];
-        }
-    }
     result.audio = request.use_cuda
-        ? vocos_decode_gpu(vocos_path, gen_mel, dev)
-        : vocos_decode(vocos_path, gen_mel);
+        ? vocos_decode_gpu(vocos_path, all_rows, dev)
+        : vocos_decode(vocos_path, all_rows);
     result.sample_rate = kSampleRate;
     result.generation_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - t0).count();

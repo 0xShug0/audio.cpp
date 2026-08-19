@@ -1,5 +1,8 @@
 #include "engine/community_models/f5_tts/runtime.h"
 
+#include "engine/community_models/f5_tts/dit_modules.h"
+#include "engine/community_models/f5_tts/weights.h"
+
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -220,6 +223,28 @@ private:
     std::shared_ptr<const engine::assets::TensorSource> inner_;
     std::unordered_map<std::string, std::string> routes_;
 };
+
+const LoadedModel & load_model_once(const std::string & path, const F5ComputeDevice & dev);
+
+// Module-typed DiT weights cache (per path + device). Leaked at exit like
+// the raw-weight cache: CUDA buffers cannot be freed after driver shutdown.
+const F5DiTWeights & load_dit_weights_once(
+    const std::string & path, const F5ComputeDevice & dev) {
+    struct Entry { F5DiTWeights w; };
+    static auto * cache = new std::unordered_map<std::string, Entry>();
+    const std::string key =
+        (dev.use_cuda ? "cuda" + std::to_string(dev.device) : "cpu") + ":" + path;
+    const auto found = cache->find(key);
+    if (found != cache->end()) {
+        return found->second.w;
+    }
+    const auto & model = load_model_once(path, dev);
+    auto source = engine::assets::open_tensor_source(path);
+    auto stripped = std::make_shared<StrippedView>(source);
+    Entry entry;
+    entry.w = load_dit_weights(*stripped, model.backend, model.backend_type);
+    return cache->emplace(key, std::move(entry)).first->second.w;
+}
 
 const LoadedModel & load_model_once(const std::string & path, const F5ComputeDevice & dev) {
     // Deliberately leaked at exit (never destroyed): CUDA weight buffers must
@@ -915,6 +940,8 @@ std::vector<float> f5_dit_forward(
         };
         (void)MEL; (void)D; (void)HEADS; (void)DH; (void)TD;
     ggml_tensor * output = nullptr;
+    // NOTE: stage taps are not wired in the module-composed graph; the parity
+    // harness compares the final output (and uses the raw path where needed).
     ggml_tensor * tap_text_embed = nullptr;
     ggml_tensor * tap_text_convnext = nullptr;
     ggml_tensor * tap_text_padded = nullptr;
@@ -922,257 +949,24 @@ std::vector<float> f5_dit_forward(
     ggml_tensor * tap_time_embed = nullptr;
     ggml_tensor * tap_block0 = nullptr;
     ggml_tensor * tap_block21 = nullptr;
-    // ---- per-call input leaves (values uploaded at each invocation) ----
-    auto * x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, MEL, N);
-    auto * cond = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, MEL, N);
-    auto * text_ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, NT);
-    auto * th_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 256, 1);
-    {
-        auto * te = ggml_get_rows(ctx, W.text_embedding.tensor, text_ids);  // [TD, NT]
-        if (taps != nullptr && taps->text_embed != nullptr) {
-            tap_text_embed = ggml_cont(ctx, te);
-            ggml_set_output(tap_text_embed);
-        }
-
-        // sinus position embedding (precompute_freqs_cis: cat(cos, sin))
-        {
-            // Layout: pe[col t][row i] stored t-major; we need [TD, NT] column
-            // tensor: element (i, t) at data[t * TD + i].
-            std::vector<float> pe(static_cast<size_t>(TD) * NT);
-            const int half = TD / 2;
-            for (int pos = 0; pos < NT; ++pos) {
-                for (int i = 0; i < half; ++i) {
-                    const float inv = std::pow(10000.0F, -2.0F * i / static_cast<float>(TD));
-                    const float f = pos * inv;
-                    pe[static_cast<size_t>(pos) * TD + i] = std::cos(f);
-                    pe[static_cast<size_t>(pos) * TD + half + i] = std::sin(f);
-                }
-            }
-            auto * pe_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, TD, NT);
-            leaf_write(pe_t, pe.data(), pe.size() * sizeof(float));
-            te = ggml_add(ctx, te, pe_t);
-        }
-
-        // ---- 4x ConvNeXt over text (column layout throughout) ----
-        for (int bi = 0; bi < 4; ++bi) {
-            const auto & B = W.text_blocks[bi];
-            auto * dw = depthwise_conv7(
-                ctx, te, B.dwconv.weight.tensor, B.dwconv.bias->tensor,
-                leaf_write, leaf_zero);
-            auto * nrm = affine_norm(ctx, dw, B.norm_w.tensor, B.norm_b.tensor);
-            auto * h1 = lin_apply(ctx, B.pw1, nrm);  // [1024, NT]
-            h1 = ggml_gelu(ctx, h1);                  // exact erf
-            // GRN: per-feature L2 over sequence
-            {
-                auto * sq = ggml_sqr(ctx, h1);
-                // sum over sequence (ne1): transpose to [NT, 1024], sum_rows -> [1, 1024]
-                auto * tr = ggml_cont(ctx, ggml_transpose(ctx, sq));  // [NT, 1024]
-                auto * ssum = ggml_sum_rows(ctx, tr);                  // [1, 1024]
-                auto * gx = ggml_sqrt(ctx, ssum);                      // [1, 1024]
-                // ggml_mean on [1, N] is identity (row-wise over ne0); use
-                // sum + scale for a true scalar mean over features.
-                auto * mean = ggml_scale(ctx, ggml_sum(ctx, gx), 1.0F / 1024);  // [1,1]
-                auto * eps_t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-                {
-                    const float eps_val = 1e-6F;
-                    leaf_write(eps_t, &eps_val, sizeof(float));
-                }
-                auto * nx = ggml_div(ctx, gx, ggml_add(ctx, mean, eps_t));
-                auto * nx_col = ggml_cont(ctx, ggml_transpose(ctx, nx));  // [1024, 1]
-                auto * nx_rep = ggml_repeat(ctx, nx_col, h1);
-                auto * scaled = ggml_mul(ctx, h1, nx_rep);
-                static thread_local std::vector<float> gbuf, bbuf;
-                gbuf = B.grn_gamma;
-                bbuf = B.grn_beta;
-                auto * gamma = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1024);
-                leaf_write(gamma, gbuf.data(), 1024 * sizeof(float));
-                auto * beta = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1024);
-                leaf_write(beta, bbuf.data(), 1024 * sizeof(float));
-                auto * g2 = ggml_reshape_2d(ctx, gamma, 1024, 1);
-                auto * b2 = ggml_reshape_2d(ctx, beta, 1024, 1);
-                auto * g_rep = ggml_repeat(ctx, g2, scaled);
-                auto * b_rep = ggml_repeat(ctx, b2, scaled);
-                auto * grn_out = ggml_add(
-                    ctx, ggml_add(ctx, ggml_mul(ctx, g_rep, scaled), b_rep), h1);
-                auto * h2 = lin_apply(ctx, B.pw2, grn_out);  // [512, NT]
-                te = ggml_add(ctx, te, h2);
-            }
-        }
-
-        if (taps != nullptr && taps->text_convnext != nullptr) {
-            tap_text_convnext = ggml_cont(ctx, te);
-            ggml_set_output(tap_text_convnext);
-        }
-
-        // ---- pad/curtail text to N (pure graph ops; te data is not valid at
-        // build time) ----
-        ggml_tensor * te_pad;
-        if (NT >= N) {
-            te_pad = ggml_cont(ctx, ggml_view_2d(ctx, te, TD, N, te->nb[1], 0));
-        } else {
-            // zero-pad columns: concat te with a zeros [TD, N-NT] constant
-            auto * zeros = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, TD, N - NT);
-            leaf_zero(zeros, static_cast<size_t>(TD) * (N - NT) * sizeof(float));
-            te_pad = ggml_concat(ctx, te, zeros, 1);  // [TD, N]
-        }
-
-        if (taps != nullptr && taps->text_padded != nullptr) {
-            tap_text_padded = ggml_cont(ctx, te_pad);
-            ggml_set_output(tap_text_padded);
-        }
-
-        // ---- input embed: concat rows [MEL; MEL; TD] -> 712 ----
-        auto * cat0 = ggml_concat(ctx, x, cond, 0);  // [200, N]
-        auto * cat1 = ggml_concat(ctx, cat0, te_pad, 0);  // [712, N]
-        auto * inp = lin_apply(ctx, W.input_proj, cat1);  // [1024, N]
-
-        // ---- conv pos embed (grouped k31 g16, Mish x2) ----
-        // Verified layout: ggml conv path wants ne [T, C, 1] with TIME as the
-        // fastest axis (element (t,c) at t + c*T). inp is [D, N] columns
-        // (feature-fastest); ggml_transpose -> [N, D] is exactly time-fastest.
-        {
-            auto * rows = ggml_cont(ctx, ggml_transpose(ctx, inp));  // ne [N, D]
-            auto * r0 = grouped_conv1d(
-                ctx, ggml_reshape_3d(ctx, rows, N, D, 1),
-                W.cpe0.weight.tensor, W.cpe0.bias->tensor, D, D, 16, 31);
-            // Mish: x * tanh(softplus(x))
-            r0 = ggml_mul(ctx, r0, ggml_tanh(ctx, ggml_softplus(ctx, r0)));
-            auto * r1 = grouped_conv1d(
-                ctx, ggml_reshape_3d(ctx, r0, N, D, 1),
-                W.cpe2.weight.tensor, W.cpe2.bias->tensor, D, D, 16, 31);
-            r1 = ggml_mul(ctx, r1, ggml_tanh(ctx, ggml_softplus(ctx, r1)));
-            // r1 is ne [N, D, 1] time-fastest; back to columns [D, N]
-            auto * c1_cols = ggml_cont(ctx, ggml_transpose(ctx, ggml_reshape_2d(ctx, r1, N, D)));
-            inp = ggml_add(ctx, inp, c1_cols);
-        }
-
-        if (taps != nullptr && taps->input_embed != nullptr) {
-            tap_input_embed = ggml_cont(ctx, inp);
-            ggml_set_output(tap_input_embed);
-        }
-
-        // ---- time embed (th_t is a per-call leaf; value depends on time_value) ----
-        // (declared above with the other per-call leaves)
-        auto * t0 = lin_apply(ctx, W.time0, th_t);
-        t0 = ggml_silu(ctx, t0);
-        auto * t_emb = lin_apply(ctx, W.time2, t0);  // [1024, 1]
-
-        auto * ones_d = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, D);
-        {
-            static const std::vector<float> ones(D, 1.0F);
-            leaf_write(ones_d, ones.data(), D * sizeof(float));
-        }
-        auto * ones_d1 = ggml_reshape_2d(ctx, ones_d, D, 1);
-
-        if (taps != nullptr && taps->time_embed != nullptr) {
-            tap_time_embed = ggml_cont(ctx, t_emb);
-            ggml_set_output(tap_time_embed);
-        }
-
-        // ---- RoPE positions ----
-        auto * pos_ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, N);
-        {
-            static thread_local std::vector<int32_t> pos;
-            pos.resize(N);
-            for (int i = 0; i < N; ++i) {
-                pos[i] = i;
-            }
-            leaf_write(pos_ids, pos.data(), N * sizeof(int32_t));
-        }
-
-        // ---- 22 DiT blocks ----
-        auto * h = inp;
-        for (int bi = 0; bi < arch.depth; ++bi) {
-            const auto & B = W.blocks[bi];
-            auto * emb = lin_apply(ctx, B.attn_norm, ggml_silu(ctx, t_emb));  // [6144, 1]
-            auto * shift_msa = chunk_col(ctx, emb, 0, D);
-            auto * scale_msa = chunk_col(ctx, emb, 1, D);
-            auto * gate_msa = chunk_col(ctx, emb, 2, D);
-            auto * shift_mlp = chunk_col(ctx, emb, 3, D);
-            auto * scale_mlp = chunk_col(ctx, emb, 4, D);
-            auto * gate_mlp = chunk_col(ctx, emb, 5, D);
-
-            auto * norm = modulate(ctx, ggml_norm(ctx, h, 1e-6F), scale_msa, shift_msa, ones_d1);
-            auto * q = lin_apply(ctx, B.to_q, norm);
-            auto * k = lin_apply(ctx, B.to_k, norm);
-            auto * v = lin_apply(ctx, B.to_v, norm);
-            // [1024, N] -> [DH, H, N]: rope layout (positions at ne2)
-            q = ggml_reshape_3d(ctx, q, DH, HEADS, N);
-            k = ggml_reshape_3d(ctx, k, DH, HEADS, N);
-            v = ggml_reshape_3d(ctx, v, DH, HEADS, N);
-            // interleaved (pair) RoPE over head dim, theta 10000 = F5 inv_freq
-            q = ggml_rope_ext(
-                ctx, q, pos_ids, nullptr, DH, GGML_ROPE_TYPE_NORMAL, 0,
-                10000.0F, 1.0F, 0.0F, 1.0F, 0.0F, 0.0F);
-            k = ggml_rope_ext(
-                ctx, k, pos_ids, nullptr, DH, GGML_ROPE_TYPE_NORMAL, 0,
-                10000.0F, 1.0F, 0.0F, 1.0F, 0.0F, 0.0F);
-            // rope layout [DH, H, N] -> flash-attn layout [DH, N, H]
-            q = ggml_cont(ctx, ggml_permute(ctx, q, 0, 2, 1, 3));
-            k = ggml_cont(ctx, ggml_permute(ctx, k, 0, 2, 1, 3));
-            v = ggml_cont(ctx, ggml_permute(ctx, v, 0, 2, 1, 3));
-            auto * attn = ggml_flash_attn_ext(
-                ctx, q, k, v, nullptr,
-                1.0F / std::sqrt(static_cast<float>(DH)), 0.0F, 0.0F);
-            // res: [DH, H, N] permuted -> flatten to [D, N]
-            auto * attn2 = ggml_reshape_2d(ctx, ggml_cont(ctx, attn), D, N);
-            auto * proj = lin_apply(ctx, B.to_out, attn2);
-            h = ggml_add(ctx, h, ggml_mul(ctx, proj, ggml_repeat(ctx, gate_msa, proj)));
-
-            auto * norm2 = modulate(ctx, ggml_norm(ctx, h, 1e-6F), scale_mlp, shift_mlp, ones_d1);
-            auto * f1 = lin_apply(ctx, B.ff0, norm2);
-            // FeedForward(approximate="tanh"):
-            // 0.5*x*(1+tanh(sqrt(2/pi)*(x+0.044715*x^3)))
-            {
-                auto * cube = ggml_mul(ctx, f1, ggml_mul(ctx, f1, f1));
-                auto * inner = ggml_add(ctx, f1, ggml_scale(ctx, cube, 0.044715F));
-                auto * tanh_part = ggml_tanh(
-                    ctx, ggml_scale(ctx, inner, 0.7978845608028654F));
-                // +1 via adding ones of matching shape
-                auto * one_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, f1->ne[0], f1->ne[1]);
-                {
-                    const size_t need = ggml_nelements(one_t);
-                    static thread_local std::vector<float> ones_fill;
-                    if (ones_fill.size() < need) {
-                        ones_fill.assign(need, 1.0F);
-                    }
-                    leaf_write(one_t, ones_fill.data(), need * sizeof(float));
-                }
-                f1 = ggml_scale(
-                    ctx, ggml_mul(ctx, f1, ggml_add(ctx, tanh_part, one_t)), 0.5F);
-            }
-            auto * f2 = lin_apply(ctx, B.ff2, f1);
-            h = ggml_add(ctx, h, ggml_mul(ctx, f2, ggml_repeat(ctx, gate_mlp, f2)));
-            if (taps != nullptr && taps->block0 != nullptr && bi == 0) {
-                tap_block0 = ggml_cont(ctx, h);
-                ggml_set_output(tap_block0);
-            }
-            if (taps != nullptr && taps->block21 != nullptr && bi == arch.depth - 1) {
-                tap_block21 = ggml_cont(ctx, h);
-                ggml_set_output(tap_block21);
-            }
-        }
-
-        // ---- final adaLN + proj ----
-        {
-            auto * emb = lin_apply(ctx, W.norm_out, ggml_silu(ctx, t_emb));  // [2048, 1]
-            auto * scale = chunk_col(ctx, emb, 0, D);
-            auto * shift = chunk_col(ctx, emb, 1, D);
-            auto * norm = modulate(ctx, ggml_norm(ctx, h, 1e-6F), scale, shift, ones_d1);
-            output = lin_apply(ctx, W.proj_out, norm);  // [100, N]
-        }
-        gnew->output = output;
-        gnew->x = x;
-        gnew->cond = cond;
-        gnew->text_ids = text_ids;
-        gnew->th_t = th_t;
-        gnew->tap_text_embed = tap_text_embed;
-        gnew->tap_text_convnext = tap_text_convnext;
-        gnew->tap_text_padded = tap_text_padded;
-        gnew->tap_input_embed = tap_input_embed;
-        gnew->tap_time_embed = tap_time_embed;
-        gnew->tap_block0 = tap_block0;
-        gnew->tap_block21 = tap_block21;
+    // ---- module-composed graph build (dev-branch reviewer pattern) ----
+    // All ops expressed via framework modules; leaves are [1, N, 100]
+    // row-major (same memory as the old mel-major columns) so the upload
+    // and readback paths are unchanged.
+    const F5DiTWeights & dit_w = load_dit_weights_once(weights_path, dev);
+    std::vector<engine::models::f5_tts::ConstStage> * staged_module_consts = nullptr;
+    auto * stage = const_stage_begin();
+    auto io = build_dit_modules_graph(
+        ctx, dit_w, arch, N, NT, model.backend_type);
+    const_stage_end(stage);
+    // staged constants upload after ggml_backend_alloc_ctx_tensors below
+    staged_module_consts = stage;
+    output = io.output.tensor;
+    gnew->x = io.x.tensor;
+    gnew->cond = io.cond.tensor;
+    gnew->text_ids = io.text_ids.tensor;
+    gnew->th_t = io.time_input.tensor;
+    gnew->output = output;
         gnew->graph = ggml_new_graph_custom(ctx, 262144, false);
         ggml_build_forward_expand(gnew->graph, output);
         for (ggml_tensor * tap :
@@ -1197,18 +991,26 @@ std::vector<float> f5_dit_forward(
             for (auto & leaf : pending_uploads) {
                 ggml_backend_tensor_set(leaf.first, leaf.second.data(), 0, leaf.second.size());
             }
+            if (staged_module_consts != nullptr) {
+                const_stage_upload(staged_module_consts);
+                const_stage_end(staged_module_consts);
+                staged_module_consts = nullptr;
+            }
             gnew->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
             if (gnew->gallocr == nullptr || !ggml_gallocr_reserve(gnew->gallocr, gnew->graph) ||
                 !ggml_gallocr_alloc_graph(gnew->gallocr, gnew->graph)) {
                 throw std::runtime_error("F5 DiT CUDA graph alloc failed");
             }
         } else {
+            if (staged_module_consts != nullptr) {
+                const_stage_end(staged_module_consts);
+                staged_module_consts = nullptr;
+            }
             // CPU: graph data tensors live in the ctx pool (inline alloc);
             // ggml_graph_compute_with_ctx replays without realloc.
         }
         it = graph_cache->emplace(cache_key, std::move(gnew)).first;
     }  // if build
-    }  // inner build scope
     DiTGraph & g = *it->second;
 
     // ---- per-call leaf uploads ----

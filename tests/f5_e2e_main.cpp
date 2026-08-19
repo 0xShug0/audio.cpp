@@ -107,6 +107,10 @@ int main(int argc, char ** argv) {
     req.ref_audio = ref_wav.samples;
     req.ref_sample_rate = ref_wav.sample_rate;
     req.ref_text = "\xD9\x83\xD8\xA7\xD9\x86\x20\xD8\xA7\xD9\x84\xD9\x84\xD8\xB9\xD9\x8A\xD8\xA8\x20\xD8\xAD\xD8\xA7\xD8\xB6\xD8\xB1\xD9\x8B\xD8\xA7\x2E";
+    if (std::getenv("F5_LONG") != nullptr) {
+        // long-text test: ~4x the cap; exercises chunking + chaining
+        req.text = req.text + " " + req.text + " " + req.text + " " + req.text;
+    }
     req.steps = 16;
     req.cfg_strength = 2.0F;
     req.seed = 42;
