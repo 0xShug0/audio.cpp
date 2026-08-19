@@ -37,10 +37,11 @@ FishAudioCodes FishAudioGenerator::encode_reference(const runtime::AudioBuffer &
 
 FishAudioGenerationResult FishAudioGenerator::generate(
     const FishAudioRequest & request,
-    const std::optional<FishAudioCodes> & reference_codes,
+    const std::vector<FishAudioCodes> & reference_codes,
     const std::optional<FishAudioConversationTurn> & previous_turn,
     bool mem_saver) {
-    engine::debug::trace_log_scalar("fish_audio.request.has_reference", request.reference.has_value());
+    engine::debug::trace_log_scalar("fish_audio.request.has_reference", !request.references.empty());
+    engine::debug::trace_log_scalar("fish_audio.request.reference_count", static_cast<int64_t>(request.references.size()));
     engine::debug::trace_log_scalar("fish_audio.request.text_chars", static_cast<int64_t>(request.text.size()));
     engine::debug::trace_log_scalar("fish_audio.request.has_previous_turn", previous_turn.has_value());
     engine::debug::trace_log_scalar("fish_audio.sampler.seed", request.generation.seed);
