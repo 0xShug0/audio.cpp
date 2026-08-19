@@ -1049,80 +1049,19 @@ F5SynthesisResult f5_synthesize(
     }
     const auto chunks = chunk_text(request.text, chars_per_chunk);
     std::vector<float> all_rows;
-    std::vector<float> chain_ref_cols;
-    int chain_ref_frames = 0;
-    std::string chain_ref_text = request.ref_text;
-
+    // Every chunk is conditioned on the ORIGINAL reference (vanilla F5
+    // chunking semantics): chained references drift the voice and decay
+    // the energy chunk over chunk (observed: two voices + fade to silence).
     for (size_t ci = 0; ci < chunks.size(); ++ci) {
-        const bool is_first = ci == 0;
-        const std::vector<float> & ref_cols = is_first ? ref_mel : chain_ref_cols;
-        const int cur_ref_frames = is_first ? ref_frames : chain_ref_frames;
         const std::string full = std::string(dialect_token(request.dialect))
-            + "\xE3\x80\x88" + chain_ref_text + chunks[ci] + "\xE3\x80\x89";
+            + "\xE3\x80\x88" + request.ref_text + chunks[ci] + "\xE3\x80\x89";
         const auto chunk_ids = tokenize(full);
-
-        std::vector<float> final_latent;
         auto out = synthesize_chunk(
-            model_path, request, ref_cols, cur_ref_frames, chunk_ids,
-            chunks[ci], chain_ref_text, dev,
+            model_path, request, ref_mel, ref_frames, chunk_ids,
+            chunks[ci], request.ref_text, dev,
             request.fixed_seed ? request.seed + static_cast<uint32_t>(ci) : 0,
-            &final_latent);
+            nullptr);
         all_rows.insert(all_rows.end(), out.gen_mel_rows.begin(), out.gen_mel_rows.end());
-
-        if (ci + 1 < chunks.size()) {
-            // next reference: tail of this chunk's GENERATED region only
-            // (never the pasted reference or zero padding); clamp the window
-            // to what was actually generated so short chunks do not chain
-            // silence into the next conditioning.
-            constexpr int kChainRefFrames = 192;
-            const int total_frames = static_cast<int>(final_latent.size()) / kNMel;
-            const int gen_end = std::min(out.duration_real, total_frames);
-            const int gen_start_actual = std::min(cur_ref_frames, gen_end);
-            const int start = std::max(gen_start_actual, gen_end - kChainRefFrames);
-            const int len = std::max(1, gen_end - start);
-            chain_ref_cols.assign(static_cast<size_t>(len) * kNMel, 0.0F);
-            for (int t = 0; t < len; ++t) {
-                for (int m = 0; m < kNMel; ++m) {
-                    chain_ref_cols[static_cast<size_t>(m) * len + t] =
-                        final_latent[static_cast<size_t>(start + t) * kNMel + m];
-                }
-            }
-            // skip chaining if the generated tail is degenerate (silence):
-            // reuse the ORIGINAL reference instead so the voice persists
-            double chain_rms = 0.0;
-            for (const auto v : chain_ref_cols) chain_rms += double(v) * v;
-            chain_rms = std::sqrt(chain_rms / chain_ref_cols.size());
-            // NaN-safe: a non-finite or silent tail falls back to the
-            // ORIGINAL reference so one bad chunk cannot poison the chain.
-            if (!std::isfinite(chain_rms) || chain_rms < 1e-4) {
-                chain_ref_cols = ref_mel;
-                chain_ref_frames = ref_frames;
-            } else {
-                chain_ref_frames = len;
-            }
-            // Reference transcript MUST match the audio window: the ref rate
-            // is frames/char, so the transcript tail should be
-            // kChainRefFrames / rate characters — otherwise the next chunk's
-            // pacing heuristic gets a mismatched ratio (too-fast speech).
-            const std::string & prev = chunks[ci];
-            const int keep_chars = std::max<int>(
-                8, static_cast<int>(kChainRefFrames / rate0));
-            const size_t pc = utf8_char_count(prev);
-            if (pc <= static_cast<size_t>(keep_chars)) {
-                chain_ref_text = prev;
-            } else {
-                // walk back keep_chars UTF-8 characters from the end
-                size_t end_byte = prev.size();
-                size_t cnt = 0;
-                while (end_byte > 0 && cnt < static_cast<size_t>(keep_chars)) {
-                    --end_byte;
-                    if ((static_cast<unsigned char>(prev[end_byte]) & 0xC0) != 0x80) {
-                        ++cnt;  // lead byte = one character
-                    }
-                }
-                chain_ref_text = prev.substr(end_byte);
-            }
-        }
     }
 
     result.audio = request.use_cuda
