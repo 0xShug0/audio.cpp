@@ -794,40 +794,87 @@ std::vector<float> vocos_decode_gpu(
 
 namespace {
 
-// Split text into chunks of at most ~max_chars bytes, preferring sentence or
-// clause boundaries (F5's chunk_text heuristic; Arabic break chars included).
+// UTF-8-aware sentence splitting: returns byte offsets that never split a
+// multi-byte character. Break after . ! ? ؛ ، and newlines.
+static bool is_break_byte_here(const std::string & text, size_t i, size_t * len) {
+    const unsigned char c = static_cast<unsigned char>(text[i]);
+    if (c == '.' || c == '!' || c == '?' || c == '\n') {
+        *len = 1;
+        return true;
+    }
+    // Arabic semicolon U+061B (D8 9B) and comma U+060C (D8 8C)
+    if (c == 0xD8 && i + 1 < text.size()) {
+        const unsigned char c2 = static_cast<unsigned char>(text[i + 1]);
+        if (c2 == 0x9B || c2 == 0x8C) {
+            *len = 2;
+            return true;
+        }
+    }
+    return false;
+}
+
+static size_t utf8_char_count(const std::string & s) {
+    size_t n = 0;
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        i += c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : 4;
+        ++n;
+    }
+    return n;
+}
+
+// Split text so each chunk has at most max_chars UTF-8 characters,
+// preferring sentence/clause boundaries.
 std::vector<std::string> chunk_text(const std::string & text, size_t max_chars) {
     std::vector<std::string> chunks;
-    if (text.size() <= max_chars) {
+    if (utf8_char_count(text) <= max_chars) {
         chunks.push_back(text);
         return chunks;
     }
-    static const std::string breaks = ".!?\xd8\x9b\xd8\x8c\n";  // .!? ؛ ، 
-
-    size_t start = 0;
-    while (start < text.size()) {
-        const size_t remaining = text.size() - start;
-        if (remaining <= max_chars) {
-            chunks.push_back(text.substr(start));
-            break;
+    // collect sentence pieces [start, end) breaking AFTER break chars
+    std::vector<std::pair<size_t, size_t>> pieces;
+    size_t piece_start = 0;
+    for (size_t i = 0; i < text.size();) {
+        size_t blen = 0;
+        if (is_break_byte_here(text, i, &blen)) {
+            pieces.emplace_back(piece_start, i + blen);
+            piece_start = i + blen;
+            i += blen;
+            continue;
         }
-        size_t best = std::string::npos;
-        for (size_t i = start + max_chars; i > start + max_chars / 2; --i) {
-            if (i >= text.size()) continue;
-            if (breaks.find(text[i]) != std::string::npos) {
-                best = i + 1;
-                break;
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        i += c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : 4;
+    }
+    if (piece_start < text.size()) {
+        pieces.emplace_back(piece_start, text.size());
+    }
+    // greedy pack pieces into chunks <= max_chars chars
+    for (const auto & [ps, pe] : pieces) {
+        const std::string piece = text.substr(ps, pe - ps);
+        const size_t pc = utf8_char_count(piece);
+        if (pc > max_chars) {
+            // oversize sentence: hard-split at character boundaries
+            size_t cs = ps;
+            while (cs < pe) {
+                size_t cnt = 0, ce = cs;
+                while (ce < pe && cnt < max_chars) {
+                    const unsigned char c = static_cast<unsigned char>(text[ce]);
+                    ce += c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : 4;
+                    ++cnt;
+                }
+                chunks.push_back(text.substr(cs, ce - cs));
+                cs = ce;
+            }
+            continue;
+        }
+        if (!chunks.empty()) {
+            const std::string & prev = chunks.back();
+            if (utf8_char_count(prev) + pc <= max_chars) {
+                chunks.back() = prev + piece;
+                continue;
             }
         }
-        if (best == std::string::npos) {
-            best = std::min(start + max_chars, text.size());
-            while (best > start + 1 &&
-                   (static_cast<unsigned char>(text[best]) & 0xC0) == 0x80) {
-                --best;  // do not split a UTF-8 sequence
-            }
-        }
-        chunks.push_back(text.substr(start, best - start));
-        start = best;
+        chunks.push_back(piece);
     }
     return chunks;
 }
@@ -843,20 +890,28 @@ ChunkResult synthesize_chunk(
     const std::vector<float> & ref_mel_cols,  // [100][ref_frames]
     int ref_frames,
     const std::vector<int32_t> & chunk_ids,
+    const std::string & chunk_text_string,
     const std::string & chunk_ref_text,
     F5ComputeDevice & dev,
     uint32_t seed,
     std::vector<float> * out_final_latent_rows) {
     const F5Architecture arch;
-    const int gen_text_len = static_cast<int>(chunk_ids.size());
 
-    const int ref_text_len = std::max(1, static_cast<int>(chunk_ref_text.size()));
+    // Pacing in CHARACTERS (Arabic is 2 bytes/char; byte-based pacing
+    // underestimates duration ~1.8x). The reference's speaking rate sets the
+    // expectation, bounded by a normal-speech ceiling so an unusually slow
+    // reference cannot drag generated speech into a compressed clamp.
+    const int gen_chars = static_cast<int>(utf8_char_count(chunk_text_string));
+    const int ref_chars = std::max(1, static_cast<int>(utf8_char_count(chunk_ref_text)));
+    const double ref_rate = static_cast<double>(ref_frames) / ref_chars;  // frames/char
+    // ceiling only guards pathological refs (e.g. mostly silence); the
+    // reference's speaking rate drives pacing, so slow refs stay slow
+    constexpr double kMaxFramesPerChar = 93.75 / 2.5;  // >= 2.5 chars/s floor... (frames/char ceiling)
+    const double rate = std::max(std::min(ref_rate, kMaxFramesPerChar), 93.75 / 14.0);
     float local_speed = request.speed;
-    if (gen_text_len < 10) local_speed = 0.3F;
-    int duration = ref_frames + static_cast<int>(
-        static_cast<double>(ref_frames) / ref_text_len
-        * static_cast<double>(gen_text_len) / local_speed);
-    duration = std::max(duration, gen_text_len + 1);
+    if (gen_chars < 10) local_speed = 0.3F;
+    int duration = ref_frames + static_cast<int>(rate * gen_chars / local_speed);
+    duration = std::max(duration, gen_chars + 1);
     // per-chunk safety cap: a single chunk never exceeds the graph budget;
     // longer inputs are split upstream by chunk_text instead of truncated.
     constexpr int kChunkFrameCap = 1024;
@@ -950,11 +1005,20 @@ F5SynthesisResult f5_synthesize(
     dev.device = request.cuda_device;
     dev.threads = request.threads;
 
-    // ---- chunk long texts instead of truncating: each chunk fits the graph
-    // budget; chunk N+1 is conditioned on the tail of chunk N (voice and
-    // prosody continuity across seams) ----
-    constexpr size_t kMaxChunkBytes = 600;  // ~200 Arabic chars ≈ 5 s speech
-    const auto chunks = chunk_text(request.text, kMaxChunkBytes);
+    // ---- chunk long texts instead of truncating: each chunk is sized by
+    // the DURATION budget (frames/char from the reference, capped) so no
+    // chunk ever needs clamping; chunk N+1 is conditioned on the tail of
+    // chunk N (voice and prosody continuity across seams) ----
+    const int ref_chars0 = std::max<int>(1, static_cast<int>(utf8_char_count(request.ref_text)));
+    const double rate0 = std::max(
+        std::min(static_cast<double>(ref_frames) / ref_chars0, 93.75 / 2.5),
+        93.75 / 14.0);
+    const int gen_budget = 1024 - ref_frames;  // frames a chunk may generate
+    // chars per chunk: budget / rate, minus a safety margin for the max()
+    // floor (gen_chars+1) and estimate jitter; at least 40 chars
+    const size_t chars_per_chunk = std::max<size_t>(
+        40, static_cast<size_t>(gen_budget / rate0 * 0.9));
+    const auto chunks = chunk_text(request.text, chars_per_chunk);
     std::vector<float> all_rows;
     std::vector<float> chain_ref_cols;
     int chain_ref_frames = 0;
@@ -971,7 +1035,7 @@ F5SynthesisResult f5_synthesize(
         std::vector<float> final_latent;
         auto out = synthesize_chunk(
             model_path, request, ref_cols, cur_ref_frames, chunk_ids,
-            chain_ref_text, dev,
+            chunks[ci], chain_ref_text, dev,
             request.fixed_seed ? request.seed + static_cast<uint32_t>(ci) : 0,
             &final_latent);
         all_rows.insert(all_rows.end(), out.gen_mel_rows.begin(), out.gen_mel_rows.end());
@@ -990,10 +1054,28 @@ F5SynthesisResult f5_synthesize(
                 }
             }
             chain_ref_frames = len;
-            // reference transcript: tail of the spoken text (~window scale)
+            // Reference transcript MUST match the audio window: the ref rate
+            // is frames/char, so the transcript tail should be
+            // kChainRefFrames / rate characters — otherwise the next chunk's
+            // pacing heuristic gets a mismatched ratio (too-fast speech).
             const std::string & prev = chunks[ci];
-            const size_t keep = std::min<size_t>(prev.size(), 60);
-            chain_ref_text = prev.substr(prev.size() - keep);
+            const int keep_chars = std::max<int>(
+                8, static_cast<int>(kChainRefFrames / rate0));
+            const size_t pc = utf8_char_count(prev);
+            if (pc <= static_cast<size_t>(keep_chars)) {
+                chain_ref_text = prev;
+            } else {
+                // walk back keep_chars UTF-8 characters from the end
+                size_t end_byte = prev.size();
+                size_t cnt = 0;
+                while (end_byte > 0 && cnt < static_cast<size_t>(keep_chars)) {
+                    --end_byte;
+                    if ((static_cast<unsigned char>(prev[end_byte]) & 0xC0) != 0x80) {
+                        ++cnt;  // lead byte = one character
+                    }
+                }
+                chain_ref_text = prev.substr(end_byte);
+            }
         }
     }
 

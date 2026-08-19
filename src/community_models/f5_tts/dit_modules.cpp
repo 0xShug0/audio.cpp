@@ -127,13 +127,20 @@ core::TensorValue modulate(
     const core::TensorValue & x,
     const core::TensorValue & scale,
     const core::TensorValue & shift) {
+    // constants sized [1, 1, C] (NOT [B, T, C]): one shared ones-row, and the
+    // repeat broadcasts handle the expansion in the compute buffer.
+    const auto row_shape = core::TensorShape::from_dims(
+        {1, 1, x.shape.dims[x.shape.rank - 1]});
     auto ones = ctx_store_f32(
-        ctx, scale.shape, std::vector<float>(static_cast<size_t>(scale.shape.num_elements()), 1.0F));
-    auto one_rep = mod::RepeatModule({x.shape}).build(ctx, lift_row(ctx, ones));
-    auto s_rep = mod::RepeatModule({x.shape}).build(ctx, lift_row(ctx, scale));
-    auto sh_rep = mod::RepeatModule({x.shape}).build(ctx, lift_row(ctx, shift));
+        ctx, row_shape, std::vector<float>(static_cast<size_t>(x.shape.dims[x.shape.rank - 1]), 1.0F));
+    auto s_row = lift_row(ctx, scale);
+    auto sh_row = lift_row(ctx, shift);
+    // 1 + scale, then broadcast once
+    auto one_plus_s = mod::AddModule().build(ctx, ones, s_row);      // [1,1,C]
+    auto scale_b = mod::RepeatModule({x.shape}).build(ctx, one_plus_s);
+    auto shift_b = mod::RepeatModule({x.shape}).build(ctx, sh_row);
     return mod::AddModule().build(
-        ctx, mod::MulModule().build(ctx, x, mod::AddModule().build(ctx, one_rep, s_rep)), sh_rep);
+        ctx, mod::MulModule().build(ctx, x, scale_b), shift_b);
 }
 
 // ---- GRN (global response norm): no framework module; expressed with
@@ -399,6 +406,199 @@ F5DiTGraphBuild build_dit_modules_graph(
         auto shift = mod::SliceModule({1, kDim, kDim}).build(ctx, emb);
         auto norm = modulate(ctx, mod::LayerNormModule({kDim, 1e-6F, false, false}).build(ctx, h, mod::NormWeights{}), scale, shift);
         io.output = mod::LinearModule({kDim, kMel, true}).build(ctx, norm, w.proj_out);  // [1, N, 100]
+    }
+    return io;
+}
+
+
+
+// Batched-CFG variant: B=2 halves share every weight; halves differ only in
+// text ids (cond half: ids+1 offset embeds 〈ref+text〉, uncond half: pad id).
+F5DiTGraphBuild build_dit_cfg_modules_graph(
+    ggml_context * ggml,
+    const F5DiTWeights & w,
+    const F5Architecture & arch,
+    int frames,
+    int text_len,
+    core::BackendType backend_type) {
+    auto ctx = make_ctx(ggml, "f5.dit.cfg", backend_type);
+    constexpr int64_t kMel = 100, kTextDim = 512, kDim = 1024;
+    constexpr int64_t kHeads = 16, kHeadDim = 64, kVocab = 2731;
+    const int64_t N = frames;
+    const int64_t NT = text_len;
+
+    F5DiTGraphBuild io;
+    // leaves: x/cond [2, N, 100] (both halves identical values), ids [2*NT]
+    io.x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, N, kMel}));
+    io.cond = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, N, kMel}));
+    io.text_ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({2 * NT}));
+    io.time_input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 256}));
+
+    // per-half embeddings then concat on the batch axis
+    auto ids_c = mod::SliceModule({0, 0, NT}).build(ctx, io.text_ids);
+    auto ids_u = mod::SliceModule({0, NT, NT}).build(ctx, io.text_ids);
+    auto emb = [&](const core::TensorValue & ids) {
+        auto e = mod::EmbeddingModule({kVocab, kTextDim}).build(ctx, ids, w.text_embedding);
+        return core::reshape_tensor(
+            ctx, core::ensure_backend_addressable_layout(ctx, e),
+            core::TensorShape::from_dims({1, NT, kTextDim}));
+    };
+    auto te_c = emb(ids_c);
+    auto te_u = emb(ids_u);
+    // shared pe over positions
+    std::vector<float> pe(static_cast<size_t>(NT) * kTextDim);
+    {
+        const int64_t half = kTextDim / 2;
+        for (int64_t pos = 0; pos < NT; ++pos) {
+            for (int64_t i = 0; i < half; ++i) {
+                const float inv = std::pow(10000.0F, -2.0F * i / static_cast<float>(kTextDim));
+                const float f = static_cast<float>(pos) * inv;
+                pe[static_cast<size_t>(pos) * kTextDim + i] = std::cos(f);
+                pe[static_cast<size_t>(pos) * kTextDim + half + i] = std::sin(f);
+            }
+        }
+    }
+    auto pe_t = ctx_store_f32(ctx, core::TensorShape::from_dims({1, NT, kTextDim}), pe);
+    te_c = mod::AddModule().build(ctx, te_c, pe_t);
+    te_u = mod::AddModule().build(ctx, te_u, pe_t);
+    auto te = mod::ConcatModule({0}).build(ctx, te_c, te_u);  // [2, NT, 512]
+
+    // text ConvNeXt x4 (batch-aware: dwconv input [B, C, T])
+    for (int bi = 0; bi < 4; ++bi) {
+        const auto & B = w.text_blocks[static_cast<size_t>(bi)];
+        auto te_c2 = mod::TransposeModule({{0, 2, 1}, 3}).build(ctx, te);   // [B, C, T]
+        // depthwise over batch: module requires rank-3 [B, C, T] — supported
+        auto dw = mod::DepthwiseConv1dModule({kTextDim, 7, 1, 3, 1, true}).build(ctx, te_c2, B.dwconv);
+        auto dw_t = mod::TransposeModule({{0, 2, 1}, 3}).build(ctx, dw);    // [B, T, C]
+        auto nrm = mod::LayerNormModule({kTextDim, 1e-6F, true, true}).build(ctx, dw_t, B.norm);
+        auto h1 = mod::LinearModule({kTextDim, kDim, true}).build(ctx, nrm, B.pw1);
+        h1 = mod::GeluModule({mod::GeluApproximation::ExactErf}).build(ctx, h1);
+        core::TensorValue g_dummy, b_dummy;
+        auto grn_out = grn(ctx, h1, B.grn_gamma, B.grn_beta, g_dummy, b_dummy);
+        auto h2 = mod::LinearModule({kDim, kTextDim, true}).build(ctx, grn_out, B.pw2);
+        te = mod::AddModule().build(ctx, te, h2);
+    }
+
+    // pad text to N on axis 1 (both halves share the same NT)
+    core::TensorValue te_pad;
+    if (NT >= N) {
+        te_pad = mod::SliceModule({1, 0, N}).build(ctx, te);
+    } else {
+        const auto zshape = core::TensorShape::from_dims({2, N - NT, kTextDim});
+        std::vector<float> zv(static_cast<size_t>(zshape.num_elements()), 0.0F);
+        te_pad = mod::ConcatModule({1}).build(ctx, te, ctx_store_f32(ctx, zshape, zv));
+    }
+
+    // input embed
+    auto cat0 = mod::ConcatModule({2}).build(ctx, io.x, io.cond);
+    auto cat1 = mod::ConcatModule({2}).build(ctx, cat0, te_pad);  // [2, N, 712]
+    auto inp = mod::LinearModule({712LL, kDim, true}).build(ctx, cat1, w.input_proj);
+
+    // CPE: conv over [B, D, N] — grouped_conv1d folds batch; keep B=2 by
+    // reshaping to rows [2*N, D] and treating 2N as the time axis of a B=1
+    // conv (valid: the conv is per-(batch,row) in time; frames never mix).
+    {
+        auto conv_mish = [&](const core::TensorValue & x_bnd,
+                             const core::TensorValue & cweight,
+                             const core::TensorValue & cbias) -> core::TensorValue {
+            // [B, N, D] -> rows [B*N, D] -> [1, B*N, D] -> conv -> [B*N, D]
+            auto rows = core::reshape_tensor(
+                ctx, core::ensure_backend_addressable_layout(ctx, x_bnd),
+                core::TensorShape::from_dims({x_bnd.shape.dims[0] * x_bnd.shape.dims[1], x_bnd.shape.dims[2]}));
+            auto b1 = core::reshape_tensor(
+                ctx, rows, core::TensorShape::from_dims({1, rows.shape.dims[0], rows.shape.dims[1]}));
+            auto x_c = mod::TransposeModule({{0, 2, 1}, 3}).build(ctx, b1);  // [1, D, B*N]
+            auto x_cc = core::wrap_tensor(ggml_cont(ctx.ggml, x_c.tensor), x_c.shape, GGML_TYPE_F32);
+            auto r = grouped_conv1d(ctx, x_cc, cweight, cbias, 16);          // [B*N, D]
+            auto sp = exp_log_softplus(ctx, r);
+            auto mish = mod::MulModule().build(ctx, r, mod::TanhModule().build(ctx, sp));
+            return core::reshape_tensor(
+                ctx, core::ensure_backend_addressable_layout(ctx, mish),
+                core::TensorShape::from_dims({2, N, kDim}));
+        };
+        auto r0 = conv_mish(inp, w.cpe0.weight, *w.cpe0.bias);
+        auto r1 = conv_mish(r0, w.cpe2.weight, *w.cpe2.bias);
+        inp = mod::AddModule().build(ctx, inp, r1);
+    }
+
+    // time embedding (shared across halves)
+    auto t0 = mod::LinearModule({256, kDim, true}).build(ctx, io.time_input, w.time0);
+    t0 = mod::SiluModule().build(ctx, t0);
+    auto t_emb = mod::LinearModule({kDim, kDim, true}).build(ctx, t0, w.time2);  // [1, 1024]
+
+    core::TensorValue positions;
+    {
+        std::vector<int32_t> pos(static_cast<size_t>(N));
+        for (int64_t i = 0; i < N; ++i) pos[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+        auto p = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({N}));
+        if (p.tensor->data != nullptr) {
+            std::memcpy(p.tensor->data, pos.data(), pos.size() * sizeof(int32_t));
+        } else if (t_const_stage != nullptr) {
+            const auto * b = reinterpret_cast<const uint8_t *>(pos.data());
+            t_const_stage->push_back({p.tensor, std::vector<uint8_t>(b, b + pos.size() * sizeof(int32_t))});
+        }
+        positions = p;
+    }
+
+    // 22 DiT blocks: identical to the B=1 graph; all modules are batch-aware
+    auto h = inp;
+    for (int bi = 0; bi < 22; ++bi) {
+        const auto & B = w.blocks[static_cast<size_t>(bi)];
+        auto emb6 = mod::LinearModule({kDim, 6 * kDim, true}).build(
+            ctx, mod::SiluModule().build(ctx, t_emb), B.attn_norm);  // [1, 6144]
+        auto shift_msa = mod::SliceModule({1, 0 * kDim, kDim}).build(ctx, emb6);
+        auto scale_msa = mod::SliceModule({1, 1 * kDim, kDim}).build(ctx, emb6);
+        auto gate_msa = mod::SliceModule({1, 2 * kDim, kDim}).build(ctx, emb6);
+        auto shift_mlp = mod::SliceModule({1, 3 * kDim, kDim}).build(ctx, emb6);
+        auto scale_mlp = mod::SliceModule({1, 4 * kDim, kDim}).build(ctx, emb6);
+        auto gate_mlp = mod::SliceModule({1, 5 * kDim, kDim}).build(ctx, emb6);
+        (void)shift_msa;
+
+        auto norm = modulate(ctx, mod::LayerNormModule({kDim, 1e-6F, false, false}).build(ctx, h, mod::NormWeights{}), scale_msa, shift_msa);
+        auto q = mod::LinearModule({kDim, kDim, true}).build(ctx, norm, B.to_q);
+        auto k = mod::LinearModule({kDim, kDim, true}).build(ctx, norm, B.to_k);
+        auto v = mod::LinearModule({kDim, kDim, true}).build(ctx, norm, B.to_v);
+        auto to_heads = [&](core::TensorValue t) {
+            return core::reshape_tensor(
+                ctx, core::ensure_backend_addressable_layout(ctx, t),
+                core::TensorShape::from_dims({t.shape.dims[0], t.shape.dims[1], kHeads, kHeadDim}));
+        };
+        q = to_heads(q); k = to_heads(k); v = to_heads(v);
+        q = mod::RoPEModule({kHeadDim, GGML_ROPE_TYPE_NORMAL, 10000.0F}).build(ctx, q, positions);
+        k = mod::RoPEModule({kHeadDim, GGML_ROPE_TYPE_NORMAL, 10000.0F}).build(ctx, k, positions);
+        auto q_heads = mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, q);
+        auto k_heads = mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, k);
+        auto v_heads = mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, v);
+        auto attn = mod::ScaledDotProductAttentionModule({
+            kHeadDim,
+            mod::ScaledDotProductAttentionLowering::Flash,
+            GGML_PREC_F32,
+            mod::AttentionCausality::NonCausal,
+        }).build(ctx, q_heads, k_heads, v_heads);  // [2, N, H, DH]
+        auto attn_flat = core::reshape_tensor(
+            ctx, core::ensure_backend_addressable_layout(ctx, attn),
+            core::TensorShape::from_dims({attn.shape.dims[0], attn.shape.dims[1], kDim}));
+        auto proj = mod::LinearModule({kDim, kDim, true}).build(ctx, attn_flat, B.to_out);
+        h = mod::AddModule().build(
+            ctx, h, mod::MulModule().build(
+                ctx, proj, mod::RepeatModule({proj.shape}).build(ctx, lift_row(ctx, gate_msa))));
+
+        auto norm2 = modulate(ctx, mod::LayerNormModule({kDim, 1e-6F, false, false}).build(ctx, h, mod::NormWeights{}), scale_mlp, shift_mlp);
+        auto f1 = mod::LinearModule({kDim, 2048, true}).build(ctx, norm2, B.ff0);
+        f1 = mod::GeluModule({mod::GeluApproximation::Tanh}).build(ctx, f1);
+        auto f2 = mod::LinearModule({2048, kDim, true}).build(ctx, f1, B.ff2);
+        h = mod::AddModule().build(
+            ctx, h, mod::MulModule().build(
+                ctx, f2, mod::RepeatModule({f2.shape}).build(ctx, lift_row(ctx, gate_mlp))));
+    }
+
+    {
+        auto emb2 = mod::LinearModule({kDim, 2 * kDim, true}).build(
+            ctx, mod::SiluModule().build(ctx, t_emb), w.norm_out);
+        auto scale = mod::SliceModule({1, 0, kDim}).build(ctx, emb2);
+        auto shift = mod::SliceModule({1, kDim, kDim}).build(ctx, emb2);
+        auto norm = modulate(ctx, mod::LayerNormModule({kDim, 1e-6F, false, false}).build(ctx, h, mod::NormWeights{}), scale, shift);
+        io.output = mod::LinearModule({kDim, kMel, true}).build(ctx, norm, w.proj_out);  // [2, N, 100]
     }
     return io;
 }

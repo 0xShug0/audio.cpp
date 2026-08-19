@@ -33,3 +33,16 @@ std::vector<ConstStage> * const_stage_begin();
 void const_stage_upload(std::vector<ConstStage> * stage);
 void const_stage_end(std::vector<ConstStage> * stage);
 }  // namespace engine::models::f5_tts
+
+namespace engine::models::f5_tts {
+
+// Batched-CFG (B=2) variant of the module-composed DiT graph.
+F5DiTGraphBuild build_dit_cfg_modules_graph(
+    ggml_context * ggml,
+    const F5DiTWeights & w,
+    const F5Architecture & arch,
+    int frames,
+    int text_len,
+    core::BackendType backend_type);
+
+}  // namespace engine::models::f5_tts
