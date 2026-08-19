@@ -4,6 +4,7 @@
   cmake,
   ninja,
   pkg-config,
+  openssl,
   rocmPackages,
   cudaPackages,
   vulkan-headers,
@@ -23,6 +24,7 @@
   rocmSupport ? config.rocmSupport or false,
   rocmGpuTargets ? (lib.optionals rocmSupport rocmPackages.clr.gpuTargets),
   strixHaloOptimizations ? (rocmSupport && rocmGpuTargets == [ "gfx1151" ]),
+  nativeModelManagerSupport ? true,
   # Model selection: if non-empty, only these model targets are built.
   # See CMakeLists.txt AUDIOCPP_MODEL_SET / AUDIOCPP_MODELS.
   models ? [ ],
@@ -45,6 +47,7 @@ stdenv.mkDerivation (finalAttrs: {
   buildInputs = [
     python-scripts
   ]
+  ++ lib.optional nativeModelManagerSupport openssl
   ++ lib.optionals vulkanSupport [
     vulkan-headers
     vulkan-loader
@@ -65,6 +68,10 @@ stdenv.mkDerivation (finalAttrs: {
     "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
     "-DENGINE_ENABLE_NATIVE_CPU=ON"
     "-DENGINE_ENABLE_LLAMAFILE=ON"
+  ]
+  ++ lib.optionals nativeModelManagerSupport [
+    "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON"
+    "-DAUDIOCPP_USE_SYSTEM_OPENSSL=ON"
   ]
   ++ (
     if models != [ ] then
@@ -95,14 +102,17 @@ stdenv.mkDerivation (finalAttrs: {
 
     # Copy the built C++ executables directly from the bin directory
     cp bin/audiocpp_cli bin/audiocpp_server bin/audiocpp_gguf $out/bin/
+    ${lib.optionalString nativeModelManagerSupport ''
+      cp bin/audiocpp_model_manager $out/bin/
+    ''}
 
-    # Install the supported spec-backed model manager and the catalog it reads
-    # relative to its installed location.
-    install -Dm755 $src/tools/model_manager_v2.py $out/bin/audiocpp_model_manager
+    # Keep the supported Python v2 manager available during migration without
+    # overwriting the native audiocpp_model_manager executable copied above.
+    install -Dm755 $src/tools/model_manager_v2.py $out/bin/audiocpp_model_manager_v2.py
     cp -R $src/model_specs $out/model_specs
 
     # Patch the shebang to use our python environment with torch/safetensors/pyyaml
-    patchShebangs $out/bin/audiocpp_model_manager
+    patchShebangs $out/bin/audiocpp_model_manager_v2.py
 
     runHook postInstall
   '';

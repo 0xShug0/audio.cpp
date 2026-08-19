@@ -553,6 +553,24 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "log_mel_cosine_min": 0.98,
         "similarity_vote_required": 1,
     },
+    "personaplex": {
+        "kind": "personaplex",
+        "display_name": "PersonaPlex",
+        "modes": ["offline", "streaming"],
+        "cpp_bin": "build/debug/bin/audiocpp_cli",
+        "python_script": "tests/personaplex/personaplex_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "/media/leo/Share/models/audio.cpp-gguf/PersonaPlex-GGUF/personaplex-7b-v1-q4_k.gguf",
+        "python_model": "models/PersonaPlex",
+        "case_catalog": "tests/personaplex/personaplex_warm_bench_cases.json",
+        "default_case_name": "all_paths",
+        "default_streaming_case_name": "streaming_service_quality",
+        "default_requests_per_session": 5,
+        "default_warmup": 1,
+        "wav_cosine_min": 0.0,
+        "log_mel_cosine_min": 0.90,
+        "length_ratio_min": 0.98,
+    },
     "parakeet": {
         "kind": "asr",
         "modes": ["offline", "longform", "streaming"],
@@ -1036,6 +1054,44 @@ def resolve_neutts_case(config: dict[str, Any], args: argparse.Namespace) -> tup
     return dict(warmup), selected, {"case_name": case_name, "warmup": warmup, "requests": selected}
 
 
+def resolve_personaplex_case(
+    config: dict[str, Any],
+    args: argparse.Namespace,
+    mode: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if len(args.case_names) > 1:
+        raise RuntimeError("PersonaPlex warmbench accepts at most one --case-name")
+    if args.texts:
+        raise RuntimeError("PersonaPlex warmbench uses JSON case requests; --text is not supported")
+    if args.case_names:
+        case_name = args.case_names[0]
+    elif mode == "streaming":
+        case_name = str(config.get("default_streaming_case_name", config.get("default_case_name", "session_core_paths")))
+    else:
+        case_name = str(config.get("default_case_name", "session_core_paths"))
+    catalog_path = REPO_ROOT / str(config["case_catalog"])
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    case = catalog.get(case_name)
+    if not isinstance(case, dict):
+        available = ", ".join(sorted(catalog))
+        raise RuntimeError(f"unknown PersonaPlex case name {case_name!r}; available: {available}")
+    requests = case.get("requests")
+    if not isinstance(requests, list) or not requests:
+        raise RuntimeError(f"PersonaPlex case {case_name!r} has no requests")
+    request_count = args.requests_per_session
+    if not args.requests_per_session_was_explicit and bool(case.get("use_all_requests_by_default", False)):
+        request_count = len(requests)
+    if len(requests) < request_count:
+        raise RuntimeError(
+            f"PersonaPlex case {case_name!r} needs at least {request_count} requests, only has {len(requests)}"
+        )
+    selected = [dict(request) for request in requests[:request_count]]
+    if getattr(args, "seed_was_explicit", False):
+        for request in selected:
+            request["seed"] = args.seed
+    return selected, {"case_name": case_name, "requests": selected}
+
+
 def resolve_miocodec_case(config: dict[str, Any], args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     if len(args.case_names) > 1:
         raise RuntimeError("MioCodec warmbench accepts at most one --case-name")
@@ -1196,6 +1252,57 @@ def parse_summary_lines(text: str) -> dict[str, Any]:
         "metrics": metrics,
         "request_metrics": average_metrics,
     }
+
+
+def wav_summary(path: Path) -> dict[str, Any]:
+    with wave.open(str(path), "rb") as wav_file:
+        sample_rate = wav_file.getframerate()
+        channels = wav_file.getnchannels()
+        frames = wav_file.getnframes()
+    return {
+        "sample_rate": sample_rate,
+        "channels": channels,
+        "frames": frames,
+        "samples": frames * channels,
+    }
+
+
+def parse_personaplex_cli_summary(stdout: str, manifest_path: Path, backend: str) -> dict[str, Any]:
+    wall_ms_by_id: dict[str, float] = {}
+    for line in stdout.splitlines():
+        if not line.startswith("[TIMING] request.") or ".wall_ms " not in line:
+            continue
+        name_part, value_part = line.split(".wall_ms ", 1)
+        request_id = name_part[len("[TIMING] request."):]
+        wall_ms_by_id[request_id] = float(value_part)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    steps: list[dict[str, Any]] = []
+    for item in manifest.get("requests", []):
+        request_id = str(item.get("id", ""))
+        audio_path = manifest_path.parent / "cpp_audio" / f"{request_id}.wav"
+        summary = wav_summary(audio_path) if audio_path.exists() else {}
+        duration_ms = 0.0
+        if summary:
+            duration_ms = 1000.0 * float(summary["frames"]) / float(summary["sample_rate"])
+        wall_ms = wall_ms_by_id.get(request_id, 0.0)
+        metrics = {"wall_ms": wall_ms}
+        if duration_ms > 0.0:
+            rtf = wall_ms / duration_ms
+            metrics.update({
+                "audio_duration_ms": duration_ms,
+                "rtf": rtf,
+                "x_realtime": 1.0 / rtf if rtf > 0.0 else 0.0,
+            })
+        steps.append({
+            "id": request_id,
+            "stems": [{
+                "name": "audio",
+                "audio": str(audio_path),
+                "summary": summary,
+            }],
+            "metrics": metrics,
+        })
+    return {"family": "personaplex", "backend": backend, "sequence_steps": steps}
 
 
 def normalize_text(text: str) -> str:
@@ -4702,6 +4809,199 @@ def build_dramabox_commands(
     return python_command, cpp_command
 
 
+def personaplex_python_request(request: dict[str, Any]) -> dict[str, Any]:
+    out = {
+        "id": request.get("id", ""),
+        "input_wav": request.get("input_wav", request.get("audio", "")),
+        "text_prompt": request.get("text_prompt", request.get("text", "")),
+        "voice_prompt": request.get("voice_prompt", ""),
+        "seed": request.get("seed", 42424242),
+        "temp_audio": request.get("temp_audio", request.get("temperature", 0.8)),
+        "temp_text": request.get("temp_text", request.get("text_temperature", 0.7)),
+        "topk_audio": request.get("topk_audio", request.get("top_k", 250)),
+        "topk_text": request.get("topk_text", request.get("text_top_k", 25)),
+        "greedy": bool(request.get("greedy", False)),
+    }
+    options = request.get("options", {})
+    if isinstance(options, dict):
+        if "temperature" in options:
+            out["temp_audio"] = options["temperature"]
+        if "text_temperature" in options:
+            out["temp_text"] = options["text_temperature"]
+        if "top_k" in options:
+            out["topk_audio"] = options["top_k"]
+        if "text_top_k" in options:
+            out["topk_text"] = options["text_top_k"]
+        if "do_sample" in options:
+            out["greedy"] = not bool(options["do_sample"])
+        if "voice_id" in options and not out["voice_prompt"]:
+            out["voice_prompt"] = str(options["voice_id"]) + ".pt"
+    if not out["voice_prompt"]:
+        voice_ref = request.get("voice_ref", "")
+        if not voice_ref:
+            raise RuntimeError(f"PersonaPlex request {out['id']!r} has neither voice_prompt nor voice_ref")
+        out["voice_prompt"] = voice_ref
+    return out
+
+
+def personaplex_cpp_request(request: dict[str, Any]) -> dict[str, Any]:
+    options = dict(request.get("options", {})) if isinstance(request.get("options", {}), dict) else {}
+    if "temp_audio" in request:
+        options["temperature"] = str(request["temp_audio"])
+    elif "temperature" in request:
+        options["temperature"] = str(request["temperature"])
+    if "temp_text" in request:
+        options["text_temperature"] = str(request["temp_text"])
+    elif "text_temperature" in request:
+        options["text_temperature"] = str(request["text_temperature"])
+    if "topk_audio" in request:
+        options["top_k"] = str(request["topk_audio"])
+    elif "top_k" in request:
+        options["top_k"] = str(request["top_k"])
+    if "topk_text" in request:
+        options["text_top_k"] = str(request["topk_text"])
+    elif "text_top_k" in request:
+        options["text_top_k"] = str(request["text_top_k"])
+    if "greedy" in request:
+        options["do_sample"] = "false" if bool(request["greedy"]) else "true"
+    elif "do_sample" in request:
+        options["do_sample"] = "true" if bool(request["do_sample"]) else "false"
+    out: dict[str, Any] = {
+        "id": request.get("id", ""),
+        "audio": str(resolve_repo_path(str(request.get("input_wav", request.get("audio", ""))))),
+        "text": request.get("text_prompt", request.get("text", "")),
+        "seed": request.get("seed", 42424242),
+        "options": options,
+    }
+    voice_ref = request.get("voice_ref")
+    if voice_ref:
+        out["voice_ref"] = str(resolve_repo_path(str(voice_ref)))
+    else:
+        voice_prompt = str(request.get("voice_prompt", ""))
+        if voice_prompt.endswith(".wav"):
+            out["voice_ref"] = str(resolve_repo_path(voice_prompt))
+        elif voice_prompt.endswith(".pt"):
+            voice_prompt = voice_prompt[:-3]
+            out["voice_id"] = voice_prompt
+        elif voice_prompt:
+            out["voice_id"] = voice_prompt
+        elif "voice_id" in out["options"]:
+            out["voice_id"] = str(out["options"].pop("voice_id"))
+    return out
+
+
+def build_personaplex_commands(
+    config: dict[str, Any],
+    mode: str,
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("PersonaPlex warmbench is CUDA-only")
+    python_requests = [personaplex_python_request(request) for request in requests]
+    cpp_requests = [personaplex_cpp_request(request) for request in requests]
+    python_request_sequence_json = json.dumps(python_requests, ensure_ascii=False, separators=(",", ":"))
+    cpp_request_path = scenario_dir / "cpp_requests.json"
+    cpp_request_path.write_text(json.dumps({"requests": cpp_requests}, indent=2, ensure_ascii=False), encoding="utf-8")
+    (scenario_dir / "cpp.batch_manifest.json").write_text(
+        json.dumps({"requests": cpp_requests}, indent=2, ensure_ascii=False),
+        encoding="utf-8")
+    if mode == "streaming" and len(cpp_requests) != 1:
+        raise RuntimeError("PersonaPlex streaming warmbench accepts exactly one request")
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--audio-out-dir",
+        str(scenario_dir / "python_audio"),
+        "--text-out-dir",
+        str(scenario_dir / "python_text"),
+        "--summary-file",
+        str(scenario_dir / "python.summary.json"),
+        "--request-sequence-json",
+        python_request_sequence_json,
+    ]
+    cpp_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--task",
+        "s2s",
+        "--family",
+        "personaplex",
+        "--model",
+        model_path,
+        "--mode",
+        mode,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+    ]
+    if mode == "streaming":
+        request = cpp_requests[0]
+        request_id = str(request.get("id", "request1"))
+        cpp_command.extend([
+            "--audio",
+            str(request["audio"]),
+            "--text",
+            str(request.get("text", "")),
+            "--seed",
+            str(request.get("seed", 42424242)),
+            "--out",
+            str(scenario_dir / "cpp_audio" / f"{request_id}.wav"),
+        ])
+        if request.get("voice_ref"):
+            cpp_command.extend(["--voice-ref", str(request["voice_ref"])])
+        elif request.get("voice_id"):
+            cpp_command.extend(["--voice-id", str(request["voice_id"])])
+        for key, value in sorted(dict(request.get("options", {})).items()):
+            cpp_command.extend(["--request-option", f"{key}={value}"])
+    else:
+        cpp_command.extend([
+            "--request-sequence",
+            str(cpp_request_path),
+            "--out-dir",
+            str(scenario_dir / "cpp_audio"),
+            "--batch-manifest-out",
+            str(scenario_dir / "cpp.batch_manifest.json"),
+            "--metrics",
+        ])
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
 def build_higgs_audio_tts_commands(
     config: dict[str, Any],
     backend: str,
@@ -4857,7 +5157,7 @@ def validate_sequence_result(summary: dict[str, Any], request_count: int, kind: 
             and len(step.get("stems", [])) > 0
             and isinstance(step.get("metrics", {}), dict)
             for step in steps)
-    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox"}:
+    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox", "personaplex"}:
         payload_valid = all(
             isinstance(step.get("stems", []), list)
             and len(step.get("stems", [])) > 0
@@ -5029,6 +5329,16 @@ def run_scenario(
         dramabox_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(dramabox_requests)
         python_command, cpp_command = build_dramabox_commands(scenario_config, backend, args, scenario_dir, dramabox_requests)
+    elif scenario_config["kind"] == "personaplex":
+        personaplex_requests, request_manifest = resolve_personaplex_case(config, args, mode)
+        args.requests_per_session = len(personaplex_requests)
+        python_command, cpp_command = build_personaplex_commands(
+            scenario_config,
+            mode,
+            backend,
+            args,
+            scenario_dir,
+            personaplex_requests)
     elif scenario_config["kind"] in {"vevo2", "seed_vc"}:
         vevo2_requests, request_manifest = resolve_vevo2_case(config, args)
         python_command, cpp_command = build_vevo2_commands(scenario_config, backend, args, scenario_dir, vevo2_requests)
@@ -5226,6 +5536,12 @@ def run_scenario(
         f"peak_rss_kb={cpp_memory['peak_rss_kb']} peak_vms_kb={cpp_memory['peak_vms_kb']}",
     )
     cpp_parsed = parse_summary_lines(cpp_stdout)
+    if scenario_config["kind"] == "personaplex" and not cpp_parsed.get("summary"):
+        cpp_parsed["summary"] = parse_personaplex_cli_summary(
+            cpp_stdout,
+            scenario_dir / "cpp.batch_manifest.json",
+            backend,
+        )
     cpp_result_payload = sanitized_result_payload(scenario_config["kind"], cpp_parsed)
     cpp_summary = cpp_parsed.get("summary") or {}
     cpp_summary_path = scenario_dir / "cpp.result.json"
@@ -5372,7 +5688,7 @@ def run_scenario(
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
             append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
-    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "neutts", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox"}:
+    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "neutts", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox", "personaplex"}:
         python_valid = validate_sequence_result(python_summary, args.requests_per_session, scenario_config["kind"])
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, scenario_config["kind"])
         python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")

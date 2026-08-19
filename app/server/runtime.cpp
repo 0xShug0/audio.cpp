@@ -39,6 +39,7 @@ using engine::io::json::Value;
 
 using Clock = std::chrono::steady_clock;
 
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
     std::filesystem::create_directories(voice_dir);
     for (const auto & voice : embedded_demo_voices()) {
@@ -63,6 +64,7 @@ void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
         throw std::runtime_error("failed to write embedded demo voice prompt_text");
     }
 }
+#endif
 
 // Per-request override for the busy timeout. Absent means "use the model's
 // configured ceiling"; a value is clamped to that ceiling by resolve_busy_timeout_ms
@@ -196,6 +198,45 @@ std::string query_param(const std::string & query, const std::string & key) {
         pos = amp + 1;
     }
     return {};
+}
+
+int hex_value(char ch) {
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return ch - 'a' + 10;
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return ch - 'A' + 10;
+    }
+    return -1;
+}
+
+std::string url_decode_query_value(std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == '+') {
+            out.push_back(' ');
+        } else if (value[i] == '%' && i + 2 < value.size()) {
+            const int hi = hex_value(value[i + 1]);
+            const int lo = hex_value(value[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+            } else {
+                out.push_back(value[i]);
+            }
+        } else {
+            out.push_back(value[i]);
+        }
+    }
+    return out;
+}
+
+std::string decoded_query_param(const std::string & query, const std::string & key) {
+    return url_decode_query_value(query_param(query, key));
 }
 
 const char * backend_name(engine::core::BackendType type) {
@@ -503,6 +544,24 @@ std::string ttft_timing_json(double ttft_ms) {
     return out.str();
 }
 
+std::string live_speech_timing_json(double request_start_to_first_audio_ms, double input_end_ms) {
+    const double input_end_to_first_audio_ms = request_start_to_first_audio_ms - input_end_ms;
+    const bool first_audio_before_input_end = input_end_to_first_audio_ms < 0.0;
+    const double overlap_ms = first_audio_before_input_end ? -input_end_to_first_audio_ms : 0.0;
+    std::ostringstream out;
+    out << "{\"ttft_ms\":";
+    if (first_audio_before_input_end) {
+        out << "null";
+    } else {
+        out << input_end_to_first_audio_ms;
+    }
+    out << ",\"first_audio_before_input_end\":" << (first_audio_before_input_end ? "true" : "false")
+        << ",\"request_start_to_first_audio_ms\":" << request_start_to_first_audio_ms
+        << ",\"input_end_ms\":" << input_end_ms
+        << ",\"overlap_ms\":" << overlap_ms << "}";
+    return out.str();
+}
+
 bool stream_event_has_output(const engine::runtime::StreamEvent & event) {
     return (event.partial_text.has_value() && !event.partial_text->text.empty()) ||
         event.audio_output.has_value() ||
@@ -538,6 +597,13 @@ double require_ttft_ms(const std::optional<double> & ttft_ms) {
         throw std::runtime_error("streaming response produced no TTFT event");
     }
     return *ttft_ms;
+}
+
+double require_input_end_ms(const std::optional<double> & input_end_ms) {
+    if (!input_end_ms.has_value()) {
+        throw std::runtime_error("live streaming response did not observe input end");
+    }
+    return *input_end_ms;
 }
 
 std::unordered_map<std::string, std::string> timing_headers(
@@ -842,6 +908,9 @@ ServerState::ServerState(
     std::filesystem::path ui_resource_anchor)
     : config_(std::move(config)),
       request_base_(std::filesystem::absolute(std::move(request_base)).lexically_normal()) {
+#if !defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
+    (void) ui_resource_anchor;
+#endif
     if (config_.backend != engine::core::BackendType::Cuda) {
         std::cerr
             << "audio.cpp is optimized for CUDA. The "
@@ -855,13 +924,13 @@ ServerState::ServerState(
                     std::chrono::system_clock::now().time_since_epoch()).count()));
         std::filesystem::create_directories(upload_root_);
     }
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     if (config_.ui_management) {
         repository_root_ = find_from_roots(
             request_base_,
             ui_resource_anchor,
             [](const std::filesystem::path & root) {
-                return std::filesystem::is_regular_file(root / "tools" / "model_manager_v2.py") &&
-                    std::filesystem::is_directory(root / "model_specs");
+                return std::filesystem::is_directory(root / "model_specs");
             }).value_or(request_base_);
         const auto binary_directory = ui_resource_anchor.empty()
             ? request_base_
@@ -882,6 +951,7 @@ ServerState::ServerState(
             repository_root_,
             models_root_);
     }
+#endif
     load_models();
 }
 
@@ -948,6 +1018,7 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else if (request.method == "POST" && request.path == "/v1/ui/upload") {
         response = handle_ui_upload(request);
     }
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     else if (request.method == "GET" && request.path == "/v1/ui/models-root") {
         response = handle_models_root_get();
     }
@@ -975,8 +1046,12 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else if (request.method == "GET" && request.path == "/v1/ui/models/package-sizes") {
         response = handle_model_package_sizes();
     }
+#endif
     else if (request.method == "POST" && request.path == "/v1/audio/speech") {
         response = handle_speech(request.body);
+    }
+    else if (request.method == "POST" && request.path == "/v1/audio/speech/live") {
+        response = handle_speech_live(request);
     }
     else if (request.method == "POST" && request.path == "/v1/audio/transcriptions") {
         response = handle_transcription(request);
@@ -1192,6 +1267,7 @@ HttpResponse ServerState::handle_ui_upload(const HttpRequest & request) {
         ",\"bytes\":" + std::to_string(request.body.size()) + "}");
 }
 
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 HttpResponse ServerState::handle_model_install(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "UI model installation is disabled", "forbidden");
@@ -1430,6 +1506,7 @@ HttpResponse ServerState::handle_directory_browser(const std::string & body_text
     }
     return json_response(response + "]}");
 }
+#endif
 
 HttpResponse ServerState::handle_ui_asset() const {
     if (!config_.ui_enabled) {
@@ -1925,6 +2002,224 @@ HttpResponse ServerState::handle_speech_stream(
             throw std::runtime_error("streaming speech model produced no audio delta events");
         }
     });
+}
+
+HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
+    if (request.body_stream == nullptr) {
+        return error_response(
+            400,
+            "live speech requires an incrementally delivered body (Transfer-Encoding: chunked)",
+            "invalid_request_error");
+    }
+
+    LoadedModel * model_ptr = nullptr;
+    int sample_rate = 16000;
+    int channels = 1;
+    std::optional<int> busy_timeout_ms;
+    minitts::app::PcmSampleFormat sample_format = minitts::app::PcmSampleFormat::S16LE;
+    std::string stream_format = "sse";
+    engine::runtime::TaskRequest task_request;
+    try {
+        const std::string model_id = query_param(request.query, "model");
+        if (model_id.empty()) {
+            throw std::runtime_error("live speech requires a 'model' query parameter");
+        }
+        const std::string input = decoded_query_param(request.query, "input");
+        if (input.empty()) {
+            throw std::runtime_error("live speech requires an 'input' query parameter");
+        }
+
+        engine::io::json::Value::Object fields;
+        fields.emplace("model", engine::io::json::Value::make_string(model_id));
+        fields.emplace("input", engine::io::json::Value::make_string(input));
+        const std::string language = decoded_query_param(request.query, "language");
+        if (!language.empty()) {
+            fields.emplace("language", engine::io::json::Value::make_string(language));
+        }
+        const std::string voice = decoded_query_param(request.query, "voice");
+        if (!voice.empty()) {
+            fields.emplace("voice", engine::io::json::Value::make_string(voice));
+        }
+        const auto body = engine::io::json::Value::make_object(std::move(fields));
+        auto & model = require_model(body);
+        if (model.task.mode != engine::runtime::RunMode::Streaming) {
+            throw std::runtime_error(
+                "live speech requires a model configured with mode=streaming: " +
+                model.config.id);
+        }
+        model_ptr = &model;
+
+        const auto parse_bounded_int = [&](const char * key, int fallback, int minimum, int maximum) {
+            const std::string raw = query_param(request.query, key);
+            if (raw.empty()) {
+                return fallback;
+            }
+            long long value = 0;
+            size_t consumed = 0;
+            try {
+                value = std::stoll(raw, &consumed);
+            } catch (const std::exception &) {
+                throw std::runtime_error(
+                    std::string("live speech ") + key + " must be an integer");
+            }
+            if (consumed != raw.size()) {
+                throw std::runtime_error(
+                    std::string("live speech ") + key + " must be an integer");
+            }
+            if (value < minimum || value > maximum) {
+                throw std::runtime_error(
+                    std::string("live speech ") + key + " must be between " +
+                    std::to_string(minimum) + " and " + std::to_string(maximum));
+            }
+            return static_cast<int>(value);
+        };
+        sample_rate = parse_bounded_int("sample_rate", 16000, 1000, 384'000);
+        channels = parse_bounded_int("channels", 1, 1, 16);
+        if (!query_param(request.query, "busy_timeout_ms").empty()) {
+            busy_timeout_ms = parse_bounded_int(
+                "busy_timeout_ms", 0, 0, std::numeric_limits<int>::max());
+        }
+        const std::string sample_format_name = query_param(request.query, "sample_format");
+        sample_format = minitts::app::parse_pcm_sample_format(
+            sample_format_name.empty() ? "s16le" : sample_format_name);
+        const std::string response_format = query_param(request.query, "response_format").empty()
+            ? "pcm"
+            : query_param(request.query, "response_format");
+        if (response_format != "pcm") {
+            throw std::runtime_error("live speech currently supports response_format=pcm");
+        }
+        stream_format = query_param(request.query, "stream_format").empty()
+            ? "sse"
+            : query_param(request.query, "stream_format");
+        if (stream_format != "sse" && stream_format != "audio") {
+            throw std::runtime_error("live speech stream_format must be sse or audio");
+        }
+
+        task_request = build_speech_request(model, body);
+        engine::runtime::AudioBuffer audio_contract;
+        audio_contract.sample_rate = sample_rate;
+        audio_contract.channels = channels;
+        task_request.audio_input = std::move(audio_contract);
+        const auto add_query_option = [&](const char * key, const char * option_key) {
+            const std::string value = decoded_query_param(request.query, key);
+            if (!value.empty()) {
+                task_request.options[option_key] = value;
+            }
+        };
+        add_query_option("seed", "seed");
+        add_query_option("temperature", "temperature");
+        add_query_option("top_k", "top_k");
+        add_query_option("top_p", "top_p");
+        add_query_option("max_tokens", "max_tokens");
+        add_query_option("max_steps", "max_steps");
+        add_query_option("repetition_penalty", "repetition_penalty");
+        add_query_option("guidance_scale", "guidance_scale");
+        add_query_option("num_inference_steps", "num_inference_steps");
+        add_query_option("instructions", "system_prompt");
+        add_query_option("reference_text", "reference_text");
+        add_query_option("voice_id", "voice_id");
+        add_query_option("system_prompt", "system_prompt");
+        add_query_option("text_temperature", "text_temperature");
+        add_query_option("text_top_k", "text_top_k");
+        add_query_option("do_sample", "do_sample");
+    } catch (const std::runtime_error & ex) {
+        return error_response(400, ex.what(), "invalid_request_error");
+    }
+
+    std::istream * pcm_input = request.body_stream;
+    if (stream_format == "audio") {
+        return chunked_audio_response([this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms](
+                                          HttpStreamWriter & writer) {
+            const minitts::app::AudioStreamFormat format{sample_rate, channels};
+            const auto audio = minitts::app::make_pcm_chunk_stream(*pcm_input, format, sample_format);
+            bool wrote_audio = false;
+            (void)run_streaming_model_from(
+                *model_ptr,
+                task_request,
+                audio,
+                [&](const engine::runtime::StreamEvent & event) {
+                    if (event.audio_output.has_value()) {
+                        const auto pcm = encode_pcm16_samples(*event.audio_output);
+                        writer.write(std::string(reinterpret_cast<const char *>(pcm.data()), pcm.size()));
+                        wrote_audio = true;
+                    }
+                    for (const auto & named : event.named_audio_outputs) {
+                        const auto pcm = encode_pcm16_samples(named.audio);
+                        writer.write(std::string(reinterpret_cast<const char *>(pcm.data()), pcm.size()));
+                        wrote_audio = true;
+                    }
+                },
+                busy_timeout_ms);
+            if (!wrote_audio) {
+                throw std::runtime_error("live speech model produced no audio delta events");
+            }
+        });
+    }
+    return sse_response(
+        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms](
+            HttpStreamWriter & writer) {
+            const minitts::app::AudioStreamFormat format{sample_rate, channels};
+            const auto audio = minitts::app::make_pcm_chunk_stream(*pcm_input, format, sample_format);
+            const auto request_started = Clock::now();
+            std::optional<double> first_audio_ms;
+            std::optional<double> input_end_ms;
+            minitts::app::AudioChunkStream timed_audio;
+            timed_audio.format = audio.format;
+            timed_audio.read = [
+                                   reader = audio.read,
+                                   request_started,
+                                   &input_end_ms
+                               ](int64_t max_samples, std::vector<float> & samples) mutable {
+                const bool has_more = reader(max_samples, samples);
+                if (!has_more && !input_end_ms.has_value()) {
+                    input_end_ms = elapsed_ms(request_started);
+                }
+                return has_more;
+            };
+            bool wrote_audio = false;
+            const auto timed_result = run_streaming_model_from(
+                *model_ptr,
+                task_request,
+                timed_audio,
+                [&](const engine::runtime::StreamEvent & event) {
+                    if (event.audio_output.has_value()) {
+                        if (!first_audio_ms.has_value()) {
+                            first_audio_ms = elapsed_ms(request_started);
+                        }
+                        const auto pcm = encode_pcm16_samples(*event.audio_output);
+                        write_sse(
+                            writer,
+                            "{\"type\":\"speech.audio.delta\",\"audio\":" +
+                                json_quote(base64_encode(pcm)) +
+                                "}");
+                        wrote_audio = true;
+                    }
+                    for (const auto & named : event.named_audio_outputs) {
+                        if (!first_audio_ms.has_value()) {
+                            first_audio_ms = elapsed_ms(request_started);
+                        }
+                        const auto pcm = encode_pcm16_samples(named.audio);
+                        write_sse(
+                            writer,
+                            "{\"type\":\"speech.audio.delta\",\"audio\":" +
+                                json_quote(base64_encode(pcm)) +
+                                "}");
+                        wrote_audio = true;
+                    }
+                },
+                busy_timeout_ms);
+            if (!wrote_audio) {
+                throw std::runtime_error("live speech model produced no audio delta events");
+            }
+            write_sse(
+                writer,
+                "{\"type\":\"speech.audio.done\",\"timing\":" +
+                    live_speech_timing_json(
+                        require_ttft_ms(first_audio_ms),
+                        require_input_end_ms(input_end_ms)) +
+                    "}");
+            write_sse_done(writer);
+        });
 }
 
 HttpResponse ServerState::handle_transcription(const HttpRequest & request) {

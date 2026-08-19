@@ -11,6 +11,22 @@ cmake --build build --parallel --target audiocpp_server
 
 Enable the backend you plan to run: `ENGINE_ENABLE_CUDA=ON` for CUDA, `ENGINE_ENABLE_VULKAN=ON` for Vulkan, or `ENGINE_ENABLE_METAL=ON` for Metal. CPU support is always available.
 
+### Choose a server mode
+
+Pick the mode that matches the behavior you want:
+
+| If you want... | Build with... | Run with... | Behavior |
+|---|---|---|
+| API/config-driven server | default build | `audiocpp_server --config server.json` | Uses models declared in the config. The UI is available unless disabled by config or `--no-ui`. |
+| Read-only UI for configured models | default build | `audiocpp_server --config server.json --ui` | Browser UI is available for configured models, without downloads, deletes, or dynamic package management. |
+| Full UI with downloads and model switching | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | UI can browse packages, download models, load/unload models, delete packages, and use temporary uploads. |
+| Standalone deployed binary without local `model_specs/` | `-DAUDIOCPP_DEPLOYMENT_BUILD=ON` | `audiocpp_server --config server.json` | Binary carries compiled package specs for fallback model-spec lookup. |
+| Offline/reproducible native-manager build | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_BORINGSSL_ARCHIVE=/path/to/boringssl.tar.gz` | `audiocpp_server --ui --ui-management --backend <backend>` | Configure does not fetch BoringSSL from the network. |
+| Distro-packaged TLS instead of bundled BoringSSL | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | Uses system OpenSSL; useful for packagers. |
+
+Native model management uses bundled BoringSSL by default. Normal server builds
+do not build or link that HTTP/TLS dependency.
+
 ## Config
 
 ```bash
@@ -317,6 +333,8 @@ curl -N http://127.0.0.1:8080/v1/audio/speech \
 ```
 
 The SSE stream emits `speech.audio.delta` events with base64 PCM chunks, then `speech.audio.done`, then `data: [DONE]`. VoxCPM2 streaming requires `retry_badcase=false` because retrying a completed bad case is an offline-only behavior. Set `"stream_format": "audio"` with `"response_format": "pcm"` to receive raw PCM bytes over chunked transfer encoding instead.
+
+`POST /v1/audio/speech/live` is the live-ingest variant for speech-to-speech models: the request body is raw PCM sent with `Transfer-Encoding: chunked`, and the response can emit audio while the input stream is still open. Its `speech.audio.done` timing reports `ttft_ms` only when first output audio occurs after the input stream ends. If output audio starts before the input stream closes, `ttft_ms` is `null`, `first_audio_before_input_end=true`, and `overlap_ms` reports how much earlier the first output arrived. `request_start_to_first_audio_ms` is also included for transport diagnostics.
 
 ### `POST /v1/audio/transcriptions`
 
