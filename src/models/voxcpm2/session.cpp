@@ -451,10 +451,22 @@ const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(
   if (!prompt_audio.has_value() && !reference_audio.has_value()) {
     return nullptr;
   }
+  // VoxCPM1 clones only via prompt-continuation mode (golden VoxCPM.cpp
+  // uses --prompt-audio + --prompt-text); the V2 reference-mode path wraps
+  // audio in tokens 103/104, which the V1 LM was never trained on. Route a
+  // V1 reference audio through the prompt path so --voice-ref clones like
+  // --audio.
+  std::optional<runtime::AudioBuffer> effective_prompt_audio = prompt_audio;
+  std::optional<runtime::AudioBuffer> effective_reference_audio = reference_audio;
+  if (assets_->config.v1 && !effective_prompt_audio.has_value() &&
+      effective_reference_audio.has_value()) {
+    effective_prompt_audio = effective_reference_audio;
+    effective_reference_audio.reset();
+  }
   EncodedPromptCacheKey key;
   key.prompt_text = prompt_text;
-  key.prompt_audio = prompt_audio;
-  key.reference_audio = reference_audio;
+  key.prompt_audio = effective_prompt_audio;
+  key.reference_audio = effective_reference_audio;
   if (auto *cached = encoded_prompt_cache_.find(key)) {
     debug::trace_log_scalar("voxcpm2.prompt_cache.hit", 1);
     debug::trace_log_scalar("voxcpm2.prompt_cache.slots",
@@ -469,8 +481,8 @@ const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(
 
   const auto encode_start = Clock::now();
   EncodedPromptCacheEntry entry;
-  entry.encoded =
-      decoder_->encode_prompt_audio(prompt_audio, prompt_text, reference_audio);
+  entry.encoded = decoder_->encode_prompt_audio(
+      effective_prompt_audio, prompt_text, effective_reference_audio);
   const double encode_ms = engine::debug::elapsed_ms(encode_start);
   if (encoded_prompt_cache_.capacity() == 0) {
     uncached_encoded_prompt_ = std::move(entry);
@@ -486,8 +498,8 @@ const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(
   encoded_prompt_cache_.put(std::move(key), std::move(entry));
   EncodedPromptCacheKey lookup;
   lookup.prompt_text = prompt_text;
-  lookup.prompt_audio = prompt_audio;
-  lookup.reference_audio = reference_audio;
+  lookup.prompt_audio = effective_prompt_audio;
+  lookup.reference_audio = effective_reference_audio;
   auto *cached = encoded_prompt_cache_.find(lookup);
   if (cached == nullptr) {
     throw std::runtime_error("VoxCPM2 prompt cache insert failed");
