@@ -274,8 +274,7 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
     }
   };
   std::unique_ptr<VoxCPM2SessionBase, decltype(release_runtime_memory)>
-      release_guard(generator_config_.mem_saver ? this : nullptr,
-                    release_runtime_memory);
+      release_guard(this, release_runtime_memory);
 
   const auto wall_start = Clock::now();
   const int64_t text_chunk_size =
@@ -299,16 +298,31 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
   const VoxCPM2EncodedPrompt *prompt =
       encoded_prompt_for_request(request.audio_input, prompt_text,
                                  reference_audio);
+  // The encoded prompt (voice-clone conditioning) is cached as host-side
+  // vectors; the VAE encoder graph that produced it is not needed again until
+  // a different voice is encoded. Drop it before the generator runs so the
+  // generator and decoder phases never coexist with the encoder graph.
+  decoder_->release_encoder_graph();
 
   runtime::TaskResult result;
   double generator_ms = 0.0;
   double decoder_ms = 0.0;
   runtime::AudioBuffer merged_audio;
-  for (const auto & chunk_request : chunk_requests) {
+  const bool mem_saver = generator_config_.mem_saver;
+  for (size_t chunk_index = 0; chunk_index < chunk_requests.size();
+       ++chunk_index) {
+    const auto &chunk_request = chunk_requests[chunk_index];
     const auto generator_start = Clock::now();
     const auto generated = generator_->generate(
         chunk_request.text_input->text, prompt, generation_options);
     generator_ms += engine::debug::elapsed_ms(generator_start, Clock::now());
+
+    if (mem_saver && chunk_index + 1 == chunk_requests.size()) {
+      // Last chunk: free the generator graphs before the AudioVAE decode so
+      // the final decode peaks at weight + decoder graph instead of weight +
+      // generator + decoder. Graphs rebuild lazily on the next request.
+      generator_->release_runtime_memory();
+    }
 
     const auto decoder_start = Clock::now();
     auto audio = decoder_->decode_features(generated.decode_features,
@@ -359,8 +373,7 @@ VoxCPM2SessionBase::run_streaming_request(
     }
   };
   std::unique_ptr<VoxCPM2SessionBase, decltype(release_runtime_memory)>
-      release_guard(generator_config_.mem_saver ? this : nullptr,
-                    release_runtime_memory);
+      release_guard(this, release_runtime_memory);
 
   const auto wall_start = Clock::now();
   auto generation_options = generation_options_from_request(request);
@@ -377,6 +390,10 @@ VoxCPM2SessionBase::run_streaming_request(
   const VoxCPM2EncodedPrompt *prompt =
       encoded_prompt_for_request(request.audio_input, prompt_text,
                                  reference_audio);
+  // Same host-side clone-conditioning cache invariant as the offline path:
+  // the encoder graph is only needed to produce the cached vectors, so free
+  // it before the streaming generation starts.
+  decoder_->release_encoder_graph();
 
   runtime::TaskResult result;
   runtime::AudioBuffer merged;
@@ -437,11 +454,18 @@ VoxCPM2SessionBase::run_streaming_request(
 }
 
 void VoxCPM2SessionBase::release_request_runtime_memory() {
-  if (!generator_config_.mem_saver) {
-    return;
-  }
-  generator_->release_runtime_memory();
+  // Only the cloned voice is cached across requests (host-side encoded
+  // vectors in encoded_prompt_cache_). Every graph whose size follows the
+  // request text/audio length (prompt prefill, VAE encoder/decoder) is
+  // dropped so a long-lived server session returns to baseline VRAM and
+  // reallocates fresh buffers sized to the next request.
+  generator_->release_text_length_memory();
   decoder_->release_runtime_memory();
+  if (generator_config_.mem_saver) {
+    // mem_saver additionally drops the fixed-size generator graphs so the
+    // session idles at weight-only VRAM.
+    generator_->release_runtime_memory();
+  }
 }
 
 const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(

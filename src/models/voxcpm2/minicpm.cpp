@@ -338,14 +338,10 @@ public:
   }
 
   ~Impl() {
-    engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-    if (buffer_ != nullptr) {
-      ggml_backend_buffer_free(buffer_);
-    }
-    if (gallocr_ != nullptr) {
-      ggml_gallocr_free(gallocr_);
-    }
+    release_graph();
   }
+
+  void release_runtime_memory() { release_graph(); }
 
   std::vector<float> embed_token(int32_t token_id) {
     const auto &config = weights_->assets().config.lm;
@@ -368,6 +364,24 @@ public:
   }
 
 private:
+  void release_graph() {
+    if (graph_ != nullptr) {
+      engine::core::release_backend_graph_resources(weights_->backend(), graph_);
+    }
+    if (buffer_ != nullptr) {
+      ggml_backend_buffer_free(buffer_);
+      buffer_ = nullptr;
+    }
+    if (gallocr_ != nullptr) {
+      ggml_gallocr_free(gallocr_);
+      gallocr_ = nullptr;
+    }
+    graph_ = nullptr;
+    token_id_ = nullptr;
+    output_ = nullptr;
+    ctx_.reset();
+  }
+
   void build(size_t graph_context_bytes) {
     const auto &config = weights_->assets().config.lm;
     if (graph_context_bytes == 0) {
@@ -448,6 +462,10 @@ VoxCPM2TextEmbeddingRuntime::~VoxCPM2TextEmbeddingRuntime() = default;
 
 std::vector<float> VoxCPM2TextEmbeddingRuntime::embed_token(int32_t token_id) {
   return impl_->embed_token(token_id);
+}
+
+void VoxCPM2TextEmbeddingRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
 }
 
 struct MiniCPMLayerWithCacheOutput {
@@ -577,6 +595,8 @@ public:
   }
 
   ~Impl() { release_graph(); }
+
+  void release_runtime_memory() { release_graph(); }
 
   VoxCPM2PromptPrefillOutput run(const VoxCPM2PromptPrefillInput &input) {
     const auto &config = weights_->assets().config;
@@ -907,6 +927,10 @@ VoxCPM2PromptPrefillRuntime::~VoxCPM2PromptPrefillRuntime() = default;
 VoxCPM2PromptPrefillOutput
 VoxCPM2PromptPrefillRuntime::run(const VoxCPM2PromptPrefillInput &input) {
   return impl_->run(input);
+}
+
+void VoxCPM2PromptPrefillRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
 }
 
 engine::core::TensorValue

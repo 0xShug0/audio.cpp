@@ -49,6 +49,7 @@ public:
                      const std::function<void(const VoxCPM2StreamingChunk &)>
                          &chunk_callback = nullptr);
   void release_runtime_memory();
+  void release_text_length_memory();
 
 private:
   class Impl;

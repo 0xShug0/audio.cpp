@@ -43,6 +43,7 @@ public:
       const std::string &prompt_text,
       const std::optional<runtime::AudioBuffer> &reference_audio);
   void release_runtime_memory();
+  void release_encoder_graph();
 
 private:
   class Impl;

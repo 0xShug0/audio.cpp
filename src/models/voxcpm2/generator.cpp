@@ -206,6 +206,7 @@ public:
   VoxCPM2StepProjectionOutput run(const std::vector<float> &lm_hidden,
                                   const std::vector<float> &residual_hidden,
                                   const std::vector<float> &current_embed);
+  void release_runtime_memory();
 
 private:
   class Impl;
@@ -221,6 +222,7 @@ public:
 
   std::vector<float>
   encode_patch(const std::vector<float> &patch_features) const;
+  void release_runtime_memory();
 
 private:
   class Impl;
@@ -239,6 +241,7 @@ public:
                          const std::vector<float> &cond,
                          const std::vector<float> &time_embedding,
                          const std::vector<float> &delta_time_embedding);
+  void release_runtime_memory();
 
 private:
   class Impl;
@@ -259,6 +262,7 @@ public:
                                     uint64_t noise_start_index = 0,
                                     const std::string &noise_file = {},
                                     float temperature = 1.0F);
+  void release_runtime_memory();
 
 private:
   class Impl;
@@ -277,15 +281,9 @@ public:
     build(graph_context_bytes);
   }
 
-  ~Impl() {
-    engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-    if (buffer_ != nullptr) {
-      ggml_backend_buffer_free(buffer_);
-    }
-    if (gallocr_ != nullptr) {
-      ggml_gallocr_free(gallocr_);
-    }
-  }
+  ~Impl() { release_graph(); }
+
+  void release_runtime_memory() { release_graph(); }
 
   VoxCPM2StepProjectionOutput run(const std::vector<float> &lm_hidden,
                                   const std::vector<float> &residual_hidden,
@@ -356,6 +354,33 @@ public:
   }
 
 private:
+  void release_graph() {
+    if (graph_ != nullptr) {
+      engine::core::release_backend_graph_resources(weights_->backend(), graph_);
+    }
+    if (buffer_ != nullptr) {
+      ggml_backend_buffer_free(buffer_);
+      buffer_ = nullptr;
+    }
+    if (gallocr_ != nullptr) {
+      ggml_gallocr_free(gallocr_);
+      gallocr_ = nullptr;
+    }
+    graph_ = nullptr;
+    lm_hidden_ = nullptr;
+    residual_hidden_ = nullptr;
+    current_embed_ = nullptr;
+    fsq_hidden_output_ = nullptr;
+    current_residual_input_output_ = nullptr;
+    residual_input_output_ = nullptr;
+    current_lm_dit_output_ = nullptr;
+    fsq_lm_dit_output_ = nullptr;
+    residual_dit_output_ = nullptr;
+    current_stop_logits_output_ = nullptr;
+    fsq_stop_logits_output_ = nullptr;
+    ctx_.reset();
+  }
+
   void build(size_t graph_context_bytes) {
     const auto &config = weights_->assets().config;
     if (graph_context_bytes == 0) {
@@ -579,6 +604,10 @@ VoxCPM2StepProjectionRuntime::VoxCPM2StepProjectionRuntime(
 
 VoxCPM2StepProjectionRuntime::~VoxCPM2StepProjectionRuntime() = default;
 
+void VoxCPM2StepProjectionRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
+}
+
 VoxCPM2StepProjectionOutput
 VoxCPM2StepProjectionRuntime::run(const std::vector<float> &lm_hidden,
                                   const std::vector<float> &residual_hidden,
@@ -598,15 +627,9 @@ public:
     build(graph_context_bytes);
   }
 
-  ~Impl() {
-    engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-    if (buffer_ != nullptr) {
-      ggml_backend_buffer_free(buffer_);
-    }
-    if (gallocr_ != nullptr) {
-      ggml_gallocr_free(gallocr_);
-    }
-  }
+  ~Impl() { release_graph(); }
+
+  void release_runtime_memory() { release_graph(); }
 
   std::vector<float>
   encode_patch(const std::vector<float> &patch_features) const {
@@ -632,6 +655,25 @@ public:
   }
 
 private:
+  void release_graph() {
+    if (graph_ != nullptr) {
+      engine::core::release_backend_graph_resources(weights_->backend(), graph_);
+    }
+    if (buffer_ != nullptr) {
+      ggml_backend_buffer_free(buffer_);
+      buffer_ = nullptr;
+    }
+    if (gallocr_ != nullptr) {
+      ggml_gallocr_free(gallocr_);
+      gallocr_ = nullptr;
+    }
+    graph_ = nullptr;
+    input_ = nullptr;
+    positions_ = nullptr;
+    output_ = nullptr;
+    ctx_.reset();
+  }
+
   void build(size_t graph_context_bytes) {
     const auto &root_config = weights_->assets().config;
     if (graph_context_bytes == 0) {
@@ -736,6 +778,10 @@ VoxCPM2LocalEncoderRuntime::VoxCPM2LocalEncoderRuntime(
 
 VoxCPM2LocalEncoderRuntime::~VoxCPM2LocalEncoderRuntime() = default;
 
+void VoxCPM2LocalEncoderRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
+}
+
 std::vector<float> VoxCPM2LocalEncoderRuntime::encode_patch(
     const std::vector<float> &patch_features) const {
   return impl_->encode_patch(patch_features);
@@ -753,15 +799,9 @@ public:
     build(graph_context_bytes);
   }
 
-  ~Impl() {
-    engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-    if (buffer_ != nullptr) {
-      ggml_backend_buffer_free(buffer_);
-    }
-    if (gallocr_ != nullptr) {
-      ggml_gallocr_free(gallocr_);
-    }
-  }
+  ~Impl() { release_graph(); }
+
+  void release_runtime_memory() { release_graph(); }
 
   std::vector<float> run(const std::vector<float> &x,
                          const std::vector<float> &mu,
@@ -937,6 +977,29 @@ public:
   }
 
 private:
+  void release_graph() {
+    if (graph_ != nullptr) {
+      engine::core::release_backend_graph_resources(weights_->backend(), graph_);
+    }
+    if (buffer_ != nullptr) {
+      ggml_backend_buffer_free(buffer_);
+      buffer_ = nullptr;
+    }
+    if (gallocr_ != nullptr) {
+      ggml_gallocr_free(gallocr_);
+      gallocr_ = nullptr;
+    }
+    graph_ = nullptr;
+    x_ = nullptr;
+    mu_ = nullptr;
+    cond_ = nullptr;
+    time_embedding_ = nullptr;
+    delta_time_embedding_ = nullptr;
+    positions_ = nullptr;
+    output_ = nullptr;
+    ctx_.reset();
+  }
+
   void build(size_t graph_context_bytes) {
     const auto &root_config = weights_->assets().config;
     const auto &config = root_config.dit;
@@ -1164,6 +1227,10 @@ VoxCPM2DiTEstimatorRuntime::VoxCPM2DiTEstimatorRuntime(
 
 VoxCPM2DiTEstimatorRuntime::~VoxCPM2DiTEstimatorRuntime() = default;
 
+void VoxCPM2DiTEstimatorRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
+}
+
 std::vector<float> VoxCPM2DiTEstimatorRuntime::run(
     const std::vector<float> &x, const std::vector<float> &mu,
     const std::vector<float> &cond, const std::vector<float> &time_embedding,
@@ -1200,6 +1267,8 @@ public:
       throw std::runtime_error("VoxCPM2 CFM runtime requires weights");
     }
   }
+
+  void release_runtime_memory() { estimator_.release_runtime_memory(); }
 
   std::vector<float> generate_patch(const std::vector<float> &mu,
                                     const std::vector<float> &cond_patch,
@@ -1408,6 +1477,10 @@ VoxCPM2CFMRuntime::VoxCPM2CFMRuntime(
 
 VoxCPM2CFMRuntime::~VoxCPM2CFMRuntime() = default;
 
+void VoxCPM2CFMRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
+}
+
 std::vector<float> VoxCPM2CFMRuntime::generate_patch(
     const std::vector<float> &mu, const std::vector<float> &cond_patch,
     int64_t timesteps, float cfg_value, uint64_t seed,
@@ -1503,8 +1576,23 @@ public:
   }
 
   void release_runtime_memory() {
+    // Release every staged graph so a session can idle at weight-only
+    // VRAM. Each runtime lazily rebuilds its graph on the next use.
+    text_embedding_.release_runtime_memory();
+    prefill_.release_runtime_memory();
     base_lm_.release_runtime_memory();
     residual_lm_.release_runtime_memory();
+    projection_.release_runtime_memory();
+    cfm_.release_runtime_memory();
+    local_encoder_.release_runtime_memory();
+  }
+
+  void release_text_length_memory() {
+    // Only the prompt-prefill graph is sized by the request text/prompt
+    // length; the other generator graphs have fixed-size workspaces. Drop it
+    // after every request so a long-lived session does not retain buffers
+    // that scale with text length; the next request rebuilds it fresh.
+    prefill_.release_runtime_memory();
   }
 
 private:
@@ -1795,6 +1883,11 @@ private:
     residual_lm_.import_state(prefill_output.residual_state);
     std::vector<float> lm_hidden = prefill_output.lm_hidden;
     std::vector<float> residual_hidden = prefill_output.residual_hidden;
+    // The prefill graph holds the largest sequence-shaped workspace; its
+    // outputs have been copied to host hiddens and its KV state imported
+    // into the step runtimes, so nothing below references it. Drop it now
+    // so the token loop runs against the much smaller step graphs.
+    prefill_.release_runtime_memory();
 
     VoxCPM2Result result;
     std::vector<const PrefillRow *> context_rows;
@@ -1945,6 +2038,10 @@ VoxCPM2StreamingResult VoxCPM2FeatureGeneratorRuntime::generate_streaming(
 
 void VoxCPM2FeatureGeneratorRuntime::release_runtime_memory() {
   impl_->release_runtime_memory();
+}
+
+void VoxCPM2FeatureGeneratorRuntime::release_text_length_memory() {
+  impl_->release_text_length_memory();
 }
 
 } // namespace engine::models::voxcpm2

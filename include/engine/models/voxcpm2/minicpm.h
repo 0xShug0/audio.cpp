@@ -135,6 +135,7 @@ public:
   ~VoxCPM2TextEmbeddingRuntime();
 
   std::vector<float> embed_token(int32_t token_id);
+  void release_runtime_memory();
 
 private:
   class Impl;
@@ -150,6 +151,7 @@ public:
   ~VoxCPM2PromptPrefillRuntime();
 
   VoxCPM2PromptPrefillOutput run(const VoxCPM2PromptPrefillInput &input);
+  void release_runtime_memory();
 
 private:
   class Impl;

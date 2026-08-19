@@ -710,8 +710,10 @@ public:
 
   void release_runtime_memory() {
     release_decoder_graph();
-    release_encoder_graph();
+    release_encoder_graph_impl();
   }
+
+  void release_encoder_graph() { release_encoder_graph_impl(); }
 
 private:
   struct EncodedFeatures {
@@ -937,7 +939,7 @@ private:
     decoder_latent_frame_capacity_ = latent_frame_capacity;
   }
 
-  void release_encoder_graph() {
+  void release_encoder_graph_impl() {
     if (encoder_graph_ != nullptr) {
       core::release_backend_graph_resources(execution_context_.backend(),
                                             encoder_graph_);
@@ -1057,6 +1059,10 @@ VoxCPM2EncodedPrompt VoxCPM2AudioVAEDecoderRuntime::encode_prompt_audio(
 
 void VoxCPM2AudioVAEDecoderRuntime::release_runtime_memory() {
   impl_->release_runtime_memory();
+}
+
+void VoxCPM2AudioVAEDecoderRuntime::release_encoder_graph() {
+  impl_->release_encoder_graph();
 }
 
 } // namespace engine::models::voxcpm2
