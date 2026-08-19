@@ -198,8 +198,14 @@ public:
                     GGML_TYPE_F32,
                     core::TensorShape::from_dims({1, 1, config.lm.hidden_size}))
                     .tensor;
-        token_ids = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, config.lm.lm_codebooks + 1);
-        ggml_set_input(token_ids);
+        text_token_id = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
+        ggml_set_input(text_token_id);
+        audio_token_ids.reserve(static_cast<size_t>(config.lm.lm_codebooks));
+        for (int64_t codebook = 0; codebook < config.lm.lm_codebooks; ++codebook) {
+            auto * id = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
+            ggml_set_input(id);
+            audio_token_ids.push_back(id);
+        }
         embedding_scale = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, 1);
         ggml_set_input(embedding_scale);
         token_scale = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, 1);
@@ -304,7 +310,14 @@ public:
         if (static_cast<int64_t>(tokens.size()) != config.lm.lm_codebooks + 1) {
             throw std::runtime_error("PersonaPlex main step token count mismatch");
         }
-        ggml_backend_tensor_set(token_ids, tokens.data(), 0, tokens.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(text_token_id, tokens.data(), 0, sizeof(int32_t));
+        for (int64_t codebook = 0; codebook < config.lm.lm_codebooks; ++codebook) {
+            ggml_backend_tensor_set(
+                audio_token_ids[static_cast<size_t>(codebook)],
+                tokens.data() + 1 + codebook,
+                0,
+                sizeof(int32_t));
+        }
         const float skip_embedding = 0.0F;
         const float use_tokens = 1.0F;
         ggml_backend_tensor_set(embedding_scale, &skip_embedding, 0, sizeof(float));
@@ -313,20 +326,13 @@ public:
     }
 
     core::TensorValue build_token_embedding(core::ModuleBuildContext & build_ctx) {
-        const auto text_id = core::wrap_tensor(
-            ggml_view_1d(ctx.get(), token_ids, 1, 0),
-            core::TensorShape::from_dims({1}),
-            GGML_TYPE_I32);
+        const auto text_id = core::wrap_tensor(text_token_id, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
         auto out = modules::EmbeddingModule({config.lm.text_vocab_size + 1, config.lm.hidden_size})
                        .build(build_ctx, text_id, weights->text_embedding);
         out = core::reshape_tensor(build_ctx, out, core::TensorShape::from_dims({1, 1, config.lm.hidden_size}));
         for (int64_t codebook = 0; codebook < config.lm.lm_codebooks; ++codebook) {
             const auto audio_id = core::wrap_tensor(
-                ggml_view_1d(
-                    ctx.get(),
-                    token_ids,
-                    1,
-                    static_cast<size_t>(codebook + 1) * token_ids->nb[0]),
+                audio_token_ids[static_cast<size_t>(codebook)],
                 core::TensorShape::from_dims({1}),
                 GGML_TYPE_I32);
             auto audio = modules::EmbeddingModule({config.lm.audio_codebook_size + 1, config.lm.hidden_size})
@@ -386,7 +392,8 @@ public:
     int threads = 1;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
     ggml_tensor * input = nullptr;
-    ggml_tensor * token_ids = nullptr;
+    ggml_tensor * text_token_id = nullptr;
+    std::vector<ggml_tensor *> audio_token_ids;
     ggml_tensor * embedding_scale = nullptr;
     ggml_tensor * token_scale = nullptr;
     ggml_tensor * positions = nullptr;
