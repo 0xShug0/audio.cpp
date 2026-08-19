@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace engine::models::f5_tts {
@@ -39,8 +40,13 @@ struct F5SampleOptions {
 // Compute device for the DiT forward: CUDA device index or CPU threads.
 struct F5ComputeDevice {
     bool use_cuda = false;
-    int device = 0;   // CUDA device index
-    int threads = 0;  // CPU threads; 0 = hardware concurrency
+    int device = 0;      // CUDA device index
+    int threads = 0;     // CPU threads; 0 = hardware concurrency
+    // FP16 linear weights: GEMMs get ~3x faster on tensor cores but each
+    // mul_mat converts the F32 activations to F16 first; at F5's GEMM sizes
+    // (K=1024/2048, N~1022) the conversion overhead outweighs the gain on an
+    // RTX 3090 (measured 4.0s -> 5.0s per clip). Off by default.
+    bool fp16_weights = false;
 };
 
 // Debug taps for parity testing: when non-null, intermediate stage outputs are
@@ -69,6 +75,19 @@ std::vector<float> f5_dit_forward(
     bool drop_audio_cond,
     bool drop_text,
     const F5DebugTaps * taps = nullptr,
+    const F5ComputeDevice * device = nullptr);
+
+// Batched CFG: one ne3=2 graph compute returning {conditioned, unconditioned}
+// velocities (drop_text applies to the second half). Halves share weights,
+// time embedding and positions; only text ids differ.
+std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
+    const std::string & weights_path,
+    const std::vector<float> & x,
+    const std::vector<float> & cond,
+    const std::vector<int32_t> & text,
+    float time_value,
+    int seq_len,
+    const F5Architecture & arch,
     const F5ComputeDevice * device = nullptr);
 
 }  // namespace engine::models::f5_tts

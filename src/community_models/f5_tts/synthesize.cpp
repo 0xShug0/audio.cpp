@@ -829,6 +829,13 @@ F5SynthesisResult f5_synthesize(
     // TODO(M4): chunk long texts like F5's chunk_text and crossfade. For now
     // cap the DiT sequence at 1024 frames (~11 s) to bound graph memory.
     duration = std::min(duration, 1024);
+    // Round the DiT sequence up to a 64-frame bucket so cached graphs (and
+    // CUDA graph captures) are reused across requests instead of rebuilt per
+    // duration. Padded frames are zero-conditioned; only the first `duration`
+    // frames are kept after sampling.
+    const int duration_real = duration;
+    duration = (duration + 63) / 64 * 64;
+    (void)duration_real;
 
     // 4. cond: zeros + ref mel in [0, ref_frames)
     std::vector<float> cond(static_cast<size_t>(duration) * kNMel, 0.0F);
@@ -842,6 +849,8 @@ F5SynthesisResult f5_synthesize(
     Rng rng(request.seed ? request.seed : 0x9E3779B97F4A7C15ULL);
     std::vector<float> y(static_cast<size_t>(duration) * kNMel);
     for (auto & val : y) val = rng.normal();
+    // pad cond with zeros (silence) up to the graph bucket size
+    cond.resize(static_cast<size_t>(duration) * kNMel, 0.0F);
 
     // 6. CFM Euler steps with CFG (cond / uncond pair)
     const auto ts = sway_timesteps(request.steps, request.sway_sampling_coef);
@@ -853,19 +862,15 @@ F5SynthesisResult f5_synthesize(
     for (size_t i = 0; i + 1 < ts.size(); ++i) {
         const float t = ts[i];
         const float dt = ts[i + 1] - ts[i];
-        // batched CFG: run twice (drop_text false/true), combine
-        const auto v_cond = f5_dit_forward(
-            model_path, y, cond, text_ids, t, duration, arch, false, false, nullptr, &dev);
-        std::vector<float> v;
-        if (request.cfg_strength > 1e-5F) {
-            const auto v_null = f5_dit_forward(
-                model_path, y, cond, text_ids, t, duration, arch, false, true, nullptr, &dev);
-            v.resize(v_cond.size());
-            for (size_t k = 0; k < v.size(); ++k) {
-                v[k] = v_cond[k] + (v_cond[k] - v_null[k]) * request.cfg_strength;
-            }
-        } else {
-            v = v_cond;
+        // CFG pair computed in ONE batched (ne3=2) graph — same math as two
+        // sequential forwards (verified cosine 1.0), half the kernel launches.
+        const auto pair = f5_dit_forward_cfg(
+            model_path, y, cond, text_ids, t, duration, arch, &dev);
+        const auto & v_cond = pair.first;
+        const auto & v_null = pair.second;
+        std::vector<float> v(v_cond.size());
+        for (size_t k = 0; k < v.size(); ++k) {
+            v[k] = v_cond[k] + (v_cond[k] - v_null[k]) * request.cfg_strength;
         }
         for (size_t k = 0; k < y.size(); ++k) {
             y[k] += dt * v[k];
@@ -878,8 +883,8 @@ F5SynthesisResult f5_synthesize(
         }
     }
 
-    // 7. splice generated region and decode
-    const int gen_frames = duration - ref_frames;
+    // 7. splice generated region and decode (real, un-bucketed duration)
+    const int gen_frames = duration_real - ref_frames;
     std::vector<float> gen_mel(static_cast<size_t>(gen_frames) * kNMel);
     for (int t = 0; t < gen_frames; ++t) {
         for (int m = 0; m < kNMel; ++m) {

@@ -116,6 +116,9 @@ int main(int argc, char ** argv) {
 
     std::printf("synthesizing...\n");
     fflush(stdout);
+    // first call = graph build; second = cached graphs (server steady state)
+    const auto warm = engine::models::f5_tts::f5_synthesize(model, vocos, req);
+    (void)warm;
     const auto result = engine::models::f5_tts::f5_synthesize(model, vocos, req);
     std::printf("generated %.2fs audio in %.2fs wall (%.2fx RTF)\n",
                 static_cast<double>(result.audio.size()) / result.sample_rate,
