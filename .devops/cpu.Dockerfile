@@ -27,7 +27,7 @@ WORKDIR /app
 COPY . .
 
 # Validate architecture (CPU backend is only supported on amd64 and arm64)
-ARG TARGETARCH
+ARG TARGETARCH=amd64
 RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
         echo "Building for $TARGETARCH"; \
     else \
@@ -103,6 +103,8 @@ FROM base AS full
 COPY --from=build /app/full /app
 COPY model_specs/ /app/model_specs/
 COPY tools/model_manager_v2.py /app/tools/model_manager_v2.py
+
+RUN mkdir -p /app/models && chown ubuntu:ubuntu /app/models
 
 USER ubuntu
 

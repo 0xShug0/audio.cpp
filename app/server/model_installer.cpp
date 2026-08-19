@@ -293,6 +293,10 @@ std::string ModelInstaller::start(
 
     const bool legacy_conversion =
         !source_directory.empty() || !source_file.empty() || !output_file.empty() || !variant.empty();
+    // The native WebUI does not send converter inputs, so normal UI installs
+    // always use the C++ package manager below. This deprecated Python branch
+    // is retained only for old direct API callers that still pass conversion
+    // fields, and should not be treated as part of the UI download path.
     const auto script = state_->repository_root / "tools" / "model_manager_deprecated.py";
     if (legacy_conversion && !std::filesystem::is_regular_file(script)) {
         throw std::runtime_error(
