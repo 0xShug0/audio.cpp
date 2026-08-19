@@ -1760,7 +1760,9 @@ private:
         }
         input_embedding = current_embed;
       }
-      prefix_cond = row.feature;
+      if (row.audio_mask) {
+        prefix_cond = row.feature;
+      }
       prefill_input.input_embeddings.insert(prefill_input.input_embeddings.end(),
                                             input_embedding.begin(),
                                             input_embedding.end());

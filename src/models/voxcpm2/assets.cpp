@@ -600,6 +600,8 @@ private:
             // feat_quant: {N, F} -> {N, F, 1}
             // merge: {N, D} -> {N, D, 1}
             // downsample/upsample: {out, in} -> {out, in, k, k} (k=3 for 3x3)
+            // V1 embedding: token_embd.weight [hidden, vocab] -> base_lm.embed_tokens.weight [vocab, hidden]
+            {"base_lm.embed_tokens.weight", {config_.lm.vocab_size, config_.lm.hidden_size}},
         };
 
         // Folded AudioVAE conv weights: v1 GGUF stores weight-norm weights
