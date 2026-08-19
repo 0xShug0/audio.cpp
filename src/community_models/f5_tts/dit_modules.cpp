@@ -494,31 +494,42 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
     auto cat1 = mod::ConcatModule({2}).build(ctx, cat0, te_pad);  // [2, N, 712]
     auto inp = mod::LinearModule({712LL, kDim, true}).build(ctx, cat1, w.input_proj);
 
-    // CPE: conv over [B, D, N] — grouped_conv1d folds batch; keep B=2 by
-    // reshaping to rows [2*N, D] and treating 2N as the time axis of a B=1
-    // conv (valid: the conv is per-(batch,row) in time; frames never mix).
+    // CPE: grouped conv per half (B=1) — folding the batch into the conv's
+    // time axis would bleed the zero-padding across the batch seam; run each
+    // half separately and concat back on the batch axis.
     {
-        auto conv_mish = [&](const core::TensorValue & x_bnd,
-                             const core::TensorValue & cweight,
-                             const core::TensorValue & cbias) -> core::TensorValue {
-            // [B, N, D] -> rows [B*N, D] -> [1, B*N, D] -> conv -> [B*N, D]
-            auto rows = core::reshape_tensor(
-                ctx, core::ensure_backend_addressable_layout(ctx, x_bnd),
-                core::TensorShape::from_dims({x_bnd.shape.dims[0] * x_bnd.shape.dims[1], x_bnd.shape.dims[2]}));
+        auto conv_mish_half = [&](const core::TensorValue & x_nd,   // [N, D] rows
+                                  const core::TensorValue & cweight,
+                                  const core::TensorValue & cbias) -> core::TensorValue {
             auto b1 = core::reshape_tensor(
-                ctx, rows, core::TensorShape::from_dims({1, rows.shape.dims[0], rows.shape.dims[1]}));
-            auto x_c = mod::TransposeModule({{0, 2, 1}, 3}).build(ctx, b1);  // [1, D, B*N]
+                ctx, core::ensure_backend_addressable_layout(ctx, x_nd),
+                core::TensorShape::from_dims({1, x_nd.shape.dims[0], x_nd.shape.dims[1]}));
+            auto x_c = mod::TransposeModule({{0, 2, 1}, 3}).build(ctx, b1);  // [1, D, N]
             auto x_cc = core::wrap_tensor(ggml_cont(ctx.ggml, x_c.tensor), x_c.shape, GGML_TYPE_F32);
-            auto r = grouped_conv1d(ctx, x_cc, cweight, cbias, 16);          // [B*N, D]
+            auto r = grouped_conv1d(ctx, x_cc, cweight, cbias, 16);          // [N, D]
             auto sp = exp_log_softplus(ctx, r);
-            auto mish = mod::MulModule().build(ctx, r, mod::TanhModule().build(ctx, sp));
-            return core::reshape_tensor(
-                ctx, core::ensure_backend_addressable_layout(ctx, mish),
-                core::TensorShape::from_dims({2, N, kDim}));
+            return mod::MulModule().build(ctx, r, mod::TanhModule().build(ctx, sp));
         };
-        auto r0 = conv_mish(inp, w.cpe0.weight, *w.cpe0.bias);
-        auto r1 = conv_mish(r0, w.cpe2.weight, *w.cpe2.bias);
-        inp = mod::AddModule().build(ctx, inp, r1);
+        // split halves, conv each, concat
+        auto half = [&](int64_t b) {
+            auto rows = core::reshape_tensor(
+                ctx, core::ensure_backend_addressable_layout(ctx, inp),
+                core::TensorShape::from_dims({2 * N, kDim}));
+            return mod::SliceModule({0, b * N, N}).build(ctx, rows);
+        };
+        auto r0_c = conv_mish_half(half(0), w.cpe0.weight, *w.cpe0.bias);
+        auto r0_u = conv_mish_half(half(1), w.cpe0.weight, *w.cpe0.bias);
+        auto r0 = mod::ConcatModule({0}).build(ctx, r0_c, r0_u);  // [2N, D]
+        auto slice_of = [&](const core::TensorValue & rows, int64_t b) {
+            return mod::SliceModule({0, b * N, N}).build(ctx, rows);
+        };
+        auto r1_c = conv_mish_half(slice_of(r0, 0), w.cpe2.weight, *w.cpe2.bias);
+        auto r1_u = conv_mish_half(slice_of(r0, 1), w.cpe2.weight, *w.cpe2.bias);
+        auto r1 = mod::ConcatModule({0}).build(ctx, r1_c, r1_u);  // [2N, D]
+        auto r1_b = core::reshape_tensor(
+            ctx, core::ensure_backend_addressable_layout(ctx, r1),
+            core::TensorShape::from_dims({2, N, kDim}));
+        inp = mod::AddModule().build(ctx, inp, r1_b);
     }
 
     // time embedding (shared across halves)

@@ -848,28 +848,34 @@ std::vector<std::string> chunk_text(const std::string & text, size_t max_chars) 
     if (piece_start < text.size()) {
         pieces.emplace_back(piece_start, text.size());
     }
-    // greedy pack pieces into chunks <= max_chars chars
+    // split every piece into <= max_chars slices (oversize sentences too),
+    // then pack greedily with tiny-piece absorption
+    std::vector<std::pair<size_t, size_t>> slices;
     for (const auto & [ps, pe] : pieces) {
-        const std::string piece = text.substr(ps, pe - ps);
-        const size_t pc = utf8_char_count(piece);
-        if (pc > max_chars) {
-            // oversize sentence: hard-split at character boundaries
-            size_t cs = ps;
-            while (cs < pe) {
-                size_t cnt = 0, ce = cs;
-                while (ce < pe && cnt < max_chars) {
-                    const unsigned char c = static_cast<unsigned char>(text[ce]);
-                    ce += c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : 4;
-                    ++cnt;
-                }
-                chunks.push_back(text.substr(cs, ce - cs));
-                cs = ce;
+        size_t cs = ps;
+        while (cs < pe) {
+            size_t cnt = 0, ce = cs;
+            while (ce < pe && cnt < max_chars) {
+                const unsigned char c = static_cast<unsigned char>(text[ce]);
+                ce += c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : 4;
+                ++cnt;
             }
-            continue;
+            slices.emplace_back(cs, ce);
+            cs = ce;
         }
+    }
+    for (const auto & [ss, se] : slices) {
+        const std::string piece = text.substr(ss, se - ss);
+        const size_t pc = utf8_char_count(piece);
         if (!chunks.empty()) {
             const std::string & prev = chunks.back();
-            if (utf8_char_count(prev) + pc <= max_chars) {
+            const size_t prev_c = utf8_char_count(prev);
+            // merge when it fits, or when the piece is tiny (< 12 chars):
+            // tiny chunks destabilize the sampler (observed NaN on 5 chars)
+            const bool tiny = pc < 12;
+            const bool fits = prev_c + pc <= max_chars;
+            const bool absorb = tiny && prev_c + pc <= max_chars * 2;
+            if (fits || absorb) {
                 chunks.back() = prev + piece;
                 continue;
             }
@@ -881,6 +887,8 @@ std::vector<std::string> chunk_text(const std::string & text, size_t max_chars) 
 
 struct ChunkResult {
     std::vector<float> gen_mel_rows;  // [gen][100]
+    int gen_frames = 0;
+    int duration_real = 0;
 };
 
 // One CFM pass for a single chunk: the original pipeline verbatim.
@@ -953,6 +961,8 @@ ChunkResult synthesize_chunk(
     }
     ChunkResult out;
     const int gen_frames = std::max(0, duration_real - ref_frames);
+    out.gen_frames = gen_frames;
+    out.duration_real = duration_real;
     out.gen_mel_rows.resize(static_cast<size_t>(gen_frames) * kNMel);
     for (int t = 0; t < gen_frames; ++t) {
         for (int m = 0; m < kNMel; ++m) {
@@ -983,8 +993,20 @@ F5SynthesisResult f5_synthesize(
         return ids;
     };
 
-    // ref audio -> 24k mono -> mel, clamped to ~5.5 s (F5 reference window)
+    // ref audio -> 24k mono -> normalize to the training RMS -> mel
+    // (Python F5: audio *= target_rms / rms when rms < target_rms; the
+    // generated wave is scaled back at the end. Skipping this feeds the model
+    // a conditioning mel far below its training distribution.)
     auto ref24 = resample(request.ref_audio, request.ref_sample_rate, kSampleRate);
+    double ref_rms = 0.0;
+    for (const auto v : ref24) ref_rms += double(v) * v;
+    ref_rms = std::sqrt(ref_rms / std::max<size_t>(1, ref24.size()));
+    constexpr double kTargetRms = 0.1;
+    float ref_gain = 1.0F;
+    if (ref_rms > 0.0 && ref_rms < kTargetRms) {
+        ref_gain = static_cast<float>(kTargetRms / ref_rms);
+        for (auto & v : ref24) v *= ref_gain;
+    }
     auto ref_mel = compute_mel(ref24);
     int ref_frames = static_cast<int>(ref_mel.size()) / kNMel;
     constexpr int kMaxRefFrames = 512;
@@ -1014,10 +1036,12 @@ F5SynthesisResult f5_synthesize(
         std::min(static_cast<double>(ref_frames) / ref_chars0, 93.75 / 2.5),
         93.75 / 14.0);
     const int gen_budget = 1024 - ref_frames;  // frames a chunk may generate
-    // chars per chunk: budget / rate, minus a safety margin for the max()
-    // floor (gen_chars+1) and estimate jitter; at least 40 chars
+    // chars per chunk: budget / rate with a safety margin, so the duration
+    // estimate NEVER engages the 1024-frame cap (cap = compressed speech).
+    // The absolute floor is small: a slow reference legitimately means short
+    // chunks (its 5.5 s reference eats most of the frame budget).
     const size_t chars_per_chunk = std::max<size_t>(
-        40, static_cast<size_t>(gen_budget / rate0 * 0.9));
+        12, static_cast<size_t>(gen_budget / rate0 * 0.92));
     const auto chunks = chunk_text(request.text, chars_per_chunk);
     std::vector<float> all_rows;
     std::vector<float> chain_ref_cols;
@@ -1041,11 +1065,16 @@ F5SynthesisResult f5_synthesize(
         all_rows.insert(all_rows.end(), out.gen_mel_rows.begin(), out.gen_mel_rows.end());
 
         if (ci + 1 < chunks.size()) {
-            // next reference: last ~2 s of this chunk's generated latent
+            // next reference: tail of this chunk's GENERATED region only
+            // (never the pasted reference or zero padding); clamp the window
+            // to what was actually generated so short chunks do not chain
+            // silence into the next conditioning.
             constexpr int kChainRefFrames = 192;
             const int total_frames = static_cast<int>(final_latent.size()) / kNMel;
-            const int start = std::max(cur_ref_frames, total_frames - kChainRefFrames);
-            const int len = std::max(1, total_frames - start);
+            const int gen_end = std::min(out.duration_real, total_frames);
+            const int gen_start_actual = std::min(cur_ref_frames, gen_end);
+            const int start = std::max(gen_start_actual, gen_end - kChainRefFrames);
+            const int len = std::max(1, gen_end - start);
             chain_ref_cols.assign(static_cast<size_t>(len) * kNMel, 0.0F);
             for (int t = 0; t < len; ++t) {
                 for (int m = 0; m < kNMel; ++m) {
@@ -1053,7 +1082,19 @@ F5SynthesisResult f5_synthesize(
                         final_latent[static_cast<size_t>(start + t) * kNMel + m];
                 }
             }
-            chain_ref_frames = len;
+            // skip chaining if the generated tail is degenerate (silence):
+            // reuse the ORIGINAL reference instead so the voice persists
+            double chain_rms = 0.0;
+            for (const auto v : chain_ref_cols) chain_rms += double(v) * v;
+            chain_rms = std::sqrt(chain_rms / chain_ref_cols.size());
+            // NaN-safe: a non-finite or silent tail falls back to the
+            // ORIGINAL reference so one bad chunk cannot poison the chain.
+            if (!std::isfinite(chain_rms) || chain_rms < 1e-4) {
+                chain_ref_cols = ref_mel;
+                chain_ref_frames = ref_frames;
+            } else {
+                chain_ref_frames = len;
+            }
             // Reference transcript MUST match the audio window: the ref rate
             // is frames/char, so the transcript tail should be
             // kChainRefFrames / rate characters — otherwise the next chunk's
@@ -1082,6 +1123,16 @@ F5SynthesisResult f5_synthesize(
     result.audio = request.use_cuda
         ? vocos_decode_gpu(vocos_path, all_rows, dev)
         : vocos_decode(vocos_path, all_rows);
+    // undo the reference normalization on the output (Python F5 parity)
+    if (ref_gain != 1.0F) {
+        double out_rms = 0.0;
+        for (const auto v : result.audio) out_rms += double(v) * v;
+        out_rms = std::sqrt(out_rms / std::max<size_t>(1, result.audio.size()));
+        if (out_rms > 0.0 && out_rms < kTargetRms) {
+            const float undo = static_cast<float>(out_rms / kTargetRms);
+            for (auto & v : result.audio) v *= undo;
+        }
+    }
     result.sample_rate = kSampleRate;
     result.generation_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - t0).count();
