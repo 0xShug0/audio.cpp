@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/community_models/f5_tts/runtime.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -40,6 +41,7 @@ F5SynthesisResult f5_synthesize(
 // test hook: log-mel frontend for parity tests
 std::vector<float> f5_test_mel(const std::vector<float> & wav);
 std::vector<float> f5_test_vocos(const std::string & vocos_path, const std::vector<float> & mel);
+std::vector<float> f5_test_vocos_gpu(const std::string & vocos_path, const std::vector<float> & mel, const F5ComputeDevice & dev);
 #endif
 
 }  // namespace engine::models::f5_tts

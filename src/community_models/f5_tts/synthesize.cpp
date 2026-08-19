@@ -1,9 +1,15 @@
 #include "engine/community_models/f5_tts/synthesize.h"
 
 #include "engine/community_models/f5_tts/runtime.h"
+
+#include "engine/framework/core/backend.h"
+
+#include "ggml.h"
+#include "ggml-cpu.h"
 #include "engine/framework/assets/tensor_source.h"
 
 #include <algorithm>
+#include <map>
 #include <chrono>
 #include <cstdio>
 #include <cmath>
@@ -491,6 +497,301 @@ std::vector<float> vocos_decode(const std::string & vocos_path, const std::vecto
 
 }  // namespace
 
+// ---- GPU vocoder (ggml graph; CUDA or CPU via F5ComputeDevice) ----
+// Same math as vocos_decode above (verified vs torch at mel-corr 0.9963):
+// embed conv k7 -> input LN -> 8x ConvNeXt (dwconv7, LN, pw1+GELU, pw2,
+// gamma, residual) -> final LN -> head linear [T,1026]; the ISTFT tail runs
+// on the host (O(n) overlap-add, ~minor vs the backbone matmuls).
+namespace {
+
+ggml_tensor * vlin(
+    ggml_context * ctx,
+    ggml_tensor * w,    // ne [in, out] (torch [out, in] order)
+    ggml_tensor * b,    // ne [out]
+    ggml_tensor * x) {  // ne [in, T]
+    auto * out = ggml_mul_mat(ctx, w, x);
+    auto * b2 = ggml_reshape_2d(ctx, b, ggml_nelements(b), 1);
+    auto * r = ggml_repeat(ctx, b2, out);
+    return ggml_add(ctx, out, r);
+}
+
+ggml_tensor * vln(
+    ggml_context * ctx,
+    ggml_tensor * x,          // ne [D, T]
+    ggml_tensor * w, ggml_tensor * b) {  // ne [D]
+    auto * n = ggml_norm(ctx, x, 1e-6F);
+    auto * w2 = ggml_reshape_2d(ctx, w, ggml_nelements(w), 1);
+    auto * b2 = ggml_reshape_2d(ctx, b, ggml_nelements(b), 1);
+    return ggml_add(
+        ctx, ggml_mul(ctx, n, ggml_repeat(ctx, w2, n)), ggml_repeat(ctx, b2, n));
+}
+
+// depthwise k7 pad3 over ne [C, T] (c fastest, time = ne1); wk host data
+// (c*7+k), bias leaf [C]
+ggml_tensor * leaf_zero_ret(
+    ggml_context * ctx,
+    int64_t c,
+    int64_t t,
+    const std::function<void(ggml_tensor *, size_t)> & leaf_zero) {
+    auto * z = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, c, t);
+    leaf_zero(z, static_cast<size_t>(c) * t * sizeof(float));
+    return z;
+}
+
+ggml_tensor * vdw7(
+    ggml_context * ctx,
+    ggml_tensor * x,
+    const float * wk_host,
+    ggml_tensor * b,
+    const std::function<void(ggml_tensor *, const void *, size_t)> & leaf_write,
+    const std::function<void(ggml_tensor *, size_t)> & leaf_zero) {
+    const int64_t C = x->ne[0];
+    const int64_t T = x->ne[1];
+    auto * xp = ggml_concat(
+        ctx,
+        ggml_concat(ctx, leaf_zero_ret(ctx, C, 3, leaf_zero), x, 1),
+        leaf_zero_ret(ctx, C, 3, leaf_zero),
+        1);  // [C, T+6]
+    ggml_tensor * out = nullptr;
+    for (int k = 0; k < 7; ++k) {
+        std::vector<float> wk(C);
+        for (int c = 0; c < C; ++c) {
+            wk[c] = wk_host[static_cast<size_t>(c) * 7 + k];
+        }
+        auto * wk_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, C, 1);
+        leaf_write(wk_t, wk.data(), wk.size() * sizeof(float));
+        auto * v = ggml_view_2d(
+            ctx, xp, C, T, xp->nb[1], static_cast<size_t>(k) * xp->nb[1]);
+        auto * term = ggml_mul(ctx, v, wk_t);  // [C,T] * [C,1] broadcast
+        out = out == nullptr ? term : ggml_add(ctx, out, term);
+    }
+    auto * b2 = ggml_reshape_2d(ctx, b, ggml_nelements(b), 1);
+    return ggml_add(ctx, out, ggml_repeat(ctx, b2, out));
+}
+
+struct VocosGraph {
+    ggml_context * ctx = nullptr;
+    ggml_cgraph * graph = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
+    ggml_backend_buffer_t io_buffer = nullptr;
+    ggml_tensor * mel = nullptr;   // ne [100, T] (m fastest)
+    ggml_tensor * spec = nullptr;  // ne [1026, T] (o fastest; row t at t*1026)
+};
+
+std::vector<float> vocos_decode_gpu(
+    const std::string & vocos_path,
+    const std::vector<float> & mel_rows,
+    const F5ComputeDevice & dev) {
+    const auto & v = load_vocos_once(vocos_path);
+    const int T = static_cast<int>(mel_rows.size()) / kNMel;
+    const int D = 512;
+    const int IM = 1536;
+    const int n_freqs = kNfft / 2 + 1;
+
+    // one backend per cuda device (or cpu); leaked at exit (CUDA driver
+    // shutdown cannot be ordered before buffer frees in static destruction)
+    struct BackendOwnerV {
+        ggml_backend_t value = nullptr;
+    };
+    static auto * owners = new std::map<int, BackendOwnerV>();
+    const int key = dev.use_cuda ? dev.device : -1;
+    ggml_backend_t backend = nullptr;
+    if (dev.use_cuda) {
+        auto ob = owners->find(key);
+        if (ob == owners->end()) {
+            core::BackendConfig cfg{core::BackendType::Cuda, dev.device, 1};
+            ob = owners->emplace(key, BackendOwnerV{core::init_backend(cfg)}).first;
+        }
+        backend = ob->second.value;
+    } else {
+        auto ob = owners->find(key);
+        if (ob == owners->end()) {
+            core::BackendConfig cfg{core::BackendType::Cpu, 0, std::max(1, dev.threads)};
+            ob = owners->emplace(key, BackendOwnerV{core::init_backend(cfg)}).first;
+        }
+        backend = ob->second.value;
+    }
+    const bool is_cuda = dev.use_cuda;
+
+    // graph cache per (T, device)
+    static auto * cache = new std::map<std::pair<int, int>, std::unique_ptr<VocosGraph>>();
+    const auto ckey = std::make_pair(T, key);
+    auto it = cache->find(ckey);
+    if (it == cache->end()) {
+        auto g = std::make_unique<VocosGraph>();
+        const size_t ctx_bytes = 256ULL << 20;
+        g->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
+        ggml_context * ctx = g->ctx;
+        std::vector<std::pair<ggml_tensor *, std::vector<uint8_t>>> pending;
+        const auto leaf_write = [&](ggml_tensor * t, const void * src, size_t bytes) {
+            if (!is_cuda) {
+                std::memcpy(t->data, src, bytes);
+            } else {
+                const auto * b = static_cast<const uint8_t *>(src);
+                pending.emplace_back(t, std::vector<uint8_t>(b, b + bytes));
+            }
+        };
+        const auto leaf_zero = [&](ggml_tensor * t, size_t bytes) {
+            if (!is_cuda) {
+                std::memset(t->data, 0, bytes);
+            } else {
+                pending.emplace_back(t, std::vector<uint8_t>(bytes, 0));
+            }
+        };
+        auto leaf_f32v = [&](const std::vector<float> & src) {
+            auto * t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, static_cast<int64_t>(src.size()));
+            leaf_write(t, src.data(), src.size() * sizeof(float));
+            return t;
+        };
+
+        // mel leaf: ne [100, T], m fastest — mel_rows buffer is exactly that
+        auto * mel = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, kNMel, T);
+        // weight leaves (torch order == needed ggml order, see notes)
+        auto * embed_w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 7, kNMel, D);
+        leaf_write(embed_w, v.embed_w.data(), v.embed_w.size() * sizeof(float));
+        auto * embed_b = leaf_f32v(v.embed_b);
+        ggml_tensor * var_h = nullptr;
+        auto * input_nw = leaf_f32v(v.input_nw);
+        auto * input_nb = leaf_f32v(v.input_nb);
+        auto * final_nw = leaf_f32v(v.final_nw);
+        auto * final_nb = leaf_f32v(v.final_nb);
+        auto * head_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, D, 2 * n_freqs);
+        leaf_write(head_w, v.head_w.data(), v.head_w.size() * sizeof(float));
+        auto * head_b = leaf_f32v(v.head_b);
+
+        // embed conv (dense k7, pad 3) via im2col + matmul on time-fastest rows
+        auto * t_fast = ggml_cont(ctx, ggml_transpose(ctx, mel));  // ne [T, 100]
+        {
+            // im2col: weight ne [k, cin, cout]; cols ne [cin*k, T]
+            auto * in3 = ggml_reshape_3d(ctx, t_fast, T, kNMel, 1);
+            auto * cols = ggml_im2col(
+                ctx, embed_w, in3, 1, 1, 3, 0, 1, 1, false, GGML_TYPE_F32);
+            auto * w2 = ggml_reshape_2d(ctx, embed_w, kNMel * 7, D);
+            auto * y = ggml_mul_mat(ctx, w2, cols);  // [D, T] feature-fastest
+            auto * b2_ = ggml_reshape_2d(ctx, embed_b, D, 1);
+            auto * yb = ggml_add(ctx, y, ggml_repeat(ctx, b2_, y));
+            var_h = ggml_cont(ctx, yb);
+        }
+        auto * h = var_h;
+
+        h = vln(ctx, h, input_nw, input_nb);
+        ggml_set_name(h, "v_after_input_ln");
+
+        for (int bi = 0; bi < 8; ++bi) {
+            const auto & B = v.blocks[bi];
+            auto * dwb = leaf_f32v(B.dw_b);
+            auto * nw = leaf_f32v(B.n_w);
+            auto * nb = leaf_f32v(B.n_b);
+            auto * p1w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, D, IM);
+            leaf_write(p1w, B.p1w.data(), B.p1w.size() * sizeof(float));
+            auto * p1b = leaf_f32v(B.p1b);
+            auto * p2w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, IM, D);
+            leaf_write(p2w, B.p2w.data(), B.p2w.size() * sizeof(float));
+            auto * p2b = leaf_f32v(B.p2b);
+            auto * gam = leaf_f32v(B.gamma);
+
+            auto * dw = vdw7(ctx, h, B.dw_w.data(), dwb, leaf_write, leaf_zero);
+            ggml_set_name(dw, "v_dw");
+            auto * ln = vln(ctx, dw, nw, nb);
+            auto * mid = vlin(ctx, p1w, p1b, ln);
+            mid = ggml_gelu(ctx, mid);  // exact erf
+            auto * up = vlin(ctx, p2w, p2b, mid);  // [512, T]
+            auto * g2 = ggml_reshape_2d(ctx, gam, D, 1);
+            up = ggml_mul(ctx, up, ggml_repeat(ctx, g2, up));
+            h = ggml_add(ctx, h, up);
+        }
+
+        h = vln(ctx, h, final_nw, final_nb);
+        auto * spec = vlin(ctx, head_w, head_b, h);  // ne [1026, T]
+
+        g->mel = mel;
+        g->spec = spec;
+        g->graph = ggml_new_graph_custom(ctx, 8192, false);
+        ggml_build_forward_expand(g->graph, spec);
+        core::validate_backend_graph_supported(backend, g->graph, "f5_vocos");
+        if (is_cuda) {
+            g->io_buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+            for (auto & leaf : pending) {
+                ggml_backend_tensor_set(leaf.first, leaf.second.data(), 0, leaf.second.size());
+            }
+            g->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+            if (g->gallocr == nullptr || !ggml_gallocr_reserve(g->gallocr, g->graph) ||
+                !ggml_gallocr_alloc_graph(g->gallocr, g->graph)) {
+                throw std::runtime_error("vocos CUDA graph alloc failed");
+            }
+        }
+        it = cache->emplace(ckey, std::move(g)).first;
+    }
+    VocosGraph & g = *it->second;
+
+    // upload mel + compute
+    if (is_cuda) {
+        ggml_backend_tensor_set(g.mel, mel_rows.data(), 0, mel_rows.size() * sizeof(float));
+    } else {
+        std::memcpy(g.mel->data, mel_rows.data(), mel_rows.size() * sizeof(float));
+    }
+    const auto status = is_cuda
+        ? core::compute_backend_graph(backend, g.graph, nullptr, "f5_vocos")
+        : ggml_graph_compute_with_ctx(g.ctx, g.graph,
+              dev.threads > 0 ? dev.threads
+                              : static_cast<int>(std::thread::hardware_concurrency()));
+    if (is_cuda) {
+        ggml_backend_synchronize(backend);
+    }
+    if (status != GGML_STATUS_SUCCESS) {
+        throw std::runtime_error("vocos graph compute failed");
+    }
+    // spec: ne [1026, T] o-fastest == row t at t*1026 — same as host layout
+    std::vector<float> spec(static_cast<size_t>(T) * 2 * n_freqs);
+    if (is_cuda) {
+        ggml_backend_tensor_get(g.spec, spec.data(), 0, spec.size() * sizeof(float));
+    } else {
+        std::memcpy(spec.data(), ggml_get_data(g.spec), spec.size() * sizeof(float));
+    }
+
+    // host ISTFT tail (identical to vocos_decode)
+    const int out_len = (T - 1) * kHop + kNfft;
+    std::vector<float> out(static_cast<size_t>(out_len), 0.0F);
+    std::vector<float> wsum(static_cast<size_t>(out_len), 0.0F);
+    std::vector<float> hann(kNfft);
+    for (int i = 0; i < kNfft; ++i) {
+        hann[i] = 0.5F * (1.0F - std::cos(2.0F * static_cast<float>(M_PI) * i / kNfft));
+    }
+    std::vector<float> re(kNfft), im(kNfft);
+    for (int t = 0; t < T; ++t) {
+        const float * row = spec.data() + static_cast<size_t>(t) * (2 * n_freqs);
+        std::fill(re.begin(), re.end(), 0.0F);
+        std::fill(im.begin(), im.end(), 0.0F);
+        for (int f = 0; f < n_freqs; ++f) {
+            const float mag = std::min(std::exp(row[f]), 100.0F);
+            const float ph = row[n_freqs + f];
+            re[f] = mag * std::cos(ph);
+            im[f] = mag * std::sin(ph);
+            if (f > 0 && f < n_freqs - 1) {
+                re[kNfft - f] = re[f];
+                im[kNfft - f] = -im[f];
+            }
+        }
+        re[n_freqs - 1] = im[n_freqs - 1] = 0.0F;
+        fft_inplace(re, im, true);
+        const int start = t * kHop;
+        for (int i = 0; i < kNfft; ++i) {
+            out[static_cast<size_t>(start + i)] += re[i] * hann[i];
+            wsum[static_cast<size_t>(start + i)] += hann[i] * hann[i];
+        }
+    }
+    std::vector<float> audio(static_cast<size_t>(T - 1) * kHop + 1);
+    const int keep = static_cast<int>(audio.size());
+    for (int i = 0; i < keep; ++i) {
+        const size_t idx = static_cast<size_t>(i) + kNfft / 2;
+        audio[static_cast<size_t>(i)] =
+            idx < out.size() && wsum[idx] > 1e-8F ? out[idx] / wsum[idx] : 0.0F;
+    }
+    return audio;
+}
+
+}  // namespace
+
 F5SynthesisResult f5_synthesize(
     const std::string & model_path,
     const std::string & vocos_path,
@@ -586,7 +887,9 @@ F5SynthesisResult f5_synthesize(
                 y[static_cast<size_t>(ref_frames + t) * kNMel + m];
         }
     }
-    result.audio = vocos_decode(vocos_path, gen_mel);
+    result.audio = request.use_cuda
+        ? vocos_decode_gpu(vocos_path, gen_mel, dev)
+        : vocos_decode(vocos_path, gen_mel);
     result.sample_rate = kSampleRate;
     result.generation_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - t0).count();
@@ -597,6 +900,7 @@ F5SynthesisResult f5_synthesize(
 #ifdef F5_MEL_TEST
 std::vector<float> f5_test_mel(const std::vector<float> & wav) { return compute_mel(wav); }
 std::vector<float> f5_test_vocos(const std::string & vp, const std::vector<float> & mel) { return vocos_decode(vp, mel); }
+std::vector<float> f5_test_vocos_gpu(const std::string & vp, const std::vector<float> & mel, const F5ComputeDevice & dev) { return vocos_decode_gpu(vp, mel, dev); }
 #endif
 
 }  // namespace engine::models::f5_tts

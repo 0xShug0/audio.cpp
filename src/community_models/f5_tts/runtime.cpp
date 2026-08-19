@@ -18,6 +18,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <functional>
+#include <map>
 #include <thread>
 #include <unordered_map>
 
@@ -381,6 +382,10 @@ ggml_tensor * grouped_conv1d(
 
 }  // namespace
 
+}  // namespace engine::models::f5_tts
+
+namespace engine::models::f5_tts {
+
 std::vector<float> f5_dit_forward(
     const std::string & weights_path,
     const std::vector<float> & x_in,
@@ -404,35 +409,72 @@ std::vector<float> f5_dit_forward(
     const int DH = arch.head_dim;
     const int TD = arch.text_dim;
     const int NT = static_cast<int>(text_in.size());
-
-    // CPU path: inline-allocating context (constants written at build time;
-    // weights are host memory on the CPU-backend store).
-    // CUDA path: no_alloc context; constants/inputs are uploaded via
-    // ggml_backend_tensor_set after ggml_backend_alloc_ctx_tensors.
     const bool is_cuda = model.backend_type == core::BackendType::Cuda;
-    const size_t ctx_bytes = std::min<size_t>(
-        std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (6ULL << 20)),
-        6144ULL << 20);
-    ggml_context * ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
-    // On CUDA the ctx is no_alloc: leaf tensors get device storage after
-    // ggml_backend_alloc_ctx_tensors, and their values are uploaded from these
-    // staging vectors. On CPU the writes below go directly into ctx memory.
-    std::vector<std::pair<ggml_tensor *, std::vector<uint8_t>>> pending_uploads;
-    const auto leaf_write = [&](ggml_tensor * t, const void * src, size_t bytes) {
-        if (!is_cuda) {
-            std::memcpy(t->data, src, bytes);
-        } else {
-            const auto * b = static_cast<const uint8_t *>(src);
-            pending_uploads.emplace_back(t, std::vector<uint8_t>(b, b + bytes));
+
+    // ---- cached graph per (model, N, NT, with/without taps) ----
+    // Taps change the graph (extra roots), so key on their presence. The
+    // per-call leaves (x, cond, text_ids, th) are uploaded each invocation;
+    // everything else (pos ids, pe, ones, constants) is uploaded once.
+    struct DiTGraph {
+        ggml_context * ctx = nullptr;
+        ggml_cgraph * graph = nullptr;
+        ggml_gallocr_t gallocr = nullptr;
+        ggml_backend_buffer_t io_buffer = nullptr;  // CUDA leaves buffer
+        core::HostGraphPlan host_plan;              // CPU plan reuse
+        ggml_tensor * x = nullptr;
+        ggml_tensor * cond = nullptr;
+        ggml_tensor * text_ids = nullptr;
+        ggml_tensor * th_t = nullptr;
+        ggml_tensor * output = nullptr;
+        ggml_tensor * tap_text_embed = nullptr;
+        ggml_tensor * tap_text_convnext = nullptr;
+        ggml_tensor * tap_text_padded = nullptr;
+        ggml_tensor * tap_input_embed = nullptr;
+        ggml_tensor * tap_time_embed = nullptr;
+        ggml_tensor * tap_block0 = nullptr;
+        ggml_tensor * tap_block21 = nullptr;
+        ~DiTGraph() {
+            // Leaked by design when cached (freed only on program-graph reset);
+            // destroyed here only when construction throws mid-build.
+            if (gallocr != nullptr) ggml_gallocr_free(gallocr);
+            if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
+            if (ctx != nullptr) ggml_free(ctx);
         }
     };
-    const auto leaf_zero = [&](ggml_tensor * t, size_t bytes) {
-        if (!is_cuda) {
-            std::memset(t->data, 0, bytes);
-        } else {
-            pending_uploads.emplace_back(t, std::vector<uint8_t>(bytes, 0));
-        }
-    };
+
+    // Graph cache is process-lifetime (CUDA buffers cannot be safely freed
+    // after driver shutdown in static destruction).
+    static auto * graph_cache =
+        new std::map<std::tuple<const LoadedModel *, int, int, bool>, std::unique_ptr<DiTGraph>>();
+    const bool want_taps = taps != nullptr;
+    const auto cache_key = std::make_tuple(&model, N, NT, want_taps);
+    auto it = graph_cache->find(cache_key);
+    if (it == graph_cache->end()) {
+        auto gnew = std::make_unique<DiTGraph>();
+        const size_t ctx_bytes = std::min<size_t>(
+            std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (6ULL << 20)),
+            6144ULL << 20);
+        gnew->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
+        ggml_context * ctx = gnew->ctx;
+        // On CUDA the ctx is no_alloc: leaf tensors get device storage after
+        // ggml_backend_alloc_ctx_tensors, values uploaded from staging vectors.
+        std::vector<std::pair<ggml_tensor *, std::vector<uint8_t>>> pending_uploads;
+        const auto leaf_write = [&](ggml_tensor * t, const void * src, size_t bytes) {
+            if (!is_cuda) {
+                std::memcpy(t->data, src, bytes);
+            } else {
+                const auto * b = static_cast<const uint8_t *>(src);
+                pending_uploads.emplace_back(t, std::vector<uint8_t>(b, b + bytes));
+            }
+        };
+        const auto leaf_zero = [&](ggml_tensor * t, size_t bytes) {
+            if (!is_cuda) {
+                std::memset(t->data, 0, bytes);
+            } else {
+                pending_uploads.emplace_back(t, std::vector<uint8_t>(bytes, 0));
+            }
+        };
+        (void)MEL; (void)D; (void)HEADS; (void)DH; (void)TD;
     ggml_tensor * output = nullptr;
     ggml_tensor * tap_text_embed = nullptr;
     ggml_tensor * tap_text_convnext = nullptr;
@@ -441,35 +483,12 @@ std::vector<float> f5_dit_forward(
     ggml_tensor * tap_time_embed = nullptr;
     ggml_tensor * tap_block0 = nullptr;
     ggml_tensor * tap_block21 = nullptr;
+    // ---- per-call input leaves (values uploaded at each invocation) ----
+    auto * x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, MEL, N);
+    auto * cond = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, MEL, N);
+    auto * text_ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, NT);
+    auto * th_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 256, 1);
     {
-        // ---- inputs [MEL, N] ----
-        // x_in/cond_in arrive mel-major [N][mel]; transpose on host into
-        // column-major [mel][n].
-        std::vector<float> x_col(static_cast<size_t>(N) * MEL);
-        std::vector<float> cond_col(static_cast<size_t>(N) * MEL);
-        // ggml [MEL, N] tensor memory: element (m, n) at n * MEL + m
-        // (ne0 = MEL is the fastest axis).
-        for (int n = 0; n < N; ++n) {
-            for (int m = 0; m < MEL; ++m) {
-                x_col[static_cast<size_t>(n) * MEL + m] = x_in[static_cast<size_t>(n) * MEL + m];
-                const float cv = drop_audio_cond ? 0.0F : cond_in[static_cast<size_t>(n) * MEL + m];
-                cond_col[static_cast<size_t>(n) * MEL + m] = cv;
-            }
-        }
-        auto * x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, MEL, N);
-        leaf_write(x, x_col.data(), x_col.size() * sizeof(float));
-        auto * cond = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, MEL, N);
-        leaf_write(cond, cond_col.data(), cond_col.size() * sizeof(float));
-
-        // ---- text embed ----
-        auto * text_ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, NT);
-        {
-            std::vector<int32_t> ids(NT);
-            for (int i = 0; i < NT; ++i) {
-                ids[i] = drop_text ? 0 : (text_in[i] + 1);
-            }
-            leaf_write(text_ids, ids.data(), ids.size() * sizeof(int32_t));
-        }
         auto * te = ggml_get_rows(ctx, W.text_embedding.tensor, text_ids);  // [TD, NT]
         if (taps != nullptr && taps->text_embed != nullptr) {
             tap_text_embed = ggml_cont(ctx, te);
@@ -593,18 +612,8 @@ std::vector<float> f5_dit_forward(
             ggml_set_output(tap_input_embed);
         }
 
-        // ---- time embed ----
-        std::vector<float> th(256);
-        {
-            const float log_base = std::log(10000.0F) / 127.0F;
-            for (int i = 0; i < 128; ++i) {
-                const float f = 1000.0F * time_value * std::exp(-log_base * i);
-                th[i] = std::sin(f);
-                th[128 + i] = std::cos(f);
-            }
-        }
-        auto * th_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 256, 1);
-        leaf_write(th_t, th.data(), th.size() * sizeof(float));
+        // ---- time embed (th_t is a per-call leaf; value depends on time_value) ----
+        // (declared above with the other per-call leaves)
         auto * t0 = lin_apply(ctx, W.time0, th_t);
         t0 = ggml_silu(ctx, t0);
         auto * t_emb = lin_apply(ctx, W.time2, t0);  // [1024, 1]
@@ -713,101 +722,137 @@ std::vector<float> f5_dit_forward(
             auto * norm = modulate(ctx, ggml_norm(ctx, h, 1e-6F), scale, shift, ones_d1);
             output = lin_apply(ctx, W.proj_out, norm);  // [100, N]
         }
+        gnew->output = output;
+        gnew->x = x;
+        gnew->cond = cond;
+        gnew->text_ids = text_ids;
+        gnew->th_t = th_t;
+        gnew->tap_text_embed = tap_text_embed;
+        gnew->tap_text_convnext = tap_text_convnext;
+        gnew->tap_text_padded = tap_text_padded;
+        gnew->tap_input_embed = tap_input_embed;
+        gnew->tap_time_embed = tap_time_embed;
+        gnew->tap_block0 = tap_block0;
+        gnew->tap_block21 = tap_block21;
+        gnew->graph = ggml_new_graph_custom(ctx, 262144, false);
+        ggml_build_forward_expand(gnew->graph, output);
+        for (ggml_tensor * tap :
+             {tap_text_embed, tap_text_convnext, tap_text_padded, tap_input_embed,
+              tap_time_embed, tap_block0, tap_block21}) {
+            if (tap != nullptr) {
+                ggml_build_forward_expand(gnew->graph, tap);
+            }
+        }
+        core::validate_backend_graph_supported(model.backend, gnew->graph, "f5_dit");
+        if (!is_cuda) {
+            const int threads = dev.threads > 0
+                ? dev.threads
+                : static_cast<int>(std::thread::hardware_concurrency());
+            core::set_backend_threads(model.backend, threads);
+        }
+        if (is_cuda) {
+            gnew->io_buffer = ggml_backend_alloc_ctx_tensors(ctx, model.backend);
+            if (gnew->io_buffer == nullptr) {
+                throw std::runtime_error("F5 DiT CUDA io buffer alloc failed");
+            }
+            for (auto & leaf : pending_uploads) {
+                ggml_backend_tensor_set(leaf.first, leaf.second.data(), 0, leaf.second.size());
+            }
+            gnew->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
+            if (gnew->gallocr == nullptr || !ggml_gallocr_reserve(gnew->gallocr, gnew->graph) ||
+                !ggml_gallocr_alloc_graph(gnew->gallocr, gnew->graph)) {
+                throw std::runtime_error("F5 DiT CUDA graph alloc failed");
+            }
+        } else {
+            // CPU: graph data tensors live in the ctx pool (inline alloc);
+            // ggml_graph_compute_with_ctx replays without realloc.
+        }
+        it = graph_cache->emplace(cache_key, std::move(gnew)).first;
+    }  // if build
+    }  // inner build scope
+    DiTGraph & g = *it->second;
+
+    // ---- per-call leaf uploads ----
+    {
+        // x/cond arrive mel-major [N][mel]; ggml [MEL, N] wants (m, n) at
+        // n * MEL + m -- identical layout, direct copy. drop_audio_cond
+        // zeroes cond on the host before upload.
+        std::vector<float> cond_col;
+        const float * cond_src = cond_in.data();
+        if (drop_audio_cond) {
+            cond_col.assign(cond_in.size(), 0.0F);
+            cond_src = cond_col.data();
+        }
+        if (is_cuda) {
+            ggml_backend_tensor_set(g.x, x_in.data(), 0, x_in.size() * sizeof(float));
+            ggml_backend_tensor_set(g.cond, cond_src, 0, cond_in.size() * sizeof(float));
+        } else {
+            std::memcpy(g.x->data, x_in.data(), x_in.size() * sizeof(float));
+            std::memcpy(g.cond->data, cond_src, cond_in.size() * sizeof(float));
+        }
+        std::vector<int32_t> ids(NT);
+        for (int i = 0; i < NT; ++i) {
+            ids[i] = drop_text ? 0 : (text_in[i] + 1);
+        }
+        if (is_cuda) {
+            ggml_backend_tensor_set(g.text_ids, ids.data(), 0, ids.size() * sizeof(int32_t));
+        } else {
+            std::memcpy(g.text_ids->data, ids.data(), ids.size() * sizeof(int32_t));
+        }
+        std::vector<float> th(256);
+        {
+            const float log_base = std::log(10000.0F) / 127.0F;
+            for (int i = 0; i < 128; ++i) {
+                const float f = 1000.0F * time_value * std::exp(-log_base * i);
+                th[i] = std::sin(f);
+                th[128 + i] = std::cos(f);
+            }
+        }
+        if (is_cuda) {
+            ggml_backend_tensor_set(g.th_t, th.data(), 0, th.size() * sizeof(float));
+        } else {
+            std::memcpy(g.th_t->data, th.data(), th.size() * sizeof(float));
+        }
     }
 
     // ---- compute ----
     std::vector<float> out;
-    if (!is_cuda) {
-        ggml_cgraph * graph = ggml_new_graph_custom(ctx, 262144, false);
-        ggml_build_forward_expand(graph, output);
-        for (ggml_tensor * tap :
-             {tap_text_embed, tap_text_convnext, tap_text_padded, tap_input_embed,
-              tap_time_embed, tap_block0, tap_block21}) {
-            if (tap != nullptr) {
-                ggml_build_forward_expand(graph, tap);
-            }
-        }
-        const int threads = dev.threads > 0 ? dev.threads
-                                            : static_cast<int>(std::thread::hardware_concurrency());
-        const auto status = ggml_graph_compute_with_ctx(ctx, graph, threads);
-        if (status != GGML_STATUS_SUCCESS) {
-            ggml_free(ctx);
-            throw std::runtime_error("F5 DiT graph compute failed");
-        }
-        out.resize(ggml_nelements(output));
-        std::memcpy(out.data(), ggml_get_data(output), out.size() * sizeof(float));
-        const auto read_tap = [](ggml_tensor * t, std::vector<float> * dst) {
-            if (t != nullptr && dst != nullptr) {
-                dst->resize(ggml_nelements(t));
-                std::memcpy(dst->data(), ggml_get_data(t), dst->size() * sizeof(float));
-            }
-        };
-        read_tap(tap_text_embed, taps == nullptr ? nullptr : taps->text_embed);
-        read_tap(tap_text_convnext, taps == nullptr ? nullptr : taps->text_convnext);
-        read_tap(tap_text_padded, taps == nullptr ? nullptr : taps->text_padded);
-        read_tap(tap_input_embed, taps == nullptr ? nullptr : taps->input_embed);
-        read_tap(tap_time_embed, taps == nullptr ? nullptr : taps->time_embed);
-        read_tap(tap_block0, taps == nullptr ? nullptr : taps->block0);
-        read_tap(tap_block21, taps == nullptr ? nullptr : taps->block21);
-    } else {
-        // CUDA: mark leaves as inputs, allocate into a backend buffer, upload
-        // data, build graph, compute via gallocr, read back.
-        ggml_backend_buffer_t io_buffer =
-            ggml_backend_alloc_ctx_tensors(ctx, model.backend);
-        if (io_buffer == nullptr) {
-            ggml_free(ctx);
-            throw std::runtime_error("F5 DiT CUDA io buffer alloc failed");
-        }
-        for (auto & leaf : pending_uploads) {
-            ggml_backend_tensor_set(
-                leaf.first, leaf.second.data(), 0, leaf.second.size());
-        }
-        ggml_cgraph * graph = ggml_new_graph_custom(ctx, 262144, false);
-        ggml_build_forward_expand(graph, output);
-        for (ggml_tensor * tap :
-             {tap_text_embed, tap_text_convnext, tap_text_padded, tap_input_embed,
-              tap_time_embed, tap_block0, tap_block21}) {
-            if (tap != nullptr) {
-                ggml_build_forward_expand(graph, tap);
-            }
-        }
-        core::validate_backend_graph_supported(model.backend, graph, "f5_dit");
-        ggml_gallocr_t allocator =
-            ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
-        if (allocator == nullptr || !ggml_gallocr_reserve(allocator, graph) ||
-            !ggml_gallocr_alloc_graph(allocator, graph)) {
-            if (allocator != nullptr) ggml_gallocr_free(allocator);
-            ggml_backend_buffer_free(io_buffer);
-            ggml_free(ctx);
-            throw std::runtime_error("F5 DiT CUDA graph alloc failed");
-        }
-        const auto status = core::compute_backend_graph(model.backend, graph, nullptr, "f5_dit");
+    const auto status = is_cuda
+        ? core::compute_backend_graph(model.backend, g.graph, nullptr, "f5_dit")
+        : ggml_graph_compute_with_ctx(g.ctx, g.graph,
+              dev.threads > 0 ? dev.threads
+                              : static_cast<int>(std::thread::hardware_concurrency()));
+    if (is_cuda) {
         ggml_backend_synchronize(model.backend);
-        if (status != GGML_STATUS_SUCCESS) {
-            ggml_gallocr_free(allocator);
-            ggml_backend_buffer_free(io_buffer);
-            ggml_free(ctx);
-            throw std::runtime_error("F5 DiT CUDA graph compute failed");
-        }
-        out.resize(ggml_nelements(output));
-        ggml_backend_tensor_get(output, out.data(), 0, out.size() * sizeof(float));
+    }
+    if (status != GGML_STATUS_SUCCESS) {
+        throw std::runtime_error("F5 DiT graph compute failed");
+    }
+    out.resize(ggml_nelements(g.output));
+    if (is_cuda) {
+        ggml_backend_tensor_get(g.output, out.data(), 0, out.size() * sizeof(float));
+    } else {
+        std::memcpy(out.data(), ggml_get_data(g.output), out.size() * sizeof(float));
+    }
+    if (taps != nullptr) {
         const auto read_tap = [&](ggml_tensor * t, std::vector<float> * dst) {
             if (t != nullptr && dst != nullptr) {
                 dst->resize(ggml_nelements(t));
-                ggml_backend_tensor_get(t, dst->data(), 0, dst->size() * sizeof(float));
+                if (is_cuda) {
+                    ggml_backend_tensor_get(t, dst->data(), 0, dst->size() * sizeof(float));
+                } else {
+                    std::memcpy(dst->data(), ggml_get_data(t), dst->size() * sizeof(float));
+                }
             }
         };
-        read_tap(tap_text_embed, taps == nullptr ? nullptr : taps->text_embed);
-        read_tap(tap_text_convnext, taps == nullptr ? nullptr : taps->text_convnext);
-        read_tap(tap_text_padded, taps == nullptr ? nullptr : taps->text_padded);
-        read_tap(tap_input_embed, taps == nullptr ? nullptr : taps->input_embed);
-        read_tap(tap_time_embed, taps == nullptr ? nullptr : taps->time_embed);
-        read_tap(tap_block0, taps == nullptr ? nullptr : taps->block0);
-        read_tap(tap_block21, taps == nullptr ? nullptr : taps->block21);
-        ggml_gallocr_free(allocator);
-        ggml_backend_buffer_free(io_buffer);
+        read_tap(g.tap_text_embed, taps->text_embed);
+        read_tap(g.tap_text_convnext, taps->text_convnext);
+        read_tap(g.tap_text_padded, taps->text_padded);
+        read_tap(g.tap_input_embed, taps->input_embed);
+        read_tap(g.tap_time_embed, taps->time_embed);
+        read_tap(g.tap_block0, taps->block0);
+        read_tap(g.tap_block21, taps->block21);
     }
-    ggml_free(ctx);
     return out;  // [MEL * N] mel-major columns: out[m * N + n]
 }
 
