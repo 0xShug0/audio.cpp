@@ -17,15 +17,15 @@ recording, and the model speaks the supplied text in that voice.
 audiocpp_cli --family moss_voicegen --model <model-dir> --task vdes \
   --instruct "A warm male radio voice in his fifties, calm, never shrill." \
   --text "Good evening, and welcome back to the late show." \
-  --language English --output out.wav
+  --language English --out out.wav
 ```
 
-`--instruct` describes the speaker: timbre, age, pace, emotion. `--language` must be the
-full language name the model was trained on — "English", not "en".
+`--instruct` describes the speaker: timbre, age, pace, emotion. `--language` takes the full
+language name the model was trained on — "English", not "en".
 
 ### Decoding defaults
 
-From the model card, and applied as the family's defaults rather than left to the caller:
+From the model card, applied as the family's defaults rather than left to the caller:
 
 | Option | Default |
 |---|---:|
@@ -34,64 +34,52 @@ From the model card, and applied as the family's defaults rather than left to th
 | `audio_top_k` | 50 |
 | `audio_repetition_penalty` | 1.1 |
 
-This family is genuinely sensitive to these. At a generic TTS preset it degenerates into
-an immediate end of speech.
+The family is sensitive to these. At a generic TTS preset it ends speech on the first frame.
 
 ## Behaviour Worth Knowing
 
-**Duration is guarded, not steered.** Upstream has no text-derived length control — only a
-flat 1000-step cap and a 16-step floor on the turn-end token — and it does not need one:
-measured over the same 168-character line, the reference produced 68%, 87% and 100% of a
-natural reading, and this port produced 62% to 99%. The same spread, no systematic
-truncation.
+**The instruction sets a class, the seed picks a member.** A different seed under the same
+description is audibly a different person; upstream `generate()` takes no seed at all and
+draws from the global RNG. The class itself holds: running the same 6026-character text
+with only "male"/"his" changed to "female"/"her" moved median F0 from 117 Hz to 190 Hz over
+47 independent designs, and by ear every chunk of both runs landed on the requested side.
+Pitch alone does not decide that — the lowest chunk of the female run sits at 120 Hz and
+still reads as female, so timbre moves with the instruction too.
 
-What the session adds is a guard rail, not a correction. It derives a minimum and maximum
-frame count from the text length (0.95 frames per character, measured; floor at 0.45 of
-that, ceiling at 1.6 plus slack) and gates the two decisions the model would otherwise make
-freely: opening the flush window, and ending the turn. Across every take measured the
-bounds never bind — the floor sits at 71 frames where the shortest natural take was 99 —
-but they do catch the pathological outlier, a take that stopped at 39 frames, a quarter of
-the text. Override them per request with `min_frames` and `max_frames`, or set them to 1
-and a large number to get upstream's behaviour exactly.
+**A seed reproduces a take, not a voice.** The same seed, instruction and text give a
+bit-identical WAV. The same seed on *different* text does not: median F0 moved 2.2 and 7.6
+semitones across three lines. Anything needing one voice across several utterances has to
+keep the generated audio and clone from it.
 
-**An instruction constrains the speaker; it does not fix one.** The same instruction with
-a different seed is audibly a different person. `generate()` upstream takes no seed at all
-and draws from the global RNG, so this is how the model works rather than a property of
-this port.
+**Duration is guarded, not steered.** Upstream has no text-derived length control — a
+1000-step cap and a 16-step floor on the turn-end token — and does not need one: over the
+same 168-character line the reference produced 68%, 87% and 100% of a natural reading, and
+this port 62% to 99%. The session adds a guard rail on top: frame bounds derived from text
+length (0.95 frames per character, floor at 0.45, ceiling at 1.6) gate the two decisions the
+model would otherwise make freely, opening the flush window and ending the turn. They caught
+one take that stopped at 39 frames and never bound otherwise — the floor sat at 71 where the
+shortest natural take was 99. `min_frames` and `max_frames` override them per request.
 
-**A seed reproduces a take, not a voice.** Generation here is deterministic: the same
-seed, instruction and text give a bit-identical WAV. But the seed does not carry the
-speaker to *other* text — holding seed and instruction fixed while changing the sentence
-moved the median F0 by 2.2 and 7.6 semitones across three lines, which is a different
-person, not a different mood. Anything that needs one voice across several utterances has
-to keep the generated audio and clone from it, rather than re-generating from the same
-seed.
+**A run can start in text mode, about 2% of the time.** Nothing forces the first step to
+open an audio segment; when it samples an ordinary text token instead, the request yields no
+audio and the session returns an error naming the retry rather than silence. Measured: 2 in
+100 requests, 0 across the 47 long-form chunks.
 
-**A run can start in text mode.** At the documented `text_temperature` of 1.5 the model
-puts about 0.76 on the audio-start token at the first step, so roughly one run in four
-samples an ordinary text token instead and produces no audio. This is upstream behaviour,
-measured against the reference implementation, not a quirk of this port.
+**bf16 or f32 for the backbone.** It carries attention-sink activations far beyond f16's
+range and produces NaN from position zero when stored as f16.
 
-**bf16 or f32 only, for the backbone.** It carries attention-sink activations far beyond
-f16's range and produces NaN from position zero when stored as f16.
+**f16 for the codec.** Stored as bf16 the audio tokenizer drifts 1.1e-2 from the reference
+decode, against 5e-7 from the f32 source, failing this port's 1e-3 gate; f16 brings it back
+to 7.1e-4 at the same size. Hence `--type bf16 --keep-type "audio_tokenizer_weights*=f16"` —
+the backbone needs the exponent range, the codec the mantissa.
 
-**The codec wants the other 16-bit format.** Storing the audio tokenizer as bf16 costs a
-lot of accuracy — worst probe deviation 1.1e-2 against the reference decode, against 5e-7
-from the f32 source, which fails this port's 1e-3 gate. f16 brings it back to 7.1e-4 and
-is the same size, since both formats are two bytes. So a package converts as
-`--type bf16 --keep-type "audio_tokenizer_weights*=f16"`: the two halves of the file want
-different 16-bit formats, for opposite reasons — the backbone needs the exponent range, the
-codec needs the mantissa.
-
-**Ship decode only.** VoiceGenerator never encodes audio, so the codec's encoder is dead
-weight in a package: `--exclude-prefix "audio_tokenizer_weights/encoder"` takes the bf16
-build from 7.3 GB to 5.7 GB.
+**Ship decode only.** VoiceGenerator never encodes audio, so
+`--exclude-prefix "audio_tokenizer_weights/encoder"` takes the package from 7.3 GB to 5.7 GB.
 
 ## Validation
 
-Parity is measured against the checkpoint's own PyTorch implementation, which ships with
-the weights. The scripts under `tools/community_models/` regenerate every reference used
-here.
+Parity is measured against the checkpoint's own PyTorch implementation, which ships with the
+weights. The scripts under `tools/community_models/` regenerate every reference used here.
 
 | Check | Result |
 |---|---|
@@ -105,15 +93,67 @@ here.
 | Codec decode from the shipped package, codec f16 | worst probe 7.1e-4 |
 | Codec decode with the codec stored bf16 | worst probe 1.1e-2 — rejected, hence the f16 override |
 
-Greedy row-for-row parity only holds at f32: greedy decoding is a step function, and bf16
-rounding is coarser than the gaps between near-tied candidates, so the trajectories part
-company. That is a property of greedy decoding, not of the port.
+Row-for-row greedy parity holds at f32 only: bf16 rounding is coarser than the gaps between
+near-tied candidates, so the trajectories separate after 16 rows.
+
+## Long-form
+
+The shared long-form case (`tools/audiocpp_cli/audiocpp_cli_longform_tts_clone_cases.json`,
+6026 characters) runs through the framework text chunker without special handling:
+
+| | |
+|---|---|
+| Chunks | 47, none silent |
+| Audio | 359 s from 77 s of compute — **RTF 0.22** |
+| Speech ratio | 78.7% |
+| Peak | 1.000, one sample in 8.6 million — not clipping |
+
+The chunker, the session and the per-chunk failure rate hold over 47 consecutive
+generations. Two limitations remain, both inherent to voice design:
+
+**The speaker does not survive chunking.** 47 chunks are 47 independent designs: median F0
+spans 13 semitones, and neighbouring chunks jump 2.3 semitones on median, 9.9 at worst. For
+one voice over a long text, generate once here and clone from the result with a
+reference-driven family.
+
+**Chunks are not levelled against each other.** Per-segment peaks span 0.20 to 1.00, roughly
+14 dB, since each chunk sets its own level. An assembler should normalise per chunk.
+
+## Performance
+
+Measured through `audiocpp_server` over one long-lived session, 100 requests of varying
+length, on a Radeon AI PRO R9700 (ROCm/HIP, bf16 backbone, f16 codec):
+
+| | |
+|---|---|
+| Real-time factor | **0.20 to 0.35, median 0.23** end to end over HTTP (523 s of audio in 124 s) |
+| First request | RTF 1.53 — it carries the one-time runtime build |
+| VRAM | 7783 MiB after the first request, 7811 after the hundredth: **+28 MiB total** |
+| Completed | 98 of 100; both failures were the text-mode start described above |
+
+The server calls `prepare()` on every request against the same session, so it is idempotent
+and the runtimes are built once. Rebuilding them per request cost about four seconds of
+re-upload on top of roughly one second of work.
+
+Other backends, same model and prompt:
+
+| Backend | Device | Works | Note |
+|---|---|---|---|
+| HIP | R9700 (gfx1201) | yes | the numbers above |
+| Vulkan | R9700 | yes | slower than HIP |
+| Vulkan | Radeon 780M (gfx1103) | yes | iGPU, RTF above 1; useful as a correctness target |
+| HIP | Radeon 780M (gfx1103) | **no** | segfaults inside ggml's `get_rows` |
+| CPU | Ryzen 7 255 | yes | RTF around 9 |
+
+The gfx1103 HIP crash is not specific to this model: the same workload runs on that card
+under Vulkan, and a hand-written HIP gather kernel runs on it too, so it is ggml's HIP
+`get_rows` path on this ROCm build (7.1, distribution packages). Reported separately.
 
 ## Framework Changes This Needed
 
-MOSS-Audio-Tokenizer v1 is a different generation from the v2 and Nano codecs already in
-the tree, so `src/models/moss/shared/` needed five additions. None of them change v2 or
-Nano behaviour:
+MOSS-Audio-Tokenizer v1 is a different generation from the v2 and Nano codecs already in the
+tree, so `src/models/moss/shared/` needed five additions. None of them change v2 or Nano
+behaviour:
 
 | Change | Why |
 |---|---|

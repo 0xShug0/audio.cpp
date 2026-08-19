@@ -226,7 +226,27 @@ std::vector<int32_t> MossVoiceGenDelayDecoder::extract_audio_codes(
         }
     }
     const auto delayed_frames = static_cast<int64_t>(audio_rows.size());
-    const int64_t frames = delayed_frames - n_vq + 1;
+    int64_t frames = delayed_frames - n_vq + 1;
+
+    // The row count only bounds the frames; it does not guarantee they are all complete.
+    // If generation is cut short — the step ceiling, or a turn that ends before the flush
+    // window has run its course — the trailing rows still hold pad for the higher
+    // codebooks. Reading those as codes puts a pad value into the codec, which rejects it
+    // as out of range. Keep only the frames where every codebook carries a real code.
+    const auto pad = static_cast<int32_t>(config_.audio_pad_code);
+    int64_t complete = 0;
+    while (complete < frames) {
+        bool full = true;
+        for (int64_t codebook = 0; codebook < n_vq && full; ++codebook) {
+            full = audio_rows[static_cast<size_t>(codebook + complete)]->codes[static_cast<size_t>(codebook)] != pad;
+        }
+        if (!full) {
+            break;
+        }
+        ++complete;
+    }
+    frames = complete;
+
     if (frames <= 0) {
         codebooks_out = n_vq;
         frames_out = 0;

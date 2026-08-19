@@ -104,6 +104,16 @@ runtime::RunMode MossVoiceGenSession::run_mode() const {
 }
 
 void MossVoiceGenSession::prepare(const runtime::SessionPreparationRequest &) {
+    // The server calls prepare() on every request against one long-lived session, so this
+    // has to be idempotent: building the runtimes here unconditionally re-uploaded the
+    // whole 5.7 GB model per request, which cost about four seconds on top of roughly one
+    // second of actual work. Nothing in this model depends on the request — there is no
+    // reference audio to encode — so it is all built once.
+    if (backbone_ != nullptr) {
+        mark_prepared();
+        return;
+    }
+
     const auto & session_options = options().options;
     const auto weight_type = runtime::find_option(session_options, {"moss_voicegen.weight_type", "weight_type"});
     if (weight_type.has_value()) {
