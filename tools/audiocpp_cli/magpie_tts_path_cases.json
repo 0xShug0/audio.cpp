@@ -1,0 +1,47 @@
+{
+  "cases": [
+    {
+      "id": "magpie_tts_warmed_multilingual",
+      "coverage": "MagpieTTS one offline session covering warmup, English Sofia voice, German Jason voice, text frontend selection, decoder/local transformer, CFG sampling, and codec decode.",
+      "family": "magpie_tts",
+      "model": "models/MagpieTTS-Multilingual-357M-GGUF",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup_short_english_sofia",
+          "text": "The warmup request checks that Magpie speaks clearly.",
+          "language": "en",
+          "voice_id": "Sofia",
+          "seed": 9100,
+          "temperature": 0.6,
+          "top_k": 80,
+          "guidance_scale": 2.5
+        },
+        {
+          "id": "english_sofia_status_update",
+          "text": "The production coordinator reviewed the overnight audio report, confirmed that the backup recorder stayed online, and asked the team to send one clear status update before the inspection window opened.",
+          "language": "en",
+          "voice_id": "Sofia",
+          "seed": 9101,
+          "temperature": 0.6,
+          "top_k": 80,
+          "guidance_scale": 2.5
+        },
+        {
+          "id": "german_jason_operations_note",
+          "text": "Das Team überprüfte am Morgen die Aufzeichnungen, bestätigte die stabile Verbindung und bereitete einen kurzen Bericht für die nächste Produktionsbesprechung vor.",
+          "language": "de",
+          "voice_id": "Jason",
+          "seed": 9102,
+          "temperature": 0.6,
+          "top_k": 80,
+          "guidance_scale": 2.5
+        }
+      ]
+    }
+  ]
+}

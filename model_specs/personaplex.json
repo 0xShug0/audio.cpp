@@ -1,0 +1,275 @@
+{
+  "schema_version": 1,
+  "family": "personaplex",
+  "display_name": "PersonaPlex",
+  "description": "PersonaPlex is a Moshi-style full-duplex speech-to-speech conversational model with Mimi audio tokenization, packaged speaker/persona prompts, streaming audio input, text generation, and generated assistant speech.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "s2s"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "capabilities": {
+    "s2s": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "description": "Packaged PersonaPlex voice prompt id such as NATF2 or NATM1. If omitted, NATF2 is used.",
+        "values": [
+          "NATF0",
+          "NATF1",
+          "NATF2",
+          "NATF3",
+          "NATM0",
+          "NATM1",
+          "NATM2",
+          "NATM3",
+          "VARF0",
+          "VARF1",
+          "VARF2",
+          "VARF3",
+          "VARF4",
+          "VARM0",
+          "VARM1",
+          "VARM2",
+          "VARM3",
+          "VARM4"
+        ],
+        "required": false,
+        "default": "NATF2"
+      },
+      {
+        "name": "system_prompt",
+        "type": "string",
+        "description": "System persona prompt. Plain text is wrapped with the required <system> tags.",
+        "required": false
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Audio token sampling temperature; default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.8
+      },
+      {
+        "name": "text_temperature",
+        "type": "float",
+        "description": "Text token sampling temperature; default follows temperature.",
+        "required": false,
+        "min": 0.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Audio token top-k sampling limit; default 250.",
+        "required": false,
+        "min": 0,
+        "default": 250
+      },
+      {
+        "name": "text_top_k",
+        "type": "int",
+        "description": "Text token top-k sampling limit; default follows top_k.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable stochastic token sampling; default true. Set false for greedy decoding.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Seed for text and audio token sampling; default 42424242.",
+        "required": false,
+        "min": 0,
+        "default": 42424242
+      }
+    ],
+    "session": [
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Reusable ggml graph arena size in MiB for PersonaPlex LM, depformer, and Mimi graphs; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "lm_weight_context_mb",
+        "type": "int",
+        "description": "Main LM weight metadata arena size in MiB; default 64.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "depformer_weight_context_mb",
+        "type": "int",
+        "description": "Depth transformer weight metadata arena size in MiB; default 64.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "mimi_weight_context_mb",
+        "type": "int",
+        "description": "Mimi codec weight metadata arena size in MiB; default 64.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "LM and Mimi matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "personaplex_7b_v1_q4_k",
+      "display_name": "PersonaPlex 7B v1 Q4_K GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "PersonaPlex-GGUF",
+      "files": [
+        "PersonaPlex-GGUF/personaplex-7b-v1-q4_k.gguf"
+      ],
+      "strip_prefix": "PersonaPlex-GGUF"
+    },
+    {
+      "id": "personaplex_7b_v1_q8_0",
+      "display_name": "PersonaPlex 7B v1 Q8_0 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "PersonaPlex-GGUF",
+      "files": [
+        "PersonaPlex-GGUF/personaplex-7b-v1-q8_0.gguf"
+      ],
+      "strip_prefix": "PersonaPlex-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "personaplex_7b_v1_q4_k",
+    "tags": [
+      "TTS",
+      "Stream",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/personaplex.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_model": "model:tokenizer_spm_32k_3.model",
+        "voice_NATF0": "model:voices_safetensors/NATF0.safetensors",
+        "voice_NATF1": "model:voices_safetensors/NATF1.safetensors",
+        "voice_NATF2": "model:voices_safetensors/NATF2.safetensors",
+        "voice_NATF3": "model:voices_safetensors/NATF3.safetensors",
+        "voice_NATM0": "model:voices_safetensors/NATM0.safetensors",
+        "voice_NATM1": "model:voices_safetensors/NATM1.safetensors",
+        "voice_NATM2": "model:voices_safetensors/NATM2.safetensors",
+        "voice_NATM3": "model:voices_safetensors/NATM3.safetensors",
+        "voice_VARF0": "model:voices_safetensors/VARF0.safetensors",
+        "voice_VARF1": "model:voices_safetensors/VARF1.safetensors",
+        "voice_VARF2": "model:voices_safetensors/VARF2.safetensors",
+        "voice_VARF3": "model:voices_safetensors/VARF3.safetensors",
+        "voice_VARF4": "model:voices_safetensors/VARF4.safetensors",
+        "voice_VARM0": "model:voices_safetensors/VARM0.safetensors",
+        "voice_VARM1": "model:voices_safetensors/VARM1.safetensors",
+        "voice_VARM2": "model:voices_safetensors/VARM2.safetensors",
+        "voice_VARM3": "model:voices_safetensors/VARM3.safetensors",
+        "voice_VARM4": "model:voices_safetensors/VARM4.safetensors"
+      },
+      "tensors": {
+        "lm_weights": {
+          "source": "weights:",
+          "prefix": "lm"
+        },
+        "mimi_weights": {
+          "source": "weights:",
+          "prefix": "mimi"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_model": "model:tokenizer_spm_32k_3.model",
+        "voice_NATF0": "model:voices_safetensors/NATF0.safetensors",
+        "voice_NATF1": "model:voices_safetensors/NATF1.safetensors",
+        "voice_NATF2": "model:voices_safetensors/NATF2.safetensors",
+        "voice_NATF3": "model:voices_safetensors/NATF3.safetensors",
+        "voice_NATM0": "model:voices_safetensors/NATM0.safetensors",
+        "voice_NATM1": "model:voices_safetensors/NATM1.safetensors",
+        "voice_NATM2": "model:voices_safetensors/NATM2.safetensors",
+        "voice_NATM3": "model:voices_safetensors/NATM3.safetensors",
+        "voice_VARF0": "model:voices_safetensors/VARF0.safetensors",
+        "voice_VARF1": "model:voices_safetensors/VARF1.safetensors",
+        "voice_VARF2": "model:voices_safetensors/VARF2.safetensors",
+        "voice_VARF3": "model:voices_safetensors/VARF3.safetensors",
+        "voice_VARF4": "model:voices_safetensors/VARF4.safetensors",
+        "voice_VARM0": "model:voices_safetensors/VARM0.safetensors",
+        "voice_VARM1": "model:voices_safetensors/VARM1.safetensors",
+        "voice_VARM2": "model:voices_safetensors/VARM2.safetensors",
+        "voice_VARM3": "model:voices_safetensors/VARM3.safetensors",
+        "voice_VARM4": "model:voices_safetensors/VARM4.safetensors"
+      },
+      "tensors": {
+        "lm_weights": "model:model.safetensors",
+        "mimi_weights": "model:tokenizer-e351c8d8-checkpoint125.safetensors"
+      }
+    }
+  ]
+}

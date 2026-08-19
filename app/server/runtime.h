@@ -3,7 +3,9 @@
 #include "busy_guard.h"
 #include "config.h"
 #include "http.h"
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 #include "model_installer.h"
+#endif
 
 #include "../streaming/streaming.h"
 
@@ -82,6 +84,7 @@ private:
     HttpResponse handle_model_unload(const std::string & body_text);
     HttpResponse handle_path_status(const std::string & body_text) const;
     HttpResponse handle_ui_upload(const HttpRequest & request);
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     HttpResponse handle_model_install(const std::string & body_text);
     HttpResponse handle_model_install_stop(const std::string & body_text);
     HttpResponse handle_model_clean_partial(const std::string & body_text);
@@ -91,6 +94,7 @@ private:
     HttpResponse handle_models_root_get() const;
     HttpResponse handle_models_root_set(const std::string & body_text);
     HttpResponse handle_directory_browser(const std::string & body_text) const;
+#endif
     HttpResponse handle_ui_asset() const;
     LoadedModel::RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
     void load_voice_presets(LoadedModel & model) const;
@@ -138,6 +142,7 @@ private:
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         const engine::io::json::Value & body);
+    HttpResponse handle_speech_live(const HttpRequest & request);
     HttpResponse handle_transcription(const HttpRequest & request);
     HttpResponse handle_transcription_json(const std::string & body_text);
     HttpResponse handle_transcription_multipart(const std::string & body_text, const std::string & boundary);
@@ -165,10 +170,12 @@ private:
     mutable std::mutex models_mutex_;
     std::filesystem::path upload_root_;
     std::filesystem::path repository_root_;
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     std::filesystem::path default_models_root_;
     std::filesystem::path models_root_;
     mutable std::mutex model_installer_mutex_;
     std::unique_ptr<ModelInstaller> model_installer_;
+#endif
     std::atomic<uint64_t> next_upload_id_{1};
 };
 

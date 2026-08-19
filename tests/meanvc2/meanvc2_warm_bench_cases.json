@@ -1,0 +1,22 @@
+{
+  "warmup_short": {
+    "requests": [
+      {
+        "model": "120ms",
+        "source_audio": "assets/resources/a.wav",
+        "target_audio": "assets/resources/b.wav",
+        "seed": 20260811
+      }
+    ]
+  },
+  "quality_120ms_default": {
+    "requests": [
+      {
+        "model": "120ms",
+        "source_audio": "resources/seed_vc/source/source_s1.wav",
+        "target_audio": "assets/resources/b.wav",
+        "seed": 20260811
+      }
+    ]
+  }
+}

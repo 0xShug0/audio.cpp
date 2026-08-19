@@ -11,6 +11,7 @@
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
 | MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](community_models/minimax_h3.md) |
+| MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
 | NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
 | OmniVoice | `omnivoice` | `tts` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
 | PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
@@ -310,6 +311,28 @@ Voice clone:
 ```bash
 audiocpp_cli --task clon --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-100M --backend cuda --text "Hello from MOSS-TTS-Nano." --voice-ref /path/to/reference.wav --reference-text "Reference transcript when available." --out out.wav
 ```
+
+## MagpieTTS
+
+MagpieTTS Multilingual 357M is a multilingual TTS model with baked speaker
+context prompts and a NanoCodec waveform decoder. The current package is a
+standalone GGUF directory.
+
+```bash
+python3 tools/model_manager_v2.py install magpie_tts_orig
+
+audiocpp_cli --task tts --family magpie_tts \
+  --model models/MagpieTTS-Multilingual-357M-GGUF \
+  --backend cuda \
+  --language en \
+  --text "The production coordinator reviewed the overnight audio report and sent one clear update." \
+  --request-option voice_id=Sofia \
+  --out out.wav
+```
+
+Use `--request-option voice_id=<name-or-index>` to select one of the baked
+speaker prompts included with the package. See [MagpieTTS](models/magpie_tts.md)
+for supported languages, long-form controls, and sampling options.
 
 ## NeuTTS
 
