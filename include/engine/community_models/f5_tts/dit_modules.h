@@ -46,4 +46,8 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
     int text_len,
     core::BackendType backend_type);
 
+// debug: registered stage taps from the last CFG graph build (F5_DUMP_STAGES=1)
+std::vector<std::pair<std::string, ggml_tensor *>> & stage_taps();
+
 }  // namespace engine::models::f5_tts
+

@@ -207,7 +207,7 @@ struct F5DiTGraphBuild {
     core::TensorValue output;
 };
 
-// staging control for the CUDA build path (see runtime.cpp)
+
 std::vector<ConstStage> * const_stage_begin() {
     t_const_stage = new std::vector<ConstStage>();
     return t_const_stage;
@@ -215,6 +215,23 @@ std::vector<ConstStage> * const_stage_begin() {
 // Bind staged constants to private backend buffers BEFORE the gallocr
 // reserves the compute arena: a tensor with data already set is treated as
 // externally owned and never aliased by scratch reuse.
+
+// --- cross-val stage dumps (debug) ---
+std::vector<std::pair<std::string, ggml_tensor *>> g_stage_taps;
+static void tap_stage(const char * name, const core::TensorValue & t) {
+    if (std::getenv("F5_DUMP_STAGES") == nullptr) return;
+    ggml_set_output(t.tensor);  // protect from arena reuse so taps are readable post-compute
+    g_stage_taps.emplace_back(name, t.tensor);
+}
+
+static void tap_stage_cond(bool cond, const char * name, const core::TensorValue & t) {
+    if (cond) tap_stage(name, t);
+}
+
+std::vector<std::pair<std::string, ggml_tensor *>> & stage_taps() {
+    return g_stage_taps;
+}
+
 void const_stage_bind(std::vector<ConstStage> * stage, ggml_backend_t backend) {
     if (stage == nullptr || backend == nullptr) return;
     for (auto & c : *stage) {
@@ -287,6 +304,27 @@ F5DiTGraphBuild build_dit_modules_graph(
         te = mod::AddModule().build(ctx, te, pe_t);
     }
 
+    // ---- Python semantics: text encoder over padded length with filler
+    // positions masked after pe and after every block ----
+    core::TensorValue te_mask_on;
+    if (NT < N) {
+        const auto pad_shape = core::TensorShape::from_dims({1, N - NT, kTextDim});
+        std::vector<float> zv(static_cast<size_t>(pad_shape.num_elements()), 0.0F);
+        te = mod::ConcatModule({1}).build(ctx, te, ctx_store_f32(ctx, pad_shape, zv));
+        std::vector<float> ones(static_cast<size_t>(NT), 1.0F);
+        std::vector<float> zeros(static_cast<size_t>(N - NT), 0.0F);
+        auto m_on = ctx_store_f32(ctx, core::TensorShape::from_dims({1, NT, 1}), ones);
+        auto m_off = ctx_store_f32(ctx, core::TensorShape::from_dims({1, N - NT, 1}), zeros);
+        te_mask_on = mod::ConcatModule({1}).build(ctx, m_on, m_off);
+        te_mask_on = mod::RepeatModule(
+            {core::TensorShape::from_dims({1, N, kTextDim})}).build(ctx, te_mask_on);
+    } else {
+        te_mask_on = core::TensorValue{};
+    }
+    if (te_mask_on.tensor != nullptr) {
+        te = mod::MulModule().build(ctx, te, te_mask_on);
+    }
+
     // ---- 4x ConvNeXt text blocks (dwconv k7, LN, pw1+GELU, GRN, pw2, residual) ----
     for (int bi = 0; bi < 4; ++bi) {
         const auto & B = w.text_blocks[static_cast<size_t>(bi)];
@@ -301,17 +339,16 @@ F5DiTGraphBuild build_dit_modules_graph(
         auto grn_out = grn(ctx, h1, B.grn_gamma, B.grn_beta, g_dummy, b_dummy);
         auto h2 = mod::LinearModule({kDim, kTextDim, true}).build(ctx, grn_out, B.pw2);
         te = mod::AddModule().build(ctx, te, h2);
+        if (te_mask_on.tensor != nullptr) {
+            te = mod::MulModule().build(ctx, te, te_mask_on);  // re-zero pads
+        }
+        tap_stage_cond(bi == 0, "txt_h1", h1);
+        tap_stage_cond(bi == 0, "txt_grn", grn_out);
+        tap_stage_cond(bi == 0, "txt_after_block", te);
     }
 
-    // ---- pad/curtail text to N frames (zero-pad along T) ----
-    core::TensorValue te_pad;
-    if (NT >= N) {
-        te_pad = mod::SliceModule({1, 0, N}).build(ctx, te);
-    } else {
-        const auto zshape = core::TensorShape::from_dims({1, N - NT, kTextDim});
-        std::vector<float> zv(static_cast<size_t>(zshape.num_elements()), 0.0F);
-        te_pad = mod::ConcatModule({1}).build(ctx, te, ctx_store_f32(ctx, zshape, zv));
-    }
+    // text is already exactly N frames (padded + masked before the blocks)
+    const auto & te_pad = te;
 
     // ---- input embed: concat features [x | cond | text] -> proj -> CPE ----
     auto cat0 = mod::ConcatModule({2}).build(ctx, io.x, io.cond);
@@ -498,11 +535,47 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
         }
     }
     auto pe_t = ctx_store_f32(ctx, core::TensorShape::from_dims({1, NT, kTextDim}), pe);
+    {
+        core::TensorValue wt;
+        wt.tensor = w.text_embedding.tensor;
+        wt.shape = w.text_embedding.shape;
+        tap_stage("emb_table", wt);
+        tap_stage("txt_ids", io.text_ids);
+    }
+    tap_stage("txt_emb_raw_c", te_c);
+    tap_stage("txt_pe", pe_t);
     te_c = mod::AddModule().build(ctx, te_c, pe_t);
     te_u = mod::AddModule().build(ctx, te_u, pe_t);
     auto te = mod::ConcatModule({0}).build(ctx, te_c, te_u);  // [2, NT, 512]
 
+    // Python runs the text encoder over the FULL padded length with filler
+    // positions masked to zero after the pe add and after every block (the
+    // GRN norm and depthwise context depend on it). Pad to N frames up front.
+    core::TensorValue te_mask_on;   // [1, N, 1] 1.0 on real cols, 0 on pads
+    if (NT < N) {
+        const auto pad_shape = core::TensorShape::from_dims({2, N - NT, kTextDim});
+        std::vector<float> zv(static_cast<size_t>(pad_shape.num_elements()), 0.0F);
+        te = mod::ConcatModule({1}).build(
+            ctx, te, ctx_store_f32(ctx, pad_shape, zv));
+        // mask: ones [2, NT, 1] concat zeros [2, N-NT, 1]
+        std::vector<float> ones(static_cast<size_t>(2 * NT), 1.0F);
+        std::vector<float> zeros(static_cast<size_t>(2 * (N - NT)), 0.0F);
+        auto m_on = ctx_store_f32(ctx, core::TensorShape::from_dims({2, NT, 1}), ones);
+        auto m_off = ctx_store_f32(ctx, core::TensorShape::from_dims({2, N - NT, 1}), zeros);
+        te_mask_on = mod::ConcatModule({1}).build(ctx, m_on, m_off);
+        te_mask_on = mod::RepeatModule(
+            {core::TensorShape::from_dims({2, N, kTextDim})}).build(ctx, te_mask_on);
+    } else {
+        // no padding: identity mask (skip the mul entirely below)
+        te_mask_on = core::TensorValue{};
+    }
+    // apply the mask right after the pe add (zero pad columns)
+    if (te_mask_on.tensor != nullptr) {
+        te = mod::MulModule().build(ctx, te, te_mask_on);
+    }
+
     // text ConvNeXt x4 (batch-aware: dwconv input [B, C, T])
+    tap_stage("txt_in", te);
     for (int bi = 0; bi < 4; ++bi) {
         const auto & B = w.text_blocks[static_cast<size_t>(bi)];
         auto te_c2 = mod::TransposeModule({{0, 2, 1}, 3}).build(ctx, te);   // [B, C, T]
@@ -516,22 +589,24 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
         auto grn_out = grn(ctx, h1, B.grn_gamma, B.grn_beta, g_dummy, b_dummy);
         auto h2 = mod::LinearModule({kDim, kTextDim, true}).build(ctx, grn_out, B.pw2);
         te = mod::AddModule().build(ctx, te, h2);
+        if (te_mask_on.tensor != nullptr) {
+            te = mod::MulModule().build(ctx, te, te_mask_on);  // re-zero pads
+        }
+        tap_stage_cond(bi == 0, "txt_h1", h1);
+        tap_stage_cond(bi == 0, "txt_grn", grn_out);
+        tap_stage_cond(bi == 0, "txt_after_block", te);
     }
 
-    // pad text to N on axis 1 (both halves share the same NT)
-    core::TensorValue te_pad;
-    if (NT >= N) {
-        te_pad = mod::SliceModule({1, 0, N}).build(ctx, te);
-    } else {
-        const auto zshape = core::TensorShape::from_dims({2, N - NT, kTextDim});
-        std::vector<float> zv(static_cast<size_t>(zshape.num_elements()), 0.0F);
-        te_pad = mod::ConcatModule({1}).build(ctx, te, ctx_store_f32(ctx, zshape, zv));
-    }
+    // text is already exactly N frames (padded + masked before the blocks)
+    const auto & te_pad = te;
 
     // input embed
     auto cat0 = mod::ConcatModule({2}).build(ctx, io.x, io.cond);
     auto cat1 = mod::ConcatModule({2}).build(ctx, cat0, te_pad);  // [2, N, 712]
+    tap_stage("te", te);      // [2, NT, 512] before pad (post-convnext)
+    tap_stage("te_pad", te_pad);
     auto inp = mod::LinearModule({712LL, kDim, true}).build(ctx, cat1, w.input_proj);
+    tap_stage("inp_proj", inp);
 
     // CPE: grouped conv per half (B=1) — folding the batch into the conv's
     // time axis would bleed the zero-padding across the batch seam; run each
@@ -569,6 +644,7 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
             ctx, core::ensure_backend_addressable_layout(ctx, r1),
             core::TensorShape::from_dims({2, N, kDim}));
         inp = mod::AddModule().build(ctx, inp, r1_b);
+        tap_stage("inp", inp);
     }
 
     // time embedding (shared across halves)
@@ -635,7 +711,9 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
             mod::ScaledDotProductAttentionLowering::Flash,
             GGML_PREC_F32,
             mod::AttentionCausality::NonCausal,
-        }).build(ctx, q_heads, k_heads, v_heads);  // [2, N, H, DH]
+        }).build(ctx, q_heads, k_heads, v_heads);
+        tap_stage_cond(bi == 0, "block0.attn", attn);
+        tap_stage_cond(bi == 21, "block21.attn", attn);  // [2, N, H, DH]
         auto attn_flat = core::reshape_tensor(
             ctx, core::ensure_backend_addressable_layout(ctx, attn),
             core::TensorShape::from_dims({attn.shape.dims[0], attn.shape.dims[1], kDim}));
