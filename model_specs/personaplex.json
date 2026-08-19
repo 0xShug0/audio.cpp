@@ -4,7 +4,7 @@
   "display_name": "PersonaPlex",
   "description": "PersonaPlex is a Moshi-style full-duplex speech-to-speech conversational model with Mimi audio tokenization, packaged speaker/persona prompts, streaming audio input, text generation, and generated assistant speech.",
   "category": "tts",
-  "status": "experimental",
+  "status": "supported",
   "tasks": [
     "s2s"
   ],
@@ -194,6 +194,8 @@
       "GGUF"
     ],
     "docs": [
+      "docs/models/personaplex.md",
+      "docs/tts.md",
       "docs/gguf.md"
     ]
   },

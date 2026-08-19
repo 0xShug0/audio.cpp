@@ -72,7 +72,9 @@ Status labels:
 | `index_tts2` | Done (v2 + v2.5 variant) | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `irodori_tts` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `kroko_asr` | Done | Pass | --- | --- | Pass |
+| `magpie_tts` | Done | --- | Pass | --- | Pass |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |
+| `meanvc2` | Done | --- | --- | Pass | --- |
 | `mel_band_roformer` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
 | `miotts` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
@@ -84,6 +86,7 @@ Status labels:
 | `omnivoice` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `outetts` | Done | Pass (TTS + clone) | --- | --- | Pass (TTS + clone) |
 | `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
+| `personaplex` | Done | --- | --- | --- | Pass |
 | `pocket_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `qwen3_asr` | Done | Pass | --- | Pass | Pass |
 | `qwen3_forced_aligner` | Done | Pass | --- | Pass | Pass |
@@ -106,6 +109,8 @@ Additional lower-bit checks:
 
 | Family | Format | Tested |
 |---|---|---|
+| `meanvc2` | `q4_k` | Pass |
+| `personaplex` | `q4_k` | Pass |
 | `voxtral_realtime` | `q4_k` | Pass (quick CUDA check; transcripts match Q8 except one capitalization-only difference) |
 
 Q8 packaging notes:
