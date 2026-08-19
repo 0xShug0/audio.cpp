@@ -7,7 +7,7 @@
 Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
 
 > [!IMPORTANT]
-> **2026-08-14 - MiniMax Music3 preview release:** MiniMax Music3 text-to-music with lyrics conditioning is now available for preview on the [preview/minimax-music-3 branch](https://github.com/0xShug0/audio.cpp/tree/preview/minimax-music-3). Please try the branch and share feedback while the performance/quality package choices are still being finalized.
+> **2026-08-18**: MiniMax Music3 has been merged from the `preview` branch into `main`. Please use the version from `main` going forward.
 >
 > **CUDA performance headline:** multiple TTS paths already run **1.8x to up to 8x faster than their Python reference paths** while cutting end-to-end latency by **45%-85%**.
 >
@@ -44,6 +44,8 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
+> **2026-08-18 - Release 0.6.1:** This update adds MiniMax Music 3 docs, DotTTS Edit docs, ACE-Step 1.5 XL notes, and WebUI/Docker launch guidance, bringing audio.cpp to **50** total model families and **70+** model variants.
+>
 > **2026-08-13 - Release 0.6:** This release adds **5** new model families - DotTTS, NeuTTS, MuScriptor, MiniMax-H3, and SenseVoice - bringing audio.cpp to **49** total model families and **70+** model variants, alongside the new native WebUI from [@mirek190](https://github.com/mirek190), expanded GGUF packaging, and more shared framework runtime pieces.
 >
 > **2026-07-31 - Release 0.5:** audio.cpp grows to **44 model families** with **9 new additions**: DramaBox, Confucius4-TTS, RVC, BS-RoFormer, GLM-TTS, Kroko ASR, Parakeet-TDT, Inflect v2, and Fun-ASR-Nano.
@@ -68,12 +70,12 @@ Runtime tags: safetensors is the default model loading path. `GGUF 16/Q8/Q4/INT8
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
-| **ace_step** | Music, Edit | 50+ langs | ACE-Step 1.5 Turbo and Base with acestep-5Hz-lm-1.7B | GGUF 16 |
+| **ace_step** | Music, Edit | 50+ langs | ACE-Step 1.5 Turbo/Base and XL Turbo/SFT with acestep-5Hz-lm-1.7B | GGUF 16 |
 | **bs_roformer** | Sep | lang agnostic | BS-RoFormer vocal separation checkpoints | GGUF Q8 |
 | **chatterbox** | TTS, Clone, VC| ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | Chatterbox with 0.5B backbone | GGUF 16/Q8 |
 | **confucius4_tts** | Clone | zh, en, ja, ko, de, fr, es, id, it, th, pt, ru, ms, vi | Confucius4-TTS multilingual voice cloning | GGUF F32, Stream |
 | **citrinet_asr** | ASR | en | Citrinet-256 | GGUF Q8 |
-| **dots_tts** | TTS, Clone, Ctrl | multilingual | DotTTS SOAR and MeanFlow | GGUF 16/Q8, Stream |
+| **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | DotTTS SOAR, MeanFlow, and Edit | GGUF 16/Q8, Stream |
 | **dramabox** | TTS, Clone | en | DramaBox expressive TTS and voice cloning | GGUF Q8 |
 | **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | Fish Audio S2 Pro | GGUF 16/Q8 |
 | **fun_asr_nano** | ASR | auto, zh, en, ja | Fun-ASR-Nano-2512 | GGUF 16/Q8 |
@@ -85,6 +87,7 @@ Runtime tags: safetensors is the default model loading path. `GGUF 16/Q8/Q4/INT8
 | **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | Bundled |
 | **mel_band_roformer** | Sep | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | GGUF 16/Q8 |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | MiniMax-H3 Q4_K with optional INT8 ConvRot DiT | GGUF Q4/INT8 |
+| **minimax_music3** | Music | auto | MiniMax Music 3 text-to-music generation with lyrics conditioning | GGUF Q4/Q8 |
 | **miocodec** | Codec, VC | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | GGUF 16/Q8 |
 | **miotts** | TTS, Clone | en, ja | MioTTS-1.7B | GGUF 16/Q8 |
 | **muscriptor** | MIDI | music | MuScriptor Small audio-to-symbolic transcription | GGUF F32, Stream |
@@ -123,6 +126,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **inflect_v2** | TTS | en | GGUF FP32 | Jan [@JanWerder](https://github.com/JanWerder) | [Inflect Micro v2 and Nano v2](docs/community_models/inflect_v2.md) native offline synthesis |
 | **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Safetensors, GGUF Q8 | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](docs/community_models/kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | GGUF Q4/INT8 | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](docs/community_models/minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |
+| **minimax_music3** | Music | auto | GGUF Q4/Q8 | [@0xShug0](https://github.com/0xShug0) | [MiniMax Music 3](docs/community_models/minimax_music3.md) text-to-music generation with lyrics conditioning |
 | **moss_tts_local** | TTS, Clone, Ctrl | auto, optional language hint | GGUF | [@justinjohn0306](https://github.com/justinjohn0306) | MOSS-TTS-Local Transformer v1.5 support |
 | **outetts** | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | GGUF | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
 | **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | GGUF F32/16/Q8, Stream | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](docs/community_models/parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support |
@@ -160,13 +164,13 @@ generation, conversion, separation, VAD, diarization, and alignment workflows. T
 into the server binary, so using it requires neither Python nor separate frontend files:
 
 ```bash
-audiocpp_server --ui --backend cuda
+audiocpp_server --ui --ui-management --backend cuda
 ```
 
-Open `http://127.0.0.1:8080`. Starting with `--ui` and no server config enables on-demand model
-load/unload and temporary browser uploads. Existing static server configurations also expose the UI by default;
-in that mode the UI only offers models declared by the server config. Add `--ui-management` when that instance
-should permit catalog browsing, downloads, temporary uploads, and dynamic model switching.
+Open `http://127.0.0.1:8080`. `--ui-management` enables catalog browsing, downloads, temporary
+uploads, and dynamic model switching, so this is the easiest way to try audio.cpp without writing a
+server config first. For a locked-down config-driven instance, start with `--ui` and a server config
+instead; in that mode the UI only offers models declared by the config unless management is enabled.
 
 The native UI also exposes background model download/preparation, long-text split-and-merge synthesis, a
 browser-local saved voice library, microphone recording, and near-live ASR input. Some model preparation jobs invoke

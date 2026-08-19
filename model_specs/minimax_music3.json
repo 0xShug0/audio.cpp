@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "family": "minimax_music3",
+  "display_name": "MiniMax Music 3",
+  "description": "MiniMax Music 3 text-to-music generation with lyrics conditioning.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "music"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "capabilities": {
+    "music": [
+      "lyrics",
+      "style_control"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "lyrics",
+        "type": "string",
+        "description": "Lyrics to sing. Structure tags such as [verse] and [chorus] are supported.",
+        "required": true
+      },
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Maximum generated audio duration in seconds.",
+        "required": false,
+        "min": 0.1,
+        "default": 20.0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Flow matching Euler steps per chunk.",
+        "required": false,
+        "min": 1,
+        "default": 30
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Flow transformer classifier-free guidance scale.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.7
+      },
+      {
+        "name": "ar_guidance_scale",
+        "type": "float",
+        "description": "Autoregressive semantic and depth CFG scale.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.5
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling for semantic and residual code sampling.",
+        "required": false,
+        "min": 1,
+        "default": 50
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "values": [
+          "native",
+          "bf16",
+          "f16",
+          "q8_0",
+          "q4_0",
+          "q4_k"
+        ],
+        "description": "Shared weight storage type.",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "language_model_gguf",
+        "type": "string",
+        "description": "Language model component GGUF file relative to the model root.",
+        "required": false,
+        "default": "language_model_q4_0.gguf"
+      },
+      {
+        "name": "rvq_depth_decoder_gguf",
+        "type": "string",
+        "description": "RVQ depth decoder component GGUF file relative to the model root.",
+        "required": false,
+        "default": "rvq_depth_decoder_bf16.gguf"
+      },
+      {
+        "name": "flow_transformer_gguf",
+        "type": "string",
+        "description": "Flow transformer component GGUF file relative to the model root.",
+        "required": false,
+        "default": "transformer_q4_0.gguf"
+      },
+      {
+        "name": "graph_context_mb",
+        "type": "int",
+        "description": "Runtime graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight context size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Load large generation stages only while they are needed to reduce peak VRAM.",
+        "required": false,
+        "default": true
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/MiniMax-Music3-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "minimax_music3_q4_0",
+      "display_name": "MiniMax Music 3 Q4_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "MiniMax-Music3-GGUF",
+      "files": [
+        "config.json",
+        "config/language_model.json",
+        "config/rvq_depth_decoder.json",
+        "config/condition_encoder.json",
+        "config/transformer.json",
+        "config/vocoder.json",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "language_model_q4_0.gguf",
+        "rvq_depth_decoder_q8_0.gguf",
+        "condition_encoder.gguf",
+        "transformer_q4_0.gguf",
+        "vocoder.gguf"
+      ],
+      "strip_prefix": ""
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "minimax_music3_q4_0",
+    "tags": [
+      "Music",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/music_generation.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "root_config": "model:config.json",
+        "language_model_config": "model:config/language_model.json",
+        "depth_decoder_config": "model:config/rvq_depth_decoder.json",
+        "condition_encoder_config": "model:config/condition_encoder.json",
+        "transformer_config": "model:config/transformer.json",
+        "vocoder_config": "model:config/vocoder.json",
+        "tokenizer_json": "model:tokenizer/tokenizer.json",
+        "tokenizer_config": "model:tokenizer/tokenizer_config.json"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "root_config": "model:config.json",
+        "language_model_config": "model:config/language_model.json",
+        "depth_decoder_config": "model:config/rvq_depth_decoder.json",
+        "condition_encoder_config": "model:config/condition_encoder.json",
+        "transformer_config": "model:config/transformer.json",
+        "vocoder_config": "model:config/vocoder.json",
+        "tokenizer_json": "model:tokenizer/tokenizer.json",
+        "tokenizer_config": "model:tokenizer/tokenizer_config.json"
+      },
+      "tensors": {
+        "language_model_weights": {
+          "source": "model:language_model/model.safetensors.index.json"
+        },
+        "depth_decoder_weights": {
+          "source": "model:rvq_depth_decoder/diffusion_pytorch_model.safetensors"
+        },
+        "condition_encoder_weights": {
+          "source": "model:condition_encoder/diffusion_pytorch_model.safetensors"
+        },
+        "transformer_weights": {
+          "source": "model:transformer/diffusion_pytorch_model.safetensors.index.json"
+        },
+        "vocoder_weights": {
+          "source": "model:vocoder/diffusion_pytorch_model.safetensors"
+        }
+      }
+    }
+  ]
+}

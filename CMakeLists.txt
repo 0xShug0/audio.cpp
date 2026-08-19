@@ -558,6 +558,25 @@ audiocpp_add_model(minimax_h3
         engine::models::minimax_h3::make_minimax_h3_loader
 )
 
+audiocpp_add_model(minimax_music3
+    SOURCES
+        src/community_models/minimax_music3/assets.cpp
+        src/community_models/minimax_music3/prompt.cpp
+        src/community_models/minimax_music3/global_lm.cpp
+        src/community_models/minimax_music3/depth_decoder.cpp
+        src/community_models/minimax_music3/ar_runtime.cpp
+        src/community_models/minimax_music3/condition_encoder.cpp
+        src/community_models/minimax_music3/flow_transformer.cpp
+        src/community_models/minimax_music3/flow_sampler.cpp
+        src/community_models/minimax_music3/vocoder.cpp
+        src/community_models/minimax_music3/pipeline.cpp
+        src/community_models/minimax_music3/session.cpp
+    INCLUDES
+        engine/community_models/minimax_music3/session.h
+    LOADERS
+        engine::models::minimax_music3::make_minimax_music3_loader
+)
+
 audiocpp_add_model(neutts
     SOURCES
         src/models/neutts/ar.cpp
@@ -1706,6 +1725,16 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME chinese_normalization_test
         COMMAND chinese_normalization_test
+    )
+
+    add_engine_unittest(index_tts_tn_corpus_test tests/unittests/test_index_tts_tn_corpus.cpp)
+    target_compile_definitions(index_tts_tn_corpus_test PRIVATE
+        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+    )
+
+    add_test(
+        NAME index_tts_tn_corpus_test
+        COMMAND index_tts_tn_corpus_test
     )
 
     add_engine_unittest(unicode_normalization_test tests/unittests/test_unicode_normalization.cpp)

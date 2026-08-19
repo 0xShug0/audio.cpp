@@ -20,6 +20,7 @@ Practical expectations:
 | **inflect_v2** | TTS | en | Community | [Inflect Micro v2 and Nano v2](inflect_v2.md) native FP32 offline synthesis |
 | **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |
+| **minimax_music3** | Music | auto | [@0xShug0](https://github.com/0xShug0) | [MiniMax Music 3](minimax_music3.md) text-to-music generation with lyrics conditioning |
 | **moss_tts_local** | TTS, voice cloning | auto, optional language hint | [@justinjohn0306](https://github.com/justinjohn0306) | [MOSS-TTS-Local Transformer v1.5](../models/moss_tts.md) support in the core model tree |
 | **outetts** | TTS, voice cloning | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | Mirek [@mirek190](https://github.com/mirek190) | [Llama-OuteTTS-1.0-1B](outetts.md) TTS and voice cloning support |
 | **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support |
