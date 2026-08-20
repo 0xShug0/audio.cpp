@@ -235,11 +235,6 @@ public:
         return false;
     }
 
-    [[nodiscard]] bool is_synthesized(std::string_view name) const noexcept override {
-        const std::string key{std::string(name)};
-        return synthesized_tensors_.find(key) != synthesized_tensors_.end();
-    }
-
     assets::TensorMetadata require_metadata(std::string_view name) const override {
         const auto it = synthesized_tensors_.find(std::string(name));
         if (it != synthesized_tensors_.end()) {
