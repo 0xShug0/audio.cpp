@@ -2049,6 +2049,13 @@ if (ENGINE_BUILD_TESTS)
 
     add_engine_unittest(dots_tts_vocoder_parity tests/dots_tts/dots_tts_vocoder_parity.cpp)
 
+    add_engine_unittest(echo_tts_host_units tests/echo_tts/echo_tts_host_units.cpp)
+
+    add_test(
+        NAME echo_tts_host_units
+        COMMAND echo_tts_host_units
+    )
+
     add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
 
     add_test(
