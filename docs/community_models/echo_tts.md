@@ -39,12 +39,43 @@ and the timestep embedding (0.0 diff). The seeded noise matches the reference Ph
 cosine 1.000000000000, with a median error of 2 ULP — near-identical, not bit-exact, so gates must
 be written as cosine plus max-absolute-error rather than equality.
 
-What is **not** verified is the part that matters most: no ggml-vs-PyTorch parity run exists for the
-DiT graph, the Fish `z_q` seam, or the flash-attention path. The specific things that would be
-silently wrong rather than loudly broken are half-head RoPE, the rotary pairing convention
-(interleaved, not NEOX), the speaker patchify reshape, and the adaLN `shift/scale/gate` order.
+### End-to-end run, RTX 3090 (sm_86), CUDA, F16 GGUF
 
-This PR stays in draft until that parity evidence exists.
+The full pipeline has been executed and the output checked objectively:
+
+| Check | Result |
+|---|---|
+| Conversion | `manifest OK`; 1117 DiT tensors written, 219 blockwise tensors dropped, 495 codec tensors |
+| GGUF verifier | pass — 1614 tensors (`dit_weights/` 1117, `ae/` 495, `pca/` 2), F16 1043 / F32 571 |
+| `latent_scale` | 0.0555555559694767 (= 1/18), matching the reference |
+| Generation | exit 0, 44 100 Hz mono, no NaNs, peak 0.80 (below the normalisation threshold) |
+| ASR round-trip, 15 words | WER 0 % — the only diffs are Whisper writing spoken "dot" as punctuation |
+| ASR round-trip, 32 words | **WER 0.0 %, 0 edits** |
+| Throughput | 9.195 s of audio in 7.89 s wall — **RTF 0.86 cold**, including the 5.5 GB model load |
+
+Transcription used `faster-whisper-large-v3-turbo`. Generation cost is essentially constant across
+those two runs (7.75 s vs 7.89 s) because the window is fixed at 640 frames, so longer text inside
+one chunk is close to free.
+
+That rules out the failure modes which produce plausible audio rather than an error: half-head RoPE,
+the rotary pairing convention (interleaved, not NEOX), the speaker patchify reshape, and the adaLN
+`shift/scale/gate` order would each yield fluent-sounding but wrong speech, not a 0 % WER. Tensor
+names are settled by `manifest OK` against the real checkpoint.
+
+### What is still missing
+
+A 0 % WER proves the pipeline is right end to end. It is **not** per-tensor parity, and this port
+does not yet have any:
+
+- No cosine ≥ 0.999 comparison of the DiT graph against PyTorch at a fixed timestep, and no
+  per-block activation dump compared against `echo_ref.npz`.
+- No A/B of the flash-attention path against `AUDIOCPP_ECHO_TTS_NO_FLASH=1` on a fixed seed.
+- No regression test for `fish_audio` itself. `build_decode_quantizer` was **restructured**, not
+  merely extended, so that core family's decode path changed and needs its own coverage.
+- No listening comparison of F16 against Q8_0.
+- No C++ unit tests are registered; the host-side checks above were run by hand and never committed.
+
+This PR stays in draft until that evidence exists.
 
 ## Known limitations
 
