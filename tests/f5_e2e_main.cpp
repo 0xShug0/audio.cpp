@@ -115,7 +115,7 @@ int main(int argc, char ** argv) {
     req.steps = std::getenv("F5_STEPS") ? std::atoi(std::getenv("F5_STEPS")) : 16;
     req.cfg_strength = 2.0F;
     req.seed = 42;
-    req.fixed_seed = true;
+    req.fixed_seed = std::getenv("F5_RANDSEED") == nullptr;  // F5_RANDSEED=1: random per run
     req.use_cuda = std::getenv("F5_CUDA") != nullptr;
     req.cuda_device = 1;
 

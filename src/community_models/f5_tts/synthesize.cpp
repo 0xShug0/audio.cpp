@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <map>
 #include <chrono>
+#include <random>
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
@@ -1127,6 +1128,15 @@ F5SynthesisResult f5_synthesize(
     const auto chunks = chunk_text(request.text, chars_per_chunk);
     std::vector<float> all_rows;
     const std::string ref_text = apply_ref_trailing_space(request.ref_text);
+    // Seed semantics match python F5 (seed=None -> fresh randomness every
+    // run): an unspecified seed draws a random base seed per request, so a
+    // sampling accident (e.g. a swallowed word like "هرمز") can be re-rolled
+    // instead of being replayed identically on every request. fixed_seed
+    // keeps deterministic per-chunk seeds (seed + chunk_index).
+    const uint32_t base_seed = request.fixed_seed
+        ? request.seed
+        : (static_cast<uint32_t>(std::random_device{}()) ^
+           static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
     // Every chunk is conditioned on the ORIGINAL reference (vanilla F5
     // chunking semantics): chained references drift the voice and decay
     // the energy chunk over chunk (observed: two voices + fade to silence).
@@ -1136,7 +1146,7 @@ F5SynthesisResult f5_synthesize(
         auto out = synthesize_chunk(
             model_path, request, ref_mel, ref_frames, chunk_ids,
             chunks[ci], ref_text, dev,
-            request.fixed_seed ? request.seed + static_cast<uint32_t>(ci) : 0,
+            base_seed + static_cast<uint32_t>(ci),
             nullptr, chunks.size() > 1 ? 1.20 : 1.0);
         all_rows.insert(all_rows.end(), out.gen_mel_rows.begin(), out.gen_mel_rows.end());
     }
