@@ -2049,6 +2049,10 @@ if (ENGINE_BUILD_TESTS)
 
     add_engine_unittest(dots_tts_vocoder_parity tests/dots_tts/dots_tts_vocoder_parity.cpp)
 
+    # Needs the GGUF and a PyTorch reference dump, so it is driven by hand
+    # rather than registered with add_test -- same as dots_tts_vocoder_parity.
+    add_engine_unittest(echo_tts_dit_parity tests/echo_tts/echo_tts_dit_parity.cpp)
+
     add_engine_unittest(echo_tts_host_units tests/echo_tts/echo_tts_host_units.cpp)
 
     add_test(

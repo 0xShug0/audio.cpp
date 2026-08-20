@@ -850,6 +850,22 @@ void EchoDitRuntime::prepare_conditioning(const EchoConditioning & conditioning)
     impl_->prepare_conditioning(conditioning);
 }
 
+std::vector<float> EchoDitRuntime::denoise_once(const std::vector<float> & x, float t, int lanes) {
+    if (!impl_->conditioning_ready()) {
+        throw std::runtime_error("Echo-TTS denoise_once() called before prepare_conditioning()");
+    }
+    if (lanes < 1) {
+        throw std::runtime_error("Echo-TTS denoise_once() requires at least one lane");
+    }
+    const int64_t latent_size = impl_->config().latent_size;
+    const int64_t per_lane = latent_size * lanes;
+    if (latent_size <= 0 || static_cast<int64_t>(x.size()) % per_lane != 0) {
+        throw std::runtime_error("Echo-TTS denoise_once() received a mis-shaped latent buffer");
+    }
+    impl_->set_sequence_length(static_cast<int64_t>(x.size()) / per_lane);
+    return impl_->denoise(x, t, lanes);
+}
+
 std::vector<float> EchoDitRuntime::sample(const EchoSamplerOptions & options) {
     if (!impl_->conditioning_ready()) {
         throw std::runtime_error("Echo-TTS sample() called before prepare_conditioning()");
