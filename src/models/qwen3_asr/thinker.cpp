@@ -326,15 +326,37 @@ public:
             if (!layer.key.has_value() || !layer.value.has_value()) {
                 throw std::runtime_error("Qwen3 ASR thinker prefill decoder did not return K/V state");
             }
-            keys_.push_back(layer.key->tensor);
-            values_.push_back(layer.value->tensor);
+            // The graph allocator recycles intermediates, and the decoder K/V is an
+            // intermediate that run() has to read back afterwards. Copy each one into
+            // a tensor of its own and mark it as a graph output, which is what keeps
+            // it off the reuse list. Same shape as QwenCausalDecodeRuntime prefill.
+            auto * key = ggml_cpy(
+                ctx_.get(),
+                layer.key->tensor,
+                ggml_dup_tensor(ctx_.get(), layer.key->tensor));
+            auto * value = ggml_cpy(
+                ctx_.get(),
+                layer.value->tensor,
+                ggml_dup_tensor(ctx_.get(), layer.value->tensor));
+            ggml_set_output(key);
+            ggml_set_output(value);
+            keys_.push_back(key);
+            values_.push_back(value);
         }
         logits_ = decoder_out.logits.tensor;
         ggml_set_output(logits_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, logits_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-        if (buffer_ == nullptr) {
+        for (auto * key : keys_) {
+            ggml_build_forward_expand(graph_, key);
+        }
+        for (auto * value : values_) {
+            ggml_build_forward_expand(graph_, value);
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             // Size, not a fault: the graph scales with prompt_steps_, which the
             // caller controls through the transcription prompt and the length of
             // the audio. Say which, and by how much, so the remedy is obvious.
@@ -344,16 +366,15 @@ public:
                 + std::to_string(audio_tokens_) + " are audio tokens); "
                 "shorten the transcription prompt or the audio");
         }
-        const auto pos = modules::qwen_position_ids(prompt_steps_);
-        ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
+        position_ids_ = modules::qwen_position_ids(prompt_steps_);
         debug::timing_log_scalar("qwen3_asr.thinker.prefill.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.thinker.prefill_prompt_steps", prompt_steps_);
     }
 
     ~PrefillGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
         }
     }
 
@@ -376,6 +397,10 @@ public:
             throw std::runtime_error("Qwen3 ASR thinker prefill audio position count mismatch");
         }
         auto timing_start = Clock::now();
+        // Re-uploaded on every run: the graph allocator may hand this leaf out to a
+        // later node once the graph has consumed it, so it cannot be written once at
+        // build time and left alone.
+        ggml_backend_tensor_set(positions_, position_ids_.data(), 0, position_ids_.size() * sizeof(int32_t));
         ggml_backend_tensor_set(token_ids_, token_ids.data(), 0, token_ids.size() * sizeof(int32_t));
         if (audio_tokens_ > 0) {
             std::vector<int64_t> positions(audio_positions.begin(), audio_positions.end());
@@ -430,8 +455,9 @@ private:
     ggml_tensor * logits_ = nullptr;
     std::vector<ggml_tensor *> keys_;
     std::vector<ggml_tensor *> values_;
+    std::vector<int32_t> position_ids_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
 };
 
 class PromptClassificationGraph {
@@ -482,20 +508,21 @@ public:
         ggml_set_output(token_ids_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, token_ids_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-        if (buffer_ == nullptr) {
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+        if (gallocr_ == nullptr ||
+            !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker classification graph");
         }
-        const auto pos = modules::qwen_position_ids(prompt_steps_);
-        ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
+        position_ids_ = modules::qwen_position_ids(prompt_steps_);
         debug::timing_log_scalar("qwen3_asr.thinker.classify.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.thinker.classify_prompt_steps", prompt_steps_);
     }
 
     ~PromptClassificationGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
         }
     }
 
@@ -518,6 +545,8 @@ public:
             throw std::runtime_error("Qwen3 ASR thinker classification audio position count mismatch");
         }
         auto timing_start = Clock::now();
+        // See PrefillGraph::run: leaves are not pinned by the graph allocator.
+        ggml_backend_tensor_set(positions_, position_ids_.data(), 0, position_ids_.size() * sizeof(int32_t));
         ggml_backend_tensor_set(token_ids_input_, input_ids.data(), 0, input_ids.size() * sizeof(int32_t));
         if (audio_tokens_ > 0) {
             std::vector<int64_t> positions(audio_positions.begin(), audio_positions.end());
@@ -558,8 +587,9 @@ private:
     ggml_tensor * audio_positions_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * token_ids_ = nullptr;
+    std::vector<int32_t> position_ids_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
 };
 
 class DecodeGraph {

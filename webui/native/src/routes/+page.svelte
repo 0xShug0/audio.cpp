@@ -68,6 +68,7 @@
   let maxTokens = 1024;
   let sourceFile: File | null = null;
   let voiceFile: File | null = null;
+  let vibeVoiceSpeakerFiles: Array<File | null> = [null, null, null, null];
   let voiceInput: HTMLInputElement | null = null;
   let referenceTextFile: File | null = null;
   let referenceTextInput: HTMLInputElement | null = null;
@@ -229,7 +230,10 @@
     stable_audio: 'Stable Audio 3',
     qwen3_asr: 'Qwen3-ASR',
     vevo2: 'Vevo2',
-    seed_vc: 'Seed-VC'
+    seed_vc: 'Seed-VC',
+    magpie_tts: 'MagpieTTS',
+    meanvc2: 'MeanVC2',
+    personaplex: 'PersonaPlex'
   };
 
   function pathVariantLabel(path: string) {
@@ -344,10 +348,13 @@
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task);
   $: acceptsSource = needsSource || selected?.task === 'gen';
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
+    (selected?.task === 's2s' && selected?.family === 'personaplex') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
+  $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: referenceVoiceRequired = !quickStartVoice && (
+  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task);
+  $: referenceVoiceRequired = !(allowsQuickStartVoice && quickStartVoice) && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
   $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
@@ -492,6 +499,11 @@
       status = 'Reference voice changed. Choose or enter its matching transcript.';
       warningStatus = status;
     }
+  }
+
+  function chooseVibeVoiceSpeaker(index: number, file: File | null) {
+    vibeVoiceSpeakerFiles = vibeVoiceSpeakerFiles.map((current, currentIndex) =>
+      currentIndex === index ? file : current);
   }
 
   function chooseQuickStartVoice(voice: string) {
@@ -860,7 +872,9 @@
 
   function resetParams() {
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
-    paramSpecs = byId;
+    paramSpecs = selected?.family === 'vibevoice'
+      ? byId.filter((spec) => spec.name !== 'voice_samples')
+      : byId;
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     if (selected?.family === 'minimax_h3') {
       duration = 15;
@@ -1077,6 +1091,18 @@
       : ['asr', 'vad', 'diar', 'align', 'midi'].includes(selected.task) ? 16000 : undefined;
     const wav = await browserDecodeToWav(file, targetSampleRate);
     return uploadWav(wav, aborter?.signal);
+  }
+
+  async function vibeVoiceSamplePaths(): Promise<string | undefined> {
+    const firstEmpty = vibeVoiceSpeakerFiles.findIndex((file) => !file);
+    const hasLaterFile = firstEmpty >= 0 && vibeVoiceSpeakerFiles.slice(firstEmpty + 1).some(Boolean);
+    if (hasLaterFile) {
+      throw new StatusWarning('VibeVoice speaker references must be filled from Speaker 1 without gaps.');
+    }
+    const files = vibeVoiceSpeakerFiles.filter((file): file is File => Boolean(file));
+    if (!files.length) return undefined;
+    const paths = await Promise.all(files.map((file) => stagedPath(file)));
+    return paths.filter((path): path is string => Boolean(path)).join(',');
   }
 
   function requestOptions() {
@@ -1369,8 +1395,12 @@
       }
       await ensureLoaded();
       const options = requestOptions();
+      if (usesVibeVoiceSpeakerFiles) {
+        const samples = await vibeVoiceSamplePaths();
+        if (samples) options.voice_samples = samples;
+      }
       const audio = acceptsSource ? await stagedPath(sourceFile) : undefined;
-      const voiceRef = needsVoice ? await stagedPath(voiceFile) : undefined;
+      const voiceRef = needsVoice && !usesVibeVoiceSpeakerFiles ? await stagedPath(voiceFile) : undefined;
 
       if (['tts', 'clon', 'vdes'].includes(selected.task)) {
         if (!text.trim()) throw new StatusWarning('Enter text to generate.');
@@ -1439,7 +1469,7 @@
           request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
           request.seed = resolvedSeed;
-          request.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         }
         if (audio) request.audio = audio;
         if (voiceRef) request.voice_ref = voiceRef;
@@ -2023,8 +2053,8 @@
           {/if}
         {/if}
 
-        {#if needsVoice}
-          {#if quickStartVoices.length}
+        {#if needsVoice && !usesVibeVoiceSpeakerFiles}
+          {#if allowsQuickStartVoice && quickStartVoices.length}
             <label for="quick-start-voice">{server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
@@ -2090,6 +2120,25 @@
               <button type="button" disabled={!voiceFile} on:click={storeCurrentVoice}>{tr('voice.save')}</button>
               <button class="danger" type="button" disabled={!savedVoiceId}
                 on:click={removeCurrentVoice}>{tr('common.delete')}</button>
+            </div>
+          </div>
+        {/if}
+
+        {#if usesVibeVoiceSpeakerFiles}
+          <div class="vibevoice-speakers">
+            <div class="field-label">Speaker references <span>optional, up to 4</span></div>
+            <div class="reference-input-grid">
+              {#each [0, 1, 2, 3] as speaker}
+                <div>
+                  <label for={'vibevoice-speaker-' + speaker}>Speaker {speaker + 1}</label>
+                  <input id={'vibevoice-speaker-' + speaker} class="file file-native" type="file" accept="audio/*"
+                    on:change={(event) => chooseVibeVoiceSpeaker(speaker, event.currentTarget.files?.[0] || null)} />
+                  <label class="file-picker" for={'vibevoice-speaker-' + speaker}>
+                    <strong>{tr('file.choose')}</strong>
+                    <span>{vibeVoiceSpeakerFiles[speaker]?.name || tr('file.none')}</span>
+                  </label>
+                </div>
+              {/each}
             </div>
           </div>
         {/if}

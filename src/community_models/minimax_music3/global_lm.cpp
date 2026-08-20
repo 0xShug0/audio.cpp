@@ -131,7 +131,9 @@ modules::QwenCausalDecodeRuntimeConfig make_minimax_music3_global_lm_runtime_con
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.decoder.lm_head_precision = GGML_PREC_DEFAULT;
     out.readback_round_type = GGML_TYPE_BF16;
-    if (backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Metal) {
+    if (backend_type == core::BackendType::Metal) {
+        out.decoder.lm_head_input_type = GGML_TYPE_F32;
+    } else if (backend_type == core::BackendType::Vulkan) {
         out.decoder.lm_head_input_type = GGML_TYPE_F16;
     } else if (backend_type != core::BackendType::Cpu) {
         out.decoder.lm_head_input_type = GGML_TYPE_BF16;

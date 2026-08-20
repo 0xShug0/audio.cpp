@@ -290,7 +290,7 @@ std::vector<std::vector<float>> MossAudioTokenizerDecoder::decode(
         throw std::runtime_error("MOSS codec decoder forward graph compute failed");
     }
 
-    const int64_t interleaved = steps;  // frames * 3840 * 2 (stereo interleaved)
+    const int64_t interleaved = steps;  // frames * samples_per_frame * channels
     std::vector<float> flat(static_cast<size_t>(interleaved));
     const auto read_start = std::chrono::steady_clock::now();
     ggml_backend_tensor_get(hidden.tensor, flat.data(), 0, flat.size() * sizeof(float));
@@ -301,7 +301,11 @@ std::vector<std::vector<float>> MossAudioTokenizerDecoder::decode(
 
     // De-interleave the jointly-processed stream back into left/right channels
     // (channel 0 = even samples, channel 1 = odd samples).
-    const int64_t per_channel = frames * cd::kSamplesPerFrame;
+    const int64_t per_channel = frames * impl_->config.samples_per_frame;
+    if (impl_->config.channels == 1) {
+        // Mono codecs (v1) emit the waveform directly; there is nothing to de-interleave.
+        return {std::move(flat)};
+    }
     std::vector<std::vector<float>> stereo(2, std::vector<float>(static_cast<size_t>(per_channel)));
     if (collect_timing) {
         deinterleave_ms = engine::debug::measure_ms([&]() {

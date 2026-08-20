@@ -21,10 +21,13 @@ option(AUDIOCPP_DEPLOYMENT_BUILD
 file(GLOB AUDIOCPP_MODEL_SPEC_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/model_specs/*.json")
 set(AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES "")
 set(AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES "")
+set(AUDIOCPP_NATIVE_PACKAGE_SPEC_ENTRIES "")
 foreach(AUDIOCPP_MODEL_SPEC_FILE IN LISTS AUDIOCPP_MODEL_SPEC_FILES)
     get_filename_component(AUDIOCPP_MODEL_SPEC_FAMILY "${AUDIOCPP_MODEL_SPEC_FILE}" NAME_WE)
     file(READ "${AUDIOCPP_MODEL_SPEC_FILE}" AUDIOCPP_MODEL_SPEC_JSON)
     string(APPEND AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES
+        "    {\"${AUDIOCPP_MODEL_SPEC_FAMILY}\", R\"AUDIOCPP_SPEC(${AUDIOCPP_MODEL_SPEC_JSON})AUDIOCPP_SPEC\"},\n")
+    string(APPEND AUDIOCPP_NATIVE_PACKAGE_SPEC_ENTRIES
         "    {\"${AUDIOCPP_MODEL_SPEC_FAMILY}\", R\"AUDIOCPP_SPEC(${AUDIOCPP_MODEL_SPEC_JSON})AUDIOCPP_SPEC\"},\n")
     if (AUDIOCPP_DEPLOYMENT_BUILD)
         string(APPEND AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES
@@ -38,6 +41,9 @@ file(GENERATE
 file(GENERATE
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/gguf_converter_model_specs.inc"
     CONTENT "${AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES}")
+file(GENERATE
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/native_package_specs.inc"
+    CONTENT "${AUDIOCPP_NATIVE_PACKAGE_SPEC_ENTRIES}")
 
 if (NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -89,6 +95,16 @@ option(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS
     OFF)
 option(ENGINE_ENABLE_NATIVE_CPU "Build ggml CPU kernels with native host ISA flags" ${ENGINE_DEFAULT_ENABLE_NATIVE_CPU})
 option(ENGINE_ENABLE_OPENMP "Build host code with OpenMP support" ON)
+option(AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER
+    "Build native model-manager tools and server download/install support"
+    OFF)
+option(AUDIOCPP_USE_SYSTEM_OPENSSL
+    "Use system OpenSSL for native model management instead of bundled BoringSSL"
+    OFF)
+if (AUDIOCPP_USE_SYSTEM_OPENSSL AND NOT AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+    message(FATAL_ERROR
+        "AUDIOCPP_USE_SYSTEM_OPENSSL requires AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON")
+endif()
 option(ENGINE_ENABLE_CPU_ALL_VARIANTS
     "Build CPU backends as dynamic libraries with per-ISA variants (for Docker/portable builds)"
     OFF)
@@ -529,6 +545,19 @@ audiocpp_add_model(parakeet_tdt
         engine::community_models::parakeet_tdt::make_parakeet_tdt_loader
 )
 
+audiocpp_add_model(personaplex
+    SOURCES
+        src/models/personaplex/assets.cpp
+        src/models/personaplex/depformer.cpp
+        src/models/personaplex/lm_runtime.cpp
+        src/models/personaplex/request.cpp
+        src/models/personaplex/session.cpp
+    INCLUDES
+        engine/models/personaplex/session.h
+    LOADERS
+        engine::models::personaplex::make_personaplex_loader
+)
+
 audiocpp_add_model(inflect_v2
     SOURCES
         src/community_models/inflect_v2/assets.cpp
@@ -688,6 +717,23 @@ audiocpp_add_model(moss
         moss_tts_nano
 )
 
+audiocpp_add_model(moss_voicegen
+    SOURCES
+        src/community_models/moss_voicegen/assets.cpp
+        src/community_models/moss_voicegen/backbone.cpp
+        src/community_models/moss_voicegen/delay_decoder.cpp
+        src/community_models/moss_voicegen/heads.cpp
+        src/community_models/moss_voicegen/loader.cpp
+        src/community_models/moss_voicegen/session.cpp
+        src/community_models/moss_voicegen/tokenizer_text.cpp
+    INCLUDES
+        engine/community_models/moss_voicegen/loader.h
+    LOADERS
+        engine::models::moss_voicegen::make_moss_voicegen_loader
+    DEPENDS
+        moss
+)
+
 audiocpp_add_model(muscriptor
     SOURCES
         src/models/muscriptor/assets.cpp
@@ -783,6 +829,23 @@ audiocpp_add_model(fish_audio
         engine/models/fish_audio/loader.h
     LOADERS
         engine::models::fish_audio::make_fish_audio_loader
+)
+
+audiocpp_add_model(magpie_tts
+    SOURCES
+        src/models/magpie_tts/assets.cpp
+        src/models/magpie_tts/request.cpp
+        src/models/magpie_tts/runtime.cpp
+        src/models/magpie_tts/session.cpp
+        src/models/magpie_tts/tokenizer_text.cpp
+    INCLUDES
+        engine/models/magpie_tts/request.h
+        engine/models/magpie_tts/runtime.h
+        engine/models/magpie_tts/session.h
+        engine/models/magpie_tts/tokenizer_text.h
+        engine/models/magpie_tts/types.h
+    LOADERS
+        engine::models::magpie_tts::make_magpie_tts_loader
 )
 
 audiocpp_add_model(confucius4_tts
@@ -1159,6 +1222,27 @@ audiocpp_add_model(seed_vc
         engine::models::seed_vc::make_seed_vc_loader
 )
 
+audiocpp_add_model(meanvc2
+    SOURCES
+        src/models/meanvc2/assets.cpp
+        src/models/meanvc2/asr_encoder.cpp
+        src/models/meanvc2/audio_pipeline.cpp
+        src/models/meanvc2/session.cpp
+        src/models/meanvc2/speaker_encoder.cpp
+        src/models/meanvc2/flow_sampler_runtime.cpp
+        src/models/meanvc2/vocoder.cpp
+    INCLUDES
+        engine/models/meanvc2/assets.h
+        engine/models/meanvc2/asr_encoder.h
+        engine/models/meanvc2/audio_pipeline.h
+        engine/models/meanvc2/session.h
+        engine/models/meanvc2/speaker_encoder.h
+        engine/models/meanvc2/flow_sampler_runtime.h
+        engine/models/meanvc2/vocoder.h
+    LOADERS
+        engine::models::meanvc2::make_meanvc2_loader
+)
+
 audiocpp_add_model(rvc
     SOURCES
         src/models/rvc/assets.cpp
@@ -1307,6 +1391,29 @@ target_include_directories(cjson_vendor PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/external/cJSON
 )
 
+# Native package management is deliberately opt-in. Normal CLI and server
+# builds do not configure an HTTP/TLS dependency. When enabled, package specs
+# remain embedded so the standalone manager and managed WebUI do not require a
+# source checkout or an external model_specs directory.
+if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+    add_subdirectory(external/cpp-httplib)
+    add_library(audiocpp_package_manager STATIC
+        src/framework/package_manager/manager.cpp
+        src/framework/io/json.cpp
+        src/framework/io/filesystem.cpp
+    )
+    target_include_directories(audiocpp_package_manager PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_include_directories(audiocpp_package_manager PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    )
+    target_link_libraries(audiocpp_package_manager PRIVATE
+        cjson_vendor
+        audiocpp_cpp_httplib
+    )
+endif()
+
 add_library(yaml_vendor STATIC
     external/libyaml/src/api.c
     external/libyaml/src/reader.c
@@ -1449,7 +1556,6 @@ add_executable(audiocpp_server
     app/server/base64.cpp
     app/server/config.cpp
     app/server/http.cpp
-    app/server/model_installer.cpp
     app/server/multipart.cpp
     app/server/runtime.cpp
     app/server/ui_assets.cpp
@@ -1460,6 +1566,11 @@ add_executable(audiocpp_server
 )
 
 target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
+if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+    target_sources(audiocpp_server PRIVATE app/server/model_installer.cpp)
+    target_link_libraries(audiocpp_server PRIVATE audiocpp_package_manager)
+    target_compile_definitions(audiocpp_server PRIVATE AUDIOCPP_HAS_NATIVE_MODEL_MANAGER=1)
+endif()
 target_include_directories(audiocpp_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 if (WIN32)
     target_link_libraries(audiocpp_server PRIVATE ws2_32)
@@ -1475,6 +1586,13 @@ target_link_libraries(audiocpp_gguf PRIVATE engine_runtime ggml)
 target_include_directories(audiocpp_gguf PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_gguf PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+    add_executable(audiocpp_model_manager
+        app/model_manager/main.cpp
+    )
+    target_link_libraries(audiocpp_model_manager PRIVATE audiocpp_package_manager)
 endif()
 
 add_executable(model_perf
@@ -1543,6 +1661,51 @@ if (ENGINE_BUILD_TESTS)
         target_link_libraries(codec_decode_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
+    add_executable(moss_voicegen_codec_parity
+        tests/moss_voicegen/codec_decode_parity.cpp
+    )
+
+    target_link_libraries(moss_voicegen_codec_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_codec_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(moss_voicegen_smoke
+        tests/moss_voicegen/voicegen_smoke.cpp
+    )
+
+    target_link_libraries(moss_voicegen_smoke PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_smoke PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(moss_voicegen_generation_parity
+        tests/moss_voicegen/generation_parity.cpp
+    )
+
+    target_link_libraries(moss_voicegen_generation_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_generation_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(moss_voicegen_backbone_parity
+        tests/moss_voicegen/backbone_parity.cpp
+    )
+
+    target_link_libraries(moss_voicegen_backbone_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_backbone_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(moss_voicegen_prompt_parity
+        tests/moss_voicegen/prompt_parity.cpp
+    )
+
+    target_link_libraries(moss_voicegen_prompt_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
     add_executable(codec_encode_parity
         tests/moss_tts_local/codec_encode_parity.cpp
     )
@@ -1550,6 +1713,15 @@ if (ENGINE_BUILD_TESTS)
     target_link_libraries(codec_encode_parity PRIVATE engine_runtime ggml)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(personaplex_ring_kv_cache_parity
+        tests/personaplex/personaplex_ring_kv_cache_parity.cpp
+    )
+
+    target_link_libraries(personaplex_ring_kv_cache_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(personaplex_ring_kv_cache_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
 endif()
 
@@ -2351,17 +2523,24 @@ if (ENGINE_BUILD_TESTS)
         target_link_libraries(parakeet_parity_dump PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
-    add_executable(server_model_installer_test
-        tests/unittests/test_server_model_installer.cpp
-        app/server/model_installer.cpp
-    )
-    target_include_directories(server_model_installer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
-    target_link_libraries(server_model_installer_test PRIVATE Threads::Threads)
+    if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+        add_executable(server_model_installer_test
+            tests/unittests/test_server_model_installer.cpp
+            app/server/model_installer.cpp
+        )
+        target_include_directories(server_model_installer_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/app/server
+            ${CMAKE_CURRENT_BINARY_DIR}/generated)
+        target_link_libraries(server_model_installer_test PRIVATE
+            Threads::Threads engine_runtime audiocpp_package_manager)
+        target_compile_definitions(server_model_installer_test PRIVATE
+            AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
 
-    add_test(
-        NAME server_model_installer_test
-        COMMAND server_model_installer_test
-    )
+        add_test(
+            NAME server_model_installer_test
+            COMMAND server_model_installer_test
+        )
+    endif()
 endif()
 
 if (ENGINE_BUILD_EXAMPLES)

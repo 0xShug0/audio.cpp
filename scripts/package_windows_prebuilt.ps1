@@ -125,6 +125,7 @@ function Write-PackageReadme {
             "",
             '- `audiocpp_cli.exe`',
             '- `audiocpp_server.exe`',
+            '- `audiocpp_model_manager.exe`',
             $cudaRuntimeBullet,
             "- MSVC and OpenMP runtime DLLs required by this build",
             "",
@@ -182,6 +183,7 @@ This package contains:
 
 - `audiocpp_cli.exe`
 - `audiocpp_server.exe`
+- `audiocpp_model_manager.exe`
 - MSVC and OpenMP runtime DLLs required by this build
 
 ## Requirements
@@ -299,8 +301,26 @@ function New-PrebuiltPackage {
     }
     Invoke-Checked "powershell.exe" (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $buildScript) + $buildArgs)
 
+    $buildArgs = @(
+        "-Preset", $Preset,
+        "-Target", "audiocpp_model_manager",
+        "-DeploymentBuild",
+        "-Jobs", $Jobs.ToString(),
+        "-CpuArch", $profileSettings.CpuArch,
+        "-Llamafile", $profileSettings.Llamafile
+    )
+    if ($Kind -eq "cuda") {
+        $buildArgs += @("-CudaArchitectures", $CudaArchitectures)
+    }
+    if ($VsInstall -ne "") {
+        $buildArgs += @("-VsInstall", $VsInstall)
+    }
+    Invoke-Checked "powershell.exe" (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $buildScript) + $buildArgs)
+
     $sourceBin = Join-Path (Join-Path $repoRoot "build") "$Preset\bin"
-    if (-not (Test-Path (Join-Path $sourceBin "audiocpp_cli.exe")) -or -not (Test-Path (Join-Path $sourceBin "audiocpp_server.exe"))) {
+    if (-not (Test-Path (Join-Path $sourceBin "audiocpp_cli.exe")) -or
+        -not (Test-Path (Join-Path $sourceBin "audiocpp_server.exe")) -or
+        -not (Test-Path (Join-Path $sourceBin "audiocpp_model_manager.exe"))) {
         throw "Expected binaries were not found in $sourceBin"
     }
 
