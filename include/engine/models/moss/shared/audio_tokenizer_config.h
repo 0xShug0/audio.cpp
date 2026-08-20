@@ -27,6 +27,9 @@ struct AudioTokenizerQuantizerConfig {
 struct AudioTokenizerConfig {
     int64_t sampling_rate = 48000;
     int64_t samples_per_frame = 3840;
+    // v2 and Nano process left/right as one interleaved stream and split it at the end.
+    // v1 is mono, so its decoder output is already the waveform.
+    int64_t channels = 2;
     AudioTokenizerQuantizerConfig quantizer;
     std::vector<AudioTokenizerTransformerStage> encoder_stages;
     std::vector<AudioTokenizerTransformerStage> decoder_stages;
@@ -38,6 +41,7 @@ struct AudioTokenizerConfig {
     int64_t decoder_module_stride = 2;
 };
 
+AudioTokenizerConfig moss_audio_tokenizer_v1_config();
 AudioTokenizerConfig moss_audio_tokenizer_v2_config();
 AudioTokenizerConfig moss_audio_tokenizer_nano_config();
 

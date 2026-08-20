@@ -717,6 +717,23 @@ audiocpp_add_model(moss
         moss_tts_nano
 )
 
+audiocpp_add_model(moss_voicegen
+    SOURCES
+        src/community_models/moss_voicegen/assets.cpp
+        src/community_models/moss_voicegen/backbone.cpp
+        src/community_models/moss_voicegen/delay_decoder.cpp
+        src/community_models/moss_voicegen/heads.cpp
+        src/community_models/moss_voicegen/loader.cpp
+        src/community_models/moss_voicegen/session.cpp
+        src/community_models/moss_voicegen/tokenizer_text.cpp
+    INCLUDES
+        engine/community_models/moss_voicegen/loader.h
+    LOADERS
+        engine::models::moss_voicegen::make_moss_voicegen_loader
+    DEPENDS
+        moss
+)
+
 audiocpp_add_model(muscriptor
     SOURCES
         src/models/muscriptor/assets.cpp
@@ -1629,6 +1646,51 @@ if (ENGINE_BUILD_TESTS)
     target_link_libraries(codec_decode_parity PRIVATE engine_runtime ggml)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(codec_decode_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(moss_voicegen_codec_parity
+        tests/moss_voicegen/codec_decode_parity.cpp
+    )
+
+    target_link_libraries(moss_voicegen_codec_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_codec_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(moss_voicegen_smoke
+        tests/moss_voicegen/voicegen_smoke.cpp
+    )
+
+    target_link_libraries(moss_voicegen_smoke PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_smoke PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(moss_voicegen_generation_parity
+        tests/moss_voicegen/generation_parity.cpp
+    )
+
+    target_link_libraries(moss_voicegen_generation_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_generation_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(moss_voicegen_backbone_parity
+        tests/moss_voicegen/backbone_parity.cpp
+    )
+
+    target_link_libraries(moss_voicegen_backbone_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_backbone_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(moss_voicegen_prompt_parity
+        tests/moss_voicegen/prompt_parity.cpp
+    )
+
+    target_link_libraries(moss_voicegen_prompt_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(moss_voicegen_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
     add_executable(codec_encode_parity
