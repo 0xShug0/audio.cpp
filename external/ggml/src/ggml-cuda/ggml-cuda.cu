@@ -3423,15 +3423,6 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
 static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
 
     bool use_cuda_graph = true;
-    // Escape hatch for graphs whose leaf inputs live in the compute arena
-    // (gallocr-only flow): replay does not observe host-side tensor_set on
-    // arena-resident inputs. Set GGML_CUDA_DISABLE_GRAPHS=1 to opt out.
-    {
-        static const bool kDisableAll = std::getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr;
-        if (kDisableAll) {
-            return false;
-        }
-    }
     // Loop over nodes in GGML graph to obtain info needed for CUDA graph
 
     for (int i = 0; i < cgraph->n_nodes; i++) {

@@ -694,15 +694,6 @@ static void ggml_gallocr_free_node(ggml_gallocr_t galloc, struct ggml_tensor * n
         return;
     }
 
-    // graph inputs are never freed either: their values are owned by the
-    // caller (uploaded once or per-call) and must survive recompute
-    if (node->flags & GGML_TENSOR_FLAG_INPUT) {
-        if (getenv("F5_DEBUG_FREE")) {
-            fprintf(stderr, "[galloc] not freeing input %s\n", node->name);
-        }
-        return;
-    }
-
     struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
     int buffer_id = hn->buffer_id;
     struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
