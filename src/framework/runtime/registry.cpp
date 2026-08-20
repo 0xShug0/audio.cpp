@@ -86,6 +86,10 @@ bool ModelRegistry::supports_family(const std::string & family) const noexcept {
         if (loader->family() == family) {
             return true;
         }
+        const auto aliases = loader->family_aliases();
+        if (std::find(aliases.begin(), aliases.end(), family) != aliases.end()) {
+            return true;
+        }
     }
     return false;
 }
@@ -160,11 +164,15 @@ void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
 
 const IVoiceModelLoader * ModelRegistry::find_loader(const ModelLoadRequest & request) const {
     for (const auto & loader : loaders_) {
-        if (request.family_hint.has_value() && loader->family() != *request.family_hint) {
-            continue;
-        }
         if (request.family_hint.has_value()) {
-            return loader.get();
+            if (loader->family() == *request.family_hint) {
+                return loader.get();
+            }
+            const auto aliases = loader->family_aliases();
+            if (std::find(aliases.begin(), aliases.end(), *request.family_hint) != aliases.end()) {
+                return loader.get();
+            }
+            continue;
         }
         if (loader->can_load(request)) {
             return loader.get();

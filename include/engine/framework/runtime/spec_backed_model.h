@@ -4,6 +4,7 @@
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/model.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <initializer_list>
@@ -24,6 +25,7 @@ struct OptionV1CompatibilityAlias {
 template <typename Assets>
 struct SpecBackedVoiceModelConfig {
     std::string family;
+    std::vector<std::string> aliases;  // accepted family hints (spec resolution still uses family)
     std::function<std::shared_ptr<const Assets>(const std::filesystem::path &)> load_assets;
     std::function<std::unique_ptr<IVoiceTaskSession>(
         const TaskSpec &,
@@ -159,12 +161,21 @@ public:
         return config_.family;
     }
 
+    std::vector<std::string> family_aliases() const override {
+        return config_.aliases;
+    }
+
+    bool family_matches(const std::string & hint) const {
+        if (hint == config_.family) return true;
+        return std::find(config_.aliases.begin(), config_.aliases.end(), hint) != config_.aliases.end();
+    }
+
     CapabilitySet advertised_capabilities() const override {
         return require_model_contract(config_.family)->capabilities;
     }
 
     bool can_load(const ModelLoadRequest & request) const override {
-        if (request.family_hint.has_value() && *request.family_hint != config_.family) {
+        if (request.family_hint.has_value() && !family_matches(*request.family_hint)) {
             return false;
         }
         try {

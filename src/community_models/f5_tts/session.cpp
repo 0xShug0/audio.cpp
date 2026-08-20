@@ -76,20 +76,32 @@ F5TTSSession::F5TTSSession(
     if (contract_ == nullptr) {
         throw std::runtime_error("F5-TTS session requires a model contract");
     }
-    // Vocos vocoder checkpoint: session option, else vocos.safetensors next
-    // to the DiT checkpoint.
+    // Vocos vocoder checkpoint: session option, else auto-discover (next to
+    // the DiT checkpoint, or the vocos-mel-24khz package installed alongside
+    // the model directory, e.g. <models>/vocos-mel-24khz/model.safetensors).
     const auto vocos_opt = runtime::find_option(
         options.options, {"f5_tts.vocos_path", "vocos_path"});
+    namespace fs = std::filesystem;
     if (vocos_opt.has_value()) {
         vocos_path_ = *vocos_opt;
     } else {
-        const auto sibling = assets_->checkpoint.parent_path() / "vocos.safetensors";
-        if (std::filesystem::exists(sibling)) {
-            vocos_path_ = sibling.string();
-        } else {
+        const fs::path ckpt_dir = assets_->checkpoint.parent_path();
+        const fs::path models_root = ckpt_dir.parent_path().parent_path();
+        const fs::path candidates[] = {
+            ckpt_dir / "vocos.safetensors",
+            models_root / "vocos-mel-24khz" / "vocos.safetensors",
+            models_root / "vocos-mel-24khz" / "model.safetensors",
+        };
+        for (const auto & c : candidates) {
+            if (fs::exists(c)) {
+                vocos_path_ = c.string();
+                break;
+            }
+        }
+        if (vocos_path_.empty()) {
             throw std::runtime_error(
-                "F5-TTS: no vocos vocoder configured; set session option "
-                "f5_tts.vocos_path to vocos.safetensors");
+                "F5-TTS: no vocos vocoder found; install the vocos_mel_24khz "
+                "package or set session option f5_tts.vocos_path");
         }
     }
     if (const auto d = runtime::find_option(options.options, {"f5_tts.dialect", "dialect"})) {
@@ -177,6 +189,7 @@ runtime::TaskResult F5TTSSession::run(const runtime::TaskRequest & request) {
 std::shared_ptr<runtime::IVoiceModelLoader> make_f5_tts_loader() {
     runtime::SpecBackedVoiceModelConfig<F5TTSAssets> config;
     config.family = std::string(kFamily);
+    config.aliases = {"habibi", "habibi_tts"};
     config.load_assets = load_f5_tts_assets;
     config.create_session = [](
                                 const runtime::TaskSpec & task,

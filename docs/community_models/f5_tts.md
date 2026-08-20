@@ -35,6 +35,37 @@ Vocos checkpoint (or place `vocos.safetensors` next to the DiT checkpoint), opti
 `f5_tts.dialect` default. Requests take `reference_text` (required), `dialect`, `speed`, `seed`,
 `num_inference_steps`, `guidance_scale`, `sway_sampling_coef`.
 
+## Quickstart (from a fresh clone)
+
+Everything needed is installable from this repository — no Python inference stack required:
+
+```bash
+# 1. Build (f5_tts is included in AUDIOCPP_MODEL_SET=full, or select it explicitly)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAUDIOCPP_MODEL_SET=custom \
+      -DAUDIOCPP_MODELS=f5_tts -DENGINE_ENABLE_CUDA=ON
+cmake --build build --parallel --target audiocpp_cli audiocpp_server
+
+# 2. Download the model + the required Vocos vocoder (safe to re-run)
+python3 tools/model_manager_v2.py install habibi_unified   # DiT checkpoint + vocab
+python3 tools/model_manager_v2.py install vocos_mel_24khz  # vocoder (auto-discovered)
+# Per-dialect specialized checkpoints (stronger accent): habibi_alg, habibi_egy,
+# habibi_irq, habibi_mar, habibi_msa, habibi_sau, habibi_uae
+
+# 3. Synthesize (zero-shot: any short reference WAV + its transcript)
+build/bin/audiocpp_cli --task tts --family habibi \
+    --model <models>/Habibi-TTS/Unified \
+    --voice-ref /path/to/reference.wav \
+    --reference-text 'transcript of the reference audio' \
+    --text 'أهلا، هذا نص عربي تجريبي.' \
+    --request-option dialect=UNK --out out.wav
+```
+
+The session finds the vocoder automatically (`f5_tts.vocos_path` session option,
+`vocos.safetensors` next to the checkpoint, or the `vocos-mel-24khz` package next to the
+model directory). Dialects: `UNK MSA SAU UAE ALG IRQ EGY MAR OMN TUN LEV SDN LBY`.
+Reference audio longer than ~10.9s is truncated (with a warning) — keep refs under that
+and make sure the transcript matches, otherwise the transcript tail leaks into the output.
+
 ## Relevant building blocks already in-tree
 
 - Vocos vocoder: `src/models/vevo2/components.cpp`, `src/models/index_tts2/`
