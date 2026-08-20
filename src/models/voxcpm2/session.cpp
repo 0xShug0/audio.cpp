@@ -575,12 +575,23 @@ VoxCPM2GenerationOptions VoxCPM2SessionBase::generation_options_from_request(
            "voxcpm1.guidance_scale"})) {
     options.guidance_scale = *value;
   }
+  bool retry_badcase_explicit = false;
   if (const auto match = runtime::find_option_match(
           request.options,
           {"voxcpm2.retry_badcase", "voxcpm1.retry_badcase",
            "retry_badcase"})) {
     options.retry_badcase =
         runtime::parse_bool_option(match->value, match->key);
+    retry_badcase_explicit = true;
+  }
+  // Streaming emits decoded chunks to the client in real time, so a bad-case
+  // retry (regenerate from scratch, discard earlier output) is impossible by
+  // construction. The struct default retry_badcase=true exists for the
+  // offline path; it must not leak into the streaming path and block every
+  // streaming request. Relax it to false unless the caller explicitly asked
+  // for retry, which the generator accepts and warns about.
+  if (!retry_badcase_explicit && task_.mode == runtime::RunMode::Streaming) {
+    options.retry_badcase = false;
   }
   if (const auto value = runtime::parse_i64_option(
           request.options,

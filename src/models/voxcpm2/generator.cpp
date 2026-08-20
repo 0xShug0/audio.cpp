@@ -1560,8 +1560,9 @@ public:
                          &chunk_callback) {
     validate_generation_options(options);
     if (options.retry_badcase) {
-      throw std::runtime_error(
-          "VoxCPM2 streaming generation requires retry_badcase=false");
+      fprintf(stderr,
+              "[VoxCPM2] warning: retry_badcase ignored in streaming "
+              "generation\n");
     }
     const auto prefill = build_prefill_sequence(text, prompt);
     const int64_t max_tokens =
