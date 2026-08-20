@@ -1089,8 +1089,19 @@ F5SynthesisResult f5_synthesize(
     }
     auto ref_mel = compute_mel(ref24);
     int ref_frames = static_cast<int>(ref_mel.size()) / kNMel;
-    constexpr int kMaxRefFrames = 512;
+    // The reference may use at most half the frame budget so a meaningful
+    // generation budget remains. CRITICAL: the ref audio and ref_text must
+    // stay aligned — truncating the audio while keeping the full transcript
+    // makes the model speak the UNSAMPLED remainder of the transcript into
+    // the generated region (observed: EGY ref leaked "استخدمه هيعجبك اوي"
+    // when its 7.84s audio was cut to 5.46s).
+    const int kMaxRefFrames = frame_budget() / 2;
     if (ref_frames > kMaxRefFrames) {
+        std::fprintf(stderr,
+            "F5-TTS: reference audio is %.1fs (%d frames) — truncated to %d frames (half the "
+            "frame budget). The transcript tail will leak into the output; use a reference "
+            "shorter than %.1fs or raise F5_FRAME_BUDGET.\n",
+            ref_frames / 93.75, ref_frames, kMaxRefFrames, kMaxRefFrames / 93.75);
         std::vector<float> trimmed(static_cast<size_t>(kMaxRefFrames) * kNMel);
         for (int t = 0; t < kMaxRefFrames; ++t) {
             for (int m = 0; m < kNMel; ++m) {
