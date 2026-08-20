@@ -898,7 +898,10 @@ std::vector<std::string> chunk_text(const std::string & text, size_t max_chars) 
         pieces.emplace_back(piece_start, text.size());
     }
     // split every piece into <= max_chars slices (oversize sentences too),
-    // then pack greedily with tiny-piece absorption
+    // snapping each cut to a WORD boundary: a mid-word slice makes the next
+    // chunk start mid-word right after the reference prompt, and the model
+    // drops the straddled word (observed: "لن |"يحتفظ" split). Falls back to
+    // a hard cut only when the window contains no space at all.
     std::vector<std::pair<size_t, size_t>> slices;
     for (const auto & [ps, pe] : pieces) {
         size_t cs = ps;
@@ -908,6 +911,15 @@ std::vector<std::string> chunk_text(const std::string & text, size_t max_chars) 
                 const unsigned char c = static_cast<unsigned char>(text[ce]);
                 ce += c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : 4;
                 ++cnt;
+            }
+            if (ce < pe) {
+                // back off to just after the last space inside the window
+                for (size_t k = ce; k > cs + 1; --k) {
+                    if (text[k - 1] == ' ') {
+                        ce = k;
+                        break;
+                    }
+                }
             }
             slices.emplace_back(cs, ce);
             cs = ce;
@@ -920,10 +932,13 @@ std::vector<std::string> chunk_text(const std::string & text, size_t max_chars) 
             const std::string & prev = chunks.back();
             const size_t prev_c = utf8_char_count(prev);
             // merge when it fits, or when the piece is tiny (< 12 chars):
-            // tiny chunks destabilize the sampler (observed NaN on 5 chars)
+            // tiny chunks destabilize the sampler (observed NaN on 5 chars).
+            // Absorbing beyond the size budget overflows the duration
+            // estimate into the 1024-frame cap -> clipped trailing words, so
+            // the allowance stays within the chunk-sizing safety margin.
             const bool tiny = pc < 12;
             const bool fits = prev_c + pc <= max_chars;
-            const bool absorb = tiny && prev_c + pc <= max_chars * 2;
+            const bool absorb = tiny && prev_c + pc <= max_chars + 4;
             if (fits || absorb) {
                 chunks.back() = prev + piece;
                 continue;
@@ -940,6 +955,23 @@ struct ChunkResult {
     int duration_real = 0;
 };
 
+// Total mel-frame budget for one CFM pass (ref + generated). 2048 allows
+// sentence-scale chunks (fewer seams, splits land on clause boundaries —
+// the 1024 budget forced ~57-char mid-word slices that dropped straddled
+// words) at ~6 GiB peak on an RTX 3090 (measured). F5_FRAME_BUDGET
+// overrides for tuning.
+int frame_budget() {
+    static const int budget = [] {
+        const char * env = std::getenv("F5_FRAME_BUDGET");
+        if (env != nullptr) {
+            const int v = std::atoi(env);
+            if (v >= 256 && v <= 8192) return v;
+        }
+        return 2048;
+    }();
+    return budget;
+}
+
 // One CFM pass for a single chunk: the original pipeline verbatim.
 ChunkResult synthesize_chunk(
     const std::string & model_path,
@@ -951,7 +983,8 @@ ChunkResult synthesize_chunk(
     const std::string & chunk_ref_text,
     F5ComputeDevice & dev,
     uint32_t seed,
-    std::vector<float> * out_final_latent_rows) {
+    std::vector<float> * out_final_latent_rows,
+    double duration_slack = 1.0) {
     const F5Architecture arch;
 
     // Pacing in CHARACTERS (Arabic is 2 bytes/char; byte-based pacing
@@ -967,11 +1000,15 @@ ChunkResult synthesize_chunk(
     const double rate = std::max(std::min(ref_rate, kMaxFramesPerChar), 93.75 / 14.0);
     float local_speed = request.speed;
     if (gen_chars < 10) local_speed = 0.3F;
-    int duration = ref_frames + static_cast<int>(rate * gen_chars / local_speed);
+    // duration_slack (>1 for chunked long-form): the rate estimate has zero
+    // tolerance for run-to-run pace variance; mid-text chunk tails end on
+    // whole words, and any undershoot clips the last word (observed: "النفط",
+    // "فقط" dropped at chunk tails). Excess frames become a short tail pause.
+    int duration = ref_frames + static_cast<int>(rate * gen_chars * duration_slack / local_speed);
     duration = std::max(duration, gen_chars + 1);
     // per-chunk safety cap: a single chunk never exceeds the graph budget;
     // longer inputs are split upstream by chunk_text instead of truncated.
-    constexpr int kChunkFrameCap = 1024;
+    const int kChunkFrameCap = frame_budget();
     if (duration > kChunkFrameCap) duration = kChunkFrameCap;
     const int duration_real = duration;
     duration = (duration + 63) / 64 * 64;  // graph bucket reuse
@@ -1077,7 +1114,7 @@ F5SynthesisResult f5_synthesize(
     const double rate0 = std::max(
         std::min(static_cast<double>(ref_frames) / ref_chars0, 93.75 / 2.5),
         93.75 / 14.0);
-    const int gen_budget = 1024 - ref_frames;  // frames a chunk may generate
+    const int gen_budget = frame_budget() - ref_frames;  // frames a chunk may generate
     // chars per chunk: budget / rate with a safety margin, so the duration
     // estimate NEVER engages the 1024-frame cap (cap = compressed speech).
     // The absolute floor is small: a slow reference legitimately means short
@@ -1100,7 +1137,7 @@ F5SynthesisResult f5_synthesize(
             model_path, request, ref_mel, ref_frames, chunk_ids,
             chunks[ci], ref_text, dev,
             request.fixed_seed ? request.seed + static_cast<uint32_t>(ci) : 0,
-            nullptr);
+            nullptr, chunks.size() > 1 ? 1.20 : 1.0);
         all_rows.insert(all_rows.end(), out.gen_mel_rows.begin(), out.gen_mel_rows.end());
     }
 
