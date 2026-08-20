@@ -58,9 +58,10 @@ public:
     // wrong integration step: feeding the reference's own x and t makes any
     // difference in the result attributable to the graph alone.
     //
-    // `x` is (lanes * sequence_length, latent_size) row-major and sets the
-    // sequence length for this call. `lanes` is 1 (conditional only) or 3
-    // (cond, text-uncond, speaker-uncond). Requires prepare_conditioning().
+    // `x` is (sequence_length, latent_size) row-major -- always a SINGLE lane --
+    // and sets the sequence length for this call. `lanes` selects how many
+    // velocity fields come back: 1 (conditional only) or 3 (cond, text-uncond,
+    // speaker-uncond, concatenated). Requires prepare_conditioning().
     std::vector<float> denoise_once(const std::vector<float> & x, float t, int lanes = 1);
 
 

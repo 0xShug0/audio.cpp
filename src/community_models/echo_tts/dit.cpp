@@ -857,12 +857,15 @@ std::vector<float> EchoDitRuntime::denoise_once(const std::vector<float> & x, fl
     if (lanes < 1) {
         throw std::runtime_error("Echo-TTS denoise_once() requires at least one lane");
     }
+    // `x` is always ONE lane. `lanes` selects how many velocity fields the
+    // denoiser returns -- see sampler.cpp, which calls denoise(x_t, t, 3) with
+    // an x_t of exactly `elements`, then expects elements * 3 back. Dividing
+    // the input by `lanes` here would set a sequence length 3x too small.
     const int64_t latent_size = impl_->config().latent_size;
-    const int64_t per_lane = latent_size * lanes;
-    if (latent_size <= 0 || static_cast<int64_t>(x.size()) % per_lane != 0) {
+    if (latent_size <= 0 || static_cast<int64_t>(x.size()) % latent_size != 0) {
         throw std::runtime_error("Echo-TTS denoise_once() received a mis-shaped latent buffer");
     }
-    impl_->set_sequence_length(static_cast<int64_t>(x.size()) / per_lane);
+    impl_->set_sequence_length(static_cast<int64_t>(x.size()) / latent_size);
     return impl_->denoise(x, t, lanes);
 }
 
