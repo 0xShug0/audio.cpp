@@ -956,6 +956,41 @@ struct ChunkResult {
     int duration_real = 0;
 };
 
+// Trim head/tail silence from a chunk's generated mel rows. The model parks
+// unused duration slack as long pauses at chunk EDGES (observed: 1.5-3s
+// pauses mid-text with a fast-paced reference), which lands between random
+// word pairs once chunks are concatenated. Speech log-mel row means sit far
+// above the silence floor (speech ~-0.5, pauses ~-6..-8), so -4.0 separates
+// them robustly. A short head/tail is kept for natural word spacing; a chunk
+// ending on sentence-final punctuation keeps a longer tail pause.
+void trim_chunk_mel_silence(
+    std::vector<float> & rows, int & gen_frames, bool sentence_final_tail) {
+    if (gen_frames <= 0) return;
+    const float kThresh = -4.0F;
+    const auto row_mean = [&](int t) {
+        const float * r = rows.data() + static_cast<size_t>(t) * kNMel;
+        float acc = 0.0F;
+        for (int m = 0; m < kNMel; ++m) acc += r[m];
+        return acc / kNMel;
+    };
+    int first = 0;
+    while (first < gen_frames && row_mean(first) < kThresh) ++first;
+    first = std::max(0, first - 9);  // keep ~0.1s lead-in
+    int last = gen_frames - 1;
+    while (last >= first && row_mean(last) < kThresh) --last;
+    if (last < first) return;  // all-silent chunk (pathological): leave as-is
+    const int tail_keep = sentence_final_tail ? 47 : 24;  // ~0.5s / ~0.26s
+    last = std::min(gen_frames - 1, last + tail_keep);
+    const int keep = last - first + 1;
+    if (keep >= gen_frames) return;
+    std::vector<float> trimmed(static_cast<size_t>(keep) * kNMel);
+    std::memcpy(trimmed.data(), rows.data() + static_cast<size_t>(first) * kNMel,
+                trimmed.size() * sizeof(float));
+    rows = std::move(trimmed);
+    gen_frames = keep;
+}
+
+
 // Total mel-frame budget for one CFM pass (ref + generated). 2048 allows
 // sentence-scale chunks (fewer seams, splits land on clause boundaries —
 // the 1024 budget forced ~57-char mid-word slices that dropped straddled
@@ -979,6 +1014,7 @@ ChunkResult synthesize_chunk(
     const F5SynthesisRequest & request,
     const std::vector<float> & ref_mel_cols,  // [100][ref_frames]
     int ref_frames,
+    int ref_voiced_frames,
     const std::vector<int32_t> & chunk_ids,
     const std::string & chunk_text_string,
     const std::string & chunk_ref_text,
@@ -994,7 +1030,7 @@ ChunkResult synthesize_chunk(
     // reference cannot drag generated speech into a compressed clamp.
     const int gen_chars = static_cast<int>(utf8_char_count(chunk_text_string));
     const int ref_chars = std::max(1, static_cast<int>(utf8_char_count(chunk_ref_text)));
-    const double ref_rate = static_cast<double>(ref_frames) / ref_chars;  // frames/char
+    const double ref_rate = static_cast<double>(ref_voiced_frames) / ref_chars;  // frames/char
     // ceiling only guards pathological refs (e.g. mostly silence); the
     // reference's speaking rate drives pacing, so slow refs stay slow
     constexpr double kMaxFramesPerChar = 93.75 / 2.5;  // >= 2.5 chars/s floor... (frames/char ceiling)
@@ -1113,6 +1149,21 @@ F5SynthesisResult f5_synthesize(
         ref_frames = kMaxRefFrames;
     }
 
+    // Voiced ref frames for the pacing rate: ref_frames/ref_chars counts the
+    // reference's internal pauses as speech time, so a dramatic/paused
+    // reference (the EGY sample) inflates the frames-per-char rate and the
+    // model parks the excess duration as long mid-text pauses. Count only
+    // frames whose log-mel row mean is above the silence floor.
+    int ref_voiced_frames = 0;
+    for (int t = 0; t < ref_frames; ++t) {
+        float acc = 0.0F;
+        for (int m = 0; m < kNMel; ++m) {
+            acc += ref_mel[static_cast<size_t>(m) * ref_frames + t];
+        }
+        if (acc / kNMel > -4.0F) ++ref_voiced_frames;
+    }
+    ref_voiced_frames = std::max(1, ref_voiced_frames);
+
     F5ComputeDevice dev;
     dev.use_cuda = request.use_cuda;
     dev.device = request.cuda_device;
@@ -1124,7 +1175,7 @@ F5SynthesisResult f5_synthesize(
     // chunk N (voice and prosody continuity across seams) ----
     const int ref_chars0 = std::max<int>(1, static_cast<int>(utf8_char_count(request.ref_text)));
     const double rate0 = std::max(
-        std::min(static_cast<double>(ref_frames) / ref_chars0, 93.75 / 2.5),
+        std::min(static_cast<double>(ref_voiced_frames) / ref_chars0, 93.75 / 2.5),
         93.75 / 14.0);
     const int gen_budget = frame_budget() - ref_frames;  // frames a chunk may generate
     // chars per chunk: budget / rate with a safety margin, so the duration
@@ -1155,10 +1206,15 @@ F5SynthesisResult f5_synthesize(
         const std::string full = assemble_chunk_text(request.dialect, ref_text, chunks[ci]);
         const auto chunk_ids = tokenize_text(vocab, full);
         auto out = synthesize_chunk(
-            model_path, request, ref_mel, ref_frames, chunk_ids,
+            model_path, request, ref_mel, ref_frames, ref_voiced_frames, chunk_ids,
             chunks[ci], ref_text, dev,
             base_seed + static_cast<uint32_t>(ci),
             nullptr, chunks.size() > 1 ? 1.20 : 1.0);
+        if (chunks.size() > 1) {
+            const char last_ch = chunks[ci].empty() ? ' ' : chunks[ci].back();
+            const bool sent_final = last_ch == '.' || last_ch == '!' || last_ch == '?';
+            trim_chunk_mel_silence(out.gen_mel_rows, out.gen_frames, sent_final);
+        }
         all_rows.insert(all_rows.end(), out.gen_mel_rows.begin(), out.gen_mel_rows.end());
     }
 
