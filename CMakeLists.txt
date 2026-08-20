@@ -713,8 +713,17 @@ audiocpp_add_model(neutts
 audiocpp_add_model(echo_tts
     SOURCES
         src/community_models/echo_tts/session.cpp
+        src/community_models/echo_tts/tokenizer.cpp
+        src/community_models/echo_tts/latent_post.cpp
+        src/community_models/echo_tts/sampler.cpp
+        src/community_models/echo_tts/dit.cpp
     INCLUDES
         engine/community_models/echo_tts/session.h
+        engine/community_models/echo_tts/config.h
+        engine/community_models/echo_tts/tokenizer.h
+        engine/community_models/echo_tts/latent_post.h
+        engine/community_models/echo_tts/sampler.h
+        engine/community_models/echo_tts/dit.h
     LOADERS
         engine::models::echo_tts::make_echo_tts_loader
 )

@@ -5,22 +5,120 @@
   "description": "Echo-TTS is an English zero-shot voice-cloning TTS model packaged for audio.cpp. A 2.8B diffusion transformer generates 80-D latents in PCA space which the Fish S1-DAC decodes to 44.1 kHz audio. Generation is a fixed 29.72 s window (640 latents).",
   "category": "tts",
   "status": "experimental",
-  "tasks": ["clone"],
-  "modes": ["offline"],
-  "languages": ["en"],
-  "runtime": { "tags": ["gguf"] },
-  "capabilities": { "clone": ["speaker_reference"] },
+  "tasks": [
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
   "options": {
     "request": [
-      { "name": "target_voice", "type": "audio_path", "description": "Reference audio path for zero-shot cloning. Wav only; no transcript required.", "required": false },
-      { "name": "cfg_scale_text", "type": "float", "description": "Classifier-free guidance scale on the text condition.", "required": false, "min": 0.0, "default": 3.0 },
-      { "name": "cfg_scale_speaker", "type": "float", "description": "Classifier-free guidance scale on the speaker condition.", "required": false, "min": 0.0, "default": 8.0 },
-      { "name": "num_steps", "type": "int", "description": "Euler sampler steps.", "required": false, "min": 1, "default": 40 },
-      { "name": "truncation_factor", "type": "float", "description": "Initial-noise truncation factor.", "required": false, "min": 0.0, "max": 1.0, "default": 0.8 },
-      { "name": "speaker_kv_scale", "type": "float", "description": "Force-speaker KV scaling. 1.0 disables; 1.5 is the upstream default when enabled.", "required": false, "min": 1.0, "default": 1.0 },
-      { "name": "seed", "type": "int", "description": "RNG seed for the initial latent.", "required": false, "default": 0 }
+      {
+        "name": "target_voice",
+        "type": "audio_path",
+        "description": "Reference audio path for zero-shot cloning. Wav only; no transcript required.",
+        "required": false
+      },
+      {
+        "name": "cfg_scale_text",
+        "type": "float",
+        "description": "Classifier-free guidance scale on the text condition.",
+        "required": false,
+        "min": 0.0,
+        "default": 3.0
+      },
+      {
+        "name": "cfg_scale_speaker",
+        "type": "float",
+        "description": "Classifier-free guidance scale on the speaker condition.",
+        "required": false,
+        "min": 0.0,
+        "default": 8.0
+      },
+      {
+        "name": "num_steps",
+        "type": "int",
+        "description": "Euler sampler steps.",
+        "required": false,
+        "min": 1,
+        "default": 40
+      },
+      {
+        "name": "truncation_factor",
+        "type": "float",
+        "description": "Initial-noise truncation factor.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.8
+      },
+      {
+        "name": "speaker_kv_scale",
+        "type": "float",
+        "description": "Force-speaker KV scaling. 1.0 disables; 1.5 is the upstream default when enabled.",
+        "required": false,
+        "min": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "RNG seed for the initial latent.",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "reference_max_seconds",
+        "type": "float",
+        "required": false,
+        "description": "Trim the speaker reference to at most this many seconds before encoding. Shorter references are cheaper and often clone better; upstream's guidance favours around 10 s. Defaults to 15 s. Values above the trained maximum of 297.1 s are clamped. Set per request, or as a session default from CLI or server config.",
+        "default": 15.0
+      },
+      {
+        "name": "sequence_length",
+        "type": "int",
+        "description": "Pin the generation window in latents (1..640; 640 = 29.72 s). Left unset, the window is estimated per chunk from text length and widened automatically if the utterance does not finish inside it, which is substantially cheaper for short text.",
+        "required": false,
+        "min": 1,
+        "max": 640
+      },
+      {
+        "name": "cfg_interval",
+        "type": "int",
+        "description": "Refresh the two unconditional CFG lanes only every Nth step inside the guidance window, reusing the previous guidance correction in between. 1 reproduces upstream exactly. Worth raising to 2 at 30+ steps, where the correction is still measured 8-10 times across the guided phase (roughly 1.3x fewer denoiser evaluations); not recommended below ~20 steps, where it is already coarsely sampled and staleness shows up as degraded timbre and text adherence.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "reference_max_seconds",
+        "type": "float",
+        "required": false,
+        "description": "Trim the speaker reference to at most this many seconds before encoding. Shorter references are cheaper and often clone better; upstream's guidance favours around 10 s. Defaults to 15 s. Values above the trained maximum of 297.1 s are clamped. Set per request, or as a session default from CLI or server config.",
+        "default": 15.0
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "required": false,
+        "description": "How many encoded speaker references to keep. Encoding is linear in reference length, so reusing a voice across requests avoids repeating it. 0 disables caching; default 4."
+      }
+    ],
     "load": []
   },
   "packages": [
@@ -31,7 +129,9 @@
       "format": "gguf",
       "precision": "orig",
       "target_directory": "Echo-TTS-GGUF",
-      "files": ["Echo-TTS-GGUF/model.gguf"],
+      "files": [
+        "Echo-TTS-GGUF/model.gguf"
+      ],
       "download": {
         "kind": "unsupported",
         "reason": "Echo-TTS model packaging is not implemented yet."
@@ -42,7 +142,11 @@
   "dependencies": [],
   "ui": {
     "recommended_package": "echo_tts_orig",
-    "tags": ["TTS", "Clone", "GGUF"],
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
     "docs": []
   },
   "sources": [
@@ -51,6 +155,20 @@
       "roots": {
         "model": ".",
         "weights": "$gguf"
+      },
+      "tensors": {
+        "dit_weights": {
+          "source": "weights:",
+          "prefix": "dit_weights"
+        },
+        "pca": {
+          "source": "weights:",
+          "prefix": "pca"
+        },
+        "codec_weights": {
+          "source": "weights:",
+          "prefix": "ae"
+        }
       }
     }
   ]
