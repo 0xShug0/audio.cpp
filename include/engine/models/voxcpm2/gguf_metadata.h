@@ -31,6 +31,7 @@ public:
 
     [[nodiscard]] std::optional<std::string> optional_string(std::string_view key) const;
     [[nodiscard]] std::optional<uint32_t> optional_u32(std::string_view key) const;
+    [[nodiscard]] std::optional<float> optional_f32(std::string_view key) const;
     [[nodiscard]] std::optional<std::vector<std::string>> optional_string_array(std::string_view key) const;
     [[nodiscard]] std::optional<std::vector<int32_t>> optional_i32_array(std::string_view key) const;
     [[nodiscard]] std::optional<std::vector<float>> optional_f32_array(std::string_view key) const;

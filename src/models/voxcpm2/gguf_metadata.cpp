@@ -51,6 +51,17 @@ std::optional<uint32_t> GgufMetadataReader::optional_u32(std::string_view key) c
     return gguf_get_val_u32(gguf_, idx);
 }
 
+std::optional<float> GgufMetadataReader::optional_f32(std::string_view key) const {
+    if (gguf_ == nullptr) {
+        return std::nullopt;
+    }
+    const int64_t idx = gguf_find_key(gguf_, std::string(key).c_str());
+    if (idx < 0 || gguf_get_kv_type(gguf_, idx) == GGUF_TYPE_ARRAY) {
+        return std::nullopt;
+    }
+    return gguf_get_val_f32(gguf_, idx);
+}
+
 std::optional<std::vector<std::string>> GgufMetadataReader::optional_string_array(std::string_view key) const {
     if (gguf_ == nullptr) {
         return std::nullopt;

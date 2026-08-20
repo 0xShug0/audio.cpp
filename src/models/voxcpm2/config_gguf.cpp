@@ -139,10 +139,14 @@ VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource &
     config.dit.num_layers = get_optional_i64("voxcpm_dit_config_num_layers").value_or(4);
     config.dit.kv_channels = get_optional_i64("voxcpm_dit_config_kv_channels").value_or(config.dit.hidden_dim / config.dit.num_heads);
     config.dit.mean_mode = get_optional_bool("voxcpm_dit_config_mean_mode").value_or(false);
-    config.dit.cfm.sigma_min = 1e-4f;  // Default
-    config.dit.cfm.solver = "euler";
-    config.dit.cfm.t_scheduler = "log-norm";
-    config.dit.cfm.inference_cfg_rate = 0.5f;  // Default
+    config.dit.cfm.sigma_min =
+        metadata.optional_f32("voxcpm_dit_config_cfm_config_sigma_min").value_or(1.0e-6F);
+    config.dit.cfm.solver =
+        metadata.optional_string("voxcpm_dit_config_cfm_config_solver").value_or("euler");
+    config.dit.cfm.t_scheduler =
+        metadata.optional_string("voxcpm_dit_config_cfm_config_t_scheduler").value_or("log-norm");
+    config.dit.cfm.inference_cfg_rate =
+        metadata.optional_f32("voxcpm_dit_config_cfm_config_inference_cfg_rate").value_or(2.0F);
 
     // Audio VAE config
     config.audio_vae.encoder_dim = get_optional_i64("voxcpm_audio_vae_config_encoder_dim").value_or(64);
