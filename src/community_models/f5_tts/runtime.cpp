@@ -1,5 +1,7 @@
 #include "engine/community_models/f5_tts/runtime.h"
 
+#include "cpu_graph_compute.h"
+
 #include "engine/community_models/f5_tts/dit_modules.h"
 #include "engine/community_models/f5_tts/weights.h"
 
@@ -659,7 +661,7 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
 
     const auto status = is_cuda
         ? core::compute_backend_graph(model.backend, g.graph, nullptr, "f5_dit_cfg")
-        : ggml_graph_compute_with_ctx(g.ctx, g.graph,
+        : f5_cpu_graph_compute(g.ctx, g.graph,
               dev.threads > 0 ? dev.threads : static_cast<int>(std::thread::hardware_concurrency()));
     if (is_cuda) ggml_backend_synchronize(model.backend);
     if (status != GGML_STATUS_SUCCESS) {
@@ -899,7 +901,7 @@ std::vector<float> f5_dit_forward(
     std::vector<float> out;
     const auto status = is_cuda
         ? core::compute_backend_graph(model.backend, g.graph, nullptr, "f5_dit")
-        : ggml_graph_compute_with_ctx(g.ctx, g.graph,
+        : f5_cpu_graph_compute(g.ctx, g.graph,
               dev.threads > 0 ? dev.threads
                               : static_cast<int>(std::thread::hardware_concurrency()));
     if (is_cuda) {

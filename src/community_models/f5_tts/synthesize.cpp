@@ -1,6 +1,10 @@
 #include "engine/community_models/f5_tts/synthesize.h"
 
+#include "cpu_graph_compute.h"
+
 #include "engine/community_models/f5_tts/runtime.h"
+
+#include "cpu_graph_compute.h"
 
 #include "engine/framework/core/backend.h"
 
@@ -777,7 +781,7 @@ std::vector<float> vocos_decode_gpu(
     }
     const auto status = is_cuda
         ? core::compute_backend_graph(backend, g.graph, nullptr, "f5_vocos")
-        : ggml_graph_compute_with_ctx(g.ctx, g.graph,
+        : f5_cpu_graph_compute(g.ctx, g.graph,
               dev.threads > 0 ? dev.threads
                               : static_cast<int>(std::thread::hardware_concurrency()));
     if (is_cuda) {

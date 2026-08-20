@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "f5_tts",
   "display_name": "F5-TTS",
-  "description": "Community F5-TTS flow-matching diffusion transformer for zero-shot voice cloning, including Arabic via the Habibi-TTS finetune (SWivid). Text conv conditioner, RoPE DiT, CFM sampler, Vocos vocoder. M0 scaffolding: inference not implemented yet.",
+  "description": "Community F5-TTS flow-matching diffusion transformer for zero-shot voice cloning, including Arabic via the Habibi-TTS finetune (SWivid). Text conv conditioner, RoPE DiT, CFM sampler, Vocos vocoder.",
   "category": "tts",
   "status": "community",
   "tasks": [
@@ -32,7 +32,14 @@
         "name": "reference_text",
         "type": "string",
         "description": "Transcript matching the reference voice audio; required by F5-TTS zero-shot cloning.",
-        "required": false
+        "required": true
+      },
+      {
+        "name": "dialect",
+        "type": "string",
+        "description": "Habibi dialect token: UNK MSA SAU UAE ALG IRQ EGY MAR OMN TUN LEV SDN LBY; default UNK.",
+        "required": false,
+        "default": "UNK"
       },
       {
         "name": "cfg_strength",
@@ -68,9 +75,40 @@
         "required": false,
         "min": 0,
         "default": 0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "CFM Euler steps (NFE); default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance strength; default 2.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 10.0,
+        "default": 2.0
       }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "vocos_path",
+        "type": "string",
+        "description": "Path to the Vocos vocoder checkpoint (vocos.safetensors); required unless placed next to the DiT checkpoint.",
+        "required": false
+      },
+      {
+        "name": "dialect",
+        "type": "string",
+        "description": "Default Habibi dialect token for requests that do not set it; default UNK.",
+        "required": false,
+        "default": "UNK"
+      }
+    ],
     "load": []
   },
   "package_defaults": {

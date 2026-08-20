@@ -14,37 +14,8 @@
     "streaming"
   ],
   "languages": [
-    "ar",
-    "my",
-    "zh",
-    "zh dialects",
-    "da",
-    "nl",
     "en",
-    "fi",
-    "fr",
-    "de",
-    "el",
-    "he",
-    "hi",
-    "id",
-    "it",
-    "ja",
-    "km",
-    "ko",
-    "lo",
-    "ms",
-    "no",
-    "pl",
-    "pt",
-    "ru",
-    "es",
-    "sw",
-    "sv",
-    "tl",
-    "th",
-    "tr",
-    "vi"
+    "zh"
   ],
   "capabilities": {
     "clone": [

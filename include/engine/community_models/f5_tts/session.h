@@ -5,18 +5,17 @@
 #include "engine/framework/runtime/session.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
+#include <filesystem>
 #include <memory>
 #include <string>
 
 namespace engine::models::f5_tts {
 
-// F5-TTS community model assets.
-//
-// M0 scaffolding: only the resource bundle is loaded so model discovery and
-// registration work end to end. Later milestones will load the text
-// conditioner, DiT transformer, and Vocos vocoder weights here.
+// F5-TTS community model assets: resource bundle + resolved checkpoint path.
+// Weights are loaded lazily by the runtime on first synthesis (graph cache).
 struct F5TTSAssets {
     assets::ResourceBundle resources;
+    std::filesystem::path checkpoint;  // DiT *.safetensors (ema weights)
 };
 
 class F5TTSSession final : public runtime::IOfflineVoiceTaskSession {
@@ -39,7 +38,11 @@ private:
     runtime::RunMode run_mode_;
     std::shared_ptr<const F5TTSAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
-    std::string reference_text_;
+    std::string vocos_path_;
+    std::string dialect_ = "UNK";
+    bool use_cuda_ = false;
+    int cuda_device_ = 0;
+    int threads_ = 0;
 };
 
 std::shared_ptr<const F5TTSAssets> load_f5_tts_assets(
