@@ -177,6 +177,52 @@
         "vocoder.gguf"
       ],
       "strip_prefix": ""
+    },
+    {
+      "id": "minimax_music3_q8_0",
+      "display_name": "MiniMax Music 3 Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MiniMax-Music3-GGUF",
+      "files": [
+        "config.json",
+        "config/language_model.json",
+        "config/rvq_depth_decoder.json",
+        "config/condition_encoder.json",
+        "config/transformer.json",
+        "config/vocoder.json",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "language_model_q8_0.gguf",
+        "rvq_depth_decoder_q8_0.gguf",
+        "condition_encoder.gguf",
+        "transformer_q8_0.gguf",
+        "vocoder.gguf"
+      ],
+      "strip_prefix": ""
+    },
+    {
+      "id": "minimax_music3_bf16",
+      "display_name": "MiniMax Music 3 BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MiniMax-Music3-GGUF",
+      "files": [
+        "config.json",
+        "config/language_model.json",
+        "config/rvq_depth_decoder.json",
+        "config/condition_encoder.json",
+        "config/transformer.json",
+        "config/vocoder.json",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "language_model_bf16.gguf",
+        "rvq_depth_decoder_bf16.gguf",
+        "condition_encoder.gguf",
+        "transformer_bf16.gguf",
+        "vocoder.gguf"
+      ],
+      "strip_prefix": ""
     }
   ],
   "dependencies": [],

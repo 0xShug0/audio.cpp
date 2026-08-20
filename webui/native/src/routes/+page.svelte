@@ -344,7 +344,7 @@
     })
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
-    comparablePath(model.path) === comparablePath(modelPath));
+    modelMatchesSelectedPackage(model, selected));
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task);
   $: acceptsSource = needsSource || selected?.task === 'gen';
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
@@ -422,13 +422,39 @@
     return catalogPathMatches(choice.path, path);
   }
 
+  function mergedSessionOptions(entry: CatalogEntry) {
+    const packageChoice = selectedPackageChoice(entry);
+    return { ...(entry.session_options || {}), ...(packageChoice?.session_options || {}) };
+  }
+
+  function packageSessionOptionsMatch(entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) {
+    const expected = choice.session_options || {};
+    const keys = Array.from(new Set((entry.install_packages || [])
+      .flatMap((candidate) => Object.keys(candidate.session_options || {}))));
+    if (!keys.length) return true;
+    const actual = model.session_options || {};
+    return keys.every((key) => actual[key] === expected[key]);
+  }
+
+  function modelMatchesPackage(entry: CatalogEntry, model: LoadedModel, choice: InstallPackageChoice) {
+    return packagePathMatches(choice, model.path) && packageSessionOptionsMatch(entry, choice, model);
+  }
+
+  function modelMatchesSelectedPackage(model: LoadedModel, entry: CatalogEntry | undefined) {
+    if (!entry) return comparablePath(model.path) === comparablePath(modelPath);
+    const choice = selectedPackageChoice(entry);
+    if (!choice) return comparablePath(model.path) === comparablePath(modelPath);
+    return comparablePath(model.path) === comparablePath(modelPath) &&
+      packageSessionOptionsMatch(entry, choice, model);
+  }
+
   function residentModel(entry: CatalogEntry, models = loadedModels) {
     return models.find((model) => model.id === entry.id && model.loaded);
   }
 
   function packageIsResident(entry: CatalogEntry, choice: InstallPackageChoice, models = loadedModels) {
     const resident = residentModel(entry, models);
-    return Boolean(resident && packagePathMatches(choice, resident.path));
+    return Boolean(resident && modelMatchesPackage(entry, resident, choice));
   }
 
   function packageIsAvailable(
@@ -442,7 +468,7 @@
 
   function studioPackageSlots(entry: CatalogEntry) {
     const choices = entry.install_packages || [];
-    if (entry.family === 'ace_step') {
+    if (entry.family === 'ace_step' || entry.family === 'minimax_music3') {
       return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
     }
     const q8 = choices.find((choice) => choice.format === 'gguf' &&
@@ -743,7 +769,7 @@
       const resident = residentModel(entry, models);
       if (!resident) continue;
       const choice = (entry.install_packages || []).find((candidate) =>
-        packagePathMatches(candidate, resident.path));
+        modelMatchesPackage(entry, resident, candidate));
       if (choice && nextIds[entry.id] !== choice.id) {
         nextIds[entry.id] = choice.id;
         changed = true;
@@ -761,9 +787,8 @@
     const staleEntries = catalog.filter((entry) => {
       const resident = residentModel(entry);
       if (!resident) return false;
-      const residentPath = comparablePath(resident.path);
       const residentChoice = (entry.install_packages || []).find((choice) =>
-        comparablePath(resolveCatalogPath(choice.path)) === residentPath);
+        modelMatchesPackage(entry, resident, choice));
       return Boolean(residentChoice && sizes[residentChoice.id]?.installed === false);
     });
     if (!staleEntries.length) return false;
@@ -1020,7 +1045,7 @@
         task: selected.task,
         mode: modeOverride || selected.mode || 'offline',
         load_options: selected.load_options || {},
-        session_options: selected.session_options || {}
+        session_options: mergedSessionOptions(selected)
       });
       await refresh();
       status = tr('status.modelReady', { model: selected.display_name });
@@ -1135,7 +1160,8 @@
     if (!isLoaded) {
       await doLoad();
       await refresh();
-      if (!loadedModels.some((model) => model.id === selectedId && model.loaded)) {
+      if (!loadedModels.some((model) => model.id === selectedId && model.loaded &&
+        modelMatchesSelectedPackage(model, selected))) {
         throw new Error('Model did not load.');
       }
     }
@@ -1154,7 +1180,8 @@
       await refresh();
     }
     if (!loadedModels.some((model) =>
-      model.id === selectedId && model.loaded && model.mode === mode)) {
+      model.id === selectedId && model.loaded && model.mode === mode &&
+        modelMatchesSelectedPackage(model, selected))) {
       throw new Error(`Model did not load in ${mode} mode.`);
     }
   }
