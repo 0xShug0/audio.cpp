@@ -445,7 +445,7 @@ private:
     // For V1 models, synthesized weights (Xavier init) should not count as present
     const bool has_fusion_proj =
         proj.fusion_concat_proj.weight.tensor != nullptr &&
-        !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
+        config.architecture == "voxcpm2";
 
     if (has_fusion_proj) {
       // Concat + Linear (used by V2 and some V1 models trained with fusion)
@@ -814,7 +814,7 @@ public:
     // For V1 models, synthesized weights (Xavier init) should not count as present
     const bool has_fusion_proj =
         weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
-        !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
+        config.architecture == "voxcpm2";
     const int64_t patch_elems = 2 * config.feat_dim * config.patch_size;
     if (static_cast<int64_t>(x.size()) != patch_elems) {
       throw std::runtime_error("VoxCPM2 DiT estimator x size mismatch");
@@ -1036,7 +1036,7 @@ private:
     // For V1 models, synthesized weights (Xavier init) should not count as present
     const bool has_fusion_proj =
         weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
-        !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
+        root_config.architecture == "voxcpm2";
     mu_ = engine::core::make_tensor(
               ctx, GGML_TYPE_F32,
               has_fusion_proj
@@ -1282,7 +1282,7 @@ public:
     // For V1 models, synthesized weights (Xavier init) should not count as present
     const bool has_fusion_proj =
         weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
-        !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
+        config.architecture == "voxcpm2";
     if (timesteps <= 0) {
       throw std::runtime_error("VoxCPM2 CFM requires positive timesteps");
     }
@@ -1933,7 +1933,7 @@ private:
       // For V1 models, synthesized weights (Xavier init) should not count as present
       const bool has_fusion_proj =
           weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
-          !weights_->assets().model_weights->is_synthesized("fusion_concat_proj.weight");
+          config.architecture == "voxcpm2";
       const auto mu = has_fusion_proj
                           ? concat_dit_mu(projected.current_lm_dit_hidden,
                                           projected.residual_dit_hidden)

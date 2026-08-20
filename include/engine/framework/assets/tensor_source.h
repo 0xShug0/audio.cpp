@@ -118,7 +118,6 @@ public:
     [[nodiscard]] std::string require_tensor_name(
         std::initializer_list<std::string_view> candidates) const;
     [[nodiscard]] virtual int64_t require_i64_scalar(std::string_view name) const = 0;
-    [[nodiscard]] virtual bool is_synthesized(std::string_view) const noexcept { return false; }
 };
 
 [[nodiscard]] TensorStorageType parse_tensor_storage_type(std::string_view value);
