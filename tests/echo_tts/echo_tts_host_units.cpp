@@ -9,6 +9,21 @@
 // implementation at tts-bench/venvs/echo/src/inference.py -- `tokenizer_encode`
 // for the token streams and `find_flattening_point` for the crop indices -- not
 // by reasoning about what it ought to return.
+//
+// Two review findings shaped the fixtures, and both are worth stating so they
+// are not "simplified" back out:
+//
+//   * The PCA basis here is RECTANGULAR and non-symmetric on purpose. An
+//     identity basis is its own transpose, so a round trip over one cannot
+//     distinguish `components[c * features + k]` from the transposed indexing,
+//     and a mean or scale dropped on both legs cancels. Both projection and
+//     inversion are therefore pinned against independently computed values
+//     rather than against each other.
+//
+//   * The flattening fixtures include a tail that is quiet but NOT zero and a
+//     tail that is flat but too loud. Only all-zero fixtures would let an
+//     implementation that merely searches for a zero window pass without ever
+//     evaluating the standard-deviation and mean thresholds.
 
 #include "engine/community_models/echo_tts/config.h"
 #include "engine/community_models/echo_tts/latent_post.h"
@@ -16,6 +31,7 @@
 
 #include "../unittests/test_assert.h"
 
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -24,12 +40,31 @@
 namespace {
 
 using engine::test::require;
-using engine::test::require_close;
 using engine::test::require_eq;
 
 using namespace engine::models::echo_tts;
 
 constexpr int64_t kMaxLength = 768;  // upstream's hard cap
+
+// The shared require_close compares `fabs(a - b) > tolerance`, which is FALSE
+// for a NaN difference, so a NaN silently passes every float assertion. Reject
+// non-finite values explicitly before deferring to it.
+void require_close(float actual, float expected, float tolerance, const std::string & label) {
+    if (!std::isfinite(actual)) {
+        throw std::runtime_error(label + " is not finite");
+    }
+    engine::test::require_close(actual, expected, tolerance, label);
+}
+
+void require_ids(const std::vector<int32_t> & actual,
+                 const std::vector<int32_t> & expected,
+                 const std::string & label) {
+    require_eq(static_cast<int64_t>(actual.size()), static_cast<int64_t>(expected.size()),
+               label + " length");
+    for (size_t i = 0; i < expected.size(); ++i) {
+        require_eq(actual[i], expected[i], label + " id " + std::to_string(i));
+    }
+}
 
 std::vector<int32_t> encode(const std::string & text) {
     return tokenize_echo_text(text, kMaxLength).input_ids;
@@ -46,6 +81,12 @@ void test_normalisation_matches_reference() {
 
     require_eq(normalize_echo_text("(parenthesised start)"), std::string("(parenthesised start)"),
                "a leading paren suppresses the tag");
+
+    // Upstream's tag check is a bare substring search for "S1"/"S2" anywhere in
+    // the string, not a prefix check, so prose containing those two characters
+    // loses the speaker tag. Faithful, and pinned so it stays faithful.
+    require_eq(normalize_echo_text("This is S1 talking"), std::string("This is S1 talking"),
+               "a bare S1 anywhere suppresses the tag, as upstream does");
 
     // Colons and semicolons become commas, an em dash becomes ", ", an ellipsis
     // becomes "...", a right single quote becomes an apostrophe, and a newline
@@ -64,26 +105,37 @@ void test_normalisation_matches_reference() {
 }
 
 void test_tokenisation_matches_reference() {
-    // A BOS 0 followed by the raw UTF-8 bytes of the normalised string.
-    const auto hello = encode("Hello world.");
-    require_eq(static_cast<int64_t>(hello.size()), static_cast<int64_t>(18), "hello token count");
-    const std::vector<int32_t> hello_prefix{0, 91, 83, 49, 93, 32, 72, 101, 108, 108, 111, 32};
-    for (size_t i = 0; i < hello_prefix.size(); ++i) {
-        require_eq(hello[i], hello_prefix[i], "hello token " + std::to_string(i));
-    }
+    // Full id vectors, not lengths. A length-preserving rewrite -- signed char
+    // sign-extension on the multibyte U+201C below being the obvious one --
+    // passes a count check and fails these.
+    require_ids(encode("Hello world."),
+                {0, 91, 83, 49, 93, 32, 72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 46},
+                "hello");
 
-    require_eq(static_cast<int64_t>(encode("[S1] Already tagged.").size()),
-               static_cast<int64_t>(21), "pre-tagged token count");
+    require_ids(encode("[S1] Already tagged."),
+                {0, 91, 83, 49, 93, 32, 65, 108, 114, 101, 97, 100, 121, 32, 116, 97, 103, 103,
+                 101, 100, 46},
+                "pre-tagged");
 
-    const auto paren = encode("(parenthesised start)");
-    require_eq(static_cast<int64_t>(paren.size()), static_cast<int64_t>(22), "paren token count");
-    require_eq(paren[1], static_cast<int32_t>('('), "paren text is not re-tagged");
+    require_ids(encode("(parenthesised start)"),
+                {0, 40, 112, 97, 114, 101, 110, 116, 104, 101, 115, 105, 115, 101, 100, 32, 115,
+                 116, 97, 114, 116, 41},
+                "paren");
 
-    require_eq(static_cast<int64_t>(
-                   encode("Time: 3; place \xE2\x80\x94 here\xE2\x80\xA6 he said "
-                          "\xE2\x80\x9Cgo\xE2\x80\x9D and it\xE2\x80\x99s fine.\nNext line.")
-                       .size()),
-               static_cast<int64_t>(72), "punctuation-heavy token count");
+    require_ids(encode("This is S1 talking"),
+                {0, 84, 104, 105, 115, 32, 105, 115, 32, 83, 49, 32, 116, 97, 108, 107, 105, 110,
+                 103},
+                "bare S1");
+
+    // 226/128/156 is the untouched left double quote: three unsigned bytes.
+    require_ids(encode("Time: 3; place \xE2\x80\x94 here\xE2\x80\xA6 he said "
+                       "\xE2\x80\x9Cgo\xE2\x80\x9D and it\xE2\x80\x99s fine.\nNext line."),
+                {0, 91, 83, 49, 93, 32, 84, 105, 109, 101, 44, 32, 51, 44, 32, 112, 108, 97, 99,
+                 101, 32, 44, 32, 32, 104, 101, 114, 101, 46, 46, 46, 32, 104, 101, 32, 115, 97,
+                 105, 100, 32, 226, 128, 156, 103, 111, 34, 32, 97, 110, 100, 32, 105, 116, 39,
+                 115, 32, 102, 105, 110, 101, 46, 32, 78, 101, 120, 116, 32, 108, 105, 110, 101,
+                 46},
+                "punctuation-heavy");
 }
 
 void test_tokeniser_truncates_at_max_length() {
@@ -93,6 +145,17 @@ void test_tokeniser_truncates_at_max_length() {
                "truncated length includes the BOS");
     require(tokens.truncated, "over-long input is reported as truncated");
     require_eq(tokens.input_ids.front(), static_cast<int32_t>(0), "BOS survives truncation");
+
+    // The surviving ids are the *leading* bytes, not zero padding: everything
+    // after the BOS is the tag "[S1] " and then 'a'.
+    const std::vector<int32_t> head{0, 91, 83, 49, 93, 32, 97, 97};
+    for (size_t i = 0; i < head.size(); ++i) {
+        require_eq(tokens.input_ids[i], head[i], "truncated head id " + std::to_string(i));
+    }
+    require_eq(tokens.input_ids.back(), static_cast<int32_t>('a'), "truncation keeps a real byte");
+    for (const float m : tokens.mask) {
+        require_close(m, 1.0F, 1e-6F, "a fully truncated sequence has no padding");
+    }
 
     const auto shortish = tokenize_echo_text("Hello world.", kMaxLength);
     require(!shortish.truncated, "short input is not reported as truncated");
@@ -106,114 +169,190 @@ void test_mask_marks_real_tokens() {
     }
 }
 
+void test_pad_to_max_zeroes_the_tail() {
+    const auto padded = tokenize_echo_text("Hello world.", kMaxLength, true, true);
+    require_eq(static_cast<int64_t>(padded.input_ids.size()), kMaxLength, "padded id length");
+    require_eq(static_cast<int64_t>(padded.mask.size()), kMaxLength, "padded mask length");
+
+    constexpr int64_t kReal = 18;  // "[S1] Hello world." plus the BOS
+    for (int64_t i = 0; i < kMaxLength; ++i) {
+        const auto idx = static_cast<size_t>(i);
+        if (i < kReal) {
+            require_close(padded.mask[idx], 1.0F, 1e-6F, "real mask " + std::to_string(i));
+        } else {
+            require_close(padded.mask[idx], 0.0F, 1e-6F, "pad mask " + std::to_string(i));
+            require_eq(padded.input_ids[idx], static_cast<int32_t>(0),
+                       "pad id " + std::to_string(i));
+        }
+    }
+}
+
 // --- PCA -------------------------------------------------------------------
 
-// A square identity basis makes project/unproject an exact bijection, so any
-// round-trip error is the implementation's own rather than the subspace's.
-EchoPcaState identity_pca(int64_t dim, float scale) {
+// A rectangular, non-symmetric orthonormal basis: 2 components over 4 features.
+// Rectangular so a transposed read is a different computation rather than the
+// same one; orthonormal so the projected coefficients are exact in binary
+// floating point and can be written down by hand.
+//
+//   b0 = [ 0.5,  0.5,  0.5,  0.5]
+//   b1 = [ 0.5, -0.5,  0.5, -0.5]
+//   mean = [1, 2, 3, 4], latent_scale = 0.5
+//
+// Because 2 components cannot span 4 features, the round trip is deliberately
+// LOSSY -- it returns the projection of the input onto span{b0, b1}, which is
+// what the real (80, 1024) basis does too. An identity fixture hides that.
+constexpr int64_t kFeatures = 4;
+constexpr int64_t kComponents = 2;
+
+EchoPcaState rectangular_pca() {
     EchoPcaState pca;
-    pca.components.assign(static_cast<size_t>(dim * dim), 0.0F);
-    for (int64_t i = 0; i < dim; ++i) {
-        pca.components[static_cast<size_t>(i * dim + i)] = 1.0F;
-    }
-    pca.mean.assign(static_cast<size_t>(dim), 0.0F);
-    for (int64_t i = 0; i < dim; ++i) {
-        pca.mean[static_cast<size_t>(i)] = 0.25F * static_cast<float>(i);
-    }
-    pca.latent_scale = scale;
+    pca.components = {0.5F, 0.5F, 0.5F, 0.5F,
+                      0.5F, -0.5F, 0.5F, -0.5F};
+    pca.mean = {1.0F, 2.0F, 3.0F, 4.0F};
+    pca.latent_scale = 0.5F;
     return pca;
 }
 
-void test_pca_round_trip_is_lossless_on_an_orthonormal_basis() {
-    constexpr int64_t kDim = 16;
-    constexpr int64_t kFrames = 5;
-
+EchoTtsConfig rectangular_config() {
     EchoTtsConfig config;
-    config.latent_size = kDim;
-    config.ae_latent_dim = kDim;
+    config.latent_size = kComponents;
+    config.ae_latent_dim = kFeatures;
+    return config;
+}
 
-    // The real checkpoint ships latent_scale = 1/18; use it rather than 1.0 so
-    // a dropped scale on either leg shows up.
-    const auto pca = identity_pca(kDim, 0.0555555559694767F);
+void test_pca_projection_matches_hand_computed_values() {
+    const auto pca = rectangular_pca();
+    const auto config = rectangular_config();
 
-    std::vector<float> z_q(static_cast<size_t>(kFrames * kDim));
-    for (int64_t f = 0; f < kFrames; ++f) {
-        for (int64_t k = 0; k < kDim; ++k) {
-            z_q[static_cast<size_t>(f * kDim + k)] =
-                static_cast<float>(f) - 2.0F + 0.5F * static_cast<float>(k);
-        }
-    }
+    // Frame 0: z_q - mean = [1, 2, 3, 4]; dot(b0) = 5, dot(b1) = -1; scaled by 0.5.
+    // Frame 1: z_q - mean = [-1, -2, -3, -4]; dot(b0) = -5, dot(b1) = 1.
+    const std::vector<float> z_q{2.0F, 4.0F, 6.0F, 8.0F,
+                                 0.0F, 0.0F, 0.0F, 0.0F};
+    const std::vector<float> expected{2.5F, -0.5F,
+                                      -2.5F, 0.5F};
 
-    const auto latents = pca_project(pca, config, z_q, kFrames);
-    require_eq(static_cast<int64_t>(latents.size()), kFrames * kDim, "projected size");
-
-    const auto recovered = pca_unproject(pca, config, latents, kFrames);
-    require_eq(static_cast<int64_t>(recovered.size()), kFrames * kDim, "unprojected size");
-
-    for (size_t i = 0; i < z_q.size(); ++i) {
-        require_close(recovered[i], z_q[i], 1e-3F, "pca round trip element " + std::to_string(i));
+    const auto latents = pca_project(pca, config, z_q, 2);
+    require_eq(static_cast<int64_t>(latents.size()), static_cast<int64_t>(expected.size()),
+               "projected size");
+    for (size_t i = 0; i < expected.size(); ++i) {
+        require_close(latents[i], expected[i], 1e-6F, "projection element " + std::to_string(i));
     }
 }
 
-void test_pca_applies_the_latent_scale() {
-    constexpr int64_t kDim = 4;
-    EchoTtsConfig config;
-    config.latent_size = kDim;
-    config.ae_latent_dim = kDim;
+void test_pca_inversion_matches_hand_computed_values() {
+    const auto pca = rectangular_pca();
+    const auto config = rectangular_config();
 
-    EchoPcaState pca = identity_pca(kDim, 0.5F);
-    pca.mean.assign(static_cast<size_t>(kDim), 0.0F);  // isolate the scale
+    // Pinned independently of the forward pass so a mean or scale dropped on
+    // both legs cannot cancel:
+    //   frame 0: coeffs [2.5, -0.5] / 0.5 = [5, -1]
+    //            mean + 5*b0 - 1*b1 = [1,2,3,4] + [2.5]*4 + [-0.5, 0.5, -0.5, 0.5]
+    //                               = [3, 5, 5, 7]
+    //   frame 1: coeffs [-5, 1] -> [1,2,3,4] + [-2.5]*4 + [0.5,-0.5,0.5,-0.5]
+    //                            = [-1, -1, 1, 1]
+    const std::vector<float> latents{2.5F, -0.5F,
+                                     -2.5F, 0.5F};
+    const std::vector<float> expected{3.0F, 5.0F, 5.0F, 7.0F,
+                                      -1.0F, -1.0F, 1.0F, 1.0F};
 
-    const std::vector<float> z_q{2.0F, 4.0F, 6.0F, 8.0F};
+    const auto recovered = pca_unproject(pca, config, latents, 2);
+    require_eq(static_cast<int64_t>(recovered.size()), static_cast<int64_t>(expected.size()),
+               "unprojected size");
+    for (size_t i = 0; i < expected.size(); ++i) {
+        require_close(recovered[i], expected[i], 1e-6F, "inversion element " + std::to_string(i));
+    }
+}
+
+void test_pca_round_trip_recovers_an_in_subspace_vector() {
+    const auto pca = rectangular_pca();
+    const auto config = rectangular_config();
+
+    // Exactly on span{b0, b1} once the mean is removed, so the lossy projection
+    // is an identity here and the round trip must be exact -- 1e-6, not 1e-3.
+    const std::vector<float> z_q{1.0F + 2.0F, 2.0F + 1.0F, 3.0F + 2.0F, 4.0F + 1.0F};
+
     const auto latents = pca_project(pca, config, z_q, 1);
+    const auto recovered = pca_unproject(pca, config, latents, 1);
     for (size_t i = 0; i < z_q.size(); ++i) {
-        require_close(latents[i], z_q[i] * 0.5F, 1e-6F,
-                      "projection scales by latent_scale, element " + std::to_string(i));
+        require_close(recovered[i], z_q[i], 1e-6F, "round trip element " + std::to_string(i));
     }
 }
 
 void test_pca_rejects_mis_shaped_buffers() {
-    EchoTtsConfig config;
-    config.latent_size = 4;
-    config.ae_latent_dim = 4;
-    const auto pca = identity_pca(4, 1.0F);
+    const auto pca = rectangular_pca();
+    const auto config = rectangular_config();
 
-    bool threw = false;
+    bool projected_threw = false;
     try {
         pca_project(pca, config, std::vector<float>(7, 0.0F), 2);
     } catch (const std::exception &) {
-        threw = true;
+        projected_threw = true;
     }
-    require(threw, "a mis-shaped z_q buffer is rejected rather than read out of bounds");
+    require(projected_threw, "a mis-shaped z_q buffer is rejected rather than read out of bounds");
+
+    bool inverted_threw = false;
+    try {
+        pca_unproject(pca, config, std::vector<float>(3, 0.0F), 2);
+    } catch (const std::exception &) {
+        inverted_threw = true;
+    }
+    require(inverted_threw, "a mis-shaped latent buffer is rejected");
+
+    bool zero_scale_threw = false;
+    try {
+        EchoPcaState broken = pca;
+        broken.latent_scale = 0.0F;
+        pca_unproject(broken, config, std::vector<float>(2, 0.0F), 1);
+    } catch (const std::exception &) {
+        zero_scale_threw = true;
+    }
+    require(zero_scale_threw, "a zero latent_scale is rejected rather than dividing by zero");
 }
 
 // --- flattening point ------------------------------------------------------
 
-std::vector<float> alternating(int64_t frames, int64_t latent_size, int64_t active_frames) {
-    std::vector<float> out(static_cast<size_t>(frames * latent_size), 0.0F);
+constexpr int64_t kCropFrames = 60;
+constexpr int64_t kCropLatent = 4;
+
+// Loud alternating +-1 for `active_frames`, then a constant `tail` value.
+std::vector<float> loud_then_tail(int64_t active_frames, float tail) {
+    std::vector<float> out(static_cast<size_t>(kCropFrames * kCropLatent), tail);
     for (int64_t f = 0; f < active_frames; ++f) {
-        for (int64_t c = 0; c < latent_size; ++c) {
-            out[static_cast<size_t>(f * latent_size + c)] = ((f + c) % 2 == 0) ? 1.0F : -1.0F;
+        for (int64_t c = 0; c < kCropLatent; ++c) {
+            out[static_cast<size_t>(f * kCropLatent + c)] = ((f + c) % 2 == 0) ? 1.0F : -1.0F;
         }
     }
     return out;
 }
 
-void test_flattening_point_matches_reference() {
-    constexpr int64_t kFrames = 60;
-    constexpr int64_t kLatent = 4;
+int64_t crop(const std::vector<float> & latents) {
+    return find_flattening_point(latents, kCropFrames, kCropLatent);
+}
 
+void test_flattening_point_matches_reference() {
     // Active for 30 frames, then silent. Reference returns 30.
-    require_eq(find_flattening_point(alternating(kFrames, kLatent, 30), kFrames, kLatent),
-               static_cast<int64_t>(30), "crop lands where the signal goes flat");
+    require_eq(crop(loud_then_tail(30, 0.0F)), static_cast<int64_t>(30),
+               "crop lands where the signal goes flat");
 
     // Never flattens: the reference falls through to len(data).
-    require_eq(find_flattening_point(alternating(kFrames, kLatent, kFrames), kFrames, kLatent),
-               kFrames, "a latent that never flattens keeps every frame");
+    require_eq(crop(loud_then_tail(kCropFrames, 0.0F)), kCropFrames,
+               "a latent that never flattens keeps every frame");
 
     // Flat from the first frame.
-    require_eq(find_flattening_point(alternating(kFrames, kLatent, 0), kFrames, kLatent),
-               static_cast<int64_t>(0), "an all-silent latent crops to nothing");
+    require_eq(crop(loud_then_tail(0, 0.0F)), static_cast<int64_t>(0),
+               "an all-silent latent crops to nothing");
+
+    // Quiet but NOT zero: std is 0 and |mean - 0| = 0.02 < 0.1, so this must
+    // still crop at 30. An implementation that looks for an all-zero window
+    // rather than evaluating both thresholds fails here.
+    require_eq(crop(loud_then_tail(30, 0.02F)), static_cast<int64_t>(30),
+               "a quiet non-zero tail still counts as flat");
+
+    // Flat but too loud: std is 0, yet |mean - 0| = 0.5 exceeds 0.1, so no
+    // window qualifies and the crop falls through to every frame. This is the
+    // case that pins the mean threshold rather than just the std threshold.
+    require_eq(crop(loud_then_tail(30, 0.5F)), kCropFrames,
+               "a flat but loud tail is not a flattening point");
 }
 
 }  // namespace
@@ -224,8 +363,10 @@ int main() {
         test_tokenisation_matches_reference();
         test_tokeniser_truncates_at_max_length();
         test_mask_marks_real_tokens();
-        test_pca_round_trip_is_lossless_on_an_orthonormal_basis();
-        test_pca_applies_the_latent_scale();
+        test_pad_to_max_zeroes_the_tail();
+        test_pca_projection_matches_hand_computed_values();
+        test_pca_inversion_matches_hand_computed_values();
+        test_pca_round_trip_recovers_an_in_subspace_vector();
         test_pca_rejects_mis_shaped_buffers();
         test_flattening_point_matches_reference();
         std::cout << "echo_tts_host_units: ok\n";

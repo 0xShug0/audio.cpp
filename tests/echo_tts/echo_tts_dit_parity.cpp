@@ -4,22 +4,36 @@
 // from the upstream PyTorch implementation, so it is driven by hand, the same
 // way dots_tts_vocoder_parity is.
 //
-//   python3 tools/community_models/echo_tts_reference.py \
-//       --speaker ref.wav --full-blocks -o echo_ref.npz
-//   python3 tools/community_models/echo_tts_pack_reference.py \
-//       echo_ref.npz -o echo_ref.bin
+//   python3 tools/community_models/echo_tts_reference.py --speaker ref.wav
+//       --full-blocks -o echo_ref.npz
+//   python3 tools/community_models/echo_tts_pack_reference.py echo_ref.npz
+//       -o echo_ref.bin
 //   ./echo_tts_dit_parity --model /path/to/Echo-TTS-GGUF --reference echo_ref.bin
 //
 // Two checks, deliberately separate:
 //
 //   denoiser  feeds the reference's own x and t through one conditional
-//             forward. Any difference is attributable to the graph alone, so a
-//             wrong block cannot hide behind a compensating integration error.
+//             forward, removing the sampler from the comparison entirely.
 //
-//   sampler   runs the full 40-step trajectory from the same seed. This one is
-//             expected to be close but not exact: the host RNG reproduces the
-//             CUDA Philox stream to cosine 1.0 with a median error of 2 ULP,
-//             which compounds slightly over 40 steps. Cosine, never equality.
+//             It does NOT isolate the DiT blocks by themselves. The reference
+//             text ids and speaker latents are injected, but prepare_conditioning()
+//             then runs our own text encoder, speaker encoder and KV
+//             projections, so a difference here could originate in any of
+//             them. It is a combined conditioning-plus-denoiser comparison,
+//             which is still enough to catch a wrong block -- nothing is being
+//             compared against itself -- but not enough to localise one.
+//
+//   sampler   runs the full 40-step trajectory. Run it twice: once from the
+//             reference's own initial noise, which removes the RNG from the
+//             comparison, and once from our seeded draw.
+//
+//             Neither is expected to be exact, and the dominant term is NOT the
+//             RNG. The reference defaults to bfloat16 while our GGUF is F16;
+//             the two round differently, and dual CFG at 3.0/8.0 amplifies the
+//             per-step difference every step. Dumping the reference with
+//             --force-dtype float16 moves the 40-step cosine from 0.905 to
+//             0.977 and the denoiser probe from 0.999977 to 0.999999. Compare
+//             like dtypes or expect the gap. Cosine, never equality.
 
 #include "engine/community_models/echo_tts/config.h"
 #include "engine/community_models/echo_tts/dit.h"
@@ -56,6 +70,13 @@ struct Tensor {
 
 class ReferenceBundle {
 public:
+    // The largest bundle the packer emits with --blocks is 24 x 640 x 2048
+    // floats in one entry; these caps sit well above that and well below
+    // anything that could exhaust memory.
+    static constexpr int32_t kMaxEntries = 4096;
+    static constexpr int32_t kMaxNameLength = 1024;
+    static constexpr int64_t kMaxElements = 1LL << 32;
+
     explicit ReferenceBundle(const std::filesystem::path & path) {
         std::ifstream in(path, std::ios::binary);
         if (!in) {
@@ -66,13 +87,32 @@ public:
         if (std::memcmp(magic, "ECHOPAR1", 8) != 0) {
             throw std::runtime_error("not an ECHOPAR1 bundle: " + path.string());
         }
+        // Every length below is signed on the wire and comes from a file this
+        // process did not write. Validate before it reaches resize(), or a
+        // negative value becomes a huge size_t and a malformed header becomes
+        // an enormous allocation instead of a format error.
         const int32_t count = read_i32(in);
+        if (count < 0 || count > kMaxEntries) {
+            throw std::runtime_error("reference bundle declares an implausible entry count");
+        }
         for (int32_t i = 0; i < count; ++i) {
             const int32_t name_len = read_i32(in);
+            if (name_len < 0 || name_len > kMaxNameLength) {
+                throw std::runtime_error("reference bundle has an implausible tensor name length");
+            }
             std::string name(static_cast<size_t>(name_len), '\0');
             in.read(name.data(), name_len);
             const int32_t dtype = read_i32(in);
+            if (dtype != 0 && dtype != 1) {
+                throw std::runtime_error("reference bundle has an unknown dtype tag");
+            }
             const int64_t elements = read_i64(in);
+            if (elements < 0 || elements > kMaxElements) {
+                throw std::runtime_error("reference bundle declares an implausible element count");
+            }
+            if (!in) {
+                throw std::runtime_error("truncated reference bundle header at entry " + name);
+            }
 
             Tensor tensor;
             tensor.is_int = dtype == 1;
@@ -99,6 +139,9 @@ public:
     }
 
 private:
+    // The packer emits little-endian and documents that audio.cpp targets only
+    // little-endian hosts, so these native reads are correct here. They would
+    // need byte-swapping on a big-endian build.
     static int32_t read_i32(std::istream & in) {
         int32_t value = 0;
         in.read(reinterpret_cast<char *>(&value), 4);
@@ -151,13 +194,17 @@ Metrics compare(const std::vector<float> & actual, const std::vector<float> & ex
     return metrics;
 }
 
-bool report(const std::string & label, const Metrics & m, double gate) {
-    const bool pass = m.cosine >= gate;
+// Cosine alone is not a gate: `actual = 1000 * expected` scores a perfect 1.0
+// while being catastrophically wrong in amplitude. The max-absolute error is
+// what closes that hole, so both must hold for a PASS.
+bool report(const std::string & label, const Metrics & m, double gate, double max_abs_gate) {
+    const bool pass = m.cosine >= gate && m.max_abs_error <= max_abs_gate;
     std::cout << std::left << std::setw(10) << label
               << " cosine=" << std::fixed << std::setprecision(9) << m.cosine
               << "  max_abs=" << std::setprecision(6) << m.max_abs_error
               << "  rms=" << m.rms_error
               << "  gate=" << std::setprecision(3) << gate
+              << "/" << max_abs_gate
               << (pass ? "  PASS" : "  FAIL") << "\n";
     return pass;
 }
@@ -217,12 +264,20 @@ int main(int argc, char ** argv) try {
     const std::string backend_name = arg_value(argc, argv, "--backend", "cuda");
     const double denoiser_gate = std::stod(arg_value(argc, argv, "--denoiser-gate", "0.999"));
     const double sampler_gate = std::stod(arg_value(argc, argv, "--sampler-gate", "0.999"));
+    // Amplitude gates, deliberately loose relative to the cosine gate: they
+    // exist to catch a scale error that cosine cannot see, not to re-litigate
+    // the rounding difference the cosine gate already bounds.
+    const double denoiser_max_abs =
+        std::stod(arg_value(argc, argv, "--denoiser-max-abs", "0.25"));
+    const double sampler_max_abs =
+        std::stod(arg_value(argc, argv, "--sampler-max-abs", "4.0"));
     const bool skip_sampler = has_flag(argc, argv, "--skip-sampler");
 
     if (model_path.empty() || reference_path.empty()) {
         std::cerr << "usage: echo_tts_dit_parity --model <gguf dir> --reference <echo_ref.bin>\n"
                   << "       [--backend cuda|vulkan|cpu|best] [--denoiser-gate 0.999]\n"
-                  << "       [--sampler-gate 0.999] [--skip-sampler]\n";
+                  << "       [--sampler-gate 0.999] [--denoiser-max-abs 0.25]\n"
+                  << "       [--sampler-max-abs 4.0] [--skip-sampler]\n";
         return 2;
     }
 
@@ -267,7 +322,8 @@ int main(int argc, char ** argv) try {
         const auto t = static_cast<float>(reference.at("dit.t").f32.at(0));
         const auto predicted = dit.denoise_once(x_input.f32, t);
         std::cout << "denoiser probe at t=" << std::fixed << std::setprecision(4) << t << "\n";
-        ok &= report("denoiser", compare(predicted, reference.at("dit.v_pred").f32), denoiser_gate);
+        ok &= report("denoiser", compare(predicted, reference.at("dit.v_pred").f32), denoiser_gate,
+                     denoiser_max_abs);
     }
 
     // 2. Sampler driven from the reference's OWN initial noise.
@@ -293,7 +349,8 @@ int main(int argc, char ** argv) try {
             reference.at("sampler.initial_noise").f32,
             denoise);
         std::cout << "sampler, reference initial noise injected\n";
-        ok &= report("injected", compare(latent, reference.at("sampler.latent").f32), sampler_gate);
+        ok &= report("injected", compare(latent, reference.at("sampler.latent").f32), sampler_gate,
+                     sampler_max_abs);
     }
 
     // 3. Full sampler trajectory from our own seeded noise. Expected to be
@@ -308,7 +365,8 @@ int main(int argc, char ** argv) try {
         std::cout << "sampler steps=" << options.num_steps
                   << " sequence_length=" << options.sequence_length
                   << " seed=" << options.seed << "\n";
-        ok &= report("sampler", compare(latent, reference.at("sampler.latent").f32), sampler_gate);
+        ok &= report("sampler", compare(latent, reference.at("sampler.latent").f32), sampler_gate,
+                     sampler_max_abs);
     }
 
     std::cout << (ok ? "echo_tts_dit_parity: ok\n" : "echo_tts_dit_parity: FAILED\n");

@@ -24,24 +24,74 @@ prove neither.
 | Milestone | Scope | Implemented | Numerically verified |
 |---|---|---|---|
 | M0 | Family registration, model spec v1 | yes | n/a |
-| M1 | GGUF conversion, DiT, PCA inverse, Fish decode | yes | **no** — see below |
-| M2 | Native speaker encoding (Fish encoder + RVQ) | yes | **no** |
+| M1 | GGUF conversion, DiT, PCA inverse, Fish decode | yes | **denoiser yes, trajectory no** |
+| M2 | Native speaker encoding (Fish encoder + RVQ) | yes | folded into the denoiser probe below |
 | M3 | Long-form via the framework text chunker | yes | **no** |
 | M4 | Q8_0 conversion, RTF and memory evidence | partial | **no** |
 
 Cloning is self-contained — `session.cpp` calls `codec_->encode_zq` directly, so no pre-computed
 speaker latent is required.
 
-What *is* verified today is host-side only: the byte tokenizer and WhisperD normalisation (exact,
-140/140 ids), PCA project/unproject (5.7e-06 against numpy on the real basis), the flattening-point
-crop (exact), the Euler dual-CFG update (6.6e-07 against a numpy transcription of `inference.py`),
-and the timestep embedding (0.0 diff). The seeded noise matches the reference Philox stream to
-cosine 1.000000000000, with a median error of 2 ULP — near-identical, not bit-exact, so gates must
-be written as cosine plus max-absolute-error rather than equality.
+### Numerical parity against PyTorch
+
+Measured on an RTX 3090 (sm_86), CUDA, F16 GGUF, by `tests/echo_tts/echo_tts_dit_parity.cpp`
+against a dump from `tools/community_models/echo_tts_reference.py`. Gates are cosine over the
+flattened tensors **and** max-absolute-error, never equality: cosine alone cannot see a uniform
+scale error, and the host Philox stream matches CUDA to ~2 ULP rather than bit-exactly.
+
+The reference defaults to **bfloat16** while the GGUF here is **F16**. Both dumps are shown because
+the difference between them is the single largest term in the table:
+
+| Check | vs bfloat16 reference | vs float16 reference | Gate | Verdict |
+|---|---|---|---|---|
+| Denoiser, one conditional forward at t = 0.7 | cosine 0.999977, max-abs 0.086 | **cosine 0.999999188, max-abs 0.010** | ≥ 0.999 | **PASS** |
+| 40-step sampler, reference initial noise injected | cosine 0.913082 | cosine 0.988459, max-abs 1.07 | ≥ 0.999 | **below gate** |
+| 40-step sampler, our own seeded draw | cosine 0.905481 | cosine 0.976972, max-abs 1.87 | ≥ 0.999 | **below gate** |
+
+**The denoiser probe passes and is the number that carries the port.** It is what settles the four
+details that fail *silently* rather than loudly — half-head RoPE, the interleaved (not NEOX) rotary
+pairing, the speaker patchify reshape, and the adaLN `shift/scale/gate` order. A 0 % WER cannot do
+that job: it scores the words, not the speaker identity, so a wrong patchify reshape in particular
+could yield fluent, correctly-worded speech in the wrong voice and still read as 0 %.
+
+Note what the probe does **not** isolate. The reference text ids and speaker latents are injected,
+but `prepare_conditioning()` then runs this port's own text encoder, speaker encoder and KV
+projections, so the number covers the combined conditioning-plus-denoiser path. That is enough to
+catch a wrong block; it is not enough to localise one. Per-block activation dumps
+(`echo_tts_pack_reference.py --blocks`) exist for that and have not been run.
+
+**The 40-step trajectory is below the gate, and that is reported as a failure of the check as
+written.** What is established about it:
+
+- **It is not the RNG.** Injecting the reference's own initial noise scores no better than our
+  seeded draw (0.988 vs 0.977), so the Philox difference is not the mechanism.
+- **It is dominated by dtype.** Re-dumping the reference at float16 to match the GGUF moves the
+  seeded trajectory from 0.905 to 0.977 and the denoiser from 0.999977 to 0.999999.
+- **It compounds with step count.** At 4 steps the same comparison scores 0.9965/0.9966; at 40 it
+  scores 0.9131/0.9055 (bfloat16 reference). Monotonic degradation with step count is the signature
+  of accumulating per-step rounding, amplified every step by dual CFG at 3.0 and 8.0, rather than of
+  a structural defect.
+- **An independent line-by-line review of the sampler found no defect** — schedule, inclusive CFG
+  bounds, single application of `truncation_factor`, three-lane CFG combination, the Euler update
+  and the speaker-KV boundary all agree with `inference.py`.
+
+That is an explanation, not a proof. Until the residual is closed or the gate is deliberately
+restated, treat the trajectory as **unverified**.
+
+### Host-side checks
+
+`tests/echo_tts/echo_tts_host_units.cpp` is registered with `add_test` and needs neither a GPU nor
+the checkpoint. It covers WhisperD normalisation (including the asymmetric quote rewrite and the
+bare-`S1` tag suppression), full byte-token id vectors, truncation and padding, PCA projection and
+inversion pinned independently against hand-computed values on a rectangular non-symmetric basis,
+and the flattening-point crop including its standard-deviation *and* mean thresholds.
+
+Separately, and **by hand rather than in CI**: PCA project/unproject at 5.7e-06 against numpy on
+the real (80, 1024) basis, the Euler dual-CFG update at 6.6e-07 against a numpy transcription of
+`inference.py`, the timestep embedding at 0.0 diff, and the tokenizer at 140/140 ids on the parity
+prompt. `combine_cfg_lanes` and `euler_timestep_schedule` have no registered coverage.
 
 ### End-to-end run, RTX 3090 (sm_86), CUDA, F16 GGUF
-
-The full pipeline has been executed and the output checked objectively:
 
 | Check | Result |
 |---|---|
@@ -50,30 +100,27 @@ The full pipeline has been executed and the output checked objectively:
 | `latent_scale` | 0.0555555559694767 (= 1/18), matching the reference |
 | Generation | exit 0, 44 100 Hz mono, no NaNs, peak 0.80 (below the normalisation threshold) |
 | ASR round-trip, 15 words | WER 0 % — the only diffs are Whisper writing spoken "dot" as punctuation |
-| ASR round-trip, 32 words | **WER 0.0 %, 0 edits** |
+| ASR round-trip, 32 words | WER 0.0 %, 0 edits |
 | Throughput | 9.195 s of audio in 7.89 s wall — **RTF 0.86 cold**, including the 5.5 GB model load |
 
 Transcription used `faster-whisper-large-v3-turbo`. Generation cost is essentially constant across
 those two runs (7.75 s vs 7.89 s) because the window is fixed at 640 frames, so longer text inside
 one chunk is close to free.
 
-That rules out the failure modes which produce plausible audio rather than an error: half-head RoPE,
-the rotary pairing convention (interleaved, not NEOX), the speaker patchify reshape, and the adaLN
-`shift/scale/gate` order would each yield fluent-sounding but wrong speech, not a 0 % WER. Tensor
-names are settled by `manifest OK` against the real checkpoint.
+WER on 32 words is a small sample and scores intelligibility only. It shows the pipeline runs end to
+end and produces the right words; the denoiser cosine above is what shows the graph is right.
 
 ### What is still missing
 
-A 0 % WER proves the pipeline is right end to end. It is **not** per-tensor parity, and this port
-does not yet have any:
-
-- No cosine ≥ 0.999 comparison of the DiT graph against PyTorch at a fixed timestep, and no
-  per-block activation dump compared against `echo_ref.npz`.
+- **No regression test for `fish_audio` itself.** `build_decode_quantizer` was **restructured**, not
+  merely extended, so a supported core family's decode path changed with no coverage of its own.
+  This is the largest gap in the list.
+- No per-block DiT activation dump, so the passing denoiser cosine proves correctness without
+  localising where any future regression lives.
+- The 40-step trajectory residual above is explained but not closed.
 - No A/B of the flash-attention path against `AUDIOCPP_ECHO_TTS_NO_FLASH=1` on a fixed seed.
-- No regression test for `fish_audio` itself. `build_decode_quantizer` was **restructured**, not
-  merely extended, so that core family's decode path changed and needs its own coverage.
 - No listening comparison of F16 against Q8_0.
-- No C++ unit tests are registered; the host-side checks above were run by hand and never committed.
+- Warm RTF and VRAM-stability-across-requests numbers.
 
 This PR stays in draft until that evidence exists.
 
