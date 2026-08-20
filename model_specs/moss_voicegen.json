@@ -25,6 +25,7 @@
   ]
  },
  "ui": {
+  "recommended_package": "moss_voicegen_bf16_codec_f16_decode",
   "tags": [
    "Voice Design",
    "GGUF"
@@ -35,6 +36,28 @@
    "docs/gguf.md"
   ]
  },
+ "package_defaults": {
+  "download": {
+   "kind": "huggingface_snapshot",
+   "repo": "audio-cpp/audio.cpp-gguf",
+   "revision": "main",
+   "gated": false
+  }
+ },
+ "packages": [
+  {
+   "id": "moss_voicegen_bf16_codec_f16_decode",
+   "display_name": "MOSS-VoiceGenerator BF16 GGUF",
+   "default": true,
+   "format": "gguf",
+   "precision": "bf16",
+   "target_directory": "MOSS-VoiceGenerator-GGUF",
+   "files": [
+    "MOSS-VoiceGenerator-GGUF/moss_voicegen_bf16_codec_f16_decode.gguf"
+   ],
+   "strip_prefix": "MOSS-VoiceGenerator-GGUF"
+  }
+ ],
  "sources": [
   {
    "format": "gguf",

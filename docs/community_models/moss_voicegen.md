@@ -7,11 +7,19 @@ recording, and the model speaks the supplied text in that voice.
 - Task: `vdes` (voice design), offline
 - Languages: English, Chinese
 - Weights: [OpenMOSS-Team/MOSS-VoiceGenerator](https://huggingface.co/OpenMOSS-Team/MOSS-VoiceGenerator), Apache-2.0
+- Codec weights: [OpenMOSS-Team/MOSS-Audio-Tokenizer](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer), Apache-2.0
 - Architecture: `moss_tts_delay` — a Qwen3-1.7B backbone with 16 audio codebook
   embeddings and `1 + 16` output heads, decoded on a delay pattern
 - Codec: MOSS-Audio-Tokenizer v1, 24 kHz mono, hop 1920
 
 ## Usage
+
+The recommended package is the self-contained GGUF:
+
+```text
+MOSS-VoiceGenerator-GGUF/
+  moss_voicegen_bf16_codec_f16_decode.gguf
+```
 
 ```bash
 audiocpp_cli --family moss_voicegen --model <model-dir> --task vdes \
@@ -22,6 +30,27 @@ audiocpp_cli --family moss_voicegen --model <model-dir> --task vdes \
 
 `--instruct` describes the speaker: timbre, age, pace, emotion. `--language` takes the full
 language name the model was trained on — "English", not "en".
+
+For safetensors, the upstream voice generator and audio tokenizer are separate Hugging Face
+repositories. Place the tokenizer snapshot under `audio_tokenizer/` inside the voice
+generator root:
+
+```text
+MOSS-VoiceGenerator/
+  config.json
+  model.safetensors
+  tokenizer.json
+  tokenizer_config.json
+  merges.txt
+  audio_tokenizer/
+    config.json
+    model.safetensors.index.json
+    model-00001-of-00002.safetensors
+    model-00002-of-00002.safetensors
+```
+
+The standalone `OpenMOSS-Team/MOSS-VoiceGenerator` snapshot does not contain
+`audio_tokenizer/`, so it is not enough for safetensors inference by itself.
 
 ### Decoding defaults
 
