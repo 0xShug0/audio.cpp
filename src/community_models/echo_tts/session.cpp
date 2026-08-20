@@ -101,12 +101,14 @@ constexpr int64_t kMinWindowFrames = 128;
 // length then reuse the same graph and the same gallocr reservation.
 constexpr int64_t kWindowQuantum = 64;
 
-bool echo_adaptive_window_disabled() {
-    static const bool disabled = [] {
-        const char * value = std::getenv("AUDIOCPP_ECHO_TTS_NO_ADAPTIVE_WINDOW");
+// Opt-in, not opt-out. See the comment at the adaptive-window call site for why
+// the default is the full trained window.
+bool echo_adaptive_window_enabled() {
+    static const bool enabled = [] {
+        const char * value = std::getenv("AUDIOCPP_ECHO_TTS_ADAPTIVE_WINDOW");
         return value != nullptr && value[0] != '\0' && value[0] != '0';
     }();
-    return disabled;
+    return enabled;
 }
 
 // Rounds `frames` up to the graph-reuse grid and clamps into range.
@@ -439,14 +441,25 @@ runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
 
     dit_->prepare_conditioning(conditioning);
 
-    // Adaptive window. The estimate is attempted first; a missing flattening
-    // point means the model was still speaking when the window closed, so the
-    // chunk is regenerated once at the full trained length. The seed is
-    // unchanged between attempts, so the retry is the run that would have
-    // happened without this optimisation -- an under-estimate costs time, never
-    // fidelity.
+    // Adaptive window: OFF by default, enable with AUDIOCPP_ECHO_TTS_ADAPTIVE_WINDOW=1.
+    //
+    // An earlier revision defaulted this on, reasoning that an under-estimate
+    // "costs time, never fidelity" because a missing flattening point triggers a
+    // retry at full length on the same seed. That reasoning is wrong, and the
+    // seed is not what changes. Echo's generated self-attention is fully
+    // non-causal -- `self_mask = torch.ones((batch_size, seq_len))` at
+    // model.py:249 -- so every latent position attends over the whole window.
+    // Shrinking 640 to 128 therefore changes the computation at every retained
+    // position, not merely how many positions survive. The reference defaults to
+    // 640 (inference.py:353).
+    //
+    // The retry only fires when no flattening point is found, so a short window
+    // that happens to produce a plausible flat tail is never corrected and
+    // silently yields different audio. Keep the optimisation available -- the
+    // cost saving is real -- but it must not be the default until it has been
+    // A/B'd against the full window on a fixed seed.
     EchoSamplerOptions attempt = sampler;
-    const bool adaptive = !sampler.window_pinned && !echo_adaptive_window_disabled();
+    const bool adaptive = !sampler.window_pinned && echo_adaptive_window_enabled();
     if (adaptive) {
         attempt.sequence_length = estimate_window_frames(
             static_cast<int64_t>(tokens.input_ids.size()), config.max_sequence_length);

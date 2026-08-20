@@ -17,15 +17,25 @@ The rate is derived, not guessed: 640 frames span 29.7215 s → 21.53 frames/s;
 | 300 | 20.0 s | 576 | 1.11x |
 | 340+ | 22.7 s+ | 640 | 1.00x (unchanged) |
 
-An under-estimate costs time, never fidelity: `generate_torch_cuda_randn` is a
-sequential Philox stream, so the 640-frame retry draws bit-identical noise to
-the run that would have happened without this change.
+**Off by default.** The original claim here was that an under-estimate "costs
+time, never fidelity", because the 640-frame retry draws bit-identical noise from
+the sequential Philox stream. The noise claim is true and the fidelity conclusion
+does not follow from it. Echo's generated self-attention is fully non-causal
+(`self_mask = torch.ones((batch_size, seq_len))`, `model.py:249`), so every
+latent position attends across the entire window. Shrinking 640 to 128 changes
+the computation at every retained position, not just how many positions survive
+-- and the retry fires only when no flattening point is found, so a short window
+that yields a plausible flat tail is never corrected.
+
+Enable with `AUDIOCPP_ECHO_TTS_ADAPTIVE_WINDOW=1` once it has been A/B'd against
+the full window on a fixed seed. The cost saving below is real; it is the
+default that was wrong.
 
 Estimates snap to a 64-frame grid (`kWindowQuantum`) because denoiser graphs are
 keyed on `sequence_length` and rebuilt when it changes.
 
 - Pin explicitly: `sequence_length` request option (skips the estimate).
-- Disable: `AUDIOCPP_ECHO_TTS_NO_ADAPTIVE_WINDOW=1`.
+- Enable: `AUDIOCPP_ECHO_TTS_ADAPTIVE_WINDOW=1` (off by default).
 
 Confirmed in your logs: 23 bytes → 128-frame window, `keys` 824 → 312.
 
