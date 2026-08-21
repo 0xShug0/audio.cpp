@@ -365,6 +365,15 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "case_catalog": "tests/qwen3_forced_aligner/qwen3_forced_aligner_warm_bench_cases.json",
         "strict_alignment": True,
     },
+    "mms_forced_aligner": {
+        "kind": "alignment",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/mms_forced_aligner_warm_bench",
+        "python_script": "tests/mms_forced_aligner/mms_forced_aligner_python_warm_bench.py",
+        "model": "models/mms-300m-1130-forced-aligner",
+        "case_catalog": "tests/mms_forced_aligner/mms_forced_aligner_warm_bench_cases.json",
+        "strict_alignment": False,
+    },
     "ace_step": {
         "kind": "ace_step",
         "modes": ["offline"],
@@ -2070,6 +2079,7 @@ def compare_qwen3_forced_aligner_step(
     cpp_step: dict[str, Any],
     py_step: dict[str, Any],
     expected_words: list[str],
+    sample_tolerance: int = 1,
 ) -> dict[str, Any]:
     mismatches: list[str] = []
     cpp_words = cpp_step.get("word_timestamps", [])
@@ -2081,10 +2091,10 @@ def compare_qwen3_forced_aligner_step(
             if normalize_alignment_word(str(cpp_word.get("word", ""))) != normalize_alignment_word(str(py_word.get("word", ""))):
                 mismatches.append(f"word[{index}]")
                 break
-            if abs(int(cpp_word.get("start_sample", 0)) - int(py_word.get("start_sample", 0))) > 1:
+            if abs(int(cpp_word.get("start_sample", 0)) - int(py_word.get("start_sample", 0))) > sample_tolerance:
                 mismatches.append(f"start_sample[{index}]")
                 break
-            if abs(int(cpp_word.get("end_sample", 0)) - int(py_word.get("end_sample", 0))) > 1:
+            if abs(int(cpp_word.get("end_sample", 0)) - int(py_word.get("end_sample", 0))) > sample_tolerance:
                 mismatches.append(f"end_sample[{index}]")
                 break
     normalized_cpp_words = {normalize_alignment_word(str(item.get("word", ""))) for item in cpp_words}
@@ -3334,6 +3344,10 @@ def build_vevo2_commands(
     return python_command, cpp_command
 
 
+# Per-family default transcript language for the shared alignment path
+# (qwen3_forced_aligner + mms_forced_aligner).
+FORCED_ALIGNER_LANGUAGES = {"qwen3_forced_aligner": "English", "mms_forced_aligner": "eng"}
+
 def build_audio_commands(
     family: str,
     config: dict[str, Any],
@@ -3399,11 +3413,12 @@ def build_audio_commands(
             cpp_command.extend(["--session-option", option])
         return python_command, cpp_command
 
-    if family == "qwen3_forced_aligner":
-        request_languages = getattr(args, "qwen3_forced_aligner_request_languages", [])
-        request_transcripts = getattr(args, "qwen3_forced_aligner_request_transcripts", [])
-        warmup_language = getattr(args, "qwen3_forced_aligner_warmup_language", "English")
-        warmup_transcript = getattr(args, "qwen3_forced_aligner_warmup_transcript", "")
+    if family in ("qwen3_forced_aligner", "mms_forced_aligner"):
+        default_language = FORCED_ALIGNER_LANGUAGES[family]
+        request_languages = getattr(args, f"{family}_request_languages", [])
+        request_transcripts = getattr(args, f"{family}_request_transcripts", [])
+        warmup_language = getattr(args, f"{family}_warmup_language", default_language)
+        warmup_transcript = getattr(args, f"{family}_warmup_transcript", "")
         common = [
             "--model",
             args.model or config["model"],
@@ -3424,7 +3439,7 @@ def build_audio_commands(
             "--iterations",
             str(args.iterations),
             "--language",
-            "English",
+            default_language,
             "--warmup-language",
             warmup_language,
             "--warmup-transcript",
@@ -5427,25 +5442,26 @@ def run_scenario(
                 "contexts": args.qwen3_asr_request_contexts,
                 "expected_fragments": [item.get("expected_fragments", []) for item in request_cases],
             }
-        elif family == "qwen3_forced_aligner":
+        elif family in ("qwen3_forced_aligner", "mms_forced_aligner"):
+            default_language = FORCED_ALIGNER_LANGUAGES[family]
             warmup_case, request_cases = load_qwen3_forced_aligner_cases(REPO_ROOT / config["case_catalog"], args.requests_per_session)
-            qwen_audio_dir = scenario_dir / "qwen3_forced_aligner_audio"
-            warmup_audio = materialize_qwen3_asr_audio(warmup_case, qwen_audio_dir, 0, "warmup")
+            audio_dir = scenario_dir / f"{family}_audio"
+            warmup_audio = materialize_qwen3_asr_audio(warmup_case, audio_dir, 0, "warmup")
             audio_requests = [
-                materialize_qwen3_asr_audio(item, qwen_audio_dir, index, "request")
+                materialize_qwen3_asr_audio(item, audio_dir, index, "request")
                 for index, item in enumerate(request_cases)
             ]
-            args.qwen3_forced_aligner_warmup_language = str(warmup_case.get("language", "English"))
-            args.qwen3_forced_aligner_warmup_transcript = str(warmup_case.get("transcript", ""))
-            args.qwen3_forced_aligner_request_languages = [str(item.get("language", "English")) for item in request_cases]
-            args.qwen3_forced_aligner_request_transcripts = [str(item.get("transcript", "")) for item in request_cases]
+            setattr(args, f"{family}_warmup_language", str(warmup_case.get("language", default_language)))
+            setattr(args, f"{family}_warmup_transcript", str(warmup_case.get("transcript", "")))
+            setattr(args, f"{family}_request_languages", [str(item.get("language", default_language)) for item in request_cases])
+            setattr(args, f"{family}_request_transcripts", [str(item.get("transcript", "")) for item in request_cases])
             request_manifest = {
                 "warmup_audio": str(warmup_audio),
-                "warmup_language": args.qwen3_forced_aligner_warmup_language,
-                "warmup_transcript": args.qwen3_forced_aligner_warmup_transcript,
+                "warmup_language": getattr(args, f"{family}_warmup_language"),
+                "warmup_transcript": getattr(args, f"{family}_warmup_transcript"),
                 "audio_sequence": [str(path) for path in audio_requests],
-                "languages": args.qwen3_forced_aligner_request_languages,
-                "transcripts": args.qwen3_forced_aligner_request_transcripts,
+                "languages": getattr(args, f"{family}_request_languages"),
+                "transcripts": getattr(args, f"{family}_request_transcripts"),
                 "expected_words": [item.get("expected_words", []) for item in request_cases],
             }
         elif family in {"higgs_audio_stt", "hviske_asr", "nemotron_asr", "muscriptor", "vibevoice_asr", "voxtral_realtime"}:
@@ -5784,6 +5800,7 @@ def run_scenario(
                         cpp_summary["sequence_steps"][request_index],
                         python_summary["sequence_steps"][request_index],
                         expected_words[request_index] if request_index < len(expected_words) else [],
+                        1 if config.get("strict_alignment", True) else 320,
                     )
                 else:
                     parity = compare_sortformer_step(cpp_summary["sequence_steps"][request_index], python_summary["sequence_steps"][request_index])

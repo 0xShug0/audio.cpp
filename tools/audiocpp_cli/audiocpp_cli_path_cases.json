@@ -2042,6 +2042,25 @@
       ]
     },
     {
+      "id": "mms_forced_aligner_words",
+      "coverage": "MMS CTC forced aligner transcript conditioning and word timestamp output",
+      "family": "mms_forced_aligner",
+      "model": "models/mms-300m-1130-forced-aligner",
+      "task": "align",
+      "mode": "offline",
+      "outputs": [
+        "words"
+      ],
+      "requests": [
+        {
+          "id": "align_eng",
+          "audio": "resources/sample.wav",
+          "language": "eng",
+          "text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. Twenty-two thousand five hundred times longer than you."
+        }
+      ]
+    },
+    {
       "id": "citrinet_asr_offline",
       "coverage": "Citrinet ASR frontend and CTC decode",
       "family": "citrinet_asr",

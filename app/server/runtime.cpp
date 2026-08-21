@@ -290,6 +290,21 @@ std::unordered_map<std::string, std::string> options_from_object(const Value * v
     return minitts::cli::json_options_map(value);
 }
 
+std::string options_json(const std::unordered_map<std::string, std::string> & options) {
+    std::ostringstream out;
+    out << "{";
+    bool first = true;
+    for (const auto & [key, value] : options) {
+        if (!first) {
+            out << ",";
+        }
+        first = false;
+        out << json_quote(key) << ":" << json_quote(value);
+    }
+    out << "}";
+    return out.str();
+}
+
 void add_option_from_json(
     std::unordered_map<std::string, std::string> & options,
     const Value & object,
@@ -1001,7 +1016,8 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
             "}");
     }
     else if (request.method == "GET" && request.path == "/v1/models") {
-        response = json_response(models_json());
+        const auto include_session_options = query_param(request.query, "include_session_options");
+        response = json_response(models_json(include_session_options == "true" || include_session_options == "1"));
     }
     else if (request.method == "GET" && request.path == "/v1/audio/voices") {
         response = handle_voices(request);
@@ -2636,7 +2652,7 @@ HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
     return json_response(out.str());
 }
 
-std::string ServerState::models_json() const {
+std::string ServerState::models_json(bool include_session_options) const {
     std::lock_guard<std::mutex> state_lock(models_mutex_);
     std::ostringstream out;
     out << "{\"object\":\"list\",\"data\":[";
@@ -2653,8 +2669,11 @@ std::string ServerState::models_json() const {
             << ",\"task\":" << json_quote(engine::runtime::to_string(model.task.task))
             << ",\"mode\":" << json_quote(engine::runtime::to_string(model.task.mode))
             << ",\"loaded\":" << (model.loaded.load() ? "true" : "false")
-            << ",\"path\":" << json_quote(model.config.path.string())
-            << "}";
+            << ",\"path\":" << json_quote(model.config.path.string());
+        if (include_session_options) {
+            out << ",\"session_options\":" << options_json(model.config.session_options);
+        }
+        out << "}";
     }
     out << "]}";
     return out.str();

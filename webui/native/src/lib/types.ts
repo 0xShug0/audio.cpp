@@ -6,6 +6,7 @@ export interface InstallPackageChoice {
   path: string;
   format: string;
   precision: string;
+  session_options?: StringMap;
 }
 
 export interface CatalogEntry {
@@ -53,6 +54,7 @@ export interface LoadedModel {
   task: string;
   mode: string;
   path: string;
+  session_options?: StringMap;
   loaded: boolean;
 }
 

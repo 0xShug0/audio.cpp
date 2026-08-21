@@ -3,6 +3,9 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/speech_encoders/sanm.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
@@ -27,33 +30,57 @@ constexpr size_t kEncoderGraphNodes = 32768;
 constexpr size_t kWeightContextBytes = 64 * 1024 * 1024;
 constexpr float kLayerNormEpsilon = 1.0e-5F;
 
-struct LinearWeights {
-  engine::core::TensorValue weight;
-  engine::core::TensorValue bias;
-};
-
 struct SanmBlockWeights {
-  engine::core::TensorValue norm1_weight;
-  engine::core::TensorValue norm1_bias;
-  LinearWeights linear_q_k_v;
-  LinearWeights linear_out;
-  engine::core::TensorValue fsmn_block;
-  LinearWeights w_1;
-  LinearWeights w_2;
-  engine::core::TensorValue norm2_weight;
-  engine::core::TensorValue norm2_bias;
+  engine::modules::NormWeights norm1;
+  engine::modules::LinearWeights linear_q_k_v;
+  engine::modules::LinearWeights linear_out;
+  engine::core::TensorValue fsmn_weight;
+  engine::modules::LinearWeights w_1;
+  engine::modules::LinearWeights w_2;
+  engine::modules::NormWeights norm2;
 };
 
-LinearWeights load_linear(engine::core::BackendWeightStore &store,
-                          const engine::assets::TensorSource &source,
-                          const std::string &prefix, int64_t input_size,
-                          int64_t output_size,
-                          engine::assets::TensorStorageType storage_type) {
+engine::modules::LinearWeights
+load_linear(engine::core::BackendWeightStore &store,
+            const engine::assets::TensorSource &source,
+            const std::string &prefix, int64_t input_size,
+            int64_t output_size,
+            engine::assets::TensorStorageType storage_type) {
   return {
       store.load_tensor(source, prefix + ".weight", storage_type,
                         {output_size, input_size}),
       store.load_f32_tensor(source, prefix + ".bias", {output_size}),
   };
+}
+
+engine::modules::NormWeights load_norm(engine::core::BackendWeightStore &store,
+                                       const engine::assets::TensorSource &source,
+                                       const std::string &prefix,
+                                       int64_t size) {
+  return {
+      store.load_f32_tensor(source, prefix + ".weight", {size}),
+      store.load_f32_tensor(source, prefix + ".bias", {size}),
+  };
+}
+
+engine::core::TensorValue
+load_fsmn_weight(engine::core::BackendWeightStore &store,
+                 const engine::assets::TensorSource &source,
+                 const std::string &name, const SenseAsrEncoderConfig &config) {
+  const auto values =
+      source.require_f32(name, {config.kernel_size, config.d_model});
+  std::vector<float> packed(
+      static_cast<size_t>(config.d_model * config.kernel_size), 0.0F);
+  for (int64_t channel = 0; channel < config.d_model; ++channel) {
+    for (int64_t index = 0; index < config.kernel_size; ++index) {
+      packed[static_cast<size_t>(channel * config.kernel_size + index)] =
+          values[static_cast<size_t>(index * config.d_model + channel)];
+    }
+  }
+  return store.make_from_f32(
+      engine::core::TensorShape::from_dims(
+          {config.d_model, 1, config.kernel_size}),
+      engine::assets::TensorStorageType::F32, std::move(packed));
 }
 
 SanmBlockWeights load_sanm_block(engine::core::BackendWeightStore &store,
@@ -62,27 +89,20 @@ SanmBlockWeights load_sanm_block(engine::core::BackendWeightStore &store,
                                  const SenseAsrEncoderConfig &config,
                                  engine::assets::TensorStorageType storage_type) {
   SanmBlockWeights weights;
-  weights.norm1_weight = store.load_f32_tensor(source, prefix + ".norm1.weight",
-                                               {input_size});
-  weights.norm1_bias =
-      store.load_f32_tensor(source, prefix + ".norm1.bias", {input_size});
+  weights.norm1 = load_norm(store, source, prefix + ".norm1", input_size);
   weights.linear_q_k_v =
       load_linear(store, source, prefix + ".self_attn.linear_q_k_v",
                   input_size, 3 * config.d_model, storage_type);
   weights.linear_out =
       load_linear(store, source, prefix + ".self_attn.linear_out",
                   config.d_model, config.d_model, storage_type);
-  weights.fsmn_block = store.load_f32_tensor(
-      source, prefix + ".self_attn.fsmn_block.weight",
-      {config.kernel_size, config.d_model});
+  weights.fsmn_weight = load_fsmn_weight(
+      store, source, prefix + ".self_attn.fsmn_block.weight", config);
   weights.w_1 = load_linear(store, source, prefix + ".feed_forward.w_1",
                             config.d_model, config.ffn_dim, storage_type);
   weights.w_2 = load_linear(store, source, prefix + ".feed_forward.w_2",
                             config.ffn_dim, config.d_model, storage_type);
-  weights.norm2_weight = store.load_f32_tensor(source, prefix + ".norm2.weight",
-                                               {config.d_model});
-  weights.norm2_bias =
-      store.load_f32_tensor(source, prefix + ".norm2.bias", {config.d_model});
+  weights.norm2 = load_norm(store, source, prefix + ".norm2", config.d_model);
   return weights;
 }
 
@@ -90,12 +110,10 @@ struct EncoderWeights {
   std::unique_ptr<engine::core::BackendWeightStore> store;
   SanmBlockWeights stem;
   std::vector<SanmBlockWeights> main_layers;
-  engine::core::TensorValue after_norm_weight;
-  engine::core::TensorValue after_norm_bias;
+  engine::modules::NormWeights after_norm;
   std::vector<SanmBlockWeights> timestamp_layers;
-  engine::core::TensorValue tp_norm_weight;
-  engine::core::TensorValue tp_norm_bias;
-  LinearWeights ctc_lo;
+  engine::modules::NormWeights tp_norm;
+  engine::modules::LinearWeights ctc_lo;
   std::vector<float> embed_rows;
 };
 
@@ -122,10 +140,8 @@ load_encoder_weights(const SenseAsrAssets &assets,
         *weights->store, source, main_root + std::to_string(index),
         config.d_model, config, storage_type));
   }
-  weights->after_norm_weight = weights->store->load_f32_tensor(
-      source, "encoder.after_norm.weight", {config.d_model});
-  weights->after_norm_bias = weights->store->load_f32_tensor(
-      source, "encoder.after_norm.bias", {config.d_model});
+  weights->after_norm = load_norm(*weights->store, source,
+                                  "encoder.after_norm", config.d_model);
   weights->timestamp_layers.reserve(
       static_cast<size_t>(config.timestamp_prediction_layers));
   for (int64_t index = 0; index < config.timestamp_prediction_layers; ++index) {
@@ -133,10 +149,8 @@ load_encoder_weights(const SenseAsrAssets &assets,
         *weights->store, source, tp_root + std::to_string(index),
         config.d_model, config, storage_type));
   }
-  weights->tp_norm_weight = weights->store->load_f32_tensor(
-      source, "encoder.tp_norm.weight", {config.d_model});
-  weights->tp_norm_bias = weights->store->load_f32_tensor(
-      source, "encoder.tp_norm.bias", {config.d_model});
+  weights->tp_norm =
+      load_norm(*weights->store, source, "encoder.tp_norm", config.d_model);
   weights->ctc_lo =
       load_linear(*weights->store, source, "ctc.ctc_lo", config.d_model,
                   config.vocab_size, storage_type);
@@ -151,90 +165,6 @@ load_encoder_weights(const SenseAsrAssets &assets,
 
   weights->store->upload();
   return weights;
-}
-
-ggml_tensor *lin(ggml_context *ctx, ggml_tensor *weight, ggml_tensor *bias,
-                 ggml_tensor *x) {
-  auto *y = ggml_mul_mat(ctx, weight, x);
-  return bias != nullptr ? ggml_add(ctx, y, bias) : y;
-}
-
-ggml_tensor *lnorm(ggml_context *ctx, ggml_tensor *gamma, ggml_tensor *beta,
-                   ggml_tensor *x) {
-  return ggml_add(ctx, ggml_mul(ctx, ggml_norm(ctx, x, kLayerNormEpsilon),
-                                gamma),
-                  beta);
-}
-
-ggml_tensor *sanm_attn(ggml_context *ctx, const SanmBlockWeights &weights,
-                       const SenseAsrEncoderConfig &config, ggml_tensor *x,
-                       int64_t frames) {
-  const int64_t d_model = config.d_model;
-  const int64_t heads = config.attention_heads;
-  const int64_t head_dim = d_model / heads;
-  const int64_t kernel = config.kernel_size;
-
-  ggml_tensor *qkv =
-      lin(ctx, weights.linear_q_k_v.weight.tensor,
-          weights.linear_q_k_v.bias.tensor, x);
-  const size_t qkv_row_stride = qkv->nb[1];
-  ggml_tensor *q = ggml_cont(ctx, ggml_view_2d(ctx, qkv, d_model, frames,
-                                                qkv_row_stride, 0));
-  ggml_tensor *k = ggml_cont(
-      ctx, ggml_view_2d(ctx, qkv, d_model, frames, qkv_row_stride,
-                        static_cast<size_t>(d_model) * sizeof(float)));
-  ggml_tensor *v = ggml_cont(
-      ctx, ggml_view_2d(ctx, qkv, d_model, frames, qkv_row_stride,
-                        2 * static_cast<size_t>(d_model) * sizeof(float)));
-
-  const int64_t pad = (kernel - 1) / 2;
-  ggml_tensor *padded =
-      ggml_pad_ext(ctx, v, 0, 0, pad, pad, 0, 0, 0, 0);
-  ggml_tensor *fsmn = v;
-  for (int64_t j = 0; j < kernel; ++j) {
-    ggml_tensor *shifted =
-        ggml_cont(ctx, ggml_view_2d(ctx, padded, d_model, frames,
-                                    padded->nb[1], j * padded->nb[1]));
-    ggml_tensor *wj = ggml_view_1d(ctx, weights.fsmn_block.tensor, d_model,
-                                   j * weights.fsmn_block.tensor->nb[1]);
-    fsmn = ggml_add(ctx, fsmn, ggml_mul(ctx, shifted, wj));
-  }
-
-  q = ggml_permute(ctx, ggml_reshape_3d(ctx, q, head_dim, heads, frames), 0, 2,
-                   1, 3);
-  k = ggml_permute(ctx, ggml_reshape_3d(ctx, k, head_dim, heads, frames), 0, 2,
-                   1, 3);
-  ggml_tensor *value_heads = ggml_cont(
-      ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, v, head_dim, heads, frames),
-                        1, 2, 0, 3));
-  ggml_tensor *scores =
-      ggml_soft_max(ctx, ggml_scale(ctx, ggml_mul_mat(ctx, k, q),
-                                    1.0F / std::sqrt(static_cast<float>(head_dim))));
-  ggml_tensor *attention = ggml_cont_2d(
-      ctx, ggml_permute(ctx, ggml_mul_mat(ctx, value_heads, scores), 0, 2, 1,
-                        3),
-      d_model, frames);
-  return ggml_add(
-      ctx,
-      lin(ctx, weights.linear_out.weight.tensor,
-          weights.linear_out.bias.tensor, attention),
-      fsmn);
-}
-
-ggml_tensor *sanm_layer(ggml_context *ctx, const SanmBlockWeights &weights,
-                        const SenseAsrEncoderConfig &config, ggml_tensor *x,
-                        int64_t frames, bool residual) {
-  ggml_tensor *input = x;
-  ggml_tensor *h =
-      lnorm(ctx, weights.norm1_weight.tensor, weights.norm1_bias.tensor, x);
-  ggml_tensor *attention = sanm_attn(ctx, weights, config, h, frames);
-  x = residual ? ggml_add(ctx, input, attention) : attention;
-  ggml_tensor *r = x;
-  h = lnorm(ctx, weights.norm2_weight.tensor, weights.norm2_bias.tensor, x);
-  h = lin(ctx, weights.w_1.weight.tensor, weights.w_1.bias.tensor, h);
-  h = ggml_relu(ctx, h);
-  h = lin(ctx, weights.w_2.weight.tensor, weights.w_2.bias.tensor, h);
-  return ggml_add(ctx, r, h);
 }
 
 std::vector<float> make_posenc_input(int64_t frames, int64_t channels) {
@@ -258,6 +188,90 @@ std::vector<float> make_posenc_input(int64_t frames, int64_t channels) {
   return values;
 }
 
+engine::core::TensorValue view_linear_rows(
+    engine::core::ModuleBuildContext &ctx,
+    const engine::core::TensorValue &weight,
+    int64_t row_offset,
+    int64_t rows,
+    int64_t cols,
+    const char *label) {
+  if (weight.shape.rank != 2 || weight.shape.dims[0] < row_offset + rows ||
+      weight.shape.dims[1] != cols) {
+    throw std::runtime_error(std::string("SenseVoice ") + label +
+                             " weight view is invalid");
+  }
+  const size_t row_stride = weight.tensor->nb[1];
+  const size_t byte_offset = static_cast<size_t>(row_offset) * row_stride;
+  return engine::core::wrap_tensor(
+      ggml_view_2d(ctx.ggml, weight.tensor, cols, rows, row_stride,
+                   byte_offset),
+      engine::core::TensorShape::from_dims({rows, cols}), weight.type);
+}
+
+engine::core::TensorValue view_linear_bias(
+    engine::core::ModuleBuildContext &ctx,
+    const std::optional<engine::core::TensorValue> &bias,
+    int64_t offset,
+    int64_t size,
+    const char *label) {
+  if (!bias.has_value() || bias->shape.rank != 1 ||
+      bias->shape.dims[0] < offset + size) {
+    throw std::runtime_error(std::string("SenseVoice ") + label +
+                             " bias view is invalid");
+  }
+  return engine::core::wrap_tensor(
+      ggml_view_1d(ctx.ggml, bias->tensor, size,
+                   static_cast<size_t>(offset) * ggml_type_size(bias->type)),
+      engine::core::TensorShape::from_dims({size}), bias->type);
+}
+
+engine::modules::SanmBlockWeightsView
+framework_sanm_weights(engine::core::ModuleBuildContext &ctx,
+                       const SanmBlockWeights &weights,
+                       const SenseAsrEncoderConfig &config,
+                       int64_t input_size) {
+  return {
+      weights.norm1,
+      {
+          view_linear_rows(ctx, weights.linear_q_k_v.weight, 0,
+                           config.d_model, input_size, "query"),
+          view_linear_bias(ctx, weights.linear_q_k_v.bias, 0, config.d_model,
+                           "query"),
+      },
+      {
+          view_linear_rows(ctx, weights.linear_q_k_v.weight, config.d_model,
+                           config.d_model, input_size, "key"),
+          view_linear_bias(ctx, weights.linear_q_k_v.bias, config.d_model,
+                           config.d_model, "key"),
+      },
+      {
+          view_linear_rows(ctx, weights.linear_q_k_v.weight, 2 * config.d_model,
+                           config.d_model, input_size, "value"),
+          view_linear_bias(ctx, weights.linear_q_k_v.bias, 2 * config.d_model,
+                           config.d_model, "value"),
+      },
+      weights.linear_out,
+      weights.fsmn_weight,
+      weights.norm2,
+      weights.w_1,
+      weights.w_2,
+  };
+}
+
+engine::modules::SanmBlockConfig block_config(
+    const SenseAsrEncoderConfig &config, int64_t input_size) {
+  engine::modules::SanmBlockConfig result;
+  result.input_size = input_size;
+  result.model_size = config.d_model;
+  result.num_heads = config.attention_heads;
+  result.ffn_size = config.ffn_dim;
+  result.fsmn_kernel_size = config.kernel_size;
+  result.layer_norm_eps = kLayerNormEpsilon;
+  result.attention_lowering =
+      engine::modules::ScaledDotProductAttentionLowering::Explicit;
+  return result;
+}
+
 } // namespace
 
 struct SenseAsrEncoderRuntime::Impl {
@@ -269,6 +283,7 @@ struct SenseAsrEncoderRuntime::Impl {
     ggml_cgraph *graph = nullptr;
     engine::core::HostGraphPlan host_plan;
     engine::core::TensorValue input;
+    engine::core::TensorValue positions;
     ggml_tensor *output = nullptr;
 
     ~Graph() {
@@ -332,30 +347,51 @@ struct SenseAsrEncoderRuntime::Impl {
           "failed to initialize SenseVoice encoder graph context");
     }
 
-    auto *x = ggml_new_tensor_2d(next->ggml, GGML_TYPE_F32,
-                                 config.input_size, total);
-    ggml_set_input(x);
-    next->input = engine::core::wrap_tensor(
-        x, engine::core::TensorShape::from_dims(
-               {total, config.input_size}));
+    engine::core::ModuleBuildContext context{
+        next->ggml, "sense_asr.encoder", execution_context->backend_type()};
+    const auto input_shape =
+        engine::core::TensorShape::from_dims({1, total, config.input_size});
+    auto input = engine::core::make_tensor(context, GGML_TYPE_F32, input_shape);
+    ggml_set_input(input.tensor);
+    next->input = input;
 
-    ggml_tensor *h =
-        sanm_layer(next->ggml, weights->stem, config, x, total, false);
+    auto hidden = engine::core::wrap_tensor(
+        ggml_scale(context.ggml, input.tensor,
+                   std::sqrt(static_cast<float>(config.d_model))),
+        input_shape, GGML_TYPE_F32);
+    next->positions =
+        engine::core::make_tensor(context, GGML_TYPE_F32, input_shape);
+    ggml_set_input(next->positions.tensor);
+    hidden = engine::modules::AddModule{}.build(context, hidden, next->positions);
+
+    hidden = engine::modules::sanm_projection_block(
+        context, hidden,
+        framework_sanm_weights(context, weights->stem, config,
+                               config.input_size),
+        block_config(config, config.input_size));
+    const auto residual_config = block_config(config, config.d_model);
     for (size_t index = 0; index < weights->main_layers.size(); ++index) {
-      h = sanm_layer(next->ggml, weights->main_layers[index], config, h, total,
-                     true);
+      hidden = engine::modules::sanm_residual_block(
+          context, hidden,
+          framework_sanm_weights(context, weights->main_layers[index], config,
+                                 config.d_model),
+          residual_config);
     }
-    h = lnorm(next->ggml, weights->after_norm_weight.tensor,
-              weights->after_norm_bias.tensor, h);
+    hidden = engine::modules::sanm_layer_norm(
+        context, hidden, weights->after_norm, kLayerNormEpsilon);
     for (size_t index = 0; index < weights->timestamp_layers.size(); ++index) {
-      h = sanm_layer(next->ggml, weights->timestamp_layers[index], config, h,
-                     total, true);
+      hidden = engine::modules::sanm_residual_block(
+          context, hidden,
+          framework_sanm_weights(context, weights->timestamp_layers[index],
+                                 config, config.d_model),
+          residual_config);
     }
-    h = lnorm(next->ggml, weights->tp_norm_weight.tensor,
-              weights->tp_norm_bias.tensor, h);
-    next->output =
-        lin(next->ggml, weights->ctc_lo.weight.tensor,
-            weights->ctc_lo.bias.tensor, h);
+    hidden = engine::modules::sanm_layer_norm(
+        context, hidden, weights->tp_norm, kLayerNormEpsilon);
+    const auto logits = engine::modules::LinearModule(
+                            {config.d_model, config.vocab_size, true})
+                            .build(context, hidden, weights->ctc_lo);
+    next->output = logits.tensor;
     ggml_set_output(next->output);
 
     next->graph =
@@ -414,17 +450,9 @@ struct SenseAsrEncoderRuntime::Impl {
     std::copy(features.values.begin(), features.values.end(),
               input.begin() + static_cast<ptrdiff_t>(nq) * config.input_size);
 
-    const float scale = std::sqrt(static_cast<float>(config.d_model));
-    for (auto &value : input) {
-      value *= scale;
-    }
-    const auto positions =
-        make_posenc_input(total, config.input_size);
-    for (size_t i = 0; i < input.size(); ++i) {
-      input[i] += positions[i];
-    }
-
     engine::core::write_tensor_f32(cached_graph->input, input);
+    engine::core::write_tensor_f32(cached_graph->positions,
+                                   make_posenc_input(total, config.input_size));
     engine::core::set_backend_threads(execution_context->backend(),
                                       execution_context->config().threads);
     // Bypass host graph plan to match reference behavior exactly

@@ -31,7 +31,7 @@ export async function health(): Promise<ServerHealth> {
 }
 
 export async function models(): Promise<LoadedModel[]> {
-  const response = await jsonRequest<{ data: LoadedModel[] }>('/v1/models');
+  const response = await jsonRequest<{ data: LoadedModel[] }>('/v1/models?include_session_options=true');
   return response.data;
 }
 

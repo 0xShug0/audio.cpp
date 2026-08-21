@@ -71,7 +71,7 @@ function preferredPackage(entries: PackageEntry[]): PackageEntry | undefined {
 function relatedPackages(entry: CatalogEntry): PackageEntry[] {
   const family = packages.filter((candidate) => candidate.family === entry.family);
   if (!family.length) return [];
-  if (entry.family === 'ace_step') return family;
+  if (entry.family === 'ace_step' || entry.family === 'minimax_music3') return family;
   if (!entry.download_id) return family;
   const exact = family.find((candidate) => candidate.id === entry.download_id);
   if (exact) {
@@ -144,9 +144,35 @@ function packageModelPath(entry: PackageEntry): string {
   return `models/${entry.target_directory}/${relative}`.replace(/\/+/g, '/');
 }
 
+function packageSessionOptions(entry: PackageEntry): Record<string, string> | undefined {
+  if (entry.family !== 'minimax_music3') return undefined;
+  if (entry.id === 'minimax_music3_q8_0') {
+    return {
+      'minimax_music3.language_model_gguf': 'language_model_q8_0.gguf',
+      'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
+      'minimax_music3.flow_transformer_gguf': 'transformer_q8_0.gguf'
+    };
+  }
+  if (entry.id === 'minimax_music3_bf16') {
+    return {
+      'minimax_music3.language_model_gguf': 'language_model_bf16.gguf',
+      'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_bf16.gguf',
+      'minimax_music3.flow_transformer_gguf': 'transformer_bf16.gguf'
+    };
+  }
+  if (entry.id === 'minimax_music3_q4_0') {
+    return {
+      'minimax_music3.language_model_gguf': 'language_model_q4_0.gguf',
+      'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
+      'minimax_music3.flow_transformer_gguf': 'transformer_q4_0.gguf'
+    };
+  }
+  return undefined;
+}
+
 function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
   const related = relatedPackages(entry);
-  if (entry.family === 'ace_step') {
+  if (entry.family === 'ace_step' || entry.family === 'minimax_music3') {
     return related
       .filter((candidate) => candidate.format === 'gguf')
       .map((candidate) => ({
@@ -154,7 +180,8 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
         label: packageLabel(candidate),
         path: packageModelPath(candidate),
         format: candidate.format,
-        precision: candidate.precision
+        precision: candidate.precision,
+        session_options: packageSessionOptions(candidate)
       }));
   }
   const q8 = preferredPackage(related.filter((candidate) =>
@@ -176,7 +203,8 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
       label: packageLabel(candidate),
       path: packageModelPath(candidate),
       format: candidate.format,
-      precision: candidate.precision
+      precision: candidate.precision,
+      session_options: packageSessionOptions(candidate)
     }));
 }
 

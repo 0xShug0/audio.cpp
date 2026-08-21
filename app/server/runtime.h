@@ -160,7 +160,7 @@ private:
     HttpResponse handle_voices(const HttpRequest & request) const;
     HttpResponse handle_unload_models(const std::string & body_text);
     HttpResponse handle_unload_all_models();
-    std::string models_json() const;
+    std::string models_json(bool include_session_options = false) const;
     std::string get_allowed_origin(const HttpRequest & request) const;
 
     ServerConfig config_;

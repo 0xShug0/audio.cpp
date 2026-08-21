@@ -54,8 +54,19 @@ readelf -d build/bin/audiocpp_server | grep NEEDED | grep cuda
 # want libcudart.so.12 / libcublas.so.12 — libcudart.so.11.0 means a mixed build
 ```
 
-Leave `CMAKE_CUDA_ARCHITECTURES` unset to build for the GPUs present at build time
-(`native`). Note that CMake caches the CUDA compiler: switching toolkits in an
+Leaving `CMAKE_CUDA_ARCHITECTURES` unset does **not** reliably build for the GPUs
+present at build time on this codebase, even though ggml's own `ggml-cuda/CMakeLists.txt`
+implements exactly that native-detect fallback. The reason: this project's top-level
+`CMakeLists.txt` calls `enable_language(CUDA)` itself, before ggml's subdirectory is
+processed — CMake computes its own default `CMAKE_CUDA_ARCHITECTURES` at that point, so
+ggml's fallback logic (gated on the variable still being undefined) never runs. Verified
+directly: on an RTX 5060 (sm_120), leaving the flag unset made CMake default to bare `75`
+(Turing) even though `CMAKE_CUDA_ARCHITECTURES_NATIVE` was correctly autodetected as
+`120a-real` in the same configure log — computed but never used. Any
+`__CUDA_ARCH__`-gated kernel path newer than the default silently compiles *out*, not
+merely unoptimized. **Always pass `CMAKE_CUDA_ARCHITECTURES` explicitly.**
+
+Note that CMake caches the CUDA compiler: switching toolkits in an
 existing build directory requires deleting `CMakeCache.txt` and `CMakeFiles/`.
 
 
@@ -79,6 +90,41 @@ cmake -S . -B build -DENGINE_ENABLE_CUDA=ON \
 On WSL2, install the toolkit only — `cuda-toolkit-<version>` from the `wsl-ubuntu`
 repo. The `cuda` and `cuda-drivers` metapackages pull a Linux display driver that
 breaks the GPU passthrough provided by the Windows host driver.
+
+Jetson Orin (aarch64, compute capability 8.7 — Orin Nano, Orin NX, AGX Orin):
+
+Tested on JetPack 7.2 / CUDA 13.2, both an Orin Nano 8GB and an Orin NX 16GB, full
+model catalog. `87` is intentionally not in this doc's example list above — always
+pass it explicitly:
+
+```bash
+cmake -S . -B build -DENGINE_ENABLE_CUDA=ON \
+  -DCUDAToolkit_ROOT=/usr/local/cuda \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DCMAKE_CUDA_ARCHITECTURES=87-real
+```
+
+On an 8GB board (Orin Nano), also add `-DGGML_CUDA_NO_VMM=ON`. Several model
+families otherwise crash at `cuMemAddressReserve` in ggml's CUDA pool allocator,
+which reserves a 32GB virtual address range unconditionally — this fails on the
+Nano's smaller unified-memory address space even though it's never meant to be
+physically backed. **Only add this on 8GB-class boards** — A/B tested on a 16GB
+Orin NX, where it isn't needed, it costs a real (if small) ~2% throughput
+regression rather than being a free no-op.
+
+If a specific model still fails with a Tegra `NvMapMemAllocInternalTagged`
+allocation error on an 8GB board despite the flag above, even for a small
+allocation with apparent memory headroom to spare, try a reboot before
+concluding the model doesn't fit — this can be boot-persistent NVMAP allocator
+fragmentation from a prior long-running session, not a hard capacity limit.
+
+Two environment gaps seen on a bare Nano image, neither audio.cpp's fault:
+`cmake` may not be installed at all and there's no root to `apt install` one — the
+official Kitware prebuilt aarch64 tarball (`cmake.org/download`) works fine
+extracted to `~/.local/` with no elevation needed. `nvidia-smi` reports memory as
+`N/A` on Jetson's unified-memory architecture — use `/proc/meminfo` or
+`tegrastats` for RAM tracking instead, not GPU-memory tooling built for discrete
+cards.
 
 Vulkan:
 
