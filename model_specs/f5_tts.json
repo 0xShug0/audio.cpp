@@ -114,7 +114,7 @@
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "tareko/audio.cpp",
+      "repo": "trklou/audio.cpp",
       "revision": "main",
       "gated": false
     }
@@ -129,10 +129,10 @@
       "precision": "orig",
       "target_directory": "Habibi-TTS/Unified",
       "files": [
-        "unified/unified-orig.gguf",
-        "unified/vocab.txt"
+        "habibi-unified/habibi-unified-orig.gguf",
+        "habibi-unified/vocab.txt"
       ],
-      "strip_prefix": "unified"
+      "strip_prefix": "habibi-unified"
     },
     {
       "id": "vocos_mel_24khz",
@@ -156,10 +156,10 @@
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/ALG",
       "files": [
-        "alg/alg-orig.gguf",
-        "alg/vocab.txt"
+        "habibi-alg/habibi-alg-orig.gguf",
+        "habibi-alg/vocab.txt"
       ],
-      "strip_prefix": "alg"
+      "strip_prefix": "habibi-alg"
     },
     {
       "id": "habibi_egy",
@@ -170,10 +170,10 @@
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/EGY",
       "files": [
-        "egy/egy-orig.gguf",
-        "egy/vocab.txt"
+        "habibi-egy/habibi-egy-orig.gguf",
+        "habibi-egy/vocab.txt"
       ],
-      "strip_prefix": "egy"
+      "strip_prefix": "habibi-egy"
     },
     {
       "id": "habibi_irq",
@@ -184,10 +184,10 @@
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/IRQ",
       "files": [
-        "irq/irq-orig.gguf",
-        "irq/vocab.txt"
+        "habibi-irq/habibi-irq-orig.gguf",
+        "habibi-irq/vocab.txt"
       ],
-      "strip_prefix": "irq"
+      "strip_prefix": "habibi-irq"
     },
     {
       "id": "habibi_mar",
@@ -198,10 +198,10 @@
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/MAR",
       "files": [
-        "mar/mar-orig.gguf",
-        "mar/vocab.txt"
+        "habibi-mar/habibi-mar-orig.gguf",
+        "habibi-mar/vocab.txt"
       ],
-      "strip_prefix": "mar"
+      "strip_prefix": "habibi-mar"
     },
     {
       "id": "habibi_msa",
@@ -212,10 +212,10 @@
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/MSA",
       "files": [
-        "msa/msa-orig.gguf",
-        "msa/vocab.txt"
+        "habibi-msa/habibi-msa-orig.gguf",
+        "habibi-msa/vocab.txt"
       ],
-      "strip_prefix": "msa"
+      "strip_prefix": "habibi-msa"
     },
     {
       "id": "habibi_sau",
@@ -226,10 +226,10 @@
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/SAU",
       "files": [
-        "sau/sau-orig.gguf",
-        "sau/vocab.txt"
+        "habibi-sau/habibi-sau-orig.gguf",
+        "habibi-sau/vocab.txt"
       ],
-      "strip_prefix": "sau"
+      "strip_prefix": "habibi-sau"
     },
     {
       "id": "habibi_uae",
@@ -240,10 +240,10 @@
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/UAE",
       "files": [
-        "uae/uae-orig.gguf",
-        "uae/vocab.txt"
+        "habibi-uae/habibi-uae-orig.gguf",
+        "habibi-uae/vocab.txt"
       ],
-      "strip_prefix": "uae"
+      "strip_prefix": "habibi-uae"
     }
   ],
   "dependencies": [],

@@ -106,7 +106,9 @@ F5TTSSession::F5TTSSession(
         const fs::path models_root = ckpt_dir.parent_path().parent_path();
         if (assets_->checkpoint.extension() == ".gguf") {
             const auto probe = assets::open_tensor_source(assets_->checkpoint);
-            if (probe->has_tensor("vocos.backbone.embed.weight")) {
+            // packed GGUF namespaces are slash-separated (vocos/backbone...)
+            if (probe->has_tensor("vocos/backbone.embed.weight") ||
+                probe->has_tensor("vocos.backbone.embed.weight")) {
                 vocos_path_ = assets_->checkpoint.string();
             }
         }
