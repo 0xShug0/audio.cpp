@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/models/voxcpm2/minicpm.h"
+#include "engine/community_models/voxcpm1/minicpm.h"
 
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -19,7 +19,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace engine::models::voxcpm2 {
+namespace engine::community_models::voxcpm1 {
 namespace {
 
 namespace binding = engine::modules::binding;
@@ -84,13 +84,13 @@ engine::core::TensorValue
 apply_minicpm_rope(engine::core::ModuleBuildContext &ctx,
                    const engine::core::TensorValue &input,
                    const engine::core::TensorValue &positions,
-                   const VoxCPM2MiniCPMWeights &weights) {
+                   const VoxCPM1MiniCPMWeights &weights) {
   const auto &config = weights.config;
   if (config.no_rope) {
     return input;
   }
   if (!weights.rope_factors.has_value()) {
-    throw std::runtime_error("VoxCPM2 MiniCPM graph missing RoPE factors");
+    throw std::runtime_error("VoxCPM1 MiniCPM graph missing RoPE factors");
   }
   const int64_t dim = head_dim(config);
   return engine::core::wrap_tensor(
@@ -154,8 +154,8 @@ engine::core::TensorValue
 minicpm_layer(engine::core::ModuleBuildContext &ctx,
               const engine::core::TensorValue &input,
               const engine::core::TensorValue &positions,
-              const VoxCPM2MiniCPMLayerWeights &layer,
-              const VoxCPM2MiniCPMWeights &weights, bool is_causal) {
+              const VoxCPM1MiniCPMLayerWeights &layer,
+              const VoxCPM1MiniCPMWeights &weights, bool is_causal) {
   const auto &config = weights.config;
   const int64_t dim = head_dim(config);
   const int64_t kv_repeats =
@@ -164,6 +164,11 @@ minicpm_layer(engine::core::ModuleBuildContext &ctx,
   auto hidden = engine::modules::RMSNormModule(
                     {config.hidden_size, config.rms_norm_eps, true, false})
                     .build(ctx, input, layer.input_norm);
+  if (std::getenv("VOXCPM_DUMP_NORM0") != nullptr &&
+      ggml_nelements(hidden.tensor) == 10240) {
+    ggml_set_name(hidden.tensor, "dump_norm0");
+    ggml_set_output(hidden.tensor);
+  }
   auto q = engine::modules::LinearModule(
                binding::linear_config(config.hidden_size,
                                       config.num_attention_heads * dim, false))
@@ -246,9 +251,16 @@ minicpm_layer(engine::core::ModuleBuildContext &ctx,
 minicpm_transformer(engine::core::ModuleBuildContext &ctx,
                     engine::core::TensorValue input,
                     const engine::core::TensorValue &positions,
-                    const VoxCPM2MiniCPMWeights &weights, bool is_causal) {
-  for (const auto &layer : weights.layers) {
-    input = minicpm_layer(ctx, input, positions, layer, weights, is_causal);
+                    const VoxCPM1MiniCPMWeights &weights, bool is_causal) {
+  for (size_t li = 0; li < weights.layers.size(); ++li) {
+    if (std::getenv("VOXCPM_DUMP_DECODER_LAYERS") != nullptr && li < 8) {
+      char name[32];
+      snprintf(name, sizeof(name), "dump_layer_%zu", li);
+      ggml_set_name(input.tensor, name);
+      ggml_set_output(input.tensor);
+    }
+    input = minicpm_layer(ctx, input, positions, weights.layers[li], weights,
+                          is_causal);
   }
   return engine::modules::RMSNormModule({weights.config.hidden_size,
                                          weights.config.rms_norm_eps, true,
@@ -257,4 +269,4 @@ minicpm_transformer(engine::core::ModuleBuildContext &ctx,
 }
 
 } // namespace
-} // namespace engine::models::voxcpm2
+} // namespace engine::community_models::voxcpm1

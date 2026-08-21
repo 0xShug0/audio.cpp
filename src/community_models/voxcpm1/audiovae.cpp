@@ -1,4 +1,4 @@
-#include "engine/models/voxcpm2/audiovae.h"
+#include "engine/community_models/voxcpm1/audiovae.h"
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
@@ -29,7 +29,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::voxcpm2 {
+namespace engine::community_models::voxcpm1 {
 namespace {
 
 namespace core = engine::core;
@@ -39,6 +39,78 @@ namespace assets_ns = engine::assets;
 using Clock = std::chrono::steady_clock;
 
 constexpr int64_t kResidualKernel = 7;
+
+enum class PaddingMode { Left, Right };
+
+std::vector<float> trim_audio_silence_vad(const std::vector<float>& input,
+                                          int sample_rate,
+                                          float max_silence_ms = 100.0f,
+                                          float top_db = 30.0f) {
+    if (input.empty() || sample_rate <= 0) {
+        return input;
+    }
+
+    constexpr int kFrameLength = 2048;
+    constexpr int kHopLength = 512;
+    const float ref = *std::max_element(input.begin(), input.end(), [](float a, float b) {
+        return std::fabs(a) < std::fabs(b);
+    });
+    if (std::fabs(ref) <= 0.0f) {
+        return input;
+    }
+
+    const float threshold = std::fabs(ref) * std::pow(10.0f, -top_db / 20.0f);
+    const size_t n = input.size();
+    int first_voice_frame = -1;
+    int last_voice_frame = -1;
+
+    for (size_t idx = 0, frame = 0; idx < n; idx += kHopLength, ++frame) {
+        const size_t frame_end = std::min(idx + static_cast<size_t>(kFrameLength), n);
+        const size_t frame_size = frame_end - idx;
+        if (frame_size == 0) {
+            break;
+        }
+        double energy = 0.0;
+        for (size_t i = idx; i < frame_end; ++i) {
+            energy += static_cast<double>(input[i]) * static_cast<double>(input[i]);
+        }
+        const float rms = static_cast<float>(std::sqrt(energy / static_cast<double>(frame_size)));
+        if (rms >= threshold) {
+            if (first_voice_frame < 0) {
+                first_voice_frame = static_cast<int>(frame);
+            }
+            last_voice_frame = static_cast<int>(frame);
+        }
+        if (frame_end == n) {
+            break;
+        }
+    }
+
+    if (first_voice_frame < 0 || last_voice_frame < 0) {
+        return input;
+    }
+
+    const int max_silence_samples = std::max(0, static_cast<int>(std::lround(max_silence_ms * sample_rate / 1000.0f)));
+    const int start = std::max(0, first_voice_frame * kHopLength - max_silence_samples);
+    const int end = std::min(static_cast<int>(n),
+                             (last_voice_frame + 1) * kHopLength + (kFrameLength - kHopLength) + max_silence_samples);
+    if (start >= end) {
+        return input;
+    }
+    return std::vector<float>(input.begin() + start, input.begin() + end);
+}
+
+void pad_audio_for_patch_alignment(std::vector<float>& audio, size_t patch_len, PaddingMode mode) {
+    if (patch_len == 0 || audio.empty() || (audio.size() % patch_len) == 0) {
+        return;
+    }
+    const size_t padding = patch_len - (audio.size() % patch_len);
+    if (mode == PaddingMode::Left) {
+        audio.insert(audio.begin(), padding, 0.0f);
+    } else {
+        audio.insert(audio.end(), padding, 0.0f);
+    }
+}
 
 struct GgmlContextDeleter {
   void operator()(ggml_context *ctx) const noexcept {
@@ -111,7 +183,7 @@ struct VAEWeights {
   VAEConv1dWeights decoder_final_conv;
 };
 
-int sample_rate_bucket(const VoxCPM2AudioVAEConfig &config) {
+int sample_rate_bucket(const VoxCPM1AudioVAEConfig &config) {
   int bucket = 0;
   while (bucket < static_cast<int>(config.sample_rate_bin_boundaries.size()) &&
          config.output_sample_rate >
@@ -127,7 +199,7 @@ std::vector<float> fold_weight_norm(const std::vector<float> &weight_v,
                                     int64_t kernel) {
   if (static_cast<int64_t>(weight_v.size()) != dim0 * dim1 * kernel ||
       static_cast<int64_t>(weight_g.size()) != dim0) {
-    throw std::runtime_error("VoxCPM2 AudioVAE weight-norm shape mismatch");
+    throw std::runtime_error("VoxCPM1 AudioVAE weight-norm shape mismatch");
   }
   std::vector<float> out(weight_v.size(), 0.0F);
   for (int64_t d0 = 0; d0 < dim0; ++d0) {
@@ -150,7 +222,7 @@ std::vector<float> fold_weight_norm(const std::vector<float> &weight_v,
 std::vector<float> squeeze_weight_g(const std::vector<float> &values,
                                     int64_t channels) {
   if (static_cast<int64_t>(values.size()) != channels) {
-    throw std::runtime_error("VoxCPM2 AudioVAE weight_g shape mismatch");
+    throw std::runtime_error("VoxCPM1 AudioVAE weight_g shape mismatch");
   }
   return values;
 }
@@ -293,14 +365,14 @@ int64_t product(const std::vector<int64_t> &values) {
   int64_t out = 1;
   for (const int64_t value : values) {
     if (value <= 0) {
-      throw std::runtime_error("VoxCPM2 AudioVAE rate must be positive");
+      throw std::runtime_error("VoxCPM1 AudioVAE rate must be positive");
     }
     out *= value;
   }
   return out;
 }
 
-VAEWeights load_vae_weights(const VoxCPM2Assets &assets,
+VAEWeights load_vae_weights(const VoxCPM1Assets &assets,
                             core::ExecutionContext &execution_context,
                             size_t weight_context_bytes,
                             assets_ns::TensorStorageType storage_type) {
@@ -309,7 +381,7 @@ VAEWeights load_vae_weights(const VoxCPM2Assets &assets,
   VAEWeights weights;
   weights.store = std::make_shared<core::BackendWeightStore>(
       execution_context.backend(), execution_context.backend_type(),
-      "voxcpm2.audiovae.weights", weight_context_bytes);
+      "voxcpm1.audiovae.weights", weight_context_bytes);
   auto &store = *weights.store;
   weights.encoder_first = load_wn_conv1d(store, source, "encoder.block.0",
                                          config.encoder_dim, 1, 7, false,
@@ -384,10 +456,10 @@ VAEWeights load_vae_weights(const VoxCPM2Assets &assets,
 }
 
 
-std::shared_ptr<const VoxCPM2Assets>
-require_assets(std::shared_ptr<const VoxCPM2Assets> assets) {
+std::shared_ptr<const VoxCPM1Assets>
+require_assets(std::shared_ptr<const VoxCPM1Assets> assets) {
   if (assets == nullptr) {
-    throw std::runtime_error("VoxCPM2 AudioVAE decoder requires assets");
+    throw std::runtime_error("VoxCPM1 AudioVAE decoder requires assets");
   }
   return assets;
 }
@@ -472,7 +544,7 @@ core::TensorValue causal_conv1d(core::ModuleBuildContext &ctx,
   const int left_pad = 2 * padding - output_padding;
   if (left_pad < 0) {
     throw std::runtime_error(
-        "VoxCPM2 AudioVAE causal convolution padding is invalid");
+        "VoxCPM1 AudioVAE causal convolution padding is invalid");
   }
   auto padded = causal_pad_left(ctx, input, left_pad);
   if (weights.depthwise_layout) {
@@ -525,9 +597,8 @@ core::TensorValue encoder_block(core::ModuleBuildContext &ctx,
   hidden = residual_unit(ctx, hidden, weights.residual_units[2], 9);
   hidden = snake_exact(ctx, hidden, weights.snake, weights.input_channels);
   const int padding = static_cast<int>((weights.stride + 1) / 2);
-  const int output_padding = weights.stride % 2;
   return causal_conv1d(ctx, hidden, weights.downsample, weights.stride, padding,
-                       1, output_padding);
+                       1);
 }
 
 core::TensorValue decoder_block(core::ModuleBuildContext &ctx,
@@ -546,11 +617,11 @@ core::TensorValue decoder_block(core::ModuleBuildContext &ctx,
 
 } // namespace
 
-class VoxCPM2AudioVAEDecoderRuntime::Impl {
+class VoxCPM1AudioVAEDecoderRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2Assets> assets,
+  Impl(std::shared_ptr<const VoxCPM1Assets> assets,
        core::ExecutionContext &execution_context,
-       VoxCPM2AudioVAEDecoderConfig config)
+       VoxCPM1AudioVAEDecoderConfig config)
       : assets_(require_assets(std::move(assets))),
         execution_context_(execution_context), config_(config),
         weights_(load_vae_weights(*assets_, execution_context_,
@@ -558,11 +629,11 @@ public:
                                   config_.weight_storage_type)) {
     if (config_.latent_frame_capacity < 0) {
       throw std::runtime_error(
-          "VoxCPM2 AudioVAE latent frame capacity must be non-negative");
+          "VoxCPM1 AudioVAE latent frame capacity must be non-negative");
     }
     if (config_.encoder_sample_capacity <= 0) {
       throw std::runtime_error(
-          "VoxCPM2 AudioVAE encoder sample capacity must be positive");
+          "VoxCPM1 AudioVAE encoder sample capacity must be positive");
     }
   }
 
@@ -575,12 +646,12 @@ public:
                                        int64_t patches) {
     const auto &vae = assets_->config.audio_vae;
     if (patches < 0) {
-      throw std::runtime_error("VoxCPM2 AudioVAE patch count is negative");
+      throw std::runtime_error("VoxCPM1 AudioVAE patch count is negative");
     }
     const int64_t latent_frames = patches * assets_->config.patch_size;
     const int64_t expected = latent_frames * vae.latent_dim;
     if (static_cast<int64_t>(features.size()) != expected) {
-      throw std::runtime_error("VoxCPM2 AudioVAE feature size mismatch");
+      throw std::runtime_error("VoxCPM1 AudioVAE feature size mismatch");
     }
     ensure_decoder_graph(latent_frames);
     std::vector<float> input(
@@ -600,7 +671,7 @@ public:
         core::compute_backend_graph(execution_context_.backend(), graph_);
     ggml_backend_synchronize(execution_context_.backend());
     if (status != GGML_STATUS_SUCCESS) {
-      throw std::runtime_error("VoxCPM2 AudioVAE decoder graph compute failed");
+      throw std::runtime_error("VoxCPM1 AudioVAE decoder graph compute failed");
     }
     const int64_t sample_count = latent_frames * decoder_stride_;
     std::vector<float> full(static_cast<size_t>(output_frames_), 0.0F);
@@ -614,15 +685,15 @@ public:
     return audio;
   }
 
-  VoxCPM2EncodedPrompt encode_prompt_audio(
+  VoxCPM1EncodedPrompt encode_prompt_audio(
       const std::optional<runtime::AudioBuffer> &prompt_audio,
       const std::string &prompt_text,
       const std::optional<runtime::AudioBuffer> &reference_audio) {
-    VoxCPM2EncodedPrompt out;
+    VoxCPM1EncodedPrompt out;
     if (prompt_audio.has_value()) {
       if (prompt_text.empty()) {
         throw std::runtime_error(
-            "VoxCPM2 prompt audio requires prompt_text or reference_text");
+            "VoxCPM1 prompt audio requires prompt_text or reference_text");
       }
       out.prompt_text = prompt_text;
       auto encoded = encode_audio(*prompt_audio, true);
@@ -639,8 +710,10 @@ public:
 
   void release_runtime_memory() {
     release_decoder_graph();
-    release_encoder_graph();
+    release_encoder_graph_impl();
   }
+
+  void release_encoder_graph() { release_encoder_graph_impl(); }
 
 private:
   struct EncodedFeatures {
@@ -663,21 +736,34 @@ private:
       options.output_padding = 256;
       options.require_full_input = true;
       options.reject_empty_output = true;
-      options.warning_context = "VoxCPM2 AudioVAE encoder";
+      options.warning_context = "VoxCPM1 AudioVAE encoder";
       options.fallback_description = "linear resampling";
       mono = engine::audio::resample_mono_soxr_or_linear(
           mono, audio.sample_rate, vae.sample_rate, options);
     }
-    const int64_t patch_samples = assets_->config.patch_size * encoder_stride_;
-    if (patch_samples <= 0) {
-      throw std::runtime_error("VoxCPM2 AudioVAE patch sample size is invalid");
+    // VAD trim silence (match VoxCPM.cpp server_common.cpp:842/878)
+    mono = trim_audio_silence_vad(mono, vae.sample_rate);
+    if (const char *dump_path = std::getenv("VOXCPM_DUMP_REF_MONO")) {
+      FILE *f = std::fopen(dump_path, "wb");
+      if (f != nullptr) {
+        std::fwrite(mono.data(), sizeof(float), mono.size(), f);
+        std::fclose(f);
+      }
     }
+    // Patch-aligned padding (Left for prompt, Right for reference)
+    const int64_t patch_samples = assets_->config.patch_size * encoder_stride_;
+    pad_audio_for_patch_alignment(mono, static_cast<size_t>(patch_samples),
+                                  left_pad ? PaddingMode::Left : PaddingMode::Right);
+    // Final padding to encoder_sample_capacity
     const int64_t sample_count = static_cast<int64_t>(mono.size());
     const int64_t padded_samples =
         ((sample_count + patch_samples - 1) / patch_samples) * patch_samples;
+    if (patch_samples <= 0) {
+      throw std::runtime_error("VoxCPM1 AudioVAE patch sample size is invalid");
+    }
     if (padded_samples > config_.encoder_sample_capacity) {
       throw std::runtime_error(
-          "VoxCPM2 AudioVAE encoder sample capacity exceeded");
+          "VoxCPM1 AudioVAE encoder sample capacity exceeded");
     }
     std::vector<float> input(
         static_cast<size_t>(config_.encoder_sample_capacity), 0.0F);
@@ -692,7 +778,20 @@ private:
         execution_context_.backend(), encoder_graph_);
     ggml_backend_synchronize(execution_context_.backend());
     if (status != GGML_STATUS_SUCCESS) {
-      throw std::runtime_error("VoxCPM2 AudioVAE encoder graph compute failed");
+      throw std::runtime_error("VoxCPM1 AudioVAE encoder graph compute failed");
+    }
+    if (const char *stage_path = std::getenv("VOXCPM_DUMP_ENC_STAGE")) {
+      const std::string dir(stage_path);
+      for (size_t i = 0; i < encoder_stages_.size(); ++i) {
+        ggml_tensor *stage = encoder_stages_[i];
+        std::vector<float> buf(static_cast<size_t>(ggml_nelements(stage)), 0.0F);
+        ggml_backend_tensor_get(stage, buf.data(), 0, buf.size() * sizeof(float));
+        FILE *f = std::fopen((dir + "/stage_" + std::to_string(i) + ".bin").c_str(), "wb");
+        if (f != nullptr) {
+          std::fwrite(buf.data(), sizeof(float), buf.size(), f);
+          std::fclose(f);
+        }
+      }
     }
 
     const int64_t latent_frames = padded_samples / encoder_stride_;
@@ -704,7 +803,7 @@ private:
                             full.size() * sizeof(float));
     if (latent_frames % assets_->config.patch_size != 0) {
       throw std::runtime_error(
-          "VoxCPM2 AudioVAE encoded frames are not divisible by patch size");
+          "VoxCPM1 AudioVAE encoded frames are not divisible by patch size");
     }
     EncodedFeatures encoded;
     encoded.patches = latent_frames / assets_->config.patch_size;
@@ -714,6 +813,14 @@ private:
       for (int64_t c = 0; c < vae.latent_dim; ++c) {
         encoded.features[static_cast<size_t>(t * vae.latent_dim + c)] =
             full[static_cast<size_t>(c * expected_capacity_frames + t)];
+      }
+    }
+    if (const char *dump_path = std::getenv("VOXCPM_DUMP_REF_FEAT")) {
+      FILE *f = std::fopen(dump_path, "wb");
+      if (f != nullptr) {
+        std::fwrite(encoded.features.data(), sizeof(float),
+                    encoded.features.size(), f);
+        std::fclose(f);
       }
     }
     return encoded;
@@ -740,27 +847,27 @@ private:
   void ensure_decoder_graph(int64_t latent_frames) {
     if (graph_ != nullptr && latent_frames <= decoder_latent_frame_capacity_) {
       engine::debug::timing_log_scalar(
-          "voxcpm2.audiovae.decoder.graph.rebuilt", false);
+          "voxcpm1.audiovae.decoder.graph.rebuilt", false);
       engine::debug::timing_log_scalar(
-          "voxcpm2.audiovae.decoder.graph.reused", true);
+          "voxcpm1.audiovae.decoder.graph.reused", true);
       engine::debug::timing_log_scalar(
-          "voxcpm2.audiovae.decoder.graph.build_ms", 0.0);
+          "voxcpm1.audiovae.decoder.graph.build_ms", 0.0);
       engine::debug::timing_log_scalar(
-          "voxcpm2.audiovae.decoder.latent_capacity",
+          "voxcpm1.audiovae.decoder.latent_capacity",
           decoder_latent_frame_capacity_);
       return;
     }
     const auto build_start = Clock::now();
     build_decoder(decoder_capacity_for(latent_frames));
     engine::debug::timing_log_scalar(
-        "voxcpm2.audiovae.decoder.graph.rebuilt", true);
+        "voxcpm1.audiovae.decoder.graph.rebuilt", true);
     engine::debug::timing_log_scalar(
-        "voxcpm2.audiovae.decoder.graph.reused", false);
+        "voxcpm1.audiovae.decoder.graph.reused", false);
     engine::debug::timing_log_scalar(
-        "voxcpm2.audiovae.decoder.graph.build_ms",
+        "voxcpm1.audiovae.decoder.graph.build_ms",
         engine::debug::elapsed_ms(build_start));
     engine::debug::timing_log_scalar(
-        "voxcpm2.audiovae.decoder.latent_capacity",
+        "voxcpm1.audiovae.decoder.latent_capacity",
         decoder_latent_frame_capacity_);
   }
 
@@ -784,12 +891,12 @@ private:
     const auto &vae = assets_->config.audio_vae;
     if (latent_frame_capacity <= 0) {
       throw std::runtime_error(
-          "VoxCPM2 AudioVAE decoder graph capacity must be positive");
+          "VoxCPM1 AudioVAE decoder graph capacity must be positive");
     }
     release_decoder_graph();
     if (config_.graph_context_bytes == 0) {
       throw std::runtime_error(
-          "VoxCPM2 AudioVAE graph context bytes must be non-zero");
+          "VoxCPM1 AudioVAE graph context bytes must be non-zero");
     }
     decoder_stride_ = product(vae.decoder_rates);
     output_frames_ = latent_frame_capacity * decoder_stride_;
@@ -797,9 +904,9 @@ private:
     ctx_.reset(ggml_init(params));
     if (ctx_ == nullptr) {
       throw std::runtime_error(
-          "failed to initialize VoxCPM2 AudioVAE decoder graph context");
+          "failed to initialize VoxCPM1 AudioVAE decoder graph context");
     }
-    core::ModuleBuildContext ctx{ctx_.get(), "voxcpm2.audiovae.decoder",
+    core::ModuleBuildContext ctx{ctx_.get(), "voxcpm1.audiovae.decoder",
                                  execution_context_.backend_type()};
     auto hidden = core::make_tensor(
         ctx, GGML_TYPE_F32,
@@ -827,12 +934,12 @@ private:
     if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) ||
         !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
       release_decoder_graph();
-      throw std::runtime_error("failed to allocate VoxCPM2 AudioVAE graph");
+      throw std::runtime_error("failed to allocate VoxCPM1 AudioVAE graph");
     }
     decoder_latent_frame_capacity_ = latent_frame_capacity;
   }
 
-  void release_encoder_graph() {
+  void release_encoder_graph_impl() {
     if (encoder_graph_ != nullptr) {
       core::release_backend_graph_resources(execution_context_.backend(),
                                             encoder_graph_);
@@ -852,35 +959,51 @@ private:
     release_encoder_graph();
     if (config_.encoder_graph_context_bytes == 0) {
       throw std::runtime_error(
-          "VoxCPM2 AudioVAE encoder graph context bytes must be non-zero");
+          "VoxCPM1 AudioVAE encoder graph context bytes must be non-zero");
     }
     encoder_stride_ = product(vae.encoder_rates);
     if (config_.encoder_sample_capacity % encoder_stride_ != 0) {
-      throw std::runtime_error("VoxCPM2 AudioVAE encoder sample capacity must "
+      throw std::runtime_error("VoxCPM1 AudioVAE encoder sample capacity must "
                                "be divisible by encoder stride");
     }
     ggml_init_params params{config_.encoder_graph_context_bytes, nullptr, true};
     encoder_ctx_.reset(ggml_init(params));
     if (encoder_ctx_ == nullptr) {
       throw std::runtime_error(
-          "failed to initialize VoxCPM2 AudioVAE encoder graph context");
+          "failed to initialize VoxCPM1 AudioVAE encoder graph context");
     }
-    core::ModuleBuildContext ctx{encoder_ctx_.get(), "voxcpm2.audiovae.encoder",
+    core::ModuleBuildContext ctx{encoder_ctx_.get(), "voxcpm1.audiovae.encoder",
                                  execution_context_.backend_type()};
     auto hidden = core::make_tensor(
         ctx, GGML_TYPE_F32,
         core::TensorShape::from_dims({1, 1, config_.encoder_sample_capacity}));
     encoder_input_ = hidden.tensor;
     ggml_set_input(encoder_input_);
+    encoder_stages_.clear();
+    if (std::getenv("VOXCPM_DUMP_ENC_STAGE") != nullptr) {
+      encoder_stages_.push_back(encoder_input_);
+    }
     hidden = causal_conv1d(ctx, hidden, weights_.encoder_first, 1, 3, 1);
+    if (std::getenv("VOXCPM_DUMP_ENC_STAGE") != nullptr) {
+      encoder_stages_.push_back(hidden.tensor);
+    }
     for (const auto &block : weights_.encoder_blocks) {
       hidden = encoder_block(ctx, hidden, block);
+      if (std::getenv("VOXCPM_DUMP_ENC_STAGE") != nullptr) {
+        encoder_stages_.push_back(hidden.tensor);
+      }
     }
     hidden = causal_conv1d(ctx, hidden, weights_.encoder_fc_mu, 1, 1, 1);
     encoder_output_ = hidden.tensor;
     ggml_set_output(encoder_output_);
+    for (ggml_tensor *stage : encoder_stages_) {
+      ggml_set_output(stage);
+    }
     encoder_graph_ = ggml_new_graph_custom(encoder_ctx_.get(), 65536, false);
     ggml_build_forward_expand(encoder_graph_, encoder_output_);
+    for (ggml_tensor *stage : encoder_stages_) {
+      ggml_build_forward_expand(encoder_graph_, stage);
+    }
     encoder_gallocr_ = ggml_gallocr_new(
         ggml_backend_get_default_buffer_type(execution_context_.backend()));
     if (encoder_gallocr_ == nullptr ||
@@ -888,13 +1011,13 @@ private:
         !ggml_gallocr_alloc_graph(encoder_gallocr_, encoder_graph_)) {
       release_encoder_graph();
       throw std::runtime_error(
-          "failed to allocate VoxCPM2 AudioVAE encoder graph");
+          "failed to allocate VoxCPM1 AudioVAE encoder graph");
     }
   }
 
-  std::shared_ptr<const VoxCPM2Assets> assets_;
+  std::shared_ptr<const VoxCPM1Assets> assets_;
   core::ExecutionContext &execution_context_;
-  VoxCPM2AudioVAEDecoderConfig config_;
+  VoxCPM1AudioVAEDecoderConfig config_;
   VAEWeights weights_;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
   std::unique_ptr<ggml_context, GgmlContextDeleter> encoder_ctx_;
@@ -902,6 +1025,7 @@ private:
   ggml_tensor *output_ = nullptr;
   ggml_tensor *encoder_input_ = nullptr;
   ggml_tensor *encoder_output_ = nullptr;
+  std::vector<ggml_tensor *> encoder_stages_;
   ggml_cgraph *graph_ = nullptr;
   ggml_cgraph *encoder_graph_ = nullptr;
   ggml_gallocr_t gallocr_ = nullptr;
@@ -912,29 +1036,33 @@ private:
   int64_t decoder_latent_frame_capacity_ = 0;
 };
 
-VoxCPM2AudioVAEDecoderRuntime::VoxCPM2AudioVAEDecoderRuntime(
-    std::shared_ptr<const VoxCPM2Assets> assets,
+VoxCPM1AudioVAEDecoderRuntime::VoxCPM1AudioVAEDecoderRuntime(
+    std::shared_ptr<const VoxCPM1Assets> assets,
     core::ExecutionContext &execution_context,
-    VoxCPM2AudioVAEDecoderConfig config)
+    VoxCPM1AudioVAEDecoderConfig config)
     : impl_(std::make_unique<Impl>(std::move(assets), execution_context,
                                    std::move(config))) {}
 
-VoxCPM2AudioVAEDecoderRuntime::~VoxCPM2AudioVAEDecoderRuntime() = default;
+VoxCPM1AudioVAEDecoderRuntime::~VoxCPM1AudioVAEDecoderRuntime() = default;
 
-runtime::AudioBuffer VoxCPM2AudioVAEDecoderRuntime::decode_features(
+runtime::AudioBuffer VoxCPM1AudioVAEDecoderRuntime::decode_features(
     const std::vector<float> &features, int64_t patches) {
   return impl_->decode_features(features, patches);
 }
 
-VoxCPM2EncodedPrompt VoxCPM2AudioVAEDecoderRuntime::encode_prompt_audio(
+VoxCPM1EncodedPrompt VoxCPM1AudioVAEDecoderRuntime::encode_prompt_audio(
     const std::optional<runtime::AudioBuffer> &prompt_audio,
     const std::string &prompt_text,
     const std::optional<runtime::AudioBuffer> &reference_audio) {
   return impl_->encode_prompt_audio(prompt_audio, prompt_text, reference_audio);
 }
 
-void VoxCPM2AudioVAEDecoderRuntime::release_runtime_memory() {
+void VoxCPM1AudioVAEDecoderRuntime::release_runtime_memory() {
   impl_->release_runtime_memory();
 }
 
-} // namespace engine::models::voxcpm2
+void VoxCPM1AudioVAEDecoderRuntime::release_encoder_graph() {
+  impl_->release_encoder_graph();
+}
+
+} // namespace engine::community_models::voxcpm1

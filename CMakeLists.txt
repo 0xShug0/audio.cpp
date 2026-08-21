@@ -734,13 +734,10 @@ audiocpp_add_model(voxcpm2
     SOURCES
         src/models/voxcpm2/assets.cpp
         src/models/voxcpm2/audiovae.cpp
-        src/models/voxcpm2/config_gguf.cpp
         src/models/voxcpm2/generator.cpp
-        src/models/voxcpm2/gguf_metadata.cpp
         src/models/voxcpm2/loader.cpp
         src/models/voxcpm2/minicpm.cpp
         src/models/voxcpm2/session.cpp
-        src/models/voxcpm2/tokenizer_gguf.cpp
         src/models/voxcpm2/tokenizer_text.cpp
     INCLUDES
         engine/models/voxcpm2/loader.h
@@ -750,20 +747,19 @@ audiocpp_add_model(voxcpm2
 
 audiocpp_add_model(voxcpm1
     SOURCES
-        src/models/voxcpm2/assets.cpp
-        src/models/voxcpm2/audiovae.cpp
-        src/models/voxcpm2/config_gguf.cpp
-        src/models/voxcpm2/generator.cpp
-        src/models/voxcpm2/gguf_metadata.cpp
-        src/models/voxcpm2/loader.cpp
-        src/models/voxcpm2/minicpm.cpp
-        src/models/voxcpm2/session.cpp
-        src/models/voxcpm2/tokenizer_gguf.cpp
-        src/models/voxcpm2/tokenizer_text.cpp
+        src/community_models/voxcpm1/assets.cpp
+        src/community_models/voxcpm1/audiovae.cpp
+        src/community_models/voxcpm1/config_gguf.cpp
+        src/community_models/voxcpm1/generator.cpp
+        src/community_models/voxcpm1/gguf_metadata.cpp
+        src/community_models/voxcpm1/minicpm.cpp
+        src/community_models/voxcpm1/session.cpp
+        src/community_models/voxcpm1/tokenizer_gguf.cpp
+        src/community_models/voxcpm1/tokenizer_text.cpp
     INCLUDES
-        engine/models/voxcpm2/loader.h
+        engine/community_models/voxcpm1/session.h
     LOADERS
-        engine::models::voxcpm2::make_voxcpm1_loader
+        engine::community_models::voxcpm1::make_voxcpm1_loader
 )
 
 audiocpp_add_model(vibevoice

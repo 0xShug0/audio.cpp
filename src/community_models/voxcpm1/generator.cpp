@@ -1,4 +1,4 @@
-#include "engine/models/voxcpm2/generator.h"
+#include "engine/community_models/voxcpm1/generator.h"
 
 #include "minicpm_blocks.h"
 
@@ -13,9 +13,10 @@
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/sampling/torch_random.h"
-#include "engine/models/voxcpm2/assets.h"
-#include "engine/models/voxcpm2/minicpm.h"
-#include "engine/models/voxcpm2/tokenizer_text.h"
+#include "engine/community_models/voxcpm1/assets.h"
+#include "engine/community_models/voxcpm1/minicpm.h"
+#include "engine/community_models/voxcpm1/tokenizer_text.h"
+#include "engine/community_models/voxcpm1/tokenizer_wrapper.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -34,7 +35,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::voxcpm2 {
+namespace engine::community_models::voxcpm1 {
 namespace {
 
 namespace binding = engine::modules::binding;
@@ -58,40 +59,40 @@ struct PrefillSequence {
   int64_t target_text_tokens = 0;
 };
 
-std::shared_ptr<const VoxCPM2Assets>
-require_assets(std::shared_ptr<const VoxCPM2Assets> assets) {
+std::shared_ptr<const VoxCPM1Assets>
+require_assets(std::shared_ptr<const VoxCPM1Assets> assets) {
   if (assets == nullptr) {
-    throw std::runtime_error("VoxCPM2 feature generator requires assets");
+    throw std::runtime_error("VoxCPM1 feature generator requires assets");
   }
   return assets;
 }
 
-void validate_generation_options(const VoxCPM2GenerationOptions &options) {
+void validate_generation_options(const VoxCPM1GenerationOptions &options) {
   if (options.min_tokens < 0) {
-    throw std::runtime_error("VoxCPM2 min_tokens must be non-negative");
+    throw std::runtime_error("VoxCPM1 min_tokens must be non-negative");
   }
   if (options.max_tokens < 0) {
-    throw std::runtime_error("VoxCPM2 max_tokens must be non-negative");
+    throw std::runtime_error("VoxCPM1 max_tokens must be non-negative");
   }
   if (options.num_inference_steps <= 0) {
     throw std::runtime_error(
-        "VoxCPM2 num_inference_steps must be positive");
+        "VoxCPM1 num_inference_steps must be positive");
   }
   if (!std::isfinite(options.guidance_scale)) {
-    throw std::runtime_error("VoxCPM2 guidance_scale must be finite");
+    throw std::runtime_error("VoxCPM1 guidance_scale must be finite");
   }
   if (options.retry_badcase_max_times <= 0) {
     throw std::runtime_error(
-        "VoxCPM2 retry_badcase_max_times must be positive");
+        "VoxCPM1 retry_badcase_max_times must be positive");
   }
   if (!std::isfinite(options.retry_badcase_ratio_threshold) ||
       options.retry_badcase_ratio_threshold <= 0.0F) {
     throw std::runtime_error(
-        "VoxCPM2 retry_badcase_ratio_threshold must be positive and finite");
+        "VoxCPM1 retry_badcase_ratio_threshold must be positive and finite");
   }
 }
 
-int64_t effective_max_tokens(const VoxCPM2GenerationOptions &options,
+int64_t effective_max_tokens(const VoxCPM1GenerationOptions &options,
                              int64_t target_text_tokens) {
   const auto ratio_bound =
       static_cast<int64_t>(static_cast<float>(target_text_tokens) *
@@ -102,7 +103,7 @@ int64_t effective_max_tokens(const VoxCPM2GenerationOptions &options,
 
 int stop_class(const std::vector<float> &logits) {
   if (logits.size() != 2) {
-    throw std::runtime_error("VoxCPM2 stop logits must have two classes");
+    throw std::runtime_error("VoxCPM1 stop logits must have two classes");
   }
   return logits[1] > logits[0] ? 1 : 0;
 }
@@ -116,10 +117,22 @@ std::vector<float> concat_dit_mu(const std::vector<float> &lm,
   return out;
 }
 
+std::vector<float> add_dit_mu(const std::vector<float> &lm,
+                              const std::vector<float> &residual) {
+  if (lm.size() != residual.size()) {
+    throw std::runtime_error("VoxCPM1 dit mu inputs must have equal size");
+  }
+  std::vector<float> out(lm.size(), 0.0F);
+  for (size_t i = 0; i < lm.size(); ++i) {
+    out[i] = lm[i] + residual[i];
+  }
+  return out;
+}
+
 void append_patch(std::vector<float> &features, const std::vector<float> &patch,
                   int64_t expected_size) {
   if (static_cast<int64_t>(patch.size()) != expected_size) {
-    throw std::runtime_error("VoxCPM2 generated patch size mismatch");
+    throw std::runtime_error("VoxCPM1 generated patch size mismatch");
   }
   features.insert(features.end(), patch.begin(), patch.end());
 }
@@ -127,11 +140,11 @@ void append_patch(std::vector<float> &features, const std::vector<float> &patch,
 void validate_feature_block(const std::vector<float> &features, int64_t patches,
                             int64_t patch_elems, const char *label) {
   if (patches < 0) {
-    throw std::runtime_error(std::string("VoxCPM2 ") + label +
+    throw std::runtime_error(std::string("VoxCPM1 ") + label +
                              " patch count is negative");
   }
   if (static_cast<int64_t>(features.size()) != patches * patch_elems) {
-    throw std::runtime_error(std::string("VoxCPM2 ") + label +
+    throw std::runtime_error(std::string("VoxCPM1 ") + label +
                              " feature size mismatch");
   }
 }
@@ -144,11 +157,11 @@ std::vector<float> feature_patch(const std::vector<float> &features,
                             begin + static_cast<std::ptrdiff_t>(patch_elems));
 }
 
-bool has_prompt_audio(const VoxCPM2EncodedPrompt *prompt) {
+bool has_prompt_audio(const VoxCPM1EncodedPrompt *prompt) {
   return prompt != nullptr && prompt->prompt_patches > 0;
 }
 
-bool has_reference_audio(const VoxCPM2EncodedPrompt *prompt) {
+bool has_reference_audio(const VoxCPM1EncodedPrompt *prompt) {
   return prompt != nullptr && prompt->reference_patches > 0;
 }
 
@@ -172,7 +185,7 @@ std::string normalize_wrapper_text(const std::string &text) {
 
 } // namespace
 
-struct VoxCPM2StepProjectionOutput {
+struct VoxCPM1StepProjectionOutput {
   std::vector<float> fsq_hidden;
   std::vector<float> current_residual_input;
   std::vector<float> residual_input;
@@ -183,61 +196,64 @@ struct VoxCPM2StepProjectionOutput {
   std::vector<float> fsq_stop_logits;
 };
 
-class VoxCPM2StepProjectionRuntime final {
+class VoxCPM1StepProjectionRuntime final {
 public:
-  VoxCPM2StepProjectionRuntime(
-      std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  VoxCPM1StepProjectionRuntime(
+      std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
       size_t graph_context_bytes, bool mem_saver = false);
-  ~VoxCPM2StepProjectionRuntime();
+  ~VoxCPM1StepProjectionRuntime();
 
-  VoxCPM2StepProjectionOutput run(const std::vector<float> &lm_hidden,
+  VoxCPM1StepProjectionOutput run(const std::vector<float> &lm_hidden,
                                   const std::vector<float> &residual_hidden,
                                   const std::vector<float> &current_embed);
+  void release_runtime_memory();
 
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
 
-class VoxCPM2LocalEncoderRuntime final {
+class VoxCPM1LocalEncoderRuntime final {
 public:
-  VoxCPM2LocalEncoderRuntime(
-      std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  VoxCPM1LocalEncoderRuntime(
+      std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
       size_t graph_context_bytes, bool mem_saver = false);
-  ~VoxCPM2LocalEncoderRuntime();
+  ~VoxCPM1LocalEncoderRuntime();
 
   std::vector<float>
   encode_patch(const std::vector<float> &patch_features) const;
+  void release_runtime_memory();
 
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
 
-class VoxCPM2DiTEstimatorRuntime final {
+class VoxCPM1DiTEstimatorRuntime final {
 public:
-  VoxCPM2DiTEstimatorRuntime(
-      std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  VoxCPM1DiTEstimatorRuntime(
+      std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
       size_t graph_context_bytes, bool mem_saver = false);
-  ~VoxCPM2DiTEstimatorRuntime();
+  ~VoxCPM1DiTEstimatorRuntime();
 
   std::vector<float> run(const std::vector<float> &x,
                          const std::vector<float> &mu,
                          const std::vector<float> &cond,
                          const std::vector<float> &time_embedding,
                          const std::vector<float> &delta_time_embedding);
+  void release_runtime_memory();
 
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
 
-class VoxCPM2CFMRuntime final {
+class VoxCPM1CFMRuntime final {
 public:
-  VoxCPM2CFMRuntime(std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  VoxCPM1CFMRuntime(std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
                     size_t estimator_graph_context_bytes,
                     bool mem_saver = false);
-  ~VoxCPM2CFMRuntime();
+  ~VoxCPM1CFMRuntime();
 
   std::vector<float> generate_patch(const std::vector<float> &mu,
                                     const std::vector<float> &cond_patch,
@@ -246,49 +262,44 @@ public:
                                     uint64_t noise_start_index = 0,
                                     const std::string &noise_file = {},
                                     float temperature = 1.0F);
+  void release_runtime_memory();
 
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
 
-class VoxCPM2StepProjectionRuntime::Impl {
+class VoxCPM1StepProjectionRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  Impl(std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
        size_t graph_context_bytes, bool mem_saver)
       : weights_(std::move(weights)), mem_saver_(mem_saver) {
     if (weights_ == nullptr) {
       throw std::runtime_error(
-          "VoxCPM2 step projection runtime requires weights");
+          "VoxCPM1 step projection runtime requires weights");
     }
     build(graph_context_bytes);
   }
 
-  ~Impl() {
-    engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-    if (buffer_ != nullptr) {
-      ggml_backend_buffer_free(buffer_);
-    }
-    if (gallocr_ != nullptr) {
-      ggml_gallocr_free(gallocr_);
-    }
-  }
+  ~Impl() { release_graph(); }
 
-  VoxCPM2StepProjectionOutput run(const std::vector<float> &lm_hidden,
+  void release_runtime_memory() { release_graph(); }
+
+  VoxCPM1StepProjectionOutput run(const std::vector<float> &lm_hidden,
                                   const std::vector<float> &residual_hidden,
                                   const std::vector<float> &current_embed) {
     const auto &config = weights_->assets().config;
     if (static_cast<int64_t>(lm_hidden.size()) != config.lm.hidden_size) {
       throw std::runtime_error(
-          "VoxCPM2 step projection lm_hidden size mismatch");
+          "VoxCPM1 step projection lm_hidden size mismatch");
     }
     if (static_cast<int64_t>(residual_hidden.size()) != config.lm.hidden_size) {
       throw std::runtime_error(
-          "VoxCPM2 step projection residual_hidden size mismatch");
+          "VoxCPM1 step projection residual_hidden size mismatch");
     }
     if (static_cast<int64_t>(current_embed.size()) != config.lm.hidden_size) {
       throw std::runtime_error(
-          "VoxCPM2 step projection current_embed size mismatch");
+          "VoxCPM1 step projection current_embed size mismatch");
     }
     ggml_backend_tensor_set(lm_hidden_, lm_hidden.data(), 0,
                             lm_hidden.size() * sizeof(float));
@@ -301,9 +312,9 @@ public:
         engine::core::compute_backend_graph(weights_->backend(), graph_);
     ggml_backend_synchronize(weights_->backend());
     if (status != GGML_STATUS_SUCCESS) {
-      throw std::runtime_error("VoxCPM2 step projection graph compute failed");
+      throw std::runtime_error("VoxCPM1 step projection graph compute failed");
     }
-    VoxCPM2StepProjectionOutput output;
+    VoxCPM1StepProjectionOutput output;
     output.fsq_hidden.resize(static_cast<size_t>(config.lm.hidden_size), 0.0F);
     output.current_residual_input.resize(
         static_cast<size_t>(config.lm.hidden_size), 0.0F);
@@ -343,19 +354,46 @@ public:
   }
 
 private:
+  void release_graph() {
+    if (graph_ != nullptr) {
+      engine::core::release_backend_graph_resources(weights_->backend(), graph_);
+    }
+    if (buffer_ != nullptr) {
+      ggml_backend_buffer_free(buffer_);
+      buffer_ = nullptr;
+    }
+    if (gallocr_ != nullptr) {
+      ggml_gallocr_free(gallocr_);
+      gallocr_ = nullptr;
+    }
+    graph_ = nullptr;
+    lm_hidden_ = nullptr;
+    residual_hidden_ = nullptr;
+    current_embed_ = nullptr;
+    fsq_hidden_output_ = nullptr;
+    current_residual_input_output_ = nullptr;
+    residual_input_output_ = nullptr;
+    current_lm_dit_output_ = nullptr;
+    fsq_lm_dit_output_ = nullptr;
+    residual_dit_output_ = nullptr;
+    current_stop_logits_output_ = nullptr;
+    fsq_stop_logits_output_ = nullptr;
+    ctx_.reset();
+  }
+
   void build(size_t graph_context_bytes) {
     const auto &config = weights_->assets().config;
     if (graph_context_bytes == 0) {
       throw std::runtime_error(
-          "VoxCPM2 step projection graph context bytes must be non-zero");
+          "VoxCPM1 step projection graph context bytes must be non-zero");
     }
     ggml_init_params params{graph_context_bytes, nullptr, true};
     ctx_.reset(ggml_init(params));
     if (ctx_ == nullptr) {
       throw std::runtime_error(
-          "failed to initialize VoxCPM2 step projection graph context");
+          "failed to initialize VoxCPM1 step projection graph context");
     }
-    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm2.step_projection"};
+    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm1.step_projection"};
     const auto &proj = weights_->weights().projections;
     auto lm_hidden = engine::core::make_tensor(
         ctx, GGML_TYPE_F32,
@@ -402,23 +440,41 @@ private:
               .build(ctx, fsq, proj.fsq_out_proj);
     fsq_hidden_output_ = fsq.tensor;
 
-    auto current_residual_concat =
-        engine::modules::ConcatModule({1}).build(ctx, lm_hidden, current_embed);
-    auto current_residual_input =
-        engine::modules::LinearModule(
-            binding::linear_config(config.lm.hidden_size * 2,
-                                   config.lm.hidden_size, true))
-            .build(ctx, current_residual_concat, proj.fusion_concat_proj);
-    current_residual_input_output_ = current_residual_input.tensor;
+    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+    // This matches VoxCPM.cpp behavior which checks weight existence
+    // For V1 models, synthesized weights (Xavier init) should not count as present
+    const bool has_fusion_proj =
+        proj.fusion_concat_proj.weight.tensor != nullptr &&
+        config.architecture == "voxcpm2";
 
-    auto residual_concat =
-        engine::modules::ConcatModule({1}).build(ctx, fsq, current_embed);
-    auto residual_input =
-        engine::modules::LinearModule(
-            binding::linear_config(config.lm.hidden_size * 2,
-                                   config.lm.hidden_size, true))
-            .build(ctx, residual_concat, proj.fusion_concat_proj);
-    residual_input_output_ = residual_input.tensor;
+    if (has_fusion_proj) {
+      // Concat + Linear (used by V2 and some V1 models trained with fusion)
+      auto current_residual_concat =
+          engine::modules::ConcatModule({1}).build(ctx, lm_hidden, current_embed);
+      auto current_residual_input =
+          engine::modules::LinearModule(
+              binding::linear_config(config.lm.hidden_size * 2,
+                                     config.lm.hidden_size, true))
+              .build(ctx, current_residual_concat, proj.fusion_concat_proj);
+      current_residual_input_output_ = current_residual_input.tensor;
+
+      auto residual_concat =
+          engine::modules::ConcatModule({1}).build(ctx, fsq, current_embed);
+      auto residual_input =
+          engine::modules::LinearModule(
+              binding::linear_config(config.lm.hidden_size * 2,
+                                     config.lm.hidden_size, true))
+              .build(ctx, residual_concat, proj.fusion_concat_proj);
+      residual_input_output_ = residual_input.tensor;
+    } else {
+      // Simple ADD (true V1 without fusion_concat_proj)
+      current_residual_input_output_ =
+          engine::modules::AddModule()
+              .build(ctx, lm_hidden, current_embed)
+              .tensor;
+      residual_input_output_ =
+          engine::modules::AddModule().build(ctx, fsq, current_embed).tensor;
+    }
 
     auto current_lm_dit =
         engine::modules::LinearModule(
@@ -510,18 +566,18 @@ private:
           gallocr_ = nullptr;
         }
         throw std::runtime_error(
-            "failed to allocate VoxCPM2 step projection graph");
+            "failed to allocate VoxCPM1 step projection graph");
       }
       return;
     }
     buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
     if (buffer_ == nullptr) {
       throw std::runtime_error(
-          "failed to allocate VoxCPM2 step projection graph");
+          "failed to allocate VoxCPM1 step projection graph");
     }
   }
 
-  std::shared_ptr<const VoxCPM2WeightsRuntime> weights_;
+  std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
   bool mem_saver_ = false;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
   ggml_tensor *lm_hidden_ = nullptr;
@@ -540,42 +596,40 @@ private:
   ggml_gallocr_t gallocr_ = nullptr;
 };
 
-VoxCPM2StepProjectionRuntime::VoxCPM2StepProjectionRuntime(
-    std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+VoxCPM1StepProjectionRuntime::VoxCPM1StepProjectionRuntime(
+    std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
     size_t graph_context_bytes, bool mem_saver)
     : impl_(std::make_unique<Impl>(std::move(weights), graph_context_bytes,
                                    mem_saver)) {}
 
-VoxCPM2StepProjectionRuntime::~VoxCPM2StepProjectionRuntime() = default;
+VoxCPM1StepProjectionRuntime::~VoxCPM1StepProjectionRuntime() = default;
 
-VoxCPM2StepProjectionOutput
-VoxCPM2StepProjectionRuntime::run(const std::vector<float> &lm_hidden,
+void VoxCPM1StepProjectionRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
+}
+
+VoxCPM1StepProjectionOutput
+VoxCPM1StepProjectionRuntime::run(const std::vector<float> &lm_hidden,
                                   const std::vector<float> &residual_hidden,
                                   const std::vector<float> &current_embed) {
   return impl_->run(lm_hidden, residual_hidden, current_embed);
 }
 
-class VoxCPM2LocalEncoderRuntime::Impl {
+class VoxCPM1LocalEncoderRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  Impl(std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
        size_t graph_context_bytes, bool mem_saver)
       : weights_(std::move(weights)), mem_saver_(mem_saver) {
     if (weights_ == nullptr) {
       throw std::runtime_error(
-          "VoxCPM2 local encoder runtime requires weights");
+          "VoxCPM1 local encoder runtime requires weights");
     }
     build(graph_context_bytes);
   }
 
-  ~Impl() {
-    engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-    if (buffer_ != nullptr) {
-      ggml_backend_buffer_free(buffer_);
-    }
-    if (gallocr_ != nullptr) {
-      ggml_gallocr_free(gallocr_);
-    }
-  }
+  ~Impl() { release_graph(); }
+
+  void release_runtime_memory() { release_graph(); }
 
   std::vector<float>
   encode_patch(const std::vector<float> &patch_features) const {
@@ -583,7 +637,7 @@ public:
     const int64_t expected = config.patch_size * config.feat_dim;
     if (static_cast<int64_t>(patch_features.size()) != expected) {
       throw std::runtime_error(
-          "VoxCPM2 local encoder patch feature size mismatch");
+          "VoxCPM1 local encoder patch feature size mismatch");
     }
     ggml_backend_tensor_set(input_, patch_features.data(), 0,
                             patch_features.size() * sizeof(float));
@@ -592,7 +646,7 @@ public:
         engine::core::compute_backend_graph(weights_->backend(), graph_);
     ggml_backend_synchronize(weights_->backend());
     if (status != GGML_STATUS_SUCCESS) {
-      throw std::runtime_error("VoxCPM2 local encoder graph compute failed");
+      throw std::runtime_error("VoxCPM1 local encoder graph compute failed");
     }
     std::vector<float> output(static_cast<size_t>(config.lm.hidden_size), 0.0F);
     ggml_backend_tensor_get(output_, output.data(), 0,
@@ -601,19 +655,38 @@ public:
   }
 
 private:
+  void release_graph() {
+    if (graph_ != nullptr) {
+      engine::core::release_backend_graph_resources(weights_->backend(), graph_);
+    }
+    if (buffer_ != nullptr) {
+      ggml_backend_buffer_free(buffer_);
+      buffer_ = nullptr;
+    }
+    if (gallocr_ != nullptr) {
+      ggml_gallocr_free(gallocr_);
+      gallocr_ = nullptr;
+    }
+    graph_ = nullptr;
+    input_ = nullptr;
+    positions_ = nullptr;
+    output_ = nullptr;
+    ctx_.reset();
+  }
+
   void build(size_t graph_context_bytes) {
     const auto &root_config = weights_->assets().config;
     if (graph_context_bytes == 0) {
       throw std::runtime_error(
-          "VoxCPM2 local encoder graph context bytes must be non-zero");
+          "VoxCPM1 local encoder graph context bytes must be non-zero");
     }
     ggml_init_params params{graph_context_bytes, nullptr, true};
     ctx_.reset(ggml_init(params));
     if (ctx_ == nullptr) {
       throw std::runtime_error(
-          "failed to initialize VoxCPM2 local encoder graph context");
+          "failed to initialize VoxCPM1 local encoder graph context");
     }
-    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm2.local_encoder"};
+    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm1.local_encoder"};
     const auto &feat_weights = weights_->weights().feat_encoder;
     auto x = engine::core::make_tensor(
         ctx, GGML_TYPE_F32,
@@ -668,14 +741,14 @@ private:
           gallocr_ = nullptr;
         }
         throw std::runtime_error(
-            "failed to allocate VoxCPM2 local encoder graph");
+            "failed to allocate VoxCPM1 local encoder graph");
       }
     } else {
       buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
     }
     if (!mem_saver_ && buffer_ == nullptr) {
       throw std::runtime_error(
-          "failed to allocate VoxCPM2 local encoder graph");
+          "failed to allocate VoxCPM1 local encoder graph");
     }
     std::vector<int32_t> position_ids(
         static_cast<size_t>(root_config.patch_size + 1), 0);
@@ -686,7 +759,7 @@ private:
                             position_ids.size() * sizeof(int32_t));
   }
 
-  std::shared_ptr<const VoxCPM2WeightsRuntime> weights_;
+  std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
   bool mem_saver_ = false;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
   ggml_tensor *input_ = nullptr;
@@ -697,40 +770,38 @@ private:
   ggml_gallocr_t gallocr_ = nullptr;
 };
 
-VoxCPM2LocalEncoderRuntime::VoxCPM2LocalEncoderRuntime(
-    std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+VoxCPM1LocalEncoderRuntime::VoxCPM1LocalEncoderRuntime(
+    std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
     size_t graph_context_bytes, bool mem_saver)
     : impl_(std::make_unique<Impl>(std::move(weights), graph_context_bytes,
                                    mem_saver)) {}
 
-VoxCPM2LocalEncoderRuntime::~VoxCPM2LocalEncoderRuntime() = default;
+VoxCPM1LocalEncoderRuntime::~VoxCPM1LocalEncoderRuntime() = default;
 
-std::vector<float> VoxCPM2LocalEncoderRuntime::encode_patch(
+void VoxCPM1LocalEncoderRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
+}
+
+std::vector<float> VoxCPM1LocalEncoderRuntime::encode_patch(
     const std::vector<float> &patch_features) const {
   return impl_->encode_patch(patch_features);
 }
 
-class VoxCPM2DiTEstimatorRuntime::Impl {
+class VoxCPM1DiTEstimatorRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  Impl(std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
        size_t graph_context_bytes, bool mem_saver)
       : weights_(std::move(weights)), mem_saver_(mem_saver) {
     if (weights_ == nullptr) {
       throw std::runtime_error(
-          "VoxCPM2 DiT estimator runtime requires weights");
+          "VoxCPM1 DiT estimator runtime requires weights");
     }
     build(graph_context_bytes);
   }
 
-  ~Impl() {
-    engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-    if (buffer_ != nullptr) {
-      ggml_backend_buffer_free(buffer_);
-    }
-    if (gallocr_ != nullptr) {
-      ggml_gallocr_free(gallocr_);
-    }
-  }
+  ~Impl() { release_graph(); }
+
+  void release_runtime_memory() { release_graph(); }
 
   std::vector<float> run(const std::vector<float> &x,
                          const std::vector<float> &mu,
@@ -738,25 +809,33 @@ public:
                          const std::vector<float> &time_embedding,
                          const std::vector<float> &delta_time_embedding) {
     const auto &config = weights_->assets().config;
+    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+    // This matches VoxCPM.cpp behavior which checks weight existence
+    // For V1 models, synthesized weights (Xavier init) should not count as present
+    const bool has_fusion_proj =
+        weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
+        config.architecture == "voxcpm2";
     const int64_t patch_elems = 2 * config.feat_dim * config.patch_size;
     if (static_cast<int64_t>(x.size()) != patch_elems) {
-      throw std::runtime_error("VoxCPM2 DiT estimator x size mismatch");
+      throw std::runtime_error("VoxCPM1 DiT estimator x size mismatch");
     }
     if (static_cast<int64_t>(cond.size()) != patch_elems) {
-      throw std::runtime_error("VoxCPM2 DiT estimator cond size mismatch");
+      throw std::runtime_error("VoxCPM1 DiT estimator cond size mismatch");
     }
-    if (static_cast<int64_t>(mu.size()) != 2 * config.dit.hidden_dim * 2) {
-      throw std::runtime_error("VoxCPM2 DiT estimator mu size mismatch");
+    const int64_t expected_mu =
+        has_fusion_proj ? 2 * config.dit.hidden_dim * 2 : 2 * config.dit.hidden_dim;
+    if (static_cast<int64_t>(mu.size()) != expected_mu) {
+      throw std::runtime_error("VoxCPM1 DiT estimator mu size mismatch");
     }
     if (static_cast<int64_t>(time_embedding.size()) !=
         2 * config.dit.hidden_dim) {
       throw std::runtime_error(
-          "VoxCPM2 DiT estimator time embedding size mismatch");
+          "VoxCPM1 DiT estimator time embedding size mismatch");
     }
     if (static_cast<int64_t>(delta_time_embedding.size()) !=
         2 * config.dit.hidden_dim) {
       throw std::runtime_error(
-          "VoxCPM2 DiT estimator delta-time embedding size mismatch");
+          "VoxCPM1 DiT estimator delta-time embedding size mismatch");
     }
     ggml_backend_tensor_set(x_, x.data(), 0, x.size() * sizeof(float));
     ggml_backend_tensor_set(cond_, cond.data(), 0, cond.size() * sizeof(float));
@@ -770,29 +849,171 @@ public:
         engine::core::compute_backend_graph(weights_->backend(), graph_);
     ggml_backend_synchronize(weights_->backend());
     if (status != GGML_STATUS_SUCCESS) {
-      throw std::runtime_error("VoxCPM2 DiT estimator graph compute failed");
+      throw std::runtime_error("VoxCPM1 DiT estimator graph compute failed");
     }
     std::vector<float> output(static_cast<size_t>(patch_elems), 0.0F);
     ggml_backend_tensor_get(output_, output.data(), 0,
                             output.size() * sizeof(float));
+    if (std::getenv("VOXCPM_DUMP_NORM0") != nullptr) {
+      ggml_tensor *tn = ggml_get_tensor(ctx_.get(), "dump_norm0");
+      if (tn != nullptr) {
+        const size_t nn = static_cast<size_t>(ggml_nelements(tn));
+        std::vector<float> buf(nn, 0.0F);
+        ggml_backend_tensor_get(tn, buf.data(), 0, buf.size() * sizeof(float));
+        FILE *f = std::fopen("/tmp/opencode/ours_norm0.bin", "wb");
+        if (f != nullptr) {
+          std::fwrite(buf.data(), sizeof(float), std::min<size_t>(nn, 5120), f);
+          std::fclose(f);
+        }
+      }
+    }
+    if (std::getenv("VOXCPM_DUMP_DECODER_LAYERS") != nullptr) {
+      for (int li = 0; li < 8; ++li) {
+        char name[32];
+        snprintf(name, sizeof(name), "dump_layer_%d", li);
+        ggml_tensor *t = ggml_get_tensor(ctx_.get(), name);
+        if (t == nullptr) {
+          continue;
+        }
+        const size_t n = static_cast<size_t>(ggml_nelements(t));
+        std::vector<float> buf(n, 0.0F);
+        ggml_backend_tensor_get(t, buf.data(), 0, buf.size() * sizeof(float));
+        if (li == 0) {
+          FILE *f = std::fopen("/tmp/opencode/ours_branch0.bin", "wb");
+          if (f != nullptr) {
+            std::fwrite(buf.data(), sizeof(float), std::min<size_t>(n, 5120), f);
+            std::fclose(f);
+          }
+        } else if (li == 1) {
+          FILE *f = std::fopen("/tmp/opencode/ours_branch1.bin", "wb");
+          if (f != nullptr) {
+            std::fwrite(buf.data(), sizeof(float), std::min<size_t>(n, 5120), f);
+            std::fclose(f);
+          }
+        }
+        double s = 0.0, l2 = 0.0;
+        for (float v : buf) {
+          s += v;
+          l2 += static_cast<double>(v) * v;
+        }
+        // batch-local stats for the branch-0 (first ne1*ne0 elements)
+        double s0 = 0.0, l20 = 0.0;
+        const size_t branch_elems = static_cast<size_t>(t->ne[0]) * static_cast<size_t>(t->ne[1]);
+        for (size_t i = 0; i < std::min(branch_elems, buf.size()); ++i) {
+          s0 += buf[i];
+          l20 += static_cast<double>(buf[i]) * buf[i];
+        }
+        fprintf(stderr,
+                "[DEC_LAYER] input#%d ne0=%lld ne1=%lld ne2=%lld ne3=%lld "
+                "sum=%.6g l2=%.6g branch0_sum=%.6g branch0_l2=%.6g "
+                "first4=%.6g %.6g %.6g %.6g\n",
+                li, static_cast<long long>(t->ne[0]),
+                static_cast<long long>(t->ne[1]),
+                static_cast<long long>(t->ne[2]),
+                static_cast<long long>(t->ne[3]), s, std::sqrt(l2), s0,
+                std::sqrt(l20),
+                buf.empty() ? 0.0 : static_cast<double>(buf[0]),
+                buf.size() < 2 ? 0.0 : static_cast<double>(buf[1]),
+                buf.size() < 3 ? 0.0 : static_cast<double>(buf[2]),
+                buf.size() < 4 ? 0.0 : static_cast<double>(buf[3]));
+      }
+    }
+    if (std::getenv("VOXCPM_DUMP_LOCDIT_WEIGHTS") != nullptr) {
+      const auto &dw = weights_->weights().dit;
+      auto dump_w = [](const char *tag, ggml_tensor *t) {
+        if (t == nullptr) {
+          fprintf(stderr, "[LOCDIT_W] %s <null>\n", tag);
+          return;
+        }
+        const size_t nbytes = static_cast<size_t>(ggml_nbytes(t));
+        const size_t nelems = static_cast<size_t>(ggml_nelements(t));
+        std::vector<uint8_t> raw(nbytes, 0);
+        ggml_backend_tensor_get(t, raw.data(), 0, nbytes);
+        fprintf(stderr, "[LOCDIT_W] %s ne0=%lld ne1=%lld type=%d nbytes=%zu "
+                        "v[0..7]=",
+                tag, static_cast<long long>(t->ne[0]),
+                static_cast<long long>(t->ne[1]), static_cast<int>(t->type),
+                nbytes);
+        double vals[8];
+        for (size_t i = 0; i < 8; ++i) {
+          if (t->type == GGML_TYPE_Q8_0) {
+            const size_t block = i / 32;
+            const size_t in_block = i % 32;
+            const float scale =
+                ggml_fp16_to_fp32(
+                    *reinterpret_cast<const ggml_fp16_t *>(
+                        raw.data() + block * 34));
+            vals[i] = static_cast<double>(
+                scale *
+                static_cast<float>(
+                    *reinterpret_cast<const int8_t *>(
+                        raw.data() + block * 34 + 2 + in_block)));
+          } else if (t->type == GGML_TYPE_F32) {
+            vals[i] = static_cast<double>(
+                *reinterpret_cast<const float *>(raw.data() + i * 4));
+          } else if (t->type == GGML_TYPE_F16) {
+            vals[i] = static_cast<double>(ggml_fp16_to_fp32(
+                *reinterpret_cast<const ggml_fp16_t *>(raw.data() + i * 2)));
+          } else {
+            vals[i] = 0.0;
+          }
+        }
+        (void)nelems;
+        for (size_t i = 0; i < 8; ++i) {
+          fprintf(stderr, "%.6g ", vals[i]);
+        }
+        fprintf(stderr, "\n");
+      };
+      dump_w("in_proj", dw.in_proj.weight.tensor);
+      dump_w("cond_proj", dw.cond_proj.weight.tensor);
+      dump_w("out_proj", dw.out_proj.weight.tensor);
+      dump_w("time_mlp1", dw.time_mlp_1.weight.tensor);
+      dump_w("decoder.l0.q", dw.decoder.layers[0].q_proj.weight.tensor);
+      dump_w("decoder.l0.k", dw.decoder.layers[0].k_proj.weight.tensor);
+      dump_w("decoder.l0.o", dw.decoder.layers[0].o_proj.weight.tensor);
+      dump_w("decoder.norm", dw.decoder.norm.weight->tensor);
+    }
     return output;
   }
 
 private:
+  void release_graph() {
+    if (graph_ != nullptr) {
+      engine::core::release_backend_graph_resources(weights_->backend(), graph_);
+    }
+    if (buffer_ != nullptr) {
+      ggml_backend_buffer_free(buffer_);
+      buffer_ = nullptr;
+    }
+    if (gallocr_ != nullptr) {
+      ggml_gallocr_free(gallocr_);
+      gallocr_ = nullptr;
+    }
+    graph_ = nullptr;
+    x_ = nullptr;
+    mu_ = nullptr;
+    cond_ = nullptr;
+    time_embedding_ = nullptr;
+    delta_time_embedding_ = nullptr;
+    positions_ = nullptr;
+    output_ = nullptr;
+    ctx_.reset();
+  }
+
   void build(size_t graph_context_bytes) {
     const auto &root_config = weights_->assets().config;
     const auto &config = root_config.dit;
     if (graph_context_bytes == 0) {
       throw std::runtime_error(
-          "VoxCPM2 DiT estimator graph context bytes must be non-zero");
+          "VoxCPM1 DiT estimator graph context bytes must be non-zero");
     }
     ggml_init_params params{graph_context_bytes, nullptr, true};
     ctx_.reset(ggml_init(params));
     if (ctx_ == nullptr) {
       throw std::runtime_error(
-          "failed to initialize VoxCPM2 DiT estimator graph context");
+          "failed to initialize VoxCPM1 DiT estimator graph context");
     }
-    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm2.dit.estimator"};
+    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm1.dit.estimator"};
     const auto &weights = weights_->weights().dit;
     x_ = engine::core::make_tensor(
              ctx, GGML_TYPE_F32,
@@ -810,9 +1031,19 @@ private:
     if (mem_saver_) {
       ggml_set_input(cond_);
     }
+    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+    // This matches VoxCPM.cpp behavior which checks weight existence
+    // For V1 models, synthesized weights (Xavier init) should not count as present
+    const bool has_fusion_proj =
+        weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
+        root_config.architecture == "voxcpm2";
     mu_ = engine::core::make_tensor(
               ctx, GGML_TYPE_F32,
-              engine::core::TensorShape::from_dims({2, 2, config.hidden_dim}))
+              has_fusion_proj
+                  ? engine::core::TensorShape::from_dims(
+                        {2, 2, config.hidden_dim})
+                  : engine::core::TensorShape::from_dims(
+                        {2, config.hidden_dim}))
               .tensor;
     if (mem_saver_) {
       ggml_set_input(mu_);
@@ -882,19 +1113,38 @@ private:
              binding::linear_config(config.hidden_dim, config.hidden_dim, true))
              .build(ctx, dt, weights.delta_time_mlp_2);
     time = engine::modules::AddModule{}.build(ctx, time, dt);
-    time = engine::core::reshape_tensor(
-        ctx, time,
-        engine::core::TensorShape::from_dims({2, 1, config.hidden_dim}));
 
-    auto mu = engine::core::wrap_tensor(
-        mu_, engine::core::TensorShape::from_dims({2, 2, config.hidden_dim}),
-        GGML_TYPE_F32);
-    auto hidden = engine::modules::ConcatModule({1}).build(ctx, mu, time);
+    const int64_t prefix_token_count =
+        has_fusion_proj ? 2 + 1 : 1;
+    auto hidden = time;
+    if (!has_fusion_proj) {
+      // True V1 (no fusion projection): the DiT conditioning mu is a single
+      // hidden vector that is ADDED into the timestep token. Batch 0 carries
+      // mu (conditioned branch); batch 1 carries zeros (unconditioned branch),
+      // mirroring LocDiTModel::forward_cfg_pair_projected with mu_tokens == 1.
+      auto mu = engine::core::wrap_tensor(
+          mu_, engine::core::TensorShape::from_dims({2, config.hidden_dim}),
+          GGML_TYPE_F32);
+      hidden = engine::modules::AddModule{}.build(ctx, hidden, mu);
+    }
+    hidden = engine::core::reshape_tensor(
+        ctx, hidden,
+        engine::core::TensorShape::from_dims({2, 1, config.hidden_dim}));
+    if (has_fusion_proj) {
+      // V2 (or V1 with fusion projection): mu is two hidden vectors concatenated as
+      // separate prefix tokens before the timestep token, matching
+      // LocDiTModel with mu_tokens == 2.
+      auto mu = engine::core::wrap_tensor(
+          mu_, engine::core::TensorShape::from_dims({2, 2, config.hidden_dim}),
+          GGML_TYPE_F32);
+      hidden = engine::modules::ConcatModule({1}).build(ctx, mu, hidden);
+    }
     hidden = engine::modules::ConcatModule({1}).build(ctx, hidden, cond);
     hidden = engine::modules::ConcatModule({1}).build(ctx, hidden, x);
 
-    positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32,
-                                    2 + 1 + root_config.patch_size * 2);
+    positions_ = ggml_new_tensor_1d(
+        ctx_.get(), GGML_TYPE_I32,
+        prefix_token_count + root_config.patch_size * 2);
     if (mem_saver_) {
       ggml_set_input(positions_);
       ggml_set_output(positions_);
@@ -902,12 +1152,14 @@ private:
     auto positions =
         engine::core::wrap_tensor(positions_,
                                   engine::core::TensorShape::from_dims(
-                                      {2 + 1 + root_config.patch_size * 2}),
+                                      {prefix_token_count +
+                                       root_config.patch_size * 2}),
                                   GGML_TYPE_I32);
     hidden =
         minicpm_transformer(ctx, hidden, positions, weights.decoder, false);
     hidden = engine::modules::SliceModule(
-                 {1, 2 + 1 + root_config.patch_size, root_config.patch_size})
+                 {1, prefix_token_count + root_config.patch_size,
+                  root_config.patch_size})
                  .build(ctx, hidden);
     hidden = engine::modules::LinearModule(
                  binding::linear_config(config.hidden_dim, root_config.feat_dim,
@@ -933,17 +1185,18 @@ private:
           gallocr_ = nullptr;
         }
         throw std::runtime_error(
-            "failed to allocate VoxCPM2 DiT estimator graph");
+            "failed to allocate VoxCPM1 DiT estimator graph");
       }
     } else {
       buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
     }
     if (!mem_saver_ && buffer_ == nullptr) {
       throw std::runtime_error(
-          "failed to allocate VoxCPM2 DiT estimator graph");
+          "failed to allocate VoxCPM1 DiT estimator graph");
     }
     std::vector<int32_t> positions_data(
-        static_cast<size_t>(2 + 1 + root_config.patch_size * 2), 0);
+        static_cast<size_t>(prefix_token_count + root_config.patch_size * 2),
+        0);
     for (int64_t i = 0; i < static_cast<int64_t>(positions_data.size()); ++i) {
       positions_data[static_cast<size_t>(i)] = static_cast<int32_t>(i);
     }
@@ -951,7 +1204,7 @@ private:
                             positions_data.size() * sizeof(int32_t));
   }
 
-  std::shared_ptr<const VoxCPM2WeightsRuntime> weights_;
+  std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
   bool mem_saver_ = false;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
   ggml_tensor *x_ = nullptr;
@@ -966,15 +1219,19 @@ private:
   ggml_gallocr_t gallocr_ = nullptr;
 };
 
-VoxCPM2DiTEstimatorRuntime::VoxCPM2DiTEstimatorRuntime(
-    std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+VoxCPM1DiTEstimatorRuntime::VoxCPM1DiTEstimatorRuntime(
+    std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
     size_t graph_context_bytes, bool mem_saver)
     : impl_(std::make_unique<Impl>(std::move(weights), graph_context_bytes,
                                    mem_saver)) {}
 
-VoxCPM2DiTEstimatorRuntime::~VoxCPM2DiTEstimatorRuntime() = default;
+VoxCPM1DiTEstimatorRuntime::~VoxCPM1DiTEstimatorRuntime() = default;
 
-std::vector<float> VoxCPM2DiTEstimatorRuntime::run(
+void VoxCPM1DiTEstimatorRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
+}
+
+std::vector<float> VoxCPM1DiTEstimatorRuntime::run(
     const std::vector<float> &x, const std::vector<float> &mu,
     const std::vector<float> &cond, const std::vector<float> &time_embedding,
     const std::vector<float> &delta_time_embedding) {
@@ -986,7 +1243,7 @@ std::vector<float> sinusoidal_time_embedding(float timestep,
                                              int64_t hidden_size) {
   if (hidden_size <= 0 || hidden_size % 2 != 0) {
     throw std::runtime_error(
-        "VoxCPM2 sinusoidal time embedding requires even hidden size");
+        "VoxCPM1 sinusoidal time embedding requires even hidden size");
   }
   const int64_t half = hidden_size / 2;
   std::vector<float> out(static_cast<size_t>(hidden_size), 0.0F);
@@ -1000,16 +1257,18 @@ std::vector<float> sinusoidal_time_embedding(float timestep,
   return out;
 }
 
-class VoxCPM2CFMRuntime::Impl {
+class VoxCPM1CFMRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  Impl(std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
        size_t estimator_graph_context_bytes, bool mem_saver)
       : weights_(std::move(weights)),
         estimator_(weights_, estimator_graph_context_bytes, mem_saver) {
     if (weights_ == nullptr) {
-      throw std::runtime_error("VoxCPM2 CFM runtime requires weights");
+      throw std::runtime_error("VoxCPM1 CFM runtime requires weights");
     }
   }
+
+  void release_runtime_memory() { estimator_.release_runtime_memory(); }
 
   std::vector<float> generate_patch(const std::vector<float> &mu,
                                     const std::vector<float> &cond_patch,
@@ -1018,18 +1277,25 @@ public:
                                     const std::string &noise_file,
                                     float temperature) {
     const auto &config = weights_->assets().config;
+    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+    // This matches VoxCPM.cpp behavior which checks weight existence
+    // For V1 models, synthesized weights (Xavier init) should not count as present
+    const bool has_fusion_proj =
+        weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
+        config.architecture == "voxcpm2";
     if (timesteps <= 0) {
-      throw std::runtime_error("VoxCPM2 CFM requires positive timesteps");
+      throw std::runtime_error("VoxCPM1 CFM requires positive timesteps");
     }
     if (!std::isfinite(cfg_value) || !std::isfinite(temperature)) {
-      throw std::runtime_error("VoxCPM2 CFM received non-finite scalar input");
+      throw std::runtime_error("VoxCPM1 CFM received non-finite scalar input");
     }
     const int64_t patch_elems = config.feat_dim * config.patch_size;
-    if (static_cast<int64_t>(mu.size()) != config.dit.hidden_dim * 2) {
-      throw std::runtime_error("VoxCPM2 CFM mu size mismatch");
+    const int64_t mu_dim = config.dit.hidden_dim * (has_fusion_proj ? 2 : 1);
+    if (static_cast<int64_t>(mu.size()) != mu_dim) {
+      throw std::runtime_error("VoxCPM1 CFM mu size mismatch");
     }
     if (static_cast<int64_t>(cond_patch.size()) != patch_elems) {
-      throw std::runtime_error("VoxCPM2 CFM conditioning patch size mismatch");
+      throw std::runtime_error("VoxCPM1 CFM conditioning patch size mismatch");
     }
 
     std::vector<float> x;
@@ -1046,7 +1312,7 @@ public:
       const auto count = static_cast<size_t>(patch_elems);
       if (noise_values_.size() < start + count) {
         throw std::runtime_error(
-            "VoxCPM2 CFM noise file is too short: expected at least " +
+            "VoxCPM1 CFM noise file is too short: expected at least " +
             std::to_string(start + count) + " floats, got " +
             std::to_string(noise_values_.size()));
       }
@@ -1056,12 +1322,18 @@ public:
     for (float &value : x) {
       value *= temperature;
     }
+    x = patch_major_to_channel_major(x);
     const std::vector<float> cond = patch_major_to_channel_major(cond_patch);
     std::vector<float> x_in(static_cast<size_t>(2 * patch_elems), 0.0F);
     std::vector<float> cond_in(static_cast<size_t>(2 * patch_elems), 0.0F);
-    std::vector<float> mu_in(static_cast<size_t>(4 * config.dit.hidden_dim),
-                             0.0F);
+    const int64_t mu_elements =
+        has_fusion_proj ? 4 * config.dit.hidden_dim : 2 * config.dit.hidden_dim;
+    std::vector<float> mu_in(static_cast<size_t>(mu_elements), 0.0F);
     std::copy(mu.begin(), mu.end(), mu_in.begin());
+    if (std::getenv("VOXCPM_TEST_BATCH_MU") != nullptr) {
+      std::copy(mu.begin(), mu.end(),
+                mu_in.begin() + static_cast<std::ptrdiff_t>(mu.size()));
+    }
     std::copy(cond.begin(), cond.end(), cond_in.begin());
     std::copy(cond.begin(), cond.end(),
               cond_in.begin() + static_cast<std::ptrdiff_t>(patch_elems));
@@ -1106,6 +1378,29 @@ public:
         const auto estimator = estimator_.run(x_in, mu_in, cond_in,
                                               time_embedding, delta_embedding);
         const float scale = optimized_cfg_scale(estimator, patch_elems);
+        if (std::getenv("VOXCPM_DUMP_DPHI") != nullptr &&
+            step == 2) {
+          double s0 = 0.0, s1 = 0.0, n0 = 0.0, n1 = 0.0;
+          std::vector<double> combined(static_cast<size_t>(patch_elems));
+          double c2 = 0.0;
+          for (int64_t i = 0; i < patch_elems; ++i) {
+            const float p = estimator[static_cast<size_t>(i)];
+            const float m = estimator[static_cast<size_t>(patch_elems + i)];
+            const double d = static_cast<double>(m) * scale +
+                             cfg_value * (static_cast<double>(p) -
+                                          static_cast<double>(m) * scale);
+            combined[static_cast<size_t>(i)] = d;
+            s0 += p; s1 += m; n0 += p * p; n1 += m * m;
+            c2 += d * d;
+          }
+          fprintf(stderr,
+                  "[DUMP_DPHI] t=%.6f dt=%.6f pos_l2=%.6g neg_l2=%.6g "
+                  "combined_l2=%.6g scale=%.6g combined[0..3]=%.6g %.6g %.6g %.6g\n",
+                  static_cast<double>(t), static_cast<double>(dt),
+                  std::sqrt(n0), std::sqrt(n1), std::sqrt(c2),
+                  static_cast<double>(scale), combined[0], combined[1],
+                  combined[2], combined[3]);
+        }
         for (int64_t i = 0; i < patch_elems; ++i) {
           const size_t index = static_cast<size_t>(i);
           const float positive = estimator[index];
@@ -1166,23 +1461,27 @@ private:
     return static_cast<float>(dot / norm);
   }
 
-  std::shared_ptr<const VoxCPM2WeightsRuntime> weights_;
-  VoxCPM2DiTEstimatorRuntime estimator_;
+  std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
+  VoxCPM1DiTEstimatorRuntime estimator_;
   std::string noise_file_;
   std::vector<float> noise_values_;
 };
 
-VoxCPM2CFMRuntime::VoxCPM2CFMRuntime(
-    std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+VoxCPM1CFMRuntime::VoxCPM1CFMRuntime(
+    std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
     size_t estimator_graph_context_bytes,
     bool mem_saver)
     : impl_(std::make_unique<Impl>(std::move(weights),
                                    estimator_graph_context_bytes,
                                    mem_saver)) {}
 
-VoxCPM2CFMRuntime::~VoxCPM2CFMRuntime() = default;
+VoxCPM1CFMRuntime::~VoxCPM1CFMRuntime() = default;
 
-std::vector<float> VoxCPM2CFMRuntime::generate_patch(
+void VoxCPM1CFMRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
+}
+
+std::vector<float> VoxCPM1CFMRuntime::generate_patch(
     const std::vector<float> &mu, const std::vector<float> &cond_patch,
     int64_t timesteps, float cfg_value, uint64_t seed,
     uint64_t noise_start_index, const std::string &noise_file,
@@ -1191,24 +1490,27 @@ std::vector<float> VoxCPM2CFMRuntime::generate_patch(
                                noise_start_index, noise_file, temperature);
 }
 
-class VoxCPM2FeatureGeneratorRuntime::Impl {
+class VoxCPM1FeatureGeneratorRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2Assets> assets,
+  Impl(std::shared_ptr<const VoxCPM1Assets> assets,
        engine::core::ExecutionContext &execution_context,
-       VoxCPM2FeatureGeneratorConfig config)
+       VoxCPM1FeatureGeneratorConfig config)
       : assets_(require_assets(std::move(assets))),
-        weights_(std::make_shared<VoxCPM2WeightsRuntime>(
+        weights_(std::make_shared<VoxCPM1WeightsRuntime>(
             assets_, execution_context, config.weight_context_bytes,
             config.weight_storage_type)),
-        tokenizer_(assets_),
+        tokenizer_(assets_->gguf_tokenizer
+                       ? VoxCPM1TokenizerWrapper(assets_->gguf_tokenizer)
+                       : VoxCPM1TokenizerWrapper(
+                             std::make_shared<VoxCPM1TextTokenizer>(assets_))),
         text_embedding_(weights_, config.text_embedding_graph_context_bytes,
                         config.mem_saver),
         prefill_(weights_, config.lm_step_graph_context_bytes,
                  config.mem_saver),
-        base_lm_(weights_, VoxCPM2MiniCPMKind::BaseLM,
+        base_lm_(weights_, VoxCPM1MiniCPMKind::BaseLM,
                  assets_->config.max_length,
                  config.lm_step_graph_context_bytes),
-        residual_lm_(weights_, VoxCPM2MiniCPMKind::ResidualLM,
+        residual_lm_(weights_, VoxCPM1MiniCPMKind::ResidualLM,
                      assets_->config.max_length,
                      config.lm_step_graph_context_bytes),
         projection_(weights_, config.projection_graph_context_bytes,
@@ -1218,20 +1520,20 @@ public:
                        config.mem_saver),
         prompt_audio_embedding_cache_(config.prompt_cache_slots) {}
 
-  VoxCPM2Result generate_zero_shot(const std::string &text,
-                                   const VoxCPM2GenerationOptions &options) {
+  VoxCPM1Result generate_zero_shot(const std::string &text,
+                                   const VoxCPM1GenerationOptions &options) {
     return generate(text, nullptr, options);
   }
 
-  VoxCPM2Result generate(const std::string &text,
-                         const VoxCPM2EncodedPrompt *prompt,
-                         const VoxCPM2GenerationOptions &options) {
+  VoxCPM1Result generate(const std::string &text,
+                         const VoxCPM1EncodedPrompt *prompt,
+                         const VoxCPM1GenerationOptions &options) {
     validate_generation_options(options);
     const auto prefill = build_prefill_sequence(text, prompt);
 
     const int64_t max_tokens =
         effective_max_tokens(options, prefill.target_text_tokens);
-    VoxCPM2Result last_result;
+    VoxCPM1Result last_result;
     uint64_t retry_noise_start = 0;
     for (int64_t attempt = 0; attempt < options.retry_badcase_max_times;
          ++attempt) {
@@ -1250,21 +1552,22 @@ public:
     return last_result;
   }
 
-  VoxCPM2StreamingResult
+  VoxCPM1StreamingResult
   generate_streaming(const std::string &text,
-                     const VoxCPM2EncodedPrompt *prompt,
-                     const VoxCPM2GenerationOptions &options,
-                     const std::function<void(const VoxCPM2StreamingChunk &)>
+                     const VoxCPM1EncodedPrompt *prompt,
+                     const VoxCPM1GenerationOptions &options,
+                     const std::function<void(const VoxCPM1StreamingChunk &)>
                          &chunk_callback) {
     validate_generation_options(options);
     if (options.retry_badcase) {
-      throw std::runtime_error(
-          "VoxCPM2 streaming generation requires retry_badcase=false");
+      fprintf(stderr,
+              "[VoxCPM1] warning: retry_badcase ignored in streaming "
+              "generation\n");
     }
     const auto prefill = build_prefill_sequence(text, prompt);
     const int64_t max_tokens =
         effective_max_tokens(options, prefill.target_text_tokens);
-    VoxCPM2StreamingResult streaming;
+    VoxCPM1StreamingResult streaming;
     auto *streaming_chunks =
         chunk_callback ? nullptr : &streaming.chunks;
     const auto result = generate_once(prefill, max_tokens, options, 0,
@@ -1274,8 +1577,23 @@ public:
   }
 
   void release_runtime_memory() {
+    // Release every staged graph so a session can idle at weight-only
+    // VRAM. Each runtime lazily rebuilds its graph on the next use.
+    text_embedding_.release_runtime_memory();
+    prefill_.release_runtime_memory();
     base_lm_.release_runtime_memory();
     residual_lm_.release_runtime_memory();
+    projection_.release_runtime_memory();
+    cfm_.release_runtime_memory();
+    local_encoder_.release_runtime_memory();
+  }
+
+  void release_text_length_memory() {
+    // Only the prompt-prefill graph is sized by the request text/prompt
+    // length; the other generator graphs have fixed-size workspaces. Drop it
+    // after every request so a long-lived session does not retain buffers
+    // that scale with text length; the next request rebuilds it fresh.
+    prefill_.release_runtime_memory();
   }
 
 private:
@@ -1302,7 +1620,7 @@ private:
   };
 
   PrefillSequence build_prefill_sequence(const std::string &target_text,
-                                         const VoxCPM2EncodedPrompt *prompt) {
+                                         const VoxCPM1EncodedPrompt *prompt) {
     const auto &config = assets_->config;
     const int64_t patch_elems = config.patch_size * config.feat_dim;
     const std::string normalized_target_text =
@@ -1315,7 +1633,7 @@ private:
                              "reference");
       if (prompt->prompt_patches > 0 && prompt->prompt_text.empty()) {
         throw std::runtime_error(
-            "VoxCPM2 continuation prompt requires prompt text");
+            "VoxCPM1 continuation prompt requires prompt text");
       }
     }
 
@@ -1326,9 +1644,9 @@ private:
     const std::string combined_text =
         use_prompt ? prompt->prompt_text + normalized_target_text
                    : normalized_target_text;
-    const VoxCPM2TextPrompt text_prompt =
+    const VoxCPM1TextPrompt text_prompt =
         tokenizer_.build_prompt(combined_text);
-    const VoxCPM2TextPrompt target_prompt =
+    const VoxCPM1TextPrompt target_prompt =
         tokenizer_.build_prompt(normalized_target_text);
     std::vector<float> zero_patch(static_cast<size_t>(patch_elems), 0.0F);
     PrefillSequence sequence;
@@ -1377,7 +1695,7 @@ private:
       // Caller-controlled: the prompt audio/text decides how many rows this
       // is. Report the numbers so the remedy is arithmetic, not guesswork.
       throw engine::runtime::CapacityError(
-          "VoxCPM2 prompt exceeds the model cache length ("
+          "VoxCPM1 prompt exceeds the model cache length ("
           + std::to_string(sequence.rows.size()) + " rows, limit "
           + std::to_string(config.max_length) + "); shorten the prompt");
     }
@@ -1389,7 +1707,7 @@ private:
     if (index < 0 || hidden_size <= 0 ||
         static_cast<int64_t>(embeddings.size()) < (index + 1) * hidden_size) {
       throw std::runtime_error(
-          "VoxCPM2 prompt audio embedding cache size mismatch");
+          "VoxCPM1 prompt audio embedding cache size mismatch");
     }
     const auto begin =
         embeddings.begin() + static_cast<std::ptrdiff_t>(index * hidden_size);
@@ -1412,7 +1730,7 @@ private:
   }
 
   const PromptAudioEmbeddingCacheEntry &
-  cached_prompt_audio_embeddings(const VoxCPM2EncodedPrompt &prompt) {
+  cached_prompt_audio_embeddings(const VoxCPM1EncodedPrompt &prompt) {
     const int64_t patch_elems =
         assets_->config.patch_size * assets_->config.feat_dim;
     PromptAudioEmbeddingCacheKey key;
@@ -1421,16 +1739,16 @@ private:
     key.reference_features = prompt.reference_features;
     key.reference_patches = prompt.reference_patches;
     if (auto *cached = prompt_audio_embedding_cache_.find(key)) {
-      debug::trace_log_scalar("voxcpm2.prompt_audio_embedding_cache.hit", 1);
+      debug::trace_log_scalar("voxcpm1.prompt_audio_embedding_cache.hit", 1);
       debug::trace_log_scalar(
-          "voxcpm2.prompt_audio_embedding_cache.slots",
+          "voxcpm1.prompt_audio_embedding_cache.slots",
           static_cast<int64_t>(prompt_audio_embedding_cache_.capacity()));
       debug::trace_log_scalar(
-          "voxcpm2.prompt_audio_embedding_cache.entries",
+          "voxcpm1.prompt_audio_embedding_cache.entries",
           static_cast<int64_t>(prompt_audio_embedding_cache_.size()));
-      debug::trace_log_scalar("voxcpm2.prompt_audio_embedding_cache.evicted",
+      debug::trace_log_scalar("voxcpm1.prompt_audio_embedding_cache.evicted",
                               0);
-      debug::timing_log_scalar("voxcpm2.prompt_audio_embedding_ms", 0.0);
+      debug::timing_log_scalar("voxcpm1.prompt_audio_embedding_ms", 0.0);
       return *cached;
     }
 
@@ -1443,13 +1761,13 @@ private:
     const double embedding_ms = engine::debug::elapsed_ms(embedding_start);
     if (prompt_audio_embedding_cache_.capacity() == 0) {
       uncached_prompt_audio_embedding_ = std::move(entry);
-      debug::trace_log_scalar("voxcpm2.prompt_audio_embedding_cache.hit", 0);
-      debug::trace_log_scalar("voxcpm2.prompt_audio_embedding_cache.slots", 0);
-      debug::trace_log_scalar("voxcpm2.prompt_audio_embedding_cache.entries",
+      debug::trace_log_scalar("voxcpm1.prompt_audio_embedding_cache.hit", 0);
+      debug::trace_log_scalar("voxcpm1.prompt_audio_embedding_cache.slots", 0);
+      debug::trace_log_scalar("voxcpm1.prompt_audio_embedding_cache.entries",
                               0);
-      debug::trace_log_scalar("voxcpm2.prompt_audio_embedding_cache.evicted",
+      debug::trace_log_scalar("voxcpm1.prompt_audio_embedding_cache.evicted",
                               0);
-      debug::timing_log_scalar("voxcpm2.prompt_audio_embedding_ms",
+      debug::timing_log_scalar("voxcpm1.prompt_audio_embedding_ms",
                                embedding_ms);
       return *uncached_prompt_audio_embedding_;
     }
@@ -1464,29 +1782,29 @@ private:
     auto *cached = prompt_audio_embedding_cache_.find(lookup);
     if (cached == nullptr) {
       throw std::runtime_error(
-          "VoxCPM2 prompt audio embedding cache insert failed");
+          "VoxCPM1 prompt audio embedding cache insert failed");
     }
-    debug::trace_log_scalar("voxcpm2.prompt_audio_embedding_cache.hit", 0);
+    debug::trace_log_scalar("voxcpm1.prompt_audio_embedding_cache.hit", 0);
     debug::trace_log_scalar(
-        "voxcpm2.prompt_audio_embedding_cache.slots",
+        "voxcpm1.prompt_audio_embedding_cache.slots",
         static_cast<int64_t>(prompt_audio_embedding_cache_.capacity()));
     debug::trace_log_scalar(
-        "voxcpm2.prompt_audio_embedding_cache.entries",
+        "voxcpm1.prompt_audio_embedding_cache.entries",
         static_cast<int64_t>(prompt_audio_embedding_cache_.size()));
-    debug::trace_log_scalar("voxcpm2.prompt_audio_embedding_cache.evicted",
+    debug::trace_log_scalar("voxcpm1.prompt_audio_embedding_cache.evicted",
                             will_evict ? 1 : 0);
-    debug::timing_log_scalar("voxcpm2.prompt_audio_embedding_ms",
+    debug::timing_log_scalar("voxcpm1.prompt_audio_embedding_ms",
                              embedding_ms);
     return *cached;
   }
 
-  VoxCPM2Result
+  VoxCPM1Result
   generate_once(const PrefillSequence &prefill, int64_t max_tokens,
-                const VoxCPM2GenerationOptions &options,
+                const VoxCPM1GenerationOptions &options,
                 uint64_t noise_start_index,
-                std::vector<VoxCPM2StreamingChunk> *streaming_chunks =
+                std::vector<VoxCPM1StreamingChunk> *streaming_chunks =
                     nullptr,
-                const std::function<void(const VoxCPM2StreamingChunk &)>
+                const std::function<void(const VoxCPM1StreamingChunk &)>
                     &streaming_chunk_callback = nullptr) {
     const auto &config = assets_->config;
     const int64_t hidden_size = config.lm.hidden_size;
@@ -1496,7 +1814,7 @@ private:
       // Same: prefill rows come from the input text, max_tokens from the
       // request. Both are the caller's to reduce.
       throw engine::runtime::CapacityError(
-          "VoxCPM2 generation exceeds the model cache length ("
+          "VoxCPM1 generation exceeds the model cache length ("
           + std::to_string(prefill.rows.size()) + " prefill rows + "
           + std::to_string(max_tokens) + " requested tokens, limit "
           + std::to_string(config.max_length) + "); shorten the input text");
@@ -1506,7 +1824,7 @@ private:
 
     std::vector<float> zero_hidden(static_cast<size_t>(hidden_size), 0.0F);
     std::vector<float> zero_patch(static_cast<size_t>(patch_elems), 0.0F);
-    VoxCPM2PromptPrefillInput prefill_input;
+    VoxCPM1PromptPrefillInput prefill_input;
     prefill_input.steps = static_cast<int64_t>(prefill.rows.size());
     prefill_input.input_embeddings.reserve(
         static_cast<size_t>(prefill_input.steps * hidden_size));
@@ -1517,7 +1835,7 @@ private:
     std::vector<float> prefix_cond = zero_patch;
     for (const auto &row : prefill.rows) {
       if (row.text_mask == row.audio_mask) {
-        throw std::runtime_error("VoxCPM2 prefill row mask is invalid");
+        throw std::runtime_error("VoxCPM1 prefill row mask is invalid");
       }
       std::vector<float> input_embedding;
       std::vector<float> current_embed = zero_hidden;
@@ -1527,11 +1845,13 @@ private:
         current_embed = row.embedding;
         if (static_cast<int64_t>(current_embed.size()) != hidden_size) {
           throw std::runtime_error(
-              "VoxCPM2 prompt audio embedding size mismatch");
+              "VoxCPM1 prompt audio embedding size mismatch");
         }
         input_embedding = current_embed;
       }
-      prefix_cond = row.feature;
+      if (row.audio_mask) {
+        prefix_cond = row.feature;
+      }
       prefill_input.input_embeddings.insert(prefill_input.input_embeddings.end(),
                                             input_embedding.begin(),
                                             input_embedding.end());
@@ -1542,12 +1862,35 @@ private:
       prefill_input.audio_mask.push_back(row.audio_mask ? 1.0F : 0.0F);
     }
     const auto prefill_output = prefill_.run(prefill_input);
+    if (std::getenv("VOXCPM_DUMP_PREFILL") != nullptr) {
+      auto dump_vec = [](const char *tag, const std::vector<float> &v) {
+        double sum = 0.0;
+        double sum2 = 0.0;
+        for (float x : v) {
+          sum += x;
+          sum2 += static_cast<double>(x) * x;
+        }
+        fprintf(stderr, "[DUMP_PREFILL] %s n=%zu sum=%.6g l2=%.6g", tag,
+                v.size(), sum, std::sqrt(sum2));
+        for (size_t i = 0; i < std::min<size_t>(8, v.size()); ++i) {
+          fprintf(stderr, " v[%zu]=%.6g", i, static_cast<double>(v[i]));
+        }
+        fprintf(stderr, "\n");
+      };
+      dump_vec("lm_hidden", prefill_output.lm_hidden);
+      dump_vec("residual_hidden", prefill_output.residual_hidden);
+    }
     base_lm_.import_state(prefill_output.base_state);
     residual_lm_.import_state(prefill_output.residual_state);
     std::vector<float> lm_hidden = prefill_output.lm_hidden;
     std::vector<float> residual_hidden = prefill_output.residual_hidden;
+    // The prefill graph holds the largest sequence-shaped workspace; its
+    // outputs have been copied to host hiddens and its KV state imported
+    // into the step runtimes, so nothing below references it. Drop it now
+    // so the token loop runs against the much smaller step graphs.
+    prefill_.release_runtime_memory();
 
-    VoxCPM2Result result;
+    VoxCPM1Result result;
     std::vector<const PrefillRow *> context_rows;
     for (auto it = prefill.rows.rbegin(); it != prefill.rows.rend(); ++it) {
       if (!it->audio_mask) {
@@ -1568,18 +1911,52 @@ private:
     for (int64_t index = 0; index < max_tokens; ++index) {
       const auto projected =
           projection_.run(lm_hidden, residual_hidden, zero_hidden);
-      const auto mu = concat_dit_mu(projected.current_lm_dit_hidden,
-                                    projected.residual_dit_hidden);
+      if (index == 0 && std::getenv("VOXCPM_DUMP_PREFILL") != nullptr) {
+        auto dump_vec = [](const char *tag, const std::vector<float> &v) {
+          double sum = 0.0;
+          double sum2 = 0.0;
+          for (float x : v) {
+            sum += x;
+            sum2 += static_cast<double>(x) * x;
+          }
+          fprintf(stderr, "[DUMP_PREFILL] %s n=%zu sum=%.6g l2=%.6g", tag,
+                  v.size(), sum, std::sqrt(sum2));
+          for (size_t i = 0; i < std::min<size_t>(8, v.size()); ++i) {
+            fprintf(stderr, " v[%zu]=%.6g", i, static_cast<double>(v[i]));
+          }
+          fprintf(stderr, "\n");
+        };
+        dump_vec("lm_to_dit", projected.current_lm_dit_hidden);
+        dump_vec("res_to_dit", projected.residual_dit_hidden);
+      }
+      // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
+      // This matches VoxCPM.cpp behavior which checks weight existence
+      // For V1 models, synthesized weights (Xavier init) should not count as present
+      const bool has_fusion_proj =
+          weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
+          config.architecture == "voxcpm2";
+      const auto mu = has_fusion_proj
+                          ? concat_dit_mu(projected.current_lm_dit_hidden,
+                                          projected.residual_dit_hidden)
+                          : add_dit_mu(projected.current_lm_dit_hidden,
+                                       projected.residual_dit_hidden);
       const auto patch = cfm_.generate_patch(
           mu, prefix_cond, options.num_inference_steps, options.guidance_scale,
           options.seed, patch_noise_start, options.cfm_noise_file);
+      if (const char *patch_dump_path = std::getenv("VOXCPM_DUMP_PATCH")) {
+        FILE *patch_file = std::fopen(patch_dump_path, "ab");
+        if (patch_file != nullptr) {
+          std::fwrite(patch.data(), sizeof(float), patch.size(), patch_file);
+          std::fclose(patch_file);
+        }
+      }
       patch_noise_start += static_cast<uint64_t>(patch_elems);
       append_patch(result.generated_features, patch, patch_elems);
       ++result.generated_patches;
       append_patch(result.decode_features, patch, patch_elems);
       ++result.decode_patches;
       if (streaming_chunks != nullptr || streaming_chunk_callback) {
-        VoxCPM2StreamingChunk chunk;
+        VoxCPM1StreamingChunk chunk;
         chunk.decode_features = patch;
         chunk.decode_patches = 1;
         chunk.generated_patches = result.generated_patches;
@@ -1596,6 +1973,13 @@ private:
           stop_class(projected.current_stop_logits) == 1) {
         break;
       }
+      if (std::getenv("VOXCPM1_LOG_STOP") != nullptr) {
+        const auto &sl = projected.current_stop_logits;
+        fprintf(stderr, "[stop_logits] pos=%lld pre stop0=%.5f stop1=%.5f\n",
+                static_cast<long long>(index),
+                sl.empty() ? 0.0 : static_cast<double>(sl[0]),
+                sl.size() < 2 ? 0.0 : static_cast<double>(sl[1]));
+      }
 
       const auto curr_embed = local_encoder_.encode_patch(patch);
       const auto next_lm = base_lm_.run_step(curr_embed).hidden;
@@ -1608,16 +1992,16 @@ private:
     return result;
   }
 
-  std::shared_ptr<const VoxCPM2Assets> assets_;
-  std::shared_ptr<const VoxCPM2WeightsRuntime> weights_;
-  VoxCPM2TextTokenizer tokenizer_;
-  VoxCPM2TextEmbeddingRuntime text_embedding_;
-  VoxCPM2PromptPrefillRuntime prefill_;
-  VoxCPM2MiniCPMStepRuntime base_lm_;
-  VoxCPM2MiniCPMStepRuntime residual_lm_;
-  VoxCPM2StepProjectionRuntime projection_;
-  VoxCPM2CFMRuntime cfm_;
-  VoxCPM2LocalEncoderRuntime local_encoder_;
+  std::shared_ptr<const VoxCPM1Assets> assets_;
+  std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
+  VoxCPM1TokenizerWrapper tokenizer_;
+  VoxCPM1TextEmbeddingRuntime text_embedding_;
+  VoxCPM1PromptPrefillRuntime prefill_;
+  VoxCPM1MiniCPMStepRuntime base_lm_;
+  VoxCPM1MiniCPMStepRuntime residual_lm_;
+  VoxCPM1StepProjectionRuntime projection_;
+  VoxCPM1CFMRuntime cfm_;
+  VoxCPM1LocalEncoderRuntime local_encoder_;
   engine::runtime::CacheSlots<PromptAudioEmbeddingCacheKey,
                               PromptAudioEmbeddingCacheEntry,
                               PromptAudioEmbeddingCacheKeyEqual>
@@ -1626,35 +2010,39 @@ private:
       uncached_prompt_audio_embedding_;
 };
 
-VoxCPM2FeatureGeneratorRuntime::VoxCPM2FeatureGeneratorRuntime(
-    std::shared_ptr<const VoxCPM2Assets> assets,
+VoxCPM1FeatureGeneratorRuntime::VoxCPM1FeatureGeneratorRuntime(
+    std::shared_ptr<const VoxCPM1Assets> assets,
     engine::core::ExecutionContext &execution_context,
-    VoxCPM2FeatureGeneratorConfig config)
+    VoxCPM1FeatureGeneratorConfig config)
     : impl_(std::make_unique<Impl>(std::move(assets), execution_context,
                                    std::move(config))) {}
 
-VoxCPM2FeatureGeneratorRuntime::~VoxCPM2FeatureGeneratorRuntime() = default;
+VoxCPM1FeatureGeneratorRuntime::~VoxCPM1FeatureGeneratorRuntime() = default;
 
-VoxCPM2Result VoxCPM2FeatureGeneratorRuntime::generate_zero_shot(
-    const std::string &text, const VoxCPM2GenerationOptions &options) {
+VoxCPM1Result VoxCPM1FeatureGeneratorRuntime::generate_zero_shot(
+    const std::string &text, const VoxCPM1GenerationOptions &options) {
   return impl_->generate_zero_shot(text, options);
 }
 
-VoxCPM2Result VoxCPM2FeatureGeneratorRuntime::generate(
-    const std::string &text, const VoxCPM2EncodedPrompt *prompt,
-    const VoxCPM2GenerationOptions &options) {
+VoxCPM1Result VoxCPM1FeatureGeneratorRuntime::generate(
+    const std::string &text, const VoxCPM1EncodedPrompt *prompt,
+    const VoxCPM1GenerationOptions &options) {
   return impl_->generate(text, prompt, options);
 }
 
-VoxCPM2StreamingResult VoxCPM2FeatureGeneratorRuntime::generate_streaming(
-    const std::string &text, const VoxCPM2EncodedPrompt *prompt,
-    const VoxCPM2GenerationOptions &options,
-    const std::function<void(const VoxCPM2StreamingChunk &)> &chunk_callback) {
+VoxCPM1StreamingResult VoxCPM1FeatureGeneratorRuntime::generate_streaming(
+    const std::string &text, const VoxCPM1EncodedPrompt *prompt,
+    const VoxCPM1GenerationOptions &options,
+    const std::function<void(const VoxCPM1StreamingChunk &)> &chunk_callback) {
   return impl_->generate_streaming(text, prompt, options, chunk_callback);
 }
 
-void VoxCPM2FeatureGeneratorRuntime::release_runtime_memory() {
+void VoxCPM1FeatureGeneratorRuntime::release_runtime_memory() {
   impl_->release_runtime_memory();
 }
 
-} // namespace engine::models::voxcpm2
+void VoxCPM1FeatureGeneratorRuntime::release_text_length_memory() {
+  impl_->release_text_length_memory();
+}
+
+} // namespace engine::community_models::voxcpm1

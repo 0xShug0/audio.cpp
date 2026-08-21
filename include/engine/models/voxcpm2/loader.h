@@ -29,6 +29,5 @@ private:
 std::unique_ptr<VoxCPM2LoadedModel>
 load_voxcpm2_model(const std::filesystem::path &model_path);
 std::shared_ptr<runtime::IVoiceModelLoader> make_voxcpm2_loader();
-std::shared_ptr<runtime::IVoiceModelLoader> make_voxcpm1_loader();
 
 } // namespace engine::models::voxcpm2

@@ -425,12 +425,12 @@ audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend 
 
 ## VoxCPM1
 
-VoxCPM1 supports offline and streaming TTS plus short-reference voice cloning. It reuses the VoxCPM2 runtime tree with a GGUF tensor-adaptation layer that understands the OpenBMB folded AudioVAE weights, so the same `--family voxcpm1` path serves both the 16 kHz 0.5B model and the 44.1 kHz 1.5B variants.
+VoxCPM1 supports offline and streaming TTS plus short-reference voice cloning. It reuses the VoxCPM2 runtime tree with a GGUF tensor-adaptation layer that understands the OpenBMB folded AudioVAE weights. The registered package is the 16 kHz 0.5B model; the runtime is size-agnostic, so a different VoxCPM1 GGUF can still be loaded via an explicit `--model <path>`.
 
 | Field | Value |
 |---|---|
 | Family | `voxcpm1` |
-| Model directory | `models/VoxCPM1-GGUF` (0.5B), `models/VoxCPM1.5-GGUF` (1.5B) |
+| Model directory | `models/VoxCPM1-GGUF` (0.5B) |
 | Task | `tts` |
 | Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
@@ -441,12 +441,6 @@ Text to speech:
 
 ```bash
 audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --text "Hello from VoxCPM1." --out out.wav
-```
-
-1.5B variant (44.1 kHz output):
-
-```bash
-audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1.5-GGUF/voxcpm1.5-q8_0.gguf --backend cpu --text "Hello from VoxCPM1." --out out.wav
 ```
 
 Voice clone:

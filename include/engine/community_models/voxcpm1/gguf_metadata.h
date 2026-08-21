@@ -12,7 +12,7 @@ namespace engine::assets {
 class TensorSource;
 }
 
-namespace engine::models::voxcpm2 {
+namespace engine::community_models::voxcpm1 {
 
 // Reads GGUF KV metadata (tokenizer.ggml.*, voxcpm_*) directly from the file
 // backing a TensorSource. Only meaningful for GGUF sources: for any other
@@ -45,4 +45,4 @@ private:
     struct gguf_context * gguf_ = nullptr;
 };
 
-}  // namespace engine::models::voxcpm2
+}  // namespace engine::community_models::voxcpm1

@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/community_models/voxcpm1/tokenizer_gguf.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -9,16 +10,16 @@
 #include <string>
 #include <vector>
 
-namespace engine::models::voxcpm2 {
+namespace engine::community_models::voxcpm1 {
 
-struct VoxCPM2RopeScalingConfig {
+struct VoxCPM1RopeScalingConfig {
     std::string type;
     std::vector<float> long_factor;
     std::vector<float> short_factor;
     int64_t original_max_position_embeddings = 0;
 };
 
-struct VoxCPM2MiniCPMConfig {
+struct VoxCPM1MiniCPMConfig {
     int64_t bos_token_id = 1;
     int64_t eos_token_id = 2;
     int64_t hidden_size = 0;
@@ -36,10 +37,10 @@ struct VoxCPM2MiniCPMConfig {
     float scale_depth = 1.0F;
     bool use_mup = false;
     bool no_rope = false;
-    VoxCPM2RopeScalingConfig rope_scaling;
+    VoxCPM1RopeScalingConfig rope_scaling;
 };
 
-struct VoxCPM2LocalTransformerConfig {
+struct VoxCPM1LocalTransformerConfig {
     int64_t hidden_dim = 0;
     int64_t ffn_dim = 0;
     int64_t num_heads = 0;
@@ -47,19 +48,19 @@ struct VoxCPM2LocalTransformerConfig {
     int64_t kv_channels = 0;
 };
 
-struct VoxCPM2CFMConfig {
+struct VoxCPM1CFMConfig {
     float sigma_min = 1.0e-6F;
     std::string solver = "euler";
     std::string t_scheduler = "log-norm";
     float inference_cfg_rate = 2.0F;
 };
 
-struct VoxCPM2DiTConfig : VoxCPM2LocalTransformerConfig {
+struct VoxCPM1DiTConfig : VoxCPM1LocalTransformerConfig {
     bool mean_mode = false;
-    VoxCPM2CFMConfig cfm;
+    VoxCPM1CFMConfig cfm;
 };
 
-struct VoxCPM2AudioVAEConfig {
+struct VoxCPM1AudioVAEConfig {
     int64_t encoder_dim = 0;
     std::vector<int64_t> encoder_rates;
     int64_t latent_dim = 0;
@@ -70,30 +71,32 @@ struct VoxCPM2AudioVAEConfig {
     int output_sample_rate = 0;
 };
 
-struct VoxCPM2Config {
+struct VoxCPM1Config {
     std::string architecture;
-    VoxCPM2MiniCPMConfig lm;
+    VoxCPM1MiniCPMConfig lm;
     int64_t patch_size = 4;
     int64_t feat_dim = 64;
     int64_t residual_lm_num_layers = 8;
     bool residual_lm_no_rope = false;
     int64_t scalar_quantization_latent_dim = 512;
     int64_t scalar_quantization_scale = 9;
-    VoxCPM2LocalTransformerConfig encoder;
-    VoxCPM2DiTConfig dit;
-    VoxCPM2AudioVAEConfig audio_vae;
+    VoxCPM1LocalTransformerConfig encoder;
+    VoxCPM1DiTConfig dit;
+    VoxCPM1AudioVAEConfig audio_vae;
     int64_t max_length = 8192;
     std::string device = "cuda";
     std::string dtype = "bfloat16";
+    bool v1 = false;
 };
 
-struct VoxCPM2Assets {
+struct VoxCPM1Assets {
     assets::ResourceBundle resources;
-    VoxCPM2Config config;
+    VoxCPM1Config config;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> audiovae_weights;
+    std::shared_ptr<const VoxCPM1GgufTokenizer> gguf_tokenizer;
 };
 
-std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const VoxCPM1Assets> load_voxcpm1_assets(const std::filesystem::path & model_path);
 
-}  // namespace engine::models::voxcpm2
+}  // namespace engine::community_models::voxcpm1

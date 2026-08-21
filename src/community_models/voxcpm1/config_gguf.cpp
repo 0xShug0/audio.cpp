@@ -1,12 +1,12 @@
-#include "engine/models/voxcpm2/config_gguf.h"
+#include "engine/community_models/voxcpm1/config_gguf.h"
 
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/models/voxcpm2/gguf_metadata.h"
+#include "engine/community_models/voxcpm1/gguf_metadata.h"
 
 #include <stdexcept>
 #include <string>
 
-namespace engine::models::voxcpm2 {
+namespace engine::community_models::voxcpm1 {
 
 bool has_voxcpm1_config_metadata(const engine::assets::TensorSource & source) {
     const GgufMetadataReader metadata(source);
@@ -16,8 +16,8 @@ bool has_voxcpm1_config_metadata(const engine::assets::TensorSource & source) {
            metadata.optional_u32("voxcpm_lm_config_hidden_size").has_value();
 }
 
-VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource & source) {
-    VoxCPM2Config config;
+VoxCPM1Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource & source) {
+    VoxCPM1Config config;
     const GgufMetadataReader metadata(source);
     config.v1 = true;
     config.architecture = "voxcpm";
@@ -186,4 +186,4 @@ VoxCPM2Config load_voxcpm1_config_from_gguf(const engine::assets::TensorSource &
     return config;
 }
 
-}  // namespace engine::models::voxcpm2
+}  // namespace engine::community_models::voxcpm1

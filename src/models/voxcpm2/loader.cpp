@@ -1,7 +1,6 @@
 #include "engine/models/voxcpm2/loader.h"
 
 #include "engine/framework/model_spec/package.h"
-#include "engine/models/voxcpm2/assets.h"
 #include "engine/models/voxcpm2/session.h"
 
 #include <stdexcept>
@@ -76,7 +75,7 @@ public:
   runtime::ModelInspection
   inspect(const runtime::ModelLoadRequest &request) const override {
     const auto assets =
-        load_voxcpm2_assets(request.model_path, false);
+        load_voxcpm2_assets(request.model_path);
     runtime::ModelInspection inspection;
     inspection.model_root = assets->resources.model_root();
     inspection.metadata = metadata(*assets);
@@ -97,104 +96,6 @@ public:
   std::unique_ptr<runtime::ILoadedVoiceModel>
   load(const runtime::ModelLoadRequest &request) const override {
     return load_voxcpm2_model(request.model_path);
-  }
-};
-
-// VoxCPM1 Loader
-runtime::CapabilitySet capabilities_v1(const VoxCPM2Assets &) {
-  runtime::CapabilitySet out;
-  out.supported_tasks = {
-      {runtime::VoiceTaskKind::Tts,
-       {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
-  };
-  out.languages = {"Auto"};
-  out.supports_speaker_reference = true;
-  return out;
-}
-
-runtime::ModelMetadata metadata_v1(const VoxCPM2Assets &assets) {
-  runtime::ModelMetadata out;
-  out.family = "voxcpm1";
-  out.variant = assets.config.architecture;
-  out.description = "VoxCPM1 loaded from GGUF assets.";
-  return out;
-}
-
-runtime::ModelCliInterface cli_v1(const VoxCPM2Assets &) {
-  runtime::ModelCliInterface out;
-  out.request_options = {
-      {"text_chunk_mode", "default|tag_aware|japanese|endline",
-       "Text chunking mode; default tag_aware."},
-  };
-  out.session_options = {
-      {"voxcpm1.mem_saver", "true|false",
-       "Use tighter graph workspaces and release request runtime graphs; default false."},
-      {"voxcpm1.prompt_cache_slots", "n",
-       "Prompt and prompt-audio embedding cache slots; default 1."},
-  };
-  return out;
-}
-
-std::unique_ptr<VoxCPM2LoadedModel>
-load_voxcpm1_model(const std::filesystem::path &model_path) {
-  auto assets = load_voxcpm2_assets(model_path, true);
-  return std::make_unique<VoxCPM2LoadedModel>(
-      metadata_v1(*assets), capabilities_v1(*assets), std::move(assets));
-}
-
-class VoxCPM1Loader final : public runtime::IVoiceModelLoader {
-public:
-  std::string family() const override { return "voxcpm1"; }
-
-  runtime::CapabilitySet advertised_capabilities() const override {
-    runtime::CapabilitySet out;
-    out.supported_tasks = {
-        {runtime::VoiceTaskKind::Tts,
-         {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
-    };
-    out.supports_speaker_reference = true;
-    return out;
-  }
-
-  std::string advertised_instructions_policy() const override {
-    return "text_prefix";
-  }
-
-  bool can_load(const runtime::ModelLoadRequest &request) const override {
-    try {
-      (void)engine::model_spec::load_resource_bundle(
-          request.model_path,
-          engine::model_spec::default_spec_path(family()));
-      return !request.family_hint.has_value() || *request.family_hint == family();
-    } catch (...) {
-      return false;
-    }
-  }
-
-  runtime::ModelInspection
-  inspect(const runtime::ModelLoadRequest &request) const override {
-    const auto assets =
-        load_voxcpm2_assets(request.model_path, true);
-    runtime::ModelInspection inspection;
-    inspection.model_root = assets->resources.model_root();
-    inspection.metadata = metadata_v1(*assets);
-    inspection.capabilities = capabilities_v1(*assets);
-    inspection.cli = cli_v1(*assets);
-    const auto spec_path = engine::model_spec::default_spec_path(family());
-    inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
-        request.model_path,
-        spec_path,
-        engine::model_spec::ResourceKind::Files);
-    inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
-        request.model_path,
-        spec_path,
-        engine::model_spec::ResourceKind::Tensors);
-    return inspection;
-  }
-
-  std::unique_ptr<runtime::ILoadedVoiceModel>
-  load(const runtime::ModelLoadRequest &request) const override {
-    return load_voxcpm1_model(request.model_path);
   }
 };
 
@@ -219,14 +120,13 @@ std::unique_ptr<runtime::IVoiceTaskSession>
 VoxCPM2LoadedModel::create_task_session(
     const runtime::TaskSpec &task,
     const runtime::SessionOptions &options) const {
-  const std::string family_label = metadata_.family == "voxcpm1" ? "VoxCPM1" : "VoxCPM2";
   if (task.mode != runtime::RunMode::Offline &&
       task.mode != runtime::RunMode::Streaming) {
-    throw std::runtime_error(family_label +
-                             " only supports offline and streaming sessions");
+    throw std::runtime_error(
+        "VoxCPM2 only supports offline and streaming sessions");
   }
   if (task.task != runtime::VoiceTaskKind::Tts) {
-    throw std::runtime_error(family_label + " only supports the Tts task");
+    throw std::runtime_error("VoxCPM2 only supports the Tts task");
   }
   if (task.mode == runtime::RunMode::Streaming) {
     return std::make_unique<VoxCPM2StreamingSession>(task, options, assets_);
@@ -236,25 +136,13 @@ VoxCPM2LoadedModel::create_task_session(
 
 std::unique_ptr<VoxCPM2LoadedModel>
 load_voxcpm2_model(const std::filesystem::path &model_path) {
-  auto assets = load_voxcpm2_assets(model_path, false);
+  auto assets = load_voxcpm2_assets(model_path);
   return std::make_unique<VoxCPM2LoadedModel>(
       metadata(*assets), capabilities(*assets), std::move(assets));
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_voxcpm2_loader() {
   return std::make_shared<VoxCPM2Loader>();
-}
-
-// VoxCPM1 model loading
-std::unique_ptr<VoxCPM2LoadedModel>
-load_voxcpm1_model(const std::filesystem::path &model_path) {
-  auto assets = load_voxcpm2_assets(model_path, true);
-  return std::make_unique<VoxCPM2LoadedModel>(
-      metadata_v1(*assets), capabilities_v1(*assets), std::move(assets));
-}
-
-std::shared_ptr<runtime::IVoiceModelLoader> make_voxcpm1_loader() {
-  return std::make_shared<VoxCPM1Loader>();
 }
 
 } // namespace engine::models::voxcpm2

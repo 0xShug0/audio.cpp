@@ -1,4 +1,4 @@
-#include "engine/models/voxcpm2/minicpm.h"
+#include "engine/community_models/voxcpm1/minicpm.h"
 
 #include "minicpm_blocks.h"
 
@@ -26,24 +26,24 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::voxcpm2 {
+namespace engine::community_models::voxcpm1 {
 
 namespace {
 
 namespace weight_binding = engine::modules::binding;
 
-VoxCPM2MiniCPMConfig residual_lm_config(const VoxCPM2Config &config) {
-  VoxCPM2MiniCPMConfig out = config.lm;
+VoxCPM1MiniCPMConfig residual_lm_config(const VoxCPM1Config &config) {
+  VoxCPM1MiniCPMConfig out = config.lm;
   out.num_hidden_layers = config.residual_lm_num_layers;
   out.vocab_size = 0;
   out.no_rope = config.residual_lm_no_rope;
   return out;
 }
 
-VoxCPM2MiniCPMConfig
-local_transformer_config(const VoxCPM2MiniCPMConfig &base,
-                         const VoxCPM2LocalTransformerConfig &local) {
-  VoxCPM2MiniCPMConfig out = base;
+VoxCPM1MiniCPMConfig
+local_transformer_config(const VoxCPM1MiniCPMConfig &base,
+                         const VoxCPM1LocalTransformerConfig &local) {
+  VoxCPM1MiniCPMConfig out = base;
   out.hidden_size = local.hidden_dim;
   out.intermediate_size = local.ffn_dim;
   out.num_attention_heads = local.num_heads;
@@ -55,7 +55,7 @@ local_transformer_config(const VoxCPM2MiniCPMConfig &base,
 }
 
 const std::vector<float> &
-active_rope_factors(const VoxCPM2MiniCPMConfig &config) {
+active_rope_factors(const VoxCPM1MiniCPMConfig &config) {
   if (config.max_position_embeddings >
       config.rope_scaling.original_max_position_embeddings) {
     return config.rope_scaling.long_factor;
@@ -63,7 +63,7 @@ active_rope_factors(const VoxCPM2MiniCPMConfig &config) {
   return config.rope_scaling.short_factor;
 }
 
-float rope_attn_factor(const VoxCPM2MiniCPMConfig &config) {
+float rope_attn_factor(const VoxCPM1MiniCPMConfig &config) {
   const auto original =
       static_cast<float>(config.rope_scaling.original_max_position_embeddings);
   if (original <= 1.0F ||
@@ -86,13 +86,13 @@ linear_weights(engine::core::BackendWeightStore &store,
                                      out_features, in_features, use_bias);
 }
 
-VoxCPM2MiniCPMWeights load_minicpm_weights(
+VoxCPM1MiniCPMWeights load_minicpm_weights(
     engine::core::BackendWeightStore &store,
     const engine::assets::TensorSource &source, const std::string &prefix,
-    const VoxCPM2MiniCPMConfig &config,
+    const VoxCPM1MiniCPMConfig &config,
     engine::assets::TensorStorageType storage_type, bool load_token_embedding) {
   const int64_t dim = head_dim(config);
-  VoxCPM2MiniCPMWeights weights;
+  VoxCPM1MiniCPMWeights weights;
   weights.config = config;
   if (load_token_embedding) {
     weights.token_embedding =
@@ -102,7 +102,7 @@ VoxCPM2MiniCPMWeights load_minicpm_weights(
   if (!config.no_rope) {
     const auto &factors = active_rope_factors(config);
     if (static_cast<int64_t>(factors.size()) != dim / 2) {
-      throw std::runtime_error("VoxCPM2 MiniCPM RoPE factor shape mismatch");
+      throw std::runtime_error("VoxCPM1 MiniCPM RoPE factor shape mismatch");
     }
     weights.rope_factors =
         store.make_from_f32(engine::core::TensorShape::from_dims({dim / 2}),
@@ -113,7 +113,7 @@ VoxCPM2MiniCPMWeights load_minicpm_weights(
   for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
     const std::string layer_prefix =
         prefix + ".layers." + std::to_string(layer);
-    VoxCPM2MiniCPMLayerWeights layer_weights;
+    VoxCPM1MiniCPMLayerWeights layer_weights;
     layer_weights.input_norm = weight_binding::norm_weight_from_source(
         store, source, layer_prefix + ".input_layernorm", config.hidden_size);
     layer_weights.q_proj = linear_weights(
@@ -149,40 +149,40 @@ VoxCPM2MiniCPMWeights load_minicpm_weights(
 
 } // namespace
 
-int64_t head_dim(const VoxCPM2MiniCPMConfig &config) {
+int64_t head_dim(const VoxCPM1MiniCPMConfig &config) {
   if (config.kv_channels <= 0 || config.num_attention_heads <= 0 ||
       config.num_key_value_heads <= 0) {
-    throw std::runtime_error("VoxCPM2 MiniCPM attention config is invalid");
+    throw std::runtime_error("VoxCPM1 MiniCPM attention config is invalid");
   }
   if (config.num_attention_heads % config.num_key_value_heads != 0) {
     throw std::runtime_error(
-        "VoxCPM2 MiniCPM attention heads must be divisible by KV heads");
+        "VoxCPM1 MiniCPM attention heads must be divisible by KV heads");
   }
   return config.kv_channels;
 }
 
-const VoxCPM2MiniCPMWeights &
-select_minicpm_weights(const VoxCPM2ModelWeights &weights,
-                       VoxCPM2MiniCPMKind kind) {
+const VoxCPM1MiniCPMWeights &
+select_minicpm_weights(const VoxCPM1ModelWeights &weights,
+                       VoxCPM1MiniCPMKind kind) {
   switch (kind) {
-  case VoxCPM2MiniCPMKind::BaseLM:
+  case VoxCPM1MiniCPMKind::BaseLM:
     return weights.base_lm;
-  case VoxCPM2MiniCPMKind::ResidualLM:
+  case VoxCPM1MiniCPMKind::ResidualLM:
     return weights.residual_lm;
   }
   throw std::runtime_error(
-      "VoxCPM2 MiniCPM runtime received an unknown graph kind");
+      "VoxCPM1 MiniCPM runtime received an unknown graph kind");
 }
 
-std::shared_ptr<const VoxCPM2ModelWeights>
-load_model_weights(const VoxCPM2Assets &assets,
+std::shared_ptr<const VoxCPM1ModelWeights>
+load_model_weights(const VoxCPM1Assets &assets,
                    engine::core::ExecutionContext &execution_context,
                    size_t weight_context_bytes,
                    engine::assets::TensorStorageType storage_type) {
-  auto weights = std::make_shared<VoxCPM2ModelWeights>();
+  auto weights = std::make_shared<VoxCPM1ModelWeights>();
   weights->store = std::make_shared<engine::core::BackendWeightStore>(
       execution_context.backend(), execution_context.backend_type(),
-      "voxcpm2.model.weights", weight_context_bytes);
+      "voxcpm1.model.weights", weight_context_bytes);
   auto &store = *weights->store;
   const auto &source = *assets.model_weights;
   weights->base_lm = load_minicpm_weights(store, source, "base_lm",
@@ -264,22 +264,22 @@ load_model_weights(const VoxCPM2Assets &assets,
 
 
 
-class VoxCPM2WeightsRuntime::Impl {
+class VoxCPM1WeightsRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2Assets> assets,
+  Impl(std::shared_ptr<const VoxCPM1Assets> assets,
        engine::core::ExecutionContext &execution_context,
        size_t weight_context_bytes,
        engine::assets::TensorStorageType weight_storage_type)
       : assets_(std::move(assets)), execution_context_(execution_context) {
     if (assets_ == nullptr) {
-      throw std::runtime_error("VoxCPM2 weights runtime requires assets");
+      throw std::runtime_error("VoxCPM1 weights runtime requires assets");
     }
     weights_ = load_model_weights(*assets_, execution_context_,
                                   weight_context_bytes, weight_storage_type);
   }
 
-  const VoxCPM2Assets &assets() const noexcept { return *assets_; }
-  const VoxCPM2ModelWeights &weights() const noexcept { return *weights_; }
+  const VoxCPM1Assets &assets() const noexcept { return *assets_; }
+  const VoxCPM1ModelWeights &weights() const noexcept { return *weights_; }
   ggml_backend_t backend() const noexcept {
     return execution_context_.backend();
   }
@@ -291,13 +291,13 @@ public:
   }
 
 private:
-  std::shared_ptr<const VoxCPM2Assets> assets_;
+  std::shared_ptr<const VoxCPM1Assets> assets_;
   engine::core::ExecutionContext &execution_context_;
-  std::shared_ptr<const VoxCPM2ModelWeights> weights_;
+  std::shared_ptr<const VoxCPM1ModelWeights> weights_;
 };
 
-VoxCPM2WeightsRuntime::VoxCPM2WeightsRuntime(
-    std::shared_ptr<const VoxCPM2Assets> assets,
+VoxCPM1WeightsRuntime::VoxCPM1WeightsRuntime(
+    std::shared_ptr<const VoxCPM1Assets> assets,
     engine::core::ExecutionContext &execution_context,
     size_t weight_context_bytes,
     engine::assets::TensorStorageType weight_storage_type)
@@ -305,53 +305,49 @@ VoxCPM2WeightsRuntime::VoxCPM2WeightsRuntime(
                                    weight_context_bytes, weight_storage_type)) {
 }
 
-VoxCPM2WeightsRuntime::~VoxCPM2WeightsRuntime() = default;
+VoxCPM1WeightsRuntime::~VoxCPM1WeightsRuntime() = default;
 
-const VoxCPM2Assets &VoxCPM2WeightsRuntime::assets() const noexcept {
+const VoxCPM1Assets &VoxCPM1WeightsRuntime::assets() const noexcept {
   return impl_->assets();
 }
 
-const VoxCPM2ModelWeights &VoxCPM2WeightsRuntime::weights() const noexcept {
+const VoxCPM1ModelWeights &VoxCPM1WeightsRuntime::weights() const noexcept {
   return impl_->weights();
 }
 
-ggml_backend_t VoxCPM2WeightsRuntime::backend() const noexcept {
+ggml_backend_t VoxCPM1WeightsRuntime::backend() const noexcept {
   return impl_->backend();
 }
 
-int VoxCPM2WeightsRuntime::threads() const noexcept { return impl_->threads(); }
+int VoxCPM1WeightsRuntime::threads() const noexcept { return impl_->threads(); }
 
-bool VoxCPM2WeightsRuntime::weights_uploaded() const noexcept {
+bool VoxCPM1WeightsRuntime::weights_uploaded() const noexcept {
   return impl_->weights_uploaded();
 }
 
-class VoxCPM2TextEmbeddingRuntime::Impl {
+class VoxCPM1TextEmbeddingRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  Impl(std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
        size_t graph_context_bytes, bool mem_saver)
       : weights_(std::move(weights)), mem_saver_(mem_saver) {
     if (weights_ == nullptr) {
       throw std::runtime_error(
-          "VoxCPM2 text embedding runtime requires weights");
+          "VoxCPM1 text embedding runtime requires weights");
     }
     build(graph_context_bytes);
   }
 
   ~Impl() {
-    engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-    if (buffer_ != nullptr) {
-      ggml_backend_buffer_free(buffer_);
-    }
-    if (gallocr_ != nullptr) {
-      ggml_gallocr_free(gallocr_);
-    }
+    release_graph();
   }
+
+  void release_runtime_memory() { release_graph(); }
 
   std::vector<float> embed_token(int32_t token_id) {
     const auto &config = weights_->assets().config.lm;
     if (token_id < 0 || token_id >= config.vocab_size) {
       throw std::runtime_error(
-          "VoxCPM2 text embedding token id is out of range");
+          "VoxCPM1 text embedding token id is out of range");
     }
     ggml_backend_tensor_set(token_id_, &token_id, 0, sizeof(token_id));
     engine::core::set_backend_threads(weights_->backend(), weights_->threads());
@@ -359,7 +355,7 @@ public:
         engine::core::compute_backend_graph(weights_->backend(), graph_);
     ggml_backend_synchronize(weights_->backend());
     if (status != GGML_STATUS_SUCCESS) {
-      throw std::runtime_error("VoxCPM2 text embedding graph compute failed");
+      throw std::runtime_error("VoxCPM1 text embedding graph compute failed");
     }
     std::vector<float> output(static_cast<size_t>(config.hidden_size), 0.0F);
     ggml_backend_tensor_get(output_, output.data(), 0,
@@ -368,22 +364,40 @@ public:
   }
 
 private:
+  void release_graph() {
+    if (graph_ != nullptr) {
+      engine::core::release_backend_graph_resources(weights_->backend(), graph_);
+    }
+    if (buffer_ != nullptr) {
+      ggml_backend_buffer_free(buffer_);
+      buffer_ = nullptr;
+    }
+    if (gallocr_ != nullptr) {
+      ggml_gallocr_free(gallocr_);
+      gallocr_ = nullptr;
+    }
+    graph_ = nullptr;
+    token_id_ = nullptr;
+    output_ = nullptr;
+    ctx_.reset();
+  }
+
   void build(size_t graph_context_bytes) {
     const auto &config = weights_->assets().config.lm;
     if (graph_context_bytes == 0) {
       throw std::runtime_error(
-          "VoxCPM2 text embedding graph context bytes must be non-zero");
+          "VoxCPM1 text embedding graph context bytes must be non-zero");
     }
     if (!weights_->weights().base_lm.token_embedding.has_value()) {
-      throw std::runtime_error("VoxCPM2 text embedding weight is missing");
+      throw std::runtime_error("VoxCPM1 text embedding weight is missing");
     }
     ggml_init_params params{graph_context_bytes, nullptr, true};
     ctx_.reset(ggml_init(params));
     if (ctx_ == nullptr) {
       throw std::runtime_error(
-          "failed to initialize VoxCPM2 text embedding graph context");
+          "failed to initialize VoxCPM1 text embedding graph context");
     }
-    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm2.text_embedding"};
+    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm1.text_embedding"};
     token_id_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
     if (mem_saver_) {
       ggml_set_input(token_id_);
@@ -417,18 +431,18 @@ private:
           gallocr_ = nullptr;
         }
         throw std::runtime_error(
-            "failed to allocate VoxCPM2 text embedding graph");
+            "failed to allocate VoxCPM1 text embedding graph");
       }
       return;
     }
     buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
     if (buffer_ == nullptr) {
       throw std::runtime_error(
-          "failed to allocate VoxCPM2 text embedding graph");
+          "failed to allocate VoxCPM1 text embedding graph");
     }
   }
 
-  std::shared_ptr<const VoxCPM2WeightsRuntime> weights_;
+  std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
   bool mem_saver_ = false;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
   ggml_tensor *token_id_ = nullptr;
@@ -438,16 +452,20 @@ private:
   ggml_gallocr_t gallocr_ = nullptr;
 };
 
-VoxCPM2TextEmbeddingRuntime::VoxCPM2TextEmbeddingRuntime(
-    std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+VoxCPM1TextEmbeddingRuntime::VoxCPM1TextEmbeddingRuntime(
+    std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
     size_t graph_context_bytes, bool mem_saver)
     : impl_(std::make_unique<Impl>(std::move(weights), graph_context_bytes,
                                    mem_saver)) {}
 
-VoxCPM2TextEmbeddingRuntime::~VoxCPM2TextEmbeddingRuntime() = default;
+VoxCPM1TextEmbeddingRuntime::~VoxCPM1TextEmbeddingRuntime() = default;
 
-std::vector<float> VoxCPM2TextEmbeddingRuntime::embed_token(int32_t token_id) {
+std::vector<float> VoxCPM1TextEmbeddingRuntime::embed_token(int32_t token_id) {
   return impl_->embed_token(token_id);
+}
+
+void VoxCPM1TextEmbeddingRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
 }
 
 struct MiniCPMLayerWithCacheOutput {
@@ -472,8 +490,8 @@ MiniCPMLayerWithCacheOutput
 minicpm_prefill_layer(engine::core::ModuleBuildContext &ctx,
                       const engine::core::TensorValue &input,
                       const engine::core::TensorValue &positions,
-                      const VoxCPM2MiniCPMLayerWeights &layer,
-                      const VoxCPM2MiniCPMWeights &weights) {
+                      const VoxCPM1MiniCPMLayerWeights &layer,
+                      const VoxCPM1MiniCPMWeights &weights) {
   const auto &config = weights.config;
   const int64_t dim = head_dim(config);
   const int64_t kv_repeats =
@@ -561,42 +579,44 @@ minicpm_prefill_layer(engine::core::ModuleBuildContext &ctx,
 }
 
 
-class VoxCPM2PromptPrefillRuntime::Impl {
+class VoxCPM1PromptPrefillRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+  Impl(std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
        size_t graph_context_bytes, bool mem_saver)
       : weights_(std::move(weights)), graph_context_bytes_(graph_context_bytes),
         mem_saver_(mem_saver) {
     if (weights_ == nullptr) {
-      throw std::runtime_error("VoxCPM2 prompt prefill runtime requires weights");
+      throw std::runtime_error("VoxCPM1 prompt prefill runtime requires weights");
     }
     if (graph_context_bytes_ == 0) {
       throw std::runtime_error(
-          "VoxCPM2 prompt prefill graph context bytes must be non-zero");
+          "VoxCPM1 prompt prefill graph context bytes must be non-zero");
     }
   }
 
   ~Impl() { release_graph(); }
 
-  VoxCPM2PromptPrefillOutput run(const VoxCPM2PromptPrefillInput &input) {
+  void release_runtime_memory() { release_graph(); }
+
+  VoxCPM1PromptPrefillOutput run(const VoxCPM1PromptPrefillInput &input) {
     const auto &config = weights_->assets().config;
     const int64_t hidden_size = config.lm.hidden_size;
     if (input.steps <= 0) {
-      throw std::runtime_error("VoxCPM2 prompt prefill requires positive steps");
+      throw std::runtime_error("VoxCPM1 prompt prefill requires positive steps");
     }
     if (static_cast<int64_t>(input.input_embeddings.size()) !=
         input.steps * hidden_size) {
       throw std::runtime_error(
-          "VoxCPM2 prompt prefill input embedding size mismatch");
+          "VoxCPM1 prompt prefill input embedding size mismatch");
     }
     if (static_cast<int64_t>(input.current_embeddings.size()) !=
         input.steps * hidden_size) {
       throw std::runtime_error(
-          "VoxCPM2 prompt prefill current embedding size mismatch");
+          "VoxCPM1 prompt prefill current embedding size mismatch");
     }
     if (static_cast<int64_t>(input.text_mask.size()) != input.steps ||
         static_cast<int64_t>(input.audio_mask.size()) != input.steps) {
-      throw std::runtime_error("VoxCPM2 prompt prefill mask size mismatch");
+      throw std::runtime_error("VoxCPM1 prompt prefill mask size mismatch");
     }
     if (sequence_steps_ != input.steps) {
       build(input.steps);
@@ -615,10 +635,10 @@ public:
         engine::core::compute_backend_graph(weights_->backend(), graph_);
     ggml_backend_synchronize(weights_->backend());
     if (status != GGML_STATUS_SUCCESS) {
-      throw std::runtime_error("VoxCPM2 prompt prefill graph compute failed");
+      throw std::runtime_error("VoxCPM1 prompt prefill graph compute failed");
     }
 
-    VoxCPM2PromptPrefillOutput output;
+    VoxCPM1PromptPrefillOutput output;
     output.lm_hidden.resize(static_cast<size_t>(hidden_size), 0.0F);
     output.residual_hidden.resize(static_cast<size_t>(hidden_size), 0.0F);
     ggml_backend_tensor_get(lm_hidden_output_, output.lm_hidden.data(), 0,
@@ -642,7 +662,7 @@ private:
   read_state(const std::vector<ggml_tensor *> &keys,
              const std::vector<ggml_tensor *> &values, int64_t step_elems) {
     if (keys.size() != values.size() || step_elems <= 0) {
-      throw std::runtime_error("VoxCPM2 prompt prefill KV state is invalid");
+      throw std::runtime_error("VoxCPM1 prompt prefill KV state is invalid");
     }
     engine::runtime::TransformerKVState state;
     state.current_end = sequence_steps_;
@@ -698,9 +718,9 @@ private:
     ctx_.reset(ggml_init(params));
     if (ctx_ == nullptr) {
       throw std::runtime_error(
-          "failed to initialize VoxCPM2 prompt prefill graph context");
+          "failed to initialize VoxCPM1 prompt prefill graph context");
     }
-    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm2.prompt_prefill"};
+    engine::core::ModuleBuildContext ctx{ctx_.get(), "voxcpm1.prompt_prefill"};
     auto input_embeddings = engine::core::make_tensor(
         ctx, GGML_TYPE_F32,
         engine::core::TensorShape::from_dims(
@@ -789,13 +809,15 @@ private:
 
     auto masked_current = mask_sequence(ctx, current_embeddings, audio_mask);
     auto residual_input =
-        engine::modules::ConcatModule({2}).build(ctx, lm_hidden, masked_current);
-    residual_input =
-        engine::modules::LinearModule(
-            binding::linear_config(config.lm.hidden_size * 2,
-                                   config.lm.hidden_size, true))
-            .build(ctx, residual_input,
-                   model_weights.projections.fusion_concat_proj);
+        config.v1
+            ? engine::modules::AddModule{}.build(ctx, lm_hidden, masked_current)
+            : engine::modules::LinearModule(
+                  binding::linear_config(config.lm.hidden_size * 2,
+                                         config.lm.hidden_size, true))
+                  .build(ctx,
+                         engine::modules::ConcatModule({2}).build(
+                             ctx, lm_hidden, masked_current),
+                         model_weights.projections.fusion_concat_proj);
 
     auto residual_hidden = residual_input;
     for (const auto &layer : model_weights.residual_lm.layers) {
@@ -855,14 +877,14 @@ private:
         }
         release_graph();
         throw std::runtime_error(
-            "failed to allocate VoxCPM2 prompt prefill graph");
+            "failed to allocate VoxCPM1 prompt prefill graph");
       }
     } else {
       buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
     }
     if (!mem_saver_ && buffer_ == nullptr) {
       throw std::runtime_error(
-          "failed to allocate VoxCPM2 prompt prefill graph");
+          "failed to allocate VoxCPM1 prompt prefill graph");
     }
     std::vector<int32_t> position_ids(static_cast<size_t>(steps), 0);
     for (int64_t i = 0; i < steps; ++i) {
@@ -873,7 +895,7 @@ private:
     sequence_steps_ = steps;
   }
 
-  std::shared_ptr<const VoxCPM2WeightsRuntime> weights_;
+  std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
   size_t graph_context_bytes_ = 0;
   bool mem_saver_ = false;
   int64_t sequence_steps_ = 0;
@@ -894,17 +916,21 @@ private:
   ggml_gallocr_t gallocr_ = nullptr;
 };
 
-VoxCPM2PromptPrefillRuntime::VoxCPM2PromptPrefillRuntime(
-    std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
+VoxCPM1PromptPrefillRuntime::VoxCPM1PromptPrefillRuntime(
+    std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
     size_t graph_context_bytes, bool mem_saver)
     : impl_(std::make_unique<Impl>(std::move(weights), graph_context_bytes,
                                    mem_saver)) {}
 
-VoxCPM2PromptPrefillRuntime::~VoxCPM2PromptPrefillRuntime() = default;
+VoxCPM1PromptPrefillRuntime::~VoxCPM1PromptPrefillRuntime() = default;
 
-VoxCPM2PromptPrefillOutput
-VoxCPM2PromptPrefillRuntime::run(const VoxCPM2PromptPrefillInput &input) {
+VoxCPM1PromptPrefillOutput
+VoxCPM1PromptPrefillRuntime::run(const VoxCPM1PromptPrefillInput &input) {
   return impl_->run(input);
+}
+
+void VoxCPM1PromptPrefillRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
 }
 
 engine::core::TensorValue
@@ -915,8 +941,8 @@ minicpm_layer_with_static_cache(engine::core::ModuleBuildContext &ctx,
                                 const engine::core::TensorValue &attention_mask,
                                 const engine::core::TensorValue &cache_key,
                                 const engine::core::TensorValue &cache_value,
-                                const VoxCPM2MiniCPMLayerWeights &layer,
-                                const VoxCPM2MiniCPMWeights &weights) {
+                                const VoxCPM1MiniCPMLayerWeights &layer,
+                                const VoxCPM1MiniCPMWeights &weights) {
   const auto &config = weights.config;
   const int64_t dim = head_dim(config);
   const engine::modules::AddModule add;
@@ -1002,26 +1028,26 @@ minicpm_layer_with_static_cache(engine::core::ModuleBuildContext &ctx,
                        : 1.0F));
 }
 
-const char *minicpm_kind_name(VoxCPM2MiniCPMKind kind) {
+const char *minicpm_kind_name(VoxCPM1MiniCPMKind kind) {
   switch (kind) {
-  case VoxCPM2MiniCPMKind::BaseLM:
+  case VoxCPM1MiniCPMKind::BaseLM:
     return "base_lm";
-  case VoxCPM2MiniCPMKind::ResidualLM:
+  case VoxCPM1MiniCPMKind::ResidualLM:
     return "residual_lm";
   }
   throw std::runtime_error(
-      "VoxCPM2 MiniCPM runtime received an unknown graph kind");
+      "VoxCPM1 MiniCPM runtime received an unknown graph kind");
 }
 
 
-class VoxCPM2MiniCPMStepRuntime::Impl {
+class VoxCPM1MiniCPMStepRuntime::Impl {
 public:
-  Impl(std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
-       VoxCPM2MiniCPMKind kind, int64_t cache_steps, size_t graph_context_bytes)
+  Impl(std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
+       VoxCPM1MiniCPMKind kind, int64_t cache_steps, size_t graph_context_bytes)
       : weights_(std::move(weights)), kind_(kind), cache_steps_(cache_steps),
         graph_context_bytes_(graph_context_bytes) {
     if (weights_ == nullptr) {
-      throw std::runtime_error("VoxCPM2 MiniCPM step runtime requires weights");
+      throw std::runtime_error("VoxCPM1 MiniCPM step runtime requires weights");
     }
     build(graph_context_bytes);
   }
@@ -1048,15 +1074,15 @@ public:
     return step_cache_.export_state();
   }
 
-  VoxCPM2MiniCPMStepOutput run_step(const std::vector<float> &embedding) {
+  VoxCPM1MiniCPMStepOutput run_step(const std::vector<float> &embedding) {
     ensure_graph();
     const auto &config =
         select_minicpm_weights(weights_->weights(), kind_).config;
     if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
-      throw std::runtime_error("VoxCPM2 MiniCPM step embedding size mismatch");
+      throw std::runtime_error("VoxCPM1 MiniCPM step embedding size mismatch");
     }
     if (step_cache_.valid_steps() >= cache_steps_) {
-      throw std::runtime_error("VoxCPM2 MiniCPM step exceeds cache capacity");
+      throw std::runtime_error("VoxCPM1 MiniCPM step exceeds cache capacity");
     }
     ggml_backend_tensor_set(input_, embedding.data(), 0,
                             embedding.size() * sizeof(float));
@@ -1079,11 +1105,11 @@ public:
         engine::core::compute_backend_graph(weights_->backend(), graph_);
     ggml_backend_synchronize(weights_->backend());
     if (status != GGML_STATUS_SUCCESS) {
-      throw std::runtime_error(std::string("VoxCPM2 MiniCPM ") +
+      throw std::runtime_error(std::string("VoxCPM1 MiniCPM ") +
                                minicpm_kind_name(kind_) +
                                " step graph compute failed");
     }
-    VoxCPM2MiniCPMStepOutput output;
+    VoxCPM1MiniCPMStepOutput output;
     output.position = step_cache_.current_end();
     output.hidden.resize(static_cast<size_t>(config.hidden_size), 0.0F);
     ggml_backend_tensor_get(hidden_output_, output.hidden.data(), 0,
@@ -1123,24 +1149,24 @@ private:
   void build(size_t graph_context_bytes) {
     if (cache_steps_ <= 0) {
       throw std::runtime_error(
-          "VoxCPM2 MiniCPM step graph requires positive cache capacity");
+          "VoxCPM1 MiniCPM step graph requires positive cache capacity");
     }
     if (graph_context_bytes == 0) {
       throw std::runtime_error(
-          "VoxCPM2 MiniCPM step graph context bytes must be non-zero");
+          "VoxCPM1 MiniCPM step graph context bytes must be non-zero");
     }
     release_graph();
     ggml_init_params params{graph_context_bytes, nullptr, true};
     ctx_.reset(ggml_init(params));
     if (ctx_ == nullptr) {
       throw std::runtime_error(
-          "failed to initialize VoxCPM2 MiniCPM step graph context");
+          "failed to initialize VoxCPM1 MiniCPM step graph context");
     }
     const auto &lm_weights = select_minicpm_weights(weights_->weights(), kind_);
     const auto &config = lm_weights.config;
     const int64_t dim = head_dim(config);
     const std::string graph_name =
-        std::string("voxcpm2.") + minicpm_kind_name(kind_) + ".step";
+        std::string("voxcpm1.") + minicpm_kind_name(kind_) + ".step";
     engine::core::ModuleBuildContext ctx{ctx_.get(), graph_name.c_str()};
     auto x = engine::core::make_tensor(
         ctx, GGML_TYPE_F32,
@@ -1188,14 +1214,14 @@ private:
     ggml_build_forward_expand(graph_, hidden_output_);
     buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
     if (buffer_ == nullptr) {
-      throw std::runtime_error("failed to allocate VoxCPM2 MiniCPM step graph");
+      throw std::runtime_error("failed to allocate VoxCPM1 MiniCPM step graph");
     }
     attention_mask_buffer_.assign(static_cast<size_t>(cache_steps_),
                                   ggml_fp32_to_fp16(-INFINITY));
   }
 
-  std::shared_ptr<const VoxCPM2WeightsRuntime> weights_;
-  VoxCPM2MiniCPMKind kind_ = VoxCPM2MiniCPMKind::BaseLM;
+  std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
+  VoxCPM1MiniCPMKind kind_ = VoxCPM1MiniCPMKind::BaseLM;
   int64_t cache_steps_ = 0;
   size_t graph_context_bytes_ = 0;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -1210,33 +1236,33 @@ private:
   ggml_backend_buffer_t buffer_ = nullptr;
 };
 
-VoxCPM2MiniCPMStepRuntime::VoxCPM2MiniCPMStepRuntime(
-    std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
-    VoxCPM2MiniCPMKind kind, int64_t cache_steps, size_t graph_context_bytes)
+VoxCPM1MiniCPMStepRuntime::VoxCPM1MiniCPMStepRuntime(
+    std::shared_ptr<const VoxCPM1WeightsRuntime> weights,
+    VoxCPM1MiniCPMKind kind, int64_t cache_steps, size_t graph_context_bytes)
     : impl_(std::make_unique<Impl>(std::move(weights), kind, cache_steps,
                                    graph_context_bytes)) {}
 
-VoxCPM2MiniCPMStepRuntime::~VoxCPM2MiniCPMStepRuntime() = default;
+VoxCPM1MiniCPMStepRuntime::~VoxCPM1MiniCPMStepRuntime() = default;
 
-void VoxCPM2MiniCPMStepRuntime::reset() { impl_->reset(); }
+void VoxCPM1MiniCPMStepRuntime::reset() { impl_->reset(); }
 
-void VoxCPM2MiniCPMStepRuntime::import_state(
+void VoxCPM1MiniCPMStepRuntime::import_state(
     const engine::runtime::TransformerKVState &state) {
   impl_->import_state(state);
 }
 
 engine::runtime::TransformerKVState
-VoxCPM2MiniCPMStepRuntime::export_state() const {
+VoxCPM1MiniCPMStepRuntime::export_state() const {
   return impl_->export_state();
 }
 
-VoxCPM2MiniCPMStepOutput
-VoxCPM2MiniCPMStepRuntime::run_step(const std::vector<float> &embedding) {
+VoxCPM1MiniCPMStepOutput
+VoxCPM1MiniCPMStepRuntime::run_step(const std::vector<float> &embedding) {
   return impl_->run_step(embedding);
 }
 
-void VoxCPM2MiniCPMStepRuntime::release_runtime_memory() {
+void VoxCPM1MiniCPMStepRuntime::release_runtime_memory() {
   impl_->release_runtime_memory();
 }
 
-} // namespace engine::models::voxcpm2
+} // namespace engine::community_models::voxcpm1

@@ -1,4 +1,4 @@
-#include "engine/models/voxcpm2/gguf_metadata.h"
+#include "engine/community_models/voxcpm1/gguf_metadata.h"
 
 #include "engine/framework/assets/tensor_source.h"
 
@@ -6,7 +6,7 @@
 
 #include <stdexcept>
 
-namespace engine::models::voxcpm2 {
+namespace engine::community_models::voxcpm1 {
 
 GgufMetadataReader::GgufMetadataReader(const engine::assets::TensorSource & source) {
     // Metadata-only open: no_alloc=true with no ggml context parses the GGUF
@@ -144,4 +144,4 @@ std::vector<int32_t> GgufMetadataReader::require_i32_array(std::string_view key)
     throw std::runtime_error("GGUF metadata key not found: " + std::string(key));
 }
 
-}  // namespace engine::models::voxcpm2
+}  // namespace engine::community_models::voxcpm1

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/models/voxcpm2/types.h"
+#include "engine/community_models/voxcpm1/types.h"
 
 #include <cstddef>
 #include <functional>
@@ -12,11 +12,11 @@ namespace engine::core {
 class ExecutionContext;
 }
 
-namespace engine::models::voxcpm2 {
+namespace engine::community_models::voxcpm1 {
 
-struct VoxCPM2Assets;
+struct VoxCPM1Assets;
 
-struct VoxCPM2FeatureGeneratorConfig {
+struct VoxCPM1FeatureGeneratorConfig {
   size_t weight_context_bytes = 3ull * 1024ull * 1024ull * 1024ull;
   size_t text_embedding_graph_context_bytes = 64ull * 1024ull * 1024ull;
   size_t lm_step_graph_context_bytes = 1024ull * 1024ull * 1024ull;
@@ -29,30 +29,31 @@ struct VoxCPM2FeatureGeneratorConfig {
       engine::assets::TensorStorageType::Native;
 };
 
-class VoxCPM2FeatureGeneratorRuntime final {
+class VoxCPM1FeatureGeneratorRuntime final {
 public:
-  VoxCPM2FeatureGeneratorRuntime(
-      std::shared_ptr<const VoxCPM2Assets> assets,
+  VoxCPM1FeatureGeneratorRuntime(
+      std::shared_ptr<const VoxCPM1Assets> assets,
       engine::core::ExecutionContext &execution_context,
-      VoxCPM2FeatureGeneratorConfig config = {});
-  ~VoxCPM2FeatureGeneratorRuntime();
+      VoxCPM1FeatureGeneratorConfig config = {});
+  ~VoxCPM1FeatureGeneratorRuntime();
 
-  VoxCPM2Result generate_zero_shot(const std::string &text,
-                                   const VoxCPM2GenerationOptions &options);
-  VoxCPM2Result generate(const std::string &text,
-                         const VoxCPM2EncodedPrompt *prompt,
-                         const VoxCPM2GenerationOptions &options);
-  VoxCPM2StreamingResult
+  VoxCPM1Result generate_zero_shot(const std::string &text,
+                                   const VoxCPM1GenerationOptions &options);
+  VoxCPM1Result generate(const std::string &text,
+                         const VoxCPM1EncodedPrompt *prompt,
+                         const VoxCPM1GenerationOptions &options);
+  VoxCPM1StreamingResult
   generate_streaming(const std::string &text,
-                     const VoxCPM2EncodedPrompt *prompt,
-                     const VoxCPM2GenerationOptions &options,
-                     const std::function<void(const VoxCPM2StreamingChunk &)>
+                     const VoxCPM1EncodedPrompt *prompt,
+                     const VoxCPM1GenerationOptions &options,
+                     const std::function<void(const VoxCPM1StreamingChunk &)>
                          &chunk_callback = nullptr);
   void release_runtime_memory();
+  void release_text_length_memory();
 
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
 
-} // namespace engine::models::voxcpm2
+} // namespace engine::community_models::voxcpm1
