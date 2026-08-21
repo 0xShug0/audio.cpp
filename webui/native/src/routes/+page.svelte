@@ -1493,7 +1493,7 @@
           if (lyrics.trim()) request.lyrics = lyrics;
           request.duration_seconds = duration;
           request.seed = resolvedSeed;
-          request.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
