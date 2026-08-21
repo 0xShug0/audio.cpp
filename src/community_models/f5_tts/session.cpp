@@ -2,11 +2,13 @@
 
 #include "engine/community_models/f5_tts/synthesize.h"
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -28,27 +30,40 @@ const runtime::AudioBuffer * reference_audio(const runtime::TaskRequest & reques
 }
 
 // Locate the DiT checkpoint inside the model directory: exactly one
-// *.safetensors is expected (Habibi Unified/Specialized layout).
+// *.safetensors / *.gguf is expected (Habibi Unified/Specialized layout).
+// GGUF is preferred when both are present (it is the packaged format).
 std::filesystem::path find_checkpoint(const std::filesystem::path & model_path) {
     namespace fs = std::filesystem;
     if (fs::is_regular_file(model_path)) {
-        return model_path;  // direct path to the .safetensors
+        return model_path;  // direct path to the checkpoint file
     }
-    std::vector<fs::path> found;
+    std::vector<fs::path> ggufs, safetensors;
     for (const auto & entry : fs::directory_iterator(model_path)) {
-        if (entry.path().extension() == ".safetensors") {
-            found.push_back(entry.path());
+        if (entry.path().extension() == ".gguf") ggufs.push_back(entry.path());
+        else if (entry.path().extension() == ".safetensors") safetensors.push_back(entry.path());
+    }
+    std::sort(ggufs.begin(), ggufs.end());
+    std::sort(safetensors.begin(), safetensors.end());
+    if (!ggufs.empty()) {
+        return ggufs.back();  // prefer gguf; highest sort key if several
+    }
+    if (!safetensors.empty()) {
+        return safetensors.back();  // highest-numbered model_*.safetensors
+    }
+    throw std::runtime_error(
+        "F5-TTS: no .gguf/.safetensors checkpoint found in " + model_path.string());
+}
+
+// First tensor-source file (safetensors preferred, then gguf) in a directory.
+std::optional<std::filesystem::path> find_tensor_file(const std::filesystem::path & dir) {
+    namespace fs = std::filesystem;
+    if (!fs::is_directory(dir)) return std::nullopt;
+    for (const char * ext : {".safetensors", ".gguf"}) {
+        for (const auto & entry : fs::directory_iterator(dir)) {
+            if (entry.path().extension() == ext) return entry.path();
         }
     }
-    if (found.empty()) {
-        throw std::runtime_error(
-            "F5-TTS: no .safetensors checkpoint found in " + model_path.string());
-    }
-    if (found.size() > 1) {
-        // prefer the highest-numbered model_*.safetensors (latest step)
-        std::sort(found.begin(), found.end());
-    }
-    return found.back();
+    return std::nullopt;
 }
 
 }  // namespace
@@ -76,9 +91,11 @@ F5TTSSession::F5TTSSession(
     if (contract_ == nullptr) {
         throw std::runtime_error("F5-TTS session requires a model contract");
     }
-    // Vocos vocoder checkpoint: session option, else auto-discover (next to
-    // the DiT checkpoint, or the vocos-mel-24khz package installed alongside
-    // the model directory, e.g. <models>/vocos-mel-24khz/model.safetensors).
+    // Vocos vocoder resolution order:
+    //   1. f5_tts.vocos_path session option
+    //   2. bundled "vocos" namespace inside a GGUF checkpoint
+    //   3. vocos.safetensors next to the checkpoint
+    //   4. the vocos-mel-24khz package installed next to the model directory
     const auto vocos_opt = runtime::find_option(
         options.options, {"f5_tts.vocos_path", "vocos_path"});
     namespace fs = std::filesystem;
@@ -87,15 +104,18 @@ F5TTSSession::F5TTSSession(
     } else {
         const fs::path ckpt_dir = assets_->checkpoint.parent_path();
         const fs::path models_root = ckpt_dir.parent_path().parent_path();
-        const fs::path candidates[] = {
-            ckpt_dir / "vocos.safetensors",
-            models_root / "vocos-mel-24khz" / "vocos.safetensors",
-            models_root / "vocos-mel-24khz" / "model.safetensors",
-        };
-        for (const auto & c : candidates) {
-            if (fs::exists(c)) {
-                vocos_path_ = c.string();
-                break;
+        if (assets_->checkpoint.extension() == ".gguf") {
+            const auto probe = assets::open_tensor_source(assets_->checkpoint);
+            if (probe->has_tensor("vocos.backbone.embed.weight")) {
+                vocos_path_ = assets_->checkpoint.string();
+            }
+        }
+        if (vocos_path_.empty()) {
+            const fs::path sibling = ckpt_dir / "vocos.safetensors";
+            if (fs::exists(sibling)) {
+                vocos_path_ = sibling.string();
+            } else if (const auto pkg = find_tensor_file(models_root / "vocos-mel-24khz")) {
+                vocos_path_ = pkg->string();
             }
         }
         if (vocos_path_.empty()) {

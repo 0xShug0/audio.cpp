@@ -54,9 +54,9 @@ std::vector<float> col_from_row(const std::vector<float> & row, int T, int F) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
     const std::string gold = "/mnt/ai/f5-parity/golden";
-    const std::string ckpt = "/mnt/ai/models/Habibi-TTS/Unified/model_200000.safetensors";
+    const std::string ckpt = argc > 1 ? argv[1] : "/mnt/ai/models/Habibi-TTS/Unified/model_200000.safetensors";
 
     const auto x = load_bin(gold + "/input_x.bin", 64 * 100);
     const auto cond = load_bin(gold + "/input_cond.bin", 64 * 100);

@@ -320,6 +320,10 @@ const VocosWeights & load_vocos_once(const std::string & path) {
     if (const auto it = cache.find(path); it != cache.end()) return it->second;
     VocosWeights v;
     v.source = assets::open_tensor_source(path);
+    if (std::filesystem::path(path).extension() == ".gguf") {
+        // GGUF packages store the vocoder under the "vocos" namespace
+        v.source = assets::make_prefixed_tensor_source(v.source, "vocos");
+    }
     const auto f32 = [&](const char * n) { return v.source->require_f32(n); };
     v.embed_w = f32("backbone.embed.weight");
     v.embed_b = f32("backbone.embed.bias");

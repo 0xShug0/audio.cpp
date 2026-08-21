@@ -228,6 +228,20 @@ private:
 
 const LoadedModel & load_model_once(const std::string & path, const F5ComputeDevice & dev);
 
+// Open the DiT checkpoint as a stripped-name tensor source. Safetensors
+// checkpoints carry raw torch names ("ema_model.transformer.*"); GGUF
+// packages store the same tensors under the "transformer" namespace, so the
+// namespace view is stripped first and both formats converge on the same
+// logical names.
+std::shared_ptr<const engine::assets::TensorSource> open_dit_source(const std::string & path) {
+    auto source = engine::assets::open_tensor_source(path);
+    std::shared_ptr<const engine::assets::TensorSource> base = std::move(source);
+    if (std::filesystem::path(path).extension() == ".gguf") {
+        base = engine::assets::make_prefixed_tensor_source(base, "transformer");
+    }
+    return std::make_shared<StrippedView>(std::move(base));
+}
+
 // Module-typed DiT weights cache (per path + device). Leaked at exit like
 // the raw-weight cache: CUDA buffers cannot be freed after driver shutdown.
 const F5DiTWeights & load_dit_weights_once(
@@ -241,8 +255,7 @@ const F5DiTWeights & load_dit_weights_once(
         return found->second.w;
     }
     const auto & model = load_model_once(path, dev);
-    auto source = engine::assets::open_tensor_source(path);
-    auto stripped = std::make_shared<StrippedView>(source);
+    auto stripped = open_dit_source(path);
     Entry entry;
     entry.w = load_dit_weights(*stripped, model.backend, model.backend_type);
     return cache->emplace(key, std::move(entry)).first->second.w;
@@ -260,8 +273,7 @@ const LoadedModel & load_model_once(const std::string & path, const F5ComputeDev
     if (const auto found = cache->find(key); found != cache->end()) {
         return found->second;
     }
-    auto source = engine::assets::open_tensor_source(path);
-    auto stripped = std::make_shared<StrippedView>(source);
+    auto stripped = open_dit_source(path);
     auto owner = std::make_unique<BackendOwner>();
     const core::BackendType type = dev.use_cuda ? core::BackendType::Cuda : core::BackendType::Cpu;
     core::BackendConfig cfg{type, dev.use_cuda ? dev.device : 0, dev.use_cuda ? 1 : std::max(1, dev.threads)};

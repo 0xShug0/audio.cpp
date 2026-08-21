@@ -114,7 +114,7 @@
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "SWivid/Habibi-TTS",
+      "repo": "tareko/audio.cpp",
       "revision": "main",
       "gated": false
     }
@@ -123,133 +123,127 @@
     {
       "id": "habibi_unified",
       "display_name": "Habibi-TTS Unified (Arabic, multi-dialect)",
-      "description": "Unified multi-dialect Arabic checkpoint from SWivid/Habibi-TTS.",
+      "description": "Unified multi-dialect Arabic checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32).",
       "default": true,
-      "format": "safetensors",
+      "format": "gguf",
       "precision": "orig",
       "target_directory": "Habibi-TTS/Unified",
       "files": [
-        "Unified/model_200000.safetensors",
-        "Unified/vocab.txt"
+        "unified/unified-orig.gguf",
+        "unified/vocab.txt"
       ],
-      "strip_prefix": "Unified"
+      "strip_prefix": "unified"
     },
     {
       "id": "vocos_mel_24khz",
-      "display_name": "Vocos mel 24kHz vocoder (required by F5/Habibi)",
-      "description": "Vocos mel-spectrogram vocoder checkpoint (safetensors), required to decode F5-TTS output. Converted mirror of charactr/vocos-mel-24khz.",
+      "display_name": "Vocos mel 24kHz vocoder (GGUF)",
+      "description": "Standalone Vocos vocoder GGUF for use with the original safetensors checkpoints.",
       "default": false,
-      "format": "safetensors",
+      "format": "gguf",
       "precision": "orig",
       "target_directory": "vocos-mel-24khz",
       "files": [
-        "model.safetensors",
-        "config.yaml"
+        "vocos-mel-24khz/vocos-mel-24khz-orig.gguf"
       ],
-      "download": {
-        "kind": "huggingface_snapshot",
-        "repo": "lucasnewman/vocos-mel-24khz",
-        "revision": "main",
-        "gated": false
-      }
+      "strip_prefix": "vocos-mel-24khz"
     },
     {
       "id": "habibi_alg",
-      "display_name": "Habibi-TTS ALG specialized checkpoint",
-      "description": "Single-dialect ALG checkpoint from SWivid/Habibi-TTS (stronger ALG accent than the unified model).",
+      "display_name": "Habibi-TTS ALG specialized checkpoint (GGUF)",
+      "description": "Single-dialect ALG checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger ALG accent than the unified model.",
       "default": false,
-      "format": "safetensors",
+      "format": "gguf",
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/ALG",
       "files": [
-        "Specialized/ALG/model_100000.safetensors",
-        "Specialized/ALG/vocab.txt"
+        "alg/alg-orig.gguf",
+        "alg/vocab.txt"
       ],
-      "strip_prefix": "Specialized/ALG"
+      "strip_prefix": "alg"
     },
     {
       "id": "habibi_egy",
-      "display_name": "Habibi-TTS EGY specialized checkpoint",
-      "description": "Single-dialect EGY checkpoint from SWivid/Habibi-TTS (stronger EGY accent than the unified model).",
+      "display_name": "Habibi-TTS EGY specialized checkpoint (GGUF)",
+      "description": "Single-dialect EGY checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger EGY accent than the unified model.",
       "default": false,
-      "format": "safetensors",
+      "format": "gguf",
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/EGY",
       "files": [
-        "Specialized/EGY/model_100000.safetensors",
-        "Specialized/EGY/vocab.txt"
+        "egy/egy-orig.gguf",
+        "egy/vocab.txt"
       ],
-      "strip_prefix": "Specialized/EGY"
+      "strip_prefix": "egy"
     },
     {
       "id": "habibi_irq",
-      "display_name": "Habibi-TTS IRQ specialized checkpoint",
-      "description": "Single-dialect IRQ checkpoint from SWivid/Habibi-TTS (stronger IRQ accent than the unified model).",
+      "display_name": "Habibi-TTS IRQ specialized checkpoint (GGUF)",
+      "description": "Single-dialect IRQ checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger IRQ accent than the unified model.",
       "default": false,
-      "format": "safetensors",
+      "format": "gguf",
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/IRQ",
       "files": [
-        "Specialized/IRQ/model_100000.safetensors",
-        "Specialized/IRQ/vocab.txt"
+        "irq/irq-orig.gguf",
+        "irq/vocab.txt"
       ],
-      "strip_prefix": "Specialized/IRQ"
+      "strip_prefix": "irq"
     },
     {
       "id": "habibi_mar",
-      "display_name": "Habibi-TTS MAR specialized checkpoint",
-      "description": "Single-dialect MAR checkpoint from SWivid/Habibi-TTS (stronger MAR accent than the unified model).",
+      "display_name": "Habibi-TTS MAR specialized checkpoint (GGUF)",
+      "description": "Single-dialect MAR checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger MAR accent than the unified model.",
       "default": false,
-      "format": "safetensors",
+      "format": "gguf",
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/MAR",
       "files": [
-        "Specialized/MAR/model_100000.safetensors",
-        "Specialized/MAR/vocab.txt"
+        "mar/mar-orig.gguf",
+        "mar/vocab.txt"
       ],
-      "strip_prefix": "Specialized/MAR"
+      "strip_prefix": "mar"
     },
     {
       "id": "habibi_msa",
-      "display_name": "Habibi-TTS MSA specialized checkpoint",
-      "description": "Single-dialect MSA checkpoint from SWivid/Habibi-TTS (stronger MSA accent than the unified model).",
+      "display_name": "Habibi-TTS MSA specialized checkpoint (GGUF)",
+      "description": "Single-dialect MSA checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger MSA accent than the unified model.",
       "default": false,
-      "format": "safetensors",
+      "format": "gguf",
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/MSA",
       "files": [
-        "Specialized/MSA/model_200000.safetensors",
-        "Specialized/MSA/vocab.txt"
+        "msa/msa-orig.gguf",
+        "msa/vocab.txt"
       ],
-      "strip_prefix": "Specialized/MSA"
+      "strip_prefix": "msa"
     },
     {
       "id": "habibi_sau",
-      "display_name": "Habibi-TTS SAU specialized checkpoint",
-      "description": "Single-dialect SAU checkpoint from SWivid/Habibi-TTS (stronger SAU accent than the unified model).",
+      "display_name": "Habibi-TTS SAU specialized checkpoint (GGUF)",
+      "description": "Single-dialect SAU checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger SAU accent than the unified model.",
       "default": false,
-      "format": "safetensors",
+      "format": "gguf",
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/SAU",
       "files": [
-        "Specialized/SAU/model_200000.safetensors",
-        "Specialized/SAU/vocab.txt"
+        "sau/sau-orig.gguf",
+        "sau/vocab.txt"
       ],
-      "strip_prefix": "Specialized/SAU"
+      "strip_prefix": "sau"
     },
     {
       "id": "habibi_uae",
-      "display_name": "Habibi-TTS UAE specialized checkpoint",
-      "description": "Single-dialect UAE checkpoint from SWivid/Habibi-TTS (stronger UAE accent than the unified model).",
+      "display_name": "Habibi-TTS UAE specialized checkpoint (GGUF)",
+      "description": "Single-dialect UAE checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger UAE accent than the unified model.",
       "default": false,
-      "format": "safetensors",
+      "format": "gguf",
       "precision": "orig",
       "target_directory": "Habibi-TTS/Specialized/UAE",
       "files": [
-        "Specialized/UAE/model_100000.safetensors",
-        "Specialized/UAE/vocab.txt"
+        "uae/uae-orig.gguf",
+        "uae/vocab.txt"
       ],
-      "strip_prefix": "Specialized/UAE"
+      "strip_prefix": "uae"
     }
   ],
   "dependencies": [],
@@ -265,22 +259,39 @@
   },
   "sources": [
     {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "vocab": "model:vocab.txt"
+      },
+      "tensors": {
+        "transformer": {
+          "source": "weights:",
+          "prefix": "transformer"
+        }
+      },
+      "optional_tensors": {
+        "vocos_vocoder": {
+          "source": "weights:",
+          "prefix": "vocos"
+        }
+      }
+    },
+    {
       "format": "safetensors",
       "roots": {
         "model": "."
       },
       "files": {
-        "config": "model:merged_XXXXXX.json",
         "vocab": "model:vocab.txt"
       },
       "tensors": {
         "transformer": {
           "source": "model:model_200000.safetensors",
-          "prefix": "transformer"
-        },
-        "vocos_vocoder": {
-          "source": "model:vocos.safetensors",
-          "prefix": "vocos"
+          "prefix": "ema_model.transformer"
         }
       }
     }

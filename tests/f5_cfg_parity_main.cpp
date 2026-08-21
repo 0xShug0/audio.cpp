@@ -64,9 +64,9 @@ double max_abs(const std::vector<float> & a, const std::vector<float> & b) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
     const std::string gold = "/mnt/ai/f5-parity/golden";
-    const std::string ckpt = "/mnt/ai/models/Habibi-TTS/Unified/model_200000.safetensors";
+    const std::string ckpt = argc > 1 ? argv[1] : "/mnt/ai/models/Habibi-TTS/Unified/model_200000.safetensors";
     constexpr int N = 64, MEL = 100, NT = 24;
 
     const auto x = load_bin(gold + "/cfg_input_x.bin", N * MEL);

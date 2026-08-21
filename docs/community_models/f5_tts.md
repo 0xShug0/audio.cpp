@@ -45,11 +45,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAUDIOCPP_MODEL_SET=custom \
       -DAUDIOCPP_MODELS=f5_tts -DENGINE_ENABLE_CUDA=ON
 cmake --build build --parallel --target audiocpp_cli audiocpp_server
 
-# 2. Download the model + the required Vocos vocoder (safe to re-run)
-python3 tools/model_manager_v2.py install habibi_unified   # DiT checkpoint + vocab
-python3 tools/model_manager_v2.py install vocos_mel_24khz  # vocoder (auto-discovered)
+# 2. Download the model package (GGUF: DiT + Vocos vocoder in one file + vocab.txt)
+python3 tools/model_manager_v2.py install habibi_unified
 # Per-dialect specialized checkpoints (stronger accent): habibi_alg, habibi_egy,
 # habibi_irq, habibi_mar, habibi_msa, habibi_sau, habibi_uae
+# Standalone vocoder for the original safetensors checkpoints: vocos_mel_24khz
 
 # 3. Synthesize (zero-shot: any short reference WAV + its transcript)
 build/bin/audiocpp_cli --task tts --family habibi \
@@ -60,11 +60,25 @@ build/bin/audiocpp_cli --task tts --family habibi \
     --request-option dialect=UNK --out out.wav
 ```
 
-The session finds the vocoder automatically (`f5_tts.vocos_path` session option,
-`vocos.safetensors` next to the checkpoint, or the `vocos-mel-24khz` package next to the
-model directory). Dialects: `UNK MSA SAU UAE ALG IRQ EGY MAR OMN TUN LEV SDN LBY`.
+The GGUF package is self-contained: the DiT lives under the `transformer` namespace and the
+Vocos vocoder under `vocos`, so no separate vocoder download or `f5_tts.vocos_path` option is
+needed (the option and safetensors fallbacks still work for the original HF checkpoints).
+Dialects: `UNK MSA SAU UAE ALG IRQ EGY MAR OMN TUN LEV SDN LBY`.
 Reference audio longer than ~10.9s is truncated (with a warning) — keep refs under that
 and make sure the transcript matches, otherwise the transcript tail leaks into the output.
+
+### Converting checkpoints to GGUF
+
+`tools/convert_f5_tts.py` wraps `audiocpp_gguf` and produces one self-contained GGUF per
+checkpoint (`transformer` + `vocos` namespaces) plus the standalone vocoder package:
+
+```bash
+python3 tools/convert_f5_tts.py --checkpoint-root /models/Habibi-TTS \
+    --vocos /models/vocos-mel-24khz/vocos.safetensors \
+    --converter build/bin/audiocpp_gguf --output-dir gguf-packages
+```
+
+The safetensors source layout stays supported for development; the packaged/default format is GGUF.
 
 ## Relevant building blocks already in-tree
 
