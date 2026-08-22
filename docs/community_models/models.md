@@ -16,6 +16,7 @@ Practical expectations:
 
 | Family | Task | Supported language(s) | Contributor | What They Added |
 |---|---|---|---|---|
+| **f5_tts** | TTS, voice cloning | en, ar (Habibi) | Community | [F5-TTS](f5_tts.md) flow-matching DiT — M0 scaffolding, aliases `habibi`/`habibi_tts` |
 | **glm_tts** | TTS, voice cloning | zh, en | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](glm_tts.md) zero-shot synthesis and voice cloning support |
 | **inflect_v2** | TTS | en | Community | [Inflect Micro v2 and Nano v2](inflect_v2.md) native FP32 offline synthesis |
 | **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |

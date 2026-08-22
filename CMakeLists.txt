@@ -570,6 +570,23 @@ audiocpp_add_model(inflect_v2
         engine::models::inflect_v2::make_inflect_v2_loader
 )
 
+audiocpp_add_model(f5_tts
+    SOURCES
+        src/community_models/f5_tts/session.cpp
+        src/community_models/f5_tts/runtime.cpp
+        src/community_models/f5_tts/weights.cpp
+        src/community_models/f5_tts/dit_modules.cpp
+        src/community_models/f5_tts/synthesize.cpp
+    INCLUDES
+        engine/community_models/f5_tts/session.h
+        engine/community_models/f5_tts/runtime.h
+    LOADERS
+        engine::models::f5_tts::make_f5_tts_loader
+    ALIASES
+        habibi
+        habibi_tts
+)
+
 audiocpp_add_model(minimax_h3
     SOURCES
         src/community_models/minimax_h3/assets.cpp
@@ -1631,6 +1648,24 @@ if (vibevoice IN_LIST AUDIOCPP_LINKED_MODELS)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
     endif()
+endif()
+
+# F5/Habibi tests: parity harnesses + e2e sample generator. Only when the
+# f5_tts model is linked (they call model-internal symbols) AND test hooks
+# are explicitly enabled — F5_MEL_TEST must never leak into production
+# model libraries (PR #275 review feedback).
+option(ENGINE_F5_TEST_HOOKS "Build F5-TTS test hooks (f5_test_* symbols) and parity binaries" OFF)
+if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS AND ENGINE_F5_TEST_HOOKS)
+    target_compile_definitions(engine_model_f5_tts PRIVATE F5_MEL_TEST=1)
+    foreach(f5_test IN ITEMS f5_e2e f5_parity f5_cfg_parity f5_tokenizer)
+        add_executable(${f5_test} tests/${f5_test}_main.cpp)
+        target_compile_definitions(${f5_test} PRIVATE F5_MEL_TEST=1)
+        target_link_libraries(${f5_test} PRIVATE engine_runtime ggml)
+        target_include_directories(${f5_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(${f5_test} PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endforeach()
 endif()
 
 if (ENGINE_BUILD_TESTS)

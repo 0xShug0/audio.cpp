@@ -124,6 +124,8 @@ public:
     virtual ~IVoiceModelLoader() = default;
 
     virtual std::string family() const = 0;
+    /** Alternate family names accepted for family hints (e.g. "habibi" for "f5_tts"). */
+    virtual std::vector<std::string> family_aliases() const { return {}; }
     virtual bool can_load(const ModelLoadRequest & request) const = 0;
     virtual ModelInspection inspect(const ModelLoadRequest & request) const = 0;
     virtual std::unique_ptr<ILoadedVoiceModel> load(const ModelLoadRequest & request) const = 0;
