@@ -1330,13 +1330,6 @@ private:
     }
     // VAD trim silence (match VoxCPM.cpp server_common.cpp:842/878)
     mono = trim_audio_silence_vad(mono, vae.sample_rate);
-    if (const char *dump_path = std::getenv("VOXCPM_DUMP_REF_MONO")) {
-      FILE *f = std::fopen(dump_path, "wb");
-      if (f != nullptr) {
-        std::fwrite(mono.data(), sizeof(float), mono.size(), f);
-        std::fclose(f);
-      }
-    }
     // Patch-aligned padding (Left for prompt, Right for reference)
     const int64_t patch_samples = assets_->config.patch_size * encoder_stride_;
     pad_audio_for_patch_alignment(mono, static_cast<size_t>(patch_samples),
@@ -1367,19 +1360,6 @@ private:
     if (status != GGML_STATUS_SUCCESS) {
       throw std::runtime_error("VoxCPM1 AudioVAE encoder graph compute failed");
     }
-    if (const char *stage_path = std::getenv("VOXCPM_DUMP_ENC_STAGE")) {
-      const std::string dir(stage_path);
-      for (size_t i = 0; i < encoder_stages_.size(); ++i) {
-        ggml_tensor *stage = encoder_stages_[i];
-        std::vector<float> buf(static_cast<size_t>(ggml_nelements(stage)), 0.0F);
-        ggml_backend_tensor_get(stage, buf.data(), 0, buf.size() * sizeof(float));
-        FILE *f = std::fopen((dir + "/stage_" + std::to_string(i) + ".bin").c_str(), "wb");
-        if (f != nullptr) {
-          std::fwrite(buf.data(), sizeof(float), buf.size(), f);
-          std::fclose(f);
-        }
-      }
-    }
 
     const int64_t latent_frames = padded_samples / encoder_stride_;
     const int64_t expected_capacity_frames =
@@ -1400,14 +1380,6 @@ private:
       for (int64_t c = 0; c < vae.latent_dim; ++c) {
         encoded.features[static_cast<size_t>(t * vae.latent_dim + c)] =
             full[static_cast<size_t>(c * expected_capacity_frames + t)];
-      }
-    }
-    if (const char *dump_path = std::getenv("VOXCPM_DUMP_REF_FEAT")) {
-      FILE *f = std::fopen(dump_path, "wb");
-      if (f != nullptr) {
-        std::fwrite(encoded.features.data(), sizeof(float),
-                    encoded.features.size(), f);
-        std::fclose(f);
       }
     }
     return encoded;
@@ -1565,31 +1537,15 @@ private:
         core::TensorShape::from_dims({1, 1, config_.encoder_sample_capacity}));
     encoder_input_ = hidden.tensor;
     ggml_set_input(encoder_input_);
-    encoder_stages_.clear();
-    if (std::getenv("VOXCPM_DUMP_ENC_STAGE") != nullptr) {
-      encoder_stages_.push_back(encoder_input_);
-    }
     hidden = causal_conv1d(ctx, hidden, weights_.encoder_first, 1, 3, 1);
-    if (std::getenv("VOXCPM_DUMP_ENC_STAGE") != nullptr) {
-      encoder_stages_.push_back(hidden.tensor);
-    }
     for (const auto &block : weights_.encoder_blocks) {
       hidden = encoder_block(ctx, hidden, block);
-      if (std::getenv("VOXCPM_DUMP_ENC_STAGE") != nullptr) {
-        encoder_stages_.push_back(hidden.tensor);
-      }
     }
     hidden = causal_conv1d(ctx, hidden, weights_.encoder_fc_mu, 1, 1, 1);
     encoder_output_ = hidden.tensor;
     ggml_set_output(encoder_output_);
-    for (ggml_tensor *stage : encoder_stages_) {
-      ggml_set_output(stage);
-    }
     encoder_graph_ = ggml_new_graph_custom(encoder_ctx_.get(), 65536, false);
     ggml_build_forward_expand(encoder_graph_, encoder_output_);
-    for (ggml_tensor *stage : encoder_stages_) {
-      ggml_build_forward_expand(encoder_graph_, stage);
-    }
     encoder_gallocr_ = ggml_gallocr_new(
         ggml_backend_get_default_buffer_type(execution_context_.backend()));
     if (encoder_gallocr_ == nullptr ||
@@ -1611,7 +1567,6 @@ private:
   ggml_tensor *output_ = nullptr;
   ggml_tensor *encoder_input_ = nullptr;
   ggml_tensor *encoder_output_ = nullptr;
-  std::vector<ggml_tensor *> encoder_stages_;
   ggml_cgraph *graph_ = nullptr;
   ggml_cgraph *encoder_graph_ = nullptr;
   ggml_gallocr_t gallocr_ = nullptr;

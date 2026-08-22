@@ -164,11 +164,6 @@ minicpm_layer(engine::core::ModuleBuildContext &ctx,
   auto hidden = engine::modules::RMSNormModule(
                     {config.hidden_size, config.rms_norm_eps, true, false})
                     .build(ctx, input, layer.input_norm);
-  if (std::getenv("VOXCPM_DUMP_NORM0") != nullptr &&
-      ggml_nelements(hidden.tensor) == 10240) {
-    ggml_set_name(hidden.tensor, "dump_norm0");
-    ggml_set_output(hidden.tensor);
-  }
   auto q = engine::modules::LinearModule(
                binding::linear_config(config.hidden_size,
                                       config.num_attention_heads * dim, false))
@@ -253,12 +248,6 @@ minicpm_transformer(engine::core::ModuleBuildContext &ctx,
                     const engine::core::TensorValue &positions,
                     const VoxCPM1MiniCPMWeights &weights, bool is_causal) {
   for (size_t li = 0; li < weights.layers.size(); ++li) {
-    if (std::getenv("VOXCPM_DUMP_DECODER_LAYERS") != nullptr && li < 8) {
-      char name[32];
-      snprintf(name, sizeof(name), "dump_layer_%zu", li);
-      ggml_set_name(input.tensor, name);
-      ggml_set_output(input.tensor);
-    }
     input = minicpm_layer(ctx, input, positions, weights.layers[li], weights,
                           is_causal);
   }
