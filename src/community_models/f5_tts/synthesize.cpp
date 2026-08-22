@@ -1025,7 +1025,8 @@ ChunkResult synthesize_chunk(
     F5ComputeDevice & dev,
     uint32_t seed,
     std::vector<float> * out_final_latent_rows,
-    double duration_slack = 1.0) {
+    double duration_slack = 1.0,
+    int tail_pad = 0) {
     const F5Architecture arch;
 
     // Pacing in CHARACTERS (Arabic is 2 bytes/char; byte-based pacing
@@ -1046,6 +1047,11 @@ ChunkResult synthesize_chunk(
     // whole words, and any undershoot clips the last word (observed: "النفط",
     // "فقط" dropped at chunk tails). Excess frames become a short tail pause.
     int duration = ref_frames + static_cast<int>(rate * gen_chars * duration_slack / local_speed);
+    // tail_pad (>0 for single-chunk short text): without it a slightly slow
+    // sampled pace runs out of frames and the final phonemes are clipped
+    // (observed: "أين اللون الأحمر؟" -> "الأخر"). ~0.2s is proportionally
+    // negligible for long text and ends as silence, not slower speech.
+    duration += tail_pad;
     duration = std::max(duration, gen_chars + 1);
     // per-chunk safety cap: a single chunk never exceeds the graph budget;
     // longer inputs are split upstream by chunk_text instead of truncated.
@@ -1213,7 +1219,8 @@ F5SynthesisResult f5_synthesize(
             model_path, request, ref_mel, ref_frames, ref_voiced_frames, chunk_ids,
             chunks[ci], ref_text, dev,
             base_seed + static_cast<uint32_t>(ci),
-            nullptr, chunks.size() > 1 ? 1.20 : 1.0);
+            nullptr, chunks.size() > 1 ? 1.20 : 1.0,
+            chunks.size() > 1 ? 0 : 20);
         if (chunks.size() > 1) {
             const char last_ch = chunks[ci].empty() ? ' ' : chunks[ci].back();
             const bool sent_final = last_ch == '.' || last_ch == '!' || last_ch == '?';
