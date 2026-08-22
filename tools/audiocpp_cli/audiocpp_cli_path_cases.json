@@ -311,6 +311,125 @@
       ]
     },
     {
+      "id": "controlfoley_t2a",
+      "coverage": "ControlFoley text-to-audio path with OpenCLIP text conditioning",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "t2a",
+          "text": "A bird sings melodically in a forest.",
+          "options": {
+            "duration_sec": 10.0,
+            "num_inference_steps": 25,
+            "cfg_strength": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
+      "id": "controlfoley_tv2a",
+      "coverage": "ControlFoley text-video-to-audio path with OpenCLIP text/image and video conditioners",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "tv2a",
+          "text": "skateboarding",
+          "options": {
+            "video": "reference/controlfoley/examples/tv2a/tv2a_video_input.mp4",
+            "duration_sec": 8.0,
+            "num_inference_steps": 25,
+            "cfg_strength": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
+      "id": "controlfoley_tc_v2a",
+      "coverage": "ControlFoley text-controlled video-to-audio path with mask-away CLIP behavior",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "tc_v2a",
+          "text": "thunder strike",
+          "options": {
+            "video": "reference/controlfoley/examples/tc_v2a/tcv2a_video_input.mp4",
+            "mask_away_clip": true,
+            "duration_sec": 6.0,
+            "num_inference_steps": 25,
+            "cfg_strength": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
+      "id": "controlfoley_ac_v2a",
+      "coverage": "ControlFoley audio-conditioned video-to-audio path with reference audio conditioning",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "ac_v2a",
+          "audio": "reference/controlfoley/examples/ac_v2a/acv2a_reference.wav",
+          "options": {
+            "video": "reference/controlfoley/examples/ac_v2a/acv2a_video_input.mp4",
+            "duration_sec": 5.0,
+            "num_inference_steps": 25,
+            "cfg_strength": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
+      "id": "controlfoley_v2a",
+      "coverage": "ControlFoley video-to-audio path with video-only conditioning",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "v2a",
+          "options": {
+            "video": "reference/controlfoley/examples/v2a/v2a_video_input.mp4",
+            "duration_sec": 6.0,
+            "num_inference_steps": 25,
+            "cfg_strength": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
       "id": "qwen3_tts_voice_design",
       "coverage": "Qwen3 TTS voice-design variant and instruction path",
       "family": "qwen3_tts",

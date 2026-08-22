@@ -1,0 +1,136 @@
+{
+  "family": "controlfoley",
+  "display_name": "ControlFoley",
+  "description": "Multimodal Foley audio generation model.",
+  "category": "audio_tool",
+  "status": "experimental",
+  "tasks": [
+    "gen"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "tags": [
+      "Foley",
+      "Audio Generation",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/controlfoley.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "open_clip_vocab": "model:open_clip_vocab.json",
+        "open_clip_merges": "model:open_clip_merges.txt",
+        "open_clip_tokenizer_config": "model:open_clip_tokenizer_config.json"
+      },
+      "tensors": {
+        "flow": {
+          "source": "weights:",
+          "prefix": "flow"
+        },
+        "vae": {
+          "source": "weights:",
+          "prefix": "vae"
+        },
+        "bigvgan": {
+          "source": "weights:",
+          "prefix": "bigvgan"
+        },
+        "open_clip": {
+          "source": "weights:",
+          "prefix": "open_clip"
+        },
+        "cav_mae": {
+          "source": "weights:",
+          "prefix": "cav_mae"
+        },
+        "synchformer": {
+          "source": "weights:",
+          "prefix": "synchformer"
+        },
+        "clap": {
+          "source": "weights:",
+          "prefix": "clap"
+        },
+        "mert": {
+          "source": "weights:",
+          "prefix": "mert"
+        },
+        "musicgen_style": {
+          "source": "weights:",
+          "prefix": "musicgen_style"
+        }
+      }
+    }
+  ],
+  "request_options": [
+    {
+      "name": "duration_sec",
+      "type": "float",
+      "default": 8.0,
+      "min": 0.64,
+      "max": 60.0,
+      "description": "Target temporal budget."
+    },
+    {
+      "name": "num_inference_steps",
+      "type": "int",
+      "default": 25,
+      "min": 1,
+      "max": 200,
+      "description": "Euler flow inference steps."
+    },
+    {
+      "name": "cfg_strength",
+      "type": "float",
+      "default": 4.5,
+      "min": 0.0,
+      "max": 20.0,
+      "description": "Classifier-free guidance strength."
+    },
+    {
+      "name": "negative_text",
+      "type": "string",
+      "default": "",
+      "description": "Negative text prompt used for the unconditional guidance text branch."
+    },
+    {
+      "name": "video",
+      "type": "path",
+      "description": "Optional video path for video-conditioned Foley generation."
+    },
+    {
+      "name": "mask_away_clip",
+      "type": "bool",
+      "default": false,
+      "description": "Disable OpenCLIP video conditioning while keeping visual and sync conditioning."
+    },
+    {
+      "name": "seed",
+      "type": "int",
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Generation seed."
+    }
+  ],
+  "session_options": []
+}

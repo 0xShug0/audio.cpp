@@ -1,0 +1,134 @@
+{
+  "family": "audiosr",
+  "display_name": "AudioSR",
+  "description": "Latent diffusion audio super-resolution model.",
+  "category": "audio_tool",
+  "status": "experimental",
+  "tasks": [
+    "gen"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "audiosr_basic_f32",
+    "tags": [
+      "Enhancement",
+      "Super Resolution",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/audiosr.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "audiosr_basic_f32",
+      "display_name": "AudioSR Basic F32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "AudioSR-GGUF",
+      "files": [
+        "AudioSR-GGUF/audiosr-basic-f32.gguf"
+      ],
+      "strip_prefix": "AudioSR-GGUF"
+    },
+    {
+      "id": "audiosr_speech_f32",
+      "display_name": "AudioSR Speech F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "AudioSR-GGUF",
+      "files": [
+        "AudioSR-GGUF/audiosr-speech-f32.gguf"
+      ],
+      "strip_prefix": "AudioSR-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:"
+        },
+        "frontend": {
+          "source": "weights:",
+          "prefix": "frontend"
+        }
+      }
+    }
+  ],
+  "request_options": [
+    {
+      "name": "num_inference_steps",
+      "type": "int",
+      "default": 50,
+      "min": 1,
+      "max": 1000,
+      "description": "DDIM inference steps."
+    },
+    {
+      "name": "guidance_scale",
+      "type": "float",
+      "default": 3.5,
+      "min": 0.0,
+      "max": 20.0,
+      "description": "Classifier-free guidance scale."
+    },
+    {
+      "name": "ddim_eta",
+      "type": "float",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 10.0,
+      "description": "DDIM eta; 1.0 matches the official AudioSR default."
+    },
+    {
+      "name": "audio_chunk_duration_sec",
+      "type": "float",
+      "default": 15.0,
+      "min": 0.001,
+      "max": 600.0,
+      "description": "Long-audio chunk duration."
+    },
+    {
+      "name": "audio_chunk_overlap_sec",
+      "type": "float",
+      "default": 2.0,
+      "min": 0.0,
+      "max": 60.0,
+      "description": "Long-audio chunk overlap."
+    },
+    {
+      "name": "seed",
+      "type": "int",
+      "default": 42,
+      "min": -1,
+      "max": 2147483647,
+      "description": "Generation seed; -1 selects a random seed."
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "family": "midashenglm_gen",
+  "display_name": "MiDashengLM-Gen",
+  "description": "DashengLM generative audio model.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "gen"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "safetensors"
+    ]
+  },
+  "ui": {
+    "tags": [
+      "Audio Generation"
+    ]
+  },
+  "packages": [],
+  "request_options": [
+    {
+      "name": "duration_sec",
+      "type": "float",
+      "default": 20.0,
+      "min": 0.04,
+      "max": 163.84,
+      "description": "Target audio duration budget."
+    },
+    {
+      "name": "guidance_scale",
+      "type": "float",
+      "default": 2.0,
+      "min": 0.0,
+      "max": 20.0,
+      "description": "Classifier-free guidance scale."
+    },
+    {
+      "name": "stop_threshold",
+      "type": "float",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Stop probability threshold."
+    },
+    {
+      "name": "min_stop_step",
+      "type": "int",
+      "default": 5,
+      "min": 0,
+      "max": 4096,
+      "description": "Minimum generated steps before accepting stop."
+    },
+    {
+      "name": "seed",
+      "type": "int",
+      "default": 0,
+      "min": -1,
+      "max": 2147483647,
+      "description": "Generation seed; -1 selects a random seed."
+    }
+  ],
+  "session_options": [
+    {
+      "name": "midashenglm_gen.weight_type",
+      "type": "enum",
+      "values": [
+        "native",
+        "f32",
+        "f16",
+        "bf16",
+        "q8_0"
+      ],
+      "default": "native",
+      "description": "Shared weight storage type."
+    }
+  ]
+}

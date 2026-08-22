@@ -403,6 +403,7 @@ add_library(engine_core OBJECT
     src/framework/modules/codecs/nemo_nano_codec.cpp
     src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
     src/framework/modules/vocoders/bigvgan_vocoder.cpp
+    src/framework/modules/vocoders/hifigan_vocoder.cpp
     src/framework/modules/vocoders/hift_vocoder.cpp
     src/framework/modules/speech_encoders/hubert_encoder.cpp
     src/framework/modules/speech_encoders/wav2vec2_bert_encoder.cpp
@@ -466,8 +467,15 @@ add_library(engine_core OBJECT
     src/framework/modules/speaker_encoders/ecapa_tdnn_runtime.cpp
     src/framework/modules/speaker_encoders/titanet_runtime.cpp
     src/framework/codecs/fsq_audio_codec_runtime.cpp
+    src/framework/codecs/mel_latent_vae44k_runtime.cpp
     src/framework/codecs/mimi_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
+    src/framework/conditioners/clap_audio_conditioner_runtime.cpp
+    src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
+    src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
+    src/framework/conditioners/open_clip_conditioner_runtime.cpp
+    src/framework/conditioners/synchformer_conditioner_runtime.cpp
+    src/models/controlfoley/flow_denoiser.cpp
     src/framework/sampling/decode_modules.cpp
     src/framework/sampling/diffusion_math.cpp
     src/framework/sampling/hf_sampler.cpp
@@ -1385,6 +1393,67 @@ audiocpp_add_model(ace_step
         engine::models::ace_step::make_ace_step_loader
 )
 
+audiocpp_add_model(midashenglm_gen
+    SOURCES
+        src/models/midashenglm_gen/assets.cpp
+        src/models/midashenglm_gen/ar_runtime.cpp
+        src/models/midashenglm_gen/audio_tokenizer.cpp
+        src/models/midashenglm_gen/flow_runtime.cpp
+        src/models/midashenglm_gen/prompt_encoder.cpp
+        src/models/midashenglm_gen/session.cpp
+        src/models/midashenglm_gen/tokenizer_text.cpp
+    INCLUDES
+        engine/models/midashenglm_gen/assets.h
+        engine/models/midashenglm_gen/ar_runtime.h
+        engine/models/midashenglm_gen/audio_tokenizer.h
+        engine/models/midashenglm_gen/flow_runtime.h
+        engine/models/midashenglm_gen/prompt_encoder.h
+        engine/models/midashenglm_gen/session.h
+        engine/models/midashenglm_gen/tokenizer_text.h
+    LOADERS
+        engine::models::midashenglm_gen::make_midashenglm_gen_loader
+)
+
+audiocpp_add_model(audiosr
+    SOURCES
+        src/models/audiosr/assets.cpp
+        src/models/audiosr/autoencoder.cpp
+        src/models/audiosr/ddim.cpp
+        src/models/audiosr/frontend.cpp
+        src/models/audiosr/hifigan.cpp
+        src/models/audiosr/pipeline.cpp
+        src/models/audiosr/session.cpp
+        src/models/audiosr/unet.cpp
+    INCLUDES
+        engine/models/audiosr/assets.h
+        engine/models/audiosr/autoencoder.h
+        engine/models/audiosr/ddim.h
+        engine/models/audiosr/frontend.h
+        engine/models/audiosr/hifigan.h
+        engine/models/audiosr/pipeline.h
+        engine/models/audiosr/session.h
+        engine/models/audiosr/unet.h
+    LOADERS
+        engine::models::audiosr::make_audiosr_loader
+)
+
+audiocpp_add_model(controlfoley
+    SOURCES
+        src/models/controlfoley/assets.cpp
+        src/models/controlfoley/conditioning.cpp
+        src/models/controlfoley/pipeline.cpp
+        src/models/controlfoley/session.cpp
+        src/models/controlfoley/video_processing.cpp
+    INCLUDES
+        engine/models/controlfoley/assets.h
+        engine/models/controlfoley/conditioning.h
+        engine/models/controlfoley/pipeline.h
+        engine/models/controlfoley/session.h
+        engine/models/controlfoley/video_processing.h
+    LOADERS
+        engine::models::controlfoley::make_controlfoley_loader
+)
+
 set(AUDIOCPP_ENABLED_MODELS "")
 if (AUDIOCPP_MODEL_SET STREQUAL "full")
     set(AUDIOCPP_ENABLED_MODELS ${AUDIOCPP_MODEL_TARGETS})
@@ -1783,6 +1852,14 @@ if (ENGINE_BUILD_TESTS)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(personaplex_ring_kv_cache_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
+
+    add_executable(hifigan_vocoder_variant_parity
+        tests/unittests/test_hifigan_vocoder_variants.cpp
+    )
+    target_link_libraries(hifigan_vocoder_variant_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(hifigan_vocoder_variant_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
 endif()
 
 if (ENGINE_BUILD_WARMBENCH)
@@ -1800,6 +1877,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(chatterbox_warm_bench tests/chatterbox/chatterbox_warm_bench.cpp)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
     add_engine_warmbench(confucius4_tts_warm_bench tests/confucius4_tts/confucius4_tts_warm_bench.cpp)
+    add_engine_warmbench(controlfoley_warm_bench tests/controlfoley/controlfoley_warm_bench.cpp)
     add_engine_warmbench(fun_asr_nano_warm_bench tests/fun_asr_nano/fun_asr_nano_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_tts_warm_bench tests/higgs_audio_tts/higgs_audio_tts_warm_bench.cpp)

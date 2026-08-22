@@ -24,6 +24,7 @@ struct AttentionConfig {
     int64_t key_value_size = 0;
     int64_t attention_size = 0;
     int64_t head_dim = 0;
+    bool use_flash_attention = false;
 };
 
 struct RelativeAttentionConfig {

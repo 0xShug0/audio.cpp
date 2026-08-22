@@ -489,6 +489,9 @@ core::TensorValue build_hubert_graph(
         hidden = LinearModule({config.hidden_size, config.final_projection_size, true, GGML_PREC_F32})
                      .build(ctx, hidden, linear_weights(weights, "final_proj"));
     }
+    if (config.materialize_output) {
+        return contiguous(ctx, hidden);
+    }
     return hidden;
 }
 
@@ -530,6 +533,9 @@ public:
         out.batch = batch;
         out.tokens = output_.shape.dims[1];
         out.hidden_size = output_.shape.dims[2];
+        if (weights_->config.release_graph_after_encode) {
+            release_graph();
+        }
         return out;
     }
 
@@ -540,6 +546,10 @@ public:
 
 private:
     void release_graph() {
+        if (graph_ != nullptr && weights_ != nullptr && weights_->execution_context != nullptr) {
+            core::release_backend_graph_resources(weights_->execution_context->backend(), graph_);
+            graph_ = nullptr;
+        }
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
             gallocr_ = nullptr;
@@ -548,7 +558,6 @@ private:
             ggml_free(ggml_);
             ggml_ = nullptr;
         }
-        graph_ = nullptr;
         input_ = {};
         output_ = {};
         graph_inputs_.clear();
