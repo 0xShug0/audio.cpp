@@ -1241,7 +1241,7 @@ F5SynthesisResult f5_synthesize(
             chunks[ci], ref_text, dev,
             base_seed + static_cast<uint32_t>(ci),
             nullptr, chunks.size() > 1 ? 1.20 : 1.0,
-            chunks.size() > 1 ? 0 : 20);
+            chunks.size() > 1 ? 0 : 40);
         if (chunks.size() > 1) {
             const char last_ch = chunks[ci].empty() ? ' ' : chunks[ci].back();
             const bool sent_final = last_ch == '.' || last_ch == '!' || last_ch == '?';
