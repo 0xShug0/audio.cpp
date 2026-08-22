@@ -1112,13 +1112,24 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
 }
 
 void ServerState::load_models() {
+    int eager_loaded = 0;
     for (auto & config : config_.models) {
         auto loaded = make_model(std::move(config));
         if (!model_index_.emplace(loaded->config.id, models_.size()).second) {
             throw std::runtime_error("duplicate server model id: " + loaded->config.id);
         }
         if (!loaded->config.lazy) {
-            ensure_model_loaded_locked(*loaded);
+            if (config_.max_loaded_models > 0 && eager_loaded >= config_.max_loaded_models) {
+                // Loading it now would immediately evict an earlier entry, so an
+                // over-limit config would churn through doomed loads at startup.
+                // Register the id and defer the load to the model's first request.
+                std::cerr << "model '" << loaded->config.id
+                          << "' registered but not loaded (max_loaded_models="
+                          << config_.max_loaded_models << " reached); it loads on first use\n";
+            } else {
+                ensure_model_loaded_locked(*loaded);
+                ++eager_loaded;
+            }
         }
         models_.push_back(std::move(loaded));
     }
@@ -1164,11 +1175,7 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
             existing->config.session_options != requested.session_options ||
             existing->config.model_spec_override != requested.model_spec_override;
         if (changed) {
-            existing->streaming = nullptr;
-            existing->offline = nullptr;
-            existing->session.reset();
-            existing->model.reset();
-            existing->loaded.store(false);
+            existing->unload();
             existing->voice_presets.clear();
             existing->default_voice_preset.reset();
             existing->config = std::move(requested);
@@ -1228,11 +1235,7 @@ HttpResponse ServerState::handle_model_unload(const std::string & body_text) {
         model = models_.at(found->second).get();
     }
     BusyGuard::Lock run_lock = acquire_model_run(*model, std::nullopt);
-    model->streaming = nullptr;
-    model->offline = nullptr;
-    model->session.reset();
-    model->model.reset();
-    model->loaded.store(false);
+    model->unload();
     return json_response("{\"id\":" + json_quote(id) + ",\"loaded\":false}");
 }
 
@@ -1581,9 +1584,56 @@ void ServerState::load_voice_presets(LoadedModel & model) const {
     }
 }
 
+void ServerState::evict_for_model_limit(const LoadedModel & loading) {
+    const int limit = config_.max_loaded_models;
+    std::vector<LoadedModel *> resident;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        for (const auto & model : models_) {
+            if (model.get() != &loading && model->session != nullptr) {
+                resident.push_back(model.get());
+            }
+        }
+    }
+    // `loading` itself will occupy one slot, so at most limit - 1 others may stay.
+    int to_evict = static_cast<int>(resident.size()) - (limit - 1);
+    if (to_evict <= 0) {
+        return;
+    }
+    std::sort(resident.begin(), resident.end(), [](const LoadedModel * a, const LoadedModel * b) {
+        return a->last_used_ms.load(std::memory_order_relaxed) <
+               b->last_used_ms.load(std::memory_order_relaxed);
+    });
+    for (LoadedModel * victim : resident) {
+        if (to_evict == 0) {
+            return;
+        }
+        // A victim mid-inference is only try-acquired: a blocking wait here could
+        // deadlock against that run evicting in return, and a busy model is in
+        // active use anyway -- prefer the next-oldest instead.
+        const auto lock = victim->busy.try_acquire();
+        if (!lock.has_value()) {
+            continue;
+        }
+        victim->unload();
+        --to_evict;
+    }
+    if (to_evict > 0) {
+        throw ServerBusyError(
+            "cannot load model '" + loading.config.id + "': max_loaded_models=" +
+            std::to_string(limit) + " and every loaded model is busy; retry later");
+    }
+}
+
 void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
+    model.last_used_ms.store(steady_now_ms(), std::memory_order_relaxed);
     if (model.session != nullptr) {
         return;
+    }
+    std::unique_lock<std::mutex> load_lock;
+    if (config_.max_loaded_models > 0) {
+        load_lock = std::unique_lock<std::mutex>(model_load_mutex_);
+        evict_for_model_limit(model);
     }
     auto registry = engine::runtime::make_default_registry();
 
@@ -2690,10 +2740,11 @@ std::string ServerState::get_allowed_origin(const HttpRequest & request) const {
 }
 
 void ServerState::LoadedModel::unload() {
-	offline = nullptr;
+    offline = nullptr;
     streaming = nullptr;
     session.reset();
     model.reset();
+    loaded.store(false);
 }
 
 HttpResponse ServerState::handle_unload_models(const std::string & body_text) {

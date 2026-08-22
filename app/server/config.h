@@ -83,6 +83,13 @@ struct ServerConfig {
     // single inference (music generation can take minutes). 0 disables the guard and
     // restores unbounded waiting.
     int busy_timeout_ms = 300000;
+    // Upper bound on how many models may be resident in memory at once. Loading a
+    // model past the limit first unloads the least recently used idle model (its
+    // next request reloads it), so a multi-model config can run on a device that
+    // only fits a few of them. 1 enforces a single resident model. 0 disables the
+    // limit and keeps the original behavior: once loaded, a model stays in memory
+    // until it is unloaded explicitly or the server exits.
+    int max_loaded_models = 0;
     // Fleet-wide bounds for incrementally delivered request bodies. The defaults are
     // in LiveIngestLimits; a model entry may override any subset of them.
     LiveIngestLimits live_ingest;

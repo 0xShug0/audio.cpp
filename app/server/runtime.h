@@ -56,6 +56,10 @@ private:
         engine::runtime::IOfflineVoiceTaskSession * offline = nullptr;
         engine::runtime::IStreamingVoiceTaskSession * streaming = nullptr;
         std::atomic<bool> loaded{false};
+        // Steady-clock ms of the most recent load or run of this model. Orders
+        // eviction when max_loaded_models forces an unload: the least recently
+        // used idle model goes first.
+        std::atomic<std::int64_t> last_used_ms{0};
         mutable std::shared_mutex metadata_mutex;
         std::unordered_map<std::string, RuntimeVoicePreset> voice_presets;
         std::optional<RuntimeVoicePreset> default_voice_preset;
@@ -99,6 +103,10 @@ private:
     LoadedModel::RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
     void load_voice_presets(LoadedModel & model) const;
     void ensure_model_loaded_locked(LoadedModel & model);
+    // With max_loaded_models set, unload least recently used idle models until
+    // `loading` fits within the limit. A model mid-inference is never a victim;
+    // when nothing can be evicted this throws ServerBusyError (-> HTTP 503).
+    void evict_for_model_limit(const LoadedModel & loading);
     LoadedModel & require_model(const engine::io::json::Value & body);
     const LoadedModel::RuntimeVoicePreset * select_voice_preset(
         const LoadedModel & model,
@@ -168,6 +176,10 @@ private:
     std::vector<std::unique_ptr<LoadedModel>> models_;
     std::unordered_map<std::string, size_t> model_index_;
     mutable std::mutex models_mutex_;
+    // Serializes framework loads while max_loaded_models is active, so two
+    // concurrent lazy loads cannot both pass the eviction check and overshoot
+    // the limit. Not taken when the limit is 0: loads stay concurrent there.
+    std::mutex model_load_mutex_;
     std::filesystem::path upload_root_;
     std::filesystem::path repository_root_;
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)

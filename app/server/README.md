@@ -93,7 +93,9 @@ Set top-level `"backend"` to `"cuda"`, `"cpu"`, `"vulkan"`, or `"metal"`. CUDA i
 Set top-level `"lazy_load": true` to register all configured model ids at startup but defer each model's framework load and session creation until its first request. A model can override the default with `"lazy": true` or `"lazy": false`.
 
 > [!WARNING]
-> Lazy loading does not unload models after a request. Once a model is first used, the server keeps that model and session in memory for reuse until the server exits.
+> Lazy loading does not unload models after a request. Once a model is first used, the server keeps that model and session in memory for reuse until the server exits, unless `max_loaded_models` limits residency.
+
+Set top-level `"max_loaded_models"` to bound how many models are resident in memory at once. When a request needs a model that is not loaded and the limit is already reached, the server first unloads the least recently used idle model (freeing VRAM on GPU backends) and reloads it on its own next request. `1` enforces a single loaded model at a time, which is the practical choice when each model alone nearly fills the device. Higher values keep that many most recently used models warm. The default `0` disables the limit. A model that is mid-inference is never unloaded; if the limit is reached and every loaded model is busy, the request fails with `503` so the client can retry. With more non-lazy models configured than the limit allows, startup loads the first `max_loaded_models` of them and defers the rest to their first request. The equivalent command-line option is `--max-loaded-models <n>`.
 
 Set per-model `"default_request_options"` to apply request-option defaults to every request for that model. Values supplied by the actual request body override these defaults.
 
