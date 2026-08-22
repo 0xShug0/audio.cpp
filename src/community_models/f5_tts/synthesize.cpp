@@ -227,6 +227,34 @@ std::vector<std::string> utf8_chars(const std::string & s) {
     return out;
 }
 
+// Strip Arabic combining marks the model cannot read: Habibi was trained on
+// ASR transcripts, which are undiacritized, so harakat/tanwin/shadda tokens
+// are severely undertrained and diacritized input degrades to garbled speech
+// with character repetitions (verified identical in the Python reference).
+// Removes tatweel U+0640, harakat U+064B..U+065F, dagger alif U+0670 —
+// all encoded as 0xD9-prefixed two-byte sequences.
+std::string strip_arabic_diacritics(const std::string & s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        if (c == 0xD9 && i + 1 < s.size()) {
+            const auto c2 = static_cast<unsigned char>(s[i + 1]);
+            if (c2 == 0x80 || (c2 >= 0x8B && c2 <= 0x9F) || c2 == 0xB0) {
+                i += 2;  // drop the combining mark
+                continue;
+            }
+        }
+        size_t len = 1;
+        if (c >= 0xF0) len = 4;
+        else if (c >= 0xE0) len = 3;
+        else if (c >= 0xC0) len = 2;
+        out.append(s, i, len);
+        i += len;
+    }
+    return out;
+}
+
 // Python: if ref_text ends with a single-byte char (ASCII), a space is
 // appended so ref and gen text do not fuse into one token stream.
 std::string apply_ref_trailing_space(std::string ref_text) {
@@ -1187,7 +1215,10 @@ F5SynthesisResult f5_synthesize(
     // chunks (its 5.5 s reference eats most of the frame budget).
     size_t chars_per_chunk = std::max<size_t>(
         12, static_cast<size_t>(gen_budget / rate0 * 0.92));
-    const auto chunks = chunk_text(request.text, chars_per_chunk);
+    const std::string gen_text = request.strip_diacritics
+        ? strip_arabic_diacritics(request.text)
+        : request.text;
+    const auto chunks = chunk_text(gen_text, chars_per_chunk);
     std::vector<float> all_rows;
     const std::string ref_text = apply_ref_trailing_space(request.ref_text);
     // Seed semantics match python F5 (seed=None -> fresh randomness every

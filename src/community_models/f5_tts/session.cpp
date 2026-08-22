@@ -199,6 +199,9 @@ runtime::TaskResult F5TTSSession::run(const runtime::TaskRequest & request) {
         req.seed = static_cast<uint32_t>(std::stoul(*v));
         req.fixed_seed = true;
     }
+    if (const auto v = runtime::find_option(request.options, {"strip_diacritics"})) {
+        req.strip_diacritics = runtime::parse_bool_option(*v, "strip_diacritics");
+    }
     req.use_cuda = use_cuda_;
     req.frame_budget = frame_budget_;
     req.cuda_device = cuda_device_;

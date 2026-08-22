@@ -34,7 +34,14 @@ package, or a safetensors checkpoint + `vocab.txt` for development). Session opt
 `f5_tts.vocos_path` (only needed with safetensors checkpoints lacking a bundled vocoder),
 `f5_tts.dialect` (default UNK), `f5_tts.frame_budget` (mel frames per CFM pass, 0 = 2048).
 Requests take `reference_text` (required), `dialect`, `speed`, `seed`, `num_inference_steps`,
-`cfg_strength` (alias `guidance_scale`), `sway_sampling_coef`.
+`cfg_strength` (alias `guidance_scale`), `sway_sampling_coef`, `strip_diacritics`.
+
+**Diacritics (harakat):** Habibi was trained on ASR transcripts, which are undiacritized —
+the harakat/tanwin/shadda tokens exist in the vocab but are severely undertrained, and raw
+diacritized input degrades to garbled speech with character repetitions (identical in the
+Python reference; not a port issue). By default the frontend strips combining marks
+(U+0640, U+064B–U+065F, U+0670) before synthesis, so `أَيْنَ اللَّوْنُ الأَحْمَر؟` reads as
+`أين اللون الأحمر؟`. Disable per request with `strip_diacritics=false`.
 
 ## Quickstart (from a fresh clone)
 

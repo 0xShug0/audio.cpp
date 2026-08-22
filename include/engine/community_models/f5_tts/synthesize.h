@@ -21,6 +21,9 @@ struct F5SynthesisRequest {
     uint32_t seed = 0;
     bool fixed_seed = false;
     int frame_budget = 0;  // total mel frames per CFM pass; 0 = default 2048
+    // Strip harakat/tanwin/shadda/tatweel from the input (Habibi is trained
+    // on undiacritized ASR transcripts; diacritized input garbles).
+    bool strip_diacritics = true;
     int threads = 0;  // 0 = hardware concurrency
     bool use_cuda = false;
     int cuda_device = 0;

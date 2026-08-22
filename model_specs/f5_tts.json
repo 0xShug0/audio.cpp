@@ -92,6 +92,13 @@
         "min": 0.0,
         "max": 10.0,
         "default": 2.0
+      },
+      {
+        "name": "strip_diacritics",
+        "type": "bool",
+        "description": "Strip Arabic combining marks (harakat/tanwin/shadda/tatweel) before synthesis; Habibi is trained on undiacritized ASR transcripts and garbles diacritized input. Default true.",
+        "required": false,
+        "default": true
       }
     ],
     "session": [
