@@ -771,6 +771,7 @@ audiocpp_add_model(voxcpm1
         src/community_models/voxcpm1/gguf_metadata.cpp
         src/community_models/voxcpm1/minicpm.cpp
         src/community_models/voxcpm1/session.cpp
+        src/community_models/voxcpm1/tokenizer_common.cpp
         src/community_models/voxcpm1/tokenizer_gguf.cpp
         src/community_models/voxcpm1/tokenizer_text.cpp
     INCLUDES
