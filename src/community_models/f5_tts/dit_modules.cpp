@@ -158,7 +158,6 @@ core::TensorValue grn(
     core::TensorValue & beta_out) {
     // per-channel L2 norm over T, then normalize by mean over channels:
     // gx[c] = ||h[:, :, c]||_2 ; nx[c] = gx[c] / (mean(gx) + 1e-6)
-    const int64_t frames = h.shape.dims[1];
     const int64_t channels = h.shape.dims[2];
     // squares -> sum over T -> sqrt  (reduce axis=1)
     auto sq = mod::MulModule().build(ctx, h, h);  // elementwise
@@ -185,16 +184,6 @@ core::TensorValue grn(
 }
 
 
-// test hook: grouped conv exposed for unit comparison against numpy
-core::TensorValue grouped_conv1d_pub(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & weight,
-    const core::TensorValue & bias,
-    int64_t groups) {
-    return grouped_conv1d(ctx, input, weight, bias, groups);
-}
-
 }  // namespace
 
 // Builds the full DiT velocity graph. Leaves: x/cond [B=1, T, MEL], text ids
@@ -216,12 +205,16 @@ std::vector<ConstStage> * const_stage_begin() {
 // reserves the compute arena: a tensor with data already set is treated as
 // externally owned and never aliased by scratch reuse.
 
-// --- cross-val stage dumps (debug) ---
+// --- cross-val stage dumps (debug only; compiled out of production) ---
 std::vector<std::pair<std::string, ggml_tensor *>> g_stage_taps;
 static void tap_stage(const char * name, const core::TensorValue & t) {
+#ifdef F5_MEL_TEST
     if (std::getenv("F5_DUMP_STAGES") == nullptr) return;
     ggml_set_output(t.tensor);  // protect from arena reuse so taps are readable post-compute
     g_stage_taps.emplace_back(name, t.tensor);
+#else
+    (void) name; (void) t;
+#endif
 }
 
 static void tap_stage_cond(bool cond, const char * name, const core::TensorValue & t) {
@@ -246,6 +239,7 @@ void const_stage_bind(std::vector<ConstStage> * stage, ggml_backend_t backend) {
 }
 
 void const_stage_upload(std::vector<ConstStage> * stage, ggml_backend_t backend) {
+    (void)backend;
     // Give each constant its own backend buffer OUTSIDE the compute arena:
     // the gallocr may reuse the arena slot of an early-consumed input for
     // later intermediates, silently corrupting constants between computes.
@@ -269,8 +263,9 @@ F5DiTGraphBuild build_dit_modules_graph(
     int frames,
     int text_len,
     core::BackendType backend_type) {
+    (void)arch;  // validated at weight-load time; dimensions are architecture constants
     auto ctx = make_ctx(ggml, "f5.dit", backend_type);
-    constexpr int64_t kMel = 100, kTextDim = 512, kDim = 1024, kVocab = 2731;
+    constexpr int64_t kMel = 100, kTextDim = 512, kDim = 1024;
     constexpr int64_t kHeads = 16, kHeadDim = 64;
     const int64_t N = frames;
     const int64_t NT = text_len;
@@ -498,9 +493,10 @@ F5DiTGraphBuild build_dit_cfg_modules_graph(
     int frames,
     int text_len,
     core::BackendType backend_type) {
+    (void)arch;  // validated at weight-load time; dimensions are architecture constants
     auto ctx = make_ctx(ggml, "f5.dit.cfg", backend_type);
     constexpr int64_t kMel = 100, kTextDim = 512, kDim = 1024;
-    constexpr int64_t kHeads = 16, kHeadDim = 64, kVocab = 2731;
+    constexpr int64_t kHeads = 16, kHeadDim = 64;
     const int64_t N = frames;
     const int64_t NT = text_len;
 

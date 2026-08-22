@@ -30,7 +30,6 @@ F5DiTWeights load_dit_weights(
         return lw;
     };
 
-    constexpr int64_t kVocab = 2731;
     constexpr int64_t kTextDim = 512;
     constexpr int64_t kDim = 1024;
     constexpr int64_t kFF = 2048;

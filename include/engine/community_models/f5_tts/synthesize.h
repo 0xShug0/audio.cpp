@@ -20,6 +20,7 @@ struct F5SynthesisRequest {
     float sway_sampling_coef = -1.0F;
     uint32_t seed = 0;
     bool fixed_seed = false;
+    int frame_budget = 0;  // total mel frames per CFM pass; 0 = default 2048
     int threads = 0;  // 0 = hardware concurrency
     bool use_cuda = false;
     int cuda_device = 0;

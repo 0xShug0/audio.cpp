@@ -129,6 +129,13 @@ F5TTSSession::F5TTSSession(
     if (const auto d = runtime::find_option(options.options, {"f5_tts.dialect", "dialect"})) {
         dialect_ = *d;
     }
+    if (const auto fb = runtime::find_option(options.options, {"f5_tts.frame_budget", "frame_budget"})) {
+        frame_budget_ = std::stoi(*fb);
+        if (frame_budget_ < 256 || frame_budget_ > 8192) {
+            throw std::runtime_error(
+                "f5_tts.frame_budget must be within [256, 8192] mel frames");
+        }
+    }
     use_cuda_ = options.backend.type == core::BackendType::Cuda;
     cuda_device_ = options.backend.device;
     threads_ = options.backend.threads;
@@ -182,7 +189,7 @@ runtime::TaskResult F5TTSSession::run(const runtime::TaskRequest & request) {
     if (const auto v = runtime::find_option(request.options, {"num_inference_steps"})) {
         req.steps = std::stoi(*v);
     }
-    if (const auto v = runtime::find_option(request.options, {"guidance_scale"})) {
+    if (const auto v = runtime::find_option(request.options, {"cfg_strength", "guidance_scale"})) {
         req.cfg_strength = std::stof(*v);
     }
     if (const auto v = runtime::find_option(request.options, {"sway_sampling_coef"})) {
@@ -193,6 +200,7 @@ runtime::TaskResult F5TTSSession::run(const runtime::TaskRequest & request) {
         req.fixed_seed = true;
     }
     req.use_cuda = use_cuda_;
+    req.frame_budget = frame_budget_;
     req.cuda_device = cuda_device_;
     req.threads = threads_;
 

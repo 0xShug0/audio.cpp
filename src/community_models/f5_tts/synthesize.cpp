@@ -30,6 +30,8 @@ namespace engine::models::f5_tts {
 namespace {
 
 // ---- mel filterbank (librosa-compatible, htk-free slaney, 24 kHz) ----------
+// MSVC does not define kPi; use our own constant everywhere.
+constexpr float kPi = 3.14159265358979323846F;
 constexpr int kSampleRate = 24000;
 constexpr int kNfft = 1024;
 constexpr int kHop = 256;
@@ -83,7 +85,7 @@ void fft_inplace(std::vector<float> & re, std::vector<float> & im, bool inverse)
         }
     }
     for (size_t len = 2; len <= n; len <<= 1) {
-        const float ang = static_cast<float>(2.0 * M_PI / static_cast<double>(len)) * (inverse ? 1 : -1);
+        const float ang = static_cast<float>(2.0 * kPi / static_cast<double>(len)) * (inverse ? 1 : -1);
         for (size_t i = 0; i < n; i += len) {
             for (size_t k = 0; k < len / 2; ++k) {
                 const float wr = std::cos(ang * static_cast<float>(k));
@@ -116,7 +118,7 @@ std::vector<float> compute_mel(const std::vector<float> & wav) {
     const int frames = std::max(1, 1 + static_cast<int>(wav.size() / kHop));
     std::vector<float> hann(kNfft);
     for (int i = 0; i < kNfft; ++i) {
-        hann[i] = 0.5F * (1.0F - std::cos(2.0F * static_cast<float>(M_PI) * i / kNfft));
+        hann[i] = 0.5F * (1.0F - std::cos(2.0F * static_cast<float>(kPi) * i / kNfft));
     }
     const auto & fb = mel_filterbank();
     std::vector<float> mel(static_cast<size_t>(kNMel) * frames);
@@ -266,7 +268,7 @@ struct Rng {
         // Box-Muller
         float u1 = std::max(next_f32(), 1e-7F);
         float u2 = next_f32();
-        return std::sqrt(-2.0F * std::log(u1)) * std::cos(2.0F * static_cast<float>(M_PI) * u2);
+        return std::sqrt(-2.0F * std::log(u1)) * std::cos(2.0F * static_cast<float>(kPi) * u2);
     }
 };
 
@@ -293,7 +295,7 @@ std::vector<float> sway_timesteps(int steps, float coef) {
         for (const int v : it->second) t.push_back(static_cast<float>(v) / 32.0F);
     }
     for (auto & v : t) {
-        v = v + coef * (std::cos(static_cast<float>(M_PI) / 2 * v) - 1 + v);
+        v = v + coef * (std::cos(static_cast<float>(kPi) / 2 * v) - 1 + v);
     }
     return t;
 }
@@ -510,7 +512,7 @@ std::vector<float> vocos_decode(const std::string & vocos_path, const std::vecto
     std::vector<float> wsum(static_cast<size_t>(out_len), 0.0F);
     std::vector<float> hann(kNfft);
     for (int i = 0; i < kNfft; ++i) {
-        hann[i] = 0.5F * (1.0F - std::cos(2.0F * static_cast<float>(M_PI) * i / kNfft));
+        hann[i] = 0.5F * (1.0F - std::cos(2.0F * static_cast<float>(kPi) * i / kNfft));
     }
     std::vector<float> re(kNfft), im(kNfft);
     for (int t = 0; t < T; ++t) {
@@ -809,7 +811,7 @@ std::vector<float> vocos_decode_gpu(
     std::vector<float> wsum(static_cast<size_t>(out_len), 0.0F);
     std::vector<float> hann(kNfft);
     for (int i = 0; i < kNfft; ++i) {
-        hann[i] = 0.5F * (1.0F - std::cos(2.0F * static_cast<float>(M_PI) * i / kNfft));
+        hann[i] = 0.5F * (1.0F - std::cos(2.0F * static_cast<float>(kPi) * i / kNfft));
     }
     std::vector<float> re(kNfft), im(kNfft);
     for (int t = 0; t < T; ++t) {
@@ -998,18 +1000,10 @@ void trim_chunk_mel_silence(
 // Total mel-frame budget for one CFM pass (ref + generated). 2048 allows
 // sentence-scale chunks (fewer seams, splits land on clause boundaries —
 // the 1024 budget forced ~57-char mid-word slices that dropped straddled
-// words) at ~6 GiB peak on an RTX 3090 (measured). F5_FRAME_BUDGET
-// overrides for tuning.
-int frame_budget() {
-    static const int budget = [] {
-        const char * env = std::getenv("F5_FRAME_BUDGET");
-        if (env != nullptr) {
-            const int v = std::atoi(env);
-            if (v >= 256 && v <= 8192) return v;
-        }
-        return 2048;
-    }();
-    return budget;
+// words) at ~6 GiB peak on an RTX 3090 (measured). Override via
+// F5SynthesisRequest::frame_budget (session option f5_tts.frame_budget).
+int frame_budget(const F5SynthesisRequest & request) {
+    return request.frame_budget > 0 ? request.frame_budget : 2048;
 }
 
 // One CFM pass for a single chunk: the original pipeline verbatim.
@@ -1055,7 +1049,7 @@ ChunkResult synthesize_chunk(
     duration = std::max(duration, gen_chars + 1);
     // per-chunk safety cap: a single chunk never exceeds the graph budget;
     // longer inputs are split upstream by chunk_text instead of truncated.
-    const int kChunkFrameCap = frame_budget();
+    const int kChunkFrameCap = frame_budget(request);
     if (duration > kChunkFrameCap) duration = kChunkFrameCap;
     const int duration_real = duration;
     duration = (duration + 63) / 64 * 64;  // graph bucket reuse
@@ -1128,8 +1122,7 @@ F5SynthesisResult f5_synthesize(
     ref_rms = std::sqrt(ref_rms / std::max<size_t>(1, ref24.size()));
     constexpr double kTargetRms = 0.1;
     float ref_gain = 1.0F;
-    if (std::getenv("F5_NO_RMS_NORM") == nullptr &&
-        ref_rms > 0.0 && ref_rms < kTargetRms) {
+    if (ref_rms > 0.0 && ref_rms < kTargetRms) {
         ref_gain = static_cast<float>(kTargetRms / ref_rms);
         for (auto & v : ref24) v *= ref_gain;
     }
@@ -1141,12 +1134,12 @@ F5SynthesisResult f5_synthesize(
     // makes the model speak the UNSAMPLED remainder of the transcript into
     // the generated region (observed: EGY ref leaked "استخدمه هيعجبك اوي"
     // when its 7.84s audio was cut to 5.46s).
-    const int kMaxRefFrames = frame_budget() / 2;
+    const int kMaxRefFrames = frame_budget(request) / 2;
     if (ref_frames > kMaxRefFrames) {
         std::fprintf(stderr,
             "F5-TTS: reference audio is %.1fs (%d frames) — truncated to %d frames (half the "
             "frame budget). The transcript tail will leak into the output; use a reference "
-            "shorter than %.1fs or raise F5_FRAME_BUDGET.\n",
+            "shorter than %.1fs or raise the frame budget (session option f5_tts.frame_budget).\n",
             ref_frames / 93.75, ref_frames, kMaxRefFrames, kMaxRefFrames / 93.75);
         std::vector<float> trimmed(static_cast<size_t>(kMaxRefFrames) * kNMel);
         for (int t = 0; t < kMaxRefFrames; ++t) {
@@ -1187,16 +1180,13 @@ F5SynthesisResult f5_synthesize(
     const double rate0 = std::max(
         std::min(static_cast<double>(ref_voiced_frames) / ref_chars0, 93.75 / 2.5),
         93.75 / 14.0);
-    const int gen_budget = frame_budget() - ref_frames;  // frames a chunk may generate
+    const int gen_budget = frame_budget(request) - ref_frames;  // frames a chunk may generate
     // chars per chunk: budget / rate with a safety margin, so the duration
     // estimate NEVER engages the 1024-frame cap (cap = compressed speech).
     // The absolute floor is small: a slow reference legitimately means short
     // chunks (its 5.5 s reference eats most of the frame budget).
     size_t chars_per_chunk = std::max<size_t>(
         12, static_cast<size_t>(gen_budget / rate0 * 0.92));
-    if (std::getenv("F5_SINGLE_CHUNK") != nullptr) {
-        chars_per_chunk = 1u << 30;  // debug: never chunk
-    }
     const auto chunks = chunk_text(request.text, chars_per_chunk);
     std::vector<float> all_rows;
     const std::string ref_text = apply_ref_trailing_space(request.ref_text);

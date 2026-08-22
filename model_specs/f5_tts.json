@@ -107,6 +107,14 @@
         "description": "Default Habibi dialect token for requests that do not set it; default UNK.",
         "required": false,
         "default": "UNK"
+      },
+      {
+        "name": "frame_budget",
+        "type": "int",
+        "description": "Total mel frames per CFM pass (ref + generated); larger budgets allow sentence-scale chunks at higher VRAM. 0 = default 2048.",
+        "required": false,
+        "min": 0,
+        "default": 0
       }
     ],
     "load": []

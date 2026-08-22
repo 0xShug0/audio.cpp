@@ -25,15 +25,16 @@ PR #180.
 | M1 | Weight loading + mel-Vocos decode path (ConvNeXt + iSTFT) | done (mel-corr 0.9963) |
 | M2 | DiT forward (RoPE, adaLN) + ConvNeXt text conditioner | done (all stages cosine 1.000000) |
 | M3 | CFM sampler (Euler, sway + EPSS, CFG null-branch parity), inference wiring, En/Ar samples | done |
-| M4 | Long-form chunking, RTF/VRAM evidence, server wiring | done (0.51x RTF on RTX 3090; GGUF package pending) |
+| M4 | Long-form chunking, RTF/VRAM evidence, server wiring | done (0.51x RTF on RTX 3090; GGUF packages hosted at trklou/audio.cpp) |
 
 ## Server usage
 
-`audiocpp_server.json` entry: family `f5_tts`, model path = checkpoint directory (must contain
-exactly one DiT `*.safetensors` + `vocab.txt`), session option `f5_tts.vocos_path` pointing at the
-Vocos checkpoint (or place `vocos.safetensors` next to the DiT checkpoint), optional
-`f5_tts.dialect` default. Requests take `reference_text` (required), `dialect`, `speed`, `seed`,
-`num_inference_steps`, `guidance_scale`, `sway_sampling_coef`.
+`audiocpp_server.json` entry: family `f5_tts`, model path = checkpoint directory (a `*.gguf`
+package, or a safetensors checkpoint + `vocab.txt` for development). Session options:
+`f5_tts.vocos_path` (only needed with safetensors checkpoints lacking a bundled vocoder),
+`f5_tts.dialect` (default UNK), `f5_tts.frame_budget` (mel frames per CFM pass, 0 = 2048).
+Requests take `reference_text` (required), `dialect`, `speed`, `seed`, `num_inference_steps`,
+`cfg_strength` (alias `guidance_scale`), `sway_sampling_coef`.
 
 ## Quickstart (from a fresh clone)
 

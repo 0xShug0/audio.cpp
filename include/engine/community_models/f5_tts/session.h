@@ -40,6 +40,7 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::string vocos_path_;
     std::string dialect_ = "UNK";
+    int frame_budget_ = 0;  // 0 = default 2048
     bool use_cuda_ = false;
     int cuda_device_ = 0;
     int threads_ = 0;

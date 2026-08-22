@@ -292,150 +292,7 @@ const LoadedModel & load_model_once(const std::string & path, const F5ComputeDev
     return cache->emplace(key, std::move(model)).first->second;
 }
 
-// ---- graph helpers (column convention) --------------------------------------
-
-ggml_tensor * lin_apply(
-    ggml_context * ctx,
-    const F5Linear & w,
-    ggml_tensor * x) {  // x [in, T] -> [out, T]
-    auto * out = ggml_mul_mat(ctx, w.weight.tensor, x);
-    // bias [out] -> [out, 1] broadcast via repeat
-    auto * b2 = ggml_reshape_2d(ctx, w.bias.tensor, ggml_nelements(w.bias.tensor), 1);
-    auto * b_rep = ggml_repeat(ctx, b2, out);
-    return ggml_add(ctx, out, b_rep);
-}
-
-ggml_tensor * affine_norm(
-    ggml_context * ctx,
-    ggml_tensor * x,  // [D, T]
-    ggml_tensor * gamma,
-    ggml_tensor * beta) {
-    auto * n = ggml_norm(ctx, x, 1e-6F);
-    auto * g2 = ggml_reshape_2d(ctx, gamma, ggml_nelements(gamma), 1);
-    auto * b2 = ggml_reshape_2d(ctx, beta, ggml_nelements(beta), 1);
-    auto * g_rep = ggml_repeat(ctx, g2, n);
-    auto * b_rep = ggml_repeat(ctx, b2, n);
-    return ggml_add(ctx, ggml_mul(ctx, n, g_rep), b_rep);
-}
-
-// chunk i of an [6*D, 1] embedding -> [D, 1]
-ggml_tensor * chunk_col(ggml_context * ctx, ggml_tensor * emb, int64_t idx, int64_t d) {
-    const int64_t stride = d * static_cast<int64_t>(sizeof(float));
-    auto * v = ggml_view_2d(ctx, emb, d, 1, stride, idx * stride);
-    return ggml_cont(ctx, v);
-}
-
-// x * (1 + scale) + shift, scale/shift [D, 1], x [D, T]
-ggml_tensor * modulate(
-    ggml_context * ctx,
-    ggml_tensor * x,
-    ggml_tensor * scale,
-    ggml_tensor * shift,
-    ggml_tensor * ones_d1) {
-    auto * one_plus = ggml_add(ctx, scale, ones_d1);
-    auto * s_rep = ggml_repeat(ctx, one_plus, x);
-    auto * sh_rep = ggml_repeat(ctx, shift, x);
-    return ggml_add(ctx, ggml_mul(ctx, x, s_rep), sh_rep);
-}
-
-// Depthwise conv1d k=7 pad=3, stride 1 (verified against numpy reference at
-// cosine 1.0). x: [C, T] columns; w: store tensor with torch [C,1,7] raw
-// bytes (host-readable on CPU backend); b: [C] bias tensor.
-ggml_tensor * depthwise_conv7(
-    ggml_context * ctx,
-    ggml_tensor * x,
-    ggml_tensor * w,
-    ggml_tensor * b,
-    const std::function<void(ggml_tensor *, const void *, size_t)> & leaf_write,
-    const std::function<void(ggml_tensor *, size_t)> & leaf_zero) {
-    const int64_t C = x->ne[0];
-    const int64_t T = x->ne[1];
-    // copy kernels out of the store tensor into host memory: torch [C,1,7].
-    // On CUDA the store tensor is device memory, so go through tensor_get.
-    std::vector<float> w_host(static_cast<size_t>(C) * 7);
-    if (w->buffer != nullptr && ggml_backend_buffer_is_host(w->buffer)) {
-        std::memcpy(w_host.data(), w->data, w_host.size() * sizeof(float));
-    } else {
-        ggml_backend_tensor_get(w, w_host.data(), 0, w_host.size() * sizeof(float));
-    }
-    const auto * raw = w_host.data();
-    std::vector<float> wk(static_cast<size_t>(C));
-    auto * zl = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, C, 3);
-    leaf_zero(zl, static_cast<size_t>(C) * 3 * sizeof(float));
-    auto * zr = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, C, 3);
-    leaf_zero(zr, static_cast<size_t>(C) * 3 * sizeof(float));
-    auto * xpad = ggml_concat(ctx, ggml_concat(ctx, zl, x, 1), zr, 1);  // [C, T+6]
-    ggml_tensor * acc = nullptr;
-    for (int k = 0; k < 7; ++k) {
-        for (int64_t c = 0; c < C; ++c) {
-            wk[static_cast<size_t>(c)] = raw[static_cast<size_t>(c) * 7 + static_cast<size_t>(k)];
-        }
-        auto * wk_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, C, 1);
-        leaf_write(wk_t, wk.data(), wk.size() * sizeof(float));
-        auto * shift = ggml_view_2d(ctx, xpad, C, T, xpad->nb[1], k * xpad->nb[1]);
-        auto * term = ggml_mul(ctx, shift, wk_t);
-        acc = acc == nullptr ? term : ggml_add(ctx, acc, term);
-    }
-    auto * b2 = ggml_reshape_2d(ctx, b, C, 1);
-    return ggml_add(ctx, acc, ggml_repeat(ctx, b2, acc));
-}
-
-// Grouped 1D conv (stride 1, pad k/2, dilation 1, bias) via per-group im2col.
-// input: rows layout ne [T, C_in, 1]; weight: torch logical [C_out, C_in/g, k]
-// loaded as ggml ne [k, C_in/g, C_out]; bias: [C_out].
-ggml_tensor * grouped_conv1d(
-    ggml_context * ctx,
-    ggml_tensor * input_rows,  // ne [T, C_in, 1]
-    ggml_tensor * weight,      // ne [k, C_in/g, C_out]
-    ggml_tensor * bias,        // ne [C_out]
-    int64_t c_in,
-    int64_t c_out,
-    int64_t groups,
-    int64_t kernel) {
-    const int64_t t = input_rows->ne[0];
-    const int64_t cg_in = c_in / groups;
-    const int64_t cg_out = c_out / groups;
-    ggml_tensor * out = nullptr;
-    for (int64_t g = 0; g < groups; ++g) {
-        // input group slice: rows [T, cg_in] — ne1 offset via view_3d advance
-        auto * in_g = ggml_view_3d(
-            ctx,
-            input_rows,
-            t,
-            cg_in,
-            1,
-            input_rows->nb[1],
-            input_rows->nb[2],
-            g * cg_in * input_rows->nb[1]);
-        // im2col with the group's kernel: view weight ne [k, cg_in, cg_out]
-        auto * w_g = ggml_view_3d(
-            ctx,
-            weight,
-            kernel,
-            cg_in,
-            cg_out,
-            weight->nb[1],
-            weight->nb[2],
-            g * cg_out * weight->nb[2]);
-        auto * cols = ggml_im2col(ctx, w_g, in_g, 1, 1, kernel / 2, 0, 1, 1, false, GGML_TYPE_F32);
-        // 1D im2col result: ne [cg_in*k, T, 1, 1] columns; matmul w2d
-        auto * w2 = ggml_reshape_2d(ctx, w_g, cg_in * kernel, cg_out);
-        auto * y = ggml_mul_mat(ctx, w2, cols);  // [cg_out, T]
-        // bias per-group slice
-        auto * b_g = ggml_view_1d(ctx, bias, cg_out, g * cg_out * bias->nb[0]);
-        auto * b2 = ggml_reshape_2d(ctx, b_g, cg_out, 1);
-        y = ggml_add(ctx, y, ggml_repeat(ctx, b2, y));
-        // columns [cg_out, t] -> rows [t, cg_out]
-        auto * y_rows = ggml_cont(ctx, ggml_transpose(ctx, y));
-        out = out == nullptr
-            ? y_rows
-            : ggml_concat(ctx, out, y_rows, 1);  // stack groups on channel dim
-    }
-    return out;  // rows ne [t, c_out, 1]
-}
-
 }  // namespace
-
 
 // Batched CFG forward: one graph, ne3=2 batch (half 0 = conditioned with
 // text_ids, half 1 = uncond: filler text ids + zeroed cond, uploaded from
@@ -443,61 +300,6 @@ ggml_tensor * grouped_conv1d(
 // Same per-half math as two f5_dit_forward calls; halves share
 // weights/time-embed/positions.
 // Returns {cond, null} mel-major [MEL*N] each.
-// ---- batched-CFG helpers (tensors carry B=2 at ne3) ----
-
-// view of one half (ne3 slice) of a [.., .., .., 2] tensor
-ggml_tensor * view_of_4d_half(ggml_context * ctx, ggml_tensor * t, int half) {
-    // slice along the LAST populated axis (works for [.., k] rank-3/4 batch)
-    if (t->ne[3] > 1) {
-        return ggml_view_3d(
-            ctx, t, t->ne[0], t->ne[1], t->ne[2],
-            t->nb[1], t->nb[2], static_cast<size_t>(half) * t->nb[3]);
-    }
-    // rank-3 batch [F, T, 2]: stride nb[2] is the half size
-    return ggml_view_2d(
-        ctx, t, t->ne[0], t->ne[1],
-        t->nb[1], static_cast<size_t>(half) * t->nb[2]);
-}
-
-// concat two 2D halves [F, T] back into [F, T, 1, 2]
-ggml_tensor * concat_halves(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
-    return ggml_concat(
-        ctx,
-        ggml_reshape_4d(ctx, a, a->ne[0], a->ne[1], 1, 1),
-        ggml_reshape_4d(ctx, b, b->ne[0], b->ne[1], 1, 1),
-        3);  // [F, T, 1, 2] — matches the leaf rank used downstream
-}
-
-// lin_apply over a 3D/4D activation: mul_mat handles ne2/ne3 as batch dims;
-// bias [out] -> [out, 1, 1, 1] broadcast via repeat
-ggml_tensor * lin_apply4(
-    ggml_context * ctx,
-    const F5Linear & w,
-    ggml_tensor * x) {
-    auto * out = ggml_mul_mat(ctx, w.weight.tensor, x);
-    auto * b2 = ggml_reshape_2d(ctx, w.bias.tensor, ggml_nelements(w.bias.tensor), 1);
-    auto * b_rep = ggml_repeat(ctx, b2, out);
-    return ggml_add(ctx, out, b_rep);
-}
-
-// modulate over batched h: scale/shift [D,1] broadcast over [D, N, 1, 2]
-ggml_tensor * modulate4(
-    ggml_context * ctx,
-    ggml_tensor * h,
-    ggml_tensor * scale,
-    ggml_tensor * shift,
-    ggml_tensor * ones_d1) {
-    // ones [D,1] -> [D,1,1,1] to match h rank for the add
-    auto * ones4 = ggml_reshape_4d(ctx, ones_d1, ones_d1->ne[0], 1, 1, 1);
-    auto * one_rep = ggml_repeat(ctx, ones4, h);
-    auto * s4 = ggml_reshape_4d(ctx, scale, scale->ne[0], 1, 1, 1);
-    auto * sh4 = ggml_reshape_4d(ctx, shift, shift->ne[0], 1, 1, 1);
-    auto * s_rep = ggml_repeat(ctx, s4, h);
-    auto * sh_rep = ggml_repeat(ctx, sh4, h);
-    return ggml_add(
-        ctx, ggml_mul(ctx, h, ggml_add(ctx, one_rep, s_rep)), sh_rep);
-}
-
 std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
     const std::string & weights_path,
     const std::vector<float> & x_in,
@@ -510,13 +312,8 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
     static const F5ComputeDevice kDefaultDevice{};
     const F5ComputeDevice & dev = device != nullptr ? *device : kDefaultDevice;
     const auto & model = load_model_once(weights_path, dev);
-    const auto & W = model.w;
     const int N = seq_len;
     const int MEL = arch.mel_dim;
-    const int D = arch.dim;
-    const int HEADS = arch.heads;
-    const int DH = arch.head_dim;
-    const int TD = arch.text_dim;
     const int NT = static_cast<int>(text_in.size());
     const bool is_cuda = model.backend_type == core::BackendType::Cuda;
 
@@ -542,22 +339,6 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
             12288ULL << 20);
         gnew->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
         ggml_context * ctx = gnew->ctx;
-        std::vector<std::pair<ggml_tensor *, std::vector<uint8_t>>> pending_uploads;
-        const auto leaf_write = [&](ggml_tensor * t, const void * src, size_t bytes) {
-            if (!is_cuda) {
-                std::memcpy(t->data, src, bytes);
-            } else {
-                const auto * b = static_cast<const uint8_t *>(src);
-                pending_uploads.emplace_back(t, std::vector<uint8_t>(b, b + bytes));
-            }
-        };
-        const auto leaf_zero = [&](ggml_tensor * t, size_t bytes) {
-            if (!is_cuda) {
-                std::memset(t->data, 0, bytes);
-            } else {
-                pending_uploads.emplace_back(t, std::vector<uint8_t>(bytes, 0));
-            }
-        };
         // ---- module-composed batched-CFG graph (B=2) ----
         // Leaves: x/cond [2, N, 100] (same values in both halves), ids
         // [2*NT] (cond half, then uncond half), time input [1, 256].
@@ -601,9 +382,6 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
             if (gnew->gallocr == nullptr || !ggml_gallocr_reserve(gnew->gallocr, gnew->graph) ||
                 !ggml_gallocr_alloc_graph(gnew->gallocr, gnew->graph)) {
                 throw std::runtime_error("F5 DiT CUDA graph alloc failed");
-            }
-            for (auto & leaf : pending_uploads) {
-                ggml_backend_tensor_set(leaf.first, leaf.second.data(), 0, leaf.second.size());
             }
             if (cfg_staged != nullptr) {
                 const_stage_upload(cfg_staged, is_cuda ? model.backend : nullptr);
@@ -716,13 +494,8 @@ std::vector<float> f5_dit_forward(
     static const F5ComputeDevice kDefaultDevice{};
     const F5ComputeDevice & dev = device != nullptr ? *device : kDefaultDevice;
     const auto & model = load_model_once(weights_path, dev);
-    const auto & W = model.w;
     const int N = seq_len;
     const int MEL = arch.mel_dim;
-    const int D = arch.dim;
-    const int HEADS = arch.heads;
-    const int DH = arch.head_dim;
-    const int TD = arch.text_dim;
     const int NT = static_cast<int>(text_in.size());
     const bool is_cuda = model.backend_type == core::BackendType::Cuda;
 
@@ -773,23 +546,7 @@ std::vector<float> f5_dit_forward(
         ggml_context * ctx = gnew->ctx;
         // On CUDA the ctx is no_alloc: leaf tensors get device storage after
         // ggml_backend_alloc_ctx_tensors, values uploaded from staging vectors.
-        std::vector<std::pair<ggml_tensor *, std::vector<uint8_t>>> pending_uploads;
-        const auto leaf_write = [&](ggml_tensor * t, const void * src, size_t bytes) {
-            if (!is_cuda) {
-                std::memcpy(t->data, src, bytes);
-            } else {
-                const auto * b = static_cast<const uint8_t *>(src);
-                pending_uploads.emplace_back(t, std::vector<uint8_t>(b, b + bytes));
-            }
-        };
-        const auto leaf_zero = [&](ggml_tensor * t, size_t bytes) {
-            if (!is_cuda) {
-                std::memset(t->data, 0, bytes);
-            } else {
-                pending_uploads.emplace_back(t, std::vector<uint8_t>(bytes, 0));
-            }
-        };
-        (void)MEL; (void)D; (void)HEADS; (void)DH; (void)TD;
+        (void)MEL;
     ggml_tensor * output = nullptr;
     // NOTE: stage taps are not wired in the module-composed graph; the parity
     // harness compares the final output (and uses the raw path where needed).
@@ -845,9 +602,6 @@ std::vector<float> f5_dit_forward(
             if (gnew->gallocr == nullptr || !ggml_gallocr_reserve(gnew->gallocr, gnew->graph) ||
                 !ggml_gallocr_alloc_graph(gnew->gallocr, gnew->graph)) {
                 throw std::runtime_error("F5 DiT CUDA graph alloc failed");
-            }
-            for (auto & leaf : pending_uploads) {
-                ggml_backend_tensor_set(leaf.first, leaf.second.data(), 0, leaf.second.size());
             }
             if (staged_module_consts != nullptr) {
                 const_stage_upload(staged_module_consts, is_cuda ? model.backend : nullptr);

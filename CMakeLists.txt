@@ -1520,9 +1520,11 @@ if (vibevoice IN_LIST AUDIOCPP_LINKED_MODELS)
 endif()
 
 # F5/Habibi tests: parity harnesses + e2e sample generator. Only when the
-# f5_tts model is linked (they call model-internal symbols). F5_MEL_TEST
-# exposes the test hooks (mel/vocos/tokenizer) in synthesize.cpp.
-if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+# f5_tts model is linked (they call model-internal symbols) AND test hooks
+# are explicitly enabled — F5_MEL_TEST must never leak into production
+# model libraries (PR #275 review feedback).
+option(ENGINE_F5_TEST_HOOKS "Build F5-TTS test hooks (f5_test_* symbols) and parity binaries" OFF)
+if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS AND ENGINE_F5_TEST_HOOKS)
     target_compile_definitions(engine_model_f5_tts PRIVATE F5_MEL_TEST=1)
     foreach(f5_test IN ITEMS f5_e2e f5_parity f5_cfg_parity f5_tokenizer)
         add_executable(${f5_test} tests/${f5_test}_main.cpp)
