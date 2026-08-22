@@ -14,11 +14,21 @@ param(
     [switch]$WithVmm,        # explicitly re-enable VMM
     [switch]$NoNativeCpu,    # build ggml CPU kernels without native host ISA flags (required for distribution)
     [switch]$DeploymentBuild, # compile model_specs into the binary (self-contained deployment, no model_specs/ dir needed)
+    [switch]$NativeModelManager,
+    [switch]$SystemOpenSsl,
+    [string]$BoringSslArchive = "",
     [switch]$Graphs          # enable CUDA graphs (memory-hungry on iGPUs: each cached graph reserves its own VRAM)
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if (-not $NativeModelManager -and $SystemOpenSsl) {
+    throw "-SystemOpenSsl requires -NativeModelManager"
+}
+if (-not $NativeModelManager -and $BoringSslArchive -ne "") {
+    throw "-BoringSslArchive requires -NativeModelManager"
+}
 
 function Invoke-Checked {
     param(
@@ -129,6 +139,8 @@ $forceMmqValue  = if ($ForceMmq) { "ON" } else { "OFF" }
 $noVmmValue     = if ($WithVmm) { "OFF" } elseif ($NoVmm) { "ON" } else { "OFF" }
 $nativeCpuValue = if ($NoNativeCpu) { "OFF" } else { "ON" }
 $deploymentValue = if ($DeploymentBuild) { "ON" } else { "OFF" }
+$nativeModelManagerValue = if ($NativeModelManager) { "ON" } else { "OFF" }
+$systemOpenSslValue = if ($SystemOpenSsl) { "ON" } else { "OFF" }
 $graphsValue    = if ($Graphs) { "ON" } else { "OFF" }
 
 Write-Host "ROCm:        $RocmPath"
@@ -137,6 +149,15 @@ Write-Host "CMake:       $cmake"
 Write-Host "Ninja:       $ninja"
 Write-Host "Build dir:   $buildDir"
 Write-Host "hipBLASLt GEMM: $hipblasLtValue, FORCE_MMQ: $forceMmqValue, NO_VMM: $noVmmValue, CUDA graphs: $graphsValue, native CPU ISA: $nativeCpuValue, deployment build: $deploymentValue"
+Write-Host "Native model manager: $nativeModelManagerValue"
+if ($NativeModelManager) {
+    Write-Host "System OpenSSL: $systemOpenSslValue"
+    if ($BoringSslArchive -ne "") {
+        Write-Host "BoringSSL archive: $BoringSslArchive"
+    } else {
+        Write-Host "BoringSSL archive: <download at configure time>"
+    }
+}
 
 if ($Clean) {
     Invoke-Checked $cmake @("--build", $buildDir, "--target", "clean")
@@ -172,8 +193,15 @@ $configureArgs = @(
     "-DGGML_HIP_NO_VMM=$noVmmValue",
     "-DENGINE_ENABLE_NATIVE_CPU=$nativeCpuValue",
     "-DAUDIOCPP_DEPLOYMENT_BUILD=$deploymentValue",
+    "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=$nativeModelManagerValue",
+    "-DAUDIOCPP_USE_SYSTEM_OPENSSL=$systemOpenSslValue",
+    "-U", "AUDIOCPP_BORINGSSL_ARCHIVE",
     "-DENGINE_ENABLE_CUDA_GRAPHS=$graphsValue"
 )
+$boringSslArchivePath = if ($BoringSslArchive -ne "") { Convert-ToCMakePath $BoringSslArchive } else { "" }
+if ($boringSslArchivePath -ne "") {
+    $configureArgs += "-DAUDIOCPP_BORINGSSL_ARCHIVE=$boringSslArchivePath"
+}
 
 Invoke-Checked $cmake $configureArgs
 

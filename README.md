@@ -292,6 +292,12 @@ For deployment builds with compiled package specs:
 scripts/build_linux.sh --backend cuda --deployment-build --target audiocpp_cli --target audiocpp_server
 ```
 
+For native WebUI model downloads, enable the native model manager:
+
+```bash
+scripts/build_linux.sh --backend cuda --native-model-manager --target audiocpp_server
+```
+
 For direct CMake commands, see [docs/build/linux.md](docs/build/linux.md).
 
 ### Windows Build
@@ -322,6 +328,12 @@ For deployment builds with compiled package specs:
 
 ```powershell
 .\scripts\build_windows.ps1 -DeploymentBuild -Target audiocpp_cli
+```
+
+For native WebUI model downloads, enable the native model manager:
+
+```powershell
+.\scripts\build_windows.ps1 -NativeModelManager -Target audiocpp_server
 ```
 
 For requirements, CPU profiles, CUDA packaging, and release zips, see [docs/build/windows.md](docs/build/windows.md).
@@ -426,6 +438,7 @@ Run with `--backend hip` (`rocm` is accepted as an alias). For GPU target select
 | `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER` | Build the standalone native model manager and enable server-side WebUI downloads/install management. This opt-in feature builds the HTTP/TLS dependency. | `OFF` |
 | `AUDIOCPP_USE_SYSTEM_OPENSSL` | Use system OpenSSL instead of bundled BoringSSL when native model management is enabled. | `OFF` |
 | `AUDIOCPP_DEPLOYMENT_BUILD` | Compile package specs into CLI/server binaries for standalone GGUF and package-spec fallback loading. Script builds expose this as `--deployment-build` on Linux/macOS and `-DeploymentBuild` on Windows. | `OFF` |
+| Native model manager script flag | Build scripts expose `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER` as `--native-model-manager` on Linux/macOS and `-NativeModelManager` on Windows. `--system-openssl` / `-SystemOpenSsl` and `--boringssl-archive` / `-BoringSslArchive` configure its TLS backend. | disabled |
 | `AUDIOCPP_MODEL_SET` | Model composite to build: `full`, `core`, or `custom`. Script builds expose this as `--model-set` on Linux/macOS and `-ModelSet` on Windows. | `full` |
 | `AUDIOCPP_MODELS` | Comma or semicolon separated model target names when `AUDIOCPP_MODEL_SET=custom`, such as `qwen3_tts,pocket_tts,qwen3_asr`. Script builds expose this as `--models` on Linux/macOS and `-Models` on Windows. | empty |
 
