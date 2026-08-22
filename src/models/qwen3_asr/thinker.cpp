@@ -27,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -278,6 +279,14 @@ private:
     std::shared_ptr<const ThinkerWeights> weights_;
 };
 
+struct GgmlGallocrDeleter {
+    void operator()(ggml_gallocr_t alloc) const noexcept {
+        if (alloc != nullptr) {
+            ggml_gallocr_free(alloc);
+        }
+    }
+};
+
 class PrefillGraph {
 public:
     PrefillGraph(
@@ -353,10 +362,14 @@ public:
         for (auto * value : values_) {
             ggml_build_forward_expand(graph_, value);
         }
-        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+        // unique_ptr so a throw below (or from later ctor statements) frees
+        // whatever the allocator already reserved; a throwing constructor
+        // runs no destructor, and each failed rebuild used to leak its
+        // partially reserved arena
+        gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
         if (gallocr_ == nullptr ||
-            !ggml_gallocr_reserve(gallocr_, graph_) ||
-            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            !ggml_gallocr_reserve(gallocr_.get(), graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
             // Size, not a fault: the graph scales with prompt_steps_, which the
             // caller controls through the transcription prompt and the length of
             // the audio. Say which, and by how much, so the remedy is obvious.
@@ -373,9 +386,6 @@ public:
 
     ~PrefillGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-        if (gallocr_ != nullptr) {
-            ggml_gallocr_free(gallocr_);
-        }
     }
 
     bool matches(const ThinkerWeightsRuntime & runtime, int64_t prompt_steps, int64_t audio_tokens) const {
@@ -457,7 +467,7 @@ private:
     std::vector<ggml_tensor *> values_;
     std::vector<int32_t> position_ids_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_gallocr_t gallocr_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
 };
 
 class PromptClassificationGraph {
@@ -508,10 +518,10 @@ public:
         ggml_set_output(token_ids_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, token_ids_);
-        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+        gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
         if (gallocr_ == nullptr ||
-            !ggml_gallocr_reserve(gallocr_, graph_) ||
-            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            !ggml_gallocr_reserve(gallocr_.get(), graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker classification graph");
         }
         position_ids_ = modules::qwen_position_ids(prompt_steps_);
@@ -521,9 +531,6 @@ public:
 
     ~PromptClassificationGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-        if (gallocr_ != nullptr) {
-            ggml_gallocr_free(gallocr_);
-        }
     }
 
     bool matches(const ThinkerWeightsRuntime & runtime, int64_t prompt_steps, int64_t audio_tokens) const {
@@ -589,7 +596,7 @@ private:
     ggml_tensor * token_ids_ = nullptr;
     std::vector<int32_t> position_ids_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_gallocr_t gallocr_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
 };
 
 class DecodeGraph {
@@ -763,6 +770,10 @@ struct Qwen3ASRThinkerRuntime::Impl {
         validate_prompt_audio(prompt, audio_embeddings);
         debug::timing_log_scalar("qwen3_asr.thinker.prompt_prepare_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         if (prefill_graph == nullptr || !prefill_graph->matches(*weights, prompt_steps, audio_embeddings.tokens)) {
+            // drop the old graph (and its cuda_graphs cache entry) before
+            // allocating the replacement: assigning over a live unique_ptr
+            // holds both arenas at once at the rebuild peak
+            prefill_graph.reset();
             prefill_graph = std::make_unique<PrefillGraph>(
                 weights,
                 prompt_steps,
@@ -780,6 +791,7 @@ struct Qwen3ASRThinkerRuntime::Impl {
         debug::timing_log_scalar("qwen3_asr.thinker.prefill_total_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         const int64_t required_cache_steps = prompt_steps + options.max_new_tokens;
         if (decode_graph == nullptr || !decode_graph->can_run(*weights, required_cache_steps)) {
+            decode_graph.reset();
             decode_graph = std::make_unique<DecodeGraph>(weights, required_cache_steps, decode_graph_arena_bytes);
         } else {
             debug::timing_log_scalar("qwen3_asr.thinker.decode.graph.build_ms", 0.0);
@@ -818,6 +830,7 @@ struct Qwen3ASRThinkerRuntime::Impl {
         debug::timing_log_scalar("qwen3_asr.thinker.classify_prompt_prepare_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         if (classification_graph == nullptr ||
             !classification_graph->matches(*weights, prompt_steps, audio_embeddings.tokens)) {
+            classification_graph.reset();
             classification_graph = std::make_unique<PromptClassificationGraph>(
                 weights,
                 prompt_steps,
