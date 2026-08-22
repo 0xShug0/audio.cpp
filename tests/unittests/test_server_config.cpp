@@ -294,6 +294,42 @@ void test_negative_busy_timeout_is_rejected() {
     require(rejected, "negative busy_timeout_ms is rejected");
 }
 
+void test_max_loaded_models_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "max_loaded_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).max_loaded_models == 0,
+        "max_loaded_models defaults to 0 (no limit) when omitted");
+
+    const auto single_path = write_config(
+        root, "max_loaded_single.json", std::string(R"JSON({"max_loaded_models": 1,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(single_path).max_loaded_models == 1,
+        "max_loaded_models accepts 1 to enforce a single resident model");
+
+    const auto multi_path = write_config(
+        root, "max_loaded_multi.json", std::string(R"JSON({"max_loaded_models": 3,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(multi_path).max_loaded_models == 3,
+        "max_loaded_models is read from the config");
+}
+
+void test_negative_max_loaded_models_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root, "max_loaded_negative.json", std::string(R"JSON({"max_loaded_models": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("max_loaded_models") != std::string::npos;
+    }
+    require(rejected, "negative max_loaded_models is rejected");
+}
+
 void test_per_model_busy_timeout() {
     const auto root = make_temp_root();
     const auto config_path = write_config(
@@ -421,6 +457,8 @@ int main() {
         test_negative_max_request_body_is_rejected();
         test_unsafe_numeric_max_request_body_is_rejected();
         test_negative_busy_timeout_is_rejected();
+        test_max_loaded_models_defaults_and_overrides();
+        test_negative_max_loaded_models_is_rejected();
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
         test_ui_configuration();

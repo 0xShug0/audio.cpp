@@ -60,7 +60,7 @@ std::filesystem::path executable_directory(const char * argv0) {
 void print_help() {
     std::cout
         << "audiocpp_server [--config <server.json>] [--ui] [--host <ip>] [--port <port>] [--backend <backend>]\n"
-        << "                [--device <id>] [--threads <n>] [--busy-timeout-ms <ms>]\n"
+        << "                [--device <id>] [--threads <n>] [--busy-timeout-ms <ms>] [--max-loaded-models <n>]\n"
         << "                [--model-spec-override <json-or-directory>] [--voice-dir <directory>]\n"
         << "                [--log] [--log-file <path>]\n"
         << "                [--cors-origins <origins>]\n"
@@ -71,6 +71,9 @@ void print_help() {
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
         << "                                   busy this long; default 300000, 0 disables\n"
+        << "  --max-loaded-models <n>          keep at most n models resident in memory, unloading\n"
+        << "                                   the least recently used idle model first; 1 enforces\n"
+        << "                                   a single loaded model, default 0 (no limit)\n"
         << "  --voice-dir <directory>          override the shared reference voice library directory\n"
         << "  --cors-origins \"*\"              experimental; disabled by default. Allows browser\n"
         << "                                   requests from any origin for trusted local demos only\n"
@@ -175,6 +178,9 @@ int main(int argc, char ** argv) {
         if (const auto busy_timeout = arg_value(argc, argv, "--busy-timeout-ms")) {
             config.busy_timeout_ms = std::stoi(*busy_timeout);
         }
+        if (const auto max_loaded_models = arg_value(argc, argv, "--max-loaded-models")) {
+            config.max_loaded_models = std::stoi(*max_loaded_models);
+        }
         if (const auto model_spec = arg_value(argc, argv, "--model-spec-override")) {
             config.model_spec_override = std::filesystem::path(*model_spec);
         }
@@ -189,6 +195,9 @@ int main(int argc, char ** argv) {
         }
         if (config.busy_timeout_ms < 0) {
             throw std::runtime_error("--busy-timeout-ms must be >= 0 (0 disables the guard)");
+        }
+        if (config.max_loaded_models < 0) {
+            throw std::runtime_error("--max-loaded-models must be >= 0 (0 disables the limit)");
         }
 
         const auto ui_resource_anchor = executable_directory(argc > 0 ? argv[0] : nullptr);
