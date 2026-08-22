@@ -13,6 +13,9 @@ param(
     [ValidateSet("ON", "OFF")]
     [string]$Llamafile = $null,
     [switch]$DeploymentBuild,
+    [switch]$NativeModelManager,
+    [switch]$SystemOpenSsl,
+    [string]$BoringSslArchive = "",
     [ValidateSet("full", "core", "custom")]
     [string]$ModelSet = "full",
     [string]$Models = "",
@@ -21,6 +24,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"  # let native command stderr (e.g. cmake warnings) flow without aborting the script
+
+if (-not $NativeModelManager -and $SystemOpenSsl) {
+    throw "-SystemOpenSsl requires -NativeModelManager"
+}
+if (-not $NativeModelManager -and $BoringSslArchive -ne "") {
+    throw "-BoringSslArchive requires -NativeModelManager"
+}
 
 function Invoke-Checked {
     param(
@@ -525,7 +535,18 @@ Write-Host "CPU architecture profile: $($cpuArchSettings.Label)"
 Write-Host "Native CPU optimization: $($settings.Native)"
 Write-Host "llamafile SGEMM: $($settings.Llamafile)"
 $deploymentBuildValue = if ($DeploymentBuild) { "ON" } else { "OFF" }
+$nativeModelManagerValue = if ($NativeModelManager) { "ON" } else { "OFF" }
+$systemOpenSslValue = if ($SystemOpenSsl) { "ON" } else { "OFF" }
 Write-Host "Deployment build: $deploymentBuildValue"
+Write-Host "Native model manager: $nativeModelManagerValue"
+if ($NativeModelManager) {
+    Write-Host "System OpenSSL: $systemOpenSslValue"
+    if ($BoringSslArchive -ne "") {
+        Write-Host "BoringSSL archive: $BoringSslArchive"
+    } else {
+        Write-Host "BoringSSL archive: <download at configure time>"
+    }
+}
 Write-Host "Model composite: $ModelSet"
 if ($Models -ne "") {
     Write-Host "Selected models: $Models"
@@ -564,9 +585,16 @@ $configureArgs = @(
     "-DENGINE_ENABLE_LLAMAFILE=$($settings.Llamafile)",
     "-DENGINE_BUILD_TESTS=$($settings.BuildTests)",
     "-DAUDIOCPP_DEPLOYMENT_BUILD=$deploymentBuildValue",
+    "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=$nativeModelManagerValue",
+    "-DAUDIOCPP_USE_SYSTEM_OPENSSL=$systemOpenSslValue",
+    "-U", "AUDIOCPP_BORINGSSL_ARCHIVE",
     "-DAUDIOCPP_MODEL_SET=$ModelSet",
     "-DAUDIOCPP_MODELS=$Models"
 )
+$boringSslArchivePath = if ($BoringSslArchive -ne "") { Convert-ToCMakePath $BoringSslArchive } else { "" }
+if ($boringSslArchivePath -ne "") {
+    $configureArgs += "-DAUDIOCPP_BORINGSSL_ARCHIVE=$boringSslArchivePath"
+}
 $configureArgs += $cpuArchSettings.CMakeArgs
 if ($settings.CFlagsDebug -ne "") {
     $configureArgs += "-DCMAKE_C_FLAGS_DEBUG=$($settings.CFlagsDebug)"

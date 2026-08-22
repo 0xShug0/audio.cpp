@@ -530,8 +530,9 @@ std::string PackageManager::install(
         for (const auto & [remote, output] : downloads) {
             if (cancelled && cancelled->load()) throw Cancelled();
             const auto destination = staging / output.lexically_relative(final_root);
-            download_file(package, remote, destination, cancelled, [&](uint64_t file_bytes) {
-                if (progress) progress({completed + file_bytes, total, "Downloading " + remote});
+            const auto progress_message = "Downloading " + remote;
+            download_file(package, remote, destination, cancelled, [&, progress_message](uint64_t file_bytes) {
+                if (progress) progress({completed + file_bytes, total, progress_message});
             });
             const auto file_size = std::filesystem::file_size(destination);
             const auto expected = remote_files.at(remote).size;

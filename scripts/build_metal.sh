@@ -11,6 +11,9 @@ WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
+AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="OFF"
+AUDIOCPP_USE_SYSTEM_OPENSSL="OFF"
+AUDIOCPP_BORINGSSL_ARCHIVE=""
 AUDIOCPP_MODEL_SET="full"
 AUDIOCPP_MODELS=""
 OPENMP_MODE="off"
@@ -48,6 +51,10 @@ Options:
   --with-examples          Build example binaries.
   --with-warmbench         Build warmbench helper binaries.
   --deployment-build       Embed package specs for standalone GGUF/model loading.
+  --native-model-manager   Build native model manager and managed WebUI downloads.
+  --system-openssl         Use system OpenSSL for native model management.
+  --boringssl-archive <p>  Use a local BoringSSL source archive for native model
+                           management instead of downloading at configure time.
   --model-set full|core|custom
                            Model composite to build.
                            Default: full
@@ -131,6 +138,18 @@ while [[ $# -gt 0 ]]; do
             AUDIOCPP_DEPLOYMENT_BUILD="ON"
             shift
             ;;
+        --native-model-manager)
+            AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="ON"
+            shift
+            ;;
+        --system-openssl)
+            AUDIOCPP_USE_SYSTEM_OPENSSL="ON"
+            shift
+            ;;
+        --boringssl-archive)
+            AUDIOCPP_BORINGSSL_ARCHIVE="$2"
+            shift 2
+            ;;
         --model-set)
             case "$2" in
                 full|core|custom)
@@ -166,6 +185,17 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" != "ON" ]]; then
+    if [[ "$AUDIOCPP_USE_SYSTEM_OPENSSL" == "ON" ]]; then
+        echo "--system-openssl requires --native-model-manager" >&2
+        exit 1
+    fi
+    if [[ -n "$AUDIOCPP_BORINGSSL_ARCHIVE" ]]; then
+        echo "--boringssl-archive requires --native-model-manager" >&2
+        exit 1
+    fi
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "audio.cpp Metal builds require macOS." >&2
@@ -237,9 +267,15 @@ CMAKE_CMD=(
     -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES"
     -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
     -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
+    -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
+    -DAUDIOCPP_USE_SYSTEM_OPENSSL="$AUDIOCPP_USE_SYSTEM_OPENSSL"
+    -UAUDIOCPP_BORINGSSL_ARCHIVE
     -DAUDIOCPP_MODEL_SET="$AUDIOCPP_MODEL_SET"
     -DAUDIOCPP_MODELS="$AUDIOCPP_MODELS"
 )
+if [[ -n "$AUDIOCPP_BORINGSSL_ARCHIVE" ]]; then
+    CMAKE_CMD+=(-DAUDIOCPP_BORINGSSL_ARCHIVE="$AUDIOCPP_BORINGSSL_ARCHIVE")
+fi
 
 if [[ -n "$GENERATOR" ]]; then
     CMAKE_CMD+=(-G "$GENERATOR")
@@ -270,6 +306,11 @@ echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
 echo "Building warmbench: $WITH_WARMBENCH"
 echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
+echo "Native model manager: $AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
+if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" == "ON" ]]; then
+    echo "System OpenSSL: $AUDIOCPP_USE_SYSTEM_OPENSSL"
+    echo "BoringSSL archive: ${AUDIOCPP_BORINGSSL_ARCHIVE:-<download at configure time>}"
+fi
 echo "Model composite: $AUDIOCPP_MODEL_SET"
 if [[ -n "$AUDIOCPP_MODELS" ]]; then
     echo "Selected models: $AUDIOCPP_MODELS"

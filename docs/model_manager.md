@@ -28,6 +28,16 @@ cmake -S . -B build -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON
 cmake --build build --target audiocpp_model_manager audiocpp_server
 ```
 
+With build helper scripts, use the native-manager flag:
+
+```bash
+./scripts/build_linux.sh --backend cuda --native-model-manager --target audiocpp_server
+```
+
+```powershell
+.\scripts\build_windows.ps1 -NativeModelManager -Target audiocpp_server
+```
+
 Run the managed WebUI with:
 
 ```bash
@@ -45,6 +55,9 @@ Offline and sandboxed builds may provide the same verified source archive with
 this through a fixed-output derivation, so its CMake phase never accesses the
 network.
 
+With build helper scripts, use `--boringssl-archive <path>` on Linux/macOS or
+`-BoringSslArchive <path>` on Windows.
+
 Packagers that prefer their distribution's OpenSSL can select it explicitly:
 
 ```bash
@@ -52,6 +65,9 @@ cmake -S . -B build \
   -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
   -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON
 ```
+
+With build helper scripts, use `--system-openssl` on Linux/macOS or
+`-SystemOpenSsl` on Windows.
 
 When using system OpenSSL on machines with multiple OpenSSL installations, make
 sure CMake resolves the distribution OpenSSL that will also be available where
