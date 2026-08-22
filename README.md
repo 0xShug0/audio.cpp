@@ -273,6 +273,16 @@ scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_ser
 
 The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-vulkan-release`, `build/linux-hip-release`, and `build/linux-cpu-release`.
 
+Without `--cuda-arch`, CUDA builds use the portable arch list (works on many
+GPUs, slower to build). For a faster build targeting only the local GPU, pass
+`--cuda-arch native` (CMake >= 3.24; on older CMake this falls back to the
+portable list) or an explicit arch list:
+
+```bash
+scripts/build_linux.sh --backend cuda --cuda-arch native --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --backend cuda --cuda-arch "86;89" --target audiocpp_cli --target audiocpp_server
+```
+
 Composite examples:
 
 ```bash

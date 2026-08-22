@@ -350,7 +350,7 @@ echo "Using generator: $GENERATOR"
 echo "Using build dir: $BUILD_DIR"
 echo "Including CUDA backend: $ENGINE_ENABLE_CUDA"
 if [[ "$ENGINE_ENABLE_CUDA" == "ON" ]]; then
-    echo "CUDA architectures: ${CUDA_ARCH:-<auto: machine-native at configure time>}"
+    echo "CUDA architectures: ${CUDA_ARCH:-<portable default list>}"
 fi
 echo "Including Vulkan backend: $ENGINE_ENABLE_VULKAN"
 echo "Including HIP backend: $ENGINE_ENABLE_HIP"
