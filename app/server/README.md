@@ -16,7 +16,7 @@ Enable the backend you plan to run: `ENGINE_ENABLE_CUDA=ON` for CUDA, `ENGINE_EN
 Pick the mode that matches the behavior you want:
 
 | If you want... | Build with... | Run with... | Behavior |
-|---|---|---|
+|---|---|---|---|
 | API/config-driven server | default build | `audiocpp_server --config server.json` | Uses models declared in the config. The UI is available unless disabled by config or `--no-ui`. |
 | Read-only UI for configured models | default build | `audiocpp_server --config server.json --ui` | Browser UI is available for configured models, without downloads, deletes, or dynamic package management. |
 | Full UI with downloads and model switching | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | UI can browse packages, download models, load/unload models, delete packages, and use temporary uploads. |
