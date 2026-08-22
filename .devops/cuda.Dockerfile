@@ -17,6 +17,10 @@ ARG BASE_CUDA_RUN_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu
 FROM ${BASE_CUDA_DEV_CONTAINER} AS build
 
 ARG GCC_VERSION=14
+# CUDA architectures to compile for.
+# - default = the portable default list from CMakeLists.txt
+# - for a custom arch set build with --build-arg CUDA_DOCKER_ARCH="89-real;...".
+ARG CUDA_DOCKER_ARCH=default
 
 # Install build toolchain
 RUN apt-get update && \
@@ -30,8 +34,10 @@ ENV CC=gcc-${GCC_VERSION} CXX=g++-${GCC_VERSION} CUDAHOSTCXX=g++-${GCC_VERSION}
 WORKDIR /app
 COPY . .
 
-# Configure and build
-RUN cmake -S . -B build \
+RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
+        ADDITIONAL_CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${CUDA_DOCKER_ARCH}"; \
+    fi && \
+    cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DAUDIOCPP_MODEL_SET=full \
         -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \
@@ -43,6 +49,7 @@ RUN cmake -S . -B build \
         -DENGINE_BUILD_EXAMPLES=OFF \
         -DENGINE_BUILD_TESTS=OFF \
         -DENGINE_BUILD_WARMBENCH=OFF \
+        ${ADDITIONAL_CMAKE_ARGS} \
         -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined && \
     cmake --build build --parallel $(nproc) \
         --target audiocpp_cli \

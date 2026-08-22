@@ -65,6 +65,12 @@ Build with a specific CUDA version, for example 13.3.0:
 docker build -f .devops/cuda.Dockerfile -t local/audio.cpp:full-cuda13 --build-arg CUDA_VERSION=13.3.0 .
 ```
 
+Build for a specific set of GPU architectures (e.g. for faster, less portable builds):
+
+```bash
+docker build -f .devops/cuda.Dockerfile -t local/audio.cpp:full-cuda12 --build-arg CUDA_DOCKER_ARCH="86;89" .
+```
+
 ### CPU
 
 ```bash

@@ -166,17 +166,74 @@ if (ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
 endif()
 
 if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
-    enable_language(CUDA)
-    # 12.0 is a floor, not a target: any 12.x or 13.x works (the Dockerfile pins
-    # 12.9.0, and docs/build/windows.md ships a CUDA 13 package). The minimum is
-    # enforced because an older toolkit configures happily and only fails at the
-    # first .cu file, which reads as a code bug rather than a toolchain one: nvcc
-    # < 11.6 cannot parse libstdc++ >= 11.3 headers ("parameter packs not expanded
-    # with '...'" in <functional>), and distros still ship such pairings (Ubuntu
-    # 22.04's nvidia-cuda-toolkit is 11.5). Fail here, with a pointer, instead.
-    # The upper bound is the host compiler the chosen toolkit accepts, not CUDA
-    # itself (e.g. CUDA 12.9 supports GCC <= 14), so it is left to the toolkit.
+    # Require at least CUDA 12.0. Older toolkits configure fine but die at the
+    # first .cu file. Run this before enable_language(CUDA) because the version
+    # is needed for the default arch list below.
     find_package(CUDAToolkit 12.0 REQUIRED)
+
+    # Define default CUDA architectures for every build path.
+    # We stay close to llama.cpp/ggml-cuda here, unless there is a reason
+    # to deviate. See llama.cpp's ggml-cuda CMakeLists.txt for additional
+    # comments.
+    # Must be set before enable_language(CUDA), as that call otherwise seeds
+    # CMAKE_CUDA_ARCHITECTURES from nvcc's default arch (sm_75 for CUDA 13,
+    # sm_52 for CUDA 12), silently making every build without an explicit
+    # list single-arch (the seed ignores the local GPU).
+    # This can be overridden with -DCMAKE_CUDA_ARCHITECTURES=... or CUDAARCHS;
+    # set to "native" to build for the local GPU only (needs CMake >= 3.24).
+
+    # "native" fallback for CMake < 3.24
+    if ((CMAKE_CUDA_ARCHITECTURES STREQUAL "native" OR "$ENV{CUDAARCHS}" STREQUAL "native")
+        AND CMAKE_VERSION VERSION_LESS "3.24")
+        message(STATUS "CMAKE_CUDA_ARCHITECTURES=native requires CMake >= 3.24; "
+                       "falling back to the portable default architecture list")
+        set(CMAKE_CUDA_ARCHITECTURES "")
+    endif()
+
+    # Define default archs
+    if ("${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "" AND "$ENV{CUDAARCHS}" STREQUAL "")
+        # XX-virtual = PTX (JIT, forward-compatible); XX-real = SASS (native).
+        if (CUDAToolkit_VERSION VERSION_LESS "13")
+            # 50/61/70 (Maxwell/Pascal/Volta) unsupported by CUDA 13 toolkits
+            list(APPEND CMAKE_CUDA_ARCHITECTURES 50-virtual 61-virtual 70-virtual)
+        endif()
+        list(APPEND CMAKE_CUDA_ARCHITECTURES 75-virtual 80-virtual 86-real)
+        if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "11.8")
+            list(APPEND CMAKE_CUDA_ARCHITECTURES 89-real 90-virtual)
+        endif()
+        if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")
+            # 12Xa, not 12X: Blackwell FP4 tensor cores are arch-specific.
+            list(APPEND CMAKE_CUDA_ARCHITECTURES 120a-real)
+        endif()
+        if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.9")
+            list(APPEND CMAKE_CUDA_ARCHITECTURES 121a-real)
+        endif()
+    endif()
+
+    enable_language(CUDA)
+
+    # Upgrade plain 12X (user value or resolved "native") to 12Xa (Blackwell).
+    foreach (_ARCHS_VAR IN ITEMS CMAKE_CUDA_ARCHITECTURES CMAKE_CUDA_ARCHITECTURES_NATIVE)
+        set(_FIXED_ARCHS "")
+        foreach (_ARCH IN LISTS ${_ARCHS_VAR})
+            if (_ARCH MATCHES "^12[0-9](-real|-virtual)?$")
+                string(REGEX REPLACE "^(12[0-9])((-real|-virtual)?)$" "\\1a\\2" _FIXED_ARCH "${_ARCH}")
+                message(STATUS "Replacing ${_ARCH} in ${_ARCHS_VAR} with ${_FIXED_ARCH}")
+                list(APPEND _FIXED_ARCHS "${_FIXED_ARCH}")
+            else()
+                list(APPEND _FIXED_ARCHS "${_ARCH}")
+            endif()
+        endforeach()
+        set(${_ARCHS_VAR} "${_FIXED_ARCHS}")
+    endforeach()
+
+    # Resolve "native" for the log; left as-is when no GPU was detected
+    # (nvcc then warns and uses its default arch).
+    if (CMAKE_CUDA_ARCHITECTURES STREQUAL "native" AND CMAKE_CUDA_ARCHITECTURES_NATIVE MATCHES "^[0-9]+(a|f)?(-real|-virtual)?(;[0-9]+(a|f)?(-real|-virtual)?|;)*$")
+        set(CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES_NATIVE}")
+    endif()
+    message(STATUS "Using CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} CMAKE_CUDA_ARCHITECTURES_NATIVE=${CMAKE_CUDA_ARCHITECTURES_NATIVE}")
+
     if (NOT MSVC)
         set(CMAKE_CUDA_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug CUDA flags" FORCE)
     endif()
@@ -1472,11 +1529,6 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED ON
     )
-    if (CMAKE_CUDA_ARCHITECTURES)
-        set_target_properties(engine_runtime PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
-    else()
-        set_target_properties(engine_runtime PROPERTIES CUDA_ARCHITECTURES native)
-    endif()
     target_compile_definitions(engine_core PRIVATE ENGINE_HAS_CUDA_ISTFT=1 ENGINE_HAS_CUDA_TORCH_RANDOM=1)
     target_compile_definitions(engine_runtime PUBLIC ENGINE_HAS_CUDA_ISTFT=1 ENGINE_HAS_CUDA_TORCH_RANDOM=1)
     target_link_libraries(engine_runtime PRIVATE CUDA::cudart CUDA::cufft)
