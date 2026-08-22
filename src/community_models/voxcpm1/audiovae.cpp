@@ -30,17 +30,164 @@
 #include <vector>
 
 namespace engine::community_models::voxcpm1 {
-namespace {
-
 namespace core = engine::core;
 namespace modules = engine::modules;
 namespace assets_ns = engine::assets;
+
+namespace {
 
 using Clock = std::chrono::steady_clock;
 
 constexpr int64_t kResidualKernel = 7;
 
 enum class PaddingMode { Left, Right };
+
+// ============================================================================
+// AudioVAEStreamingDecodeState Implementation
+// ============================================================================
+
+} // namespace
+
+AudioVAEStreamingDecodeState::AudioVAEStreamingDecodeState(AudioVAEStreamingDecodeState&& other) noexcept
+    : ctx_(std::move(other.ctx_)),
+      buffer_(other.buffer_),
+      slots_(std::move(other.slots_)),
+      pending_updates_(std::move(other.pending_updates_)),
+      cursor_(other.cursor_) {
+  other.buffer_ = nullptr;
+  other.cursor_ = 0;
+}
+
+AudioVAEStreamingDecodeState& AudioVAEStreamingDecodeState::operator=(AudioVAEStreamingDecodeState&& other) noexcept {
+  if (this != &other) {
+    reset();
+    ctx_ = std::move(other.ctx_);
+    buffer_ = other.buffer_;
+    slots_ = std::move(other.slots_);
+    pending_updates_ = std::move(other.pending_updates_);
+    cursor_ = other.cursor_;
+
+    other.buffer_ = nullptr;
+    other.cursor_ = 0;
+  }
+  return *this;
+}
+
+AudioVAEStreamingDecodeState::~AudioVAEStreamingDecodeState() {
+  reset();
+}
+
+void AudioVAEStreamingDecodeState::reset() {
+  pending_updates_.clear();
+  slots_.clear();
+  cursor_ = 0;
+  if (buffer_) {
+    ggml_backend_buffer_free(buffer_);
+    buffer_ = nullptr;
+  }
+  if (ctx_) {
+    ctx_.reset();
+  }
+}
+
+void AudioVAEStreamingDecodeState::clear() {
+  pending_updates_.clear();
+  cursor_ = 0;
+  if (buffer_) {
+    ggml_backend_buffer_clear(buffer_, 0);
+  }
+}
+
+bool AudioVAEStreamingDecodeState::initialize(const std::vector<SlotSpec>& specs, core::ExecutionContext& execution_context) {
+  reset();
+  if (specs.empty()) {
+    return false;
+  }
+
+  // Create ggml context with no_alloc for state tensors
+  ggml_init_params params = {};
+  params.mem_size = 1024 * 1024;  // 1MB metadata buffer
+  params.mem_buffer = nullptr;
+  params.no_alloc = true;
+  ctx_.reset(ggml_init(params));
+  if (!ctx_) {
+    return false;
+  }
+
+  slots_.reserve(specs.size());
+
+  for (const SlotSpec& spec : specs) {
+    if (spec.frames <= 0 || spec.channels <= 0) {
+      reset();
+      return false;
+    }
+
+    ggml_tensor* tensor = ggml_new_tensor_3d(ctx_.get(), GGML_TYPE_F32, spec.frames, spec.channels, 1);
+    if (!tensor) {
+      reset();
+      return false;
+    }
+    const std::string tensor_name = "audio_vae.streaming_state." + spec.name;
+    ggml_set_name(tensor, tensor_name.c_str());
+    slots_.push_back(Slot{spec.frames, spec.channels, tensor, spec.name});
+  }
+
+  buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), execution_context.backend());
+  if (!buffer_) {
+    reset();
+    return false;
+  }
+  ggml_backend_buffer_clear(buffer_, 0);
+  return true;
+}
+
+void AudioVAEStreamingDecodeState::begin_graph() {
+  pending_updates_.clear();
+  cursor_ = 0;
+}
+
+ggml_tensor* AudioVAEStreamingDecodeState::take_slot(int64_t frames, int64_t channels, const std::string& name) {
+  if (cursor_ >= slots_.size()) {
+    return nullptr;
+  }
+  Slot& slot = slots_[cursor_];
+  if (slot.frames != frames || slot.channels != channels || slot.name != name) {
+    return nullptr;
+  }
+  ++cursor_;
+  return slot.tensor;
+}
+
+void AudioVAEStreamingDecodeState::queue_update(ggml_tensor* tensor) {
+  if (!tensor || cursor_ == 0) {
+    return;
+  }
+  pending_updates_.push_back(PendingUpdate{cursor_ - 1, tensor});
+}
+
+void AudioVAEStreamingDecodeState::build_update_graph(ggml_cgraph* graph) const {
+  if (!graph) {
+    return;
+  }
+  for (const PendingUpdate& update : pending_updates_) {
+    if (!update.tensor) continue;
+    ggml_set_output(update.tensor);
+    ggml_build_forward_expand(graph, update.tensor);
+  }
+}
+
+void AudioVAEStreamingDecodeState::publish_updates(core::ExecutionContext& execution_context) {
+  (void)execution_context;
+  for (const PendingUpdate& update : pending_updates_) {
+    if (update.slot_index >= slots_.size()) continue;
+    ggml_tensor* dst = slots_[update.slot_index].tensor;
+    if (!dst || !update.tensor) continue;
+    if (ggml_nbytes(update.tensor) != ggml_nbytes(dst)) continue;
+    ggml_backend_tensor_copy(update.tensor, dst);
+  }
+}
+
+namespace {
 
 std::vector<float> trim_audio_silence_vad(const std::vector<float>& input,
                                           int sample_rate,
@@ -615,6 +762,234 @@ core::TensorValue decoder_block(core::ModuleBuildContext &ctx,
   return hidden;
 }
 
+// ============================================================================
+// Stateful Convolution Methods for Streaming Decode
+// ============================================================================
+
+core::TensorValue causal_conv1d_stateful(core::ModuleBuildContext &ctx,
+                                         const core::TensorValue &input,
+                                         const VAEConv1dWeights &weights,
+                                         int stride, int padding, int dilation,
+                                         int output_padding,
+                                         AudioVAEStreamingDecodeState &state,
+                                         const std::string &state_name) {
+  const int left_pad = 2 * padding - output_padding;
+  if (left_pad < 0) {
+    throw std::runtime_error(
+        "VoxCPM1 AudioVAE causal convolution padding is invalid");
+  }
+  const int state_frames = left_pad;
+  if (state_frames <= 0) {
+    return causal_conv1d(ctx, input, weights, stride, padding, dilation,
+                         output_padding);
+  }
+
+  ggml_tensor* prev = state.take_slot(state_frames, input.shape.dims[1],
+                                      state_name);
+  if (!prev) {
+    throw std::runtime_error(
+        "VoxCPM1 AudioVAE streaming state slot not found: " + state_name);
+  }
+  // State has [state_frames, channels, 1], need to wrap with correct shape [1, channels, state_frames]
+  auto prev_val = core::wrap_tensor(
+      prev, core::TensorShape::from_dims({1, input.shape.dims[1], state_frames}),
+      GGML_TYPE_F32);
+  auto padded = modules::ConcatModule({2}).build(ctx, prev_val, input);
+
+  core::TensorValue result;
+  if (weights.depthwise_layout) {
+    result = modules::DepthwiseConv1dModule(
+                 {weights.out_channels, weights.kernel_size, stride, 0, dilation,
+                  weights.depthwise.bias.has_value()})
+             .build(ctx, padded, weights.depthwise);
+  } else {
+    result = modules::Conv1dModule(
+                 {weights.in_channels, weights.out_channels, weights.kernel_size,
+                  stride, 0, dilation, weights.regular.bias.has_value()})
+             .build(ctx, padded, weights.regular);
+  }
+
+  // Extract next state from the end of padded input
+  const int64_t padded_frames = padded.shape.dims[2];
+  const int64_t state_offset = (padded_frames - state_frames) * padded.tensor->nb[0];
+  
+  // View: extract last state_frames frames from padded input
+  // Physical layout of padded.tensor is column-major [frames, channels, batch]
+  // Use source tensor's strides for correct channel dimension
+  const int64_t view_ne0 = state_frames;
+  const int64_t view_ne1 = padded.tensor->ne[1];  // channels
+  const int64_t view_ne2 = padded.tensor->ne[2];  // batch
+  const size_t view_nb1 = padded.tensor->nb[1];
+  const size_t view_nb2 = padded.tensor->nb[2];
+  
+  ggml_tensor* next_state = ggml_view_3d(
+      ctx.ggml, padded.tensor, view_ne0, view_ne1, view_ne2,
+      view_nb1, view_nb2, state_offset);
+  next_state = ggml_cont(ctx.ggml, next_state);
+  state.queue_update(next_state);
+
+  return result;
+}
+
+core::TensorValue causal_conv1d_dw_stateful(core::ModuleBuildContext &ctx,
+                                            const core::TensorValue &input,
+                                            const VAEConv1dWeights &weights,
+                                            int stride, int padding,
+                                            int dilation,
+                                            AudioVAEStreamingDecodeState &state,
+                                            const std::string &state_name) {
+  const int left_pad = 2 * padding;
+  if (left_pad < 0) {
+    throw std::runtime_error(
+        "VoxCPM1 AudioVAE causal depthwise convolution padding is invalid");
+  }
+  const int state_frames = left_pad;
+  if (state_frames <= 0) {
+    return causal_conv1d(ctx, input, weights, stride, padding, dilation);
+  }
+
+  ggml_tensor* prev = state.take_slot(state_frames, input.shape.dims[1],
+                                      state_name);
+  if (!prev) {
+    throw std::runtime_error(
+        "VoxCPM1 AudioVAE streaming state slot not found: " + state_name);
+  }
+  // State has [state_frames, channels, 1], need to wrap with correct shape [1, channels, state_frames]
+  auto prev_val = core::wrap_tensor(
+      prev, core::TensorShape::from_dims({1, input.shape.dims[1], state_frames}),
+      GGML_TYPE_F32);
+  auto padded = modules::ConcatModule({2}).build(ctx, prev_val, input);
+
+auto result = modules::DepthwiseConv1dModule(
+                    {weights.out_channels, weights.kernel_size, stride, 0,
+                     dilation, weights.depthwise.bias.has_value()})
+              .build(ctx, padded, weights.depthwise);
+
+  // Extract next state from the end of padded input (like causal_conv1d_stateful)
+  const int64_t padded_frames = padded.shape.dims[2];
+  const int64_t state_offset = (padded_frames - state_frames) * padded.tensor->nb[0];
+  
+  // View: extract last state_frames frames from padded input
+  // Physical layout of padded.tensor is column-major [frames, channels, batch]
+  // Use source tensor's strides for correct channel dimension
+  const int64_t view_ne0 = state_frames;
+  const int64_t view_ne1 = padded.tensor->ne[1];  // channels
+  const int64_t view_ne2 = padded.tensor->ne[2];  // batch
+  const size_t view_nb1 = padded.tensor->nb[1];
+  const size_t view_nb2 = padded.tensor->nb[2];
+  
+  ggml_tensor* next_state = ggml_view_3d(
+      ctx.ggml, padded.tensor, view_ne0, view_ne1, view_ne2,
+      view_nb1, view_nb2, state_offset);
+  next_state = ggml_cont(ctx.ggml, next_state);
+  state.queue_update(next_state);
+
+  return result;
+}
+
+core::TensorValue causal_conv_transpose1d_stateful(
+    core::ModuleBuildContext &ctx, const core::TensorValue &input,
+    const VAEConvTranspose1dWeights &weights, int stride, int padding,
+    int output_padding, AudioVAEStreamingDecodeState &state,
+    const std::string &state_name) {
+  // For transpose conv, context frames = (kernel_size - 1) / stride
+  const int64_t ctx_frames = (weights.kernel_size - 1) / stride;
+  if (ctx_frames <= 0) {
+    return causal_conv_transpose1d(ctx, input, weights, stride);
+  }
+
+ggml_tensor* prev = state.take_slot(ctx_frames, input.shape.dims[1],
+                                       state_name);
+  if (!prev) {
+    throw std::runtime_error(
+        "VoxCPM1 AudioVAE streaming state slot not found: " + state_name);
+  }
+  // State has [ctx_frames, channels, 1], need to wrap with correct shape [1, channels, ctx_frames]
+  auto prev_val = core::wrap_tensor(
+      prev, core::TensorShape::from_dims({1, input.shape.dims[1], ctx_frames}),
+      GGML_TYPE_F32);
+  auto x_full = modules::ConcatModule({2}).build(ctx, prev_val, input);
+
+  auto full = modules::ConvTranspose1dModule(
+                  {weights.in_channels, weights.out_channels, weights.kernel_size,
+                   stride, 0, 1, weights.conv.bias.has_value()})
+              .build(ctx, x_full, weights.conv);
+
+  // Use correct conv_transpose1d output frames formula
+  // (input_frames - 1) * stride + dilation * (kernel_size - 1) + 1
+  // Here dilation=1, padding=0 (in the module config)
+  const int64_t full_frames = (x_full.shape.dims[2] - 1) * stride + (weights.kernel_size - 1) + 1;
+  auto view = ggml_view_3d(ctx.ggml, full.tensor, full_frames,
+                           weights.out_channels, 1, full.tensor->nb[1],
+                           full.tensor->nb[2], 0);
+  auto result = core::wrap_tensor(
+      ggml_cont(ctx.ggml, view),
+      core::TensorShape::from_dims({1, weights.out_channels, full_frames}),
+      GGML_TYPE_F32);
+
+  // Crop: left = ctx_frames * stride, right = padding * 2 - output_padding
+  const int64_t crop_left = ctx_frames * stride;
+  const int crop_right = padding * 2 - output_padding;
+  if (crop_left > 0 || crop_right > 0) {
+    result = modules::SliceModule(
+                 {2, static_cast<int64_t>(crop_left),
+                  full_frames - crop_left - crop_right})
+             .build(ctx, result);
+  }
+
+  const int64_t state_offset = (x_full.shape.dims[2] - ctx_frames) * x_full.tensor->nb[0];
+  // View strides: use source tensor's strides for correct channel dimension
+  const int64_t view_ne0 = ctx_frames;
+  const int64_t view_ne1 = x_full.tensor->ne[1];
+  const int64_t view_ne2 = x_full.tensor->ne[2];
+  const size_t view_nb1 = x_full.tensor->nb[1];
+  const size_t view_nb2 = x_full.tensor->nb[2];
+  ggml_tensor* next_state = ggml_view_3d(
+      ctx.ggml, x_full.tensor, view_ne0, view_ne1, view_ne2,
+      view_nb1, view_nb2, state_offset);
+  next_state = ggml_cont(ctx.ggml, next_state);
+  state.queue_update(next_state);
+
+  return result;
+}
+
+core::TensorValue residual_unit_stateful(core::ModuleBuildContext &ctx,
+                                         const core::TensorValue &input,
+                                         const VAEResidualUnitWeights &weights,
+                                         int dilation,
+                                         AudioVAEStreamingDecodeState &state,
+                                         const std::string &state_prefix) {
+  const int padding = static_cast<int>(((kResidualKernel - 1) * dilation) / 2);
+  auto hidden = snake_exact(ctx, input, weights.snake1, input.shape.dims[1]);
+  hidden = causal_conv1d_dw_stateful(ctx, hidden, weights.conv1, 1, padding,
+                                     dilation, state,
+                                     state_prefix + ".conv1");
+  hidden = snake_exact(ctx, hidden, weights.snake2, input.shape.dims[1]);
+  hidden = causal_conv1d(ctx, hidden, weights.conv2, 1, 0, 1);
+  return modules::AddModule{}.build(ctx, input, hidden);
+}
+
+core::TensorValue decoder_block_stateful(core::ModuleBuildContext &ctx,
+                                         const core::TensorValue &input,
+                                         const VAEDecoderBlockWeights &weights,
+                                         AudioVAEStreamingDecodeState &state,
+                                         const std::string &state_prefix) {
+  auto hidden =
+      apply_sr_condition(ctx, input, weights.sr_cond, weights.input_channels);
+  hidden = snake_exact(ctx, hidden, weights.snake, weights.input_channels);
+  hidden = causal_conv_transpose1d_stateful(
+      ctx, hidden, weights.upsample, weights.stride,
+      static_cast<int>(std::ceil(weights.stride / 2.0f)), weights.stride % 2,
+      state, state_prefix + ".transpose");
+  hidden = residual_unit_stateful(ctx, hidden, weights.residual_units[0], 1,
+                                  state, state_prefix + ".res0");
+  hidden = residual_unit_stateful(ctx, hidden, weights.residual_units[1], 3,
+                                  state, state_prefix + ".res1");
+  hidden = residual_unit_stateful(ctx, hidden, weights.residual_units[2], 9,
+                                  state, state_prefix + ".res2");
+  return hidden;
+}
+
 } // namespace
 
 class VoxCPM1AudioVAEDecoderRuntime::Impl {
@@ -626,7 +1001,8 @@ public:
         execution_context_(execution_context), config_(config),
         weights_(load_vae_weights(*assets_, execution_context_,
                                   config_.weight_context_bytes,
-                                  config_.weight_storage_type)) {
+                                  config_.weight_storage_type)),
+        decoder_stride_(product(assets_->config.audio_vae.decoder_rates)) {
     if (config_.latent_frame_capacity < 0) {
       throw std::runtime_error(
           "VoxCPM1 AudioVAE latent frame capacity must be non-negative");
@@ -715,7 +1091,218 @@ public:
 
   void release_encoder_graph() { release_encoder_graph_impl(); }
 
+  // Streaming decode support
+  bool supports_streaming_decode() const {
+    const core::BackendType t = execution_context_.backend_type();
+    return t == core::BackendType::Cpu || t == core::BackendType::Cuda ||
+           t == core::BackendType::Hip;
+  }
+
+  bool initialize_streaming_decode_state(AudioVAEStreamingDecodeState& state) {
+    if (!supports_streaming_decode()) {
+      return false;
+    }
+
+    std::vector<AudioVAEStreamingDecodeState::SlotSpec> specs;
+    specs.reserve(2 + weights_.decoder_blocks.size() * 4);
+
+    // decoder.model.0 depthwise (padding=3, so state_frames=6)
+    specs.push_back(AudioVAEStreamingDecodeState::SlotSpec{
+        6,
+        weights_.decoder_first_depthwise.out_channels,
+        "decoder.model0.depthwise"});
+
+    for (size_t i = 0; i < weights_.decoder_blocks.size(); ++i) {
+      const VAEDecoderBlockWeights& block = weights_.decoder_blocks[i];
+      const int stride = block.stride;
+      const std::string prefix = "decoder.block" + std::to_string(i);
+      const int64_t transpose_ctx = (block.upsample.kernel_size - 1) / stride;
+      if (transpose_ctx > 0) {
+        specs.push_back(AudioVAEStreamingDecodeState::SlotSpec{
+            transpose_ctx,
+            block.upsample.in_channels,
+            prefix + ".transpose"});
+      }
+
+      // Residual units: conv1 is depthwise with different dilations
+      specs.push_back(AudioVAEStreamingDecodeState::SlotSpec{
+          6,
+          block.residual_units[0].conv1.out_channels,
+          prefix + ".res0.conv1"});
+      specs.push_back(AudioVAEStreamingDecodeState::SlotSpec{
+          18,
+          block.residual_units[1].conv1.out_channels,
+          prefix + ".res1.conv1"});
+      specs.push_back(AudioVAEStreamingDecodeState::SlotSpec{
+          54,
+          block.residual_units[2].conv1.out_channels,
+          prefix + ".res2.conv1"});
+    }
+
+    // decoder.final.conv (padding=3, so state_frames=6)
+    specs.push_back(AudioVAEStreamingDecodeState::SlotSpec{
+        6,
+        weights_.decoder_final_conv.in_channels,
+        "decoder.final.conv"});
+
+    // Drop any previously built graph so it gets rebuilt against the new state
+    release_streaming_decoder_graph();
+    return state.initialize(specs, execution_context_);
+  }
+
+  runtime::AudioBuffer decode_streaming_step(
+      const std::vector<float>& patch_features,
+      AudioVAEStreamingDecodeState& state) {
+    const auto &vae = assets_->config.audio_vae;
+    const int64_t latent_frames = assets_->config.patch_size;
+    const int64_t expected = latent_frames * vae.latent_dim;
+    if (static_cast<int64_t>(patch_features.size()) != expected) {
+      throw std::runtime_error(
+          "VoxCPM1 AudioVAE streaming patch feature size mismatch");
+    }
+
+    // Build streaming decode graph (once) against the runtime state
+    if (!streaming_graph_) {
+      state.begin_graph();
+      build_streaming_decoder_graph(state);
+    }
+
+    // Prepare input (single patch, latent_dim channels, patch_size frames)
+    std::vector<float> input(static_cast<size_t>(vae.latent_dim * latent_frames), 0.0F);
+    for (int64_t t = 0; t < latent_frames; ++t) {
+      for (int64_t c = 0; c < vae.latent_dim; ++c) {
+        input[static_cast<size_t>(c * latent_frames + t)] =
+            patch_features[static_cast<size_t>(t * vae.latent_dim + c)];
+      }
+    }
+    ggml_backend_tensor_set(streaming_input_, input.data(), 0,
+                            input.size() * sizeof(float));
+
+    core::set_backend_threads(execution_context_.backend(),
+                              std::max(1, execution_context_.config().threads));
+    const ggml_status status =
+        core::compute_backend_graph(execution_context_.backend(), streaming_graph_);
+    ggml_backend_synchronize(execution_context_.backend());
+    if (status != GGML_STATUS_SUCCESS) {
+      throw std::runtime_error(
+          "VoxCPM1 AudioVAE streaming decoder graph compute failed");
+    }
+
+    // Publish state updates
+    state.publish_updates(execution_context_);
+
+    // Get output (decoder_stride_ samples per latent frame)
+    const int64_t sample_count = latent_frames * decoder_stride_;
+    std::vector<float> full(static_cast<size_t>(streaming_output_frames_), 0.0F);
+    ggml_backend_tensor_get(streaming_output_, full.data(), 0,
+                            full.size() * sizeof(float));
+
+    runtime::AudioBuffer audio;
+    audio.sample_rate = vae.output_sample_rate;
+    audio.channels = 1;
+    audio.samples.assign(full.begin(),
+                         full.begin() + static_cast<std::ptrdiff_t>(sample_count));
+    return audio;
+  }
+
 private:
+  // Add streaming decode graph members
+  std::unique_ptr<ggml_context, GgmlContextDeleter> streaming_ctx_;
+  ggml_cgraph* streaming_graph_ = nullptr;
+  ggml_gallocr_t streaming_gallocr_ = nullptr;
+  ggml_tensor* streaming_input_ = nullptr;
+  ggml_tensor* streaming_output_ = nullptr;
+  int64_t streaming_output_frames_ = 0;
+
+  void build_streaming_decoder_graph(AudioVAEStreamingDecodeState& state) {
+    const auto &vae = assets_->config.audio_vae;
+    const int64_t latent_frames = assets_->config.patch_size;
+    if (latent_frames <= 0) {
+      throw std::runtime_error(
+          "VoxCPM1 AudioVAE patch size must be positive for streaming");
+    }
+    if (config_.graph_context_bytes == 0) {
+      throw std::runtime_error(
+          "VoxCPM1 AudioVAE graph context bytes must be non-zero");
+    }
+    streaming_output_frames_ = latent_frames * decoder_stride_;
+
+    ggml_init_params params{config_.graph_context_bytes, nullptr, true};
+    streaming_ctx_.reset(ggml_init(params));
+    if (!streaming_ctx_) {
+      throw std::runtime_error(
+          "failed to initialize VoxCPM1 AudioVAE streaming decoder graph context");
+    }
+
+    core::ModuleBuildContext ctx{streaming_ctx_.get(),
+                                 "voxcpm1.audiovae.streaming_decoder",
+                                 execution_context_.backend_type()};
+
+    auto hidden = core::make_tensor(
+        ctx, GGML_TYPE_F32,
+        core::TensorShape::from_dims({1, vae.latent_dim, latent_frames}));
+    streaming_input_ = hidden.tensor;
+    ggml_set_input(streaming_input_);
+
+    // decoder.model.0 depthwise (stateful)
+    hidden = causal_conv1d_dw_stateful(
+        ctx, hidden, weights_.decoder_first_depthwise, 1, 3, 1,
+        state, "decoder.model0.depthwise");
+    // decoder.model.1 pointwise (no state needed)
+    hidden = causal_conv1d(ctx, hidden, weights_.decoder_first_pointwise, 1, 0, 1);
+
+    // Decoder blocks (stateful)
+    for (size_t i = 0; i < weights_.decoder_blocks.size(); ++i) {
+      const auto& block = weights_.decoder_blocks[i];
+      const std::string prefix = "decoder.block" + std::to_string(i);
+      hidden = decoder_block_stateful(
+          ctx, hidden, block, state, prefix);
+    }
+
+    // Final layers
+    hidden = snake_exact(ctx, hidden, weights_.decoder_final_snake,
+                         hidden.shape.dims[1]);
+    hidden = causal_conv1d_stateful(
+        ctx, hidden, weights_.decoder_final_conv, 1, 3, 1, 0,
+        state, "decoder.final.conv");
+    hidden = modules::TanhModule{}.build(ctx, hidden);
+
+    streaming_output_ = hidden.tensor;
+    ggml_set_output(streaming_output_);
+
+    streaming_graph_ = ggml_new_graph_custom(streaming_ctx_.get(), 65536, false);
+    ggml_build_forward_expand(streaming_graph_, streaming_output_);
+
+    state.build_update_graph(streaming_graph_);
+
+    streaming_gallocr_ = ggml_gallocr_new(
+        ggml_backend_get_default_buffer_type(execution_context_.backend()));
+    if (!streaming_gallocr_ || !ggml_gallocr_reserve(streaming_gallocr_, streaming_graph_) ||
+        !ggml_gallocr_alloc_graph(streaming_gallocr_, streaming_graph_)) {
+      release_streaming_decoder_graph();
+      throw std::runtime_error(
+          "failed to allocate VoxCPM1 AudioVAE streaming decoder graph");
+    }
+  }
+
+  void release_streaming_decoder_graph() {
+    if (streaming_graph_) {
+      core::release_backend_graph_resources(execution_context_.backend(), streaming_graph_);
+    }
+    if (streaming_gallocr_) {
+      ggml_gallocr_free(streaming_gallocr_);
+      streaming_gallocr_ = nullptr;
+    }
+    streaming_graph_ = nullptr;
+    streaming_input_ = nullptr;
+    streaming_output_ = nullptr;
+    streaming_ctx_.reset();
+    streaming_output_frames_ = 0;
+  }
+
+
+
+  // The rest of the members...
   struct EncodedFeatures {
     std::vector<float> features;
     int64_t patches = 0;
@@ -898,7 +1485,6 @@ private:
       throw std::runtime_error(
           "VoxCPM1 AudioVAE graph context bytes must be non-zero");
     }
-    decoder_stride_ = product(vae.decoder_rates);
     output_frames_ = latent_frame_capacity * decoder_stride_;
     ggml_init_params params{config_.graph_context_bytes, nullptr, true};
     ctx_.reset(ggml_init(params));
@@ -1048,6 +1634,21 @@ VoxCPM1AudioVAEDecoderRuntime::~VoxCPM1AudioVAEDecoderRuntime() = default;
 runtime::AudioBuffer VoxCPM1AudioVAEDecoderRuntime::decode_features(
     const std::vector<float> &features, int64_t patches) {
   return impl_->decode_features(features, patches);
+}
+
+bool VoxCPM1AudioVAEDecoderRuntime::supports_streaming_decode() const {
+  return impl_->supports_streaming_decode();
+}
+
+bool VoxCPM1AudioVAEDecoderRuntime::initialize_streaming_decode_state(
+    AudioVAEStreamingDecodeState &state) {
+  return impl_->initialize_streaming_decode_state(state);
+}
+
+runtime::AudioBuffer VoxCPM1AudioVAEDecoderRuntime::decode_streaming_step(
+    const std::vector<float> &patch_features,
+    AudioVAEStreamingDecodeState &state) {
+  return impl_->decode_streaming_step(patch_features, state);
 }
 
 VoxCPM1EncodedPrompt VoxCPM1AudioVAEDecoderRuntime::encode_prompt_audio(

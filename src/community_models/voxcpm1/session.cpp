@@ -404,10 +404,23 @@ VoxCPM1SessionBase::run_streaming_request(
   merged.channels = 1;
   double decoder_ms = 0.0;
   size_t emitted_chunks = 0;
+
+  // Carry AudioVAE decoder convolution state across streamed patches so the
+  // boundary between consecutive chunks stays continuous instead of resetting.
+  bool use_streaming_decode = decoder_->supports_streaming_decode();
+  AudioVAEStreamingDecodeState streaming_state;
+  if (use_streaming_decode) {
+    use_streaming_decode =
+        decoder_->initialize_streaming_decode_state(streaming_state);
+  }
+
   auto emit_chunk = [&](const VoxCPM1StreamingChunk &chunk) {
     const auto decoder_start = Clock::now();
-    auto audio = decoder_->decode_features(chunk.decode_features,
-                                           chunk.decode_patches);
+    auto audio = use_streaming_decode
+        ? decoder_->decode_streaming_step(chunk.decode_features,
+                                          streaming_state)
+        : decoder_->decode_features(chunk.decode_features,
+                                    chunk.decode_patches);
     decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
     if (emitted_chunks == 0) {
       merged.sample_rate = audio.sample_rate;
