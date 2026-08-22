@@ -12,18 +12,18 @@ original safetensors checkpoints.
 
 Examples:
   # unified checkpoint (default package)
-  python3 tools/convert_f5_tts.py \
+  python3 tools/community_models/convert_f5_tts.py \
       --checkpoint /models/Habibi-TTS/Unified \
       --vocos /models/vocos-mel-24khz/vocos.safetensors \
       --converter build/bin/audiocpp_gguf --name habibi-unified
 
   # every specialized dialect checkpoint under a Habibi-TTS root
-  python3 tools/convert_f5_tts.py --checkpoint-root /models/Habibi-TTS \
+  python3 tools/community_models/convert_f5_tts.py --checkpoint-root /models/Habibi-TTS \
       --vocos /models/vocos-mel-24khz/vocos.safetensors \
       --converter build/bin/audiocpp_gguf
 
   # standalone vocoder package
-  python3 tools/convert_f5_tts.py --vocos-only \
+  python3 tools/community_models/convert_f5_tts.py --vocos-only \
       --vocos /models/vocos-mel-24khz/vocos.safetensors \
       --converter build/bin/audiocpp_gguf
 """

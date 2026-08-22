@@ -631,6 +631,49 @@
       ]
     },
     {
+      "id": "magpie_tts_warmed_multilingual",
+      "coverage": "MagpieTTS one offline session covering warmup, English Sofia voice, German Jason voice, text frontend selection, decoder/local transformer, CFG sampling, and codec decode.",
+      "family": "magpie_tts",
+      "model": "models/MagpieTTS-Multilingual-357M-GGUF",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup_short_english_sofia",
+          "text": "The warmup request checks that Magpie speaks clearly.",
+          "language": "en",
+          "voice_id": "Sofia",
+          "seed": 9100,
+          "temperature": 0.6,
+          "top_k": 80,
+          "guidance_scale": 2.5
+        },
+        {
+          "id": "english_sofia_status_update",
+          "text": "The production coordinator reviewed the overnight audio report, confirmed that the backup recorder stayed online, and asked the team to send one clear status update before the inspection window opened.",
+          "language": "en",
+          "voice_id": "Sofia",
+          "seed": 9101,
+          "temperature": 0.6,
+          "top_k": 80,
+          "guidance_scale": 2.5
+        },
+        {
+          "id": "german_jason_operations_note",
+          "text": "Das Team \u00fcberpr\u00fcfte am Morgen die Aufzeichnungen, best\u00e4tigte die stabile Verbindung und bereitete einen kurzen Bericht f\u00fcr die n\u00e4chste Produktionsbesprechung vor.",
+          "language": "de",
+          "voice_id": "Jason",
+          "seed": 9102,
+          "temperature": 0.6,
+          "top_k": 80,
+          "guidance_scale": 2.5
+        }
+      ]
+    },
+    {
       "id": "miocodec_voice_conversion",
       "coverage": "MioCodec voice conversion path, WavLM feature extraction, content/global encoders, wave decoder, and waveform reconstruction",
       "family": "miocodec",
@@ -952,6 +995,100 @@
           "options": {
             "caption": "\u4f59\u88d5\u306e\u3042\u308b\u5927\u4eba\u306e\u7537\u6027\u3002\u89aa\u3057\u3044\u76f8\u624b\u306b\u5bfe\u3057\u3066\u3001\u304f\u3060\u3051\u305f\u96f0\u56f2\u6c17\u3067\u5446\u308c\u306a\u304c\u3089\u3082\u697d\u3057\u305d\u3046\u306b\u8a71\u3057\u3066\u3044\u308b\u3002",
             "no_ref": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "irodori_tts_v4_no_reference_tts",
+      "coverage": "Irodori-TTS v4 no-reference Japanese TTS using the GGUF package",
+      "family": "irodori_tts",
+      "model": "models/Irodori-TTS-v4-Small-GGUF",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "no_reference",
+          "text": "\u672c\u65e5\u306f\u304a\u8d8a\u3057\u3044\u305f\u3060\u304d\u3001\u8aa0\u306b\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\u3069\u3046\u305e\u3054\u3086\u3063\u304f\u308a\u304a\u904e\u3054\u3057\u304f\u3060\u3055\u3044\u3002",
+          "language": "ja",
+          "seed": 1234,
+          "options": {
+            "no_ref": true,
+            "num_inference_steps": 24
+          }
+        }
+      ]
+    },
+    {
+      "id": "irodori_tts_v4_reference_clone",
+      "coverage": "Irodori-TTS v4 reference-audio voice clone using the GGUF package",
+      "family": "irodori_tts",
+      "model": "models/Irodori-TTS-v4-Small-GGUF",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "clone_reference",
+          "text": "\u3069\u3046\u3057\u3066\u3082\u3063\u3068\u65e9\u304f\u6559\u3048\u3066\u304f\u308c\u306a\u304b\u3063\u305f\u306e\uff1f\u79c1\u3001\u305a\u3063\u3068\u5f85\u3063\u3066\u305f\u306e\u306b\u3002",
+          "language": "ja",
+          "voice_ref": "models/Irodori-TTS-v4-Small/samples/clone_ref1.wav",
+          "seed": 1234,
+          "options": {
+            "num_inference_steps": 24
+          }
+        }
+      ]
+    },
+    {
+      "id": "irodori_tts_v4_caption_voice_design",
+      "coverage": "Irodori-TTS v4 caption-conditioned no-reference voice design using the GGUF package",
+      "family": "irodori_tts",
+      "model": "models/Irodori-TTS-v4-Small-GGUF",
+      "task": "vdes",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "caption_only",
+          "text": "\u3059\u307f\u307e\u305b\u3093\uff01\u3053\u306e\u8fd1\u304f\u306b\u30b3\u30f3\u30d3\u30cb\u3063\u3066\u3042\u308a\u307e\u3059\u304b\uff1f\u3061\u3087\u3063\u3068\u6025\u3044\u3067\u3066\u3001\u9053\u306b\u8ff7\u3063\u3061\u3083\u3063\u305f\u307f\u305f\u3044\u3067\u3002",
+          "language": "ja",
+          "seed": 1234,
+          "options": {
+            "caption": "\u82e5\u3044\u5973\u6027\u304c\u3001\u614c\u3066\u305f\u69d8\u5b50\u3067\u65e9\u53e3\u306b\u8a71\u3057\u3066\u3044\u308b\u3002\u7126\u308a\u3068\u4e0d\u5b89\u304c\u58f0\u306b\u306b\u3058\u3093\u3067\u3044\u308b\u3002",
+            "no_ref": true,
+            "num_inference_steps": 24
+          }
+        }
+      ]
+    },
+    {
+      "id": "irodori_tts_v4_reference_caption_voice_design",
+      "coverage": "Irodori-TTS v4 combined reference-audio and caption voice design using the GGUF package",
+      "family": "irodori_tts",
+      "model": "models/Irodori-TTS-v4-Small-GGUF",
+      "task": "vdes",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "reference_caption",
+          "text": "\u3069\u3046\u3057\u3066\u3082\u3063\u3068\u65e9\u304f\u6559\u3048\u3066\u304f\u308c\u306a\u304b\u3063\u305f\u306e\uff1f\u79c1\u3001\u305a\u3063\u3068\u5f85\u3063\u3066\u305f\u306e\u306b\u3002",
+          "language": "ja",
+          "voice_ref": "models/Irodori-TTS-v4-Small/samples/clone_ref1.wav",
+          "seed": 1234,
+          "options": {
+            "caption": "\u6df1\u304f\u50b7\u3064\u304d\u3001\u4eca\u306b\u3082\u6ce3\u304d\u51fa\u3057\u305d\u3046\u306a\u69d8\u5b50\u3002\u58f0\u304c\u9707\u3048\u3066\u304a\u308a\u3001\u60b2\u75db\u306a\u30c8\u30fc\u30f3\u3067\u5f31\u3005\u3057\u304f\u8a71\u3059\u3002",
+            "num_inference_steps": 24
           }
         }
       ]

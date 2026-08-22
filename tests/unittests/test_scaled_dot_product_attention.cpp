@@ -10,6 +10,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -35,6 +36,28 @@ struct RunResult {
     std::vector<float> values;
     double compute_ms = 0.0;
 };
+
+const char * backend_name(engine::core::BackendType backend_type) {
+    switch (backend_type) {
+        case engine::core::BackendType::Cpu: return "cpu";
+        case engine::core::BackendType::Cuda: return "cuda";
+        case engine::core::BackendType::Hip: return "hip";
+        case engine::core::BackendType::Vulkan: return "vulkan";
+        case engine::core::BackendType::Metal: return "metal";
+        case engine::core::BackendType::BestAvailable: return "best";
+    }
+    return "unknown";
+}
+
+bool backend_available(engine::core::BackendType backend_type) {
+    try {
+        auto * backend = engine::core::init_backend({backend_type, 0, 8});
+        ggml_backend_free(backend);
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
 
 struct RepeatCase {
     const char * name;
@@ -99,9 +122,15 @@ DiffStats diff_stats(const std::vector<float> & lhs, const std::vector<float> & 
 
 class SdpaRunner {
 public:
-    SdpaRunner(const SdpaCase & test_case, engine::modules::ScaledDotProductAttentionLowering lowering)
-        : test_case_(test_case) {
-        backend_ = engine::core::init_backend({engine::core::BackendType::Cuda, 0, 8});
+    SdpaRunner(
+        const SdpaCase & test_case,
+        engine::core::BackendType backend_type,
+        engine::modules::ScaledDotProductAttentionLowering lowering,
+        bool use_attention_mask)
+        : test_case_(test_case),
+          backend_type_(backend_type),
+          use_attention_mask_(use_attention_mask) {
+        backend_ = engine::core::init_backend({backend_type_, 0, 8});
         ggml_init_params params{};
         params.mem_size = kGraphBytes;
         params.mem_buffer = nullptr;
@@ -114,7 +143,7 @@ public:
         ctx_.module_instance_name = lowering == engine::modules::ScaledDotProductAttentionLowering::Flash
             ? "sdpa.flash"
             : "sdpa.explicit";
-        ctx_.backend_type = engine::core::BackendType::Cuda;
+        ctx_.backend_type = backend_type_;
 
         q_ = engine::core::make_tensor(
             ctx_,
@@ -143,21 +172,24 @@ public:
                 test_case.key_steps,
                 test_case.head_dim,
             }));
-        mask_ = engine::core::make_tensor(
-            ctx_,
-            GGML_TYPE_F16,
-            engine::core::TensorShape::from_dims({
-                test_case.batch,
-                1,
-                test_case.query_steps,
-                test_case.key_steps,
-            }));
+        if (use_attention_mask_) {
+            mask_ = engine::core::make_tensor(
+                ctx_,
+                GGML_TYPE_F16,
+                engine::core::TensorShape::from_dims({
+                    test_case.batch,
+                    1,
+                    test_case.query_steps,
+                    test_case.key_steps,
+                }));
+        }
 
         output_ = engine::modules::ScaledDotProductAttentionModule({
             test_case.head_dim,
             lowering,
             GGML_PREC_F32,
-        }).build(ctx_, q_, k_, v_, mask_);
+            use_attention_mask_ ? engine::modules::AttentionCausality::NonCausal : engine::modules::AttentionCausality::Causal,
+        }).build(ctx_, q_, k_, v_, use_attention_mask_ ? std::optional<engine::core::TensorValue>(mask_) : std::nullopt);
 
         graph_ = ggml_new_graph_custom(ggml_, kGraphNodes, false);
         ggml_build_forward_expand(graph_, output_.tensor);
@@ -187,7 +219,9 @@ public:
         engine::core::write_tensor_f32(q_, q_values);
         engine::core::write_tensor_f32(k_, k_values);
         engine::core::write_tensor_f32(v_, v_values);
-        engine::core::write_tensor_f16(mask_, mask_values);
+        if (use_attention_mask_) {
+            engine::core::write_tensor_f16(mask_, mask_values);
+        }
         const auto start = std::chrono::steady_clock::now();
         const ggml_status status = ggml_backend_graph_compute(backend_, graph_);
         ggml_backend_synchronize(backend_);
@@ -205,6 +239,8 @@ public:
 
 private:
     SdpaCase test_case_;
+    engine::core::BackendType backend_type_ = engine::core::BackendType::Cpu;
+    bool use_attention_mask_ = false;
     ggml_backend_t backend_ = nullptr;
     ggml_backend_buffer_t buffer_ = nullptr;
     ggml_context * ggml_ = nullptr;
@@ -213,7 +249,7 @@ private:
     engine::core::TensorValue q_;
     engine::core::TensorValue k_;
     engine::core::TensorValue v_;
-    engine::core::TensorValue mask_;
+    engine::core::TensorValue mask_{};
     engine::core::TensorValue output_;
 };
 
@@ -276,8 +312,8 @@ engine::core::TensorValue current_4d_repeat_kv_heads(
         engine::core::TensorShape::from_dims({batch, kv_heads * repeats, steps, dim}));
 }
 
-void run_manual_repeat_parity_case(const RepeatCase & test_case) {
-    auto backend = engine::core::init_backend({engine::core::BackendType::Cuda, 0, 8});
+void run_manual_repeat_parity_case(const RepeatCase & test_case, engine::core::BackendType backend_type) {
+    auto backend = engine::core::init_backend({backend_type, 0, 8});
     ggml_init_params params{};
     params.mem_size = kGraphBytes;
     params.mem_buffer = nullptr;
@@ -290,7 +326,7 @@ void run_manual_repeat_parity_case(const RepeatCase & test_case) {
     engine::core::ModuleBuildContext ctx{};
     ctx.ggml = ggml;
     ctx.module_instance_name = "manual_repeat.parity";
-    ctx.backend_type = engine::core::BackendType::Cuda;
+    ctx.backend_type = backend_type;
 
     const auto input_shape = engine::core::TensorShape::from_dims({
         test_case.batch,
@@ -333,7 +369,7 @@ void run_manual_repeat_parity_case(const RepeatCase & test_case) {
     engine::core::read_tensor_f32_into(legacy.tensor, legacy_values);
     engine::core::read_tensor_f32_into(current.tensor, current_values);
     const auto stats = diff_stats(legacy_values, current_values);
-    std::cout << test_case.name
+    std::cout << backend_name(backend_type) << ' ' << test_case.name
               << " legacy_concat_vs_current_4d_repeat"
               << " max_abs=" << stats.max_abs
               << " mean_abs=" << stats.mean_abs
@@ -353,20 +389,28 @@ void run_manual_repeat_parity_case(const RepeatCase & test_case) {
     ggml_backend_free(backend);
 }
 
-void run_manual_repeat_parity_cases() {
+void run_manual_repeat_parity_cases(engine::core::BackendType backend_type) {
     const std::vector<RepeatCase> cases = {
         {"manual_repeat_kv_2x", 1, 2, 2, 5, 7},
         {"manual_repeat_kv_4x", 2, 1, 4, 3, 8},
         {"manual_repeat_kv_single", 1, 3, 1, 4, 5},
     };
     for (const auto & test_case : cases) {
-        run_manual_repeat_parity_case(test_case);
+        run_manual_repeat_parity_case(test_case, backend_type);
     }
 }
 
-void run_case(const SdpaCase & test_case) {
-    SdpaRunner explicit_runner(test_case, engine::modules::ScaledDotProductAttentionLowering::Explicit);
-    SdpaRunner flash_runner(test_case, engine::modules::ScaledDotProductAttentionLowering::Flash);
+void run_cuda_case(const SdpaCase & test_case) {
+    SdpaRunner explicit_runner(
+        test_case,
+        engine::core::BackendType::Cuda,
+        engine::modules::ScaledDotProductAttentionLowering::Explicit,
+        true);
+    SdpaRunner flash_runner(
+        test_case,
+        engine::core::BackendType::Cuda,
+        engine::modules::ScaledDotProductAttentionLowering::Flash,
+        true);
 
     double explicit_ms = 0.0;
     double flash_ms = 0.0;
@@ -390,7 +434,7 @@ void run_case(const SdpaCase & test_case) {
         explicit_ms += explicit_result.compute_ms;
         flash_ms += flash_result.compute_ms;
         const auto stats = diff_stats(explicit_result.values, flash_result.values);
-        std::cout << test_case.name << " round=" << round
+        std::cout << "cuda " << test_case.name << " round=" << round
                   << " explicit_ms=" << explicit_result.compute_ms
                   << " flash_ms=" << flash_result.compute_ms
                   << " max_abs=" << stats.max_abs
@@ -403,14 +447,67 @@ void run_case(const SdpaCase & test_case) {
             throw std::runtime_error(oss.str());
         }
     }
-    std::cout << test_case.name << " avg_explicit_ms=" << explicit_ms / kRounds
+    std::cout << "cuda " << test_case.name << " avg_explicit_ms=" << explicit_ms / kRounds
               << " avg_flash_ms=" << flash_ms / kRounds << "\n";
+}
+
+void run_cpu_case(const SdpaCase & test_case) {
+    SdpaRunner explicit_runner(
+        test_case,
+        engine::core::BackendType::Cpu,
+        engine::modules::ScaledDotProductAttentionLowering::Explicit,
+        false);
+    SdpaRunner per_head_runner(
+        test_case,
+        engine::core::BackendType::Cpu,
+        engine::modules::ScaledDotProductAttentionLowering::ExplicitCpuPerHead,
+        false);
+
+    double explicit_ms = 0.0;
+    double per_head_ms = 0.0;
+    for (int round = 0; round < kRounds; ++round) {
+        const auto q = make_patterned_f32(
+            static_cast<size_t>(test_case.batch * test_case.heads * test_case.query_steps * test_case.head_dim),
+            0.31F + static_cast<float>(round),
+            0.18F);
+        const auto k = make_patterned_f32(
+            static_cast<size_t>(test_case.batch * test_case.heads * test_case.key_steps * test_case.head_dim),
+            1.17F + static_cast<float>(round) * 0.37F,
+            0.16F);
+        const auto v = make_patterned_f32(
+            static_cast<size_t>(test_case.batch * test_case.heads * test_case.key_steps * test_case.head_dim),
+            2.03F + static_cast<float>(round) * 0.19F,
+            0.12F);
+        const std::vector<float> no_mask;
+
+        const auto explicit_result = explicit_runner.run(q, k, v, no_mask);
+        const auto per_head_result = per_head_runner.run(q, k, v, no_mask);
+        explicit_ms += explicit_result.compute_ms;
+        per_head_ms += per_head_result.compute_ms;
+        const auto stats = diff_stats(explicit_result.values, per_head_result.values);
+        std::cout << "cpu " << test_case.name << " round=" << round
+                  << " explicit_ms=" << explicit_result.compute_ms
+                  << " per_head_ms=" << per_head_result.compute_ms
+                  << " max_abs=" << stats.max_abs
+                  << " mean_abs=" << stats.mean_abs
+                  << " cosine=" << stats.cosine << "\n";
+        if (stats.max_abs > 1.0e-5F || stats.mean_abs > 1.0e-6 || stats.cosine < 0.999999) {
+            std::ostringstream oss;
+            oss << test_case.name << " SDPA CPU per-head mismatch: max_abs=" << stats.max_abs
+                << " mean_abs=" << stats.mean_abs << " cosine=" << stats.cosine;
+            throw std::runtime_error(oss.str());
+        }
+    }
+    std::cout << "cpu " << test_case.name << " avg_explicit_ms=" << explicit_ms / kRounds
+              << " avg_per_head_ms=" << per_head_ms / kRounds << "\n";
 }
 
 }  // namespace
 
 int main() try {
-    run_manual_repeat_parity_cases();
+    const bool has_cuda = backend_available(engine::core::BackendType::Cuda);
+    const auto backend_type = has_cuda ? engine::core::BackendType::Cuda : engine::core::BackendType::Cpu;
+    run_manual_repeat_parity_cases(backend_type);
 
     const std::vector<SdpaCase> cases = {
         {"moss_qwen_prefill_128", 1, 32, 128, 128, 128, true},
@@ -418,7 +515,11 @@ int main() try {
         {"moss_depth_step_12", 1, 32, 12, 12, 80, true},
     };
     for (const auto & test_case : cases) {
-        run_case(test_case);
+        if (has_cuda) {
+            run_cuda_case(test_case);
+        } else {
+            run_cpu_case(test_case);
+        }
     }
     return 0;
 } catch (const std::exception & error) {

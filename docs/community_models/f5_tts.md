@@ -77,11 +77,11 @@ and make sure the transcript matches, otherwise the transcript tail leaks into t
 
 ### Converting checkpoints to GGUF
 
-`tools/convert_f5_tts.py` wraps `audiocpp_gguf` and produces one self-contained GGUF per
+`tools/community_models/convert_f5_tts.py` wraps `audiocpp_gguf` and produces one self-contained GGUF per
 checkpoint (`transformer` + `vocos` namespaces) plus the standalone vocoder package:
 
 ```bash
-python3 tools/convert_f5_tts.py --checkpoint-root /models/Habibi-TTS \
+python3 tools/community_models/convert_f5_tts.py --checkpoint-root /models/Habibi-TTS \
     --vocos /models/vocos-mel-24khz/vocos.safetensors \
     --converter build/bin/audiocpp_gguf --output-dir gguf-packages
 ```

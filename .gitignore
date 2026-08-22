@@ -23,6 +23,7 @@ __pycache__/
 /resources/
 /patches/
 /target_proj/
+/tools_local/
 /nocommit/
 /perf/
 /logs/

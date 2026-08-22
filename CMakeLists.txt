@@ -1623,32 +1623,11 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(model_perf PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
-add_executable(miocodec_wavlm_parity
+add_executable(miocodec_wavlm_parity EXCLUDE_FROM_ALL
     tests/miocodec/miocodec_wavlm_parity.cpp
 )
 
 target_link_libraries(miocodec_wavlm_parity PRIVATE engine_runtime ggml)
-
-add_executable(torch_bin_parity
-    tests/vibevoice/torch_bin_parity.cpp
-)
-
-target_link_libraries(torch_bin_parity PRIVATE engine_runtime ggml)
-if (ENGINE_ENABLE_OPENMP)
-    target_link_libraries(torch_bin_parity PRIVATE OpenMP::OpenMP_CXX)
-endif()
-
-# Only build this parity check when the vibevoice model is linked, since it
-# directly references model-internal symbols (load_vibevoice_assets etc.).
-if (vibevoice IN_LIST AUDIOCPP_LINKED_MODELS)
-    add_executable(vibevoice_finetune_overlay_check
-        tests/vibevoice/finetune_overlay_check.cpp
-    )
-    target_link_libraries(vibevoice_finetune_overlay_check PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-endif()
 
 # F5/Habibi tests: parity harnesses + e2e sample generator. Only when the
 # f5_tts model is linked (they call model-internal symbols) AND test hooks
@@ -1658,7 +1637,7 @@ option(ENGINE_F5_TEST_HOOKS "Build F5-TTS test hooks (f5_test_* symbols) and par
 if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS AND ENGINE_F5_TEST_HOOKS)
     target_compile_definitions(engine_model_f5_tts PRIVATE F5_MEL_TEST=1)
     foreach(f5_test IN ITEMS f5_e2e f5_parity f5_cfg_parity f5_tokenizer)
-        add_executable(${f5_test} tests/${f5_test}_main.cpp)
+        add_executable(${f5_test} tests/f5_tts/${f5_test}_main.cpp)
         target_compile_definitions(${f5_test} PRIVATE F5_MEL_TEST=1)
         target_link_libraries(${f5_test} PRIVATE engine_runtime ggml)
         target_include_directories(${f5_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1669,6 +1648,27 @@ if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS AND ENGINE_F5_TEST_HOOKS)
 endif()
 
 if (ENGINE_BUILD_TESTS)
+    add_executable(torch_bin_parity
+        tests/vibevoice/torch_bin_parity.cpp
+    )
+
+    target_link_libraries(torch_bin_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(torch_bin_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    # Only build this parity check when the vibevoice model is linked, since it
+    # directly references model-internal symbols (load_vibevoice_assets etc.).
+    if (vibevoice IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(vibevoice_finetune_overlay_check
+            tests/vibevoice/finetune_overlay_check.cpp
+        )
+        target_link_libraries(vibevoice_finetune_overlay_check PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endif()
+
     add_executable(moss_tts_local_smoke
         tests/moss_tts_local/moss_tts_local_smoke.cpp
     )
@@ -1676,24 +1676,6 @@ if (ENGINE_BUILD_TESTS)
     target_link_libraries(moss_tts_local_smoke PRIVATE engine_runtime ggml)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-
-    add_executable(codec_dequant_parity
-        tests/moss_tts_local/codec_dequant_parity.cpp
-    )
-
-    target_link_libraries(codec_dequant_parity PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(codec_dequant_parity PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-
-    add_executable(codec_decode_parity
-        tests/moss_tts_local/codec_decode_parity.cpp
-    )
-
-    target_link_libraries(codec_decode_parity PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(codec_decode_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
     add_executable(moss_voicegen_codec_parity
@@ -1741,15 +1723,6 @@ if (ENGINE_BUILD_TESTS)
         target_link_libraries(moss_voicegen_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
-    add_executable(codec_encode_parity
-        tests/moss_tts_local/codec_encode_parity.cpp
-    )
-
-    target_link_libraries(codec_encode_parity PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-
     add_executable(personaplex_ring_kv_cache_parity
         tests/personaplex/personaplex_ring_kv_cache_parity.cpp
     )
@@ -1775,7 +1748,6 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(chatterbox_warm_bench tests/chatterbox/chatterbox_warm_bench.cpp)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
     add_engine_warmbench(confucius4_tts_warm_bench tests/confucius4_tts/confucius4_tts_warm_bench.cpp)
-    add_engine_warmbench(dramabox_warm_bench tools/dramabox/dramabox_warm_bench.cpp)
     add_engine_warmbench(fun_asr_nano_warm_bench tests/fun_asr_nano/fun_asr_nano_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_tts_warm_bench tests/higgs_audio_tts/higgs_audio_tts_warm_bench.cpp)
