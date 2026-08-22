@@ -94,6 +94,12 @@
         "type": "string",
         "description": "Text prompt for prompt-continuation voice cloning.",
         "required": false
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Alias for prompt_text; text prompt for prompt-continuation voice cloning.",
+        "required": false
       }
     ],
     "session": [
