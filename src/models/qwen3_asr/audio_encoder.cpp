@@ -498,7 +498,7 @@ public:
     }
 
     ~Qwen3ASRAudioEncoderGraph() {
-        engine::core::release_backend_graph_resources(backend_, graph_);
+        engine::core::release_backend_graph_resources(backend_, graph_, true);
     }
 
     bool matches(const Qwen3ASRAudioEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads) const {

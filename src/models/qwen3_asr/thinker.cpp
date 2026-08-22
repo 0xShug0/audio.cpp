@@ -392,7 +392,7 @@ public:
     }
 
     ~PrefillGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
     }
 
     bool matches(const ThinkerWeightsRuntime & runtime, int64_t prompt_steps, int64_t audio_tokens) const {
@@ -541,7 +541,7 @@ public:
     }
 
     ~PromptClassificationGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
     }
 
     bool matches(const ThinkerWeightsRuntime & runtime, int64_t prompt_steps, int64_t audio_tokens) const {
@@ -671,7 +671,7 @@ public:
     }
 
     ~DecodeGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
