@@ -12,6 +12,9 @@ const config = {
     output: {
       bundleStrategy: 'inline'
     },
+    router: {
+      type: 'hash'
+    },
     paths: {
       relative: true
     }
