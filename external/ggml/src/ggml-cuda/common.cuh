@@ -1131,6 +1131,9 @@ struct ggml_cuda_pool {
 
     virtual void * alloc(size_t size, size_t * actual_size) = 0;
     virtual void free(void * ptr, size_t size) = 0;
+    // Release cached device memory back to the driver. Buffers handed out by
+    // alloc() are unaffected; only idle cached capacity is dropped.
+    virtual void clear() {}
 };
 
 template<typename T>

@@ -305,11 +305,34 @@ static void cuda_clear_graph(ggml_backend_t backend, ggml_cgraph * graph) {
     if (fn != nullptr) fn(backend, graph);
 }
 
-void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph) {
+static void cuda_trim_pools(ggml_backend_t backend) {
+    if (backend == nullptr) return;
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    if (device == nullptr) return;
+    auto fn = (void (*)(ggml_backend_t))
+        ggml_backend_reg_get_proc_address(
+            ggml_backend_dev_backend_reg(device),
+            "ggml_backend_cuda_trim_pools");
+    if (fn != nullptr) fn(backend);
+}
+
+void trim_backend_pools(ggml_backend_t backend) {
+    if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_trim_pools(backend);
+}
+
+// evict_cuda_graph_cache defaults to false, preserving historical behavior
+// for existing call sites: before the CUDA backend exported
+// ggml_backend_cuda_clear_graph the lookup resolved nothing, and families
+// that rebuild same-shape graphs between requests inherit a warm CUDA-graph
+// cache from that. Families that prefer bounded memory over the warm
+// carry-over opt in with true.
+void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph, bool evict_cuda_graph_cache) {
+    if (!evict_cuda_graph_cache) return;  // existing callsite/behavior unchanged
     if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_clear_graph(backend, graph);
 }
 
-void release_backend_graph_resources(BackendType backend_type, ggml_backend_t backend, ggml_cgraph * graph) {
+void release_backend_graph_resources(BackendType backend_type, ggml_backend_t backend, ggml_cgraph * graph, bool evict_cuda_graph_cache) {
+    if (!evict_cuda_graph_cache) return;  // existing callsite/behavior unchanged
     if (backend_type == BackendType::Cuda || backend_type == BackendType::Hip) cuda_clear_graph(backend, graph);
 }
 
