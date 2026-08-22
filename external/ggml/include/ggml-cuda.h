@@ -23,6 +23,7 @@ extern "C" {
 GGML_BACKEND_API ggml_backend_t ggml_backend_cuda_init(int device);
 
 GGML_BACKEND_API bool ggml_backend_is_cuda(ggml_backend_t backend);
+GGML_BACKEND_API void ggml_backend_cuda_trim_pools(ggml_backend_t backend);
 GGML_BACKEND_API void ggml_backend_cuda_clear_graph(ggml_backend_t backend, const struct ggml_cgraph * graph);
 
 // device buffer

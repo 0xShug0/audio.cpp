@@ -366,10 +366,17 @@ public:
         // whatever the allocator already reserved; a throwing constructor
         // runs no destructor, and each failed rebuild used to leak its
         // partially reserved arena
-        gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
-        if (gallocr_ == nullptr ||
-            !ggml_gallocr_reserve(gallocr_.get(), graph_) ||
-            !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
+        const auto try_alloc = [&]() {
+            gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
+            return gallocr_ != nullptr &&
+                ggml_gallocr_reserve(gallocr_.get(), graph_) &&
+                ggml_gallocr_alloc_graph(gallocr_.get(), graph_);
+        };
+        // On failure the device may simply be full of idle cached pool
+        // buffers (the legacy pool never shrinks on its own); trim and retry
+        // once before declaring the size impossible
+        if (!try_alloc() &&
+            (engine::core::trim_backend_pools(runtime_->backend()), !try_alloc())) {
             // Size, not a fault: the graph scales with prompt_steps_, which the
             // caller controls through the transcription prompt and the length of
             // the audio. Say which, and by how much, so the remedy is obvious.
@@ -518,10 +525,14 @@ public:
         ggml_set_output(token_ids_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, token_ids_);
-        gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
-        if (gallocr_ == nullptr ||
-            !ggml_gallocr_reserve(gallocr_.get(), graph_) ||
-            !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
+        const auto try_alloc = [&]() {
+            gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
+            return gallocr_ != nullptr &&
+                ggml_gallocr_reserve(gallocr_.get(), graph_) &&
+                ggml_gallocr_alloc_graph(gallocr_.get(), graph_);
+        };
+        if (!try_alloc() &&
+            (engine::core::trim_backend_pools(runtime_->backend()), !try_alloc())) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker classification graph");
         }
         position_ids_ = modules::qwen_position_ids(prompt_steps_);
@@ -647,6 +658,10 @@ public:
         ggml_set_output(logits_);
         ggml_build_forward_expand(graph_, logits_);
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
+        if (buffer_ == nullptr) {
+            engine::core::trim_backend_pools(runtime_->backend());
+            buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
+        }
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker decode graph");
         }

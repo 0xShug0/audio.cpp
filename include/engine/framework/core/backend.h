@@ -44,6 +44,9 @@ bool is_host_backend(ggml_backend_t backend);
 bool uses_host_graph_plan(BackendType type);
 bool uses_host_graph_plan(ggml_backend_t backend);
 bool requested_backend_uses_host_graph_plan(const BackendConfig & config);
+// Drop the CUDA/HIP context's cached (idle) pool memory back to the driver.
+// No-op on other backends. For use on allocation-failure paths before a retry.
+void trim_backend_pools(ggml_backend_t backend);
 void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph);
 void release_backend_graph_resources(BackendType backend_type, ggml_backend_t backend, ggml_cgraph * graph);
 void validate_backend_graph_supported(ggml_backend_t backend, ggml_cgraph * graph, const char * label);

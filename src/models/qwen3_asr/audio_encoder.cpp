@@ -484,8 +484,12 @@ public:
         ggml_build_forward_expand(graph_, output_);
         // unique_ptr so a throw below frees the partial reservation (a
         // throwing constructor runs no destructor)
-        gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
-        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
+        const auto try_alloc = [&]() {
+            gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+            return gallocr_ != nullptr && ggml_gallocr_alloc_graph(gallocr_.get(), graph_);
+        };
+        if (!try_alloc() &&
+            (engine::core::trim_backend_pools(backend_), !try_alloc())) {
             throw std::runtime_error("failed to allocate Qwen3 ASR audio encoder graph");
         }
         ggml_backend_tensor_set(attention_mask_, attention_mask_values.data(), 0, attention_mask_values.size() * sizeof(float));

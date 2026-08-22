@@ -305,6 +305,21 @@ static void cuda_clear_graph(ggml_backend_t backend, ggml_cgraph * graph) {
     if (fn != nullptr) fn(backend, graph);
 }
 
+static void cuda_trim_pools(ggml_backend_t backend) {
+    if (backend == nullptr) return;
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    if (device == nullptr) return;
+    auto fn = (void (*)(ggml_backend_t))
+        ggml_backend_reg_get_proc_address(
+            ggml_backend_dev_backend_reg(device),
+            "ggml_backend_cuda_trim_pools");
+    if (fn != nullptr) fn(backend);
+}
+
+void trim_backend_pools(ggml_backend_t backend) {
+    if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_trim_pools(backend);
+}
+
 void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph) {
     if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_clear_graph(backend, graph);
 }
