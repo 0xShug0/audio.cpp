@@ -181,9 +181,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
-          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server
-          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -DeploymentBuild -NativeModelManager
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager
       - name: Pack
         shell: pwsh
         working-directory: build/windows-cpu-release/bin
@@ -214,9 +214,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli
-          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_server
-          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_gguf
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_server -DeploymentBuild -NativeModelManager
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager
       - name: Pack
         shell: pwsh
         working-directory: build/windows-vulkan-release/bin
@@ -278,7 +278,7 @@ jobs:
             -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_NATIVE_CPU=ON -DENGINE_BUILD_TESTS=OFF ^
             -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON ^
             "-DCMAKE_CUDA_ARCHITECTURES=${{ matrix.cuda_archs }}" ^
-            -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DCUDAToolkit_ROOT="%CUDA_PATH%"
+            -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DCUDAToolkit_ROOT="%CUDA_PATH%"
           cmake --build build --config Release -j %NUMBER_OF_PROCESSORS% --target ${{ env.BUILD_TARGETS }}
       - name: Bundle CUDA runtime
         shell: pwsh
