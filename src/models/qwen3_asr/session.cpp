@@ -81,6 +81,47 @@ bool request_return_timestamps(const runtime::TaskRequest & request) {
     return false;
 }
 
+void log_chunk_word_diagnostics(
+    int64_t chunk_index,
+    int64_t chunk_count,
+    const runtime::TimeSpan & source_span,
+    const runtime::TimeSpan & keep_span,
+    const runtime::TaskResult & item,
+    size_t merged_before,
+    size_t merged_after,
+    int64_t source_sample_rate,
+    int64_t timestamp_sample_rate) {
+    if (!debug::log_enabled()) {
+        return;
+    }
+    std::ostringstream out;
+    out << "qwen3_asr.words_chunk"
+        << " index=" << chunk_index
+        << " count=" << chunk_count
+        << " source_start=" << source_span.start_sample
+        << " source_end=" << source_span.end_sample
+        << " keep_start=" << keep_span.start_sample
+        << " keep_end=" << keep_span.end_sample
+        << " source_sample_rate=" << source_sample_rate
+        << " timestamp_sample_rate=" << timestamp_sample_rate
+        << " raw_words=" << item.word_timestamps.size()
+        << " merged_delta=" << (merged_after - merged_before);
+    if (item.text_output.has_value()) {
+        out << " text_chars=" << item.text_output->text.size();
+    }
+    if (!item.word_timestamps.empty()) {
+        const auto & first = item.word_timestamps.front();
+        const auto & last = item.word_timestamps.back();
+        out << " first_word=\"" << first.word << "\""
+            << " first_start=" << first.span.start_sample
+            << " first_end=" << first.span.end_sample
+            << " last_word=\"" << last.word << "\""
+            << " last_start=" << last.span.start_sample
+            << " last_end=" << last.span.end_sample;
+    }
+    debug::log_message(debug::LogLevel::Info, "qwen3_asr", out.str());
+}
+
 }  // namespace
 
 Qwen3ASRSession::Qwen3ASRSession(
@@ -198,6 +239,7 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
         item_request.audio_input = engine::audio::slice_audio_buffer(audio, chunks.front().source_span);
         auto item = run_single(make_request(item_request));
         std::vector<runtime::WordTimestamp> merged_words;
+        const size_t merged_before = merged_words.size();
         engine::audio::append_chunk_word_timestamps(
             merged_words,
             item.word_timestamps,
@@ -205,12 +247,23 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
             chunks.front().keep_span,
             audio.sample_rate,
             assets_->config.sample_rate);
+        log_chunk_word_diagnostics(
+            0,
+            1,
+            chunks.front().source_span,
+            chunks.front().keep_span,
+            item,
+            merged_before,
+            merged_words.size(),
+            audio.sample_rate,
+            assets_->config.sample_rate);
         item.word_timestamps = std::move(merged_words);
         return item;
     }
     runtime::TaskResult merged;
     std::ostringstream text;
-    for (const auto & chunk : chunks) {
+    for (size_t chunk_index = 0; chunk_index < chunks.size(); ++chunk_index) {
+        const auto & chunk = chunks[chunk_index];
         runtime::TaskRequest item_request = request;
         item_request.audio_input = engine::audio::slice_audio_buffer(audio, chunk.source_span);
         auto item = run_single(make_request(item_request));
@@ -225,11 +278,22 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
                 merged.text_output->language = item.text_output->language;
             }
         }
+        const size_t merged_before = merged.word_timestamps.size();
         engine::audio::append_chunk_word_timestamps(
             merged.word_timestamps,
             item.word_timestamps,
             chunk.source_span,
             chunk.keep_span,
+            audio.sample_rate,
+            assets_->config.sample_rate);
+        log_chunk_word_diagnostics(
+            static_cast<int64_t>(chunk_index),
+            static_cast<int64_t>(chunks.size()),
+            chunk.source_span,
+            chunk.keep_span,
+            item,
+            merged_before,
+            merged.word_timestamps.size(),
             audio.sample_rate,
             assets_->config.sample_rate);
     }
