@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iosfwd>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,7 @@ struct BackendDeviceInfo {
 
 // Enumerates every device of every loaded ggml backend registry, in registry order.
 std::vector<BackendDeviceInfo> list_backend_devices();
+void print_backend_devices(std::ostream & out);
 
 struct BackendMemorySnapshot {
     bool available = false;

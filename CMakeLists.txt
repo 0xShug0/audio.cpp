@@ -1848,6 +1848,20 @@ endif()
 if (ENGINE_BUILD_TESTS)
     enable_testing()
 
+    add_test(
+        NAME audiocpp_cli_list_devices
+        COMMAND audiocpp_cli --list-devices
+    )
+    add_test(
+        NAME audiocpp_server_list_devices
+        COMMAND audiocpp_server --list-devices
+    )
+    set_tests_properties(
+        audiocpp_cli_list_devices
+        audiocpp_server_list_devices
+        PROPERTIES PASS_REGULAR_EXPRESSION "available_devices=[0-9]+"
+    )
+
     set(ENGINE_UNITTEST_ASSET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/assets")
 
     function(add_engine_unittest target source)
