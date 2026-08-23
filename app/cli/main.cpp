@@ -648,16 +648,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
         if (has_arg(argc, argv, "--list-devices")) {
-            const auto devices = engine::core::list_backend_devices();
-            std::cout << "available_devices=" << devices.size() << "\n";
-            for (const auto & device : devices) {
-                std::cout << device.backend << ":" << device.index;
-                if (!device.name.empty()) {
-                    std::cout << " \"" << device.name << "\"";
-                }
-                std::cout << " [" << device.type << "]\n";
-            }
-            std::cout << "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
+            print_backend_devices(std::cout);
             return 0;
         }
         if (has_arg(argc, argv, "--list-loaders")) {
