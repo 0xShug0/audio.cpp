@@ -111,6 +111,8 @@ jobs:
       - name: Pack
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
           tar -czvf audio-${{ needs.get-version.outputs.tag }}-bin-macos-${{ matrix.arch }}-metal.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
@@ -137,6 +139,8 @@ jobs:
       - name: Pack
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
           tar -czf audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
@@ -163,6 +167,8 @@ jobs:
       - name: Pack
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
           tar -czf audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
@@ -189,6 +195,8 @@ jobs:
         working-directory: build/windows-cpu-release/bin
         run: |
           cp ..\..\..\LICENSE . 2>$null
+          Copy-Item -Recurse ..\..\..\tools .\tools -ErrorAction SilentlyContinue
+          Copy-Item -Recurse ..\..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
           7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu.zip *
       - uses: actions/upload-artifact@v4
         with:
@@ -222,6 +230,8 @@ jobs:
         working-directory: build/windows-vulkan-release/bin
         run: |
           cp ..\..\..\LICENSE . 2>$null
+          Copy-Item -Recurse ..\..\..\tools .\tools -ErrorAction SilentlyContinue
+          Copy-Item -Recurse ..\..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
           7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-vulkan.zip *
       - uses: actions/upload-artifact@v4
         with:
@@ -310,6 +320,8 @@ jobs:
         # llama.cpp.
         run: |
           cp ..\..\LICENSE . 2>$null
+          Copy-Item -Recurse ..\..\tools .\tools -ErrorAction SilentlyContinue
+          Copy-Item -Recurse ..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
           7z a -snl ..\..\audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cuda${{ matrix.label }}.zip * -x!cudart
           7z a -snl ..\..\audio-${{ needs.get-version.outputs.tag }}-cudart-windows-x64-cuda${{ matrix.label }}.zip cudart\*
       - uses: actions/upload-artifact@v4
