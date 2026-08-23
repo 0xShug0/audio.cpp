@@ -2,8 +2,7 @@
 #include "http.h"
 #include "runtime.h"
 
-#include "../cli/args.h"
-
+#include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
 
 #include <csignal>
@@ -115,7 +114,7 @@ void print_help() {
 int main(int argc, char ** argv) {
     try {
         if (has_arg(argc, argv, "--list-devices")) {
-            minitts::cli::print_backend_devices(std::cout);
+            engine::core::print_backend_devices(std::cout);
             return 0;
         }
         if (has_arg(argc, argv, "--help") || has_arg(argc, argv, "-h")) {

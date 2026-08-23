@@ -648,7 +648,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
         if (has_arg(argc, argv, "--list-devices")) {
-            print_backend_devices(std::cout);
+            engine::core::print_backend_devices(std::cout);
             return 0;
         }
         if (has_arg(argc, argv, "--list-loaders")) {

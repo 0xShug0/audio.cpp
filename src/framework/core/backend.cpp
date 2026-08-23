@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 
@@ -207,6 +208,19 @@ std::vector<BackendDeviceInfo> list_backend_devices() {
         }
     }
     return devices;
+}
+
+void print_backend_devices(std::ostream & out) {
+    const auto devices = list_backend_devices();
+    out << "available_devices=" << devices.size() << "\n";
+    for (const auto & device : devices) {
+        out << device.backend << ":" << device.index;
+        if (!device.name.empty()) {
+            out << " \"" << device.name << "\"";
+        }
+        out << " [" << device.type << "]\n";
+    }
+    out << "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
 }
 
 ggml_backend_t init_backend(const BackendConfig & config) {

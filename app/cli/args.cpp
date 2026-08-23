@@ -1,6 +1,5 @@
 #include "args.h"
 
-#include <ostream>
 #include <stdexcept>
 
 namespace minitts::cli {
@@ -110,19 +109,6 @@ engine::core::BackendType parse_backend(const std::string & value) {
         return engine::core::BackendType::BestAvailable;
     }
     throw std::runtime_error("unsupported backend: " + value);
-}
-
-void print_backend_devices(std::ostream & out) {
-    const auto devices = engine::core::list_backend_devices();
-    out << "available_devices=" << devices.size() << "\n";
-    for (const auto & device : devices) {
-        out << device.backend << ":" << device.index;
-        if (!device.name.empty()) {
-            out << " \"" << device.name << "\"";
-        }
-        out << " [" << device.type << "]\n";
-    }
-    out << "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
 }
 
 }  // namespace minitts::cli

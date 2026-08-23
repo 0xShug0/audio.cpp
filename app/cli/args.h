@@ -3,7 +3,6 @@
 #include "engine/framework/core/backend.h"
 
 #include <filesystem>
-#include <iosfwd>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -32,6 +31,5 @@ int parse_int_arg(int argc, char ** argv, const std::string & name, int fallback
 std::optional<float> parse_optional_float_arg(int argc, char ** argv, const std::string & name);
 std::optional<std::filesystem::path> optional_path_arg(int argc, char ** argv, const std::string & name);
 engine::core::BackendType parse_backend(const std::string & value);
-void print_backend_devices(std::ostream & out);
 
 }  // namespace minitts::cli
