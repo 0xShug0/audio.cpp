@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <map>
 
 #include "engine/framework/core/backend.h"
 
@@ -99,6 +100,7 @@ struct ServerConfig {
     // model preset resolves to <voice_dir>/<name>.wav as the cloning reference.
     std::optional<std::filesystem::path> voice_dir;
     std::vector<ServerModelConfig> models;
+    std::map<std::string,bool> apikeys;
 };
 
 engine::core::BackendType parse_server_backend(const std::string & value);

@@ -977,11 +977,36 @@ ServerState::~ServerState() {
     }
 }
 
+class AuthError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 HttpResponse ServerState::handle(const HttpRequest & request) {
   HttpResponse response;
   const std::string allowed_origin = get_allowed_origin(request);
   try {
     log_request_body_if_enabled(config_, request);
+
+    if (!config_.apikeys.empty()) {
+       if (const auto it = request.headers.find("authorization"); it != request.headers.end()) {
+           std::string auth,authtype,apikey;
+
+           auth = it->second;
+           for (int i = 0; i<auth.size() && std::isalpha(auth[i]); i++) {
+               authtype += auth[i];
+           }
+
+           apikey = auth.substr(authtype.size() + 1);
+
+           if (config_.apikeys.find(apikey) == config_.apikeys.end()) {
+             throw AuthError("authorization failed");
+           }
+       } else {
+           throw AuthError("authorization failed");
+       }
+    }
+
     if (request.method == "OPTIONS" && (!allowed_origin.empty() || config_.ui_enabled)) {
         response.status = 204;
         response.content_type = "text/plain";
@@ -1104,6 +1129,8 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     // sent. (Streaming requests acquire the lock inside the stream body, after
     // headers are sent, so there it becomes a stream error event instead.)
     response = error_response(503, ex.what(), "server_busy");
+  } catch (const AuthError & ex) {
+    response = error_response(401, ex.what(), "auth_error");
   }
   if (!allowed_origin.empty()) {
       response.headers["Access-Control-Allow-Origin"] = allowed_origin;

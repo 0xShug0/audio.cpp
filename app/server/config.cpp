@@ -260,6 +260,14 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         throw std::runtime_error("server threads must be positive");
     }
 
+    const auto * apikeys = root.find("apikeys");
+    if (apikeys && !apikeys->is_array()) {
+        throw std::runtime_error("server config, apikeys must be an array of strings");
+    }
+    for (const auto & item : apikeys->as_array()) {
+        config.apikeys.insert(std::make_pair(item.as_string(),true));
+    }
+
     const auto * models = root.find("models");
     if (models == nullptr || !models->is_array()) {
         throw std::runtime_error("server config requires a models array");
