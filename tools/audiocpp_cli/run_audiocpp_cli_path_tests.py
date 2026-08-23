@@ -248,7 +248,7 @@ def maybe_absolute_path(value: Any) -> Any:
     path = Path(value)
     if path.is_absolute():
         return value
-    if value.startswith(("resources/", "models/", "build/", "reference/")):
+    if value.startswith(("assets/", "resources/", "models/", "build/", "reference/")):
         return str(REPO_ROOT / path)
     return value
 

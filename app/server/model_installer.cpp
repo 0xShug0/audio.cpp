@@ -1,6 +1,8 @@
 #include "model_installer.h"
+#include "engine/framework/package_manager/manager.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -114,6 +116,20 @@ std::string read_log_tail_text(const std::filesystem::path & path) {
     return content.str();
 }
 
+void write_text_atomic(const std::filesystem::path & path, const std::string & text) {
+    const auto temporary = path.string() + ".tmp";
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            throw std::runtime_error("could not write package inventory: " + temporary);
+        }
+        output.write(text.data(), static_cast<std::streamsize>(text.size()));
+    }
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::rename(temporary, path);
+}
+
 struct LogSnapshot {
     std::string message;
     uint64_t downloaded_bytes = 0;
@@ -205,6 +221,7 @@ struct ModelInstaller::State {
         std::filesystem::path log_path;
         std::filesystem::path cancel_path;
         bool cancel_requested = false;
+        std::shared_ptr<std::atomic_bool> cancel_flag = std::make_shared<std::atomic_bool>(false);
         int exit_code = -1;
         int64_t started_at_ms = 0;
         int64_t finished_at_ms = 0;
@@ -223,6 +240,7 @@ struct ModelInstaller::State {
     std::filesystem::path size_error_path;
     std::filesystem::path installed_output_path;
     uint64_t size_generation = 0;
+    std::shared_ptr<engine::package_manager::PackageManager> native_manager;
 
     ~State() {
         std::error_code error;
@@ -241,6 +259,8 @@ ModelInstaller::ModelInstaller(
     state_->size_output_path = state_->job_root / "package-sizes.json";
     state_->size_error_path = state_->job_root / "package-sizes.log";
     state_->installed_output_path = state_->job_root / "installed-packages.json";
+    state_->native_manager = std::make_shared<engine::package_manager::PackageManager>(
+        state_->repository_root, state_->models_root);
 }
 
 ModelInstaller::~ModelInstaller() = default;
@@ -273,9 +293,12 @@ std::string ModelInstaller::start(
 
     const bool legacy_conversion =
         !source_directory.empty() || !source_file.empty() || !output_file.empty() || !variant.empty();
-    const auto script = state_->repository_root / "tools" /
-        (legacy_conversion ? "model_manager_deprecated.py" : "model_manager_v2.py");
-    if (!std::filesystem::is_regular_file(script)) {
+    // The native WebUI does not send converter inputs, so normal UI installs
+    // always use the C++ package manager below. This deprecated Python branch
+    // is retained only for old direct API callers that still pass conversion
+    // fields, and should not be treated as part of the UI download path.
+    const auto script = state_->repository_root / "tools" / "model_manager_deprecated.py";
+    if (legacy_conversion && !std::filesystem::is_regular_file(script)) {
         throw std::runtime_error(
             "model preparation helper was not found at " + script.string() +
             "; run the server from an updated audio.cpp source or portable bundle root");
@@ -338,12 +361,40 @@ std::string ModelInstaller::start(
                 job.started_at_ms = now_ms();
             }
 
+            if (!legacy_conversion) {
+                std::shared_ptr<std::atomic_bool> cancel_flag;
+                {
+                    std::lock_guard<std::mutex> lock(shared->mutex);
+                    cancel_flag = shared->jobs.at(package_id).cancel_flag;
+                }
+                const auto message = shared->native_manager->install(
+                    package_id, overwrite, cancel_flag,
+                    [shared, package_id](const engine::package_manager::PackageProgress & progress) {
+                        std::lock_guard<std::mutex> lock(shared->mutex);
+                        auto & job = shared->jobs.at(package_id);
+                        job.downloaded_bytes = progress.downloaded_bytes;
+                        job.total_bytes = progress.total_bytes;
+                        if (!progress.message.empty()) job.message = progress.message;
+                    });
+                std::lock_guard<std::mutex> lock(shared->mutex);
+                auto & job = shared->jobs.at(package_id);
+                job.finished_at_ms = now_ms();
+                job.exit_code = 0;
+                job.state = job.cancel_requested ? "cancelled" : "complete";
+                job.message = job.cancel_requested
+                    ? "Download stopped; completed staging files were removed" : message;
+                if (job.state == "complete") {
+                    job.downloaded_bytes = job.total_bytes;
+                    ++shared->size_generation;
+                    shared->size_state = "idle";
+                    shared->size_message = "Package inventory will be refreshed";
+                }
+                return;
+            }
+
             std::string command = python_command() + " -u " + shell_quote(script.string()) +
                 " install " + shell_quote(package_id) +
                 " --models-root " + shell_quote(shared->models_root.string());
-            if (!legacy_conversion) {
-                command += " --progress --cancel-file " + shell_quote(cancel_path.string());
-            }
             if (overwrite) {
                 command += " --overwrite";
             }
@@ -473,6 +524,7 @@ std::string ModelInstaller::stop(const std::string & package_id) {
         }
         marker << "cancel\n";
         job.cancel_requested = true;
+        job.cancel_flag->store(true);
         job.state = "cancelling";
         job.message = "Stopping download and removing its staging files";
     }
@@ -482,10 +534,6 @@ std::string ModelInstaller::stop(const std::string & package_id) {
 std::string ModelInstaller::clean_partial(const std::string & package_id) {
     if (!valid_package_id(package_id)) {
         throw std::runtime_error("invalid model-manager package id");
-    }
-    const auto script = state_->repository_root / "tools" / "model_manager_v2.py";
-    if (!std::filesystem::is_regular_file(script)) {
-        throw std::runtime_error("model cleanup helper was not found at " + script.string());
     }
     std::filesystem::path cancel_path;
     {
@@ -501,19 +549,7 @@ std::string ModelInstaller::clean_partial(const std::string & package_id) {
         }
     }
 
-    const auto log_path = state_->job_root / (package_id + "-clean-partial.log");
-    std::string command = python_command() + " -u " + shell_quote(script.string()) +
-        " clean-partial " + shell_quote(package_id) +
-        " --models-root " + shell_quote(state_->models_root.string()) +
-        " > " + shell_quote(log_path.string()) + " 2>&1";
-    const int result = std::system(command.c_str());
-    std::string message = read_log_tail_text(log_path);
-    while (!message.empty() && std::isspace(static_cast<unsigned char>(message.back()))) {
-        message.pop_back();
-    }
-    if (result != 0) {
-        throw std::runtime_error(message.empty() ? "partial download cleanup failed" : message);
-    }
+    const auto message = state_->native_manager->clean_partial(package_id);
     if (!cancel_path.empty()) {
         std::error_code error;
         std::filesystem::remove(cancel_path, error);
@@ -531,10 +567,6 @@ std::string ModelInstaller::remove(const std::string & package_id) {
     if (!valid_package_id(package_id)) {
         throw std::runtime_error("invalid model-manager package id");
     }
-    const auto script = state_->repository_root / "tools" / "model_manager_v2.py";
-    if (!std::filesystem::is_regular_file(script)) {
-        throw std::runtime_error("model removal helper was not found at " + script.string());
-    }
     {
         std::lock_guard<std::mutex> lock(state_->mutex);
         const auto job = state_->jobs.find(package_id);
@@ -545,19 +577,7 @@ std::string ModelInstaller::remove(const std::string & package_id) {
         }
     }
 
-    const auto log_path = state_->job_root / (package_id + "-uninstall.log");
-    std::string command = python_command() + " -u " + shell_quote(script.string()) +
-        " uninstall " + shell_quote(package_id) +
-        " --models-root " + shell_quote(state_->models_root.string()) +
-        " > " + shell_quote(log_path.string()) + " 2>&1";
-    const int result = std::system(command.c_str());
-    std::string message = read_log_tail_text(log_path);
-    while (!message.empty() && std::isspace(static_cast<unsigned char>(message.back()))) {
-        message.pop_back();
-    }
-    if (result != 0) {
-        throw std::runtime_error(message.empty() ? "model package removal failed" : message);
-    }
+    const auto message = state_->native_manager->remove(package_id);
     {
         std::lock_guard<std::mutex> lock(state_->mutex);
         state_->jobs.erase(package_id);
@@ -592,53 +612,23 @@ std::string ModelInstaller::package_sizes() {
             start_scan = true;
             std::ofstream(state_->size_output_path, std::ios::trunc);
             std::ofstream(state_->size_error_path, std::ios::trunc);
-            std::ofstream(state_->installed_output_path, std::ios::trunc);
+            write_text_atomic(state_->installed_output_path, state_->native_manager->inventory(false));
         }
     }
 
     if (start_scan) {
-        const auto script = state_->repository_root / "tools" / "model_manager_v2.py";
-        if (!std::filesystem::is_regular_file(script)) {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->size_generation == scan_generation) {
-                state_->size_state = "failed";
-                state_->size_message = "Package size helper was not found at " + script.string();
-            }
-        } else {
-            const auto shared = state_;
-            std::thread([shared, script, scan_generation, size_output_path, size_error_path,
+        const auto shared = state_;
+        std::thread([shared, scan_generation, size_output_path, size_error_path,
                          installed_output_path]() {
                 try {
-                    std::string installed_command = python_command() + " -u " + shell_quote(script.string()) +
-                        " installed --json --models-root " + shell_quote(shared->models_root.string()) +
-                        " > " + shell_quote(installed_output_path.string()) +
-                        " 2>> " + shell_quote(size_error_path.string());
-                    const int installed_result = std::system(installed_command.c_str());
-                    (void) installed_result;
-                    std::string command = python_command() + " -u " + shell_quote(script.string()) +
-                        " sizes --json --models-root " + shell_quote(shared->models_root.string()) +
-                        " > " + shell_quote(size_output_path.string()) +
-                        " 2> " + shell_quote(size_error_path.string());
-                    const int result = std::system(command.c_str());
-                    std::string output = read_log_tail_text(size_output_path);
-                    while (!output.empty() && std::isspace(static_cast<unsigned char>(output.back()))) {
-                        output.pop_back();
-                    }
-                    const bool valid_output = !output.empty() && output.front() == '[' && output.back() == ']';
+                    const auto output = shared->native_manager->inventory(true);
+                    write_text_atomic(size_output_path, output);
                     std::lock_guard<std::mutex> lock(shared->mutex);
                     if (shared->size_generation != scan_generation) {
                         return;
                     }
-                    if (result == 0 && valid_output) {
-                        shared->size_state = "complete";
-                        shared->size_message = "Package sizes are ready";
-                    } else {
-                        shared->size_state = "failed";
-                        shared->size_message = read_log_tail_text(size_error_path);
-                        if (shared->size_message.empty()) {
-                            shared->size_message = "Package size check failed";
-                        }
-                    }
+                    shared->size_state = "complete";
+                    shared->size_message = "Package sizes are ready";
                 } catch (const std::exception & error) {
                     std::lock_guard<std::mutex> lock(shared->mutex);
                     if (shared->size_generation == scan_generation) {
@@ -646,8 +636,7 @@ std::string ModelInstaller::package_sizes() {
                         shared->size_message = error.what();
                     }
                 }
-            }).detach();
-        }
+        }).detach();
     }
 
     std::lock_guard<std::mutex> lock(state_->mutex);

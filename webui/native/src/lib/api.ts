@@ -1,5 +1,9 @@
 import type { LoadedModel, ServerHealth } from './types';
 
+function apiUrl(path: string): string {
+  return new URL(path.replace(/^\//, ''), document.baseURI).toString();
+}
+
 async function errorFrom(response: Response): Promise<Error> {
   let message = `${response.status} ${response.statusText}`;
   try {
@@ -21,7 +25,7 @@ export async function jsonRequest<T>(
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const response = await fetch(path, { ...init, headers, signal });
+  const response = await fetch(apiUrl(path), { ...init, headers, signal });
   if (!response.ok) throw await errorFrom(response);
   return response.json() as Promise<T>;
 }
@@ -31,7 +35,7 @@ export async function health(): Promise<ServerHealth> {
 }
 
 export async function models(): Promise<LoadedModel[]> {
-  const response = await jsonRequest<{ data: LoadedModel[] }>('/v1/models');
+  const response = await jsonRequest<{ data: LoadedModel[] }>('/v1/models?include_session_options=true');
   return response.data;
 }
 
@@ -168,7 +172,7 @@ export async function uploadWav(blob: Blob, signal?: AbortSignal): Promise<strin
 }
 
 export async function speech(body: Record<string, unknown>, signal?: AbortSignal) {
-  const response = await fetch('/v1/audio/speech', {
+  const response = await fetch(apiUrl('/v1/audio/speech'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

@@ -2,7 +2,9 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
+| MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
+| PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
 | RVC | `rvc` | `vc` | [RVC](#rvc) |
 | Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |
 | VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
@@ -21,6 +23,41 @@ Common CLI shape:
 
 ```bash
 audiocpp_cli --task <task> --family <family> --model <model-dir> --backend cuda ...
+```
+
+## MeanVC2
+
+MeanVC2 is a zero-shot voice conversion model. It takes source speech through
+`--audio` and a target speaker reference through `--voice-ref`. See
+[MeanVC2](models/meanvc2.md) for streaming behavior and options.
+
+```bash
+python3 tools/model_manager_v2.py install meanvc2_120ms_40ms_f32
+
+audiocpp_cli --task vc --family meanvc2 \
+  --model models/MeanVC2-GGUF/meanvc2-120ms-40ms-fp32.gguf \
+  --backend cuda \
+  --audio assets/resources/a.wav \
+  --voice-ref assets/resources/b.wav \
+  --out converted.wav
+```
+
+## PersonaPlex
+
+PersonaPlex is a speech-to-speech conversational model. It consumes user audio,
+a packaged or reference voice prompt, and an optional system/persona prompt.
+See [PersonaPlex](models/personaplex.md) for offline and streaming examples.
+
+```bash
+python3 tools/model_manager_v2.py install personaplex_7b_v1_q4_k
+
+audiocpp_cli --task s2s --family personaplex \
+  --model models/PersonaPlex-GGUF \
+  --backend cuda \
+  --audio user.wav \
+  --text "You are a concise assistant. Answer naturally and briefly." \
+  --request-option voice_id=NATF2 \
+  --out reply.wav
 ```
 
 ## MioCodec

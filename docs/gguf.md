@@ -50,6 +50,7 @@ Status labels:
 | `Pass` | Covered by the path-test matrix with acceptable output. |
 | `Pass (TTS + clone)` | Both no-reference TTS and reference-audio voice cloning run successfully. |
 | `Pass (drift)` | Loads and runs, with known acceptable output drift. |
+| `Pass (bit-identical)` | Loads and runs, reproducing the F32/F16 reference timestamps exactly (0-sample boundary diff). |
 | `Pass (ASR match, drift)` | TTS output has similarity/frame drift but ASR transcript remains usable. |
 | `No (...)` | Known unsupported, failing, or too much output drift. |
 | `---` | Not tested in the current GGUF path-test matrix. |
@@ -72,10 +73,13 @@ Status labels:
 | `index_tts2` | Done (v2 + v2.5 variant) | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `irodori_tts` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `kroko_asr` | Done | Pass | --- | --- | Pass |
+| `magpie_tts` | Done | --- | Pass | --- | Pass |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |
+| `meanvc2` | Done | --- | --- | Pass | --- |
 | `mel_band_roformer` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
 | `miotts` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
+| `mms_forced_aligner` | Done | Pass | --- | Pass | Pass (bit-identical) |
 | `moss_tts_local` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_tts_nano` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `muscriptor` | Done | Pass | Pass | --- | --- |
@@ -84,6 +88,7 @@ Status labels:
 | `omnivoice` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `outetts` | Done | Pass (TTS + clone) | --- | --- | Pass (TTS + clone) |
 | `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
+| `personaplex` | Done | --- | --- | --- | Pass |
 | `pocket_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `qwen3_asr` | Done | Pass | --- | Pass | Pass |
 | `qwen3_forced_aligner` | Done | Pass | --- | Pass | Pass |
@@ -106,6 +111,8 @@ Additional lower-bit checks:
 
 | Family | Format | Tested |
 |---|---|---|
+| `meanvc2` | `q4_k` | Pass |
+| `personaplex` | `q4_k` | Pass |
 | `voxtral_realtime` | `q4_k` | Pass (quick CUDA check; transcripts match Q8 except one capitalization-only difference) |
 
 Q8 packaging notes:

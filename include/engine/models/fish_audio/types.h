@@ -26,7 +26,7 @@ struct FishAudioReference {
 
 struct FishAudioRequest {
     std::string text;
-    std::optional<FishAudioReference> reference = std::nullopt;
+    std::vector<FishAudioReference> references;
     FishAudioGenerationOptions generation;
 };
 

@@ -14,13 +14,13 @@ downloader places them) and each can be overridden explicitly.
 This tool does not download anything and never writes into --model-dir.
 
 Example:
-    python tools/convert_index_tts2_5.py \
+    python tools/community_models/convert_index_tts2_5.py \
         --model-dir /path/to/IndexTTS-2.5 \
         --output-dir /path/to/staging
 
 Then run the printed audiocpp_gguf command, or let the script run it:
 
-    python tools/convert_index_tts2_5.py \
+    python tools/community_models/convert_index_tts2_5.py \
         --model-dir /path/to/IndexTTS-2.5 \
         --output-dir /path/to/staging \
         --run-converter /path/to/audiocpp_gguf --type f16

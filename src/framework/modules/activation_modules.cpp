@@ -24,6 +24,16 @@ const core::ModuleSchema kReluSchema = {
     "Applies rectified linear activation elementwise.",
 };
 
+const core::ModuleSchema kLeakyReluSchema = {
+    "LeakyReLU",
+    "nn.activation",
+    kActivationInputs,
+    1,
+    kActivationOutputs,
+    1,
+    "Applies leaky rectified linear activation elementwise.",
+};
+
 const core::ModuleSchema kSigmoidSchema = {
     "Sigmoid",
     "nn.activation",
@@ -315,6 +325,33 @@ core::TensorValue ReluModule::build(core::ModuleBuildContext & ctx, const core::
 
 const core::ModuleSchema & ReluModule::static_schema() noexcept {
     return kReluSchema;
+}
+
+LeakyReluModule::LeakyReluModule(LeakyReluConfig config) : config_(config) {
+}
+
+const LeakyReluConfig & LeakyReluModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & LeakyReluModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue LeakyReluModule::build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");
+    const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
+    return core::wrap_tensor(
+        ggml_leaky_relu(ctx.ggml, contiguous.tensor, config_.negative_slope, false),
+        input.shape,
+        GGML_TYPE_F32);
+}
+
+const core::ModuleSchema & LeakyReluModule::static_schema() noexcept {
+    return kLeakyReluSchema;
 }
 
 const core::ModuleSchema & SigmoidModule::schema() const noexcept {

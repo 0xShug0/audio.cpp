@@ -2,6 +2,41 @@
 
 namespace engine::models::moss {
 
+// MOSS-Audio-Tokenizer v1 - 24 kHz mono, hop 1920, four transformer stages per side.
+// Same layer math as v2 with two fewer stages, and one 10 s attention window per stage
+// rather than v2's per-stage durations, so the context lengths are just the stage frame
+// rate times ten.
+AudioTokenizerConfig moss_audio_tokenizer_v1_config() {
+    AudioTokenizerConfig config;
+    config.sampling_rate = 24000;
+    config.samples_per_frame = 1920;
+    config.channels = 1;
+    config.quantizer = AudioTokenizerQuantizerConfig{
+        1024,
+        8,
+        512,
+        768,
+        32,
+    };
+    config.encoder_stages = {
+        {240, 384, 768, 12, 12, 3072, 1000, 240},
+        {768, 384, 768, 12, 12, 3072, 500, 2},
+        {768, 640, 768, 12, 12, 3072, 250, 2},
+        {1280, 768, 1280, 20, 32, 5120, 125, 2},
+    };
+    config.decoder_stages = {
+        {768, 1280, 1280, 20, 32, 5120, 125, 2},
+        {640, 768, 768, 12, 12, 3072, 250, 2},
+        {384, 768, 768, 12, 12, 3072, 500, 2},
+        {384, 240, 768, 12, 12, 3072, 1000, 240},
+    };
+    config.encoder_module_start = 1;
+    config.encoder_module_stride = 2;
+    config.decoder_module_start = 0;
+    config.decoder_module_stride = 2;
+    return config;
+}
+
 AudioTokenizerConfig moss_audio_tokenizer_v2_config() {
     AudioTokenizerConfig config;
     config.sampling_rate = 48000;

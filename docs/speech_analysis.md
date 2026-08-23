@@ -5,8 +5,9 @@
 | Silero VAD | `silero_vad` | `vad` | [Silero VAD](#silero-vad) |
 | MarbleNet VAD | `marblenet_vad` | `vad` | [MarbleNet VAD](#marblenet-vad) |
 | Sortformer Diarization | `sortformer_diar` | `diar` | [Sortformer Diarization](#sortformer-diarization) |
+| MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |
 
-This page covers VAD and diarization models. ASR models are documented in [ASR models](asr.md).
+This page covers VAD, diarization, and forced-aligner models. ASR models are documented in [ASR models](asr.md).
 
 Common CLI shape:
 
@@ -147,3 +148,36 @@ Compatibility aliases are applied before v1 option validation:
 | `conv_weight_type` | `sortformer_diar.conv_weight_type` |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.
+
+## MMS Forced Aligner
+
+The MMS forced aligner aligns an exact transcript to mono/stereo audio and
+returns per-word start/end timestamps. Native normalization covers Dutch and
+English; a pre-romanized mode accepts ASCII romanization for other languages.
+
+| Field | Value |
+|---|---|
+| Family | `mms_forced_aligner` |
+| Model directory | `models/mms-300m-1130-forced-aligner` (safetensors) or a local GGUF |
+| Task | `align` |
+| Mode | `offline` only |
+| Output | `word_timestamps` |
+
+```bash
+audiocpp_cli --task align --family mms_forced_aligner --model models/mms-300m-1130-forced-aligner \
+  --audio speech.wav --text "The quick brown fox." --language eng --words-out words.json
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | WAV path | required | Input audio. |
+| `--text` | string | required | Exact transcript to align. |
+| `--language` | `nl`, `nld`, `en`, `eng` (latin); any code (pre_romanized) | required | Transcript language. |
+| `--request-option text_normalization=<mode>` | `latin`, `pre_romanized` | `latin` | Native Latin normalization or caller-supplied romanization. |
+| `--request-option star_frequency=<mode>` | `segment`, `edges` | `segment` | Virtual `<star>` target placement. |
+| `--request-option merge_threshold_sec=<float>` | float >= 0 | `0.0` | Merge words whose gap is at or below this many seconds. |
+| `--words-out` | JSON path | not set | Write per-word timestamps. |
+
+The checkpoint is CC-BY-NC-4.0 and GGUF conversion is local-only. See the
+[full model guide](community_models/mms_forced_aligner.md) for install,
+conversion, licensing, and boundary-parity evidence.

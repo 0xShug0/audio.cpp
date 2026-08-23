@@ -68,6 +68,7 @@
   let maxTokens = 1024;
   let sourceFile: File | null = null;
   let voiceFile: File | null = null;
+  let vibeVoiceSpeakerFiles: Array<File | null> = [null, null, null, null];
   let voiceInput: HTMLInputElement | null = null;
   let referenceTextFile: File | null = null;
   let referenceTextInput: HTMLInputElement | null = null;
@@ -229,7 +230,10 @@
     stable_audio: 'Stable Audio 3',
     qwen3_asr: 'Qwen3-ASR',
     vevo2: 'Vevo2',
-    seed_vc: 'Seed-VC'
+    seed_vc: 'Seed-VC',
+    magpie_tts: 'MagpieTTS',
+    meanvc2: 'MeanVC2',
+    personaplex: 'PersonaPlex'
   };
 
   function pathVariantLabel(path: string) {
@@ -340,16 +344,21 @@
     })
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
-    comparablePath(model.path) === comparablePath(modelPath));
+    modelMatchesSelectedPackage(model, selected));
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task);
   $: acceptsSource = needsSource || selected?.task === 'gen';
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
+    (selected?.task === 's2s' && selected?.family === 'personaplex') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
+  $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: referenceVoiceRequired = !quickStartVoice && (
+  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task);
+  $: referenceVoiceRequired = !(allowsQuickStartVoice && quickStartVoice) && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
-  $: referenceTextRequired = Boolean(voiceFile) && isQwenBase;
+  $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
+  $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
+    (Boolean(voiceFile) && isQwenBase);
   $: quickStartVoices = server && !server.ui_management
     ? configuredVoices
     : Object.entries(demoVoiceSources)
@@ -413,13 +422,39 @@
     return catalogPathMatches(choice.path, path);
   }
 
+  function mergedSessionOptions(entry: CatalogEntry) {
+    const packageChoice = selectedPackageChoice(entry);
+    return { ...(entry.session_options || {}), ...(packageChoice?.session_options || {}) };
+  }
+
+  function packageSessionOptionsMatch(entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) {
+    const expected = choice.session_options || {};
+    const keys = Array.from(new Set((entry.install_packages || [])
+      .flatMap((candidate) => Object.keys(candidate.session_options || {}))));
+    if (!keys.length) return true;
+    const actual = model.session_options || {};
+    return keys.every((key) => actual[key] === expected[key]);
+  }
+
+  function modelMatchesPackage(entry: CatalogEntry, model: LoadedModel, choice: InstallPackageChoice) {
+    return packagePathMatches(choice, model.path) && packageSessionOptionsMatch(entry, choice, model);
+  }
+
+  function modelMatchesSelectedPackage(model: LoadedModel, entry: CatalogEntry | undefined) {
+    if (!entry) return comparablePath(model.path) === comparablePath(modelPath);
+    const choice = selectedPackageChoice(entry);
+    if (!choice) return comparablePath(model.path) === comparablePath(modelPath);
+    return comparablePath(model.path) === comparablePath(modelPath) &&
+      packageSessionOptionsMatch(entry, choice, model);
+  }
+
   function residentModel(entry: CatalogEntry, models = loadedModels) {
     return models.find((model) => model.id === entry.id && model.loaded);
   }
 
   function packageIsResident(entry: CatalogEntry, choice: InstallPackageChoice, models = loadedModels) {
     const resident = residentModel(entry, models);
-    return Boolean(resident && packagePathMatches(choice, resident.path));
+    return Boolean(resident && modelMatchesPackage(entry, resident, choice));
   }
 
   function packageIsAvailable(
@@ -433,7 +468,7 @@
 
   function studioPackageSlots(entry: CatalogEntry) {
     const choices = entry.install_packages || [];
-    if (entry.family === 'ace_step') {
+    if (entry.family === 'ace_step' || entry.family === 'minimax_music3') {
       return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
     }
     const q8 = choices.find((choice) => choice.format === 'gguf' &&
@@ -490,6 +525,11 @@
       status = 'Reference voice changed. Choose or enter its matching transcript.';
       warningStatus = status;
     }
+  }
+
+  function chooseVibeVoiceSpeaker(index: number, file: File | null) {
+    vibeVoiceSpeakerFiles = vibeVoiceSpeakerFiles.map((current, currentIndex) =>
+      currentIndex === index ? file : current);
   }
 
   function chooseQuickStartVoice(voice: string) {
@@ -590,6 +630,10 @@
     // Specs that publish request metadata are authoritative. Older specs
     // without that metadata keep the legacy UI behavior until migrated.
     return entry.request_options === undefined || entry.request_options.includes(option);
+  }
+
+  function requiresRequestOption(entry: CatalogEntry, option: string) {
+    return entry.required_request_options?.includes(option) === true;
   }
 
   function packageVersionLabel(size: ModelPackageSize | undefined, translate = tr) {
@@ -725,7 +769,7 @@
       const resident = residentModel(entry, models);
       if (!resident) continue;
       const choice = (entry.install_packages || []).find((candidate) =>
-        packagePathMatches(candidate, resident.path));
+        modelMatchesPackage(entry, resident, candidate));
       if (choice && nextIds[entry.id] !== choice.id) {
         nextIds[entry.id] = choice.id;
         changed = true;
@@ -743,9 +787,8 @@
     const staleEntries = catalog.filter((entry) => {
       const resident = residentModel(entry);
       if (!resident) return false;
-      const residentPath = comparablePath(resident.path);
       const residentChoice = (entry.install_packages || []).find((choice) =>
-        comparablePath(resolveCatalogPath(choice.path)) === residentPath);
+        modelMatchesPackage(entry, resident, choice));
       return Boolean(residentChoice && sizes[residentChoice.id]?.installed === false);
     });
     if (!staleEntries.length) return false;
@@ -854,7 +897,9 @@
 
   function resetParams() {
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
-    paramSpecs = byId;
+    paramSpecs = selected?.family === 'vibevoice'
+      ? byId.filter((spec) => spec.name !== 'voice_samples')
+      : byId;
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     if (selected?.family === 'minimax_h3') {
       duration = 15;
@@ -1000,7 +1045,7 @@
         task: selected.task,
         mode: modeOverride || selected.mode || 'offline',
         load_options: selected.load_options || {},
-        session_options: selected.session_options || {}
+        session_options: mergedSessionOptions(selected)
       });
       await refresh();
       status = tr('status.modelReady', { model: selected.display_name });
@@ -1073,6 +1118,18 @@
     return uploadWav(wav, aborter?.signal);
   }
 
+  async function vibeVoiceSamplePaths(): Promise<string | undefined> {
+    const firstEmpty = vibeVoiceSpeakerFiles.findIndex((file) => !file);
+    const hasLaterFile = firstEmpty >= 0 && vibeVoiceSpeakerFiles.slice(firstEmpty + 1).some(Boolean);
+    if (hasLaterFile) {
+      throw new StatusWarning('VibeVoice speaker references must be filled from Speaker 1 without gaps.');
+    }
+    const files = vibeVoiceSpeakerFiles.filter((file): file is File => Boolean(file));
+    if (!files.length) return undefined;
+    const paths = await Promise.all(files.map((file) => stagedPath(file)));
+    return paths.filter((path): path is string => Boolean(path)).join(',');
+  }
+
   function requestOptions() {
     let raw: Record<string, unknown> = {};
     try {
@@ -1103,7 +1160,8 @@
     if (!isLoaded) {
       await doLoad();
       await refresh();
-      if (!loadedModels.some((model) => model.id === selectedId && model.loaded)) {
+      if (!loadedModels.some((model) => model.id === selectedId && model.loaded &&
+        modelMatchesSelectedPackage(model, selected))) {
         throw new Error('Model did not load.');
       }
     }
@@ -1122,7 +1180,8 @@
       await refresh();
     }
     if (!loadedModels.some((model) =>
-      model.id === selectedId && model.loaded && model.mode === mode)) {
+      model.id === selectedId && model.loaded && model.mode === mode &&
+        modelMatchesSelectedPackage(model, selected))) {
       throw new Error(`Model did not load in ${mode} mode.`);
     }
   }
@@ -1355,12 +1414,20 @@
         throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires a reference voice.`);
       }
       if (referenceTextRequired && !referenceText.trim()) {
-        throw new StatusWarning('Qwen3-TTS Base voice cloning requires a reference transcript. Choose a matching .txt file or enter the transcript.');
+        const prefix = isQwenBase ? 'Qwen3-TTS Base voice cloning' : (selected.display_name_en || selected.display_name);
+        throw new StatusWarning(`${prefix} requires a reference transcript. Choose a matching .txt file or enter the transcript.`);
+      }
+      if (lyricsRequired && !lyrics.trim()) {
+        throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires lyrics.`);
       }
       await ensureLoaded();
       const options = requestOptions();
+      if (usesVibeVoiceSpeakerFiles) {
+        const samples = await vibeVoiceSamplePaths();
+        if (samples) options.voice_samples = samples;
+      }
       const audio = acceptsSource ? await stagedPath(sourceFile) : undefined;
-      const voiceRef = needsVoice ? await stagedPath(voiceFile) : undefined;
+      const voiceRef = needsVoice && !usesVibeVoiceSpeakerFiles ? await stagedPath(voiceFile) : undefined;
 
       if (['tts', 'clon', 'vdes'].includes(selected.task)) {
         if (!text.trim()) throw new StatusWarning('Enter text to generate.');
@@ -1426,10 +1493,10 @@
           if (lyrics.trim()) request.lyrics = lyrics;
           request.duration_seconds = duration;
           request.seed = resolvedSeed;
-          request.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
           request.seed = resolvedSeed;
-          request.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         }
         if (audio) request.audio = audio;
         if (voiceRef) request.voice_ref = voiceRef;
@@ -1935,8 +2002,9 @@
         {/if}
 
         {#if selected.task === 'gen'}
-          <label for="lyrics">{tr('request.lyrics')} <span>{tr('request.optional')}</span></label>
-          <textarea id="lyrics" rows="3" bind:value={lyrics} placeholder="[Verse]…"></textarea>
+          <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
+          <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
+            aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
         {/if}
 
         {#if selected.task === 'asr'}
@@ -2012,8 +2080,8 @@
           {/if}
         {/if}
 
-        {#if needsVoice}
-          {#if quickStartVoices.length}
+        {#if needsVoice && !usesVibeVoiceSpeakerFiles}
+          {#if allowsQuickStartVoice && quickStartVoices.length}
             <label for="quick-start-voice">{server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
@@ -2079,6 +2147,25 @@
               <button type="button" disabled={!voiceFile} on:click={storeCurrentVoice}>{tr('voice.save')}</button>
               <button class="danger" type="button" disabled={!savedVoiceId}
                 on:click={removeCurrentVoice}>{tr('common.delete')}</button>
+            </div>
+          </div>
+        {/if}
+
+        {#if usesVibeVoiceSpeakerFiles}
+          <div class="vibevoice-speakers">
+            <div class="field-label">Speaker references <span>optional, up to 4</span></div>
+            <div class="reference-input-grid">
+              {#each [0, 1, 2, 3] as speaker}
+                <div>
+                  <label for={'vibevoice-speaker-' + speaker}>Speaker {speaker + 1}</label>
+                  <input id={'vibevoice-speaker-' + speaker} class="file file-native" type="file" accept="audio/*"
+                    on:change={(event) => chooseVibeVoiceSpeaker(speaker, event.currentTarget.files?.[0] || null)} />
+                  <label class="file-picker" for={'vibevoice-speaker-' + speaker}>
+                    <strong>{tr('file.choose')}</strong>
+                    <span>{vibeVoiceSpeakerFiles[speaker]?.name || tr('file.none')}</span>
+                  </label>
+                </div>
+              {/each}
             </div>
           </div>
         {/if}

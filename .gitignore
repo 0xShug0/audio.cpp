@@ -16,12 +16,14 @@ __pycache__/
 /venv/
 /.venv/
 /tests/assets/**/*.safetensors
+/tests/omnivoice/outputs/
 /unittests/
 /models/
 /reference/
 /resources/
 /patches/
 /target_proj/
+/tools_local/
 /nocommit/
 /perf/
 /logs/

@@ -74,6 +74,8 @@ h1 { font-size: clamp(28px, 3vw, 40px); line-height: 1; letter-spacing: -.04em; 
 label { display: block; color: #b8cae4; font-size: 11px; font-weight: 650; margin: 11px 0 5px; }
 label:first-child { margin-top: 0; }
 label span { color: var(--muted); font-weight: 400; }
+.field-label { color: #b8cae4; font-size: 11px; font-weight: 650; margin: 11px 0 5px; }
+.field-label span { color: var(--muted); font-weight: 400; }
 input, textarea, select { width: 100%; color: #edf5ff; background: #081426; border: 1px solid #2a405f; border-radius: 7px; padding: 7px 9px; outline: none; transition: border .15s, box-shadow .15s; font-size: 13px; }
 textarea { resize: vertical; line-height: 1.4; }
 input:focus, textarea:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(106,168,255,.12); }

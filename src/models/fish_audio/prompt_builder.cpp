@@ -16,12 +16,12 @@ struct CodeSpan {
     const FishAudioCodes * codes = nullptr;
 };
 
-std::string reference_text_with_speakers(const std::string & text) {
+std::string reference_text_with_speakers(const std::string & text, int64_t speaker) {
     static const std::regex speaker_re(R"(<\|speaker:\d+\|>)");
     if (std::regex_search(text, speaker_re)) {
         return text;
     }
-    return "<|speaker:0|>" + text;
+    return "<|speaker:" + std::to_string(speaker) + "|>" + text;
 }
 
 void append_code_span(
@@ -55,7 +55,7 @@ FishAudioPromptBuilder::FishAudioPromptBuilder(
 
 FishAudioPrompt FishAudioPromptBuilder::build(
     const FishAudioRequest & request,
-    const std::optional<FishAudioCodes> & reference_codes,
+    const std::vector<FishAudioCodes> & reference_codes,
     const std::optional<FishAudioConversationTurn> & previous_turn) const {
     if (request.text.empty()) {
         throw std::runtime_error("Fish Audio request text must not be empty");
@@ -67,15 +67,26 @@ FishAudioPrompt FishAudioPromptBuilder::build(
 
     std::vector<int32_t> row0;
     std::vector<CodeSpan> code_spans;
-    if (request.reference.has_value()) {
-        if (!reference_codes.has_value()) {
-            throw std::runtime_error("Fish Audio reference request requires encoded reference codes");
+    if (!request.references.empty()) {
+        if (reference_codes.size() != request.references.size()) {
+            throw std::runtime_error("Fish Audio reference request requires one encoded code tensor per reference");
         }
         append_tokens(row0, tokenizer_.encode("<|im_start|>system\n"));
         append_tokens(row0, tokenizer_.encode("convert the provided text to speech reference to the following:\n\nText:\n"));
-        append_tokens(row0, tokenizer_.encode(reference_text_with_speakers(request.reference->text)));
+        for (size_t index = 0; index < request.references.size(); ++index) {
+            if (index != 0) {
+                append_tokens(row0, tokenizer_.encode("\n"));
+            }
+            append_tokens(
+                row0,
+                tokenizer_.encode(reference_text_with_speakers(
+                    request.references[index].text,
+                    static_cast<int64_t>(index))));
+        }
         append_tokens(row0, tokenizer_.encode("\n\nSpeech:\n"));
-        append_code_span(row0, code_spans, tokenizer_, *reference_codes, assets_->config.fast.num_codebooks);
+        for (const auto & codes : reference_codes) {
+            append_code_span(row0, code_spans, tokenizer_, codes, assets_->config.fast.num_codebooks);
+        }
         append_tokens(row0, tokenizer_.encode("<|im_end|>\n"));
     } else {
         append_tokens(row0, tokenizer_.encode("<|im_start|>system\n"));

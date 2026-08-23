@@ -118,6 +118,19 @@ public:
         return Lock(*this, std::move(lock));
     }
 
+    // Non-blocking variant: the lock only if the model is idle right now, nullopt
+    // otherwise. Eviction sweeps use this so a caller that already holds one
+    // model's guard never waits on another's -- two loads evicting each other's
+    // target would otherwise deadlock.
+    std::optional<Lock> try_acquire() {
+        std::unique_lock<std::timed_mutex> lock(mutex_, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            return std::nullopt;
+        }
+        busy_since_ms_.store(steady_now_ms(), std::memory_order_release);
+        return Lock(*this, std::move(lock));
+    }
+
 private:
     std::timed_mutex mutex_;
     std::atomic<std::int64_t> busy_since_ms_{0};

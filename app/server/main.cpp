@@ -2,6 +2,7 @@
 #include "http.h"
 #include "runtime.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
 
 #include <csignal>
@@ -60,17 +61,22 @@ std::filesystem::path executable_directory(const char * argv0) {
 void print_help() {
     std::cout
         << "audiocpp_server [--config <server.json>] [--ui] [--host <ip>] [--port <port>] [--backend <backend>]\n"
-        << "                [--device <id>] [--threads <n>] [--busy-timeout-ms <ms>]\n"
+        << "                [--device <id>] [--list-devices] [--threads <n>] [--busy-timeout-ms <ms>]\n"
+        << "                [--max-loaded-models <n>]\n"
         << "                [--model-spec-override <json-or-directory>] [--voice-dir <directory>]\n"
         << "                [--log] [--log-file <path>]\n"
         << "                [--cors-origins <origins>]\n"
-        << "  --ui                             serve the embedded WebUI; without --config, start\n"
-        << "                                   as a native model-management host\n"
+        << "  --ui                             serve the embedded WebUI\n"
         << "  --no-ui                          disable the embedded WebUI\n"
-        << "  --ui-management                  allow WebUI model load/unload and temporary uploads\n"
+        << "  --ui-management                  allow WebUI model management and downloads; requires\n"
+        << "                                   AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON at build time\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
+        << "  --list-devices                   list available backend devices and exit\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
         << "                                   busy this long; default 300000, 0 disables\n"
+        << "  --max-loaded-models <n>          keep at most n models resident in memory, unloading\n"
+        << "                                   the least recently used idle model first; 1 enforces\n"
+        << "                                   a single loaded model, default 0 (no limit)\n"
         << "  --voice-dir <directory>          override the shared reference voice library directory\n"
         << "  --cors-origins \"*\"              experimental; disabled by default. Allows browser\n"
         << "                                   requests from any origin for trusted local demos only\n"
@@ -93,7 +99,10 @@ void print_help() {
         << "  GET  /v1/ui/models/package-sizes package sizes from metadata-only checks\n"
         << "  GET  /v1/audio/voices?model=<id>\n"
         << "  POST /v1/audio/speech\n"
+        << "  POST /v1/audio/speech/live?model=<id>\n"
+        << "       raw PCM in a chunked body, speech audio deltas as SSE on the same connection\n"
         << "  POST /v1/audio/transcriptions\n"
+        << "       fields: file, model, language, prompt, stream\n"
         << "       OpenAI-style streaming: speech stream_format=sse|audio, transcription stream=true\n"
         << "  POST /v1/audio/transcriptions/live?model=<id>\n"
         << "       raw PCM in a chunked body, transcript deltas as SSE on the same connection\n"
@@ -104,6 +113,10 @@ void print_help() {
 
 int main(int argc, char ** argv) {
     try {
+        if (has_arg(argc, argv, "--list-devices")) {
+            engine::core::print_backend_devices(std::cout);
+            return 0;
+        }
         if (has_arg(argc, argv, "--help") || has_arg(argc, argv, "-h")) {
             print_help();
             return 0;
@@ -133,7 +146,6 @@ int main(int argc, char ** argv) {
             ? minitts::server::load_server_config(*config_path)
             : minitts::server::ServerConfig{};
         if (!config_path.has_value()) {
-            config.ui_management = true;
             config.lazy_load = true;
         }
         if (ui_requested) {
@@ -145,6 +157,13 @@ int main(int argc, char ** argv) {
         if (has_arg(argc, argv, "--ui-management")) {
             config.ui_management = true;
         }
+#if !defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
+        if (config.ui_management) {
+            throw std::runtime_error(
+                "UI model management is not available in this build; reconfigure with "
+                "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON");
+        }
+#endif
         if (const auto host = arg_value(argc, argv, "--host")) {
             config.host = *host;
         }
@@ -166,6 +185,9 @@ int main(int argc, char ** argv) {
         if (const auto busy_timeout = arg_value(argc, argv, "--busy-timeout-ms")) {
             config.busy_timeout_ms = std::stoi(*busy_timeout);
         }
+        if (const auto max_loaded_models = arg_value(argc, argv, "--max-loaded-models")) {
+            config.max_loaded_models = std::stoi(*max_loaded_models);
+        }
         if (const auto model_spec = arg_value(argc, argv, "--model-spec-override")) {
             config.model_spec_override = std::filesystem::path(*model_spec);
         }
@@ -180,6 +202,9 @@ int main(int argc, char ** argv) {
         }
         if (config.busy_timeout_ms < 0) {
             throw std::runtime_error("--busy-timeout-ms must be >= 0 (0 disables the guard)");
+        }
+        if (config.max_loaded_models < 0) {
+            throw std::runtime_error("--max-loaded-models must be >= 0 (0 disables the limit)");
         }
 
         const auto ui_resource_anchor = executable_directory(argc > 0 ? argv[0] : nullptr);

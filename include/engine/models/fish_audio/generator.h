@@ -26,7 +26,7 @@ public:
     FishAudioCodes encode_reference(const runtime::AudioBuffer & audio);
     FishAudioGenerationResult generate(
         const FishAudioRequest & request,
-        const std::optional<FishAudioCodes> & reference_codes,
+        const std::vector<FishAudioCodes> & reference_codes,
         const std::optional<FishAudioConversationTurn> & previous_turn,
         bool mem_saver);
 

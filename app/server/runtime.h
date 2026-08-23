@@ -3,7 +3,9 @@
 #include "busy_guard.h"
 #include "config.h"
 #include "http.h"
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 #include "model_installer.h"
+#endif
 
 #include "../streaming/streaming.h"
 
@@ -54,6 +56,10 @@ private:
         engine::runtime::IOfflineVoiceTaskSession * offline = nullptr;
         engine::runtime::IStreamingVoiceTaskSession * streaming = nullptr;
         std::atomic<bool> loaded{false};
+        // Steady-clock ms of the most recent load or run of this model. Orders
+        // eviction when max_loaded_models forces an unload: the least recently
+        // used idle model goes first.
+        std::atomic<std::int64_t> last_used_ms{0};
         mutable std::shared_mutex metadata_mutex;
         std::unordered_map<std::string, RuntimeVoicePreset> voice_presets;
         std::optional<RuntimeVoicePreset> default_voice_preset;
@@ -82,6 +88,7 @@ private:
     HttpResponse handle_model_unload(const std::string & body_text);
     HttpResponse handle_path_status(const std::string & body_text) const;
     HttpResponse handle_ui_upload(const HttpRequest & request);
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     HttpResponse handle_model_install(const std::string & body_text);
     HttpResponse handle_model_install_stop(const std::string & body_text);
     HttpResponse handle_model_clean_partial(const std::string & body_text);
@@ -91,10 +98,15 @@ private:
     HttpResponse handle_models_root_get() const;
     HttpResponse handle_models_root_set(const std::string & body_text);
     HttpResponse handle_directory_browser(const std::string & body_text) const;
+#endif
     HttpResponse handle_ui_asset() const;
     LoadedModel::RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
     void load_voice_presets(LoadedModel & model) const;
     void ensure_model_loaded_locked(LoadedModel & model);
+    // With max_loaded_models set, unload least recently used idle models until
+    // `loading` fits within the limit. A model mid-inference is never a victim;
+    // when nothing can be evicted this throws ServerBusyError (-> HTTP 503).
+    void evict_for_model_limit(const LoadedModel & loading);
     LoadedModel & require_model(const engine::io::json::Value & body);
     const LoadedModel::RuntimeVoicePreset * select_voice_preset(
         const LoadedModel & model,
@@ -138,6 +150,7 @@ private:
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         const engine::io::json::Value & body);
+    HttpResponse handle_speech_live(const HttpRequest & request);
     HttpResponse handle_transcription(const HttpRequest & request);
     HttpResponse handle_transcription_json(const std::string & body_text);
     HttpResponse handle_transcription_multipart(const std::string & body_text, const std::string & boundary);
@@ -155,7 +168,7 @@ private:
     HttpResponse handle_voices(const HttpRequest & request) const;
     HttpResponse handle_unload_models(const std::string & body_text);
     HttpResponse handle_unload_all_models();
-    std::string models_json() const;
+    std::string models_json(bool include_session_options = false) const;
     std::string get_allowed_origin(const HttpRequest & request) const;
 
     ServerConfig config_;
@@ -163,12 +176,18 @@ private:
     std::vector<std::unique_ptr<LoadedModel>> models_;
     std::unordered_map<std::string, size_t> model_index_;
     mutable std::mutex models_mutex_;
+    // Serializes framework loads while max_loaded_models is active, so two
+    // concurrent lazy loads cannot both pass the eviction check and overshoot
+    // the limit. Not taken when the limit is 0: loads stay concurrent there.
+    std::mutex model_load_mutex_;
     std::filesystem::path upload_root_;
     std::filesystem::path repository_root_;
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     std::filesystem::path default_models_root_;
     std::filesystem::path models_root_;
     mutable std::mutex model_installer_mutex_;
     std::unique_ptr<ModelInstaller> model_installer_;
+#endif
     std::atomic<uint64_t> next_upload_id_{1};
 };
 

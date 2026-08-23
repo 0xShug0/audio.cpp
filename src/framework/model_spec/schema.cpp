@@ -97,7 +97,7 @@ const std::unordered_set<std::string> & source_formats() {
 const std::unordered_set<std::string> & precisions() {
     static const std::unordered_set<std::string> values = {
         "native", "orig", "f32", "f16", "bf16",
-        "q8_0", "q6_k", "q5_k_m", "q5_k_s", "q4_k_m", "q4_k_s", "q4_k", "q3_k_m", "q3_k_s", "q2_k",
+        "q8_0", "q6_k", "q5_k_m", "q5_k_s", "q4_k_m", "q4_k_s", "q4_k", "q4_0", "q3_k_m", "q3_k_s", "q2_k",
     };
     return values;
 }

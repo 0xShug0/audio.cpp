@@ -51,6 +51,10 @@ Options:
   --with-examples          Build example binaries.
   --with-warmbench         Build warmbench helper binaries.
   --deployment-build       Embed package specs for standalone GGUF/model loading.
+  --native-model-manager   Build native model manager and managed WebUI downloads.
+  --system-openssl         Use system OpenSSL for native model management.
+  --boringssl-archive <p>  Use a local BoringSSL source archive for native model
+                           management instead of downloading at configure time.
   --model-set full|core|custom
                            Model composite to build.
                            Default: full
@@ -181,6 +185,17 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" != "ON" ]]; then
+    if [[ "$AUDIOCPP_USE_SYSTEM_OPENSSL" == "ON" ]]; then
+        echo "--system-openssl requires --native-model-manager" >&2
+        exit 1
+    fi
+    if [[ -n "$AUDIOCPP_BORINGSSL_ARCHIVE" ]]; then
+        echo "--boringssl-archive requires --native-model-manager" >&2
+        exit 1
+    fi
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "audio.cpp Metal builds require macOS." >&2

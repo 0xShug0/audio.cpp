@@ -17,7 +17,7 @@ ARG GCC_VERSION=14
 # Install build toolchain
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        gcc-${GCC_VERSION} g++-${GCC_VERSION} make cmake libgomp1 && \
+        gcc-${GCC_VERSION} g++-${GCC_VERSION} make cmake libgomp1 ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -27,7 +27,7 @@ WORKDIR /app
 COPY . .
 
 # Validate architecture (CPU backend is only supported on amd64 and arm64)
-ARG TARGETARCH
+ARG TARGETARCH=amd64
 RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
         echo "Building for $TARGETARCH"; \
     else \
@@ -43,12 +43,14 @@ RUN cmake -S . -B build \
         -DENGINE_ENABLE_CUDA=OFF \
         -DENGINE_ENABLE_VULKAN=OFF \
         -DENGINE_ENABLE_OPENMP=ON \
+        -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
         -DENGINE_BUILD_EXAMPLES=OFF \
         -DENGINE_BUILD_TESTS=OFF \
         -DENGINE_BUILD_WARMBENCH=OFF && \
     cmake --build build --parallel $(nproc) \
         --target audiocpp_cli \
         --target audiocpp_server \
+        --target audiocpp_model_manager \
         --target model_perf \
         --target miocodec_wavlm_parity
 
@@ -58,7 +60,7 @@ RUN mkdir -p /app/lib && \
 
 # Collect binaries + multiplexer into /app/full
 RUN mkdir -p /app/full && \
-    cp build/bin/audiocpp_cli build/bin/audiocpp_server \
+    cp build/bin/audiocpp_cli build/bin/audiocpp_server build/bin/audiocpp_model_manager \
        build/bin/model_perf build/bin/miocodec_wavlm_parity /app/full/ && \
     cp .devops/entrypoint.sh /app/full/entrypoint.sh && \
     chmod +x /app/full/entrypoint.sh
@@ -101,6 +103,8 @@ FROM base AS full
 COPY --from=build /app/full /app
 COPY model_specs/ /app/model_specs/
 COPY tools/model_manager_v2.py /app/tools/model_manager_v2.py
+
+RUN mkdir -p /app/models && chown ubuntu:ubuntu /app/models
 
 USER ubuntu
 

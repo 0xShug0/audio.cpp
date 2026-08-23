@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 
 #include <optional>
@@ -43,6 +44,20 @@ struct GatedFeedForwardWeights {
     LinearWeights gate_proj;
     LinearWeights up_proj;
     LinearWeights down_proj;
+};
+
+struct ConvFeedForwardConfig {
+    int64_t hidden_size = 0;
+    int64_t intermediate_size = 0;
+    int64_t kernel_size = 0;
+    bool causal = false;
+    bool use_bias = false;
+    GeluApproximation gelu_approximation = GeluApproximation::Tanh;
+};
+
+struct ConvFeedForwardWeights {
+    Conv1dWeights proj;
+    Conv1dWeights out;
 };
 
 class FeedForwardModule {
@@ -97,6 +112,24 @@ public:
 
 private:
     GatedFeedForwardConfig config_;
+};
+
+class ConvFeedForwardModule {
+public:
+    explicit ConvFeedForwardModule(ConvFeedForwardConfig config);
+
+    const ConvFeedForwardConfig & config() const noexcept;
+    const core::ModuleSchema & schema() const noexcept;
+
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const ConvFeedForwardWeights & weights) const;
+
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    ConvFeedForwardConfig config_;
 };
 
 }  // namespace engine::modules

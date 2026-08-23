@@ -1,7 +1,8 @@
 # DotTTS
 
-DotTTS is an experimental multilingual TTS and voice-cloning family with SOAR
-and MeanFlow packages. The default download is the standalone SOAR Q8 GGUF.
+DotTTS is an experimental multilingual TTS, voice-cloning, and speech-editing
+family with SOAR, MeanFlow, and Edit packages. The default download is the
+standalone SOAR Q8 GGUF.
 
 ```bash
 python3 tools/model_manager_v2.py install dots_tts_soar_q8_0
@@ -34,6 +35,31 @@ audiocpp_cli --task tts --family dots_tts \
   --request-option reference_duration_sec=5 \
   --out mf.wav
 ```
+
+DotTTS Edit uses a separate Edit GGUF package and `template_name=edit`. It
+takes source audio plus a structured edit instruction. When `source_text` and
+`target_text` are omitted, the runtime derives them from the tagged instruction.
+
+```bash
+python3 tools/model_manager_v2.py install dots_tts_edit_q8_0
+
+audiocpp_cli --task tts --family dots_tts \
+  --model models/DotTTS-Edit-GGUF/dots-tts-edit-q8_0.gguf \
+  --backend cuda \
+  --text 'Hello <sub targ="brave">small</sub> world.' \
+  --request-option source_audio=source.wav \
+  --request-option template_name=edit \
+  --out edited.wav
+```
+
+Use `source_text` and `target_text` to override the derived transcripts.
+`use_xvector=auto` follows the upstream behavior: speaker guidance is disabled
+for pure `emo`, `bg`, or `enhance` edits and enabled for text, pitch, rate,
+pause, speaker-transfer, or mixed edits.
+
+Supported structural tags include `<del>`, `<ins>`, `<sub targ="replacement">`,
+`<emo>`, `<pitch>`, `<rate>`, `<enhance>`, `<bg>`, `<pause/>`, and
+`<spk_transfer/>`.
 
 Streaming mode emits generated audio chunks and a final merged WAV:
 
@@ -81,7 +107,12 @@ audiocpp_cli --task tts --family dots_tts \
 |---|---|---:|---|
 | `--reference-text` / `--request-option reference_text=<text>` | text | empty | Transcript for prompt audio. |
 | `--request-option reference_duration_sec=<f>` | seconds | not set | Trim prompt audio before reference conditioning. |
-| `--request-option template_name=<name>` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave` | `tts` | Synthesis template. |
+| `--request-option template_name=<name>` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave`, `edit` | `tts` | Synthesis template. Use `edit` with the DotTTS Edit package. |
+| `--request-option source_audio=<path>` | WAV path | not set | Source audio for `template_name=edit`. |
+| `--request-option instruction=<text>` / `--request-option instruct=<text>` | text | request text | Structured DotTTS Edit instruction. |
+| `--request-option source_text=<text>` | text | derived | Optional source transcript override for DotTTS Edit. |
+| `--request-option target_text=<text>` | text | derived | Optional target transcript override for DotTTS Edit. |
+| `--request-option use_xvector=<mode>` | `auto`, `on`, `off` | `auto` | Speaker-guidance control for DotTTS Edit. |
 | `--language` / `--request-option language=<code>` | language code or `none` | `none` | Optional language tag, such as `en` or `zh`. |
 | `--request-option num_inference_steps=<n>` | integer | `10` | Flow-matching inference steps. |
 | `--guidance-scale` / `--request-option guidance_scale=<f>` | float | `1.2` | Classifier-free guidance scale. |
@@ -101,4 +132,3 @@ audiocpp_cli --task tts --family dots_tts \
 | `--session-option dots_tts.codec_conv_weight_type=<type>` | `native`, `f32`, `f16` | `native` | AudioVAE convolution weight storage type. |
 | `--session-option dots_tts.reference_cache_slots=<n>` | integer | `4` | Prepared reference-audio cache slots; use `0` to disable reuse. |
 | `--session-option dots_tts.mem_saver=true\|false` | bool | `false` | Release request-phase components while keeping reference cache slots alive. |
-

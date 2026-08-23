@@ -8,6 +8,7 @@ param(
     [string]$OutputDir = "",
     [string]$CudaArchitectures = "default",
     [string]$VsInstall = "",
+    [string]$BoringSslArchive = "",
     [switch]$SkipCudaRuntimeDlls
 )
 
@@ -125,6 +126,7 @@ function Write-PackageReadme {
             "",
             '- `audiocpp_cli.exe`',
             '- `audiocpp_server.exe`',
+            '- `audiocpp_model_manager.exe`',
             $cudaRuntimeBullet,
             "- MSVC and OpenMP runtime DLLs required by this build",
             "",
@@ -158,7 +160,7 @@ Server:
 Native WebUI (no Python required):
 
 ```powershell
-.\audiocpp_server.exe --ui --backend cuda
+.\audiocpp_server.exe --ui --ui-management --backend cuda
 ```
 
 Then open `http://127.0.0.1:8080`.
@@ -182,6 +184,7 @@ This package contains:
 
 - `audiocpp_cli.exe`
 - `audiocpp_server.exe`
+- `audiocpp_model_manager.exe`
 - MSVC and OpenMP runtime DLLs required by this build
 
 ## Requirements
@@ -211,7 +214,7 @@ Server:
 Native WebUI (no Python required):
 
 ```powershell
-.\audiocpp_server.exe --ui --backend cpu
+.\audiocpp_server.exe --ui --ui-management --backend cpu
 ```
 
 Then open `http://127.0.0.1:8080`.
@@ -267,6 +270,11 @@ function New-PrebuiltPackage {
         [Parameter(Mandatory = $true)][ValidateSet("cpu", "cuda")][string]$Kind
     )
 
+    $nativeManagerArgs = @("-NativeModelManager")
+    if ($BoringSslArchive -ne "") {
+        $nativeManagerArgs += @("-BoringSslArchive", $BoringSslArchive)
+    }
+
     $buildArgs = @(
         "-Preset", $Preset,
         "-Target", "audiocpp_cli",
@@ -281,6 +289,7 @@ function New-PrebuiltPackage {
     if ($VsInstall -ne "") {
         $buildArgs += @("-VsInstall", $VsInstall)
     }
+    $buildArgs += $nativeManagerArgs
     Invoke-Checked "powershell.exe" (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $buildScript) + $buildArgs)
 
     $buildArgs = @(
@@ -297,10 +306,30 @@ function New-PrebuiltPackage {
     if ($VsInstall -ne "") {
         $buildArgs += @("-VsInstall", $VsInstall)
     }
+    $buildArgs += $nativeManagerArgs
+    Invoke-Checked "powershell.exe" (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $buildScript) + $buildArgs)
+
+    $buildArgs = @(
+        "-Preset", $Preset,
+        "-Target", "audiocpp_model_manager",
+        "-DeploymentBuild",
+        "-Jobs", $Jobs.ToString(),
+        "-CpuArch", $profileSettings.CpuArch,
+        "-Llamafile", $profileSettings.Llamafile
+    )
+    if ($Kind -eq "cuda") {
+        $buildArgs += @("-CudaArchitectures", $CudaArchitectures)
+    }
+    if ($VsInstall -ne "") {
+        $buildArgs += @("-VsInstall", $VsInstall)
+    }
+    $buildArgs += $nativeManagerArgs
     Invoke-Checked "powershell.exe" (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $buildScript) + $buildArgs)
 
     $sourceBin = Join-Path (Join-Path $repoRoot "build") "$Preset\bin"
-    if (-not (Test-Path (Join-Path $sourceBin "audiocpp_cli.exe")) -or -not (Test-Path (Join-Path $sourceBin "audiocpp_server.exe"))) {
+    if (-not (Test-Path (Join-Path $sourceBin "audiocpp_cli.exe")) -or
+        -not (Test-Path (Join-Path $sourceBin "audiocpp_server.exe")) -or
+        -not (Test-Path (Join-Path $sourceBin "audiocpp_model_manager.exe"))) {
         throw "Expected binaries were not found in $sourceBin"
     }
 

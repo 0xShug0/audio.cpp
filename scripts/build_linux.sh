@@ -177,6 +177,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" != "ON" ]]; then
+    if [[ "$AUDIOCPP_USE_SYSTEM_OPENSSL" == "ON" ]]; then
+        echo "--system-openssl requires --native-model-manager" >&2
+        exit 1
+    fi
+    if [[ -n "$AUDIOCPP_BORINGSSL_ARCHIVE" ]]; then
+        echo "--boringssl-archive requires --native-model-manager" >&2
+        exit 1
+    fi
+fi
+
 GENERATOR="Unix Makefiles"
 if command -v ninja >/dev/null 2>&1; then
     GENERATOR="Ninja"
@@ -339,7 +350,7 @@ echo "Using generator: $GENERATOR"
 echo "Using build dir: $BUILD_DIR"
 echo "Including CUDA backend: $ENGINE_ENABLE_CUDA"
 if [[ "$ENGINE_ENABLE_CUDA" == "ON" ]]; then
-    echo "CUDA architectures: ${CUDA_ARCH:-<auto: machine-native at configure time>}"
+    echo "CUDA architectures: ${CUDA_ARCH:-<portable default list>}"
 fi
 echo "Including Vulkan backend: $ENGINE_ENABLE_VULKAN"
 echo "Including HIP backend: $ENGINE_ENABLE_HIP"

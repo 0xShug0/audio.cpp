@@ -65,6 +65,12 @@ Build with a specific CUDA version, for example 13.3.0:
 docker build -f .devops/cuda.Dockerfile -t local/audio.cpp:full-cuda13 --build-arg CUDA_VERSION=13.3.0 .
 ```
 
+Build for a specific set of GPU architectures (e.g. for faster, less portable builds):
+
+```bash
+docker build -f .devops/cuda.Dockerfile -t local/audio.cpp:full-cuda12 --build-arg CUDA_DOCKER_ARCH="86;89" .
+```
+
 ### CPU
 
 ```bash
@@ -73,8 +79,8 @@ docker build -f .devops/cpu.Dockerfile -t local/audio.cpp:full-cpu .
 
 ## Usage
 
-The model directory `<models-dir>` must be mounted into the container.
-An additional `<output-dir>` should be mounted for TTS tasks.
+For CLI use, mount the model directory `<models-dir>` into the container.
+An additional `<output-dir>` should be mounted for tasks that write files.
 
 ### CUDA
 
@@ -82,11 +88,46 @@ An additional `<output-dir>` should be mounted for TTS tasks.
 docker run --rm --gpus all -v "<models-dir>:/models:ro" ghcr.io/0xshug0/audio.cpp:full-cuda12 <cli|server> --model /models/<model> <...>
 ```
 
+### WebUI
+
+For the native WebUI with model downloads and dynamic model management, mount a
+writable model directory and expose the server port:
+
+```bash
+docker run --rm --gpus all \
+  -p 8080:8080 \
+  -v "<models-dir>:/app/models" \
+  ghcr.io/0xshug0/audio.cpp:full-cuda12 \
+  server --ui --ui-management --host 0.0.0.0 --port 8080 --backend cuda
+```
+
+Open `http://127.0.0.1:8080` on the host. Use a writable mount when the UI
+should download or prepare models. For a read-only model directory, omit
+`--ui-management` or mount the directory as read-only and load only models that
+already exist in the configured path.
+
 ### CPU
 
 ```bash
 docker run --rm -v "<models-dir>:/models:ro" ghcr.io/0xshug0/audio.cpp:full-cpu <cli|server> --model /models/<model> <...>
 ```
+
+### Native WebUI
+
+Use `--ui-management` when you want the browser UI to browse, download, remove,
+or switch models. Mount a writable models directory to keep downloads across
+container runs:
+
+```bash
+docker run --rm --gpus all \
+  -p 8080:8080 \
+  -v "<models-dir>:/app/models" \
+  ghcr.io/0xshug0/audio.cpp:full-cuda12 \
+  server --ui --ui-management --host 0.0.0.0 --port 8080 --backend cuda
+```
+
+Then open `http://127.0.0.1:8080`. Omit `--ui-management` for a read-only UI
+serving only the models declared by your server configuration.
 
 See the fully working [examples](#examples) below.
 
