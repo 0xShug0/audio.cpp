@@ -1,11 +1,12 @@
 {
+  "schema_version": 1,
   "family": "audiosr",
   "display_name": "AudioSR",
-  "description": "Latent diffusion audio super-resolution model.",
-  "category": "audio_tool",
+  "description": "AudioSR performs latent-diffusion audio super-resolution from an input waveform.",
+  "category": "audio_tools",
   "status": "experimental",
   "tasks": [
-    "gen"
+    "edit"
   ],
   "modes": [
     "offline"
@@ -15,20 +16,83 @@
   ],
   "runtime": {
     "tags": [
-      "gguf"
+      "gguf",
+      "cuda"
     ]
   },
-  "ui": {
-    "recommended_package": "audiosr_basic_f32",
-    "tags": [
-      "Enhancement",
-      "Super Resolution",
-      "GGUF"
-    ],
-    "docs": [
-      "docs/models/audiosr.md",
-      "docs/gguf.md"
+  "capabilities": {
+    "edit": [
+      "inpaint"
     ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "DDIM inference steps.",
+        "required": false,
+        "min": 1,
+        "max": 1000,
+        "default": 50
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale.",
+        "required": false,
+        "min": 0.0,
+        "max": 20.0,
+        "default": 3.5
+      },
+      {
+        "name": "ddim_eta",
+        "type": "float",
+        "description": "DDIM eta; 1.0 matches the official AudioSR default.",
+        "required": false,
+        "min": 0.0,
+        "max": 10.0,
+        "default": 1.0
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Long-audio chunk duration.",
+        "required": false,
+        "min": 0.001,
+        "max": 600.0,
+        "default": 15.0
+      },
+      {
+        "name": "audio_chunk_overlap_sec",
+        "type": "float",
+        "description": "Long-audio chunk overlap.",
+        "required": false,
+        "min": 0.0,
+        "max": 60.0,
+        "default": 2.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed; -1 selects a random seed.",
+        "required": false,
+        "min": -1,
+        "max": 2147483647,
+        "default": 42
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "AudioSR weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
   },
   "package_defaults": {
     "download": {
@@ -63,6 +127,18 @@
       "strip_prefix": "AudioSR-GGUF"
     }
   ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "audiosr_basic_f32",
+    "tags": [
+      "Edit",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/audiosr.md",
+      "docs/gguf.md"
+    ]
+  },
   "sources": [
     {
       "format": "gguf",
@@ -79,56 +155,6 @@
           "prefix": "frontend"
         }
       }
-    }
-  ],
-  "request_options": [
-    {
-      "name": "num_inference_steps",
-      "type": "int",
-      "default": 50,
-      "min": 1,
-      "max": 1000,
-      "description": "DDIM inference steps."
-    },
-    {
-      "name": "guidance_scale",
-      "type": "float",
-      "default": 3.5,
-      "min": 0.0,
-      "max": 20.0,
-      "description": "Classifier-free guidance scale."
-    },
-    {
-      "name": "ddim_eta",
-      "type": "float",
-      "default": 1.0,
-      "min": 0.0,
-      "max": 10.0,
-      "description": "DDIM eta; 1.0 matches the official AudioSR default."
-    },
-    {
-      "name": "audio_chunk_duration_sec",
-      "type": "float",
-      "default": 15.0,
-      "min": 0.001,
-      "max": 600.0,
-      "description": "Long-audio chunk duration."
-    },
-    {
-      "name": "audio_chunk_overlap_sec",
-      "type": "float",
-      "default": 2.0,
-      "min": 0.0,
-      "max": 60.0,
-      "description": "Long-audio chunk overlap."
-    },
-    {
-      "name": "seed",
-      "type": "int",
-      "default": 42,
-      "min": -1,
-      "max": 2147483647,
-      "description": "Generation seed; -1 selects a random seed."
     }
   ]
 }

@@ -3,6 +3,7 @@
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/model_spec/package.h"
 
 #include <stdexcept>
 
@@ -137,11 +138,11 @@ void validate_tensor_shapes(const engine::assets::TensorSource & source, MiDashe
 
 std::shared_ptr<const MiDashengLmGenAssets> load_midashenglm_gen_assets(
     const std::filesystem::path & model_path) {
-    const auto root = std::filesystem::weakly_canonical(model_path);
     auto assets = std::make_shared<MiDashengLmGenAssets>();
-    assets->model_root = root;
-    assets->config = parse_config(root / "config.json");
-    assets->weights = engine::assets::open_indexed_tensor_source(root / "model.safetensors.index.json", root);
+    assets->resources = engine::model_spec::load_resource_bundle_for_family(model_path, "midashenglm_gen");
+    assets->model_root = assets->resources.model_root();
+    assets->config = parse_config(assets->resources.require_file("config"));
+    assets->weights = assets->resources.open_tensor_source("weights");
     validate_tensor_shapes(*assets->weights, assets->config);
     return assets;
 }

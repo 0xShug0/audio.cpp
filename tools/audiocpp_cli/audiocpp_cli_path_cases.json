@@ -3184,6 +3184,77 @@
           }
         }
       ]
+    },
+    {
+      "id": "midashenglm_gen_warmbench_single_paths",
+      "coverage": "MiDashengLM-Gen single-request warmbench paths: mixed speech/music/sfx CFG, music+sfx no speech CFG, and speech no-CFG",
+      "family": "midashenglm_gen",
+      "model": "models/MiDashengLM-Gen",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "speech_music_sfx_cfg",
+          "text": "<|caption|> A calm narrator speaks over soft rain, distant piano, and a quiet room tone. <|asr|> The lights are still on, and the rain is getting softer now. Please stay near the window and listen carefully. <|speech|> calm warm male narrator, close microphone, gentle emotion, clear words <|music|> sparse quiet piano chords with slow reverb tail <|sfx|> soft rain against a window, occasional distant thunder <|env|> small quiet room at night",
+          "options": {
+            "duration_sec": 10.0,
+            "guidance_scale": 2.0,
+            "stop_threshold": 0.5,
+            "min_stop_step": 5,
+            "seed": 20260817
+          }
+        },
+        {
+          "id": "music_sfx_no_speech_cfg",
+          "text": "<|caption|> A compact game menu loop with bright synth chords, small coin pickup sounds, and gentle crowd ambience. <|asr|> <|unknown|> <|speech|> <|unknown|> <|music|> bright looping synth melody, soft bass pulse, light percussion, arcade menu energy <|sfx|> coin pickup blips, small button clicks, short sparkle effects <|env|> lively indoor arcade space",
+          "options": {
+            "duration_sec": 8.8,
+            "guidance_scale": 2.0,
+            "stop_threshold": 0.5,
+            "min_stop_step": 5,
+            "seed": 20260818
+          }
+        },
+        {
+          "id": "speech_no_cfg",
+          "text": "<|caption|> A studio voice reads a short emergency notice with no background music. <|asr|> Attention please. The north entrance is closed for maintenance. Please use the west entrance until further notice. <|speech|> neutral female announcement voice, steady pace, clear articulation <|music|> <|unknown|> <|sfx|> <|unknown|> <|env|> dry studio booth",
+          "options": {
+            "duration_sec": 7.2,
+            "guidance_scale": 1.0,
+            "stop_threshold": 0.5,
+            "min_stop_step": 5,
+            "seed": 20260819
+          }
+        }
+      ]
+    },
+    {
+      "id": "audiosr_basic_short_super_resolution",
+      "coverage": "AudioSR basic GGUF short waveform super-resolution path with DDIM sampler, VAE, UNet, and HiFi-GAN",
+      "family": "audiosr",
+      "model": "models/AudioSR-GGUF/audiosr-basic-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "short_speech_sr",
+          "audio": "resources/mel_roformer_test_5s.wav",
+          "options": {
+            "num_inference_steps": 10,
+            "guidance_scale": 3.5,
+            "ddim_eta": 1.0,
+            "audio_chunk_duration_sec": 10.24,
+            "audio_chunk_overlap_sec": 0.0,
+            "seed": 42
+          }
+        }
+      ]
     }
   ],
   "audit_gaps": [

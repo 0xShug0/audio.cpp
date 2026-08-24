@@ -13,13 +13,13 @@ namespace {
 constexpr int32_t kQwen3PadTokenId = 151643;
 
 std::filesystem::path require_tokenizer_file(const MiDashengLmGenAssets & assets, const char * filename) {
-    const auto path = assets.model_root / filename;
-    if (!engine::io::is_existing_file(path)) {
+    const auto * path = assets.resources.find_file(filename);
+    if (path == nullptr || !engine::io::is_existing_file(*path)) {
         throw std::runtime_error(
             std::string("MiDashengLM-Gen tokenizer file is missing: ") + filename +
             ". Copy the Qwen3 tokenizer sidecar into the model package.");
     }
-    return path;
+    return *path;
 }
 
 }  // namespace

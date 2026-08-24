@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
 #include <filesystem>
@@ -30,6 +31,7 @@ struct MiDashengLmGenConfig {
 struct MiDashengLmGenAssets {
     std::filesystem::path model_root;
     MiDashengLmGenConfig config;
+    engine::assets::ResourceBundle resources;
     std::shared_ptr<const engine::assets::TensorSource> weights;
 };
 

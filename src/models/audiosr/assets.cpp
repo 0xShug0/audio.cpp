@@ -1,6 +1,7 @@
 #include "engine/models/audiosr/assets.h"
 
 #include "engine/framework/io/filesystem.h"
+#include "engine/framework/model_spec/package.h"
 
 #include <stdexcept>
 
@@ -51,10 +52,11 @@ void validate_required_tensors(const engine::assets::TensorSource & source) {
 
 std::shared_ptr<const AudioSRAssets> load_audiosr_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<AudioSRAssets>();
+    assets->resources = engine::model_spec::load_resource_bundle_for_family(model_path, "audiosr");
     assets->gguf_path = resolve_gguf_path(model_path);
-    assets->model_root = assets->gguf_path.parent_path();
+    assets->model_root = assets->resources.model_root();
     assets->variant = variant_from_path(assets->gguf_path);
-    assets->weights = engine::assets::open_tensor_source(assets->gguf_path);
+    assets->weights = assets->resources.open_tensor_source("weights");
     validate_required_tensors(*assets->weights);
     const auto scale_factor = assets->weights->require_f32("scale_factor");
     if (scale_factor.size() != 1) {

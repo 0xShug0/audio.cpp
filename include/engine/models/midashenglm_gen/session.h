@@ -3,6 +3,7 @@
 #include "engine/models/midashenglm_gen/ar_runtime.h"
 #include "engine/models/midashenglm_gen/audio_tokenizer.h"
 #include "engine/models/midashenglm_gen/tokenizer_text.h"
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 
@@ -19,7 +20,8 @@ public:
     MiDashengLmGenSession(
         engine::runtime::TaskSpec task,
         engine::runtime::SessionOptions options,
-        std::shared_ptr<const MiDashengLmGenAssets> assets);
+        std::shared_ptr<const MiDashengLmGenAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~MiDashengLmGenSession() override;
 
     std::string family() const override;
@@ -35,6 +37,7 @@ private:
     engine::runtime::TaskSpec task_;
     engine::runtime::SessionOptions options_;
     std::shared_ptr<const MiDashengLmGenAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::unique_ptr<engine::core::ExecutionContext> execution_;
     std::unique_ptr<MiDashengLmGenTextTokenizer> tokenizer_;
     std::unique_ptr<MiDashengLmGenPromptEncoderRuntime> prompt_encoder_;

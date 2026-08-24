@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
 #include <filesystem>
@@ -45,6 +46,7 @@ struct AudioSRAssets {
     std::filesystem::path gguf_path;
     std::string variant = "basic";
     AudioSRConfig config;
+    engine::assets::ResourceBundle resources;
     std::vector<float> frontend_lowpass_sos;
     std::vector<float> frontend_lowpass_sos_valid;
     std::shared_ptr<const engine::assets::TensorSource> weights;

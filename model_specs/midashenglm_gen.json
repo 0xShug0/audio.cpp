@@ -1,11 +1,12 @@
 {
+  "schema_version": 1,
   "family": "midashenglm_gen",
   "display_name": "MiDashengLM-Gen",
-  "description": "DashengLM generative audio model.",
+  "description": "DashengLM generative audio model for speech, music, sound effects, and ambience prompts.",
   "category": "audio_generation",
   "status": "experimental",
   "tasks": [
-    "gen"
+    "music"
   ],
   "modes": [
     "offline"
@@ -15,70 +16,162 @@
   ],
   "runtime": {
     "tags": [
-      "safetensors"
+      "gguf",
+      "cuda"
     ]
   },
-  "ui": {
-    "tags": [
-      "Audio Generation"
+  "capabilities": {
+    "music": [
+      "instrumental",
+      "style_control"
     ]
   },
-  "packages": [],
-  "request_options": [
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Target audio duration budget.",
+        "required": false,
+        "min": 0.04,
+        "max": 163.84,
+        "default": 20.0
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale.",
+        "required": false,
+        "min": 0.0,
+        "max": 20.0,
+        "default": 2.0
+      },
+      {
+        "name": "stop_threshold",
+        "type": "float",
+        "description": "Stop probability threshold.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "min_stop_step",
+        "type": "int",
+        "description": "Minimum generated steps before accepting stop.",
+        "required": false,
+        "min": 0,
+        "max": 4096,
+        "default": 5
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed; -1 selects a random seed.",
+        "required": false,
+        "min": -1,
+        "max": 2147483647,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "unsupported",
+      "reason": "MiDashengLM-Gen GGUF package is not published yet; convert locally with audiocpp_gguf."
+    }
+  },
+  "packages": [
     {
-      "name": "duration_sec",
-      "type": "float",
-      "default": 20.0,
-      "min": 0.04,
-      "max": 163.84,
-      "description": "Target audio duration budget."
+      "id": "midashenglm_gen_f32",
+      "display_name": "MiDashengLM-Gen F32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "MiDashengLM-Gen-GGUF",
+      "files": [
+        "MiDashengLM-Gen-GGUF/midashenglm-gen-f32.gguf"
+      ],
+      "strip_prefix": "MiDashengLM-Gen-GGUF"
     },
     {
-      "name": "guidance_scale",
-      "type": "float",
-      "default": 2.0,
-      "min": 0.0,
-      "max": 20.0,
-      "description": "Classifier-free guidance scale."
-    },
-    {
-      "name": "stop_threshold",
-      "type": "float",
-      "default": 0.5,
-      "min": 0.0,
-      "max": 1.0,
-      "description": "Stop probability threshold."
-    },
-    {
-      "name": "min_stop_step",
-      "type": "int",
-      "default": 5,
-      "min": 0,
-      "max": 4096,
-      "description": "Minimum generated steps before accepting stop."
-    },
-    {
-      "name": "seed",
-      "type": "int",
-      "default": 0,
-      "min": -1,
-      "max": 2147483647,
-      "description": "Generation seed; -1 selects a random seed."
+      "id": "midashenglm_gen_safetensors",
+      "display_name": "MiDashengLM-Gen Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "MiDashengLM-Gen",
+      "files": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00003.safetensors",
+        "model-00002-of-00003.safetensors",
+        "model-00003-of-00003.safetensors",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mispeech/midashenglm-gen",
+        "revision": "main",
+        "gated": false
+      }
     }
   ],
-  "session_options": [
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "midashenglm_gen_f32",
+    "tags": [
+      "Music",
+      "SFX",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
     {
-      "name": "midashenglm_gen.weight_type",
-      "type": "enum",
-      "values": [
-        "native",
-        "f32",
-        "f16",
-        "bf16",
-        "q8_0"
-      ],
-      "default": "native",
-      "description": "Shared weight storage type."
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "vocab.json": "model:vocab.json",
+        "merges.txt": "model:merges.txt",
+        "tokenizer_config.json": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "vocab.json": "model:vocab.json",
+        "merges.txt": "model:merges.txt",
+        "tokenizer_config.json": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors.index.json"
+      }
     }
   ]
 }
