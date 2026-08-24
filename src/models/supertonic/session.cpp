@@ -195,6 +195,16 @@ SupertonicGenerationOptions SupertonicSession::generation_options_from_request(c
     }
     if (request.voice.has_value() && request.voice->speaker.has_value() && request.voice->speaker->cached_voice_id.has_value()) {
         options.voice = *request.voice->speaker->cached_voice_id;
+    } else {
+        // WebUI model_params send the picked preset as a plain request option
+        // (see webui/configs/model_params.json). Accept it as a fallback so the
+        // voice picker takes effect; unknown ids are rejected downstream by the
+        // voice-style loader.
+        if (const auto preset = runtime::find_option(request.options, {"voice", "supertonic.voice"})) {
+            if (!preset->empty()) {
+                options.voice = *preset;
+            }
+        }
     }
     if (const auto value = runtime::parse_i64_option(request.options, {"num_inference_steps"})) {
         if (*value <= 0) {
