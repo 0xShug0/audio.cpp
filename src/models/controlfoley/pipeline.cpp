@@ -18,7 +18,6 @@ namespace engine::models::controlfoley {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-constexpr engine::assets::TensorStorageType kNativeWeightType = engine::assets::TensorStorageType::Native;
 
 std::shared_ptr<const ControlFoleyAssets> require_assets(
     std::shared_ptr<const ControlFoleyAssets> assets) {
@@ -189,9 +188,11 @@ ControlFoleyOptions parse_controlfoley_options(
 struct ControlFoleyPipelineRuntime::Impl {
     Impl(
         std::shared_ptr<const ControlFoleyAssets> assets_in,
-        engine::core::ExecutionContext & execution_in)
+        engine::core::ExecutionContext & execution_in,
+        engine::assets::TensorStorageType weight_type_in)
         : assets(require_assets(std::move(assets_in))),
           execution(&execution_in),
+          weight_type(weight_type_in),
           vae(
               assets->vae_weights,
               *execution,
@@ -199,14 +200,14 @@ struct ControlFoleyPipelineRuntime::Impl {
               engine::codecs::MelLatentVae44kRuntimeOptions{
                   1024ull * 1024ull * 1024ull,
                   1024ull * 1024ull * 1024ull,
-                  kNativeWeightType,
+                  weight_type,
                   GGML_PREC_DEFAULT,
               }),
           vocoder(engine::modules::BigVganVocoderComponent::load_from_tensor_source(
               assets->bigvgan_weights,
               execution->config(),
-              bigvgan_config(assets->config, kNativeWeightType))),
-          conditioner(assets, *execution) {
+              bigvgan_config(assets->config, weight_type))),
+          conditioner(assets, *execution, weight_type) {
         rng_policy = engine::sampling::resolve_torch_cuda_sampling_policy(
             execution->backend_type(),
             execution->config().device,
@@ -370,7 +371,7 @@ struct ControlFoleyPipelineRuntime::Impl {
 
     void ensure_flow(const ControlFoleyTemporalShape & shape) {
         ControlFoleyFlowRuntimeOptions options;
-        options.weight_storage_type = kNativeWeightType;
+        options.weight_storage_type = weight_type;
         auto config = flow_config(assets->config, shape);
         if (flow == nullptr) {
             flow = std::make_unique<ControlFoleyFlowDenoiserRuntime>(
@@ -385,6 +386,7 @@ struct ControlFoleyPipelineRuntime::Impl {
 
     std::shared_ptr<const ControlFoleyAssets> assets;
     engine::core::ExecutionContext * execution = nullptr;
+    engine::assets::TensorStorageType weight_type = engine::assets::TensorStorageType::Native;
     engine::sampling::TorchCudaSamplingPolicy rng_policy;
     std::unique_ptr<ControlFoleyFlowDenoiserRuntime> flow;
     engine::codecs::MelLatentVae44kRuntime vae;
@@ -394,8 +396,9 @@ struct ControlFoleyPipelineRuntime::Impl {
 
 ControlFoleyPipelineRuntime::ControlFoleyPipelineRuntime(
     std::shared_ptr<const ControlFoleyAssets> assets,
-    engine::core::ExecutionContext & execution)
-    : impl_(std::make_unique<Impl>(std::move(assets), execution)) {}
+    engine::core::ExecutionContext & execution,
+    engine::assets::TensorStorageType weight_type)
+    : impl_(std::make_unique<Impl>(std::move(assets), execution, weight_type)) {}
 
 ControlFoleyPipelineRuntime::~ControlFoleyPipelineRuntime() = default;
 

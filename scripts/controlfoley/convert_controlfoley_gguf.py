@@ -117,7 +117,7 @@ def main() -> None:
     model_dir = args.model_dir
     bigvgan_dir = args.bigvgan_dir
     staging = args.output_dir / "_safetensors"
-    output = args.output_dir / "controlfoley-large-44k-f32.gguf"
+    output = args.output_dir / f"controlfoley-large-44k-{args.type}.gguf"
 
     flow = load_state_dict(model_dir / "weights" / "controlfoley.pth")
     vae = load_state_dict(model_dir / "ext_weights" / "v1-44.pth")

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/models/controlfoley/flow_denoiser.h"
 #include "engine/framework/runtime/session.h"
@@ -36,7 +37,8 @@ class ControlFoleyConditionerRuntime {
 public:
     ControlFoleyConditionerRuntime(
         std::shared_ptr<const ControlFoleyAssets> assets,
-        engine::core::ExecutionContext & execution);
+        engine::core::ExecutionContext & execution,
+        engine::assets::TensorStorageType weight_type);
     ~ControlFoleyConditionerRuntime();
 
     ControlFoleyConditioningBatch build(

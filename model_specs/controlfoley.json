@@ -132,5 +132,19 @@
       "description": "Generation seed."
     }
   ],
-  "session_options": []
+  "session_options": [
+    {
+      "name": "controlfoley.weight_type",
+      "type": "enum",
+      "values": [
+        "native",
+        "f32",
+        "f16",
+        "bf16",
+        "q8_0"
+      ],
+      "default": "native",
+      "description": "ControlFoley weight storage type."
+    }
+  ]
 }

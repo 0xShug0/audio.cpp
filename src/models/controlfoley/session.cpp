@@ -1,5 +1,6 @@
 #include "engine/models/controlfoley/session.h"
 
+#include "engine/framework/runtime/options.h"
 #include "engine/models/controlfoley/pipeline.h"
 
 #include <stdexcept>
@@ -47,6 +48,20 @@ engine::runtime::ModelCliInterface make_cli() {
         {"seed", "n", "Generation seed."},
     };
     return out;
+}
+
+engine::assets::TensorStorageType weight_type(const engine::runtime::SessionOptions & options) {
+    return engine::runtime::parse_tensor_storage_option(
+        options.options,
+        "controlfoley.weight_type",
+        engine::assets::TensorStorageType::Native,
+        {
+            engine::assets::TensorStorageType::Native,
+            engine::assets::TensorStorageType::F32,
+            engine::assets::TensorStorageType::F16,
+            engine::assets::TensorStorageType::BF16,
+            engine::assets::TensorStorageType::Q8_0,
+        });
 }
 
 class ControlFoleyLoadedModel final : public engine::runtime::ILoadedVoiceModel {
@@ -137,7 +152,8 @@ ControlFoleySession::ControlFoleySession(
     execution_ = std::make_unique<engine::core::ExecutionContext>(options_.backend);
     pipeline_ = std::make_unique<ControlFoleyPipelineRuntime>(
         assets_,
-        *execution_);
+        *execution_,
+        weight_type(options_));
 }
 
 ControlFoleySession::~ControlFoleySession() = default;

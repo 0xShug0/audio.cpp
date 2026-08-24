@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/models/controlfoley/assets.h"
@@ -29,7 +30,8 @@ class ControlFoleyPipelineRuntime {
 public:
     ControlFoleyPipelineRuntime(
         std::shared_ptr<const ControlFoleyAssets> assets,
-        engine::core::ExecutionContext & execution);
+        engine::core::ExecutionContext & execution,
+        engine::assets::TensorStorageType weight_type);
     ~ControlFoleyPipelineRuntime();
 
     engine::runtime::AudioBuffer run(const engine::runtime::TaskRequest & request);

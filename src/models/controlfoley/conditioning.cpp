@@ -29,7 +29,6 @@ namespace engine::models::controlfoley {
 namespace {
 
 constexpr int64_t kOpenClipContextLength = 77;
-constexpr engine::assets::TensorStorageType kNativeWeightType = engine::assets::TensorStorageType::Native;
 constexpr int32_t kOpenClipStartToken = 49406;
 constexpr int32_t kOpenClipEndToken = 49407;
 
@@ -308,12 +307,14 @@ struct ControlFoleyConditionerRuntime::Impl {
 
     Impl(
         std::shared_ptr<const ControlFoleyAssets> assets_in,
-        engine::core::ExecutionContext & execution_in)
+        engine::core::ExecutionContext & execution_in,
+        engine::assets::TensorStorageType weight_type_in)
         : assets(require_assets(std::move(assets_in))),
           execution(&execution_in),
+          weight_type(weight_type_in),
           tokenizer(*assets) {
         engine::conditioners::OpenClipRuntimeOptions options;
-        options.weight_storage_type = kNativeWeightType;
+        options.weight_storage_type = weight_type;
         options.load_text = true;
         options.load_image = true;
         auto image_config = engine::conditioners::OpenClipImageConfig{};
@@ -595,7 +596,7 @@ struct ControlFoleyConditionerRuntime::Impl {
     engine::conditioners::CavMaeStConditionerRuntime & cav_mae() {
         if (cav_mae_runtime == nullptr) {
             engine::conditioners::CavMaeStRuntimeOptions options;
-            options.weight_storage_type = kNativeWeightType;
+            options.weight_storage_type = weight_type;
             cav_mae_runtime = std::make_unique<engine::conditioners::CavMaeStConditionerRuntime>(
                 assets->cav_mae_weights,
                 *execution,
@@ -608,7 +609,7 @@ struct ControlFoleyConditionerRuntime::Impl {
     engine::conditioners::SynchformerConditionerRuntime & synchformer() {
         if (synchformer_runtime == nullptr) {
             engine::conditioners::SynchformerRuntimeOptions options;
-            options.weight_storage_type = kNativeWeightType;
+            options.weight_storage_type = weight_type;
             synchformer_runtime = std::make_unique<engine::conditioners::SynchformerConditionerRuntime>(
                 assets->synchformer_weights,
                 *execution,
@@ -622,7 +623,7 @@ struct ControlFoleyConditionerRuntime::Impl {
         if (clap_runtime == nullptr) {
             engine::conditioners::ClapAudioConfig config;
             engine::conditioners::ClapAudioRuntimeOptions options;
-            options.weight_storage_type = kNativeWeightType;
+            options.weight_storage_type = weight_type;
             clap_runtime = std::make_unique<engine::conditioners::ClapAudioConditionerRuntime>(
                 assets->clap_weights,
                 *execution,
@@ -635,7 +636,7 @@ struct ControlFoleyConditionerRuntime::Impl {
     engine::conditioners::MusicGenStyleConditionerRuntime & musicgen_style() {
         if (musicgen_style_runtime == nullptr) {
             engine::conditioners::MusicGenStyleRuntimeOptions options;
-            options.weight_storage_type = kNativeWeightType;
+            options.weight_storage_type = weight_type;
             musicgen_style_runtime = std::make_unique<engine::conditioners::MusicGenStyleConditionerRuntime>(
                 assets->mert_weights,
                 assets->musicgen_style_weights,
@@ -648,6 +649,7 @@ struct ControlFoleyConditionerRuntime::Impl {
 
     std::shared_ptr<const ControlFoleyAssets> assets;
     engine::core::ExecutionContext * execution = nullptr;
+    engine::assets::TensorStorageType weight_type = engine::assets::TensorStorageType::Native;
     OpenClipTokenizer tokenizer;
     std::optional<ShapeKey> empty_condition_cache_key;
     ControlFoleyFlowConditionInput empty_condition_cache_value;
@@ -664,8 +666,9 @@ struct ControlFoleyConditionerRuntime::Impl {
 
 ControlFoleyConditionerRuntime::ControlFoleyConditionerRuntime(
     std::shared_ptr<const ControlFoleyAssets> assets,
-    engine::core::ExecutionContext & execution)
-    : impl_(std::make_unique<Impl>(std::move(assets), execution)) {}
+    engine::core::ExecutionContext & execution,
+    engine::assets::TensorStorageType weight_type)
+    : impl_(std::make_unique<Impl>(std::move(assets), execution, weight_type)) {}
 
 ControlFoleyConditionerRuntime::~ControlFoleyConditionerRuntime() = default;
 
