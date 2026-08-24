@@ -429,6 +429,7 @@ MiDashengLmGenAROutput MiDashengLmGenARRuntime::generate(
         if (valid_tokens <= 0) {
             throw std::runtime_error("MiDashengLM-Gen AR prompt has no valid tokens");
         }
+        qwen_->release_runtime_graphs();
         std::vector<float> prompt_embeddings(static_cast<size_t>(valid_tokens * config.hidden_size));
         for (int64_t t = 0; t < valid_tokens; ++t) {
             const size_t src = static_cast<size_t>((b * prompt.tokens + t) * config.hidden_size);

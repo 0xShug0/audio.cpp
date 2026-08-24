@@ -306,16 +306,7 @@ public:
         result.audio.reserve(static_cast<size_t>(batch_));
         const int64_t out_frames = 2 * frames_;
         const int64_t out_dim = config_.istft_n_fft + 2;
-        if (execution_.backend_type() == core::BackendType::Cuda && cuda_istft_ == nullptr) {
-            cuda_istft_ = std::make_unique<engine::audio::CudaLogMagnitudePhaseISTFT>(
-                engine::audio::CudaLogMagnitudePhaseISTFTConfig{
-                    out_frames,
-                    config_.istft_n_fft,
-                    config_.istft_hop,
-                    out_dim,
-                    execution_.config().device,
-                });
-        } else if (execution_.backend_type() != core::BackendType::Cuda && host_istft_ == nullptr) {
+        if (host_istft_ == nullptr) {
             host_istft_ = std::make_unique<engine::audio::HostLogMagnitudePhaseISTFT>(
                 engine::audio::HostLogMagnitudePhaseISTFTConfig{
                     out_frames,
@@ -331,19 +322,11 @@ public:
             const std::vector<float> item(
                 log_magnitude_phase.begin() + static_cast<std::ptrdiff_t>(item_offset),
                 log_magnitude_phase.begin() + static_cast<std::ptrdiff_t>(item_offset + item_count));
-            if (execution_.backend_type() == core::BackendType::Cuda) {
-                auto decoded = cuda_istft_->compute(item, weights_->istft_window);
-                result.audio.push_back(engine::runtime::AudioBuffer{
-                    static_cast<int>(config_.sample_rate),
-                    1,
-                    std::move(decoded.audio)});
-            } else {
-                auto decoded = host_istft_->compute(item, weights_->istft_window);
-                result.audio.push_back(engine::runtime::AudioBuffer{
-                    static_cast<int>(config_.sample_rate),
-                    1,
-                    std::move(decoded.audio)});
-            }
+            auto decoded = host_istft_->compute(item, weights_->istft_window);
+            result.audio.push_back(engine::runtime::AudioBuffer{
+                static_cast<int>(config_.sample_rate),
+                1,
+                std::move(decoded.audio)});
         }
         return result;
     }
@@ -376,7 +359,6 @@ private:
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
-    std::unique_ptr<engine::audio::CudaLogMagnitudePhaseISTFT> cuda_istft_;
     std::unique_ptr<engine::audio::HostLogMagnitudePhaseISTFT> host_istft_;
 };
 
