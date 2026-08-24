@@ -293,16 +293,25 @@ core::TensorValue hifigan_graph(
         const int64_t out_channels = config.upsample_initial_channel / (int64_t{1} << (up + 1));
         const int64_t kernel = config.upsample_kernel_sizes[static_cast<size_t>(up)];
         const int64_t rate = config.upsample_rates[static_cast<size_t>(up)];
+        const int64_t padding = (kernel - rate) / 2;
         x = LeakyReluModule({config.leaky_relu_slope}).build(ctx, x);
+        const int64_t module_padding = config.lower_padded_conv_transpose_as_crop ? 0 : padding;
         x = ConvTranspose1dModule({
                 in_channels,
                 out_channels,
                 kernel,
                 static_cast<int>(rate),
-                static_cast<int>((kernel - rate) / 2),
+                static_cast<int>(module_padding),
                 1,
                 true})
                 .build(ctx, x, weights.ups[static_cast<size_t>(up)]);
+        if (config.lower_padded_conv_transpose_as_crop && padding > 0) {
+            const int64_t cropped_frames = x.shape.dims[2] - 2 * padding;
+            if (cropped_frames <= 0) {
+                throw std::runtime_error("HiFi-GAN padded ConvTranspose1d crop would produce empty output");
+            }
+            x = SliceModule({2, padding, cropped_frames}).build(ctx, x);
+        }
         if (source != nullptr) {
             auto x_source = Conv1dModule({
                     1,

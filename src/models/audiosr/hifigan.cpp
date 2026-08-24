@@ -50,10 +50,12 @@ AudioSRHiFiGanRuntime::AudioSRHiFiGanRuntime(
     if (assets == nullptr || assets->weights == nullptr) {
         throw std::runtime_error("AudioSR HiFi-GAN requires tensor source");
     }
+    auto config = make_hifigan_config(assets->config, weight_type);
+    config.lower_padded_conv_transpose_as_crop = execution.backend_type() == core::BackendType::Vulkan;
     impl_ = std::make_unique<Impl>(engine::modules::HifiGanVocoderComponent::load_from_tensor_source(
         assets->weights,
         execution.config(),
-        make_hifigan_config(assets->config, weight_type)));
+        std::move(config)));
 }
 
 AudioSRHiFiGanRuntime::~AudioSRHiFiGanRuntime() = default;
