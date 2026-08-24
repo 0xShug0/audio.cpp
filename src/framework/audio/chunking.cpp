@@ -648,8 +648,19 @@ void append_chunk_speech_metadata(
         const int64_t local_start = std::max<int64_t>(local_span.start_sample, 0);
         const int64_t local_end = std::min<int64_t>(local_span.end_sample, source_samples);
         if (local_start >= local_end) {
-            throw std::runtime_error(std::string("Audio chunker speech metadata merge received a ") +
-                label + " outside the chunk span");
+            std::ostringstream warning;
+            warning << "dropping " << label << " outside chunk span"
+                    << " local_start=" << local_span.start_sample
+                    << " local_end=" << local_span.end_sample
+                    << " source_samples=" << source_samples
+                    << " source_start=" << source_span.start_sample
+                    << " source_end=" << source_span.end_sample
+                    << " keep_start=" << keep_span.start_sample
+                    << " keep_end=" << keep_span.end_sample
+                    << " source_sample_rate=" << source_sample_rate
+                    << " timestamp_sample_rate=" << timestamp_sample_rate;
+            debug::log_message(debug::LogLevel::Warning, "audio.chunking", warning.str());
+            return std::optional<runtime::TimeSpan>{};
         }
         runtime::TimeSpan global{
             timestamp_source_span.start_sample + local_start,
