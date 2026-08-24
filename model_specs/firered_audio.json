@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "family": "firered_audio",
+  "display_name": "FireRedAudio",
+  "description": "FireRedAudio native GGUF package for generation paths backed by a Qwen3.5 hybrid backbone, FireRed RedAE conditioning, RedPatchEncoder, RedDiT latent flow, and RedAE waveform decoding.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "asr",
+    "tts",
+    "clone",
+    "design"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "dependencies": [],
+  "capabilities": {
+    "tts": [
+      "speaker_reference",
+      "style_control"
+    ],
+    "clone": [
+      "speaker_reference"
+    ],
+    "design": [
+      "voice_design"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "template_name",
+        "type": "enum",
+        "description": "FireRedAudio template: asr, understand, tts_clone, voice_design, semantic_edit, or acoustic_edit.",
+        "required": false,
+        "values": [
+          "tts_clone",
+          "voice_design",
+          "semantic_edit",
+          "acoustic_edit",
+          "asr",
+          "understand"
+        ],
+        "default": "tts_clone"
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript for the prompt audio used by tts_clone.",
+        "required": false
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Voice design instruction.",
+        "required": false
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "description": "FireRedAudio generation language tag.",
+        "required": false,
+        "default": "zh"
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "FireRedAudio DiT flow steps per generated latent patch.",
+        "required": false,
+        "min": 1,
+        "default": 10
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "FireRedAudio DiT classifier-free guidance scale.",
+        "required": false,
+        "min": 0.0,
+        "default": 2.0
+      },
+      {
+        "name": "max_new_audio_steps",
+        "type": "int",
+        "description": "Maximum generated RedAE latent patches.",
+        "required": false,
+        "min": 1,
+        "default": 750
+      },
+      {
+        "name": "min_new_audio_steps",
+        "type": "int",
+        "description": "Minimum generated RedAE latent patches before eosp can stop generation.",
+        "required": false,
+        "min": 0,
+        "default": 6
+      },
+      {
+        "name": "max_new_text_tokens",
+        "type": "int",
+        "description": "Maximum text-mode tokens before audio mode.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "max_new_tokens",
+        "type": "int",
+        "description": "Maximum generated text tokens for ASR/understanding.",
+        "required": false,
+        "min": 1,
+        "default": 300
+      },
+      {
+        "name": "enable_thinking",
+        "type": "bool",
+        "description": "Leave the understanding think block open for chain-of-thought style answers.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Text sampling top-k for understanding.",
+        "required": false,
+        "min": 0,
+        "default": 20
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Text sampling top-p for understanding.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.8
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Text sampling temperature for understanding.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.7
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "FireRedAudio weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Main runtime graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "helper_graph_arena_mb",
+        "type": "int",
+        "description": "Helper graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight loading context size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-audio cache slots; set 0 to disable reuse.",
+        "required": false,
+        "min": 0,
+        "default": 2
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release cached runtime graphs after each request to reduce peak VRAM; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "firered_audio_orig",
+      "display_name": "FireRedAudio Orig GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "FireRedAudio-GGUF",
+      "files": [
+        "FireRedAudio-GGUF/firered-audio-orig.gguf"
+      ],
+      "strip_prefix": "FireRedAudio-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/FireRedAudio-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "ui": {
+    "recommended_package": "firered_audio_orig",
+    "tags": [
+      "TTS",
+      "Clone",
+      "Design",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "processor_config": "model:processor_config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model"
+        },
+        "redae_decoder_weights": {
+          "source": "weights:",
+          "prefix": "redae_decoder"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "family": "fireredtts3",
+  "display_name": "FireRedTTS3",
+  "description": "FireRedTTS3 family for Base zero-shot voice cloning and Instruct instruction-conditioned TTS, voice design, semantic edit, and acoustic edit with Qwen3 autoregressive hidden-state generation, FireRed DiT latent patch flow, and RedAE waveform decoding.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "tts",
+    "clone",
+    "design"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "dependencies": [],
+  "capabilities": {
+    "tts": [
+      "speaker_reference",
+      "style_control"
+    ],
+    "clone": [
+      "speaker_reference",
+      "style_control"
+    ],
+    "design": [
+      "voice_design"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "template_name",
+        "type": "enum",
+        "description": "FireRedTTS3 Instruct request template: instruct_tts, voice_design, semantic_edit, or acoustic_edit.",
+        "required": false,
+        "values": [
+          "instruct_tts",
+          "voice_design",
+          "semantic_edit",
+          "acoustic_edit"
+        ],
+        "default": "instruct_tts"
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript for the prompt audio.",
+        "required": false
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "FireRedTTS3 instruction for voice design or edit tasks.",
+        "required": false
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Language tag used by FireRedTTS3.",
+        "required": false,
+        "default": "Chinese"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 600.",
+        "required": false,
+        "min": 1,
+        "default": 600
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "FireRed DiT flow steps per generated latent patch.",
+        "required": false,
+        "min": 1,
+        "default": 10
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "FireRed DiT classifier-free guidance scale.",
+        "required": false,
+        "min": 0.0,
+        "default": 2.0
+      },
+      {
+        "name": "stop_threshold",
+        "type": "float",
+        "description": "Stop probability threshold for AR patch generation.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "FireRedTTS3 weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Main runtime graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "helper_graph_arena_mb",
+        "type": "int",
+        "description": "Helper graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight loading context size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-audio cache slots; set 0 to disable reuse.",
+        "required": false,
+        "min": 0,
+        "default": 4
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release cached runtime graphs after each request to reduce peak VRAM; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "fireredtts3_instruct_orig",
+      "display_name": "FireRedTTS3 Instruct Orig GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "FireRedTTS3-Instruct-GGUF",
+      "files": [
+        "FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-orig.gguf"
+      ],
+      "strip_prefix": "FireRedTTS3-Instruct-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/FireRedTTS3-Instruct-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "fireredtts3_base_orig",
+      "display_name": "FireRedTTS3 Base Orig GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "FireRedTTS3-Base-GGUF",
+      "files": [
+        "FireRedTTS3-Base-GGUF/fireredtts3-base-orig.gguf"
+      ],
+      "strip_prefix": "FireRedTTS3-Base-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/FireRedTTS3-Base-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "ui": {
+    "recommended_package": "fireredtts3_instruct_orig",
+    "tags": [
+      "TTS",
+      "Clone",
+      "Design",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "redae_config": "model:redae/config.json",
+        "tokenizer_json": "model:text_tokenizer/tokenizer.json",
+        "tokenizer_config": "model:text_tokenizer/tokenizer_config.json",
+        "vocab_json": "model:text_tokenizer/vocab.json"
+      },
+      "optional_files": {
+        "base_config": "model:fireredtts3_base/config.json",
+        "instruct_config": "model:fireredtts3_instruct/config.json"
+      },
+      "tensors": {
+        "redae_weights": {
+          "source": "weights:",
+          "prefix": "redae"
+        }
+      },
+      "optional_tensors": {
+        "base_weights": {
+          "source": "weights:",
+          "prefix": "base"
+        },
+        "campplus_weights": {
+          "source": "weights:",
+          "prefix": "campplus"
+        },
+        "instruct_weights": {
+          "source": "weights:",
+          "prefix": "instruct"
+        }
+      }
+    }
+  ]
+}

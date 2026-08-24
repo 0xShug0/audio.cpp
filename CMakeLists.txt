@@ -400,6 +400,7 @@ add_library(engine_core OBJECT
     src/framework/modules/speech_encoders/whisper_embedding.cpp
     src/framework/modules/speech_encoders/whisper_frontend.cpp
     src/framework/modules/speech_encoders/campplus_encoder.cpp
+    src/framework/modules/speech_encoders/s3_tokenizer.cpp
     src/framework/modules/codecs/nemo_nano_codec.cpp
     src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
     src/framework/modules/vocoders/bigvgan_vocoder.cpp
@@ -470,6 +471,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/mel_latent_vae44k_runtime.cpp
     src/framework/codecs/mimi_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
+    src/framework/codecs/redae_codec_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
     src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
@@ -1452,6 +1454,54 @@ audiocpp_add_model(controlfoley
         engine/models/controlfoley/video_processing.h
     LOADERS
         engine::models::controlfoley::make_controlfoley_loader
+)
+
+audiocpp_add_model(fireredtts3
+    SOURCES
+        src/models/fireredtts3/assets.cpp
+        src/models/fireredtts3/ar.cpp
+        src/models/fireredtts3/flow.cpp
+        src/models/fireredtts3/pipeline.cpp
+        src/models/fireredtts3/redae.cpp
+        src/models/fireredtts3/session.cpp
+        src/models/fireredtts3/tokenizer_text.cpp
+    INCLUDES
+        engine/models/fireredtts3/assets.h
+        engine/models/fireredtts3/ar.h
+        engine/models/fireredtts3/flow.h
+        engine/models/fireredtts3/pipeline.h
+        engine/models/fireredtts3/redae.h
+        engine/models/fireredtts3/session.h
+        engine/models/fireredtts3/tokenizer_text.h
+    LOADERS
+        engine::models::fireredtts3::make_fireredtts3_loader
+)
+
+audiocpp_add_model(firered_audio
+    SOURCES
+        src/models/firered_audio/assets.cpp
+        src/models/firered_audio/audio_encoder.cpp
+        src/models/firered_audio/flow.cpp
+        src/models/firered_audio/patch_encoder.cpp
+        src/models/firered_audio/pipeline.cpp
+        src/models/firered_audio/qwen35_runtime.cpp
+        src/models/firered_audio/redae.cpp
+        src/models/firered_audio/session.cpp
+        src/models/firered_audio/tokenizer.cpp
+        src/models/firered_audio/understanding.cpp
+    INCLUDES
+        engine/models/firered_audio/assets.h
+        engine/models/firered_audio/audio_encoder.h
+        engine/models/firered_audio/flow.h
+        engine/models/firered_audio/patch_encoder.h
+        engine/models/firered_audio/pipeline.h
+        engine/models/firered_audio/qwen35_runtime.h
+        engine/models/firered_audio/redae.h
+        engine/models/firered_audio/session.h
+        engine/models/firered_audio/tokenizer.h
+        engine/models/firered_audio/understanding.h
+    LOADERS
+        engine::models::firered_audio::make_firered_audio_loader
 )
 
 set(AUDIOCPP_ENABLED_MODELS "")

@@ -2751,6 +2751,225 @@
       ]
     },
     {
+      "id": "fireredtts3_base_clone_official",
+      "coverage": "FireRedTTS3 Base official voice clone path using reference audio, reference text, RedAE prompt latents, CAMPPlus speaker embedding, AR decode, flow, and RedAE decode",
+      "family": "fireredtts3",
+      "model": "models/audio.cpp-gguf/FireRedTTS3-Base-GGUF/fireredtts3-base-orig.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "base_clone_official",
+          "language": "Chinese",
+          "reference_text": "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you.",
+          "voice_ref": "assets/resources/b.wav",
+          "text": "今天天气很好，我们一起去公园散步吧。",
+          "seed": 1234,
+          "num_inference_steps": 4,
+          "guidance_scale": 2.0,
+          "options": {
+            "stop_threshold": 0.5
+          }
+        }
+      ]
+    },
+    {
+      "id": "fireredtts3_instruct_official_paths",
+      "coverage": "FireRedTTS3 Instruct official clone, voice-design, semantic-edit, and acoustic-edit paths in one session",
+      "family": "fireredtts3",
+      "model": "models/audio.cpp-gguf/FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-orig.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "instruct_clone_official",
+          "language": "Chinese",
+          "reference_text": "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you.",
+          "voice_ref": "assets/resources/b.wav",
+          "text": "今天天气很好，我们一起去公园散步吧。",
+          "seed": 1234,
+          "num_inference_steps": 4,
+          "guidance_scale": 2.0,
+          "options": {
+            "template_name": "instruct_tts",
+            "stop_threshold": 0.5
+          }
+        },
+        {
+          "id": "voice_design_official",
+          "language": "Chinese",
+          "text": "今天天气很好，我们一起去公园散步吧。",
+          "seed": 2,
+          "num_inference_steps": 4,
+          "guidance_scale": 1.2,
+          "options": {
+            "template_name": "voice_design",
+            "instruction": "一个年轻女性的温柔嗓音，语速稍慢，带一点俏皮。"
+          }
+        },
+        {
+          "id": "semantic_edit_official",
+          "audio": "assets/resources/a.wav",
+          "seed": 1234,
+          "num_inference_steps": 4,
+          "guidance_scale": 1.2,
+          "options": {
+            "template_name": "semantic_edit",
+            "instruction": "Replace 'year eighteen o three' with 'year nineteen o five'."
+          }
+        },
+        {
+          "id": "acoustic_edit_official",
+          "audio": "assets/resources/c.wav",
+          "seed": 1234,
+          "num_inference_steps": 4,
+          "guidance_scale": 1.2,
+          "options": {
+            "template_name": "acoustic_edit",
+            "instruction": "adjust the speed to 0.5x"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_asr_zh_official",
+      "coverage": "FireRedAudio official Chinese ASR path through audio encoder and Qwen understanding decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "asr_zh_official",
+          "audio": "reference/FireRedAudio/assets/examples/asr_zh_fleurs.wav",
+          "text": "Transcribe speech to text."
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_tts_zh_clone_official",
+      "coverage": "FireRedAudio official Chinese TTS clone path through prompt RedAE latents, patch encoder, Qwen audio generation, flow, and RedAE decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "tts_zh_clone_official",
+          "language": "zh",
+          "reference_text": "同时，他强调微调要科学有序。",
+          "voice_ref": "reference/FireRedAudio/assets/examples/tts_zh_prompt.wav",
+          "text": "安徽淮南秦师傅发现，停在小区的爱车右前驾驶窗玻璃被砸。",
+          "seed": 1234,
+          "options": {
+            "template_name": "tts_clone"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_voice_design_official",
+      "coverage": "FireRedAudio official voice design path through instruction prompt, Qwen audio generation, flow, and RedAE decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "vdes",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "voice_design_official",
+          "language": "zh",
+          "text": "是我请他来的，可他什么也不知道，他来只是想打听一下，你们厂是不是有旧锅炉？",
+          "seed": 1234,
+          "options": {
+            "template_name": "voice_design",
+            "instruction": "以女性高音区的清亮音色,表现出青年阶段的特质,音量略强,语速适中稍快,语调带有解释意味和急切的情感流露,确保语音流畅自然。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_semantic_edit_official",
+      "coverage": "FireRedAudio official semantic edit path through source-audio RedAE latents, edit prompt, Qwen audio generation, flow, and RedAE decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "edit_semantic_official",
+          "audio": "reference/FireRedAudio/assets/examples/edit_semantic_zh_ref.wav",
+          "seed": 1234,
+          "options": {
+            "template_name": "semantic_edit",
+            "instruction": "delete '比普通的茶叶要'"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_acoustic_edit_official",
+      "coverage": "FireRedAudio official acoustic edit path through source-audio RedAE latents, edit prompt, Qwen audio generation, flow, and RedAE decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "edit_acoustic_official",
+          "audio": "reference/FireRedAudio/assets/examples/edit_acoustic_zh_ref.wav",
+          "seed": 1234,
+          "options": {
+            "template_name": "acoustic_edit",
+            "instruction": "shift the pitch by 3 steps"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_understand_qa_official",
+      "coverage": "FireRedAudio official audio understanding QA path with thinking enabled",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "understand_qa_official",
+          "audio": "reference/FireRedAudio/assets/examples/assets_mmau_test.wav",
+          "text": "What illness did Second speaker's friend suffer from?\n(A) Progressive arthritis (B) Progressive cancer (C) Acute pneumonia (D) Chronic heart disease",
+          "options": {
+            "template_name": "understand",
+            "enable_thinking": true,
+            "max_new_tokens": 10240
+          }
+        }
+      ]
+    },
+    {
       "id": "dramabox_voice_ref_cfg_stg_cold",
       "coverage": "DramaBox single cold voice-reference TTS request with CFG and STG enabled",
       "family": "dramabox",
