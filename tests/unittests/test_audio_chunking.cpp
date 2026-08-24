@@ -879,6 +879,41 @@ void test_chunk_word_timestamp_merge_drops_outside_words() {
     require_span(merged[1].span, 1050, 1080, "second valid word span");
 }
 
+void test_chunk_speech_metadata_merge_drops_outside_spans() {
+    engine::runtime::TaskResult chunk;
+    auto kept_segment = speech(20, 40);
+    kept_segment.text = "kept segment";
+    chunk.speech_segments.push_back(kept_segment);
+    auto outside_segment = speech(120, 140);
+    outside_segment.text = "outside segment";
+    chunk.speech_segments.push_back(outside_segment);
+
+    engine::runtime::SpeakerTurn kept_turn;
+    kept_turn.span = engine::runtime::TimeSpan{50, 80};
+    kept_turn.speaker_id = "SPEAKER_00";
+    chunk.speaker_turns.push_back(kept_turn);
+    engine::runtime::SpeakerTurn outside_turn;
+    outside_turn.span = engine::runtime::TimeSpan{120, 140};
+    outside_turn.speaker_id = "SPEAKER_01";
+    chunk.speaker_turns.push_back(outside_turn);
+
+    engine::runtime::TaskResult merged;
+    engine::audio::append_chunk_speech_metadata(
+        merged,
+        chunk,
+        engine::runtime::TimeSpan{1000, 1100},
+        engine::runtime::TimeSpan{1000, 1100},
+        16000,
+        16000);
+
+    engine::test::require_eq(merged.speech_segments.size(), static_cast<size_t>(1), "outside speech segment dropped");
+    engine::test::require_eq(merged.speech_segments[0].text, std::string("kept segment"), "valid speech segment kept");
+    require_span(merged.speech_segments[0].span, 1020, 1040, "valid speech segment span");
+    engine::test::require_eq(merged.speaker_turns.size(), static_cast<size_t>(1), "outside speaker turn dropped");
+    engine::test::require_eq(merged.speaker_turns[0].speaker_id, std::string("SPEAKER_00"), "valid speaker turn kept");
+    require_span(merged.speaker_turns[0].span, 1050, 1080, "valid speaker turn span");
+}
+
 }  // namespace
 
 int main() {
@@ -912,6 +947,7 @@ int main() {
         test_chunk_speech_metadata_merge_rescales_chunk_domain();
         test_chunk_word_timestamp_merge_rejects_invalid_spans();
         test_chunk_word_timestamp_merge_drops_outside_words();
+        test_chunk_speech_metadata_merge_drops_outside_spans();
         std::cout << "audio_chunking_test passed\n";
     } catch (const std::exception & ex) {
         std::cerr << "audio_chunking_test failed: " << ex.what() << "\n";
