@@ -108,16 +108,15 @@ jobs:
             ${{ matrix.defines }} ${{ env.CMAKE_ARGS }}
       - name: Build
         run: cmake --build build --config Release --parallel "$(sysctl -n hw.logicalcpu)" --target ${{ env.BUILD_TARGETS }}
-      - name: Pack
+      - name: Stage bundle
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
           cp -r tools build/bin/tools 2>/dev/null || true
           cp -r model_specs build/bin/model_specs 2>/dev/null || true
-          tar -czvf audio-${{ needs.get-version.outputs.tag }}-bin-macos-${{ matrix.arch }}-metal.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-macos-${{ matrix.arch }}-metal
-          path: audio-${{ needs.get-version.outputs.tag }}-bin-macos-${{ matrix.arch }}-metal.tar.gz
+          path: build/bin/*
 
   linux-cpu:
     name: Ubuntu x64 (CPU)
@@ -136,16 +135,15 @@ jobs:
             -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF ${{ env.CMAKE_ARGS }}
       - name: Build
         run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
-      - name: Pack
+      - name: Stage bundle
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
           cp -r tools build/bin/tools 2>/dev/null || true
           cp -r model_specs build/bin/model_specs 2>/dev/null || true
-          tar -czf audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu
-          path: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu.tar.gz
+          path: build/bin/*
 
   linux-vulkan:
     name: Ubuntu x64 (Vulkan)
@@ -164,16 +162,15 @@ jobs:
             -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON ${{ env.CMAKE_ARGS }}
       - name: Build
         run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
-      - name: Pack
+      - name: Stage bundle
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
           cp -r tools build/bin/tools 2>/dev/null || true
           cp -r model_specs build/bin/model_specs 2>/dev/null || true
-          tar -czf audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan.tar.gz -C build/bin .
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan
-          path: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan.tar.gz
+          path: build/bin/*
 
   windows-cpu:
     name: Windows x64 (CPU)
@@ -190,18 +187,17 @@ jobs:
           .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager
           .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -DeploymentBuild -NativeModelManager
           .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager
-      - name: Pack
+      - name: Stage bundle
         shell: pwsh
         working-directory: build/windows-cpu-release/bin
         run: |
           cp ..\..\..\LICENSE . 2>$null
           Copy-Item -Recurse ..\..\..\tools .\tools -ErrorAction SilentlyContinue
           Copy-Item -Recurse ..\..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
-          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu.zip *
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu
-          path: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu.zip
+          path: build/windows-cpu-release/bin/*
 
   windows-vulkan:
     name: Windows x64 (Vulkan)
@@ -225,18 +221,17 @@ jobs:
           .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager
           .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_server -DeploymentBuild -NativeModelManager
           .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager
-      - name: Pack
+      - name: Stage bundle
         shell: pwsh
         working-directory: build/windows-vulkan-release/bin
         run: |
           cp ..\..\..\LICENSE . 2>$null
           Copy-Item -Recurse ..\..\..\tools .\tools -ErrorAction SilentlyContinue
           Copy-Item -Recurse ..\..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
-          7z a -snl ..\..\..\audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-vulkan.zip *
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-vulkan
-          path: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-vulkan.zip
+          path: build/windows-vulkan-release/bin/*
 
   windows-cuda:
     name: 'Windows x64 (CUDA ${{ matrix.label }})'
@@ -300,8 +295,11 @@ jobs:
         # only trips if NO cudart was copied at all (a broken/empty toolkit).
         # cufft64_*.dll is included because engine_runtime links CUDA::cufft
         # for its CUDA inverse-STFT kernel (CMakeLists.txt).
+        #
+        # Staged outside build/bin so the bin artifact stays free of the heavy
+        # runtime DLLs; the cudart artifact is uploaded separately below.
         run: |
-          $dst = "build\bin\cudart"
+          $dst = "build\cudart"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           $dlls = "cudart64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll", "cufft64_*.dll"
           robocopy "$env:CUDA_PATH\bin" $dst $dlls
@@ -312,22 +310,21 @@ jobs:
             exit 1
           }
           exit 0
-      - name: Pack
+      - name: Stage bundle
         shell: pwsh
         working-directory: build/bin
-        # -x!cudart keeps the heavy CUDA runtime DLLs out of the bin zip so they
-        # are shipped exactly once (in the separate cudart...zip), matching
-        # llama.cpp.
         run: |
           cp ..\..\LICENSE . 2>$null
           Copy-Item -Recurse ..\..\tools .\tools -ErrorAction SilentlyContinue
           Copy-Item -Recurse ..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
-          7z a -snl ..\..\audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cuda${{ matrix.label }}.zip * -x!cudart
-          7z a -snl ..\..\audio-${{ needs.get-version.outputs.tag }}-cudart-windows-x64-cuda${{ matrix.label }}.zip cudart\*
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cuda${{ matrix.label }}
-          path: 'audio-${{ needs.get-version.outputs.tag }}-*cuda${{ matrix.label }}.zip'
+          path: build/bin/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-cudart-windows-x64-cuda${{ matrix.label }}
+          path: build/cudart/*
 
   # Best-effort ROCm builds. Kept OUT of the release `needs` and commented by
   # default (llama.cpp ships its ROCm job disabled as well) because GitHub
@@ -359,7 +356,32 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: assets
-          merge-multiple: true
+      # Each artifact downloads into assets/<artifact-name>/ holding the raw
+      # bundle (binaries + tools/ + model_specs/). Archive per platform here so
+      # the release ships the same zip/tar.gz layout as before; artifact names
+      # already match the final asset basenames.
+      - name: Create release archives
+        run: |
+          set -euo pipefail
+          if ! command -v zip >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y zip
+          fi
+          cd assets
+          for d in */; do
+            name="${d%/}"
+            echo "Packing ${name}"
+            case "$name" in
+              *windows*)
+                (cd "$d" && zip -qqr "../${name}.zip" .)
+                ;;
+              *)
+                (cd "$d" && tar -czf "../${name}.tar.gz" .)
+                ;;
+            esac
+          done
+          rm -rf -- */
+          ls -la
       - name: Create and push git tag
         run: |
           TAG="${{ needs.get-version.outputs.tag }}"
