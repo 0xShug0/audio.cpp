@@ -7,7 +7,7 @@
 Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
 
 > [!IMPORTANT]
-> **2026-08-18**: MiniMax Music3 has been merged from the `preview` branch into `main`. Please use the version from `main` going forward.
+> **2026-08-25**: Five model families planned for release 0.7 are now under testing on the `dev` branch: AudioSR, ControlFoley, FireRedTTS3, FireRedAudio, and MiDashengLM-Gen. Please try them and share feedback on model quality, options, and backend behavior.
 >
 > **CUDA performance headline:** multiple TTS paths already run **1.8x to up to 8x faster than their Python reference paths** while cutting end-to-end latency by **45%-85%**.
 >
