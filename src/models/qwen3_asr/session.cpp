@@ -94,6 +94,27 @@ void log_chunk_word_diagnostics(
     if (!debug::log_enabled()) {
         return;
     }
+    const int64_t source_samples = source_sample_rate == timestamp_sample_rate
+        ? source_span.end_sample - source_span.start_sample
+        : static_cast<int64_t>(std::llround(
+            static_cast<double>(source_span.end_sample - source_span.start_sample) *
+            static_cast<double>(timestamp_sample_rate) /
+            static_cast<double>(source_sample_rate)));
+    int64_t outside_count = 0;
+    int64_t first_outside = -1;
+    int64_t max_word_end = 0;
+    for (size_t i = 0; i < item.word_timestamps.size(); ++i) {
+        const auto & word = item.word_timestamps[i];
+        max_word_end = std::max(max_word_end, word.span.end_sample);
+        const int64_t local_start = std::max<int64_t>(word.span.start_sample, 0);
+        const int64_t local_end = std::min<int64_t>(word.span.end_sample, source_samples);
+        if (local_start >= local_end) {
+            if (first_outside < 0) {
+                first_outside = static_cast<int64_t>(i);
+            }
+            ++outside_count;
+        }
+    }
     std::ostringstream out;
     out << "qwen3_asr.words_chunk"
         << " index=" << chunk_index
@@ -105,7 +126,10 @@ void log_chunk_word_diagnostics(
         << " source_sample_rate=" << source_sample_rate
         << " timestamp_sample_rate=" << timestamp_sample_rate
         << " raw_words=" << item.word_timestamps.size()
-        << " merged_delta=" << (merged_after - merged_before);
+        << " merged_delta=" << (merged_after - merged_before)
+        << " outside_words=" << outside_count
+        << " source_samples=" << source_samples
+        << " max_word_end=" << max_word_end;
     if (item.text_output.has_value()) {
         out << " text_chars=" << item.text_output->text.size();
     }
@@ -118,6 +142,22 @@ void log_chunk_word_diagnostics(
             << " last_word=\"" << last.word << "\""
             << " last_start=" << last.span.start_sample
             << " last_end=" << last.span.end_sample;
+    }
+    if (first_outside >= 0) {
+        const auto index = static_cast<size_t>(first_outside);
+        const auto append = [&](const char * prefix, int64_t word_index, const runtime::WordTimestamp & word) {
+            out << ' ' << prefix << "_index=" << word_index
+                << ' ' << prefix << "_word=\"" << word.word << "\""
+                << ' ' << prefix << "_start=" << word.span.start_sample
+                << ' ' << prefix << "_end=" << word.span.end_sample;
+        };
+        if (index > 0) {
+            append("prev", first_outside - 1, item.word_timestamps[index - 1]);
+        }
+        append("bad", first_outside, item.word_timestamps[index]);
+        if (index + 1 < item.word_timestamps.size()) {
+            append("next", first_outside + 1, item.word_timestamps[index + 1]);
+        }
     }
     debug::log_message(debug::LogLevel::Info, "qwen3_asr", out.str());
 }
