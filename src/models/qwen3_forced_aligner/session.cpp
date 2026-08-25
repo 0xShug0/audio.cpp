@@ -21,6 +21,13 @@ constexpr size_t kDefaultThinkerPrefillGraphArenaBytes = 256ull * 1024ull * 1024
 constexpr size_t kDefaultThinkerDecodeGraphArenaBytes = 256ull * 1024ull * 1024ull;
 constexpr size_t kDefaultThinkerWeightContextBytes = 64ull * 1024ull * 1024ull;
 
+bool request_clamp_timestamps_to_audio(const runtime::TaskRequest & request) {
+    if (const auto value = runtime::find_option(request.options, {"clamp_timestamps_to_audio"})) {
+        return runtime::parse_bool_option(*value, "clamp_timestamps_to_audio");
+    }
+    return false;
+}
+
 std::shared_ptr<const engine::models::qwen3_asr::Qwen3ASRAssets> require_assets(
     std::shared_ptr<const engine::models::qwen3_asr::Qwen3ASRAssets> assets) {
     if (assets == nullptr) {
@@ -229,7 +236,12 @@ runtime::TaskResult Qwen3ForcedAlignerSession::run_single(const runtime::TaskReq
         timestamp_ids.push_back(id);
     }
     const auto postprocess_start = Clock::now();
-    auto timestamps = processor_.parse_timestamps(align_prompt.words, timestamp_ids, assets_->config.sample_rate);
+    auto timestamps = processor_.parse_timestamps(
+        align_prompt.words,
+        timestamp_ids,
+        assets_->config.sample_rate,
+        audio_frames,
+        request_clamp_timestamps_to_audio(request));
     const auto postprocess_end = Clock::now();
 
     runtime::TaskResult result;

@@ -81,6 +81,13 @@ bool request_return_timestamps(const runtime::TaskRequest & request) {
     return false;
 }
 
+bool request_clamp_timestamps_to_audio(const runtime::TaskRequest & request) {
+    if (const auto value = runtime::find_option(request.options, {"clamp_timestamps_to_audio"})) {
+        return runtime::parse_bool_option(*value, "clamp_timestamps_to_audio");
+    }
+    return false;
+}
+
 void log_chunk_word_diagnostics(
     int64_t chunk_index,
     int64_t chunk_count,
@@ -498,6 +505,9 @@ runtime::TaskResult Qwen3ASRSession::run_single(const Qwen3ASRRequest & asr_requ
             align_request.audio_input = asr_request.audio;
             align_request.text_input = runtime::Transcript{decoded.text, decoded.language};
             align_request.options["audio_chunk_mode"] = "none";
+            if (asr_request.generation.clamp_timestamps_to_audio) {
+                align_request.options["clamp_timestamps_to_audio"] = "true";
+            }
             forced_aligner_session_->prepare(runtime::build_preparation_request(align_request));
             auto aligned = forced_aligner_session_->run(align_request);
             result.word_timestamps = std::move(aligned.word_timestamps);
@@ -725,6 +735,7 @@ Qwen3ASRRequest Qwen3ASRSession::make_request(const runtime::TaskRequest & reque
     if (const auto value = runtime::find_option(request.options, {"return_timestamps"})) {
         out.generation.return_timestamps = runtime::parse_bool_option(*value, "return_timestamps");
     }
+    out.generation.clamp_timestamps_to_audio = request_clamp_timestamps_to_audio(request);
     return out;
 }
 
