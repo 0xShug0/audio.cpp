@@ -1,0 +1,80 @@
+name: server-memory-guard cross-platform
+
+# Verifies the server memory-management changes (--idle-unload-ms and
+# --min-free-memory-mb) compile and the config unit tests pass on all three
+# desktop platforms. GPU backends are disabled here: the changes themselves are
+# backend-agnostic (they query memory through ggml_backend_dev_memory), and the
+# existing linux/mac/windows workflows already cover CUDA/Vulkan/Metal builds.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "app/server/**"
+      - "src/framework/core/host_memory.cpp"
+      - "include/engine/framework/core/backend.h"
+      - "src/framework/core/backend.cpp"
+      - "tests/unittests/test_server_config.cpp"
+      - ".github/workflows/server-memory-guard.yml"
+
+jobs:
+  build-test:
+    name: ${{ matrix.os }} build+test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_BUILD_TESTS=ON \
+            -DENGINE_ENABLE_OPENMP=OFF \
+            -DENGINE_ENABLE_CUDA=OFF \
+            -DENGINE_ENABLE_VULKAN=OFF \
+            -DENGINE_ENABLE_METAL=OFF
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DENGINE_BUILD_TESTS=ON `
+            -DENGINE_ENABLE_OPENMP=OFF `
+            -DENGINE_ENABLE_CUDA=OFF `
+            -DENGINE_ENABLE_VULKAN=OFF `
+            -DENGINE_ENABLE_METAL=OFF
+
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cmake --build build --target audiocpp_server server_config_test --parallel "$(nproc)"
+
+      - name: Build (macOS nproc fallback)
+        if: runner.os == 'macOS'
+        run: |
+          cmake --build build --target audiocpp_server server_config_test --parallel "$(sysctl -n hw.logicalcpu)"
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target audiocpp_server server_config_test --parallel
+
+      - name: Run server_config_test (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: ./build/bin/server_config_test
+
+      - name: Run server_config_test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\build\bin\Release\server_config_test.exe
