@@ -2907,7 +2907,7 @@
       "coverage": "FireRedAudio official semantic edit path through source-audio RedAE latents, edit prompt, Qwen audio generation, flow, and RedAE decode",
       "family": "firered_audio",
       "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
-      "task": "tts",
+      "task": "gen",
       "mode": "offline",
       "outputs": [
         "audio"
@@ -2929,7 +2929,7 @@
       "coverage": "FireRedAudio official acoustic edit path through source-audio RedAE latents, edit prompt, Qwen audio generation, flow, and RedAE decode",
       "family": "firered_audio",
       "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
-      "task": "tts",
+      "task": "gen",
       "mode": "offline",
       "outputs": [
         "audio"

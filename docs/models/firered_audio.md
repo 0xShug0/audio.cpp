@@ -57,7 +57,7 @@ audiocpp_cli \
 | Field | Value |
 |---|---|
 | Family | `firered_audio` |
-| Tasks | `asr`, `tts`, `clon`, `vdes` |
+| Tasks | `asr`, `tts`, `clon`, `vdes`, `gen` |
 | Mode | `offline` |
 | Default package | `models/FireRedAudio-GGUF/firered-audio-orig.gguf` |
 | Generation paths | `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` |
@@ -71,8 +71,8 @@ audiocpp_cli \
 | `understand` | `asr` | `--audio`, question through `--text` |
 | `tts_clone` | `clon` | `--text`, `--voice-ref`, `--reference-text` |
 | `voice_design` | `vdes` | `--text`, `--request-option instruction=<text>` |
-| `semantic_edit` | `tts` | `--audio`, `--request-option instruction=<text>` |
-| `acoustic_edit` | `tts` | `--audio`, `--request-option instruction=<text>` |
+| `semantic_edit` | `gen` | `--audio`, `--request-option instruction=<text>` |
+| `acoustic_edit` | `gen` | `--audio`, `--request-option instruction=<text>` |
 
 ## Options
 

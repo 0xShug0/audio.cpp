@@ -98,7 +98,6 @@
     {
       "id": "midashenglm_gen_f32",
       "display_name": "MiDashengLM-Gen F32 GGUF",
-      "default": true,
       "format": "gguf",
       "precision": "f32",
       "target_directory": "MiDashengLM-Gen-GGUF",
@@ -110,6 +109,7 @@
     {
       "id": "midashenglm_gen_q8_0",
       "display_name": "MiDashengLM-Gen Q8_0 GGUF",
+      "default": true,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "MiDashengLM-Gen-GGUF",
@@ -121,7 +121,7 @@
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "midashenglm_gen_f32",
+    "recommended_package": "midashenglm_gen_q8_0",
     "tags": [
       "Music",
       "SFX",

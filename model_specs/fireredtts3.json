@@ -180,7 +180,6 @@
     {
       "id": "fireredtts3_instruct_orig",
       "display_name": "FireRedTTS3 Instruct Orig GGUF",
-      "default": true,
       "format": "gguf",
       "precision": "orig",
       "target_directory": "FireRedTTS3-Instruct-GGUF",
@@ -198,6 +197,7 @@
     {
       "id": "fireredtts3_instruct_q8_0",
       "display_name": "FireRedTTS3 Instruct Q8_0 GGUF",
+      "default": true,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "FireRedTTS3-Instruct-GGUF",
@@ -248,7 +248,7 @@
     }
   ],
   "ui": {
-    "recommended_package": "fireredtts3_instruct_orig",
+    "recommended_package": "fireredtts3_instruct_q8_0",
     "tags": [
       "TTS",
       "Clone",

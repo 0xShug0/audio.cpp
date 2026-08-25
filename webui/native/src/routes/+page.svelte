@@ -19,9 +19,10 @@
     setModelsRoot,
     speech,
     stopModelInstall,
-    transcription,
-    unloadModel,
-    uploadWav,
+        transcription,
+        unloadModel,
+        uploadFile,
+        uploadWav,
     type ModelInstallJob,
     type ModelPackageSize,
     type DirectoryBrowserResponse
@@ -65,9 +66,10 @@
   let lyrics = '';
   let duration = 30;
   let seed = 1234;
-  let maxTokens = 1024;
-  let sourceFile: File | null = null;
-  let voiceFile: File | null = null;
+      let maxTokens = 1024;
+      let sourceFile: File | null = null;
+      let videoFile: File | null = null;
+      let voiceFile: File | null = null;
   let vibeVoiceSpeakerFiles: Array<File | null> = [null, null, null, null];
   let voiceInput: HTMLInputElement | null = null;
   let referenceTextFile: File | null = null;
@@ -345,9 +347,13 @@
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
     modelMatchesSelectedPackage(model, selected));
-  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task);
-  $: acceptsSource = needsSource || selected?.task === 'gen';
-  $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
+      $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
+        selected?.id === 'firered-audio-acoustic-edit';
+      $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
+        isFireRedAudioEdit;
+      $: acceptsSource = needsSource || selected?.task === 'gen';
+      $: acceptsVideo = selected?.request_options?.includes('video') === true;
+      $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
   $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
@@ -820,8 +826,9 @@
   function clearModelSelection() {
     selectedId = '';
     quickStartVoice = '';
-    configuredVoices = [];
-    modelPath = '';
+        configuredVoices = [];
+        videoFile = null;
+        modelPath = '';
     installed = null;
     paramSpecs = [];
     advancedValues = {};
@@ -1421,12 +1428,15 @@
         throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires lyrics.`);
       }
       await ensureLoaded();
-      const options = requestOptions();
-      if (usesVibeVoiceSpeakerFiles) {
-        const samples = await vibeVoiceSamplePaths();
-        if (samples) options.voice_samples = samples;
-      }
-      const audio = acceptsSource ? await stagedPath(sourceFile) : undefined;
+        const options = requestOptions();
+        if (usesVibeVoiceSpeakerFiles) {
+          const samples = await vibeVoiceSamplePaths();
+          if (samples) options.voice_samples = samples;
+        }
+        if (acceptsVideo && videoFile) {
+          options.video = await uploadFile(videoFile, aborter?.signal);
+        }
+        const audio = acceptsSource ? await stagedPath(sourceFile) : undefined;
       const voiceRef = needsVoice && !usesVibeVoiceSpeakerFiles ? await stagedPath(voiceFile) : undefined;
 
       if (['tts', 'clon', 'vdes'].includes(selected.task)) {
@@ -1491,7 +1501,7 @@
         if (['gen', 's2s', 'align'].includes(selected.task) && language.trim()) request.language = language;
         if (selected.task === 'gen') {
           if (lyrics.trim()) request.lyrics = lyrics;
-          request.duration_seconds = duration;
+          if (!isFireRedAudioEdit) request.duration_seconds = duration;
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
@@ -2049,10 +2059,10 @@
           {/if}
         </div>
 
-        {#if acceptsSource}
-          <label for="source">{tr('request.sourceAudio')} {needsSource ? '' : `(${tr('request.optional')})`}</label>
-          <input id="source" class="file file-native" type="file" accept="audio/*"
-            on:change={(event) => sourceFile = event.currentTarget.files?.[0] || null} />
+            {#if acceptsSource}
+              <label for="source">{tr('request.sourceAudio')} {needsSource ? '' : `(${tr('request.optional')})`}</label>
+              <input id="source" class="file file-native" type="file" accept="audio/*"
+                on:change={(event) => sourceFile = event.currentTarget.files?.[0] || null} />
           <label class="file-picker" for="source"><strong>{tr('file.choose')}</strong><span>{sourceFile?.name || tr('file.none')}</span></label>
           <div class="media-actions">
             {#if recordingTarget === 'source'}
@@ -2076,11 +2086,18 @@
                 <button type="button" disabled={running || Boolean(recorder)}
                   on:click={startLiveTranscription}>{tr('request.startLive')}</button>
               {/if}
-            </div>
-          {/if}
-        {/if}
+                </div>
+              {/if}
+            {/if}
 
-        {#if needsVoice && !usesVibeVoiceSpeakerFiles}
+            {#if acceptsVideo}
+              <label for="video">Video <span>{tr('request.optional')}</span></label>
+              <input id="video" class="file file-native" type="file" accept="video/*"
+                on:change={(event) => videoFile = event.currentTarget.files?.[0] || null} />
+              <label class="file-picker" for="video"><strong>{tr('file.choose')}</strong><span>{videoFile?.name || tr('file.none')}</span></label>
+            {/if}
+
+            {#if needsVoice && !usesVibeVoiceSpeakerFiles}
           {#if allowsQuickStartVoice && quickStartVoices.length}
             <label for="quick-start-voice">{server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}

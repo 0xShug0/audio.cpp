@@ -25,7 +25,7 @@
     ]
   },
   "ui": {
-    "recommended_package": "controlfoley_large_44k_f32",
+    "recommended_package": "controlfoley_large_44k_q8_0",
     "tags": [
       "SFX",
       "GGUF"
@@ -170,7 +170,6 @@
     {
       "id": "controlfoley_large_44k_f32",
       "display_name": "ControlFoley Large 44k F32 GGUF",
-      "default": true,
       "format": "gguf",
       "precision": "f32",
       "target_directory": "ControlFoley-GGUF",
@@ -182,6 +181,7 @@
     {
       "id": "controlfoley_large_44k_q8_0",
       "display_name": "ControlFoley Large 44k Q8_0 GGUF",
+      "default": true,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "ControlFoley-GGUF",

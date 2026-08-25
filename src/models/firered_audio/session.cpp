@@ -214,8 +214,9 @@ FireRedAudioSession::FireRedAudioSession(
     if (task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceCloning &&
         task_.task != runtime::VoiceTaskKind::VoiceDesign &&
+        task_.task != runtime::VoiceTaskKind::AudioGeneration &&
         task_.task != runtime::VoiceTaskKind::Asr) {
-        throw std::runtime_error("FireRedAudio supports tts, clone, voice design, and asr tasks");
+        throw std::runtime_error("FireRedAudio supports tts, clone, voice design, gen, and asr tasks");
     }
     using T = engine::assets::TensorStorageType;
     const auto storage_type = runtime::parse_tensor_storage_option(

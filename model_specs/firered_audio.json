@@ -9,7 +9,8 @@
     "asr",
     "tts",
     "clone",
-    "design"
+    "design",
+    "edit"
   ],
   "modes": [
     "offline"
@@ -34,6 +35,9 @@
     ],
     "design": [
       "voice_design"
+    ],
+    "edit": [
+      "prompt_editing"
     ]
   },
   "options": {
@@ -216,7 +220,6 @@
     {
       "id": "firered_audio_orig",
       "display_name": "FireRedAudio Orig GGUF",
-      "default": true,
       "format": "gguf",
       "precision": "orig",
       "target_directory": "FireRedAudio-GGUF",
@@ -234,6 +237,7 @@
     {
       "id": "firered_audio_q8_0",
       "display_name": "FireRedAudio Q8_0 GGUF",
+      "default": true,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "FireRedAudio-GGUF",
@@ -250,7 +254,7 @@
     }
   ],
   "ui": {
-    "recommended_package": "firered_audio_orig",
+    "recommended_package": "firered_audio_q8_0",
     "tags": [
       "TTS",
       "Clone",
