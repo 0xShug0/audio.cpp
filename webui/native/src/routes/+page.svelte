@@ -128,6 +128,14 @@
     demo_3_woman: 'demo_3_woman',
     demo_4_woman: 'demo_4_woman'
   };
+  const exposeAllStudioPackageFamilies = new Set([
+    'audiosr',
+    'controlfoley',
+    'firered_audio',
+    'fireredtts3',
+    'meanvc2',
+    'midashenglm_gen'
+  ]);
 
   function chooseUiLanguage(code: string) {
     uiLanguage = resolveUiLanguage([code]);
@@ -347,13 +355,16 @@
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
     modelMatchesSelectedPackage(model, selected));
-      $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
-        selected?.id === 'firered-audio-acoustic-edit';
-      $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
-        isFireRedAudioEdit;
-      $: acceptsSource = needsSource || selected?.task === 'gen';
-      $: acceptsVideo = selected?.request_options?.includes('video') === true;
-      $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
+  $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
+    selected?.id === 'firered-audio-acoustic-edit';
+  $: usesDurationSecOption =
+    selected?.family === 'controlfoley' ||
+    selected?.family === 'midashenglm_gen';
+  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
+    isFireRedAudioEdit;
+  $: acceptsSource = needsSource || selected?.task === 'gen';
+  $: acceptsVideo = selected?.request_options?.includes('video') === true;
+  $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
   $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
@@ -474,7 +485,8 @@
 
   function studioPackageSlots(entry: CatalogEntry) {
     const choices = entry.install_packages || [];
-    if (entry.family === 'ace_step' || entry.family === 'minimax_music3') {
+    if (entry.family === 'ace_step' || entry.family === 'minimax_music3' ||
+        exposeAllStudioPackageFamilies.has(entry.family)) {
       return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
     }
     const q8 = choices.find((choice) => choice.format === 'gguf' &&
@@ -904,9 +916,10 @@
 
   function resetParams() {
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
-    paramSpecs = selected?.family === 'vibevoice'
-      ? byId.filter((spec) => spec.name !== 'voice_samples')
-      : byId;
+    const hidesDurationSec = selected?.family === 'controlfoley' || selected?.family === 'midashenglm_gen';
+    paramSpecs = byId.filter((spec) =>
+      !(selected?.family === 'vibevoice' && spec.name === 'voice_samples') &&
+      !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     if (selected?.family === 'minimax_h3') {
       duration = 15;
@@ -1501,7 +1514,10 @@
         if (['gen', 's2s', 'align'].includes(selected.task) && language.trim()) request.language = language;
         if (selected.task === 'gen') {
           if (lyrics.trim()) request.lyrics = lyrics;
-          if (!isFireRedAudioEdit) request.duration_seconds = duration;
+          if (!isFireRedAudioEdit) {
+            if (usesDurationSecOption) options.duration_sec = duration;
+            else request.duration_seconds = duration;
+          }
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
