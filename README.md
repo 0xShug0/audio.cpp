@@ -77,6 +77,8 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 | **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | DotTTS SOAR, MeanFlow, and Edit | GGUF 16/Q8, Stream |
 | **dramabox** | TTS, Clone | en | DramaBox expressive TTS and voice cloning | GGUF Q8 |
 | **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | Fish Audio S2 Pro | GGUF 16/Q8 |
+| **firered_audio** | ASR, TTS, Clone, Design, Ctrl | zh, en | FireRedAudio multimodal speech/audio model with ASR, understanding, cloning, design, and edit paths | GGUF original/Q8 |
+| **fireredtts3** | TTS, Clone, Design, Ctrl | zh, en | FireRedTTS3 Base and Instruct packages for voice cloning, design, semantic edit, and acoustic edit | GGUF original/Q8 |
 | **higgs_audio_tts** | TTS, Clone, Ctrl | auto | Higgs Audio v3 TTS 4B | GGUF 16/Q8 |
 | **index_tts2** | TTS, Clone, Ctrl | zh, en, ja, es, ar | IndexTTS-2, IndexTTS-2.5 (variant) | GGUF 16/Q8 |
 | **irodori_tts** | TTS, Clone, Design, Ctrl | ja | Irodori-TTS-v4-Small, Irodori-TTS-500M-v3, Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
@@ -114,7 +116,9 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
+| **audiosr** | Edit | lang agnostic | AudioSR Basic and Speech audio super-resolution packages | GGUF F32 |
 | **bs_roformer** | Sep | lang agnostic | BS-RoFormer vocal separation checkpoints | GGUF Q8 |
+| **controlfoley** | SFX | auto | ControlFoley 44 kHz multimodal Foley generation from text, video, and reference audio conditioning | GGUF F32/Q8 |
 | **htdemucs** | Sep | lang agnostic | HTDemucs, HTDemucs_ft | GGUF 16/Q8 |
 | **meanvc2** | VC | lang agnostic | MeanVC2 120 ms/40 ms zero-shot voice conversion | GGUF F32/Q4, Stream |
 | **mel_band_roformer** | Sep | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | GGUF 16/Q8 |
@@ -129,6 +133,7 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 |---|---|---|---|---|
 | **ace_step** | Music, Edit | 50+ langs | ACE-Step 1.5 Turbo/Base and XL Turbo/SFT with acestep-5Hz-lm-1.7B | GGUF 16 |
 | **heartmula** | Music | zh, en, ja, ko, es | HeartMuLa-oss-3B with HeartCodec-oss | GGUF 16/Q8 |
+| **midashenglm_gen** | Music, SFX | auto | MiDashengLM-Gen structured-prompt generation for speech, music, sound effects, and ambience | GGUF F32/Q8 |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | MiniMax-H3 Q4_K with optional INT8 ConvRot DiT | GGUF Q4/INT8 |
 | **minimax_music3** | Music | auto | MiniMax Music 3 text-to-music generation with lyrics conditioning | GGUF Q4/Q8 |
 | **stable_audio** | Music, SFX, Edit | en | Stable Audio 3 Small Music, Stable Audio 3 Small SFX, Stable Audio 3 Medium | GGUF 16/Q8 |

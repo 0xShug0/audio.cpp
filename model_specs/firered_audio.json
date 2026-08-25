@@ -241,7 +241,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/tts.md",
+      "docs/models/firered_audio.md",
       "docs/gguf.md"
     ]
   },

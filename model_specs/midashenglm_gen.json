@@ -138,6 +138,7 @@
       "GGUF"
     ],
     "docs": [
+      "docs/models/midashenglm_gen.md",
       "docs/gguf.md"
     ]
   },

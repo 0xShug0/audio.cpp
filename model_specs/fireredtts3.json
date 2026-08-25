@@ -222,7 +222,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/tts.md",
+      "docs/models/fireredtts3.md",
       "docs/gguf.md"
     ]
   },

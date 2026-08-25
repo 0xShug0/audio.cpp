@@ -18,6 +18,8 @@
 | VoxCPM2 | `voxcpm2` | `tts`, `vdes` | [VoxCPM2](#voxcpm2) |
 | Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](#higgs-audio-v3-tts) |
 | Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
+| FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
+| FireRedAudio | `firered_audio` | `asr`, `tts`, `clon`, `vdes` | [FireRedAudio](models/firered_audio.md) |
 | IndexTTS2 | `index_tts2` | `tts` | [IndexTTS](models/index_tts.md) |
 | IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS](models/index_tts.md) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
