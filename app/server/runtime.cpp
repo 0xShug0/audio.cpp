@@ -8,6 +8,7 @@
 #include "../streaming/pcm_source.h"
 #include "../streaming/streaming.h"
 
+#include "engine/framework/core/host_memory.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/metadata.h"
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -1107,6 +1109,8 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     // there. Checked before ServerBusyError only because both are
     // runtime_error; the two conditions are disjoint.
     response = error_response(400, ex.what(), "invalid_request_error");
+  } catch (const InsufficientMemoryError & ex) {
+    response = error_response(503, ex.what(), "insufficient_memory");
   } catch (const ServerBusyError & ex) {
     // Non-streaming requests surface the busy state as 503 before any response is
     // sent. (Streaming requests acquire the lock inside the stream body, after
@@ -1644,6 +1648,7 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
         load_lock = std::unique_lock<std::mutex>(model_load_mutex_);
         evict_for_model_limit(model);
     }
+    ensure_model_fits_memory(model.config);
     auto registry = engine::runtime::make_default_registry();
 
     engine::runtime::ModelLoadRequest load_request;
@@ -2796,6 +2801,63 @@ void ServerState::unload_idle_models() {
         std::cerr << "[server] idle " << idle_ms << " ms: unloaded " << unloaded << " model(s)\n";
         // Restart the idle clock so we do not spin on unload attempts every interval.
             last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
+    }
+}
+
+namespace {
+std::string format_bytes(size_t bytes) {
+    const double gib = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(2) << gib << " GiB";
+    return out.str();
+}
+}  // namespace
+
+size_t ServerState::estimate_model_memory_bytes(const ServerModelConfig & model) const {
+    size_t weights = 0;
+    const auto add_file = [&weights](const std::filesystem::path & path) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(path, ec)) {
+            weights += static_cast<size_t>(std::filesystem::file_size(path, ec));
+        }
+    };
+    add_file(model.path);
+    for (const auto & [key, value] : model.session_options) {
+        (void)key;
+        std::filesystem::path aux(value);
+        if (aux.is_relative()) {
+            aux = model.path.parent_path() / aux;
+        }
+        add_file(aux);
+    }
+    // Weights plus a runtime factor for Metal/GPU buffers, activation graphs and
+    // KV state, plus a fixed floor for per-model bookkeeping.
+    constexpr double kRuntimeOverheadFactor = 1.5;
+    constexpr size_t kFixedOverhead = 128ull * 1024 * 1024;
+    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead;
+}
+
+void ServerState::ensure_model_fits_memory(const ServerModelConfig & model) {
+    const size_t estimate = estimate_model_memory_bytes(model);
+    const size_t headroom = static_cast<size_t>(config_.min_free_memory_mb) * 1024ull * 1024ull;
+
+    const size_t host_available = engine::core::available_host_memory_bytes();
+    if (host_available > 0 && estimate + headroom > host_available) {
+        throw InsufficientMemoryError(
+            "cannot load model '" + model.id + "': estimated " + format_bytes(estimate) +
+            " + " + std::to_string(config_.min_free_memory_mb) + " MiB headroom exceeds available host memory (" +
+            format_bytes(host_available) + ")");
+    }
+
+    const engine::core::BackendMemorySnapshot device =
+        engine::core::query_backend_memory(engine::core::BackendConfig{
+            config_.backend, config_.device, config_.threads});
+    if (device.available && estimate + headroom > static_cast<size_t>(device.free_bytes)) {
+        throw InsufficientMemoryError(
+            "cannot load model '" + model.id + "': estimated " + format_bytes(estimate) +
+            " + " + std::to_string(config_.min_free_memory_mb) + " MiB headroom exceeds available " +
+            backend_name(config_.backend) + " memory (" +
+            format_bytes(static_cast<size_t>(device.free_bytes)) + ")");
     }
 }
 

@@ -95,6 +95,12 @@ struct ServerConfig {
     // max_loaded_models: that bounds peak residency, this frees memory during
     // quiet periods. The next request reloads lazily.
     int idle_unload_ms = 0;
+    // Minimum free memory (host and GPU, each) the server must retain after
+    // loading a model, in MiB. Before every lazy load the server estimates the
+    // model's resident footprint from its weights and refuses to load when
+    // estimate + this headroom would not fit. 0 disables the extra headroom
+    // (the estimate must still fit in what is free).
+    int min_free_memory_mb = 512;
     // Fleet-wide bounds for incrementally delivered request bodies. The defaults are
     // in LiveIngestLimits; a model entry may override any subset of them.
     LiveIngestLimits live_ingest;

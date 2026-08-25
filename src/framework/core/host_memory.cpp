@@ -5,7 +5,10 @@
 #elif defined(__linux__)
 #include <cstdio>
 #include <cstring>
-#elif defined(__unix__) || defined(__APPLE__)
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <unistd.h>
+#elif defined(__unix__)
 #include <unistd.h>
 #endif
 
@@ -37,6 +40,28 @@ size_t mem_available_bytes() {
 }
 
 }  // namespace
+#elif defined(__APPLE__)
+namespace {
+
+// Mach VM stats: pages that a fresh allocation can claim without swapping.
+// free_count is the idle pool; inactive_count is reclaimable file cache /
+// anonymous memory; purgeable_count can be dropped on demand. Compressed
+// pages are deliberately excluded -- dropping them would force decompression
+// and they are already backing live data.
+size_t mem_available_bytes() {
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    vm_statistics64_data_t vm_stat{};
+    if (host_statistics64(mach_host_self(), HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm_stat), &count) != KERN_SUCCESS) {
+        return 0;
+    }
+    const uint64_t page = static_cast<uint64_t>(vm_page_size);
+    return static_cast<size_t>(
+        (static_cast<uint64_t>(vm_stat.free_count) +
+         static_cast<uint64_t>(vm_stat.inactive_count) +
+         static_cast<uint64_t>(vm_stat.purgeable_count)) * page);
+}
+
+}  // namespace
 #endif
 
 size_t available_host_memory_bytes() {
@@ -50,6 +75,10 @@ size_t available_host_memory_bytes() {
     if (const size_t bytes = mem_available_bytes(); bytes > 0) {
         return bytes;
     }
+#elif defined(__APPLE__)
+    if (const size_t bytes = mem_available_bytes(); bytes > 0) {
+        return bytes;
+    }
 #elif defined(_SC_AVPHYS_PAGES) && defined(_SC_PAGE_SIZE)
     const long pages = sysconf(_SC_AVPHYS_PAGES);
     const long page_size = sysconf(_SC_PAGE_SIZE);
@@ -57,7 +86,7 @@ size_t available_host_memory_bytes() {
         return static_cast<size_t>(pages) * static_cast<size_t>(page_size);
     }
 #endif
-    // macOS has no _SC_AVPHYS_PAGES, and any query can fail: report unknown.
+    // A query can fail on any platform: report unknown (0).
     return 0;
 }
 
