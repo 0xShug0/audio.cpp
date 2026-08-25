@@ -190,7 +190,24 @@
       "strip_prefix": "FireRedTTS3-Instruct-GGUF",
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/FireRedTTS3-Instruct-GGUF",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "fireredtts3_instruct_q8_0",
+      "display_name": "FireRedTTS3 Instruct Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "FireRedTTS3-Instruct-GGUF",
+      "files": [
+        "FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-q8_0.gguf"
+      ],
+      "strip_prefix": "FireRedTTS3-Instruct-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
         "revision": "main",
         "gated": false
       }
@@ -207,7 +224,24 @@
       "strip_prefix": "FireRedTTS3-Base-GGUF",
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/FireRedTTS3-Base-GGUF",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "fireredtts3_base_q8_0",
+      "display_name": "FireRedTTS3 Base Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "FireRedTTS3-Base-GGUF",
+      "files": [
+        "FireRedTTS3-Base-GGUF/fireredtts3-base-q8_0.gguf"
+      ],
+      "strip_prefix": "FireRedTTS3-Base-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
         "revision": "main",
         "gated": false
       }

@@ -114,17 +114,6 @@
         "AudioSR-GGUF/audiosr-basic-f32.gguf"
       ],
       "strip_prefix": "AudioSR-GGUF"
-    },
-    {
-      "id": "audiosr_speech_f32",
-      "display_name": "AudioSR Speech F32 GGUF",
-      "format": "gguf",
-      "precision": "f32",
-      "target_directory": "AudioSR-GGUF",
-      "files": [
-        "AudioSR-GGUF/audiosr-speech-f32.gguf"
-      ],
-      "strip_prefix": "AudioSR-GGUF"
     }
   ],
   "dependencies": [],

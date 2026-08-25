@@ -88,8 +88,10 @@
   },
   "package_defaults": {
     "download": {
-      "kind": "unsupported",
-      "reason": "MiDashengLM-Gen GGUF package is not published yet; convert locally with audiocpp_gguf."
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
     }
   },
   "packages": [
@@ -106,27 +108,15 @@
       "strip_prefix": "MiDashengLM-Gen-GGUF"
     },
     {
-      "id": "midashenglm_gen_safetensors",
-      "display_name": "MiDashengLM-Gen Safetensors",
-      "format": "safetensors",
-      "precision": "native",
-      "target_directory": "MiDashengLM-Gen",
+      "id": "midashenglm_gen_q8_0",
+      "display_name": "MiDashengLM-Gen Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MiDashengLM-Gen-GGUF",
       "files": [
-        "config.json",
-        "model.safetensors.index.json",
-        "model-00001-of-00003.safetensors",
-        "model-00002-of-00003.safetensors",
-        "model-00003-of-00003.safetensors",
-        "vocab.json",
-        "merges.txt",
-        "tokenizer_config.json"
+        "MiDashengLM-Gen-GGUF/midashenglm-gen-q8_0.gguf"
       ],
-      "download": {
-        "kind": "huggingface_snapshot",
-        "repo": "mispeech/midashenglm-gen",
-        "revision": "main",
-        "gated": false
-      }
+      "strip_prefix": "MiDashengLM-Gen-GGUF"
     }
   ],
   "dependencies": [],

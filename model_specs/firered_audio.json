@@ -226,7 +226,24 @@
       "strip_prefix": "FireRedAudio-GGUF",
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/FireRedAudio-GGUF",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "firered_audio_q8_0",
+      "display_name": "FireRedAudio Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "FireRedAudio-GGUF",
+      "files": [
+        "FireRedAudio-GGUF/firered-audio-q8_0.gguf"
+      ],
+      "strip_prefix": "FireRedAudio-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
         "revision": "main",
         "gated": false
       }
