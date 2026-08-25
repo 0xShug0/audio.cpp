@@ -10,13 +10,13 @@
 
 namespace engine::core {
 
-namespace {
-
 void ensure_backends_loaded() {
     if (ggml_backend_reg_count() == 0) {
         ggml_backend_load_all();
     }
 }
+
+namespace {
 
 // A backend is identified by the name of the ggml registry that owns it. The device type
 // (GPU/IGPU/ACCEL) deliberately plays no part in that: Metal reports GPU rather than ACCEL,

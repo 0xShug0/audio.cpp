@@ -32,6 +32,11 @@ struct BackendDeviceInfo {
 std::vector<BackendDeviceInfo> list_backend_devices();
 void print_backend_devices(std::ostream & out);
 
+// Load every registered ggml backend registry (idempotent). Needed before
+// query_backend_memory() can report GPU memory on a process that has not yet
+// initialized a backend.
+void ensure_backends_loaded();
+
 struct BackendMemorySnapshot {
     bool available = false;
     int64_t total_bytes = 0;

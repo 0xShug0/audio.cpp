@@ -6,8 +6,8 @@
 #include <cstdio>
 #include <cstring>
 #elif defined(__APPLE__)
+#include <cstdint>
 #include <mach/mach.h>
-#include <unistd.h>
 #elif defined(__unix__)
 #include <unistd.h>
 #endif

@@ -1643,10 +1643,16 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
     if (model.session != nullptr) {
         return;
     }
-    std::unique_lock<std::mutex> load_lock;
+    // Serialize the whole "evict -> memory check -> load" sequence even when
+    // max_loaded_models is 0 (no eviction): two concurrent lazy loads could
+    // otherwise both pass the memory pre-check before either allocates, and the
+    // guard would be meaningless. A model mid-inference is never a victim.
+    std::unique_lock<std::mutex> load_lock(model_load_mutex_);
     if (config_.max_loaded_models > 0) {
-        load_lock = std::unique_lock<std::mutex>(model_load_mutex_);
         evict_for_model_limit(model);
+        // Note: if ensure_model_fits_memory() below then refuses the load, the
+        // evicted model is already unloaded (freed memory is never restored).
+        // That is acceptable: the 503 tells the client to retry later.
     }
     ensure_model_fits_memory(model.config);
     auto registry = engine::runtime::make_default_registry();
@@ -2763,14 +2769,22 @@ void ServerState::LoadedModel::unload() {
 
 void ServerState::idle_unload_loop() {
     const auto interval_ms = std::max<std::int64_t>(1000, config_.idle_unload_ms / 10);
+    auto deadline = steady_now_ms() + interval_ms;
     while (!idle_unload_shutdown_.load(std::memory_order_relaxed)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
-        if (idle_unload_shutdown_.load(std::memory_order_relaxed)) {
-            break;
-        }
-        const auto idle_ms = steady_now_ms() - last_activity_ms_.load(std::memory_order_relaxed);
-        if (idle_ms >= config_.idle_unload_ms) {
-            unload_idle_models();
+        // Sleep in small slices so SIGTERM (destructor join) never waits out a
+        // full poll interval; the deadline keeps the idle check cadence intact.
+        const auto now = steady_now_ms();
+        if (now >= deadline) {
+            if (idle_unload_shutdown_.load(std::memory_order_relaxed)) {
+                break;
+            }
+            const auto idle_ms = now - last_activity_ms_.load(std::memory_order_relaxed);
+            if (idle_ms >= config_.idle_unload_ms) {
+                unload_idle_models();
+            }
+            deadline = steady_now_ms() + interval_ms;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
     }
 }
@@ -2815,20 +2829,39 @@ std::string format_bytes(size_t bytes) {
 
 size_t ServerState::estimate_model_memory_bytes(const ServerModelConfig & model) const {
     size_t weights = 0;
-    const auto add_file = [&weights](const std::filesystem::path & path) {
-        std::error_code ec;
+    std::error_code ec;
+    // Directories (model_spec / HF-style checkpoints) are summed recursively with
+    // hard limits so a pathological tree cannot stall the load path or blow the
+    // counter; anything beyond the limits contributes 0 (the fixed floor below
+    // still applies, so the estimate never reads as completely empty).
+    constexpr size_t kMaxDepth = 3;
+    constexpr size_t kMaxFiles = 10000;
+    size_t visited_files = 0;
+    const auto add_file = [&](const std::filesystem::path & path) {
         if (std::filesystem::is_regular_file(path, ec)) {
             weights += static_cast<size_t>(std::filesystem::file_size(path, ec));
+            ++visited_files;
         }
     };
-    add_file(model.path);
+    const std::function<void(const std::filesystem::path &, size_t)> add_tree =
+        [&](const std::filesystem::path & path, size_t depth) {
+            if (std::filesystem::is_regular_file(path, ec)) {
+                add_file(path);
+            } else if (std::filesystem::is_directory(path, ec) && depth < kMaxDepth) {
+                std::filesystem::directory_iterator it(path, ec), end;
+                for (; it != end && visited_files < kMaxFiles; it.increment(ec)) {
+                    add_tree(it->path(), depth + 1);
+                }
+            }
+        };
+    add_tree(model.path, 0);
     for (const auto & [key, value] : model.session_options) {
         (void)key;
         std::filesystem::path aux(value);
         if (aux.is_relative()) {
             aux = model.path.parent_path() / aux;
         }
-        add_file(aux);
+        add_tree(aux, 0);
     }
     // Weights plus a runtime factor for Metal/GPU buffers, activation graphs and
     // KV state, plus a fixed floor for per-model bookkeeping.
@@ -2849,6 +2882,11 @@ void ServerState::ensure_model_fits_memory(const ServerModelConfig & model) {
             format_bytes(host_available) + ")");
     }
 
+    // ggml backend registries may not be loaded yet on the very first request
+    // (init_backend happens inside a session load, after this pre-check), which
+    // would make query_backend_memory() report "unknown" and silently skip the
+    // GPU check. Loading them here is idempotent and cheap once done.
+    engine::core::ensure_backends_loaded();
     const engine::core::BackendMemorySnapshot device =
         engine::core::query_backend_memory(engine::core::BackendConfig{
             config_.backend, config_.device, config_.threads});

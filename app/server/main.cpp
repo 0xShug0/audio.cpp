@@ -79,7 +79,7 @@ void print_help() {
         << "                                   a single loaded model, default 0 (no limit)\n"        << "  --idle-unload-ms <ms>            unload all resident models after this many ms without\n"
         << "                                   any model load/run; default 0 (disabled), next request\n"
         << "                                   reloads lazily\n"        << "  --min-free-memory-mb <mb>        refuse a model load unless host and GPU each keep at\n"
-        << "                                   least this many MiB free after the load; default 1024,\n"
+        << "                                   least this many MiB free after the load; default 512,\n"
         << "                                   0 disables the extra headroom\n"
         << "  --voice-dir <directory>          override the shared reference voice library directory\n"
         << "  --cors-origins \"*\"              experimental; disabled by default. Allows browser\n"
