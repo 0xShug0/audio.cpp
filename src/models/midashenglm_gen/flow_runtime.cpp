@@ -77,16 +77,6 @@ void add_scaled(std::vector<float> & dst, const std::vector<float> & rhs, float 
     }
 }
 
-core::TensorValue linear(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const modules::LinearWeights & weights,
-    int64_t in_features,
-    int64_t out_features,
-    bool bias) {
-    return modules::LinearModule({in_features, out_features, bias, GGML_PREC_DEFAULT}).build(ctx, input, weights);
-}
-
 core::TensorValue dit_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -94,9 +84,12 @@ core::TensorValue dit_attention(
     const MiDashengLmGenConfig & config,
     const MiDashengLmGenFlowBlockWeights & weights) {
     const int64_t head_dim = config.flow_hidden_size / config.flow_heads;
-    auto q = linear(ctx, input, {weights.attention.q_weight, weights.attention.q_bias}, config.flow_hidden_size, config.flow_hidden_size, true);
-    auto k = linear(ctx, input, {weights.attention.k_weight, weights.attention.k_bias}, config.flow_hidden_size, config.flow_hidden_size, true);
-    auto v = linear(ctx, input, {weights.attention.v_weight, weights.attention.v_bias}, config.flow_hidden_size, config.flow_hidden_size, true);
+    auto q = modules::LinearModule({config.flow_hidden_size, config.flow_hidden_size, true, GGML_PREC_DEFAULT})
+                 .build(ctx, input, {weights.attention.q_weight, weights.attention.q_bias});
+    auto k = modules::LinearModule({config.flow_hidden_size, config.flow_hidden_size, true, GGML_PREC_DEFAULT})
+                 .build(ctx, input, {weights.attention.k_weight, weights.attention.k_bias});
+    auto v = modules::LinearModule({config.flow_hidden_size, config.flow_hidden_size, true, GGML_PREC_DEFAULT})
+                 .build(ctx, input, {weights.attention.v_weight, weights.attention.v_bias});
     q = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, q), core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.flow_heads, head_dim}));
     k = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, k), core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.flow_heads, head_dim}));
     v = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, v), core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.flow_heads, head_dim}));
@@ -112,7 +105,8 @@ core::TensorValue dit_attention(
         ctx,
         core::ensure_backend_addressable_layout(ctx, context),
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.flow_hidden_size}));
-    return linear(ctx, context, {weights.attention.out_weight, weights.attention.out_bias}, config.flow_hidden_size, config.flow_hidden_size, true);
+    return modules::LinearModule({config.flow_hidden_size, config.flow_hidden_size, true, GGML_PREC_DEFAULT})
+        .build(ctx, context, {weights.attention.out_weight, weights.attention.out_bias});
 }
 
 core::TensorValue dit_block(
@@ -125,9 +119,9 @@ core::TensorValue dit_block(
     x = dit_attention(ctx, x, positions, config, weights);
     x = modules::AddModule{}.build(ctx, input, x);
     auto ff = modules::RMSNormModule({config.flow_hidden_size, 1.0e-6F, true, false}).build(ctx, x, weights.norm2);
-    ff = linear(ctx, ff, weights.mlp_in, config.flow_hidden_size, config.flow_intermediate_size, true);
+    ff = modules::LinearModule({config.flow_hidden_size, config.flow_intermediate_size, true, GGML_PREC_DEFAULT}).build(ctx, ff, weights.mlp_in);
     ff = modules::GeluModule({modules::GeluApproximation::Tanh}).build(ctx, ff);
-    ff = linear(ctx, ff, weights.mlp_out, config.flow_intermediate_size, config.flow_hidden_size, true);
+    ff = modules::LinearModule({config.flow_intermediate_size, config.flow_hidden_size, true, GGML_PREC_DEFAULT}).build(ctx, ff, weights.mlp_out);
     return modules::AddModule{}.build(ctx, x, ff);
 }
 
@@ -228,21 +222,21 @@ public:
         auto time = core::wrap_tensor(time_embedding_, core::TensorShape::from_dims({batch_, kTimeEmbeddingSize}));
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({tokens}), GGML_TYPE_I32);
 
-        auto time_hidden = linear(ctx, time, weights_->time_in, kTimeEmbeddingSize, config_.flow_hidden_size, true);
+        auto time_hidden = modules::LinearModule({kTimeEmbeddingSize, config_.flow_hidden_size, true, GGML_PREC_DEFAULT}).build(ctx, time, weights_->time_in);
         time_hidden = modules::SiluModule{}.build(ctx, time_hidden);
-        time_hidden = linear(ctx, time_hidden, weights_->time_out, config_.flow_hidden_size, config_.flow_hidden_size, true);
+        time_hidden = modules::LinearModule({config_.flow_hidden_size, config_.flow_hidden_size, true, GGML_PREC_DEFAULT}).build(ctx, time_hidden, weights_->time_out);
         time_hidden = core::reshape_tensor(ctx, time_hidden, core::TensorShape::from_dims({batch_, 1, config_.flow_hidden_size}));
-        auto cond_hidden = linear(ctx, condition, weights_->c_embedder, config_.hidden_size, config_.flow_hidden_size, true);
+        auto cond_hidden = modules::LinearModule({config_.hidden_size, config_.flow_hidden_size, true, GGML_PREC_DEFAULT}).build(ctx, condition, weights_->c_embedder);
         auto y = modules::AddModule{}.build(ctx, time_hidden, cond_hidden);
-        auto history_hidden = linear(ctx, history, weights_->x_embedder, config_.target_embedding_size, config_.flow_hidden_size, true);
-        auto x_hidden = linear(ctx, x, weights_->x_embedder, config_.target_embedding_size, config_.flow_hidden_size, true);
+        auto history_hidden = modules::LinearModule({config_.target_embedding_size, config_.flow_hidden_size, true, GGML_PREC_DEFAULT}).build(ctx, history, weights_->x_embedder);
+        auto x_hidden = modules::LinearModule({config_.target_embedding_size, config_.flow_hidden_size, true, GGML_PREC_DEFAULT}).build(ctx, x, weights_->x_embedder);
         auto sequence = modules::ConcatModule({1}).build(ctx, history_hidden, x_hidden);
         sequence = modules::ConcatModule({1}).build(ctx, y, sequence);
         for (const auto & block : weights_->blocks) {
             sequence = dit_block(ctx, sequence, positions, config_, block);
         }
         sequence = modules::RMSNormModule({config_.flow_hidden_size, 1.0e-6F, true, false}).build(ctx, sequence, weights_->final_norm);
-        sequence = linear(ctx, sequence, weights_->final_linear, config_.flow_hidden_size, config_.target_embedding_size, true);
+        sequence = modules::LinearModule({config_.flow_hidden_size, config_.target_embedding_size, true, GGML_PREC_DEFAULT}).build(ctx, sequence, weights_->final_linear);
         auto last = modules::SliceModule({1, 1 + config_.patch_size, config_.patch_size}).build(ctx, sequence);
         output_ = core::ensure_backend_addressable_layout(ctx, last).tensor;
         ggml_set_output(output_);

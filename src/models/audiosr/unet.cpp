@@ -110,36 +110,6 @@ struct BlockSpec {
     bool downsample_only = false;
 };
 
-modules::Conv2dWeights conv2d(
-    core::BackendWeightStore & store,
-    const engine::assets::TensorSource & source,
-    const std::string & prefix,
-    engine::assets::TensorStorageType type,
-    int64_t out_channels,
-    int64_t in_channels,
-    int64_t kernel) {
-    return binding::conv2d_from_source(store, source, prefix, type, out_channels, in_channels, kernel, kernel, true);
-}
-
-modules::LinearWeights linear(
-    core::BackendWeightStore & store,
-    const engine::assets::TensorSource & source,
-    const std::string & prefix,
-    engine::assets::TensorStorageType type,
-    int64_t out_features,
-    int64_t in_features,
-    bool bias) {
-    return binding::linear_from_source(store, source, prefix, type, out_features, in_features, bias);
-}
-
-modules::NormWeights norm(
-    core::BackendWeightStore & store,
-    const engine::assets::TensorSource & source,
-    const std::string & prefix,
-    int64_t channels) {
-    return binding::norm_from_source(store, source, prefix, channels);
-}
-
 ResBlockWeights load_resblock(
     core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
@@ -148,13 +118,13 @@ ResBlockWeights load_resblock(
     int64_t in_channels,
     int64_t out_channels) {
     ResBlockWeights out;
-    out.in_norm = norm(store, source, prefix + ".in_layers.0", in_channels);
-    out.in_conv = conv2d(store, source, prefix + ".in_layers.2", type, out_channels, in_channels, 3);
-    out.emb = linear(store, source, prefix + ".emb_layers.1", type, out_channels, kTimeHiddenDim, true);
-    out.out_norm = norm(store, source, prefix + ".out_layers.0", out_channels);
-    out.out_conv = conv2d(store, source, prefix + ".out_layers.3", type, out_channels, out_channels, 3);
+    out.in_norm = binding::norm_from_source(store, source, prefix + ".in_layers.0", in_channels);
+    out.in_conv = binding::conv2d_from_source(store, source, prefix + ".in_layers.2", type, out_channels, in_channels, 3, 3, true);
+    out.emb = binding::linear_from_source(store, source, prefix + ".emb_layers.1", type, out_channels, kTimeHiddenDim, true);
+    out.out_norm = binding::norm_from_source(store, source, prefix + ".out_layers.0", out_channels);
+    out.out_conv = binding::conv2d_from_source(store, source, prefix + ".out_layers.3", type, out_channels, out_channels, 3, 3, true);
     if (in_channels != out_channels) {
-        out.skip = conv2d(store, source, prefix + ".skip_connection", type, out_channels, in_channels, 1);
+        out.skip = binding::conv2d_from_source(store, source, prefix + ".skip_connection", type, out_channels, in_channels, 1, 1, true);
     }
     return out;
 }
@@ -166,10 +136,10 @@ CrossAttentionWeights load_cross_attention(
     engine::assets::TensorStorageType type,
     int64_t channels) {
     CrossAttentionWeights out;
-    out.q = linear(store, source, prefix + ".to_q", type, channels, channels, false);
-    out.k = linear(store, source, prefix + ".to_k", type, channels, channels, false);
-    out.v = linear(store, source, prefix + ".to_v", type, channels, channels, false);
-    out.out = linear(store, source, prefix + ".to_out.0", type, channels, channels, true);
+    out.q = binding::linear_from_source(store, source, prefix + ".to_q", type, channels, channels, false);
+    out.k = binding::linear_from_source(store, source, prefix + ".to_k", type, channels, channels, false);
+    out.v = binding::linear_from_source(store, source, prefix + ".to_v", type, channels, channels, false);
+    out.out = binding::linear_from_source(store, source, prefix + ".to_out.0", type, channels, channels, true);
     return out;
 }
 
@@ -180,17 +150,17 @@ SpatialTransformerWeights load_spatial_transformer(
     engine::assets::TensorStorageType type,
     int64_t channels) {
     SpatialTransformerWeights out;
-    out.norm = norm(store, source, prefix + ".norm", channels);
-    out.proj_in = conv2d(store, source, prefix + ".proj_in", type, channels, channels, 1);
+    out.norm = binding::norm_from_source(store, source, prefix + ".norm", channels);
+    out.proj_in = binding::conv2d_from_source(store, source, prefix + ".proj_in", type, channels, channels, 1, 1, true);
     const std::string block = prefix + ".transformer_blocks.0";
-    out.block.norm1 = norm(store, source, block + ".norm1", channels);
+    out.block.norm1 = binding::norm_from_source(store, source, block + ".norm1", channels);
     out.block.attn1 = load_cross_attention(store, source, block + ".attn1", type, channels);
-    out.block.norm2 = norm(store, source, block + ".norm2", channels);
+    out.block.norm2 = binding::norm_from_source(store, source, block + ".norm2", channels);
     out.block.attn2 = load_cross_attention(store, source, block + ".attn2", type, channels);
-    out.block.norm3 = norm(store, source, block + ".norm3", channels);
-    out.block.ff_in = linear(store, source, block + ".ff.net.0.proj", type, channels * 8, channels, true);
-    out.block.ff_out = linear(store, source, block + ".ff.net.2", type, channels, channels * 4, true);
-    out.proj_out = conv2d(store, source, prefix + ".proj_out", type, channels, channels, 1);
+    out.block.norm3 = binding::norm_from_source(store, source, block + ".norm3", channels);
+    out.block.ff_in = binding::linear_from_source(store, source, block + ".ff.net.0.proj", type, channels * 8, channels, true);
+    out.block.ff_out = binding::linear_from_source(store, source, block + ".ff.net.2", type, channels, channels * 4, true);
+    out.proj_out = binding::conv2d_from_source(store, source, prefix + ".proj_out", type, channels, channels, 1, 1, true);
     return out;
 }
 
@@ -204,14 +174,16 @@ UnetBlockWeights load_block(
     out.in_channels = spec.in_channels;
     out.out_channels = spec.out_channels;
     if (spec.downsample_only) {
-        out.sample_conv = conv2d(
+        out.sample_conv = binding::conv2d_from_source(
             store,
             source,
             prefix + ".0.op",
             type,
             spec.out_channels,
             spec.in_channels,
-            3);
+            3,
+            3,
+            true);
         out.is_downsample = true;
         return out;
     }
@@ -226,14 +198,16 @@ UnetBlockWeights load_block(
     }
     if (spec.sample) {
         const int64_t sample_index = 1 + spec.transformers;
-        out.sample_conv = conv2d(
+        out.sample_conv = binding::conv2d_from_source(
             store,
             source,
             prefix + "." + std::to_string(sample_index) + ".conv",
             type,
             spec.out_channels,
             spec.out_channels,
-            3);
+            3,
+            3,
+            true);
     }
     return out;
 }
@@ -254,9 +228,9 @@ UnetWeights load_weights(
         4096ull * 1024ull * 1024ull);
     const auto & source = *assets.weights;
     const std::string prefix = "model.diffusion_model";
-    weights.time0 = linear(*weights.store, source, prefix + ".time_embed.0", type, kTimeHiddenDim, kTimeEmbeddingDim, true);
-    weights.time2 = linear(*weights.store, source, prefix + ".time_embed.2", type, kTimeHiddenDim, kTimeHiddenDim, true);
-    weights.input_conv = conv2d(*weights.store, source, prefix + ".input_blocks.0.0", type, 128, 32, 3);
+    weights.time0 = binding::linear_from_source(*weights.store, source, prefix + ".time_embed.0", type, kTimeHiddenDim, kTimeEmbeddingDim, true);
+    weights.time2 = binding::linear_from_source(*weights.store, source, prefix + ".time_embed.2", type, kTimeHiddenDim, kTimeHiddenDim, true);
+    weights.input_conv = binding::conv2d_from_source(*weights.store, source, prefix + ".input_blocks.0.0", type, 128, 32, 3, 3, true);
     const std::array<BlockSpec, kUnetInputBlocks - 1> input_specs{{
         {128, 128, 0, false},
         {128, 128, 0, false},
@@ -310,8 +284,8 @@ UnetWeights load_weights(
             output_specs[static_cast<size_t>(index)]);
         weights.output_blocks[index].is_upsample = output_specs[static_cast<size_t>(index)].sample;
     }
-    weights.out_norm = norm(*weights.store, source, prefix + ".out.0", 128);
-    weights.out_conv = conv2d(*weights.store, source, prefix + ".out.2", type, 16, 128, 3);
+    weights.out_norm = binding::norm_from_source(*weights.store, source, prefix + ".out.0", 128);
+    weights.out_conv = binding::conv2d_from_source(*weights.store, source, prefix + ".out.2", type, 16, 128, 3, 3, true);
     weights.store->upload();
     return weights;
 }
@@ -381,29 +355,6 @@ core::TensorValue geglu(
     return modules::MulModule().build(ctx, x, gate);
 }
 
-core::TensorValue group_norm_2d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const modules::NormWeights & weights,
-    int64_t channels,
-    int64_t groups,
-    float eps) {
-    if (input.shape.rank != 4 || input.shape.dims[1] != channels) {
-        throw std::runtime_error("AudioSR UNet GroupNorm2d input shape mismatch");
-    }
-    auto x = core::ensure_backend_addressable_layout(ctx, input);
-    x = core::wrap_tensor(ggml_group_norm(ctx.ggml, x.tensor, groups, eps), x.shape, GGML_TYPE_F32);
-    if (!weights.weight.has_value() || !weights.bias.has_value()) {
-        throw std::runtime_error("AudioSR UNet GroupNorm2d requires affine weights");
-    }
-    auto weight = modules::ReshapeModule({core::TensorShape::from_dims({1, channels, 1, 1})}).build(ctx, *weights.weight);
-    weight = modules::RepeatModule({x.shape}).build(ctx, weight);
-    x = modules::MulModule().build(ctx, x, weight);
-    auto bias = modules::ReshapeModule({core::TensorShape::from_dims({1, channels, 1, 1})}).build(ctx, *weights.bias);
-    bias = modules::RepeatModule({x.shape}).build(ctx, bias);
-    return modules::AddModule().build(ctx, x, bias);
-}
-
 core::TensorValue transformer_block(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -431,7 +382,7 @@ core::TensorValue spatial_transformer(
     const int64_t batch = input.shape.dims[0];
     const int64_t height = input.shape.dims[2];
     const int64_t width = input.shape.dims[3];
-    auto x = group_norm_2d(ctx, input, weights.norm, channels, kUnetGroups, kUnetNormEps);
+    auto x = modules::GroupNormModule({channels, kUnetGroups, kUnetNormEps, true, true}).build(ctx, input, weights.norm);
     x = modules::Conv2dModule({channels, channels, 1, 1, 1, 1, 0, 0, 1, 1, true}).build(ctx, x, weights.proj_in);
     x = core::ensure_backend_addressable_layout(ctx, x);
     x = modules::ReshapeModule({core::TensorShape::from_dims({batch, channels, height * width})}).build(ctx, x);
@@ -452,7 +403,7 @@ core::TensorValue resblock(
     const ResBlockWeights & weights,
     int64_t in_channels,
     int64_t out_channels) {
-    auto h = group_norm_2d(ctx, input, weights.in_norm, in_channels, kUnetGroups, kUnetNormEps);
+    auto h = modules::GroupNormModule({in_channels, kUnetGroups, kUnetNormEps, true, true}).build(ctx, input, weights.in_norm);
     h = modules::SiluModule().build(ctx, h);
     h = modules::Conv2dModule({in_channels, out_channels, 3, 3, 1, 1, 1, 1, 1, 1, true}).build(ctx, h, weights.in_conv);
     auto emb = modules::SiluModule().build(ctx, embedding);
@@ -460,7 +411,7 @@ core::TensorValue resblock(
     emb = modules::ReshapeModule({core::TensorShape::from_dims({1, out_channels, 1, 1})}).build(ctx, emb);
     emb = modules::RepeatModule({h.shape}).build(ctx, emb);
     h = modules::AddModule().build(ctx, h, emb);
-    h = group_norm_2d(ctx, h, weights.out_norm, out_channels, kUnetGroups, kUnetNormEps);
+    h = modules::GroupNormModule({out_channels, kUnetGroups, kUnetNormEps, true, true}).build(ctx, h, weights.out_norm);
     h = modules::SiluModule().build(ctx, h);
     h = modules::Conv2dModule({out_channels, out_channels, 3, 3, 1, 1, 1, 1, 1, 1, true}).build(ctx, h, weights.out_conv);
     auto residual = input;
@@ -542,7 +493,7 @@ core::TensorValue build_unet(
         x = modules::ConcatModule({1}).build(ctx, x, skip);
         x = run_block(ctx, x, emb, weights.output_blocks[index]);
     }
-    x = group_norm_2d(ctx, x, weights.out_norm, 128, kUnetGroups, kUnetNormEps);
+    x = modules::GroupNormModule({128, kUnetGroups, kUnetNormEps, true, true}).build(ctx, x, weights.out_norm);
     x = modules::SiluModule().build(ctx, x);
     x = modules::Conv2dModule({128, 16, 3, 3, 1, 1, 1, 1, 1, 1, true}).build(ctx, x, weights.out_conv);
     return x;

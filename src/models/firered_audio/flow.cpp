@@ -8,6 +8,7 @@
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
@@ -82,13 +83,8 @@ std::vector<int32_t> position_ids(int64_t steps) {
 
 core::TensorValue mish(core::ModuleBuildContext & ctx, const core::TensorValue & x) {
     auto softplus = core::wrap_tensor(ggml_softplus(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
-    auto t = core::wrap_tensor(ggml_tanh(ctx.ggml, softplus.tensor), x.shape, GGML_TYPE_F32);
-    return core::wrap_tensor(ggml_mul(ctx.ggml, x.tensor, t.tensor), x.shape, GGML_TYPE_F32);
-}
-
-core::TensorValue mul_broadcast(core::ModuleBuildContext & ctx, const core::TensorValue & x, const core::TensorValue & scale) {
-    auto s = modules::RepeatModule({x.shape}).build(ctx, scale);
-    return core::wrap_tensor(ggml_mul(ctx.ggml, x.tensor, s.tensor), x.shape, GGML_TYPE_F32);
+    auto t = modules::TanhModule{}.build(ctx, softplus);
+    return modules::MulModule{}.build(ctx, x, t);
 }
 
 core::TensorValue modulate(
@@ -99,7 +95,8 @@ core::TensorValue modulate(
     auto s = modules::RepeatModule({x.shape}).build(ctx, scale);
     auto sh = modules::RepeatModule({x.shape}).build(ctx, shift);
     auto one_plus = core::wrap_tensor(ggml_scale_bias(ctx.ggml, s.tensor, 1.0F, 1.0F), x.shape, GGML_TYPE_F32);
-    return core::wrap_tensor(ggml_add(ctx.ggml, ggml_mul(ctx.ggml, x.tensor, one_plus.tensor), sh.tensor), x.shape, GGML_TYPE_F32);
+    auto scaled = modules::MulModule{}.build(ctx, x, one_plus);
+    return modules::AddModule{}.build(ctx, scaled, sh);
 }
 
 struct FireRedDiTBlockWeights {
@@ -297,8 +294,9 @@ private:
         auto h = modules::RMSNormModule({config_.hidden_size, 1.0e-6F, true, false}).build(ctx, x, weights.norm1);
         h = modulate(ctx, h, shift_msa, scale_msa);
         h = modules::ProjectedGroupedSelfAttentionModule(attention_config()).build(ctx, h, positions, weights.attention, layer);
-        h = mul_broadcast(ctx, h, gate_msa);
-        auto out = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, h.tensor), x.shape, GGML_TYPE_F32);
+        gate_msa = modules::RepeatModule({h.shape}).build(ctx, gate_msa);
+        h = modules::MulModule{}.build(ctx, h, gate_msa);
+        auto out = modules::AddModule{}.build(ctx, x, h);
 
         h = modules::RMSNormModule({config_.hidden_size, 1.0e-6F, true, false}).build(ctx, out, weights.norm2);
         h = modulate(ctx, h, shift_conv, scale_conv);
@@ -307,8 +305,9 @@ private:
         h = mish(ctx, h);
         h = modules::Conv1dModule({config_.hidden_size, config_.hidden_size, 3, 1, 1, 1, true}).build(ctx, h, weights.conv2);
         h = modules::TransposeModule({{0, 2, 1, 3}, h.shape.rank}).build(ctx, h);
-        h = mul_broadcast(ctx, h, gate_conv);
-        out = core::wrap_tensor(ggml_add(ctx.ggml, out.tensor, h.tensor), out.shape, GGML_TYPE_F32);
+        gate_conv = modules::RepeatModule({h.shape}).build(ctx, gate_conv);
+        h = modules::MulModule{}.build(ctx, h, gate_conv);
+        out = modules::AddModule{}.build(ctx, out, h);
 
         h = modules::RMSNormModule({config_.hidden_size, 1.0e-6F, true, false}).build(ctx, out, weights.norm3);
         h = modulate(ctx, h, shift_mlp, scale_mlp);
@@ -318,8 +317,9 @@ private:
             true,
             modules::GeluApproximation::Tanh,
         }).build(ctx, h, weights.mlp);
-        h = mul_broadcast(ctx, h, gate_mlp);
-        return core::wrap_tensor(ggml_add(ctx.ggml, out.tensor, h.tensor), out.shape, GGML_TYPE_F32);
+        gate_mlp = modules::RepeatModule({h.shape}).build(ctx, gate_mlp);
+        h = modules::MulModule{}.build(ctx, h, gate_mlp);
+        return modules::AddModule{}.build(ctx, out, h);
     }
 
     void ensure(int64_t batch) {

@@ -91,25 +91,6 @@ int64_t level_channels(const AudioSRConfig & config, int64_t level) {
     return config.vae_base_channels * mult[level];
 }
 
-modules::Conv2dWeights conv2d(
-    core::BackendWeightStore & store,
-    const engine::assets::TensorSource & source,
-    const std::string & prefix,
-    engine::assets::TensorStorageType type,
-    int64_t out_channels,
-    int64_t in_channels,
-    int64_t kernel) {
-    return binding::conv2d_from_source(store, source, prefix, type, out_channels, in_channels, kernel, kernel, true);
-}
-
-modules::NormWeights norm(
-    core::BackendWeightStore & store,
-    const engine::assets::TensorSource & source,
-    const std::string & prefix,
-    int64_t channels) {
-    return binding::norm_from_source(store, source, prefix, channels);
-}
-
 VaeResBlockWeights load_resblock(
     core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
@@ -118,12 +99,12 @@ VaeResBlockWeights load_resblock(
     int64_t in_channels,
     int64_t out_channels) {
     VaeResBlockWeights out;
-    out.norm1 = norm(store, source, prefix + ".norm1", in_channels);
-    out.conv1 = conv2d(store, source, prefix + ".conv1", type, out_channels, in_channels, 3);
-    out.norm2 = norm(store, source, prefix + ".norm2", out_channels);
-    out.conv2 = conv2d(store, source, prefix + ".conv2", type, out_channels, out_channels, 3);
+    out.norm1 = binding::norm_from_source(store, source, prefix + ".norm1", in_channels);
+    out.conv1 = binding::conv2d_from_source(store, source, prefix + ".conv1", type, out_channels, in_channels, 3, 3, true);
+    out.norm2 = binding::norm_from_source(store, source, prefix + ".norm2", out_channels);
+    out.conv2 = binding::conv2d_from_source(store, source, prefix + ".conv2", type, out_channels, out_channels, 3, 3, true);
     if (in_channels != out_channels) {
-        out.shortcut = conv2d(store, source, prefix + ".nin_shortcut", type, out_channels, in_channels, 1);
+        out.shortcut = binding::conv2d_from_source(store, source, prefix + ".nin_shortcut", type, out_channels, in_channels, 1, 1, true);
     }
     return out;
 }
@@ -135,11 +116,11 @@ VaeAttentionWeights load_attention(
     engine::assets::TensorStorageType type,
     int64_t channels) {
     VaeAttentionWeights out;
-    out.norm = norm(store, source, prefix + ".norm", channels);
-    out.q = conv2d(store, source, prefix + ".q", type, channels, channels, 1);
-    out.k = conv2d(store, source, prefix + ".k", type, channels, channels, 1);
-    out.v = conv2d(store, source, prefix + ".v", type, channels, channels, 1);
-    out.proj_out = conv2d(store, source, prefix + ".proj_out", type, channels, channels, 1);
+    out.norm = binding::norm_from_source(store, source, prefix + ".norm", channels);
+    out.q = binding::conv2d_from_source(store, source, prefix + ".q", type, channels, channels, 1, 1, true);
+    out.k = binding::conv2d_from_source(store, source, prefix + ".k", type, channels, channels, 1, 1, true);
+    out.v = binding::conv2d_from_source(store, source, prefix + ".v", type, channels, channels, 1, 1, true);
+    out.proj_out = binding::conv2d_from_source(store, source, prefix + ".proj_out", type, channels, channels, 1, 1, true);
     return out;
 }
 
@@ -160,7 +141,7 @@ VaeEncoderWeights load_encoder_weights(
         2048ull * 1024ull * 1024ull);
     const auto & source = *assets.weights;
     const auto & config = assets.config;
-    weights.conv_in = conv2d(*weights.store, source, prefix + ".encoder.conv_in", type, config.vae_base_channels, 1, 3);
+    weights.conv_in = binding::conv2d_from_source(*weights.store, source, prefix + ".encoder.conv_in", type, config.vae_base_channels, 1, 3, 3, true);
     int64_t in_channels = config.vae_base_channels;
     for (int64_t level = 0; level < kVaeLevels; ++level) {
         const int64_t out_channels = level_channels(config, level);
@@ -175,22 +156,24 @@ VaeEncoderWeights load_encoder_weights(
             in_channels = out_channels;
         }
         if (level != kVaeLevels - 1) {
-            weights.downsample[level] = conv2d(
+            weights.downsample[level] = binding::conv2d_from_source(
                 *weights.store,
                 source,
                 prefix + ".encoder.down." + std::to_string(level) + ".downsample.conv",
                 type,
                 in_channels,
                 in_channels,
-                3);
+                3,
+                3,
+                true);
         }
     }
     weights.mid_block_1 = load_resblock(*weights.store, source, prefix + ".encoder.mid.block_1", type, in_channels, in_channels);
     weights.mid_attn = load_attention(*weights.store, source, prefix + ".encoder.mid.attn_1", type, in_channels);
     weights.mid_block_2 = load_resblock(*weights.store, source, prefix + ".encoder.mid.block_2", type, in_channels, in_channels);
-    weights.norm_out = norm(*weights.store, source, prefix + ".encoder.norm_out", in_channels);
-    weights.conv_out = conv2d(*weights.store, source, prefix + ".encoder.conv_out", type, 2 * config.encoder_z_channels, in_channels, 3);
-    weights.quant_conv = conv2d(*weights.store, source, prefix + ".quant_conv", type, 2 * config.latent_channels, 2 * config.encoder_z_channels, 1);
+    weights.norm_out = binding::norm_from_source(*weights.store, source, prefix + ".encoder.norm_out", in_channels);
+    weights.conv_out = binding::conv2d_from_source(*weights.store, source, prefix + ".encoder.conv_out", type, 2 * config.encoder_z_channels, in_channels, 3, 3, true);
+    weights.quant_conv = binding::conv2d_from_source(*weights.store, source, prefix + ".quant_conv", type, 2 * config.latent_channels, 2 * config.encoder_z_channels, 1, 1, true);
     weights.store->upload();
     return weights;
 }
@@ -211,8 +194,8 @@ VaeDecoderWeights load_decoder_weights(
         2048ull * 1024ull * 1024ull);
     const auto & source = *assets.weights;
     const auto & config = assets.config;
-    weights.post_quant_conv = conv2d(*weights.store, source, "first_stage_model.post_quant_conv", type, config.encoder_z_channels, config.latent_channels, 1);
-    weights.conv_in = conv2d(*weights.store, source, "first_stage_model.decoder.conv_in", type, level_channels(config, 3), config.encoder_z_channels, 3);
+    weights.post_quant_conv = binding::conv2d_from_source(*weights.store, source, "first_stage_model.post_quant_conv", type, config.encoder_z_channels, config.latent_channels, 1, 1, true);
+    weights.conv_in = binding::conv2d_from_source(*weights.store, source, "first_stage_model.decoder.conv_in", type, level_channels(config, 3), config.encoder_z_channels, 3, 3, true);
     int64_t channels = level_channels(config, 3);
     weights.mid_block_1 = load_resblock(*weights.store, source, "first_stage_model.decoder.mid.block_1", type, channels, channels);
     weights.mid_attn = load_attention(*weights.store, source, "first_stage_model.decoder.mid.attn_1", type, channels);
@@ -231,47 +214,22 @@ VaeDecoderWeights load_decoder_weights(
             channels = out_channels;
         }
         if (level != 0) {
-            weights.upsample[stored_level - 1] = conv2d(
+            weights.upsample[stored_level - 1] = binding::conv2d_from_source(
                 *weights.store,
                 source,
                 "first_stage_model.decoder.up." + std::to_string(stored_level) + ".upsample.conv",
                 type,
                 channels,
                 channels,
-                3);
+                3,
+                3,
+                true);
         }
     }
-    weights.norm_out = norm(*weights.store, source, "first_stage_model.decoder.norm_out", channels);
-    weights.conv_out = conv2d(*weights.store, source, "first_stage_model.decoder.conv_out", type, 1, channels, 3);
+    weights.norm_out = binding::norm_from_source(*weights.store, source, "first_stage_model.decoder.norm_out", channels);
+    weights.conv_out = binding::conv2d_from_source(*weights.store, source, "first_stage_model.decoder.conv_out", type, 1, channels, 3, 3, true);
     weights.store->upload();
     return weights;
-}
-
-core::TensorValue silu(core::ModuleBuildContext & ctx, const core::TensorValue & x) {
-    return modules::SiluModule().build(ctx, x);
-}
-
-core::TensorValue group_norm_2d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const modules::NormWeights & weights,
-    int64_t channels,
-    int64_t groups,
-    float eps) {
-    if (input.shape.rank != 4 || input.shape.dims[1] != channels) {
-        throw std::runtime_error("AudioSR VAE GroupNorm2d input shape mismatch");
-    }
-    auto x = core::ensure_backend_addressable_layout(ctx, input);
-    x = core::wrap_tensor(ggml_group_norm(ctx.ggml, x.tensor, groups, eps), x.shape, GGML_TYPE_F32);
-    if (!weights.weight.has_value() || !weights.bias.has_value()) {
-        throw std::runtime_error("AudioSR VAE GroupNorm2d requires affine weights");
-    }
-    auto weight = modules::ReshapeModule({core::TensorShape::from_dims({1, channels, 1, 1})}).build(ctx, *weights.weight);
-    weight = modules::RepeatModule({x.shape}).build(ctx, weight);
-    x = modules::MulModule().build(ctx, x, weight);
-    auto bias = modules::ReshapeModule({core::TensorShape::from_dims({1, channels, 1, 1})}).build(ctx, *weights.bias);
-    bias = modules::RepeatModule({x.shape}).build(ctx, bias);
-    return modules::AddModule().build(ctx, x, bias);
 }
 
 core::TensorValue resblock(
@@ -280,11 +238,11 @@ core::TensorValue resblock(
     const VaeResBlockWeights & weights,
     int64_t in_channels,
     int64_t out_channels) {
-    auto h = group_norm_2d(ctx, input, weights.norm1, in_channels, kVaeGroups, kVaeNormEps);
-    h = silu(ctx, h);
+    auto h = modules::GroupNormModule({in_channels, kVaeGroups, kVaeNormEps, true, true}).build(ctx, input, weights.norm1);
+    h = modules::SiluModule().build(ctx, h);
     h = modules::Conv2dModule({in_channels, out_channels, 3, 3, 1, 1, 1, 1, 1, 1, true}).build(ctx, h, weights.conv1);
-    h = group_norm_2d(ctx, h, weights.norm2, out_channels, kVaeGroups, kVaeNormEps);
-    h = silu(ctx, h);
+    h = modules::GroupNormModule({out_channels, kVaeGroups, kVaeNormEps, true, true}).build(ctx, h, weights.norm2);
+    h = modules::SiluModule().build(ctx, h);
     h = modules::Conv2dModule({out_channels, out_channels, 3, 3, 1, 1, 1, 1, 1, 1, true}).build(ctx, h, weights.conv2);
     auto residual = input;
     if (weights.shortcut.has_value()) {
@@ -299,7 +257,7 @@ core::TensorValue vae_attention(
     const core::TensorValue & input,
     const VaeAttentionWeights & weights,
     int64_t channels) {
-    auto h = group_norm_2d(ctx, input, weights.norm, channels, kVaeGroups, kVaeNormEps);
+    auto h = modules::GroupNormModule({channels, kVaeGroups, kVaeNormEps, true, true}).build(ctx, input, weights.norm);
     auto q = modules::Conv2dModule({channels, channels, 1, 1, 1, 1, 0, 0, 1, 1, true}).build(ctx, h, weights.q);
     auto k = modules::Conv2dModule({channels, channels, 1, 1, 1, 1, 0, 0, 1, 1, true}).build(ctx, h, weights.k);
     auto v = modules::Conv2dModule({channels, channels, 1, 1, 1, 1, 0, 0, 1, 1, true}).build(ctx, h, weights.v);
@@ -364,8 +322,8 @@ core::TensorValue build_encoder_graph(
     x = resblock(ctx, x, weights.mid_block_1, channels, channels);
     x = vae_attention(ctx, x, weights.mid_attn, channels);
     x = resblock(ctx, x, weights.mid_block_2, channels, channels);
-    x = group_norm_2d(ctx, x, weights.norm_out, channels, kVaeGroups, kVaeNormEps);
-    x = silu(ctx, x);
+    x = modules::GroupNormModule({channels, kVaeGroups, kVaeNormEps, true, true}).build(ctx, x, weights.norm_out);
+    x = modules::SiluModule().build(ctx, x);
     x = modules::Conv2dModule({channels, 2 * config.encoder_z_channels, 3, 3, 1, 1, 1, 1, 1, 1, true}).build(ctx, x, weights.conv_out);
     return modules::Conv2dModule({2 * config.encoder_z_channels, 2 * config.latent_channels, 1, 1, 1, 1, 0, 0, 1, 1, true})
         .build(ctx, x, weights.quant_conv);
@@ -393,8 +351,8 @@ core::TensorValue build_decoder_graph(
             x = upsample(ctx, x, weights.upsample[level - 1], channels);
         }
     }
-    x = group_norm_2d(ctx, x, weights.norm_out, channels, kVaeGroups, kVaeNormEps);
-    x = silu(ctx, x);
+    x = modules::GroupNormModule({channels, kVaeGroups, kVaeNormEps, true, true}).build(ctx, x, weights.norm_out);
+    x = modules::SiluModule().build(ctx, x);
     return modules::Conv2dModule({channels, 1, 3, 3, 1, 1, 1, 1, 1, 1, true}).build(ctx, x, weights.conv_out);
 }
 

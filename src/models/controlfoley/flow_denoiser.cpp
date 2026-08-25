@@ -85,10 +85,6 @@ int64_t hidden_multiple(int64_t hidden, float ratio) {
     return 256 * ((raw + 255) / 256);
 }
 
-core::TensorValue ensure_contiguous(core::ModuleBuildContext & ctx, const core::TensorValue & value) {
-    return core::ensure_backend_addressable_layout(ctx, value);
-}
-
 core::TensorValue repeat_like(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & value,
@@ -112,30 +108,16 @@ core::TensorValue repeat_like(
     return modules::RepeatModule({like.shape}).build(ctx, value);
 }
 
-core::TensorValue add_tensors(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & lhs,
-    const core::TensorValue & rhs) {
-    const auto rhs_expanded = repeat_like(ctx, rhs, lhs);
-    return core::wrap_tensor(ggml_add(ctx.ggml, lhs.tensor, rhs_expanded.tensor), lhs.shape, GGML_TYPE_F32);
-}
-
-core::TensorValue mul_tensors(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & lhs,
-    const core::TensorValue & rhs) {
-    const auto rhs_expanded = repeat_like(ctx, rhs, lhs);
-    return core::wrap_tensor(ggml_mul(ctx.ggml, lhs.tensor, rhs_expanded.tensor), lhs.shape, GGML_TYPE_F32);
-}
-
 core::TensorValue modulate(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & shift,
     const core::TensorValue & scale) {
-    auto scaled_delta = mul_tensors(ctx, input, scale);
-    auto scaled = core::wrap_tensor(ggml_add(ctx.ggml, input.tensor, scaled_delta.tensor), input.shape, GGML_TYPE_F32);
-    return add_tensors(ctx, scaled, shift);
+    const auto scale_expanded = repeat_like(ctx, scale, input);
+    auto scaled_delta = modules::MulModule{}.build(ctx, input, scale_expanded);
+    auto scaled = modules::AddModule{}.build(ctx, input, scaled_delta);
+    const auto shift_expanded = repeat_like(ctx, shift, scaled);
+    return modules::AddModule{}.build(ctx, scaled, shift_expanded);
 }
 
 core::TensorValue unsqueeze_sequence(core::ModuleBuildContext & ctx, const core::TensorValue & value) {
@@ -231,34 +213,6 @@ struct FlowWeights {
     core::TensorValue sync_pos_emb;
 };
 
-modules::LinearWeights load_linear(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    assets::TensorStorageType storage,
-    int64_t out_features,
-    int64_t in_features,
-    bool use_bias = true) {
-    modules::LinearWeights weights;
-    weights.weight = store.load_tensor(source, prefix + ".weight", storage, {out_features, in_features});
-    if (use_bias) {
-        weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_features});
-    }
-    return weights;
-}
-
-modules::Conv1dWeights load_conv1d(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    assets::TensorStorageType storage,
-    int64_t out_channels,
-    int64_t in_channels,
-    int64_t kernel_size,
-    bool use_bias = true) {
-    return binding::conv1d_from_source(store, source, prefix, storage, out_channels, in_channels, kernel_size, use_bias);
-}
-
 modules::GatedFeedForwardWeights load_gated_ffn(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
@@ -267,9 +221,9 @@ modules::GatedFeedForwardWeights load_gated_ffn(
     int64_t hidden,
     int64_t intermediate) {
     return {
-        load_linear(store, source, prefix + ".w1", storage, intermediate, hidden, false),
-        load_linear(store, source, prefix + ".w3", storage, intermediate, hidden, false),
-        load_linear(store, source, prefix + ".w2", storage, hidden, intermediate, false),
+        binding::linear_from_source(store, source, prefix + ".w1", storage, intermediate, hidden, false),
+        binding::linear_from_source(store, source, prefix + ".w3", storage, intermediate, hidden, false),
+        binding::linear_from_source(store, source, prefix + ".w2", storage, hidden, intermediate, false),
     };
 }
 
@@ -282,9 +236,9 @@ modules::GatedConvFeedForwardWeights load_gated_conv_ffn(
     int64_t intermediate,
     int64_t kernel_size) {
     return {
-        load_conv1d(store, source, prefix + ".w1", storage, intermediate, hidden, kernel_size, false),
-        load_conv1d(store, source, prefix + ".w3", storage, intermediate, hidden, kernel_size, false),
-        load_conv1d(store, source, prefix + ".w2", storage, hidden, intermediate, kernel_size, false),
+        binding::conv1d_from_source(store, source, prefix + ".w1", storage, intermediate, hidden, kernel_size, false),
+        binding::conv1d_from_source(store, source, prefix + ".w3", storage, intermediate, hidden, kernel_size, false),
+        binding::conv1d_from_source(store, source, prefix + ".w2", storage, hidden, intermediate, kernel_size, false),
     };
 }
 
@@ -303,9 +257,9 @@ ProjectionWeights load_projection(
     int64_t intermediate) {
     ProjectionWeights weights;
     if (first_conv) {
-        weights.conv = load_conv1d(store, source, prefix + ".0", storage, hidden, input_dim, kernel_size, true);
+        weights.conv = binding::conv1d_from_source(store, source, prefix + ".0", storage, hidden, input_dim, kernel_size, true);
     } else {
-        weights.linear = load_linear(store, source, prefix + ".0", storage, hidden, input_dim, true);
+        weights.linear = binding::linear_from_source(store, source, prefix + ".0", storage, hidden, input_dim, true);
     }
     const std::string mlp_prefix = prefix + "." + std::to_string(mlp_index);
     if (conv_mlp) {
@@ -324,7 +278,7 @@ AttentionWeights load_attention(
     const ControlFoleyFlowRuntimeOptions & options) {
     const int64_t head_dim = config.hidden_dim / config.num_heads;
     return {
-        load_linear(store, source, prefix + ".qkv", options.weight_storage_type, config.hidden_dim * 3, config.hidden_dim, true),
+        binding::linear_from_source(store, source, prefix + ".qkv", options.weight_storage_type, config.hidden_dim * 3, config.hidden_dim, true),
         binding::norm_weight_from_source(store, source, prefix + ".q_norm", head_dim),
         binding::norm_weight_from_source(store, source, prefix + ".k_norm", head_dim),
     };
@@ -343,7 +297,7 @@ SingleBlockWeights load_single_block(
     weights.pre_only = pre_only;
     weights.conv_path = conv_path;
     weights.attention = load_attention(store, source, prefix + ".attn", config, options);
-    weights.modulation = load_linear(
+    weights.modulation = binding::linear_from_source(
         store,
         source,
         prefix + ".adaLN_modulation.1",
@@ -353,7 +307,7 @@ SingleBlockWeights load_single_block(
         true);
     if (!pre_only) {
         if (conv_path) {
-            weights.conv_out = load_conv1d(
+            weights.conv_out = binding::conv1d_from_source(
                 store,
                 source,
                 prefix + ".linear1",
@@ -371,7 +325,7 @@ SingleBlockWeights load_single_block(
                 intermediate,
                 3);
         } else {
-            weights.linear_out = load_linear(
+            weights.linear_out = binding::linear_from_source(
                 store,
                 source,
                 prefix + ".linear1",
@@ -418,19 +372,19 @@ FlowWeights load_flow_weights(
         store, source, "clap_input_proj", options.weight_storage_type, config.audio_dim, config.hidden_dim, 1, false, false, config.v2 ? 2 : 1, 1, intermediate);
     weights.timbre_input = load_projection(
         store, source, "timbre_input_proj", options.weight_storage_type, config.timbre_dim, config.hidden_dim, 1, false, false, config.v2 ? 2 : 1, 1, intermediate);
-    weights.clip_cond = load_linear(store, source, "clip_cond_proj", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true);
-    weights.text_cond = load_linear(store, source, "text_cond_proj", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true);
-    weights.timbre_cond = load_linear(store, source, "timbre_cond_proj", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true);
+    weights.clip_cond = binding::linear_from_source(store, source, "clip_cond_proj", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true);
+    weights.text_cond = binding::linear_from_source(store, source, "text_cond_proj", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true);
+    weights.timbre_cond = binding::linear_from_source(store, source, "timbre_cond_proj", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true);
     weights.global_cond = load_gated_ffn(store, source, "global_cond_mlp", options.weight_storage_type, config.hidden_dim, intermediate);
-    weights.time_fc1 = load_linear(store, source, "t_embed.mlp.0", options.weight_storage_type, config.hidden_dim, config.v2 ? config.hidden_dim : 256, true);
-    weights.time_fc2 = load_linear(store, source, "t_embed.mlp.2", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true);
+    weights.time_fc1 = binding::linear_from_source(store, source, "t_embed.mlp.0", options.weight_storage_type, config.hidden_dim, config.v2 ? config.hidden_dim : 256, true);
+    weights.time_fc2 = binding::linear_from_source(store, source, "t_embed.mlp.2", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true);
     weights.repa = {
-        load_linear(store, source, "repa_mlp.feature_mlp.0", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true),
+        binding::linear_from_source(store, source, "repa_mlp.feature_mlp.0", options.weight_storage_type, config.hidden_dim, config.hidden_dim, true),
         binding::norm_from_source(store, source, "repa_mlp.feature_mlp.1", config.hidden_dim),
     };
     weights.final_layer = {
-        load_linear(store, source, "final_layer.adaLN_modulation.1", options.weight_storage_type, 2 * config.hidden_dim, config.hidden_dim, true),
-        load_conv1d(store, source, "final_layer.conv", options.weight_storage_type, config.latent_dim, config.hidden_dim, 7, true),
+        binding::linear_from_source(store, source, "final_layer.adaLN_modulation.1", options.weight_storage_type, 2 * config.hidden_dim, config.hidden_dim, true),
+        binding::conv1d_from_source(store, source, "final_layer.conv", options.weight_storage_type, config.latent_dim, config.hidden_dim, 7, true),
     };
     const int64_t joint_depth = config.depth - config.fused_depth;
     weights.joint_blocks.reserve(static_cast<size_t>(joint_depth));
@@ -569,14 +523,14 @@ Qkv build_pre_attention(
     const int64_t head_dim = config.hidden_dim / config.num_heads;
     qkv = core::reshape_tensor(
         ctx,
-        ensure_contiguous(ctx, qkv),
+        core::ensure_backend_addressable_layout(ctx, qkv),
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.hidden_dim, 3}));
     auto q = modules::SliceModule({3, 0, 1}).build(ctx, qkv);
     auto k = modules::SliceModule({3, 1, 1}).build(ctx, qkv);
     auto v = modules::SliceModule({3, 2, 1}).build(ctx, qkv);
-    q = core::reshape_tensor(ctx, ensure_contiguous(ctx, q), core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_heads, head_dim}));
-    k = core::reshape_tensor(ctx, ensure_contiguous(ctx, k), core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_heads, head_dim}));
-    v = core::reshape_tensor(ctx, ensure_contiguous(ctx, v), core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_heads, head_dim}));
+    q = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, q), core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_heads, head_dim}));
+    k = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, k), core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_heads, head_dim}));
+    v = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, v), core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_heads, head_dim}));
     q = modules::RMSNormModule({head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.attention.q_norm);
     k = modules::RMSNormModule({head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.attention.k_norm);
     if (positions != nullptr) {
@@ -602,13 +556,13 @@ core::TensorValue scaled_attention(
         ggml_mul_mat_set_prec(scores.tensor, options.attention_precision);
     }
     scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(head_dim))), scores.shape, GGML_TYPE_F32);
-    auto attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, ensure_contiguous(ctx, scores).tensor), scores.shape, GGML_TYPE_F32);
+    auto attn = modules::SoftmaxModule{}.build(ctx, scores);
     auto out = modules::MatMulModule{}.build(ctx, attn, qkv.v);
     if (options.attention_precision != GGML_PREC_DEFAULT) {
         ggml_mul_mat_set_prec(out.tensor, options.attention_precision);
     }
     out = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, out);
-    return core::reshape_tensor(ctx, ensure_contiguous(ctx, out), core::TensorShape::from_dims({qkv.q.shape.dims[0], qkv.q.shape.dims[2], config.hidden_dim}));
+    return core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, out), core::TensorShape::from_dims({qkv.q.shape.dims[0], qkv.q.shape.dims[2], config.hidden_dim}));
 }
 
 core::TensorValue apply_block_post_attention(
@@ -625,7 +579,9 @@ core::TensorValue apply_block_post_attention(
     core::TensorValue projected = weights.conv_path
         ? channel_last_conv1d(ctx, attn_out, weights.conv_out, config.hidden_dim, config.hidden_dim, 3, true)
         : modules::LinearModule({config.hidden_dim, config.hidden_dim, true, options.projection_precision}).build(ctx, attn_out, weights.linear_out);
-    auto x = core::wrap_tensor(ggml_add(ctx.ggml, input.tensor, mul_tensors(ctx, projected, modulation.gate_msa).tensor), input.shape, GGML_TYPE_F32);
+    auto gate_msa = repeat_like(ctx, modulation.gate_msa, projected);
+    auto projected_gated = modules::MulModule{}.build(ctx, projected, gate_msa);
+    auto x = modules::AddModule{}.build(ctx, input, projected_gated);
     auto normalized = modules::LayerNormModule({config.hidden_dim, config.layer_norm_eps, false, false}).build(ctx, x, {});
     normalized = modulate(ctx, normalized, modulation.shift_mlp, modulation.scale_mlp);
     core::TensorValue ffn = weights.conv_path
@@ -646,7 +602,9 @@ core::TensorValue apply_block_post_attention(
               modules::GeluApproximation::Tanh,
               options.projection_precision,
           }).build(ctx, normalized, weights.linear_ffn);
-    return core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, mul_tensors(ctx, ffn, modulation.gate_mlp).tensor), x.shape, GGML_TYPE_F32);
+    auto gate_mlp = repeat_like(ctx, modulation.gate_mlp, ffn);
+    auto ffn_gated = modules::MulModule{}.build(ctx, ffn, gate_mlp);
+    return modules::AddModule{}.build(ctx, x, ffn_gated);
 }
 
 core::TensorValue apply_single_block(
@@ -905,10 +863,11 @@ std::unique_ptr<ConditionGraph> build_condition_graph(
 
     auto sync = core::reshape_tensor(
         ctx,
-        ensure_contiguous(ctx, out->sync_in),
+        core::ensure_backend_addressable_layout(ctx, out->sync_in),
         core::TensorShape::from_dims({batch, config.sync_seq_len / 8, 8, config.sync_dim}));
-    sync = add_tensors(ctx, sync, weights.sync_pos_emb);
-    sync = core::reshape_tensor(ctx, ensure_contiguous(ctx, sync), core::TensorShape::from_dims({batch, config.sync_seq_len, config.sync_dim}));
+    auto sync_pos_emb = repeat_like(ctx, weights.sync_pos_emb, sync);
+    sync = modules::AddModule{}.build(ctx, sync, sync_pos_emb);
+    sync = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, sync), core::TensorShape::from_dims({batch, config.sync_seq_len, config.sync_dim}));
 
     out->clip_out = build_projection(
         ctx,
@@ -937,7 +896,8 @@ std::unique_ptr<ConditionGraph> build_condition_graph(
     if (config.visual_seq_len != config.clip_seq_len) {
         visual = interpolate_time_with_matrix(ctx, visual, out->visual_interp, config.visual_seq_len, config.clip_seq_len);
     }
-    out->clip_out = add_tensors(ctx, out->clip_out, visual);
+    auto visual_repeated = repeat_like(ctx, visual, out->clip_out);
+    out->clip_out = modules::AddModule{}.build(ctx, out->clip_out, visual_repeated);
 
     out->sync_out = build_projection(
         ctx,
@@ -1056,7 +1016,10 @@ std::unique_ptr<FlowGraph> build_flow_graph(
         true,
         7,
         true);
-    auto global_seed = add_tensors(ctx, add_tensors(ctx, out->clip_cond, out->text_cond), out->timbre);
+    auto text_cond_repeated = repeat_like(ctx, out->text_cond, out->clip_cond);
+    auto global_seed = modules::AddModule{}.build(ctx, out->clip_cond, text_cond_repeated);
+    auto timbre_repeated = repeat_like(ctx, out->timbre, global_seed);
+    global_seed = modules::AddModule{}.build(ctx, global_seed, timbre_repeated);
     auto global_c = modules::GatedFeedForwardModule({
         config.hidden_dim,
         hidden_multiple(config.hidden_dim, config.mlp_ratio),
@@ -1074,8 +1037,11 @@ std::unique_ptr<FlowGraph> build_flow_graph(
     time = modules::SiluModule{}.build(ctx, time);
     time = modules::LinearModule({config.hidden_dim, config.hidden_dim, true, options.projection_precision})
                .build(ctx, time, weights.time_fc2);
-    global_c = add_tensors(ctx, unsqueeze_sequence(ctx, global_c), unsqueeze_sequence(ctx, time));
-    auto extended_c = add_tensors(ctx, out->sync, global_c);
+    global_c = unsqueeze_sequence(ctx, global_c);
+    auto time_unsqueezed = repeat_like(ctx, unsqueeze_sequence(ctx, time), global_c);
+    global_c = modules::AddModule{}.build(ctx, global_c, time_unsqueezed);
+    auto global_c_repeated = repeat_like(ctx, global_c, out->sync);
+    auto extended_c = modules::AddModule{}.build(ctx, out->sync, global_c_repeated);
 
     auto clip = out->clip;
     auto text = out->text;

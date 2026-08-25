@@ -10,6 +10,7 @@
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
 #include "engine/framework/modules/positional_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/transformers/qwen_causal_decoder.h"
 #include "engine/framework/modules/weight_binding.h"
@@ -127,17 +128,6 @@ struct Qwen35Weights {
     modules::LinearWeights lm_head;
 };
 
-modules::LinearWeights linear_from_backbone(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    assets::TensorStorageType storage_type,
-    int64_t out_features,
-    int64_t in_features,
-    bool bias = false) {
-    return binding::linear_from_source(store, source, prefix, storage_type, out_features, in_features, bias);
-}
-
 FullAttentionWeights load_full_attention(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
@@ -145,34 +135,38 @@ FullAttentionWeights load_full_attention(
     const FireRedAudioBackboneConfig & config,
     assets::TensorStorageType storage_type) {
     FullAttentionWeights out;
-    out.q_proj = linear_from_backbone(
+    out.q_proj = binding::linear_from_source(
         store,
         source,
         prefix + ".q_proj",
         storage_type,
         config.heads * config.head_dim * 2,
-        config.hidden_size);
-    out.k_proj = linear_from_backbone(
+        config.hidden_size,
+        false);
+    out.k_proj = binding::linear_from_source(
         store,
         source,
         prefix + ".k_proj",
         storage_type,
         config.kv_heads * config.head_dim,
-        config.hidden_size);
-    out.v_proj = linear_from_backbone(
+        config.hidden_size,
+        false);
+    out.v_proj = binding::linear_from_source(
         store,
         source,
         prefix + ".v_proj",
         storage_type,
         config.kv_heads * config.head_dim,
-        config.hidden_size);
-    out.o_proj = linear_from_backbone(
+        config.hidden_size,
+        false);
+    out.o_proj = binding::linear_from_source(
         store,
         source,
         prefix + ".o_proj",
         storage_type,
         config.hidden_size,
-        config.heads * config.head_dim);
+        config.heads * config.head_dim,
+        false);
     out.q_norm = binding::norm_weight_from_source(store, source, prefix + ".q_norm", config.head_dim);
     out.k_norm = binding::norm_weight_from_source(store, source, prefix + ".k_norm", config.head_dim);
     return out;
@@ -188,10 +182,10 @@ LinearAttentionWeights load_linear_attention(
     const int64_t key_dim = config.linear_key_head_dim * config.linear_num_key_heads;
     const int64_t value_dim = config.linear_value_head_dim * config.linear_num_value_heads;
     const int64_t conv_dim = key_dim * 2 + value_dim;
-    out.in_proj_qkv = linear_from_backbone(store, source, prefix + ".in_proj_qkv", storage_type, conv_dim, config.hidden_size);
-    out.in_proj_z = linear_from_backbone(store, source, prefix + ".in_proj_z", storage_type, value_dim, config.hidden_size);
-    out.in_proj_b = linear_from_backbone(store, source, prefix + ".in_proj_b", storage_type, config.linear_num_value_heads, config.hidden_size);
-    out.in_proj_a = linear_from_backbone(store, source, prefix + ".in_proj_a", storage_type, config.linear_num_value_heads, config.hidden_size);
+    out.in_proj_qkv = binding::linear_from_source(store, source, prefix + ".in_proj_qkv", storage_type, conv_dim, config.hidden_size, false);
+    out.in_proj_z = binding::linear_from_source(store, source, prefix + ".in_proj_z", storage_type, value_dim, config.hidden_size, false);
+    out.in_proj_b = binding::linear_from_source(store, source, prefix + ".in_proj_b", storage_type, config.linear_num_value_heads, config.hidden_size, false);
+    out.in_proj_a = binding::linear_from_source(store, source, prefix + ".in_proj_a", storage_type, config.linear_num_value_heads, config.hidden_size, false);
     out.conv_weight = store.load_tensor(
         source,
         prefix + ".conv1d.weight",
@@ -200,7 +194,7 @@ LinearAttentionWeights load_linear_attention(
     out.dt_bias = store.load_f32_tensor(source, prefix + ".dt_bias", {config.linear_num_value_heads});
     out.a_log = store.load_f32_tensor(source, prefix + ".A_log", {config.linear_num_value_heads});
     out.norm = binding::norm_weight_from_source(store, source, prefix + ".norm", config.linear_value_head_dim);
-    out.out_proj = linear_from_backbone(store, source, prefix + ".out_proj", storage_type, config.hidden_size, value_dim);
+    out.out_proj = binding::linear_from_source(store, source, prefix + ".out_proj", storage_type, config.hidden_size, value_dim, false);
     return out;
 }
 
@@ -235,19 +229,20 @@ std::shared_ptr<Qwen35Weights> load_qwen35_weights(
         } else {
             out.linear = load_linear_attention(*weights->store, source, prefix + ".linear_attn", c, storage_type);
         }
-        out.mlp_gate = linear_from_backbone(*weights->store, source, prefix + ".mlp.gate_proj", storage_type, c.intermediate_size, c.hidden_size);
-        out.mlp_up = linear_from_backbone(*weights->store, source, prefix + ".mlp.up_proj", storage_type, c.intermediate_size, c.hidden_size);
-        out.mlp_down = linear_from_backbone(*weights->store, source, prefix + ".mlp.down_proj", storage_type, c.hidden_size, c.intermediate_size);
+        out.mlp_gate = binding::linear_from_source(*weights->store, source, prefix + ".mlp.gate_proj", storage_type, c.intermediate_size, c.hidden_size, false);
+        out.mlp_up = binding::linear_from_source(*weights->store, source, prefix + ".mlp.up_proj", storage_type, c.intermediate_size, c.hidden_size, false);
+        out.mlp_down = binding::linear_from_source(*weights->store, source, prefix + ".mlp.down_proj", storage_type, c.hidden_size, c.intermediate_size, false);
         weights->layers.push_back(std::move(out));
     }
     weights->final_norm = binding::norm_weight_from_source(*weights->store, source, std::string(root) + ".norm", c.hidden_size);
-    weights->lm_head = linear_from_backbone(
+    weights->lm_head = binding::linear_from_source(
         *weights->store,
         source,
         "backbone_llm.lm_head",
         storage_type,
         c.vocab_size,
-        c.hidden_size);
+        c.hidden_size,
+        false);
     weights->store->upload();
     return weights;
 }
@@ -297,7 +292,7 @@ core::TensorValue mlp(
     auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false}).build(ctx, x, weights.mlp_gate);
     gate = modules::SiluModule{}.build(ctx, gate);
     auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false}).build(ctx, x, weights.mlp_up);
-    auto gated = core::wrap_tensor(ggml_mul(ctx.ggml, gate.tensor, up.tensor), gate.shape, GGML_TYPE_F32);
+    auto gated = modules::MulModule{}.build(ctx, gate, up);
     return modules::LinearModule({config.intermediate_size, config.hidden_size, false}).build(ctx, gated, weights.mlp_down);
 }
 
@@ -357,8 +352,8 @@ core::TensorValue full_attention(
         ctx,
         core::ensure_backend_addressable_layout(ctx, context),
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
-    gate = core::wrap_tensor(ggml_sigmoid(ctx.ggml, gate.tensor), gate.shape, GGML_TYPE_F32);
-    context = core::wrap_tensor(ggml_mul(ctx.ggml, context.tensor, gate.tensor), context.shape, GGML_TYPE_F32);
+    gate = modules::SigmoidModule{}.build(ctx, gate);
+    context = modules::MulModule{}.build(ctx, context, gate);
     return modules::LinearModule({config.heads * config.head_dim, config.hidden_size, false}).build(ctx, context, weights.o_proj);
 }
 
@@ -409,8 +404,8 @@ core::TensorValue full_attention_prefill_cached(
         ctx,
         core::ensure_backend_addressable_layout(ctx, context),
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
-    gate = core::wrap_tensor(ggml_sigmoid(ctx.ggml, gate.tensor), gate.shape, GGML_TYPE_F32);
-    context = core::wrap_tensor(ggml_mul(ctx.ggml, context.tensor, gate.tensor), context.shape, GGML_TYPE_F32);
+    gate = modules::SigmoidModule{}.build(ctx, gate);
+    context = modules::MulModule{}.build(ctx, context, gate);
     return modules::LinearModule({config.heads * config.head_dim, config.hidden_size, false}).build(ctx, context, weights.o_proj);
 }
 
@@ -461,8 +456,8 @@ core::TensorValue full_attention_cached(
         ctx,
         core::ensure_backend_addressable_layout(ctx, context),
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
-    gate = core::wrap_tensor(ggml_sigmoid(ctx.ggml, gate.tensor), gate.shape, GGML_TYPE_F32);
-    context = core::wrap_tensor(ggml_mul(ctx.ggml, context.tensor, gate.tensor), context.shape, GGML_TYPE_F32);
+    gate = modules::SigmoidModule{}.build(ctx, gate);
+    context = modules::MulModule{}.build(ctx, context, gate);
     return modules::LinearModule({config.heads * config.head_dim, config.hidden_size, false}).build(ctx, context, weights.o_proj);
 }
 
@@ -555,14 +550,14 @@ LinearAttentionCachedOutput linear_attention_prefill(
     query = repeat_linear_attention_heads(ctx, query, key_repeats);
     key = repeat_linear_attention_heads(ctx, key, key_repeats);
     auto beta = modules::LinearModule({config.hidden_size, config.linear_num_value_heads, false}).build(ctx, input, weights.in_proj_b);
-    beta = core::wrap_tensor(ggml_sigmoid(ctx.ggml, beta.tensor), beta.shape, GGML_TYPE_F32);
+    beta = modules::SigmoidModule{}.build(ctx, beta);
     auto a = modules::LinearModule({config.hidden_size, config.linear_num_value_heads, false}).build(ctx, input, weights.in_proj_a);
     auto dt_bias = repeat_head_values(ctx, weights.dt_bias, steps, config.linear_num_value_heads);
-    a = core::wrap_tensor(ggml_add(ctx.ggml, a.tensor, dt_bias.tensor), a.shape, GGML_TYPE_F32);
+    a = modules::AddModule{}.build(ctx, a, dt_bias);
     a = core::wrap_tensor(ggml_softplus(ctx.ggml, a.tensor), a.shape, GGML_TYPE_F32);
     auto a_log = repeat_head_values(ctx, weights.a_log, steps, config.linear_num_value_heads);
     a_log = core::wrap_tensor(ggml_exp(ctx.ggml, a_log.tensor), a_log.shape, GGML_TYPE_F32);
-    auto g = core::wrap_tensor(ggml_mul(ctx.ggml, a.tensor, a_log.tensor), a.shape, GGML_TYPE_F32);
+    auto g = modules::MulModule{}.build(ctx, a, a_log);
     g = core::wrap_tensor(ggml_scale(ctx.ggml, g.tensor, -1.0F), g.shape, GGML_TYPE_F32);
     beta = core::reshape_tensor(ctx, beta, core::TensorShape::from_dims({1, steps, config.linear_num_value_heads, 1}));
     g = core::reshape_tensor(ctx, g, core::TensorShape::from_dims({1, steps, config.linear_num_value_heads, 1}));
@@ -581,7 +576,7 @@ LinearAttentionCachedOutput linear_attention_prefill(
         weights.norm);
     auto z_flat = core::reshape_tensor(ctx, z, core::TensorShape::from_dims({steps * config.linear_num_value_heads, config.linear_value_head_dim}));
     z_flat = modules::SiluModule{}.build(ctx, z_flat);
-    current_delta = core::wrap_tensor(ggml_mul(ctx.ggml, current_delta.tensor, z_flat.tensor), current_delta.shape, GGML_TYPE_F32);
+    current_delta = modules::MulModule{}.build(ctx, current_delta, z_flat);
     current_delta = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, current_delta), core::TensorShape::from_dims({1, steps, value_dim}));
     auto output = modules::LinearModule({value_dim, config.hidden_size, false}).build(ctx, current_delta, weights.out_proj);
     auto next_tail = modules::SliceModule({2, steps, config.linear_conv_kernel_dim - 1}).build(ctx, padded);
@@ -637,14 +632,14 @@ LinearAttentionCachedOutput linear_attention_cached(
     query = repeat_linear_attention_heads(ctx, query, key_repeats);
     key = repeat_linear_attention_heads(ctx, key, key_repeats);
     auto beta = modules::LinearModule({config.hidden_size, config.linear_num_value_heads, false}).build(ctx, input, weights.in_proj_b);
-    beta = core::wrap_tensor(ggml_sigmoid(ctx.ggml, beta.tensor), beta.shape, GGML_TYPE_F32);
+    beta = modules::SigmoidModule{}.build(ctx, beta);
     auto a = modules::LinearModule({config.hidden_size, config.linear_num_value_heads, false}).build(ctx, input, weights.in_proj_a);
     auto dt_bias = repeat_head_values(ctx, weights.dt_bias, 1, config.linear_num_value_heads);
-    a = core::wrap_tensor(ggml_add(ctx.ggml, a.tensor, dt_bias.tensor), a.shape, GGML_TYPE_F32);
+    a = modules::AddModule{}.build(ctx, a, dt_bias);
     a = core::wrap_tensor(ggml_softplus(ctx.ggml, a.tensor), a.shape, GGML_TYPE_F32);
     auto a_log = repeat_head_values(ctx, weights.a_log, 1, config.linear_num_value_heads);
     a_log = core::wrap_tensor(ggml_exp(ctx.ggml, a_log.tensor), a_log.shape, GGML_TYPE_F32);
-    auto g = core::wrap_tensor(ggml_mul(ctx.ggml, a.tensor, a_log.tensor), a.shape, GGML_TYPE_F32);
+    auto g = modules::MulModule{}.build(ctx, a, a_log);
     g = core::wrap_tensor(ggml_scale(ctx.ggml, g.tensor, -1.0F), g.shape, GGML_TYPE_F32);
     beta = core::reshape_tensor(ctx, beta, core::TensorShape::from_dims({1, 1, config.linear_num_value_heads, 1}));
     g = core::reshape_tensor(ctx, g, core::TensorShape::from_dims({1, 1, config.linear_num_value_heads, 1}));
@@ -663,7 +658,7 @@ LinearAttentionCachedOutput linear_attention_cached(
         weights.norm);
     auto z_flat = core::reshape_tensor(ctx, z, core::TensorShape::from_dims({config.linear_num_value_heads, config.linear_value_head_dim}));
     z_flat = modules::SiluModule{}.build(ctx, z_flat);
-    current_delta = core::wrap_tensor(ggml_mul(ctx.ggml, current_delta.tensor, z_flat.tensor), current_delta.shape, GGML_TYPE_F32);
+    current_delta = modules::MulModule{}.build(ctx, current_delta, z_flat);
     current_delta = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, current_delta), core::TensorShape::from_dims({1, 1, value_dim}));
     auto output = modules::LinearModule({value_dim, config.hidden_size, false}).build(ctx, current_delta, weights.out_proj);
     auto next_tail = modules::SliceModule({2, 1, config.linear_conv_kernel_dim - 1}).build(ctx, conv_input);
@@ -761,11 +756,11 @@ private:
                 ggml_set_input(state.tensor);
                 h = linear_attention(ctx, h, state, *layer.linear, config_);
             }
-            x = core::wrap_tensor(ggml_add(ctx.ggml, residual.tensor, h.tensor), residual.shape, GGML_TYPE_F32);
+            x = modules::AddModule{}.build(ctx, residual, h);
             residual = x;
             h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
             h = mlp(ctx, h, layer, config_);
-            x = core::wrap_tensor(ggml_add(ctx.ggml, residual.tensor, h.tensor), residual.shape, GGML_TYPE_F32);
+            x = modules::AddModule{}.build(ctx, residual, h);
         }
         x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
@@ -1026,11 +1021,11 @@ public:
                 ggml_build_forward_expand(graph_, ggml_cpy(ctx.ggml, out.next_recurrent_state.tensor, recurrent_state.tensor));
                 h = std::move(out.output);
             }
-            x = core::wrap_tensor(ggml_add(ctx.ggml, residual.tensor, h.tensor), residual.shape, GGML_TYPE_F32);
+            x = modules::AddModule{}.build(ctx, residual, h);
             residual = x;
             h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
             h = mlp(ctx, h, layer, config_);
-            x = core::wrap_tensor(ggml_add(ctx.ggml, residual.tensor, h.tensor), residual.shape, GGML_TYPE_F32);
+            x = modules::AddModule{}.build(ctx, residual, h);
         }
         x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
@@ -1202,11 +1197,11 @@ private:
                 h = std::move(out.output);
                 ++linear_index;
             }
-            x = core::wrap_tensor(ggml_add(ctx.ggml, residual.tensor, h.tensor), residual.shape, GGML_TYPE_F32);
+            x = modules::AddModule{}.build(ctx, residual, h);
             residual = x;
             h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
             h = mlp(ctx, h, layer, config_);
-            x = core::wrap_tensor(ggml_add(ctx.ggml, residual.tensor, h.tensor), residual.shape, GGML_TYPE_F32);
+            x = modules::AddModule{}.build(ctx, residual, h);
         }
         if (full_index != full_count || linear_index != linear_count) {
             throw std::runtime_error("FireRedAudio Qwen3.5 prefill cache/state count mismatch");

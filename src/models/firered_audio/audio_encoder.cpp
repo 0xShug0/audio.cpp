@@ -129,17 +129,6 @@ std::vector<float> sinusoidal_positions(int64_t length, int64_t channels) {
     return table;
 }
 
-modules::NormWeights layer_norm_from_source(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    int64_t hidden_size) {
-    return {
-        store.load_f32_tensor(source, prefix + ".weight", {hidden_size}),
-        store.load_f32_tensor(source, prefix + ".bias", {hidden_size}),
-    };
-}
-
 std::shared_ptr<AudioEncoderWeights> load_audio_encoder_weights(
     const FireRedAudioAssets & assets,
     core::ExecutionContext & execution,
@@ -175,12 +164,12 @@ std::shared_ptr<AudioEncoderWeights> load_audio_encoder_weights(
     for (int64_t layer = 0; layer < c.encoder_layers; ++layer) {
         const std::string prefix = "audio_encoder.layers." + std::to_string(layer);
         AudioEncoderLayerWeights item;
-        item.self_attn_norm = layer_norm_from_source(*out->store, source, prefix + ".self_attn_layer_norm", c.d_model);
+        item.self_attn_norm = binding::norm_from_source(*out->store, source, prefix + ".self_attn_layer_norm", c.d_model);
         item.attention.q_proj = binding::linear_from_source(*out->store, source, prefix + ".self_attn.q_proj", storage_type, c.d_model, c.d_model, true);
         item.attention.k_proj = binding::linear_from_source(*out->store, source, prefix + ".self_attn.k_proj", storage_type, c.d_model, c.d_model, false);
         item.attention.v_proj = binding::linear_from_source(*out->store, source, prefix + ".self_attn.v_proj", storage_type, c.d_model, c.d_model, true);
         item.attention.out_proj = binding::linear_from_source(*out->store, source, prefix + ".self_attn.out_proj", storage_type, c.d_model, c.d_model, true);
-        item.final_norm = layer_norm_from_source(*out->store, source, prefix + ".final_layer_norm", c.d_model);
+        item.final_norm = binding::norm_from_source(*out->store, source, prefix + ".final_layer_norm", c.d_model);
         const auto fc1 = binding::linear_from_source(*out->store, source, prefix + ".fc1", storage_type, c.encoder_ffn_dim, c.d_model, true);
         const auto fc2 = binding::linear_from_source(*out->store, source, prefix + ".fc2", storage_type, c.d_model, c.encoder_ffn_dim, true);
         item.feed_forward = {fc1.weight, fc1.bias, fc2.weight, fc2.bias};
@@ -204,7 +193,7 @@ std::shared_ptr<AudioEncoderWeights> load_audio_encoder_weights(
         c.d_model,
         3,
         true);
-    out->adapter_norm = layer_norm_from_source(*out->store, source, "audio_encoder.adapter.layer_norm", c.d_model);
+    out->adapter_norm = binding::norm_from_source(*out->store, source, "audio_encoder.adapter.layer_norm", c.d_model);
     out->adapter_linear1 = binding::linear_from_source(*out->store, source, "audio_encoder.adapter.linear1", storage_type, c.output_dim, c.d_model, true);
     out->adapter_linear2 = binding::linear_from_source(*out->store, source, "audio_encoder.adapter.linear2", storage_type, c.output_dim, c.output_dim, true);
     out->positions = out->store->make_f32(

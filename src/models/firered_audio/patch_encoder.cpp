@@ -7,6 +7,7 @@
 #include "engine/framework/modules/attention/projected_grouped_self_attention.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
@@ -226,7 +227,7 @@ private:
         int64_t layer) const {
         auto h = modules::RMSNormModule({config_.hidden_size, 1.0e-6F, true, false}).build(ctx, x, weights.norm1);
         h = modules::ProjectedGroupedSelfAttentionModule(attention_config()).build(ctx, h, positions, weights.attention, layer);
-        auto out = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, h.tensor), x.shape, GGML_TYPE_F32);
+        auto out = modules::AddModule{}.build(ctx, x, h);
         h = modules::RMSNormModule({config_.hidden_size, 1.0e-6F, true, false}).build(ctx, out, weights.norm2);
         h = modules::FeedForwardModule({
             config_.hidden_size,
@@ -234,7 +235,7 @@ private:
             true,
             modules::GeluApproximation::Tanh,
         }).build(ctx, h, weights.mlp);
-        return core::wrap_tensor(ggml_add(ctx.ggml, out.tensor, h.tensor), out.shape, GGML_TYPE_F32);
+        return modules::AddModule{}.build(ctx, out, h);
     }
 
     void ensure(int64_t patches) {
