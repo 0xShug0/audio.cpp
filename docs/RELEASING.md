@@ -43,6 +43,10 @@ Notes:
   is bundled in a separate `cudart-...zip`.
 - CUDA architectures are pinned (all-real) so binaries are portable across the
   supported NVIDIA GPUs instead of being tied to the (GPU-less) CI host.
+- Windows packages bundle the MSVC runtime app-locally (`vcruntime140*.dll`,
+  `msvcp140*.dll`, `vcomp140.dll`) so they run on clean Windows without a
+  separately installed VC++ Redistributable. Total added size is ~1 MB
+  compressed (negligible vs. the CPU/Vulkan/CUDA package sizes).
 
 ## When the workflow runs
 

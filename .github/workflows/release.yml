@@ -187,6 +187,28 @@ jobs:
           .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager
           .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -DeploymentBuild -NativeModelManager
           .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager
+      - name: Bundle VC runtime
+        shell: pwsh
+        working-directory: build/windows-cpu-release/bin
+        # App-local deployment of the MSVC runtime so the prebuilt binaries run
+        # on clean Windows without a separately installed VC++ Redistributable.
+        # Sizes: vcruntime140* + msvcp140* + vcomp140 ~2 MB (well under 1 MB
+        # compressed), negligible against the CPU/Vulkan/CUDA zip sizes.
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending |
+            Select-Object -First 1
+          foreach ($sub in 'x64\Microsoft.VC143.CRT', 'x64\Microsoft.VC143.OPENMP') {
+            $dir = Join-Path $redist.FullName $sub
+            if (Test-Path $dir) {
+              Get-ChildItem "$dir\*.dll" | Where-Object {
+                $_.Name -match '^(vcruntime140|msvcp140|vcomp140)'
+              } | Copy-Item -Destination . -ErrorAction SilentlyContinue
+            }
+          }
+          Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
       - name: Stage bundle
         shell: pwsh
         working-directory: build/windows-cpu-release/bin
@@ -221,6 +243,25 @@ jobs:
           .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager
           .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_server -DeploymentBuild -NativeModelManager
           .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager
+      - name: Bundle VC runtime
+        shell: pwsh
+        working-directory: build/windows-vulkan-release/bin
+        # App-local deployment of the MSVC runtime (see windows-cpu comments).
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending |
+            Select-Object -First 1
+          foreach ($sub in 'x64\Microsoft.VC143.CRT', 'x64\Microsoft.VC143.OPENMP') {
+            $dir = Join-Path $redist.FullName $sub
+            if (Test-Path $dir) {
+              Get-ChildItem "$dir\*.dll" | Where-Object {
+                $_.Name -match '^(vcruntime140|msvcp140|vcomp140)'
+              } | Copy-Item -Destination . -ErrorAction SilentlyContinue
+            }
+          }
+          Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
       - name: Stage bundle
         shell: pwsh
         working-directory: build/windows-vulkan-release/bin
@@ -310,6 +351,25 @@ jobs:
             exit 1
           }
           exit 0
+      - name: Bundle VC runtime
+        shell: pwsh
+        working-directory: build/bin
+        # App-local deployment of the MSVC runtime (see windows-cpu comments).
+        # The CUDA build disables OpenMP, so vcomp140 is not needed - only the
+        # CRT DLLs for the host-side /MD runtime.
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending |
+            Select-Object -First 1
+          $dir = Join-Path $redist.FullName 'x64\Microsoft.VC143.CRT'
+          if (Test-Path $dir) {
+            Get-ChildItem "$dir\*.dll" | Where-Object {
+              $_.Name -match '^(vcruntime140|msvcp140)'
+            } | Copy-Item -Destination . -ErrorAction SilentlyContinue
+          }
+          Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
       - name: Stage bundle
         shell: pwsh
         working-directory: build/bin
