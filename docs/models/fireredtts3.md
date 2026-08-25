@@ -67,6 +67,7 @@ audiocpp_cli \
 | Mode | `offline` | `offline` |
 | GGUF | `models/FireRedTTS3-Base-GGUF/fireredtts3-base-orig.gguf` | `models/FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-orig.gguf` |
 | Primary use | Zero-shot voice clone | Clone, voice design, semantic edit, acoustic edit |
+| Languages | Official 24 language tags plus 21 Chinese dialect tags | Same request language tags for text frontend handling |
 
 ## Templates
 
@@ -81,7 +82,7 @@ audiocpp_cli \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--language` / `--request-option language=<name>` | language tag | `Chinese` | Generation language tag. |
+| `--language` / `--request-option language=<name>` | official FireRedTTS3 language or dialect tag | `Chinese` | Generation language tag. |
 | `--voice-ref` | WAV path | required for clone | Prompt/reference voice. |
 | `--reference-text` / `--request-option reference_text=<text>` | text | empty | Transcript for the prompt audio. |
 | `--request-option template_name=<name>` | `instruct_tts`, `voice_design`, `semantic_edit`, `acoustic_edit` | path-dependent | Instruct request template. |
@@ -95,3 +96,20 @@ audiocpp_cli \
 | `--session-option fireredtts3.reference_cache_slots=<n>` | integer >= 0 | `4` | Prepared reference-audio cache slots. |
 | `--session-option fireredtts3.mem_saver=true\|false` | bool | `false` | Release runtime graphs after request phases. |
 | `--session-option fireredtts3.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
+
+Language tags accepted by FireRedTTS3 Base match the official tokenizer:
+`Arabic`, `Cantonese`, `Chinese`, `Czech`, `Dutch`, `English`, `Finnish`,
+`French`, `German`, `Greek`, `Hindi`, `Indonesian`, `Italian`, `Japanese`,
+`Korean`, `Polish`, `Portuguese`, `Romanian`, `Russian`, `Spanish`, `Thai`,
+`Turkish`, `Ukrainian`, `Vietnamese`, plus Chinese dialect tags such as
+`ZH_Sichuan`, `ZH_Shanghai`, and `ZH_Wu`.
+
+Text normalization note: the native frontend applies local normalization for
+Chinese, English, Cantonese, and `ZH_*` dialect tags. Other official language
+tags are accepted but currently use basic whitespace cleanup, matching the
+official Python path when LLM-based TN is not enabled.
+
+Quality note: based on local checks against the original Python mode, non-English
+and non-Chinese generation can be weaker even though the language tags are
+accepted. Validate the specific language, task, and voice-reference setup before
+depending on those outputs.

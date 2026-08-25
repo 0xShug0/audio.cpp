@@ -5,6 +5,8 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
+#include "engine/framework/text/chinese_normalization.h"
+#include "engine/framework/text/text_normalization.h"
 #include "engine/models/fireredtts3/pipeline.h"
 
 #include <stdexcept>
@@ -52,6 +54,22 @@ std::string request_language(const runtime::TaskRequest & request) {
     return "Chinese";
 }
 
+bool has_prefix(std::string_view value, std::string_view prefix) {
+    return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
+}
+
+std::string normalize_fire_red_tts3_text(std::string_view language, std::string_view text) {
+    if (language == "Chinese" || language == "Cantonese" || has_prefix(language, "ZH_")) {
+        return engine::text::normalize_chinese_text(
+            text,
+            engine::text::ChineseTextNormalizationTarget::IndexTTS);
+    }
+    if (language == "English") {
+        return engine::text::normalize_english_text(text);
+    }
+    return engine::text::collapse_ascii_whitespace(text);
+}
+
 FireRedTTS3BaseRequest make_base_request(
     const FireRedTTS3TextTokenizer & tokenizer,
     const runtime::TaskRequest & request) {
@@ -67,7 +85,8 @@ FireRedTTS3BaseRequest make_base_request(
     out.language = request_language(request);
     out.reference_text = runtime::find_option(request.options, {"reference_text"}).value_or("");
     out.prompt_audio = *request.voice->speaker->audio;
-    out.token_ids = tokenizer.encode_base_prompt(out.language, out.reference_text, request.text_input->text);
+    const std::string normalized_text = normalize_fire_red_tts3_text(out.language, request.text_input->text);
+    out.token_ids = tokenizer.encode_base_prompt(out.language, out.reference_text, normalized_text);
     out.seed = runtime::parse_u32_option(request.options, {"seed"}).value_or(out.seed);
     out.num_inference_steps = runtime::parse_positive_i64_option(
         request.options,
@@ -125,6 +144,7 @@ FireRedTTS3InstructRequest make_instruct_request(const runtime::TaskRequest & re
         out.task = FireRedTTS3InstructTask::Clone;
         out.prompt_audio = *request.voice->speaker->audio;
         out.instruction = runtime::find_option(request.options, {"reference_text"}).value_or(out.instruction);
+        out.text = normalize_fire_red_tts3_text(request_language(request), out.text);
         apply_common_generation_options(request, 1234, 2.0F, out);
         return out;
     }
@@ -135,6 +155,7 @@ FireRedTTS3InstructRequest make_instruct_request(const runtime::TaskRequest & re
         out.task = FireRedTTS3InstructTask::VoiceDesign;
         out.infer_text = true;
         out.text_do_sample = true;
+        out.text = normalize_fire_red_tts3_text(request_language(request), out.text);
         apply_common_generation_options(request, 2, 1.2F, out);
         return out;
     }

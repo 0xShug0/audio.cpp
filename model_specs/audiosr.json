@@ -120,7 +120,6 @@
   "ui": {
     "recommended_package": "audiosr_basic_f32",
     "tags": [
-      "S2S",
       "GGUF"
     ],
     "docs": [

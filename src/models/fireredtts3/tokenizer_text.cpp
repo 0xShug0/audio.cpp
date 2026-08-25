@@ -2,6 +2,7 @@
 
 #include "engine/framework/tokenizers/llama_bpe.h"
 
+#include <algorithm>
 #include <array>
 #include <iomanip>
 #include <sstream>
@@ -16,8 +17,64 @@ namespace {
 
 using engine::tokenizers::LlamaBpeAddedToken;
 
+constexpr std::array<std::string_view, 24> kLanguageTags = {
+    "Chinese",
+    "English",
+    "Cantonese",
+    "Japanese",
+    "Korean",
+    "Spanish",
+    "French",
+    "Russian",
+    "Arabic",
+    "Turkish",
+    "Indonesian",
+    "Portuguese",
+    "Italian",
+    "Dutch",
+    "Vietnamese",
+    "German",
+    "Ukrainian",
+    "Thai",
+    "Polish",
+    "Romanian",
+    "Greek",
+    "Czech",
+    "Finnish",
+    "Hindi",
+};
+
+constexpr std::array<std::string_view, 21> kDialectTags = {
+    "ZH_Anhui",
+    "ZH_Fujian",
+    "ZH_Gansu",
+    "ZH_Guizhou",
+    "ZH_Hebei",
+    "ZH_Henan",
+    "ZH_Hubei",
+    "ZH_Hunan",
+    "ZH_Jiangxi",
+    "ZH_Liaoning",
+    "ZH_Minnan",
+    "ZH_Ningxia",
+    "ZH_Shaanxi",
+    "ZH_Shandong",
+    "ZH_Shanghai",
+    "ZH_Shanxi",
+    "ZH_Sichuan",
+    "ZH_Tianjin",
+    "ZH_Wenzhou",
+    "ZH_Wu",
+    "ZH_Yunnan",
+};
+
+template <size_t N>
+bool contains_tag(const std::array<std::string_view, N> & tags, std::string_view language) {
+    return std::find(tags.begin(), tags.end(), language) != tags.end();
+}
+
 bool is_supported_language(std::string_view language) {
-    return language == "Chinese" || language == "English";
+    return contains_tag(kLanguageTags, language) || contains_tag(kDialectTags, language);
 }
 
 constexpr int32_t kLatentInPadId = 151655;
@@ -116,60 +173,11 @@ std::vector<LlamaBpeAddedToken> firered_special_tokens() {
         token << "<|placeholder_" << std::setw(3) << std::setfill('0') << index << "|>";
         add(token.str());
     }
-    constexpr std::array<std::string_view, 24> languages = {
-        "<|Chinese|>",
-        "<|English|>",
-        "<|Cantonese|>",
-        "<|Japanese|>",
-        "<|Korean|>",
-        "<|Spanish|>",
-        "<|French|>",
-        "<|Russian|>",
-        "<|Arabic|>",
-        "<|Turkish|>",
-        "<|Indonesian|>",
-        "<|Portuguese|>",
-        "<|Italian|>",
-        "<|Dutch|>",
-        "<|Vietnamese|>",
-        "<|German|>",
-        "<|Ukrainian|>",
-        "<|Thai|>",
-        "<|Polish|>",
-        "<|Romanian|>",
-        "<|Greek|>",
-        "<|Czech|>",
-        "<|Finnish|>",
-        "<|Hindi|>",
-    };
-    for (const auto language : languages) {
-        add(std::string(language));
+    for (const auto language : kLanguageTags) {
+        add("<|" + std::string(language) + "|>");
     }
-    constexpr std::array<std::string_view, 21> dialects = {
-        "<|ZH_Anhui|>",
-        "<|ZH_Fujian|>",
-        "<|ZH_Gansu|>",
-        "<|ZH_Guizhou|>",
-        "<|ZH_Hebei|>",
-        "<|ZH_Henan|>",
-        "<|ZH_Hubei|>",
-        "<|ZH_Hunan|>",
-        "<|ZH_Jiangxi|>",
-        "<|ZH_Liaoning|>",
-        "<|ZH_Minnan|>",
-        "<|ZH_Ningxia|>",
-        "<|ZH_Shaanxi|>",
-        "<|ZH_Shandong|>",
-        "<|ZH_Shanghai|>",
-        "<|ZH_Shanxi|>",
-        "<|ZH_Sichuan|>",
-        "<|ZH_Tianjin|>",
-        "<|ZH_Wenzhou|>",
-        "<|ZH_Wu|>",
-        "<|ZH_Yunnan|>",
-    };
-    for (const auto dialect : dialects) {
-        add(std::string(dialect));
+    for (const auto dialect : kDialectTags) {
+        add("<|" + std::string(dialect) + "|>");
     }
     add("<|edit|>");
     add("<|frame_patch|>");
@@ -207,7 +215,7 @@ std::string FireRedTTS3TextTokenizer::build_base_prompt(
     std::string_view reference_text,
     std::string_view text) const {
     if (!is_supported_language(language)) {
-        throw std::runtime_error("FireRedTTS3 Base language must be Chinese or English");
+        throw std::runtime_error("unsupported FireRedTTS3 Base language tag: " + std::string(language));
     }
     return "<|" + std::string(language) + "|><|sot|>" +
         std::string(reference_text) + std::string(text) + "<|eot|>";

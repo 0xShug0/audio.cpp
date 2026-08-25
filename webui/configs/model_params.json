@@ -271,7 +271,7 @@
   ],
 
   "fireredtts3-base": [
-    {"name": "language", "type": "choice", "label": "language", "default": "Chinese", "choices": ["Chinese", "English"]},
+    {"name": "language", "type": "choice", "label": "language", "default": "Chinese", "choices": ["Chinese", "English", "Cantonese", "Japanese", "Korean", "Spanish", "French", "Russian", "Arabic", "Turkish", "Indonesian", "Portuguese", "Italian", "Dutch", "Vietnamese", "German", "Ukrainian", "Thai", "Polish", "Romanian", "Greek", "Czech", "Finnish", "Hindi", "ZH_Anhui", "ZH_Fujian", "ZH_Gansu", "ZH_Guizhou", "ZH_Hebei", "ZH_Henan", "ZH_Hubei", "ZH_Hunan", "ZH_Jiangxi", "ZH_Liaoning", "ZH_Minnan", "ZH_Ningxia", "ZH_Shaanxi", "ZH_Shandong", "ZH_Shanghai", "ZH_Shanxi", "ZH_Sichuan", "ZH_Tianjin", "ZH_Wenzhou", "ZH_Wu", "ZH_Yunnan"]},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
     {"name": "stop_threshold", "type": "slider", "label": "stop_threshold", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
@@ -279,7 +279,7 @@
 
   "fireredtts3-instruct": [
     {"name": "template_name", "type": "choice", "label": "template_name", "default": "instruct_tts", "choices": ["instruct_tts"]},
-    {"name": "language", "type": "choice", "label": "language", "default": "Chinese", "choices": ["Chinese", "English"]},
+    {"name": "language", "type": "choice", "label": "language", "default": "Chinese", "choices": ["Chinese", "English", "Cantonese", "Japanese", "Korean", "Spanish", "French", "Russian", "Arabic", "Turkish", "Indonesian", "Portuguese", "Italian", "Dutch", "Vietnamese", "German", "Ukrainian", "Thai", "Polish", "Romanian", "Greek", "Czech", "Finnish", "Hindi", "ZH_Anhui", "ZH_Fujian", "ZH_Gansu", "ZH_Guizhou", "ZH_Hebei", "ZH_Henan", "ZH_Hubei", "ZH_Hunan", "ZH_Jiangxi", "ZH_Liaoning", "ZH_Minnan", "ZH_Ningxia", "ZH_Shaanxi", "ZH_Shandong", "ZH_Shanghai", "ZH_Shanxi", "ZH_Tianjin", "ZH_Wenzhou", "ZH_Wu", "ZH_Yunnan"]},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
     {"name": "stop_threshold", "type": "slider", "label": "stop_threshold", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
@@ -289,7 +289,7 @@
 
   "fireredtts3-instruct-vdesign": [
     {"name": "template_name", "type": "choice", "label": "template_name", "default": "voice_design", "choices": ["voice_design"]},
-    {"name": "language", "type": "choice", "label": "language", "default": "Chinese", "choices": ["Chinese", "English"]},
+    {"name": "language", "type": "choice", "label": "language", "default": "Chinese", "choices": ["Chinese", "English", "Cantonese", "Japanese", "Korean", "Spanish", "French", "Russian", "Arabic", "Turkish", "Indonesian", "Portuguese", "Italian", "Dutch", "Vietnamese", "German", "Ukrainian", "Thai", "Polish", "Romanian", "Greek", "Czech", "Finnish", "Hindi", "ZH_Anhui", "ZH_Fujian", "ZH_Gansu", "ZH_Guizhou", "ZH_Hebei", "ZH_Henan", "ZH_Hubei", "ZH_Hunan", "ZH_Jiangxi", "ZH_Liaoning", "ZH_Minnan", "ZH_Ningxia", "ZH_Shaanxi", "ZH_Shandong", "ZH_Shanghai", "ZH_Shanxi", "ZH_Tianjin", "ZH_Wenzhou", "ZH_Wu", "ZH_Yunnan"]},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
     {"name": "stop_threshold", "type": "slider", "label": "stop_threshold", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
