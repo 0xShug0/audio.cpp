@@ -90,6 +90,11 @@ struct ServerConfig {
     // limit and keeps the original behavior: once loaded, a model stays in memory
     // until it is unloaded explicitly or the server exits.
     int max_loaded_models = 0;
+    // Unload every resident model once the server has been idle this long without
+    // any model load/run (steady-clock ms). 0 disables idle unload. Complements
+    // max_loaded_models: that bounds peak residency, this frees memory during
+    // quiet periods. The next request reloads lazily.
+    int idle_unload_ms = 0;
     // Fleet-wide bounds for incrementally delivered request bodies. The defaults are
     // in LiveIngestLimits; a model entry may override any subset of them.
     LiveIngestLimits live_ingest;

@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -968,9 +969,16 @@ ServerState::ServerState(
     }
 #endif
     load_models();
+    if (config_.idle_unload_ms > 0) {
+        idle_unload_thread_ = std::thread(&ServerState::idle_unload_loop, this);
+    }
 }
 
 ServerState::~ServerState() {
+    idle_unload_shutdown_.store(true, std::memory_order_relaxed);
+    if (idle_unload_thread_.joinable()) {
+        idle_unload_thread_.join();
+    }
     if (!upload_root_.empty()) {
         std::error_code ec;
         std::filesystem::remove_all(upload_root_, ec);
@@ -1626,6 +1634,7 @@ void ServerState::evict_for_model_limit(const LoadedModel & loading) {
 }
 
 void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
+    last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
     model.last_used_ms.store(steady_now_ms(), std::memory_order_relaxed);
     if (model.session != nullptr) {
         return;
@@ -2745,6 +2754,49 @@ void ServerState::LoadedModel::unload() {
     session.reset();
     model.reset();
     loaded.store(false);
+}
+
+void ServerState::idle_unload_loop() {
+    const auto interval_ms = std::max<std::int64_t>(1000, config_.idle_unload_ms / 10);
+    while (!idle_unload_shutdown_.load(std::memory_order_relaxed)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+        if (idle_unload_shutdown_.load(std::memory_order_relaxed)) {
+            break;
+        }
+        const auto idle_ms = steady_now_ms() - last_activity_ms_.load(std::memory_order_relaxed);
+        if (idle_ms >= config_.idle_unload_ms) {
+            unload_idle_models();
+        }
+    }
+}
+
+void ServerState::unload_idle_models() {
+    std::vector<LoadedModel *> resident;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        for (const auto & model : models_) {
+            if (model->session != nullptr) {
+                resident.push_back(model.get());
+            }
+        }
+    }
+    int unloaded = 0;
+    for (LoadedModel * model : resident) {
+        // Never unload a model mid-inference; a busy model keeps its slot and the
+        // next idle pass retries it.
+        const auto lock = model->busy.try_acquire();
+        if (!lock.has_value()) {
+            continue;
+        }
+        model->unload();
+        ++unloaded;
+    }
+    if (unloaded > 0) {
+        const auto idle_ms = steady_now_ms() - last_activity_ms_.load(std::memory_order_relaxed);
+        std::cerr << "[server] idle " << idle_ms << " ms: unloaded " << unloaded << " model(s)\n";
+        // Restart the idle clock so we do not spin on unload attempts every interval.
+            last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
+    }
 }
 
 HttpResponse ServerState::handle_unload_models(const std::string & body_text) {

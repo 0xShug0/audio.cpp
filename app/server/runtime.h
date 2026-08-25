@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -168,6 +169,10 @@ private:
     HttpResponse handle_voices(const HttpRequest & request) const;
     HttpResponse handle_unload_models(const std::string & body_text);
     HttpResponse handle_unload_all_models();
+    // Background loop started when idle_unload_ms > 0: when the server has gone
+    // that long without a model load/run, unloads every resident (non-busy) model.
+    void idle_unload_loop();
+    void unload_idle_models();
     std::string models_json(bool include_session_options = false) const;
     std::string get_allowed_origin(const HttpRequest & request) const;
 
@@ -189,6 +194,10 @@ private:
     std::unique_ptr<ModelInstaller> model_installer_;
 #endif
     std::atomic<uint64_t> next_upload_id_{1};
+    // Steady-clock ms of the most recent model load/run; drives idle unload.
+    std::atomic<std::int64_t> last_activity_ms_{0};
+    std::atomic<bool> idle_unload_shutdown_{false};
+    std::thread idle_unload_thread_;
 };
 
 }  // namespace minitts::server
