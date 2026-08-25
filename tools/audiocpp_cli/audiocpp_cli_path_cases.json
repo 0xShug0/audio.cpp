@@ -327,7 +327,7 @@
           "options": {
             "duration_sec": 10.0,
             "num_inference_steps": 25,
-            "cfg_strength": 4.5,
+            "guidance_scale": 4.5,
             "seed": 123
           }
         }
@@ -351,7 +351,7 @@
             "video": "reference/controlfoley/examples/tv2a/tv2a_video_input.mp4",
             "duration_sec": 8.0,
             "num_inference_steps": 25,
-            "cfg_strength": 4.5,
+            "guidance_scale": 4.5,
             "seed": 123
           }
         }
@@ -376,7 +376,7 @@
             "mask_away_clip": true,
             "duration_sec": 6.0,
             "num_inference_steps": 25,
-            "cfg_strength": 4.5,
+            "guidance_scale": 4.5,
             "seed": 123
           }
         }
@@ -400,7 +400,7 @@
             "video": "reference/controlfoley/examples/ac_v2a/acv2a_video_input.mp4",
             "duration_sec": 5.0,
             "num_inference_steps": 25,
-            "cfg_strength": 4.5,
+            "guidance_scale": 4.5,
             "seed": 123
           }
         }
@@ -423,7 +423,7 @@
             "video": "reference/controlfoley/examples/v2a/v2a_video_input.mp4",
             "duration_sec": 6.0,
             "num_inference_steps": 25,
-            "cfg_strength": 4.5,
+            "guidance_scale": 4.5,
             "seed": 123
           }
         }

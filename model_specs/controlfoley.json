@@ -1,11 +1,12 @@
 {
+  "schema_version": 1,
   "family": "controlfoley",
   "display_name": "ControlFoley",
   "description": "Multimodal Foley audio generation model.",
-  "category": "audio_tool",
+  "category": "audio_tools",
   "status": "experimental",
   "tasks": [
-    "gen"
+    "sfx"
   ],
   "modes": [
     "offline"
@@ -18,10 +19,15 @@
       "gguf"
     ]
   },
+  "capabilities": {
+    "sfx": [
+      "prompt_generation"
+    ]
+  },
   "ui": {
+    "recommended_package": "controlfoley_large_44k_f32",
     "tags": [
-      "Foley",
-      "Audio Generation",
+      "SFX",
       "GGUF"
     ],
     "docs": [
@@ -81,70 +87,109 @@
       }
     }
   ],
-  "request_options": [
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "required": false,
+        "default": 8.0,
+        "min": 0.64,
+        "max": 60.0,
+        "description": "Target temporal budget."
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "required": false,
+        "default": 25,
+        "min": 1,
+        "max": 200,
+        "description": "Euler flow inference steps."
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "required": false,
+        "default": 4.5,
+        "min": 0.0,
+        "max": 20.0,
+        "description": "Classifier-free guidance strength."
+      },
+      {
+        "name": "negative_prompt",
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "Negative text prompt used for the unconditional guidance text branch."
+      },
+      {
+        "name": "video",
+        "type": "path",
+        "required": false,
+        "description": "Optional video path for video-conditioned Foley generation."
+      },
+      {
+        "name": "mask_away_clip",
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "Disable OpenCLIP video conditioning while keeping visual and sync conditioning."
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "required": false,
+        "default": 42,
+        "min": 0,
+        "max": 2147483647,
+        "description": "Generation seed."
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "required": false,
+        "preset": "weight_type_full",
+        "default": "native",
+        "description": "ControlFoley weight storage type."
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
     {
-      "name": "duration_sec",
-      "type": "float",
-      "default": 8.0,
-      "min": 0.64,
-      "max": 60.0,
-      "description": "Target temporal budget."
+      "id": "controlfoley_large_44k_f32",
+      "display_name": "ControlFoley Large 44k F32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "ControlFoley-GGUF",
+      "files": [
+        "ControlFoley-GGUF/controlfoley-large-44k-f32.gguf"
+      ],
+      "strip_prefix": "ControlFoley-GGUF"
     },
     {
-      "name": "num_inference_steps",
-      "type": "int",
-      "default": 25,
-      "min": 1,
-      "max": 200,
-      "description": "Euler flow inference steps."
-    },
-    {
-      "name": "cfg_strength",
-      "type": "float",
-      "default": 4.5,
-      "min": 0.0,
-      "max": 20.0,
-      "description": "Classifier-free guidance strength."
-    },
-    {
-      "name": "negative_text",
-      "type": "string",
-      "default": "",
-      "description": "Negative text prompt used for the unconditional guidance text branch."
-    },
-    {
-      "name": "video",
-      "type": "path",
-      "description": "Optional video path for video-conditioned Foley generation."
-    },
-    {
-      "name": "mask_away_clip",
-      "type": "bool",
-      "default": false,
-      "description": "Disable OpenCLIP video conditioning while keeping visual and sync conditioning."
-    },
-    {
-      "name": "seed",
-      "type": "int",
-      "default": 42,
-      "min": 0,
-      "max": 2147483647,
-      "description": "Generation seed."
+      "id": "controlfoley_large_44k_q8_0",
+      "display_name": "ControlFoley Large 44k Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "ControlFoley-GGUF",
+      "files": [
+        "ControlFoley-GGUF/controlfoley-large-44k-q8_0.gguf"
+      ],
+      "strip_prefix": "ControlFoley-GGUF"
     }
   ],
-  "session_options": [
-    {
-      "name": "controlfoley.weight_type",
-      "type": "enum",
-      "values": [
-        "native",
-        "f32",
-        "f16",
-        "bf16",
-        "q8_0"
-      ],
-      "default": "native",
-      "description": "ControlFoley weight storage type."
-    }
-  ]
+  "dependencies": []
 }

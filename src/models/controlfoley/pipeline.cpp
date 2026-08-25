@@ -171,11 +171,11 @@ ControlFoleyFlowConditionInput pack_cfg_conditions(
 ControlFoleyOptions parse_controlfoley_options(
     const std::unordered_map<std::string, std::string> & options) {
     ControlFoleyOptions out;
-    out.duration_sec = positive_float_option(options, {"duration_sec", "duration"}, 8.0F, "duration_sec");
-    out.num_inference_steps = positive_i64_option(options, {"num_inference_steps", "num_steps"}, 25, "num_inference_steps");
-    out.cfg_strength = positive_float_option(options, {"cfg_strength", "guidance_scale"}, 4.5F, "cfg_strength");
+    out.duration_sec = positive_float_option(options, {"duration_sec"}, 8.0F, "duration_sec");
+    out.num_inference_steps = positive_i64_option(options, {"num_inference_steps"}, 25, "num_inference_steps");
+    out.guidance_scale = positive_float_option(options, {"guidance_scale"}, 4.5F, "guidance_scale");
     out.seed = engine::runtime::parse_u32_option(options, {"seed"}).value_or(42);
-    out.negative_text = engine::runtime::find_option(options, {"negative_text", "negative_prompt"}).value_or("");
+    out.negative_prompt = engine::runtime::find_option(options, {"negative_prompt"}).value_or("");
     if (const auto video = engine::runtime::find_option(options, {"video"}); video.has_value() && !video->empty()) {
         out.video = std::filesystem::path(*video);
     }
@@ -225,7 +225,7 @@ struct ControlFoleyPipelineRuntime::Impl {
         if (request.text_input.has_value()) {
             conditioning_request.text = request.text_input->text;
         }
-        conditioning_request.negative_text = options.negative_text;
+        conditioning_request.negative_prompt = options.negative_prompt;
         if (request.audio_input.has_value()) {
             conditioning_request.audio = *request.audio_input;
         }
@@ -235,7 +235,7 @@ struct ControlFoleyPipelineRuntime::Impl {
         auto conditioning = conditioner.build(conditioning_request, shape);
         const auto condition_build_end = Clock::now();
         const auto preprocess_start = Clock::now();
-        const bool use_cfg = options.cfg_strength >= 1.0F;
+        const bool use_cfg = options.guidance_scale >= 1.0F;
         const auto cond_preprocessed = use_cfg
             ? flow->preprocess_conditions(pack_cfg_conditions(conditioning.condition, conditioning.empty))
             : flow->preprocess_conditions(conditioning.condition);
@@ -301,8 +301,8 @@ struct ControlFoleyPipelineRuntime::Impl {
                 }
                 for (int64_t i = 0; i < latent_values; ++i) {
                     const float guided =
-                        options.cfg_strength * cfg.flow[static_cast<size_t>(i)] +
-                        (1.0F - options.cfg_strength) * cfg.flow[static_cast<size_t>(latent_values + i)];
+                        options.guidance_scale * cfg.flow[static_cast<size_t>(i)] +
+                        (1.0F - options.guidance_scale) * cfg.flow[static_cast<size_t>(latent_values + i)];
                     latent[static_cast<size_t>(i)] += step_dt * guided;
                 }
                 if (timing_enabled) {
@@ -359,7 +359,7 @@ struct ControlFoleyPipelineRuntime::Impl {
             "controlfoley.vocoder_ms",
             engine::debug::elapsed_ms(vocoder_start, vocoder_end));
         engine::debug::timing_log_scalar(
-            "controlfoley.session.wall_ms",
+            "session.wall_ms",
             engine::debug::elapsed_ms(start, vocoder_end));
 
         engine::runtime::AudioBuffer out;

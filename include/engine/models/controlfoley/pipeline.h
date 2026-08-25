@@ -16,9 +16,9 @@ namespace engine::models::controlfoley {
 struct ControlFoleyOptions {
     float duration_sec = 8.0F;
     int64_t num_inference_steps = 25;
-    float cfg_strength = 4.5F;
+    float guidance_scale = 4.5F;
     uint32_t seed = 42;
-    std::string negative_text;
+    std::string negative_prompt;
     std::optional<std::filesystem::path> video;
     bool mask_away_clip = false;
 };

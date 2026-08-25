@@ -2,6 +2,7 @@
 
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/models/controlfoley/assets.h"
 
 #include <memory>
@@ -19,7 +20,8 @@ public:
     ControlFoleySession(
         engine::runtime::TaskSpec task,
         engine::runtime::SessionOptions options,
-        std::shared_ptr<const ControlFoleyAssets> assets);
+        std::shared_ptr<const ControlFoleyAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~ControlFoleySession() override;
 
     std::string family() const override;
@@ -32,6 +34,7 @@ private:
     engine::runtime::TaskSpec task_;
     engine::runtime::SessionOptions options_;
     std::shared_ptr<const ControlFoleyAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::unique_ptr<engine::core::ExecutionContext> execution_;
     std::unique_ptr<ControlFoleyPipelineRuntime> pipeline_;
 };

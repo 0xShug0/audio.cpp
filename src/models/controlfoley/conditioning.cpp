@@ -336,24 +336,24 @@ struct ControlFoleyConditionerRuntime::Impl {
         out.empty = empty;
 
         const bool has_text = request.text.has_value() && !request.text->empty();
-        const bool has_negative_text = !request.negative_text.empty();
+        const bool has_negative_prompt = !request.negative_prompt.empty();
         double tokenize_ms = 0.0;
         double encode_ms = 0.0;
-        double negative_tokenize_ms = 0.0;
-        double negative_encode_ms = 0.0;
+        double negative_prompt_tokenize_ms = 0.0;
+        double negative_prompt_encode_ms = 0.0;
 
         const bool text_cached = has_text &&
             positive_text_cache_key.has_value() &&
             *positive_text_cache_key == *request.text;
-        const bool negative_text_cached = has_negative_text &&
-            negative_text_cache_key.has_value() &&
-            *negative_text_cache_key == request.negative_text;
-        if (has_text && has_negative_text && !text_cached && !negative_text_cached) {
+        const bool negative_prompt_cached = has_negative_prompt &&
+            negative_prompt_cache_key.has_value() &&
+            *negative_prompt_cache_key == request.negative_prompt;
+        if (has_text && has_negative_prompt && !text_cached && !negative_prompt_cached) {
             encode_ms = engine::debug::measure_ms([&]() {
-                encode_open_clip_text_pair(*request.text, request.negative_text, tokenize_ms, negative_tokenize_ms);
+                encode_open_clip_text_pair(*request.text, request.negative_prompt, tokenize_ms, negative_prompt_tokenize_ms);
             });
             out.condition.text = positive_text_cache_value;
-            out.empty.text = negative_text_cache_value;
+            out.empty.text = negative_prompt_cache_value;
         } else {
             if (has_text) {
                 encode_ms = engine::debug::measure_ms([&]() {
@@ -364,13 +364,13 @@ struct ControlFoleyConditionerRuntime::Impl {
                         tokenize_ms);
                 });
             }
-            if (has_negative_text) {
-                negative_encode_ms = engine::debug::measure_ms([&]() {
+            if (has_negative_prompt) {
+                negative_prompt_encode_ms = engine::debug::measure_ms([&]() {
                     out.empty.text = encode_open_clip_text(
-                        request.negative_text,
-                        negative_text_cache_key,
-                        negative_text_cache_value,
-                        negative_tokenize_ms);
+                        request.negative_prompt,
+                        negative_prompt_cache_key,
+                        negative_prompt_cache_value,
+                        negative_prompt_tokenize_ms);
                 });
             }
         }
@@ -378,12 +378,12 @@ struct ControlFoleyConditionerRuntime::Impl {
             engine::debug::timing_log_scalar("controlfoley.cond.text_tokenize_ms", tokenize_ms);
             engine::debug::timing_log_scalar("controlfoley.cond.text_encode_ms", encode_ms);
         }
-        if (has_negative_text) {
-            engine::debug::timing_log_scalar("controlfoley.cond.negative_text_tokenize_ms", negative_tokenize_ms);
-            engine::debug::timing_log_scalar("controlfoley.cond.negative_text_encode_ms", negative_encode_ms);
+        if (has_negative_prompt) {
+            engine::debug::timing_log_scalar("controlfoley.cond.negative_prompt_tokenize_ms", negative_prompt_tokenize_ms);
+            engine::debug::timing_log_scalar("controlfoley.cond.negative_prompt_encode_ms", negative_prompt_encode_ms);
         } else {
-            engine::debug::timing_log_scalar("controlfoley.cond.negative_text_tokenize_ms", 0.0);
-            engine::debug::timing_log_scalar("controlfoley.cond.negative_text_encode_ms", 0.0);
+            engine::debug::timing_log_scalar("controlfoley.cond.negative_prompt_tokenize_ms", 0.0);
+            engine::debug::timing_log_scalar("controlfoley.cond.negative_prompt_encode_ms", 0.0);
         }
         if (request.video.has_value()) {
             const double video_ms = engine::debug::measure_ms([&]() {
@@ -581,9 +581,9 @@ struct ControlFoleyConditionerRuntime::Impl {
             throw std::runtime_error("ControlFoley OpenCLIP CFG text batch output shape mismatch");
         }
         positive_text_cache_key = positive;
-        negative_text_cache_key = negative;
+        negative_prompt_cache_key = negative;
         positive_text_cache_value.assign(hidden.values.begin(), hidden.values.begin() + branch_values);
-        negative_text_cache_value.assign(hidden.values.begin() + branch_values, hidden.values.end());
+        negative_prompt_cache_value.assign(hidden.values.begin() + branch_values, hidden.values.end());
     }
 
     engine::conditioners::OpenClipConditionerRuntime & open_clip() {
@@ -655,8 +655,8 @@ struct ControlFoleyConditionerRuntime::Impl {
     ControlFoleyFlowConditionInput empty_condition_cache_value;
     std::optional<std::string> positive_text_cache_key;
     std::vector<float> positive_text_cache_value;
-    std::optional<std::string> negative_text_cache_key;
-    std::vector<float> negative_text_cache_value;
+    std::optional<std::string> negative_prompt_cache_key;
+    std::vector<float> negative_prompt_cache_value;
     std::unique_ptr<engine::conditioners::OpenClipConditionerRuntime> open_clip_runtime;
     std::unique_ptr<engine::conditioners::CavMaeStConditionerRuntime> cav_mae_runtime;
     std::unique_ptr<engine::conditioners::SynchformerConditionerRuntime> synchformer_runtime;

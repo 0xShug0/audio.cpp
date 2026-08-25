@@ -22,7 +22,7 @@ struct ControlFoleyTemporalShape {
 
 struct ControlFoleyConditioningRequest {
     std::optional<std::string> text;
-    std::string negative_text;
+    std::string negative_prompt;
     std::optional<engine::runtime::AudioBuffer> audio;
     std::optional<std::filesystem::path> video;
     bool mask_away_clip = false;

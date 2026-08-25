@@ -1,6 +1,7 @@
 #include "engine/models/controlfoley/session.h"
 
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/models/controlfoley/pipeline.h"
 
 #include <stdexcept>
@@ -20,34 +21,12 @@ std::shared_ptr<const ControlFoleyAssets> require_assets(
     return assets;
 }
 
-engine::runtime::ModelMetadata make_metadata() {
-    engine::runtime::ModelMetadata out;
-    out.family = kFamily;
-    out.variant = "large_44k";
-    out.description = "ControlFoley multimodal Foley generation from GGUF.";
-    return out;
-}
-
-engine::runtime::CapabilitySet make_capabilities() {
-    engine::runtime::CapabilitySet out;
-    out.supported_tasks = {
-        {engine::runtime::VoiceTaskKind::AudioGeneration, {engine::runtime::RunMode::Offline}},
-    };
-    return out;
-}
-
-engine::runtime::ModelCliInterface make_cli() {
-    engine::runtime::ModelCliInterface out;
-    out.request_options = {
-        {"duration_sec", "seconds", "Target temporal budget."},
-        {"num_inference_steps", "n", "Euler flow inference steps."},
-        {"cfg_strength", "scale", "Classifier-free guidance strength."},
-        {"negative_text", "text", "Negative text prompt for CFG."},
-        {"video", "path", "Optional video path for video-conditioned Foley generation."},
-        {"mask_away_clip", "true|false", "Disable CLIP video conditioning."},
-        {"seed", "n", "Generation seed."},
-    };
-    return out;
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("ControlFoley session requires a model contract");
+    }
+    return contract;
 }
 
 engine::assets::TensorStorageType weight_type(const engine::runtime::SessionOptions & options) {
@@ -64,87 +43,31 @@ engine::assets::TensorStorageType weight_type(const engine::runtime::SessionOpti
         });
 }
 
-class ControlFoleyLoadedModel final : public engine::runtime::ILoadedVoiceModel {
-public:
-    explicit ControlFoleyLoadedModel(std::shared_ptr<const ControlFoleyAssets> assets)
-        : assets_(require_assets(std::move(assets))),
-          metadata_(make_metadata()),
-          capabilities_(make_capabilities()) {}
-
-    const engine::runtime::ModelMetadata & metadata() const noexcept override {
-        return metadata_;
-    }
-
-    const engine::runtime::CapabilitySet & capabilities() const noexcept override {
-        return capabilities_;
-    }
-
-    std::unique_ptr<engine::runtime::IVoiceTaskSession> create_task_session(
-        const engine::runtime::TaskSpec & task,
-        const engine::runtime::SessionOptions & options) const override {
-        return std::make_unique<ControlFoleySession>(task, options, assets_);
-    }
-
-private:
-    std::shared_ptr<const ControlFoleyAssets> assets_;
-    engine::runtime::ModelMetadata metadata_;
-    engine::runtime::CapabilitySet capabilities_;
-};
-
-class ControlFoleyLoader final : public engine::runtime::IVoiceModelLoader {
-public:
-    std::string family() const override {
-        return kFamily;
-    }
-
-    engine::runtime::CapabilitySet advertised_capabilities() const override {
-        return make_capabilities();
-    }
-
-    bool can_load(const engine::runtime::ModelLoadRequest & request) const override {
-        if (request.family_hint.has_value() && *request.family_hint != family()) {
-            return false;
-        }
-        try {
-            (void) load_controlfoley_assets(request.model_path);
-            return true;
-        } catch (...) {
-            if (request.family_hint.has_value() && *request.family_hint == family()) {
-                throw;
-            }
-            return false;
-        }
-    }
-
-    engine::runtime::ModelInspection inspect(const engine::runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_controlfoley_assets(request.model_path);
-        engine::runtime::ModelInspection out;
-        out.model_root = assets->model_root;
-        out.metadata = make_metadata();
-        out.capabilities = make_capabilities();
-        out.cli = make_cli();
-        out.discovered_weights = {
-            {"weights", assets->gguf_path},
-        };
-        return out;
-    }
-
-    std::unique_ptr<engine::runtime::ILoadedVoiceModel> load(
-        const engine::runtime::ModelLoadRequest & request) const override {
-        return std::make_unique<ControlFoleyLoadedModel>(load_controlfoley_assets(request.model_path));
-    }
-};
+std::unique_ptr<engine::runtime::IVoiceTaskSession> create_controlfoley_session(
+    const engine::runtime::TaskSpec & task,
+    const engine::runtime::SessionOptions & options,
+    std::shared_ptr<const ControlFoleyAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    return std::make_unique<ControlFoleySession>(
+        task,
+        options,
+        std::move(assets),
+        std::move(contract));
+}
 
 }  // namespace
 
 ControlFoleySession::ControlFoleySession(
     engine::runtime::TaskSpec task,
     engine::runtime::SessionOptions options,
-    std::shared_ptr<const ControlFoleyAssets> assets)
+    std::shared_ptr<const ControlFoleyAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : engine::runtime::RuntimeSessionBase(options),
       task_(task),
       options_(std::move(options)),
-      assets_(require_assets(std::move(assets))) {
+      assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))) {
+    engine::runtime::validate_spec_backed_session_options(options_, *contract_, kFamily, "ControlFoley");
     if (task_.task != engine::runtime::VoiceTaskKind::AudioGeneration ||
         task_.mode != engine::runtime::RunMode::Offline) {
         throw std::runtime_error("ControlFoley supports only offline gen");
@@ -171,19 +94,24 @@ engine::runtime::RunMode ControlFoleySession::run_mode() const {
 }
 
 void ControlFoleySession::prepare(const engine::runtime::SessionPreparationRequest & request) {
-    (void)request;
+    engine::runtime::validate_spec_backed_request_options(request.options, *contract_, "ControlFoley");
     mark_prepared();
 }
 
 engine::runtime::TaskResult ControlFoleySession::run(const engine::runtime::TaskRequest & request) {
     require_prepared("ControlFoley run");
+    engine::runtime::validate_spec_backed_request_options(request.options, *contract_, "ControlFoley");
     engine::runtime::TaskResult result;
     result.audio_output = pipeline_->run(request);
     return result;
 }
 
 std::shared_ptr<engine::runtime::IVoiceModelLoader> make_controlfoley_loader() {
-    return std::make_shared<ControlFoleyLoader>();
+    engine::runtime::SpecBackedVoiceModelConfig<ControlFoleyAssets> config;
+    config.family = kFamily;
+    config.load_assets = load_controlfoley_assets;
+    config.create_session = create_controlfoley_session;
+    return engine::runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::controlfoley
