@@ -54,12 +54,12 @@ jobs:
             -DENGINE_ENABLE_VULKAN=OFF `
             -DENGINE_ENABLE_METAL=OFF
 
-      - name: Build (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
         run: |
           cmake --build build --target audiocpp_server server_config_test --parallel "$(nproc)"
 
-      - name: Build (macOS nproc fallback)
+      - name: Build (macOS)
         if: runner.os == 'macOS'
         run: |
           cmake --build build --target audiocpp_server server_config_test --parallel "$(sysctl -n hw.logicalcpu)"
