@@ -2,7 +2,7 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
-| AudioSR | `audiosr` | `gen` audio super-resolution | [AudioSR](#audiosr) |
+| AudioSR | `audiosr` | `s2s` audio super-resolution | [AudioSR](#audiosr) |
 | ControlFoley | `controlfoley` | `gen` Foley/SFX generation | [ControlFoley](#controlfoley) |
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
@@ -34,7 +34,7 @@ AudioSR performs audio super-resolution from an input waveform. See
 [AudioSR](models/audiosr.md) for options and long-audio chunking behavior.
 
 ```bash
-audiocpp_cli --task gen --family audiosr \
+audiocpp_cli --task s2s --family audiosr \
   --model models/AudioSR-GGUF/audiosr-basic-f32.gguf \
   --backend cuda \
   --audio input.wav \

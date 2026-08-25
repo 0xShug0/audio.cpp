@@ -69,9 +69,9 @@ AudioSRSession::AudioSRSession(
       assets_(require_assets(std::move(assets))),
       contract_(require_contract(std::move(contract))) {
     engine::runtime::validate_spec_backed_session_options(options_, *contract_, kFamily, "AudioSR");
-    if (task_.task != engine::runtime::VoiceTaskKind::AudioGeneration ||
+    if (task_.task != engine::runtime::VoiceTaskKind::SpeechToSpeech ||
         task_.mode != engine::runtime::RunMode::Offline) {
-        throw std::runtime_error("AudioSR supports only offline gen");
+        throw std::runtime_error("AudioSR supports only offline s2s");
     }
     execution_ = std::make_unique<engine::core::ExecutionContext>(options_.backend);
     pipeline_ = std::make_unique<AudioSRPipelineRuntime>(

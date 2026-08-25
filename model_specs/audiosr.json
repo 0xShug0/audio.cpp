@@ -6,7 +6,7 @@
   "category": "audio_tools",
   "status": "experimental",
   "tasks": [
-    "edit"
+    "s2s"
   ],
   "modes": [
     "offline"
@@ -21,8 +21,8 @@
     ]
   },
   "capabilities": {
-    "edit": [
-      "inpaint"
+    "s2s": [
+      "audio_enhancement"
     ]
   },
   "options": {
@@ -120,7 +120,7 @@
   "ui": {
     "recommended_package": "audiosr_basic_f32",
     "tags": [
-      "Edit",
+      "S2S",
       "GGUF"
     ],
     "docs": [

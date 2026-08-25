@@ -6,7 +6,7 @@ AudioSR performs audio super-resolution from an input waveform.
 
 ```bash
 audiocpp_cli \
-  --task gen \
+  --task s2s \
   --family audiosr \
   --model models/AudioSR-GGUF/audiosr-basic-f32.gguf \
   --backend cuda \
@@ -23,7 +23,7 @@ audiocpp_cli \
 | Field | Value |
 |---|---|
 | Family | `audiosr` |
-| Task | `gen` |
+| Task | `s2s` |
 | Mode | `offline` |
 | Default package | `models/AudioSR-GGUF/audiosr-basic-f32.gguf` |
 | Input | Source WAV through `--audio` |

@@ -3455,7 +3455,7 @@
       "coverage": "AudioSR basic GGUF short waveform super-resolution path with DDIM sampler, VAE, UNet, and HiFi-GAN",
       "family": "audiosr",
       "model": "models/AudioSR-GGUF/audiosr-basic-f32.gguf",
-      "task": "gen",
+      "task": "s2s",
       "mode": "offline",
       "outputs": [
         "audio"
