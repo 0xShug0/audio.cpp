@@ -64,7 +64,10 @@ int64_t gpt_text_vocab_size(const IndexTTS2Config & config) {
 }
 
 ggml_type decode_cache_type(core::BackendType backend_type) {
-    return backend_type == core::BackendType::Cuda ? GGML_TYPE_F16 : GGML_TYPE_F32;
+    // F32 KV on HIP forces ggml's flash-attention kernels to convert the whole K/V
+    // cache to F16 on every decode step (convert_unary dominates the kernel profile).
+    // Keeping the cache F16 avoids that entirely, as it already does on CUDA.
+    return backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ? GGML_TYPE_F16 : GGML_TYPE_F32;
 }
 
 struct GgmlContextDeleter {
