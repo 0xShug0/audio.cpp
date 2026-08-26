@@ -29,7 +29,7 @@ prove neither.
 | M3 | Long-form via the framework text chunker | yes | **no** |
 | M4 | Q8_0 conversion, RTF and memory evidence | partial | **no** |
 
-Cloning is self-contained — `session.cpp` calls `codec_->encode_zq` directly, so no pre-computed
+Cloning is self-contained — `session.cpp` calls `codec_->encode_latents` directly, so no pre-computed
 speaker latent is required.
 
 ### Numerical parity against PyTorch
