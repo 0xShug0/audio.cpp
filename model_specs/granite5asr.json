@@ -1,0 +1,172 @@
+{
+  "family": "granite5asr",
+  "display_name": "Granite Speech 5.0 470M TurboCTC",
+  "description": "IBM Granite Speech 5.0 TurboCTC 470M parameter compact and ultra-fast English ASR model using a Conformer CTC architecture with block self-attention and self-conditioning.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {
+    "asr": [
+      "vad_chunking",
+      "partial_results"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Recognition language (currently English).",
+        "required": false,
+        "default": "en"
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode: auto, fixed, or none.",
+        "values": [
+          "auto",
+          "fixed",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Fixed chunk duration in seconds when not using VAD segmentation.",
+        "required": false,
+        "min": 0.001,
+        "default": 30
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared model weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Encoder graph arena size in MB.",
+        "required": false,
+        "min": 64,
+        "default": 1024
+      },
+      {
+        "name": "vad_model_path",
+        "type": "string",
+        "description": "Path to the Silero VAD model directory used by automatic audio chunking.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "server",
+      "stream",
+      "cuda",
+      "metal",
+      "cpu"
+    ]
+  },
+  "ui": {
+    "recommended_package": "granite5asr_q8_0",
+    "tags": [
+      "ASR",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/gguf.md"
+    ],
+    "summary": "IBM Granite Speech 5.0 470M TurboCTC English transcription."
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "ibm-granite/granite-speech-5.0-470m-turboctc",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "granite5asr_q8_0",
+      "display_name": "Granite Speech 5.0 470M TurboCTC Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "granite-speech-5.0-470m-turboctc-gguf",
+      "files": [
+        "granite-speech-5.0-470m-turboctc-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "granite5asr_safetensors",
+      "display_name": "Granite Speech 5.0 470M TurboCTC Native Safetensors",
+      "format": "safetensors",
+      "precision": "bfloat16",
+      "target_directory": "granite5asr",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "tokenizer.json",
+        "model.safetensors"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}
