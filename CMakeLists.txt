@@ -1744,6 +1744,7 @@ add_executable(audiocpp_server
     app/server/base64.cpp
     app/server/config.cpp
     app/server/http.cpp
+    app/server/model_memory.cpp
     app/server/multipart.cpp
     app/server/runtime.cpp
     app/server/ui_assets.cpp
@@ -2667,6 +2668,7 @@ if (ENGINE_BUILD_TESTS)
     add_executable(server_config_test
         tests/unittests/test_server_config.cpp
         app/server/config.cpp
+        app/server/model_memory.cpp
         app/cli/args.cpp
         app/cli/request.cpp
     )

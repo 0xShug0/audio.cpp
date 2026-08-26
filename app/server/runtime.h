@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
@@ -108,9 +109,6 @@ private:
     // `loading` fits within the limit. A model mid-inference is never a victim;
     // when nothing can be evicted this throws ServerBusyError (-> HTTP 503).
     void evict_for_model_limit(const LoadedModel & loading);
-    // Estimated resident bytes this model will occupy once loaded (weights plus
-    // a runtime overhead factor for GPU buffers / compute graphs).
-    size_t estimate_model_memory_bytes(const ServerModelConfig & model) const;
     // Refuse the load with InsufficientMemoryError (-> HTTP 503) when the
     // estimated footprint plus configured headroom does not fit the free host
     // memory and (for GPU backends) the backend device memory.
