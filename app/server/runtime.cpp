@@ -9,6 +9,7 @@
 #include "../streaming/streaming.h"
 
 #include "engine/framework/core/host_memory.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/metadata.h"
@@ -1643,11 +1644,16 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
     if (model.session != nullptr) {
         return;
     }
-    // Serialize the whole "evict -> memory check -> load" sequence even when
-    // max_loaded_models is 0 (no eviction): two concurrent lazy loads could
-    // otherwise both pass the memory pre-check before either allocates, and the
-    // guard would be meaningless. A model mid-inference is never a victim.
-    std::unique_lock<std::mutex> load_lock(model_load_mutex_);
+    // Serialize the whole "evict -> memory check -> load" sequence only when a guard
+    // actually needs it: eviction (max_loaded_models > 0) or the memory pre-check
+    // (min_free_memory_mb > 0). With both off there is nothing for concurrent loads
+    // to race over, so unrelated first-load requests keep their original concurrency.
+    const bool serialize_load =
+        config_.max_loaded_models > 0 || config_.min_free_memory_mb > 0;
+    std::unique_lock<std::mutex> load_lock(model_load_mutex_, std::defer_lock);
+    if (serialize_load) {
+        load_lock.lock();
+    }
     if (config_.max_loaded_models > 0) {
         evict_for_model_limit(model);
         // Note: if ensure_model_fits_memory() below then refuses the load, the
@@ -1927,6 +1933,10 @@ ServerState::TimedTaskResult ServerState::run_model(
     const auto started = Clock::now();
     model.session->prepare(engine::runtime::build_preparation_request(request));
     auto result = model.offline->run(request);
+    // Mark activity at completion too: idle unload must measure from when the
+    // request finished, not when it started, or a long inference would look idle
+    // (and be unloaded) the moment it returns.
+    last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
     return TimedTaskResult{std::move(result), elapsed_ms(started), std::nullopt};
 }
 
@@ -1964,6 +1974,9 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
     if (!timed_result.ttft_ms.has_value() && task_result_has_output(timed_result.result)) {
         timed_result.ttft_ms = timed_result.wall_ms;
     }
+    // Mark activity at completion too (see run_model): idle unload measures from
+    // request finish, so a long stream is not unloaded the moment it ends.
+    last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
     return timed_result;
 }
 
@@ -2830,10 +2843,10 @@ std::string format_bytes(size_t bytes) {
 size_t ServerState::estimate_model_memory_bytes(const ServerModelConfig & model) const {
     size_t weights = 0;
     std::error_code ec;
-    // Directories (model_spec / HF-style checkpoints) are summed recursively with
-    // hard limits so a pathological tree cannot stall the load path or blow the
-    // counter; anything beyond the limits contributes 0 (the fixed floor below
-    // still applies, so the estimate never reads as completely empty).
+    // Checkpoint trees (safetensors / HF-style directories) are summed recursively
+    // with hard limits so a pathological tree cannot stall the load path or blow the
+    // counter; anything beyond the limits contributes 0 (the fixed floor below still
+    // applies, so the estimate never reads as completely empty).
     constexpr size_t kMaxDepth = 3;
     constexpr size_t kMaxFiles = 10000;
     size_t visited_files = 0;
@@ -2854,12 +2867,34 @@ size_t ServerState::estimate_model_memory_bytes(const ServerModelConfig & model)
                 }
             }
         };
-    add_tree(model.path, 0);
+    // Estimate only what the loader will actually read from model.path, so the
+    // guard neither overestimates nor masks the loader's own error:
+    //  - a single-file model contributes that file;
+    //  - a model directory contributes the one GGUF it selects (model.gguf, or the
+    //    sole *.gguf) -- a package holding several variants is loaded from just one;
+    //  - a directory with no GGUF is a safetensors/HF checkpoint whose whole tree
+    //    loads, so it is summed;
+    //  - a directory with several GGUFs and no model.gguf is ambiguous: the loader
+    //    rejects it with "contains N GGUF files", so we estimate nothing rather than
+    //    answer 503 and hide that real error.
+    if (std::filesystem::is_regular_file(model.path, ec)) {
+        add_file(model.path);
+    } else if (std::filesystem::is_directory(model.path, ec)) {
+        if (const auto selected = engine::assets::find_directory_gguf(model.path)) {
+            add_file(*selected);
+        } else if (engine::assets::directory_gguf_files(model.path).empty()) {
+            add_tree(model.path, 0);
+        }
+    }
+    // Relative auxiliary paths resolve against the model directory when model.path
+    // is a directory, and against the model file's parent when it is a file.
+    const std::filesystem::path aux_base =
+        std::filesystem::is_directory(model.path, ec) ? model.path : model.path.parent_path();
     for (const auto & [key, value] : model.session_options) {
         (void)key;
         std::filesystem::path aux(value);
         if (aux.is_relative()) {
-            aux = model.path.parent_path() / aux;
+            aux = aux_base / aux;
         }
         add_tree(aux, 0);
     }
@@ -2871,6 +2906,12 @@ size_t ServerState::estimate_model_memory_bytes(const ServerModelConfig & model)
 }
 
 void ServerState::ensure_model_fits_memory(const ServerModelConfig & model) {
+    // The guard is opt-in: 0 disables it entirely so existing deployments see no
+    // behavior change. This also keeps lazy loads unserialized (see the call site)
+    // when neither this guard nor max_loaded_models is active.
+    if (config_.min_free_memory_mb <= 0) {
+        return;
+    }
     const size_t estimate = estimate_model_memory_bytes(model);
     const size_t headroom = static_cast<size_t>(config_.min_free_memory_mb) * 1024ull * 1024ull;
 

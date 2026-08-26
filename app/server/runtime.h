@@ -188,9 +188,10 @@ private:
     std::vector<std::unique_ptr<LoadedModel>> models_;
     std::unordered_map<std::string, size_t> model_index_;
     mutable std::mutex models_mutex_;
-    // Serializes framework loads while max_loaded_models is active, so two
-    // concurrent lazy loads cannot both pass the eviction check and overshoot
-    // the limit. Not taken when the limit is 0: loads stay concurrent there.
+    // Serializes framework loads while max_loaded_models or the memory guard
+    // (min_free_memory_mb) is active, so two concurrent lazy loads cannot both
+    // pass the eviction/memory check and overshoot. Not taken when both are off:
+    // unrelated first loads stay concurrent there.
     std::mutex model_load_mutex_;
     std::filesystem::path upload_root_;
     std::filesystem::path repository_root_;
@@ -201,7 +202,9 @@ private:
     std::unique_ptr<ModelInstaller> model_installer_;
 #endif
     std::atomic<uint64_t> next_upload_id_{1};
-    // Steady-clock ms of the most recent model load/run; drives idle unload.
+    // Steady-clock ms of the most recent model load/run completion; drives idle
+    // unload. Updated at run start and again at completion so a long inference
+    // does not read as idle the moment it finishes.
     std::atomic<std::int64_t> last_activity_ms_{0};
     std::atomic<bool> idle_unload_shutdown_{false};
     std::thread idle_unload_thread_;

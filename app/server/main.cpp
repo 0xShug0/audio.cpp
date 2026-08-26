@@ -220,7 +220,7 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("--idle-unload-ms must be >= 0 (0 disables idle unload)");
         }
         if (config.min_free_memory_mb < 0) {
-            throw std::runtime_error("--min-free-memory-mb must be >= 0 (0 disables the headroom)");
+            throw std::runtime_error("--min-free-memory-mb must be >= 0 (0 disables the memory guard)");
         }
 
         const auto ui_resource_anchor = executable_directory(argc > 0 ? argv[0] : nullptr);

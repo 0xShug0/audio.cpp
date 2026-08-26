@@ -262,7 +262,7 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         throw std::runtime_error("server idle_unload_ms must be >= 0 (0 disables idle unload)");
     }
     if (config.min_free_memory_mb < 0) {
-        throw std::runtime_error("server min_free_memory_mb must be >= 0 (0 disables the headroom)");
+        throw std::runtime_error("server min_free_memory_mb must be >= 0 (0 disables the memory guard)");
     }
     if (config.threads <= 0) {
         throw std::runtime_error("server threads must be positive");

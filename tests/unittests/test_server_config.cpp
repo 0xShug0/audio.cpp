@@ -468,14 +468,14 @@ void test_min_free_memory_mb_defaults_and_overrides() {
     const auto default_path = write_config(
         root, "min_free_default.json", std::string("{") + kMinimalModel + "}");
     require(
-        minitts::server::load_server_config(default_path).min_free_memory_mb == 512,
-        "min_free_memory_mb defaults to 512 MiB when omitted");
+        minitts::server::load_server_config(default_path).min_free_memory_mb == 0,
+        "min_free_memory_mb defaults to 0 (guard disabled) when omitted");
 
     const auto set_path = write_config(
-        root, "min_free_set.json", std::string(R"JSON({"min_free_memory_mb": 0,)JSON") + kMinimalModel + "}");
+        root, "min_free_set.json", std::string(R"JSON({"min_free_memory_mb": 256,)JSON") + kMinimalModel + "}");
     require(
-        minitts::server::load_server_config(set_path).min_free_memory_mb == 0,
-        "min_free_memory_mb accepts 0 to disable the headroom");
+        minitts::server::load_server_config(set_path).min_free_memory_mb == 256,
+        "min_free_memory_mb is read from the config to opt into the guard");
 }
 
 void test_negative_min_free_memory_mb_is_rejected() {
