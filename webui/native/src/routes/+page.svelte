@@ -30,6 +30,7 @@
   import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
+  import Arena from './Arena.svelte';
   import type {
     AudioOutput,
     CatalogEntry,
@@ -46,7 +47,8 @@
   } from '$lib/voices';
   import '../app.css';
 
-  let tab: 'studio' | 'models' | 'logs' = 'studio';
+  let tab: 'studio' | 'arena' | 'models' | 'logs' = 'studio';
+  let arenaComponent: { runArena: () => Promise<void> } | null = null;
   let selectedId = catalog[0]?.id || '';
   let selected: CatalogEntry = catalog[0];
   let modelPath = selected?.path || '';
@@ -543,6 +545,17 @@
       status = 'Reference voice changed. Choose or enter its matching transcript.';
       warningStatus = status;
     }
+  }
+
+  function clearVoiceReference() {
+    quickStartVoice = '';
+    savedVoiceId = '';
+    voiceFile = null;
+    voiceName = '';
+    referenceTextFile = null;
+    referenceText = '';
+    if (voiceInput) voiceInput.value = '';
+    if (referenceTextInput) referenceTextInput.value = '';
   }
 
   function chooseVibeVoiceSpeaker(index: number, file: File | null) {
@@ -1587,7 +1600,8 @@
     }
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !running) {
       event.preventDefault();
-      run();
+      if (tab === 'arena') arenaComponent?.runArena();
+      else run();
     }
   }
 
@@ -1898,6 +1912,7 @@
   </div>
   <nav aria-label={tr('nav.primary')}>
     <button class:active={tab === 'studio'} on:click={openStudioPage}>{tr('nav.studio')}</button>
+    <button class:active={tab === 'arena'} on:click={() => tab = 'arena'}>Arena</button>
     {#if server?.ui_management !== false}
       <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
     {/if}
@@ -2150,6 +2165,9 @@
             {:else}
               <button type="button" disabled={Boolean(recorder) || liveRecording}
                 on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
+              <button type="button"
+                disabled={!quickStartVoice && !savedVoiceId && !voiceFile && !referenceTextFile && !referenceText.trim()}
+                on:click={clearVoiceReference}>Clear reference</button>
               {#if voiceFile}<span>{voiceFile.name}</span>{/if}
             {/if}
           </div>
@@ -2301,6 +2319,24 @@
         {#if outputJson}<pre>{outputJson}</pre>{/if}
       </section>
     </div>
+  {:else if tab === 'arena'}
+    <Arena
+      bind:this={arenaComponent}
+      {activeCatalog}
+      {loadedModels}
+      {server}
+      {modelsFolder}
+      {maxTokens}
+      {entrySelectable}
+      {studioPackageSlots}
+      {packageIsAvailable}
+      {packageSessionOptionsMatch}
+      {supportsMaxTokens}
+      {supportsRequestOption}
+      {requiresRequestOption}
+      {refresh}
+      {log}
+    />
   {:else if tab === 'models'}
     <section class="page-head">
       <p class="eyebrow">{tr('models.eyebrow')}</p><h1>{tr('models.title')}</h1>
