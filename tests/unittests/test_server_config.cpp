@@ -590,7 +590,9 @@ void test_model_memory_estimator() {
 
     // Relative auxiliary session files resolve against the model directory.
     {
-        const auto dir = root / "aux";
+        // Not named "aux": that is a reserved DOS device name and cannot be
+        // created on Windows.
+        const auto dir = root / "sidecar";
         std::filesystem::create_directories(dir);
         write_file(dir / "model.gguf", 7000);
         write_file(dir / "head.bin", 8000);
