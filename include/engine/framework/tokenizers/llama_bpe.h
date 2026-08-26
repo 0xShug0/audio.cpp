@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace engine::tokenizers {
@@ -62,12 +63,53 @@ enum class LlamaBpePreTokenizer {
     SarvamMoe,
 };
 
+struct LlamaBpeAddedToken {
+    LlamaBpeAddedToken(
+        std::string content_ = {},
+        std::optional<int32_t> id_ = std::nullopt,
+        bool special_ = true,
+        bool user_defined_ = true,
+        bool unknown_ = false,
+        bool lstrip_ = false,
+        bool rstrip_ = false)
+        : content(std::move(content_)),
+          id(id_),
+          special(special_),
+          user_defined(user_defined_),
+          unknown(unknown_),
+          lstrip(lstrip_),
+          rstrip(rstrip_) {}
+
+    std::string content;
+    std::optional<int32_t> id;
+    bool special = true;
+    bool user_defined = true;
+    bool unknown = false;
+    bool lstrip = false;
+    bool rstrip = false;
+};
+
 struct LlamaBpeTokenizerSpec {
+    LlamaBpeTokenizerSpec(
+        std::filesystem::path vocab_path_ = {},
+        std::filesystem::path merges_path_ = {},
+        std::filesystem::path tokenizer_config_path_ = {},
+        std::optional<std::filesystem::path> tokenizer_json_path_ = std::nullopt,
+        LlamaBpePreTokenizer pre_type_ = LlamaBpePreTokenizer::Gpt2,
+        std::vector<LlamaBpeAddedToken> additional_special_tokens_ = {})
+        : vocab_path(std::move(vocab_path_)),
+          merges_path(std::move(merges_path_)),
+          tokenizer_config_path(std::move(tokenizer_config_path_)),
+          tokenizer_json_path(std::move(tokenizer_json_path_)),
+          pre_type(pre_type_),
+          additional_special_tokens(std::move(additional_special_tokens_)) {}
+
     std::filesystem::path vocab_path;
     std::filesystem::path merges_path;
     std::filesystem::path tokenizer_config_path;
     std::optional<std::filesystem::path> tokenizer_json_path;
     LlamaBpePreTokenizer pre_type = LlamaBpePreTokenizer::Gpt2;
+    std::vector<LlamaBpeAddedToken> additional_special_tokens;
 };
 
 class LlamaBpeTokenizer final : public ITokenizer {

@@ -311,6 +311,125 @@
       ]
     },
     {
+      "id": "controlfoley_t2a",
+      "coverage": "ControlFoley text-to-audio path with OpenCLIP text conditioning",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "t2a",
+          "text": "A bird sings melodically in a forest.",
+          "options": {
+            "duration_sec": 10.0,
+            "num_inference_steps": 25,
+            "guidance_scale": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
+      "id": "controlfoley_tv2a",
+      "coverage": "ControlFoley text-video-to-audio path with OpenCLIP text/image and video conditioners",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "tv2a",
+          "text": "skateboarding",
+          "options": {
+            "video": "reference/controlfoley/examples/tv2a/tv2a_video_input.mp4",
+            "duration_sec": 8.0,
+            "num_inference_steps": 25,
+            "guidance_scale": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
+      "id": "controlfoley_tc_v2a",
+      "coverage": "ControlFoley text-controlled video-to-audio path with mask-away CLIP behavior",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "tc_v2a",
+          "text": "thunder strike",
+          "options": {
+            "video": "reference/controlfoley/examples/tc_v2a/tcv2a_video_input.mp4",
+            "mask_away_clip": true,
+            "duration_sec": 6.0,
+            "num_inference_steps": 25,
+            "guidance_scale": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
+      "id": "controlfoley_ac_v2a",
+      "coverage": "ControlFoley audio-conditioned video-to-audio path with reference audio conditioning",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "ac_v2a",
+          "audio": "reference/controlfoley/examples/ac_v2a/acv2a_reference.wav",
+          "options": {
+            "video": "reference/controlfoley/examples/ac_v2a/acv2a_video_input.mp4",
+            "duration_sec": 5.0,
+            "num_inference_steps": 25,
+            "guidance_scale": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
+      "id": "controlfoley_v2a",
+      "coverage": "ControlFoley video-to-audio path with video-only conditioning",
+      "family": "controlfoley",
+      "model": "models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "v2a",
+          "options": {
+            "video": "reference/controlfoley/examples/v2a/v2a_video_input.mp4",
+            "duration_sec": 6.0,
+            "num_inference_steps": 25,
+            "guidance_scale": 4.5,
+            "seed": 123
+          }
+        }
+      ]
+    },
+    {
       "id": "qwen3_tts_voice_design",
       "coverage": "Qwen3 TTS voice-design variant and instruction path",
       "family": "qwen3_tts",
@@ -2632,6 +2751,225 @@
       ]
     },
     {
+      "id": "fireredtts3_base_clone_official",
+      "coverage": "FireRedTTS3 Base official voice clone path using reference audio, reference text, RedAE prompt latents, CAMPPlus speaker embedding, AR decode, flow, and RedAE decode",
+      "family": "fireredtts3",
+      "model": "models/audio.cpp-gguf/FireRedTTS3-Base-GGUF/fireredtts3-base-orig.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "base_clone_official",
+          "language": "Chinese",
+          "reference_text": "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you.",
+          "voice_ref": "assets/resources/b.wav",
+          "text": "今天天气很好，我们一起去公园散步吧。",
+          "seed": 1234,
+          "num_inference_steps": 4,
+          "guidance_scale": 2.0,
+          "options": {
+            "stop_threshold": 0.5
+          }
+        }
+      ]
+    },
+    {
+      "id": "fireredtts3_instruct_official_paths",
+      "coverage": "FireRedTTS3 Instruct official clone, voice-design, semantic-edit, and acoustic-edit paths in one session",
+      "family": "fireredtts3",
+      "model": "models/audio.cpp-gguf/FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-orig.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "instruct_clone_official",
+          "language": "Chinese",
+          "reference_text": "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you.",
+          "voice_ref": "assets/resources/b.wav",
+          "text": "今天天气很好，我们一起去公园散步吧。",
+          "seed": 1234,
+          "num_inference_steps": 4,
+          "guidance_scale": 2.0,
+          "options": {
+            "template_name": "instruct_tts",
+            "stop_threshold": 0.5
+          }
+        },
+        {
+          "id": "voice_design_official",
+          "language": "Chinese",
+          "text": "今天天气很好，我们一起去公园散步吧。",
+          "seed": 2,
+          "num_inference_steps": 4,
+          "guidance_scale": 1.2,
+          "options": {
+            "template_name": "voice_design",
+            "instruction": "一个年轻女性的温柔嗓音，语速稍慢，带一点俏皮。"
+          }
+        },
+        {
+          "id": "semantic_edit_official",
+          "audio": "assets/resources/a.wav",
+          "seed": 1234,
+          "num_inference_steps": 4,
+          "guidance_scale": 1.2,
+          "options": {
+            "template_name": "semantic_edit",
+            "instruction": "Replace 'year eighteen o three' with 'year nineteen o five'."
+          }
+        },
+        {
+          "id": "acoustic_edit_official",
+          "audio": "assets/resources/c.wav",
+          "seed": 1234,
+          "num_inference_steps": 4,
+          "guidance_scale": 1.2,
+          "options": {
+            "template_name": "acoustic_edit",
+            "instruction": "adjust the speed to 0.5x"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_asr_zh_official",
+      "coverage": "FireRedAudio official Chinese ASR path through audio encoder and Qwen understanding decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "asr_zh_official",
+          "audio": "reference/FireRedAudio/assets/examples/asr_zh_fleurs.wav",
+          "text": "Transcribe speech to text."
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_tts_zh_clone_official",
+      "coverage": "FireRedAudio official Chinese TTS clone path through prompt RedAE latents, patch encoder, Qwen audio generation, flow, and RedAE decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "tts_zh_clone_official",
+          "language": "zh",
+          "reference_text": "同时，他强调微调要科学有序。",
+          "voice_ref": "reference/FireRedAudio/assets/examples/tts_zh_prompt.wav",
+          "text": "安徽淮南秦师傅发现，停在小区的爱车右前驾驶窗玻璃被砸。",
+          "seed": 1234,
+          "options": {
+            "template_name": "tts_clone"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_voice_design_official",
+      "coverage": "FireRedAudio official voice design path through instruction prompt, Qwen audio generation, flow, and RedAE decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "vdes",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "voice_design_official",
+          "language": "zh",
+          "text": "是我请他来的，可他什么也不知道，他来只是想打听一下，你们厂是不是有旧锅炉？",
+          "seed": 1234,
+          "options": {
+            "template_name": "voice_design",
+            "instruction": "以女性高音区的清亮音色,表现出青年阶段的特质,音量略强,语速适中稍快,语调带有解释意味和急切的情感流露,确保语音流畅自然。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_semantic_edit_official",
+      "coverage": "FireRedAudio official semantic edit path through source-audio RedAE latents, edit prompt, Qwen audio generation, flow, and RedAE decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "edit_semantic_official",
+          "audio": "reference/FireRedAudio/assets/examples/edit_semantic_zh_ref.wav",
+          "seed": 1234,
+          "options": {
+            "template_name": "semantic_edit",
+            "instruction": "delete '比普通的茶叶要'"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_acoustic_edit_official",
+      "coverage": "FireRedAudio official acoustic edit path through source-audio RedAE latents, edit prompt, Qwen audio generation, flow, and RedAE decode",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "edit_acoustic_official",
+          "audio": "reference/FireRedAudio/assets/examples/edit_acoustic_zh_ref.wav",
+          "seed": 1234,
+          "options": {
+            "template_name": "acoustic_edit",
+            "instruction": "shift the pitch by 3 steps"
+          }
+        }
+      ]
+    },
+    {
+      "id": "firered_audio_understand_qa_official",
+      "coverage": "FireRedAudio official audio understanding QA path with thinking enabled",
+      "family": "firered_audio",
+      "model": "models/audio.cpp-gguf/FireRedAudio-GGUF/firered-audio-orig.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "understand_qa_official",
+          "audio": "reference/FireRedAudio/assets/examples/assets_mmau_test.wav",
+          "text": "What illness did Second speaker's friend suffer from?\n(A) Progressive arthritis (B) Progressive cancer (C) Acute pneumonia (D) Chronic heart disease",
+          "options": {
+            "template_name": "understand",
+            "enable_thinking": true,
+            "max_new_tokens": 10240
+          }
+        }
+      ]
+    },
+    {
       "id": "dramabox_voice_ref_cfg_stg_cold",
       "coverage": "DramaBox single cold voice-reference TTS request with CFG and STG enabled",
       "family": "dramabox",
@@ -3062,6 +3400,77 @@
             "batch_size": 1,
             "prelude_forcing": true,
             "seed": 3234
+          }
+        }
+      ]
+    },
+    {
+      "id": "midashenglm_gen_warmbench_single_paths",
+      "coverage": "MiDashengLM-Gen single-request warmbench paths: mixed speech/music/sfx CFG, music+sfx no speech CFG, and speech no-CFG",
+      "family": "midashenglm_gen",
+      "model": "models/MiDashengLM-Gen",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "speech_music_sfx_cfg",
+          "text": "<|caption|> A calm narrator speaks over soft rain, distant piano, and a quiet room tone. <|asr|> The lights are still on, and the rain is getting softer now. Please stay near the window and listen carefully. <|speech|> calm warm male narrator, close microphone, gentle emotion, clear words <|music|> sparse quiet piano chords with slow reverb tail <|sfx|> soft rain against a window, occasional distant thunder <|env|> small quiet room at night",
+          "options": {
+            "duration_sec": 10.0,
+            "guidance_scale": 2.0,
+            "stop_threshold": 0.5,
+            "min_stop_step": 5,
+            "seed": 20260817
+          }
+        },
+        {
+          "id": "music_sfx_no_speech_cfg",
+          "text": "<|caption|> A compact game menu loop with bright synth chords, small coin pickup sounds, and gentle crowd ambience. <|asr|> <|unknown|> <|speech|> <|unknown|> <|music|> bright looping synth melody, soft bass pulse, light percussion, arcade menu energy <|sfx|> coin pickup blips, small button clicks, short sparkle effects <|env|> lively indoor arcade space",
+          "options": {
+            "duration_sec": 8.8,
+            "guidance_scale": 2.0,
+            "stop_threshold": 0.5,
+            "min_stop_step": 5,
+            "seed": 20260818
+          }
+        },
+        {
+          "id": "speech_no_cfg",
+          "text": "<|caption|> A studio voice reads a short emergency notice with no background music. <|asr|> Attention please. The north entrance is closed for maintenance. Please use the west entrance until further notice. <|speech|> neutral female announcement voice, steady pace, clear articulation <|music|> <|unknown|> <|sfx|> <|unknown|> <|env|> dry studio booth",
+          "options": {
+            "duration_sec": 7.2,
+            "guidance_scale": 1.0,
+            "stop_threshold": 0.5,
+            "min_stop_step": 5,
+            "seed": 20260819
+          }
+        }
+      ]
+    },
+    {
+      "id": "audiosr_basic_short_super_resolution",
+      "coverage": "AudioSR basic GGUF short waveform super-resolution path with DDIM sampler, VAE, UNet, and HiFi-GAN",
+      "family": "audiosr",
+      "model": "models/AudioSR-GGUF/audiosr-basic-f32.gguf",
+      "task": "s2s",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "short_speech_sr",
+          "audio": "resources/mel_roformer_test_5s.wav",
+          "options": {
+            "num_inference_steps": 10,
+            "guidance_scale": 3.5,
+            "ddim_eta": 1.0,
+            "audio_chunk_duration_sec": 10.24,
+            "audio_chunk_overlap_sec": 0.0,
+            "seed": 42
           }
         }
       ]

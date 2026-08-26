@@ -297,6 +297,8 @@ def materialize_request_paths(request: dict[str, Any]) -> dict[str, Any]:
         for key, value in options.items():
             if key.endswith("_path") or key.endswith("_file") or key.endswith(".path") or key.endswith(".file"):
                 options[key] = maybe_absolute_path(value)
+            elif key in {"video", "controlfoley.video"}:
+                options[key] = maybe_absolute_path(value)
             elif key in {"voice_samples", "vibevoice.voice_samples"}:
                 options[key] = maybe_absolute_path_list(value)
         out["options"] = options

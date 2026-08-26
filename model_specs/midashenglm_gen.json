@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "family": "midashenglm_gen",
+  "display_name": "MiDashengLM-Gen",
+  "description": "DashengLM generative audio model for speech, music, sound effects, and ambience prompts.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "music"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf",
+      "cuda"
+    ]
+  },
+  "capabilities": {
+    "music": [
+      "instrumental",
+      "style_control"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Target audio duration budget.",
+        "required": false,
+        "min": 0.04,
+        "max": 163.84,
+        "default": 20.0
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale.",
+        "required": false,
+        "min": 0.0,
+        "max": 20.0,
+        "default": 2.0
+      },
+      {
+        "name": "stop_threshold",
+        "type": "float",
+        "description": "Stop probability threshold.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "min_stop_step",
+        "type": "int",
+        "description": "Minimum generated steps before accepting stop.",
+        "required": false,
+        "min": 0,
+        "max": 4096,
+        "default": 5
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed; -1 selects a random seed.",
+        "required": false,
+        "min": -1,
+        "max": 2147483647,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "midashenglm_gen_f32",
+      "display_name": "MiDashengLM-Gen F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "MiDashengLM-Gen-GGUF",
+      "files": [
+        "MiDashengLM-Gen-GGUF/midashenglm-gen-f32.gguf"
+      ],
+      "strip_prefix": "MiDashengLM-Gen-GGUF"
+    },
+    {
+      "id": "midashenglm_gen_q8_0",
+      "display_name": "MiDashengLM-Gen Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MiDashengLM-Gen-GGUF",
+      "files": [
+        "MiDashengLM-Gen-GGUF/midashenglm-gen-q8_0.gguf"
+      ],
+      "strip_prefix": "MiDashengLM-Gen-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "midashenglm_gen_q8_0",
+    "tags": [
+      "Music",
+      "SFX",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/midashenglm_gen.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "vocab.json": "model:vocab.json",
+        "merges.txt": "model:merges.txt",
+        "tokenizer_config.json": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "vocab.json": "model:vocab.json",
+        "merges.txt": "model:merges.txt",
+        "tokenizer_config.json": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors.index.json"
+      }
+    }
+  ]
+}
