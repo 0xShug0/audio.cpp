@@ -19,6 +19,7 @@ __pycache__/
 /tests/omnivoice/outputs/
 /unittests/
 /models/
+/granite5asr/
 /reference/
 /resources/
 /patches/
