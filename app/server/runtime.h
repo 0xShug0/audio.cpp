@@ -102,6 +102,7 @@ private:
     HttpResponse handle_directory_browser(const std::string & body_text) const;
 #endif
     HttpResponse handle_ui_asset() const;
+    HttpResponse handle_ui_voice_preview(const HttpRequest & request) const;
     LoadedModel::RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
     void load_voice_presets(LoadedModel & model) const;
     void ensure_model_loaded_locked(LoadedModel & model);

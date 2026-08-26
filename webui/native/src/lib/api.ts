@@ -160,6 +160,10 @@ export async function availableVoices(model = ''): Promise<string[]> {
   return response.voices;
 }
 
+export function voicePreviewUrl(voice: string): string {
+  return `/v1/ui/voice-preview?voice=${encodeURIComponent(voice)}`;
+}
+
 export async function uploadWav(blob: Blob, signal?: AbortSignal): Promise<string> {
   const response = await jsonRequest<{ path: string }>('/v1/ui/upload', {
     method: 'POST',

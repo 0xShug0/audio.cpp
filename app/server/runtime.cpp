@@ -1033,6 +1033,9 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else if (request.method == "GET" && request.path == "/v1/audio/voices") {
         response = handle_voices(request);
     }
+    else if (request.method == "GET" && request.path == "/v1/ui/voice-preview") {
+        response = handle_ui_voice_preview(request);
+    }
     else if (request.method == "POST" && request.path == "/v1/models/load") {
         response = handle_model_load(request.body);
     }
@@ -1560,6 +1563,71 @@ HttpResponse ServerState::handle_ui_asset() const {
     response.headers["Pragma"] = "no-cache";
     response.headers["Content-Security-Policy"] =
         "default-src 'self' 'unsafe-inline' blob: data:; connect-src 'self'; media-src 'self' blob: data:";
+    response.headers["X-Content-Type-Options"] = "nosniff";
+    return response;
+}
+
+HttpResponse ServerState::handle_ui_voice_preview(const HttpRequest & request) const {
+    if (!config_.ui_enabled) {
+        return error_response(404, "WebUI is disabled", "not_found");
+    }
+    if (!config_.voice_dir.has_value()) {
+        return error_response(404, "voice library is not configured", "not_found");
+    }
+    const std::string voice = decoded_query_param(request.query, "voice");
+    const auto wav = resolve_voice_library_wav(*config_.voice_dir, voice);
+    if (!wav.has_value()) {
+        return error_response(404, "voice preview is not available", "not_found");
+    }
+    const auto file_size = std::filesystem::file_size(*wav);
+    std::ifstream file(*wav, std::ios::binary);
+    if (!file) {
+        return error_response(404, "voice preview is not available", "not_found");
+    }
+    std::uintmax_t offset = 0;
+    std::uintmax_t count = file_size;
+    bool partial = false;
+    if (const auto range = request.headers.find("range"); range != request.headers.end() &&
+        range->second.rfind("bytes=", 0) == 0) {
+        const std::string spec = range->second.substr(6);
+        const size_t dash = spec.find('-');
+        if (dash != std::string::npos && dash > 0) {
+            const std::uintmax_t begin = std::stoull(spec.substr(0, dash));
+            const std::uintmax_t end = dash + 1 < spec.size()
+                ? std::stoull(spec.substr(dash + 1))
+                : file_size - 1;
+            if (begin >= file_size || end < begin) {
+                HttpResponse response;
+                response.status = 416;
+                response.content_type = "text/plain";
+                response.headers["Content-Range"] = "bytes */" + std::to_string(file_size);
+                response.headers["Accept-Ranges"] = "bytes";
+                return response;
+            }
+            offset = begin;
+            count = std::min(end, file_size - 1) - begin + 1;
+            partial = true;
+        }
+    }
+    HttpResponse response;
+    response.status = partial ? 206 : 200;
+    response.content_type = "audio/wav";
+    if (partial) {
+        file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+        response.body.resize(static_cast<size_t>(count));
+        file.read(response.body.data(), static_cast<std::streamsize>(response.body.size()));
+        response.body.resize(static_cast<size_t>(file.gcount()));
+        response.headers["Content-Range"] =
+            "bytes " + std::to_string(offset) + "-" +
+            std::to_string(offset + response.body.size() - 1) + "/" +
+            std::to_string(file_size);
+    } else {
+        response.body.assign(
+            std::istreambuf_iterator<char>(file),
+            std::istreambuf_iterator<char>());
+    }
+    response.headers["Accept-Ranges"] = "bytes";
+    response.headers["Cache-Control"] = "no-store";
     response.headers["X-Content-Type-Options"] = "nosniff";
     return response;
 }
