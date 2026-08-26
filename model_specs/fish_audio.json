@@ -139,10 +139,10 @@
       {
         "name": "ar_weight_context_mb",
         "type": "int",
-        "description": "AR weight context size in MiB; default 512.",
+        "description": "AR weight context size in MiB; default 32.",
         "required": false,
         "min": 0,
-        "default": 512
+        "default": 32
       },
       {
         "name": "codec_graph_arena_mb",
@@ -155,10 +155,10 @@
       {
         "name": "codec_weight_context_mb",
         "type": "int",
-        "description": "Codec weight context size in MiB; default 512.",
+        "description": "Codec weight context size in MiB; default 32.",
         "required": false,
         "min": 0,
-        "default": 512
+        "default": 32
       }
     ],
     "load": []

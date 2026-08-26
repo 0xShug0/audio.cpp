@@ -663,6 +663,12 @@ S3TokenizerOutputs S3TokenizerComponent::tokenize(
         execution_context_->config());
 }
 
+void S3TokenizerComponent::release_runtime_cache() const {
+    if (state_ != nullptr) {
+        state_->cache = make_s3_tokenizer_inference_session_cache();
+    }
+}
+
 S3TokenizerComponent::~S3TokenizerComponent() = default;
 S3TokenizerComponent::S3TokenizerComponent(S3TokenizerComponent &&) noexcept = default;
 S3TokenizerComponent & S3TokenizerComponent::operator=(S3TokenizerComponent &&) noexcept = default;

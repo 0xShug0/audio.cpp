@@ -20,7 +20,7 @@ public:
         assets::TensorStorageType weight_storage_type);
     ~FishAudioARRuntime();
 
-    FishAudioCodes generate(const FishAudioPrompt & prompt, const FishAudioGenerationOptions & options);
+    engine::codecs::FishDacCodes generate(const FishAudioPrompt & prompt, const FishAudioGenerationOptions & options);
     void release_runtime_graphs();
 
 private:

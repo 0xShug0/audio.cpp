@@ -85,6 +85,7 @@ public:
     S3TokenizerOutputs tokenize(
         const runtime::AudioBuffer & audio,
         std::optional<int64_t> max_len) const;
+    void release_runtime_cache() const;
 
 private:
     struct State;

@@ -826,7 +826,7 @@ public:
         runtime_.reset();
     }
 
-    FishAudioCodes generate(const FishAudioPrompt & prompt, const FishAudioGenerationOptions & options) {
+    engine::codecs::FishDacCodes generate(const FishAudioPrompt & prompt, const FishAudioGenerationOptions & options) {
         FishARProfile profile;
         const auto & assets = runtime_->assets();
         const auto & weights = runtime_->weights();
@@ -856,7 +856,7 @@ public:
         auto frame = sample_frame(prefill.forward.logits, prefill.forward.hidden, options, sample, false, profile);
         if (frame.front() == im_end_id()) {
             log_profile(profile);
-            return FishAudioCodes{{}, assets.config.fast.num_codebooks, 0};
+            return engine::codecs::FishDacCodes{{}, assets.config.fast.num_codebooks, 0};
         }
         append_frame(generated_frame_major, frame);
         ++profile.generated_frames;
@@ -879,7 +879,7 @@ public:
             generated_frame_major.resize(generated_frame_major.size() - static_cast<size_t>(assets.config.fast.num_codebooks));
             --profile.generated_frames;
         }
-        FishAudioCodes out;
+        engine::codecs::FishDacCodes out;
         out.codebooks = assets.config.fast.num_codebooks;
         out.frames = static_cast<int64_t>(generated_frame_major.size()) / out.codebooks;
         out.codes.assign(static_cast<size_t>(out.codebooks * out.frames), 0);
@@ -1549,7 +1549,7 @@ FishAudioARRuntime::FishAudioARRuntime(
 
 FishAudioARRuntime::~FishAudioARRuntime() = default;
 
-FishAudioCodes FishAudioARRuntime::generate(
+engine::codecs::FishDacCodes FishAudioARRuntime::generate(
     const FishAudioPrompt & prompt,
     const FishAudioGenerationOptions & options) {
     return impl_->generate(prompt, options);

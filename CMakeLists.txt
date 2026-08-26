@@ -468,6 +468,7 @@ add_library(engine_core OBJECT
     src/framework/modules/speaker_encoders/ecapa_tdnn_runtime.cpp
     src/framework/modules/speaker_encoders/titanet_runtime.cpp
     src/framework/codecs/fsq_audio_codec_runtime.cpp
+    src/framework/codecs/fish_dac_codec_runtime.cpp
     src/framework/codecs/mel_latent_vae44k_runtime.cpp
     src/framework/codecs/mimi_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
@@ -903,7 +904,6 @@ audiocpp_add_model(fish_audio
     SOURCES
         src/models/fish_audio/ar.cpp
         src/models/fish_audio/assets.cpp
-        src/models/fish_audio/codec.cpp
         src/models/fish_audio/generator.cpp
         src/models/fish_audio/loader.cpp
         src/models/fish_audio/prompt_builder.cpp
