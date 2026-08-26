@@ -2840,7 +2840,7 @@ std::string format_bytes(size_t bytes) {
 }
 }  // namespace
 
-size_t ServerState::estimate_model_memory_bytes(const ServerModelConfig & model) const {
+std::optional<size_t> ServerState::estimate_model_memory_bytes(const ServerModelConfig & model) const {
     size_t weights = 0;
     std::error_code ec;
     // Checkpoint trees (safetensors / HF-style directories) are summed recursively
@@ -2875,14 +2875,17 @@ size_t ServerState::estimate_model_memory_bytes(const ServerModelConfig & model)
     //  - a directory with no GGUF is a safetensors/HF checkpoint whose whole tree
     //    loads, so it is summed;
     //  - a directory with several GGUFs and no model.gguf is ambiguous: the loader
-    //    rejects it with "contains N GGUF files", so we estimate nothing rather than
-    //    answer 503 and hide that real error.
+    //    rejects it with "contains N GGUF files", so the footprint is indeterminate
+    //    and the caller skips the guard rather than answer 503 and hide that real
+    //    error -- no matter how large the configured headroom is.
     if (std::filesystem::is_regular_file(model.path, ec)) {
         add_file(model.path);
     } else if (std::filesystem::is_directory(model.path, ec)) {
         if (const auto selected = engine::assets::find_directory_gguf(model.path)) {
             add_file(*selected);
-        } else if (engine::assets::directory_gguf_files(model.path).empty()) {
+        } else if (!engine::assets::directory_gguf_files(model.path).empty()) {
+            return std::nullopt;
+        } else {
             add_tree(model.path, 0);
         }
     }
@@ -2912,13 +2915,20 @@ void ServerState::ensure_model_fits_memory(const ServerModelConfig & model) {
     if (config_.min_free_memory_mb <= 0) {
         return;
     }
-    const size_t estimate = estimate_model_memory_bytes(model);
+    const auto estimate = estimate_model_memory_bytes(model);
+    if (!estimate.has_value()) {
+        // Indeterminate footprint (an ambiguous multi-GGUF model directory): the
+        // loader rejects that path with its own error, so the guard has no basis
+        // to refuse and must not mask the real error with a 503, no matter how
+        // large the configured headroom is.
+        return;
+    }
     const size_t headroom = static_cast<size_t>(config_.min_free_memory_mb) * 1024ull * 1024ull;
 
     const size_t host_available = engine::core::available_host_memory_bytes();
-    if (host_available > 0 && estimate + headroom > host_available) {
+    if (host_available > 0 && *estimate + headroom > host_available) {
         throw InsufficientMemoryError(
-            "cannot load model '" + model.id + "': estimated " + format_bytes(estimate) +
+            "cannot load model '" + model.id + "': estimated " + format_bytes(*estimate) +
             " + " + std::to_string(config_.min_free_memory_mb) + " MiB headroom exceeds available host memory (" +
             format_bytes(host_available) + ")");
     }
@@ -2931,9 +2941,9 @@ void ServerState::ensure_model_fits_memory(const ServerModelConfig & model) {
     const engine::core::BackendMemorySnapshot device =
         engine::core::query_backend_memory(engine::core::BackendConfig{
             config_.backend, config_.device, config_.threads});
-    if (device.available && estimate + headroom > static_cast<size_t>(device.free_bytes)) {
+    if (device.available && *estimate + headroom > static_cast<size_t>(device.free_bytes)) {
         throw InsufficientMemoryError(
-            "cannot load model '" + model.id + "': estimated " + format_bytes(estimate) +
+            "cannot load model '" + model.id + "': estimated " + format_bytes(*estimate) +
             " + " + std::to_string(config_.min_free_memory_mb) + " MiB headroom exceeds available " +
             backend_name(config_.backend) + " memory (" +
             format_bytes(static_cast<size_t>(device.free_bytes)) + ")");
