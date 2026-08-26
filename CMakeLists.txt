@@ -1817,31 +1817,6 @@ add_executable(miocodec_wavlm_parity EXCLUDE_FROM_ALL
 
 target_link_libraries(miocodec_wavlm_parity PRIVATE engine_runtime ggml)
 
-add_executable(test_granite5asr_golden_transcription
-    tests/granite5asr/test_granite5asr_golden_transcription.cpp
-)
-target_compile_definitions(test_granite5asr_golden_transcription PRIVATE
-    ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
-)
-target_link_libraries(test_granite5asr_golden_transcription PRIVATE engine_runtime ggml)
-target_include_directories(test_granite5asr_golden_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-if (ENGINE_ENABLE_OPENMP)
-    target_link_libraries(test_granite5asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
-endif()
-
-add_executable(granite5asr_warm_bench
-    tests/granite5asr/granite5asr_warm_bench.cpp
-)
-target_compile_definitions(granite5asr_warm_bench PRIVATE
-    ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
-)
-target_link_libraries(granite5asr_warm_bench PRIVATE engine_runtime ggml)
-target_include_directories(granite5asr_warm_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-if (ENGINE_ENABLE_OPENMP)
-    target_link_libraries(granite5asr_warm_bench PRIVATE OpenMP::OpenMP_CXX)
-endif()
-
-
 # F5/Habibi tests: parity harnesses + e2e sample generator. Only when the
 # f5_tts model is linked (they call model-internal symbols) AND test hooks
 # are explicitly enabled — F5_MEL_TEST must never leak into production
@@ -1861,6 +1836,18 @@ if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS AND ENGINE_F5_TEST_HOOKS)
 endif()
 
 if (ENGINE_BUILD_TESTS)
+    add_executable(test_granite5asr_golden_transcription
+        tests/granite5asr/test_granite5asr_golden_transcription.cpp
+    )
+    target_compile_definitions(test_granite5asr_golden_transcription PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_link_libraries(test_granite5asr_golden_transcription PRIVATE engine_runtime ggml)
+    target_include_directories(test_granite5asr_golden_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(test_granite5asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
     add_executable(torch_bin_parity
         tests/vibevoice/torch_bin_parity.cpp
     )
@@ -1972,6 +1959,9 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(controlfoley_warm_bench tests/controlfoley/controlfoley_warm_bench.cpp)
     add_engine_warmbench(fun_asr_nano_warm_bench tests/fun_asr_nano/fun_asr_nano_warm_bench.cpp)
     add_engine_warmbench(granite5asr_warm_bench tests/granite5asr/granite5asr_warm_bench.cpp)
+    target_compile_definitions(granite5asr_warm_bench PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_tts_warm_bench tests/higgs_audio_tts/higgs_audio_tts_warm_bench.cpp)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)

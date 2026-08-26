@@ -13,6 +13,7 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/registry.h"
 
@@ -85,8 +86,28 @@ std::optional<int> parse_busy_timeout_override(const Value & body) {
     return requested;
 }
 
-bool model_accepts_request_option(std::string_view family, std::string_view option) {
-    const auto contract = engine::model_spec::model_contract(family);
+bool is_missing_model_contract_error(std::string_view message) {
+    return message.find("model contract spec not found for family '") != std::string_view::npos ||
+           message.find("does not embed an audio.cpp model spec") != std::string_view::npos ||
+           message.find("embeds a legacy model spec") != std::string_view::npos;
+}
+
+bool model_accepts_request_option(
+    std::string_view family,
+    std::string_view option,
+    const std::optional<std::filesystem::path> & model_spec_override,
+    const std::filesystem::path & model_path) {
+    std::optional<engine::model_spec::ModelContract> contract;
+    {
+        engine::model_spec::ScopedSpecOverride scoped(model_spec_override, model_path);
+        try {
+            contract = engine::model_spec::model_contract(family);
+        } catch (const std::runtime_error & ex) {
+            if (!is_missing_model_contract_error(ex.what())) {
+                throw;
+            }
+        }
+    }
     if (!contract.has_value()) {
         return true;
     }
@@ -1848,8 +1869,15 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
 
     bool voice_field_is_preset = false;
     const auto * preset = select_voice_preset(model, body, voice_field_is_preset);
+    const auto effective_model_spec_override = model.config.model_spec_override.has_value()
+        ? model.config.model_spec_override
+        : config_.model_spec_override;
     const bool can_inject_reference_text =
-        model_accepts_request_option(model.config.family, "reference_text");
+        model_accepts_request_option(
+            model.config.family,
+            "reference_text",
+            effective_model_spec_override,
+            model.config.path);
 
     engine::runtime::VoiceCondition voice;
     bool has_voice = false;
