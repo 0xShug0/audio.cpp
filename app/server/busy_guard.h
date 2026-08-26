@@ -18,6 +18,14 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// The host/GPU does not currently have enough free memory to load a model.
+// Mapped to HTTP 503: a transient server condition the caller may retry after
+// other models have been evicted or the system has freed memory.
+class InsufficientMemoryError : public std::runtime_error {
+public:
+    explicit InsufficientMemoryError(const std::string & message) : std::runtime_error(message) {}
+};
+
 inline std::int64_t steady_now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch())

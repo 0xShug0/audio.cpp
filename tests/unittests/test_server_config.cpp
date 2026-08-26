@@ -432,6 +432,66 @@ void test_request_timeout_is_clamped_to_policy() {
         "unbounded on both sides stays unbounded");
 }
 
+void test_idle_unload_ms_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "idle_unload_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).idle_unload_ms == 0,
+        "idle_unload_ms defaults to 0 (disabled) when omitted");
+
+    const auto set_path = write_config(
+        root, "idle_unload_set.json", std::string(R"JSON({"idle_unload_ms": 300000,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(set_path).idle_unload_ms == 300000,
+        "idle_unload_ms is read from the config");
+}
+
+void test_negative_idle_unload_ms_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root, "idle_unload_negative.json", std::string(R"JSON({"idle_unload_ms": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("idle_unload_ms") != std::string::npos;
+    }
+    require(rejected, "negative idle_unload_ms is rejected");
+}
+
+void test_min_free_memory_mb_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "min_free_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).min_free_memory_mb == 0,
+        "min_free_memory_mb defaults to 0 (guard disabled) when omitted");
+
+    const auto set_path = write_config(
+        root, "min_free_set.json", std::string(R"JSON({"min_free_memory_mb": 256,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(set_path).min_free_memory_mb == 256,
+        "min_free_memory_mb is read from the config to opt into the guard");
+}
+
+void test_negative_min_free_memory_mb_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root, "min_free_negative.json", std::string(R"JSON({"min_free_memory_mb": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("min_free_memory_mb") != std::string::npos;
+    }
+    require(rejected, "negative min_free_memory_mb is rejected");
+}
+
 void test_model_run_overrun_predicate() {
     using minitts::server::model_run_has_overrun;
 
@@ -459,6 +519,10 @@ int main() {
         test_negative_busy_timeout_is_rejected();
         test_max_loaded_models_defaults_and_overrides();
         test_negative_max_loaded_models_is_rejected();
+        test_idle_unload_ms_defaults_and_overrides();
+        test_negative_idle_unload_ms_is_rejected();
+        test_min_free_memory_mb_defaults_and_overrides();
+        test_negative_min_free_memory_mb_is_rejected();
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
         test_ui_configuration();

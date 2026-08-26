@@ -8,6 +8,8 @@
 #include "../streaming/pcm_source.h"
 #include "../streaming/streaming.h"
 
+#include "engine/framework/core/host_memory.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/metadata.h"
@@ -22,6 +24,7 @@
 #include <cstdint>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -29,6 +32,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -968,9 +972,16 @@ ServerState::ServerState(
     }
 #endif
     load_models();
+    if (config_.idle_unload_ms > 0) {
+        idle_unload_thread_ = std::thread(&ServerState::idle_unload_loop, this);
+    }
 }
 
 ServerState::~ServerState() {
+    idle_unload_shutdown_.store(true, std::memory_order_relaxed);
+    if (idle_unload_thread_.joinable()) {
+        idle_unload_thread_.join();
+    }
     if (!upload_root_.empty()) {
         std::error_code ec;
         std::filesystem::remove_all(upload_root_, ec);
@@ -1099,6 +1110,8 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     // there. Checked before ServerBusyError only because both are
     // runtime_error; the two conditions are disjoint.
     response = error_response(400, ex.what(), "invalid_request_error");
+  } catch (const InsufficientMemoryError & ex) {
+    response = error_response(503, ex.what(), "insufficient_memory");
   } catch (const ServerBusyError & ex) {
     // Non-streaming requests surface the busy state as 503 before any response is
     // sent. (Streaming requests acquire the lock inside the stream body, after
@@ -1626,15 +1639,28 @@ void ServerState::evict_for_model_limit(const LoadedModel & loading) {
 }
 
 void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
+    last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
     model.last_used_ms.store(steady_now_ms(), std::memory_order_relaxed);
     if (model.session != nullptr) {
         return;
     }
-    std::unique_lock<std::mutex> load_lock;
-    if (config_.max_loaded_models > 0) {
-        load_lock = std::unique_lock<std::mutex>(model_load_mutex_);
-        evict_for_model_limit(model);
+    // Serialize the whole "evict -> memory check -> load" sequence only when a guard
+    // actually needs it: eviction (max_loaded_models > 0) or the memory pre-check
+    // (min_free_memory_mb > 0). With both off there is nothing for concurrent loads
+    // to race over, so unrelated first-load requests keep their original concurrency.
+    const bool serialize_load =
+        config_.max_loaded_models > 0 || config_.min_free_memory_mb > 0;
+    std::unique_lock<std::mutex> load_lock(model_load_mutex_, std::defer_lock);
+    if (serialize_load) {
+        load_lock.lock();
     }
+    if (config_.max_loaded_models > 0) {
+        evict_for_model_limit(model);
+        // Note: if ensure_model_fits_memory() below then refuses the load, the
+        // evicted model is already unloaded (freed memory is never restored).
+        // That is acceptable: the 503 tells the client to retry later.
+    }
+    ensure_model_fits_memory(model.config);
     auto registry = engine::runtime::make_default_registry();
 
     engine::runtime::ModelLoadRequest load_request;
@@ -1907,6 +1933,10 @@ ServerState::TimedTaskResult ServerState::run_model(
     const auto started = Clock::now();
     model.session->prepare(engine::runtime::build_preparation_request(request));
     auto result = model.offline->run(request);
+    // Mark activity at completion too: idle unload must measure from when the
+    // request finished, not when it started, or a long inference would look idle
+    // (and be unloaded) the moment it returns.
+    last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
     return TimedTaskResult{std::move(result), elapsed_ms(started), std::nullopt};
 }
 
@@ -1944,6 +1974,9 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
     if (!timed_result.ttft_ms.has_value() && task_result_has_output(timed_result.result)) {
         timed_result.ttft_ms = timed_result.wall_ms;
     }
+    // Mark activity at completion too (see run_model): idle unload measures from
+    // request finish, so a long stream is not unloaded the moment it ends.
+    last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
     return timed_result;
 }
 
@@ -2745,6 +2778,166 @@ void ServerState::LoadedModel::unload() {
     session.reset();
     model.reset();
     loaded.store(false);
+}
+
+void ServerState::idle_unload_loop() {
+    const auto interval_ms = std::max<std::int64_t>(1000, config_.idle_unload_ms / 10);
+    auto deadline = steady_now_ms() + interval_ms;
+    while (!idle_unload_shutdown_.load(std::memory_order_relaxed)) {
+        // Sleep in small slices so SIGTERM (destructor join) never waits out a
+        // full poll interval; the deadline keeps the idle check cadence intact.
+        const auto now = steady_now_ms();
+        if (now >= deadline) {
+            if (idle_unload_shutdown_.load(std::memory_order_relaxed)) {
+                break;
+            }
+            const auto idle_ms = now - last_activity_ms_.load(std::memory_order_relaxed);
+            if (idle_ms >= config_.idle_unload_ms) {
+                unload_idle_models();
+            }
+            deadline = steady_now_ms() + interval_ms;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+    }
+}
+
+void ServerState::unload_idle_models() {
+    std::vector<LoadedModel *> resident;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        for (const auto & model : models_) {
+            if (model->session != nullptr) {
+                resident.push_back(model.get());
+            }
+        }
+    }
+    int unloaded = 0;
+    for (LoadedModel * model : resident) {
+        // Never unload a model mid-inference; a busy model keeps its slot and the
+        // next idle pass retries it.
+        const auto lock = model->busy.try_acquire();
+        if (!lock.has_value()) {
+            continue;
+        }
+        model->unload();
+        ++unloaded;
+    }
+    if (unloaded > 0) {
+        const auto idle_ms = steady_now_ms() - last_activity_ms_.load(std::memory_order_relaxed);
+        std::cerr << "[server] idle " << idle_ms << " ms: unloaded " << unloaded << " model(s)\n";
+        // Restart the idle clock so we do not spin on unload attempts every interval.
+            last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
+    }
+}
+
+namespace {
+std::string format_bytes(size_t bytes) {
+    const double gib = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(2) << gib << " GiB";
+    return out.str();
+}
+}  // namespace
+
+size_t ServerState::estimate_model_memory_bytes(const ServerModelConfig & model) const {
+    size_t weights = 0;
+    std::error_code ec;
+    // Checkpoint trees (safetensors / HF-style directories) are summed recursively
+    // with hard limits so a pathological tree cannot stall the load path or blow the
+    // counter; anything beyond the limits contributes 0 (the fixed floor below still
+    // applies, so the estimate never reads as completely empty).
+    constexpr size_t kMaxDepth = 3;
+    constexpr size_t kMaxFiles = 10000;
+    size_t visited_files = 0;
+    const auto add_file = [&](const std::filesystem::path & path) {
+        if (std::filesystem::is_regular_file(path, ec)) {
+            weights += static_cast<size_t>(std::filesystem::file_size(path, ec));
+            ++visited_files;
+        }
+    };
+    const std::function<void(const std::filesystem::path &, size_t)> add_tree =
+        [&](const std::filesystem::path & path, size_t depth) {
+            if (std::filesystem::is_regular_file(path, ec)) {
+                add_file(path);
+            } else if (std::filesystem::is_directory(path, ec) && depth < kMaxDepth) {
+                std::filesystem::directory_iterator it(path, ec), end;
+                for (; it != end && visited_files < kMaxFiles; it.increment(ec)) {
+                    add_tree(it->path(), depth + 1);
+                }
+            }
+        };
+    // Estimate only what the loader will actually read from model.path, so the
+    // guard neither overestimates nor masks the loader's own error:
+    //  - a single-file model contributes that file;
+    //  - a model directory contributes the one GGUF it selects (model.gguf, or the
+    //    sole *.gguf) -- a package holding several variants is loaded from just one;
+    //  - a directory with no GGUF is a safetensors/HF checkpoint whose whole tree
+    //    loads, so it is summed;
+    //  - a directory with several GGUFs and no model.gguf is ambiguous: the loader
+    //    rejects it with "contains N GGUF files", so we estimate nothing rather than
+    //    answer 503 and hide that real error.
+    if (std::filesystem::is_regular_file(model.path, ec)) {
+        add_file(model.path);
+    } else if (std::filesystem::is_directory(model.path, ec)) {
+        if (const auto selected = engine::assets::find_directory_gguf(model.path)) {
+            add_file(*selected);
+        } else if (engine::assets::directory_gguf_files(model.path).empty()) {
+            add_tree(model.path, 0);
+        }
+    }
+    // Relative auxiliary paths resolve against the model directory when model.path
+    // is a directory, and against the model file's parent when it is a file.
+    const std::filesystem::path aux_base =
+        std::filesystem::is_directory(model.path, ec) ? model.path : model.path.parent_path();
+    for (const auto & [key, value] : model.session_options) {
+        (void)key;
+        std::filesystem::path aux(value);
+        if (aux.is_relative()) {
+            aux = aux_base / aux;
+        }
+        add_tree(aux, 0);
+    }
+    // Weights plus a runtime factor for Metal/GPU buffers, activation graphs and
+    // KV state, plus a fixed floor for per-model bookkeeping.
+    constexpr double kRuntimeOverheadFactor = 1.5;
+    constexpr size_t kFixedOverhead = 128ull * 1024 * 1024;
+    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead;
+}
+
+void ServerState::ensure_model_fits_memory(const ServerModelConfig & model) {
+    // The guard is opt-in: 0 disables it entirely so existing deployments see no
+    // behavior change. This also keeps lazy loads unserialized (see the call site)
+    // when neither this guard nor max_loaded_models is active.
+    if (config_.min_free_memory_mb <= 0) {
+        return;
+    }
+    const size_t estimate = estimate_model_memory_bytes(model);
+    const size_t headroom = static_cast<size_t>(config_.min_free_memory_mb) * 1024ull * 1024ull;
+
+    const size_t host_available = engine::core::available_host_memory_bytes();
+    if (host_available > 0 && estimate + headroom > host_available) {
+        throw InsufficientMemoryError(
+            "cannot load model '" + model.id + "': estimated " + format_bytes(estimate) +
+            " + " + std::to_string(config_.min_free_memory_mb) + " MiB headroom exceeds available host memory (" +
+            format_bytes(host_available) + ")");
+    }
+
+    // ggml backend registries may not be loaded yet on the very first request
+    // (init_backend happens inside a session load, after this pre-check), which
+    // would make query_backend_memory() report "unknown" and silently skip the
+    // GPU check. Loading them here is idempotent and cheap once done.
+    engine::core::ensure_backends_loaded();
+    const engine::core::BackendMemorySnapshot device =
+        engine::core::query_backend_memory(engine::core::BackendConfig{
+            config_.backend, config_.device, config_.threads});
+    if (device.available && estimate + headroom > static_cast<size_t>(device.free_bytes)) {
+        throw InsufficientMemoryError(
+            "cannot load model '" + model.id + "': estimated " + format_bytes(estimate) +
+            " + " + std::to_string(config_.min_free_memory_mb) + " MiB headroom exceeds available " +
+            backend_name(config_.backend) + " memory (" +
+            format_bytes(static_cast<size_t>(device.free_bytes)) + ")");
+    }
 }
 
 HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
