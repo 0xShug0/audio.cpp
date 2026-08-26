@@ -115,10 +115,17 @@
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
-      "target_directory": "granite-speech-5.0-470m-turboctc-gguf",
+      "target_directory": "Granite-Speech-5.0-470M-TurboCTC-GGUF",
       "files": [
-        "granite-speech-5.0-470m-turboctc-q8_0.gguf"
-      ]
+        "Granite-Speech-5.0-470M-TurboCTC-GGUF/granite-speech-5.0-470m-turboctc-q8_0.gguf"
+      ],
+      "strip_prefix": "Granite-Speech-5.0-470M-TurboCTC-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      }
     },
     {
       "id": "granite5asr_safetensors",
