@@ -2,13 +2,13 @@
 
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/core/execution_context.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/fish_audio/ar.h"
-#include "engine/models/fish_audio/codec.h"
 #include "engine/models/fish_audio/generator.h"
 
 #include <algorithm>
@@ -29,8 +29,8 @@ namespace fs = std::filesystem;
 
 constexpr size_t kDefaultArGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultCodecGraphArenaBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kDefaultArWeightContextBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kDefaultCodecWeightContextBytes = 512ull * 1024ull * 1024ull;
+constexpr size_t kDefaultArWeightContextBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultCodecWeightContextBytes = 32ull * 1024ull * 1024ull;
 constexpr int64_t kDefaultReferenceCacheSlots = 1;
 constexpr const char * kReferenceTextOption = "reference_text";
 constexpr const char * kMultiReferenceCondOption = "multi_reference_cond";
@@ -324,14 +324,26 @@ FishAudioSession::FishAudioSession(
         runtime::parse_size_mb_option(options.options, {"fish_audio.ar_graph_arena_mb"}, kDefaultArGraphArenaBytes),
         runtime::parse_size_mb_option(options.options, {"fish_audio.ar_weight_context_mb"}, kDefaultArWeightContextBytes),
         ar_weight_type);
-    auto codec = std::make_unique<FishAudioCodecRuntime>(
-        assets_,
+    engine::codecs::FishDacCodecRuntimeOptions codec_options;
+    codec_options.graph_arena_bytes =
+        runtime::parse_size_mb_option(options.options, {"fish_audio.codec_graph_arena_mb"}, kDefaultCodecGraphArenaBytes);
+    codec_options.weight_context_bytes =
+        runtime::parse_size_mb_option(options.options, {"fish_audio.codec_weight_context_mb"}, kDefaultCodecWeightContextBytes);
+    codec_options.matmul_weight_storage_type = codec_weight_type;
+    codec_options.conv_weight_storage_type = codec_weight_type;
+    core::ExecutionContext codec_execution(options.backend);
+    auto codec_component = engine::codecs::FishDacCodecComponent::load_from_tensor_source(
+        assets_->codec_weights,
+        assets_->config.codec,
+        engine::codecs::FishDacCodecWeightBinding{},
+        codec_execution.backend(),
+        codec_execution.backend_type(),
+        codec_options);
+    auto codec = std::make_unique<engine::codecs::FishDacCodecRuntime>(
+        std::move(codec_component),
         options.backend,
         threads,
-        runtime::parse_size_mb_option(options.options, {"fish_audio.codec_graph_arena_mb"}, kDefaultCodecGraphArenaBytes),
-        runtime::parse_size_mb_option(options.options, {"fish_audio.codec_weight_context_mb"}, kDefaultCodecWeightContextBytes),
-        codec_weight_type,
-        codec_weight_type);
+        codec_options.graph_arena_bytes);
     generator_ = std::make_unique<FishAudioGenerator>(
         assets_,
         std::move(ar),
@@ -416,7 +428,7 @@ FishAudioRequest FishAudioSession::make_request(const runtime::TaskRequest & req
     return out;
 }
 
-const FishAudioCodes & FishAudioSession::resolve_reference_codes(const FishAudioReference & reference) {
+const engine::codecs::FishDacCodes & FishAudioSession::resolve_reference_codes(const FishAudioReference & reference) {
     ReferenceCacheKey key;
     key.source_id = reference.cache_id;
     if (reference.cache_id.empty() && !reference.audio.has_value()) {
@@ -477,7 +489,7 @@ runtime::TaskResult FishAudioSession::run(const runtime::TaskRequest & request) 
     engine::debug::trace_log_scalar("fish_audio.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
 
     runtime::AudioBuffer merged_audio;
-    std::vector<FishAudioCodes> reference_codes;
+    std::vector<engine::codecs::FishDacCodes> reference_codes;
     std::optional<FishAudioConversationTurn> previous_turn = std::nullopt;
     for (size_t chunk_index = 0; chunk_index < chunk_requests.size(); ++chunk_index) {
         const auto & chunk_request = chunk_requests[chunk_index];
