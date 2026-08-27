@@ -161,18 +161,16 @@ std::shared_ptr<const EchoTtsAssets> load_echo_tts_assets(
     assets->pca.latent_scale = 1.0F / 18.0F;
     assets->config.validate();
 
-    // The Fish S1-DAC travels inside Echo's own GGUF. audio.cpp implements this
-    // codec for the fish_audio family and Echo reuses that implementation, but
-    // not its weights: fish_audio ships S2 Pro, while Echo's PCA basis is fitted
-    // to the S1 DAC's latent space. Only four config fields reach the codec
-    // graphs, and their defaults already describe S1-DAC.
-    auto codec_assets = std::make_shared<fish_audio::FishAudioAssets>();
-    codec_assets->codec_weights = assets->resources.open_tensor_source("codec_weights");
-    codec_assets->config.codec.sample_rate = kSampleRate;
-    codec_assets->config.codec.frame_length = assets->config.ae_downsample_factor;
-    codec_assets->config.codec.total_codebooks = 10;
-    codec_assets->config.codec.quantizer_codebooks = 9;
-    assets->codec_assets = std::move(codec_assets);
+    // The Fish S1-DAC travels inside Echo's own GGUF, and the shared codec
+    // runtime decodes it. Echo brings its own weights rather than fish_audio's:
+    // that family ships S2 Pro, while Echo's PCA basis is fitted to the S1 DAC's
+    // latent space. The two share the graph, not the checkpoint. Only these four
+    // fields differ from the runtime's defaults.
+    assets->codec_weights = assets->resources.open_tensor_source("codec_weights");
+    assets->codec_config.sample_rate = kSampleRate;
+    assets->codec_config.frame_length = assets->config.ae_downsample_factor;
+    assets->codec_config.total_codebooks = 10;
+    assets->codec_config.quantizer_codebooks = 9;
     return assets;
 }
 
@@ -277,21 +275,28 @@ void EchoTtsSession::prepare(const runtime::SessionPreparationRequest & request)
             assets::TensorStorageType::Native);
     }
     if (codec_ == nullptr) {
-        if (assets_->codec_assets == nullptr ||
-            assets_->codec_assets->codec_weights == nullptr) {
+        if (assets_->codec_weights == nullptr) {
             throw std::runtime_error(
                 "Echo-TTS GGUF has no codec_weights; re-run convert_echo_tts.py with "
                 "--fish-dir pointing at the Fish S1-DAC checkpoint");
         }
         const int threads = options().backend.threads > 0 ? options().backend.threads : 1;
-        codec_ = std::make_unique<fish_audio::FishAudioCodecRuntime>(
-            assets_->codec_assets,
+        engine::codecs::FishDacCodecRuntimeOptions codec_options;
+        codec_options.graph_arena_bytes = kDefaultCodecGraphArenaBytes;
+        codec_options.weight_context_bytes = kDefaultCodecWeightContextBytes;
+        core::ExecutionContext codec_execution(options().backend);
+        auto codec_component = engine::codecs::FishDacCodecComponent::load_from_tensor_source(
+            assets_->codec_weights,
+            assets_->codec_config,
+            engine::codecs::FishDacCodecWeightBinding{},
+            codec_execution.backend(),
+            codec_execution.backend_type(),
+            codec_options);
+        codec_ = std::make_unique<engine::codecs::FishDacCodecRuntime>(
+            std::move(codec_component),
             options().backend,
             threads,
-            kDefaultCodecGraphArenaBytes,
-            kDefaultCodecWeightContextBytes,
-            assets::TensorStorageType::Native,
-            assets::TensorStorageType::Native);
+            codec_options.graph_arena_bytes);
     }
     mark_prepared();
 }
@@ -397,7 +402,7 @@ void EchoTtsSession::encode_speaker(const runtime::AudioBuffer & audio) {
             static_cast<size_t>(chunk_samples), 0.0F)};
         std::copy_n(mono.begin() + offset, available, chunk.samples.begin());
 
-        auto chunk_latents = codec_->encode_zq(chunk);
+        auto chunk_latents = codec_->encode_latents(chunk);
         auto projected = pca_project(
             assets_->pca, config, chunk_latents.values, chunk_latents.frames);
         latents.insert(latents.end(), projected.begin(), projected.end());
@@ -530,7 +535,7 @@ runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
 
     auto z_q = pca_unproject(assets_->pca, config, latent, frames);
     report_stats("decode.z_q", z_q);
-    auto audio = codec_->decode_zq(z_q, frames);
+    auto audio = codec_->decode_latents(z_q, frames);
     report_stats("decode.audio", audio.samples);
     return audio;
 }

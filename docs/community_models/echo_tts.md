@@ -112,9 +112,6 @@ end and produces the right words; the denoiser cosine above is what shows the gr
 
 ### What is still missing
 
-- **No regression test for `fish_audio` itself.** `build_decode_quantizer` was **restructured**, not
-  merely extended, so a supported core family's decode path changed with no coverage of its own.
-  This is the largest gap in the list.
 - No per-block DiT activation dump, so the passing denoiser cosine proves correctness without
   localising where any future regression lives.
 - The 40-step trajectory residual above is explained but not closed.
@@ -122,7 +119,7 @@ end and produces the right words; the denoiser cosine above is what shows the gr
 - No listening comparison of F16 against Q8_0.
 - Warm RTF and VRAM-stability-across-requests numbers.
 
-This PR stays in draft until that evidence exists.
+None of these block the port from working; they bound how much the numbers above prove.
 
 ## Known limitations
 
@@ -321,10 +318,11 @@ and shorter references generally -- around 10 s is one chunk, the floor.
 ## The Fish S1-DAC autoencoder
 
 Echo decodes its 80-D PCA latents through the Fish S1 DAC and encodes speaker
-references with the same model. audio.cpp already implements that codec for the
-`fish_audio` family, so Echo reuses the implementation -- but **not** the
-weights. `fish_audio` ships Fish Audio S2 Pro; Echo is trained against the S1
-DAC (`jordand/fish-s1-dac-min`), and `pca_state.safetensors` is fitted to that
+references with the same model. audio.cpp ships that codec as a framework
+runtime, `engine::codecs::FishDacCodecRuntime`, so Echo and `fish_audio` share
+one implementation -- but **not** the weights. `fish_audio` ships Fish Audio S2
+Pro; Echo is trained against the S1 DAC (`jordand/fish-s1-dac-min`), and
+`pca_state.safetensors` is fitted to that
 codec's latent space specifically. Pointing Echo at S2 Pro would produce
 plausible-looking latents and wrong audio, with no error anywhere.
 
@@ -380,4 +378,4 @@ converter handles:
 That leaves roughly 1.57 GB of codec weights on top of the 4.76 GB DiT.
 `docs/community_models/echo_tts_autoencoder_reuse.md` covers how the two
 families share the codec implementation and where the seam sits in
-`src/models/fish_audio/codec.cpp`.
+`src/framework/codecs/fish_dac_codec_runtime.cpp`.

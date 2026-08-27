@@ -5,8 +5,7 @@
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/fish_audio/assets.h"
-#include "engine/models/fish_audio/codec.h"
+#include "engine/framework/codecs/fish_dac_codec_runtime.h"
 
 #include <memory>
 #include <optional>
@@ -22,11 +21,10 @@ struct EchoTtsAssets {
     EchoTtsConfig config;
     EchoPcaState pca;
     std::shared_ptr<const assets::TensorSource> dit_weights;
-    // The Fish S1-DAC autoencoder, packaged inside Echo's own GGUF. audio.cpp
-    // implements this codec for the fish_audio family; Echo reuses the
-    // implementation but supplies the S1 weights its PCA basis was fitted to.
-    // See docs/community_models/echo_tts_autoencoder_reuse.md.
-    std::shared_ptr<const fish_audio::FishAudioAssets> codec_assets;
+    // The Fish S1-DAC config this GGUF's codec weights were trained with.
+    // The framework owns the graph; Echo only supplies the config and weights.
+    engine::codecs::FishDacCodecConfig codec_config;
+    std::shared_ptr<const assets::TensorSource> codec_weights;
 };
 
 // Encoding a speaker reference is linear in its length -- a 4.5-minute clip is
@@ -87,7 +85,7 @@ private:
     std::shared_ptr<const EchoTtsAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::unique_ptr<EchoDitRuntime> dit_;
-    std::unique_ptr<fish_audio::FishAudioCodecRuntime> codec_;
+    std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec_;
     int64_t reference_max_samples_ = 0;
     std::vector<float> speaker_latent_;
     int64_t speaker_frames_ = 0;

@@ -37,7 +37,7 @@ F32_REQUIRED_MARKERS = ("gamma", ".alpha", "codebook", "norm.weight", "_norm.")
 
 
 def codec_probe_names() -> List[str]:
-    """Names src/models/fish_audio/codec.cpp loads, transcribed from its paths."""
+    """Names src/framework/codecs/fish_dac_codec_runtime.cpp loads, transcribed from its paths."""
     want: List[str] = ["encoder.block.0.conv.weight", "encoder.block.0.conv.bias"]
     for b in range(1, 5):
         for r in range(3):
