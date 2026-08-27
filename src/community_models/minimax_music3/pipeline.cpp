@@ -180,6 +180,58 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         return generate_sequential(request, target_frames);
     }
 
+    std::vector<runtime::AudioBuffer> generate_ensemble(
+        const MiniMaxMusic3Request & request,
+        const std::vector<uint64_t> & take_seeds) {
+        if (request.duration_sec <= 0.0) {
+            throw std::runtime_error("MiniMax Music 3 duration_sec must be positive");
+        }
+        if (request.num_inference_steps <= 0) {
+            throw std::runtime_error("MiniMax Music 3 num_inference_steps must be positive");
+        }
+        if (request.guidance_scale <= 0.0F || request.ar_guidance_scale <= 0.0F) {
+            throw std::runtime_error("MiniMax Music 3 guidance scales must be positive");
+        }
+        if (request.top_k <= 0) {
+            throw std::runtime_error("MiniMax Music 3 top_k must be positive");
+        }
+        const int64_t takes = static_cast<int64_t>(take_seeds.size());
+        if (takes <= 0) {
+            throw std::runtime_error("MiniMax Music 3 ensemble requires at least one take seed");
+        }
+        const int64_t target_frames = std::min<int64_t>(
+            assets->config.max_audio_frames,
+            static_cast<int64_t>(request.duration_sec * static_cast<double>(assets->config.frame_rate)));
+        std::vector<uint64_t> rng_offsets(static_cast<size_t>(takes), 0);
+        std::vector<std::vector<float>> take_hiddens;
+        {
+            auto & ar_runtime = ensure_ar();
+            take_hiddens = ar_runtime.generate_frame_hiddens_ensemble(
+                request, target_frames, take_seeds, rng_offsets);
+            release_ar_after_phase();
+        }
+        const int64_t hidden_frame_width =
+            assets->config.condition.condition_layers * assets->config.qwen.hidden_size;
+        std::vector<runtime::AudioBuffer> out;
+        out.reserve(static_cast<size_t>(takes));
+        for (int64_t take = 0; take < takes; ++take) {
+            const auto & frame_hiddens = take_hiddens[static_cast<size_t>(take)];
+            const int64_t generated_frames =
+                static_cast<int64_t>(frame_hiddens.size()) / hidden_frame_width;
+            if (static_cast<int64_t>(frame_hiddens.size()) != generated_frames * hidden_frame_width) {
+                throw std::runtime_error("MiniMax Music 3 frame hidden shape mismatch");
+            }
+            if (generated_frames <= 0) {
+                throw std::runtime_error("MiniMax Music 3 AR produced no frames");
+            }
+            MiniMaxMusic3Request take_request = request;
+            take_request.seed = take_seeds[static_cast<size_t>(take)];
+            out.push_back(denoise_and_vocode(
+                frame_hiddens, generated_frames, take_request, rng_offsets[static_cast<size_t>(take)]));
+        }
+        return out;
+    }
+
     // The exact pre-existing sequential pipeline, byte-for-byte.
     runtime::AudioBuffer generate_sequential(const MiniMaxMusic3Request & request, int64_t target_frames) {
         uint64_t rng_offset_blocks = 0;
@@ -642,6 +694,12 @@ MiniMaxMusic3PipelineRuntime::~MiniMaxMusic3PipelineRuntime() = default;
 
 runtime::AudioBuffer MiniMaxMusic3PipelineRuntime::generate(const MiniMaxMusic3Request & request) {
     return impl_->generate(request);
+}
+
+std::vector<runtime::AudioBuffer> MiniMaxMusic3PipelineRuntime::generate_ensemble(
+    const MiniMaxMusic3Request & request,
+    const std::vector<uint64_t> & take_seeds) {
+    return impl_->generate_ensemble(request, take_seeds);
 }
 
 void MiniMaxMusic3PipelineRuntime::release_runtime_graphs() {

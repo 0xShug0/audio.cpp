@@ -93,6 +93,11 @@ struct MiniMaxMusic3Request {
     // trajectory.
     int64_t flow_uncond_interval = 2;
     int64_t flow_uncond_warmup = 2;
+    // Number of independent takes decoded together in one batched AR pass
+    // (per-take seeds seed, seed+1, ...). The global LM and depth decoder are
+    // bandwidth-bound, so K takes cost far less than K runs; flow/vocoder run
+    // per take. 1 keeps the plain single-song path.
+    int64_t ensemble_takes = 1;
 };
 
 }  // namespace engine::models::minimax_music3

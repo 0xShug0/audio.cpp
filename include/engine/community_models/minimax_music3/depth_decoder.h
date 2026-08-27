@@ -48,6 +48,20 @@ public:
         uint64_t & sample_call_index,
         uint64_t & rng_offset_blocks);
 
+    // Ensemble variant: decodes the depth chain for `songs` independent takes
+    // in one batched pass (rows are [cond_0, uncond_0, cond_1, ...]). Each
+    // take samples with its own seed/counters, so results are identical to
+    // running the single-take path per song.
+    std::vector<MiniMaxMusic3DepthCodes> generate_batch(
+        const std::vector<float> & interleaved_hiddens,
+        int64_t songs,
+        const std::vector<int32_t> & semantic_codes,
+        float guidance_scale,
+        int64_t top_k,
+        const std::vector<uint64_t> & seeds,
+        std::vector<uint64_t> & sample_call_indices,
+        std::vector<uint64_t> & rng_offset_blocks);
+
     std::vector<float> feedback_embedding(const std::vector<int32_t> & codes) const;
     void release_runtime_graphs();
 

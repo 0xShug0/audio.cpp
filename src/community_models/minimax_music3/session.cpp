@@ -142,6 +142,7 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"seed", "int", "Generation seed.", false, "0", "0"},
         {"flow_uncond_interval", "int", "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between. Default 2 is the accepted recipe (~-15..-21% wall, mel-L1 ~0.4 dB); 1 restores the exact reference trajectory.", false, "2", "1"},
         {"flow_uncond_warmup", "int", "Number of initial flow steps that always evaluate both CFG branches when delta reuse is enabled.", false, "2", "0"},
+        {"ensemble_takes", "int", "Decode N independent takes of the same prompt in one batched AR pass (seeds seed..seed+N-1); flow and vocoder run per take. Outputs are returned as named audio (take_01..take_NN) for --out-dir.", false, "1", "1"},
     };
     out.session_options = {
         {"minimax_music3.weight_type", "native|bf16|f16|q8_0|q4_0|q4_k", "Shared weight storage type.", false, "native"},
@@ -272,6 +273,12 @@ MiniMaxMusic3Request MiniMaxMusic3Session::parse_request(const runtime::TaskRequ
     if (const auto value = runtime::parse_i64_option(request.options, {"flow_uncond_warmup"})) {
         out.flow_uncond_warmup = *value;
     }
+    if (const auto value = runtime::parse_i64_option(request.options, {"ensemble_takes"})) {
+        out.ensemble_takes = *value;
+    }
+    if (out.ensemble_takes < 1 || out.ensemble_takes > 16) {
+        throw std::runtime_error("MiniMax Music 3 ensemble_takes must be in [1, 16]");
+    }
     return out;
 }
 
@@ -280,7 +287,29 @@ runtime::TaskResult MiniMaxMusic3Session::run(const runtime::TaskRequest & reque
     const auto parsed = parse_request(request);
     const auto start = Clock::now();
     runtime::TaskResult result;
-    result.audio_output = pipeline_->generate(parsed);
+    // Debug aid: route K=1 through the ensemble machinery to verify the
+    // batched path reproduces the plain path (it must at batch 2).
+    const char * force_env = std::getenv("MM3_ENSEMBLE_FORCE");
+    const bool force_ensemble = force_env != nullptr && force_env[0] == '1';
+    if (parsed.ensemble_takes > 1 || force_ensemble) {
+        std::vector<uint64_t> take_seeds(static_cast<size_t>(parsed.ensemble_takes));
+        for (size_t take = 0; take < take_seeds.size(); ++take) {
+            take_seeds[take] = parsed.seed + static_cast<uint64_t>(take);
+        }
+        auto takes = pipeline_->generate_ensemble(parsed, take_seeds);
+        result.audio_output = takes.front();
+        for (size_t take = 0; take < takes.size(); ++take) {
+            runtime::NamedAudioBuffer named;
+            char id[16];
+            std::snprintf(id, sizeof(id), "take_%02zu", take + 1);
+            named.id = id;
+            named.audio = std::move(takes[take]);
+            named.meta.emplace("seed", std::to_string(take_seeds[take]));
+            result.named_audio_outputs.push_back(std::move(named));
+        }
+    } else {
+        result.audio_output = pipeline_->generate(parsed);
+    }
     engine::debug::timing_log_scalar(
         "session.wall_ms",
         engine::debug::elapsed_ms(start, Clock::now()));

@@ -259,6 +259,15 @@ int32_t sample_semantic_token(
     return token;
 }
 
+void assign_batch_row(const std::vector<float> & values, int64_t row, int64_t width, std::vector<float> & out) {
+    if (row < 0 || width <= 0 || static_cast<int64_t>(values.size()) < (row + 1) * width) {
+        throw std::runtime_error("MiniMax Music 3 batch output shape mismatch");
+    }
+    out.assign(
+        values.begin() + static_cast<std::ptrdiff_t>(row * width),
+        values.begin() + static_cast<std::ptrdiff_t>((row + 1) * width));
+}
+
 void assign_batch2_row(const std::vector<float> & values, int64_t row, int64_t width, std::vector<float> & out) {
     if (row < 0 || row >= 2 || width <= 0 || static_cast<int64_t>(values.size()) != 2 * width) {
         throw std::runtime_error("MiniMax Music 3 batch-2 output shape mismatch");
@@ -376,7 +385,12 @@ struct MiniMaxMusic3ArRuntime::Impl {
             target_frames * assets->config.condition.condition_layers * assets->config.qwen.hidden_size));
         uint64_t sample_call_index = 0;
         std::mt19937 fallback_rng(static_cast<uint32_t>(request.seed));
+        double semantic_ms = 0.0;
+        double depth_ms = 0.0;
+        double feedback_ms = 0.0;
+        double lm_ms = 0.0;
         for (int64_t frame = 0; frame <= target_frames; ++frame) {
+            const auto t_sem = Clock::now();
             const int32_t token = sample_semantic_token(
                 prompt,
                 state.logits,
@@ -398,7 +412,9 @@ struct MiniMaxMusic3ArRuntime::Impl {
                 token >= prompt.audio_code_offset + prompt.semantic_vocab_size) {
                 throw std::runtime_error("MiniMax Music 3 sampled token outside semantic audio range");
             }
+            semantic_ms += engine::debug::elapsed_ms(t_sem, Clock::now());
             const int32_t semantic_code = token - prompt.audio_code_offset;
+            const auto t_depth = Clock::now();
             auto depth_codes = depth->generate(
                 state.cond.hidden,
                 state.uncond.hidden,
@@ -408,6 +424,7 @@ struct MiniMaxMusic3ArRuntime::Impl {
                 request.seed,
                 sample_call_index,
                 rng_offset_blocks);
+            depth_ms += engine::debug::elapsed_ms(t_depth, Clock::now());
             if (frame > 0) {
                 frame_hiddens.insert(frame_hiddens.end(), state.cond.hidden.begin(), state.cond.hidden.end());
                 frame_hiddens.insert(frame_hiddens.end(), depth_codes.hidden.begin(), depth_codes.hidden.end());
@@ -418,14 +435,204 @@ struct MiniMaxMusic3ArRuntime::Impl {
             if (frame == target_frames) {
                 break;
             }
+            const auto t_fb = Clock::now();
             const auto feedback = depth->feedback_embedding(depth_codes.codes);
             duplicate_feedback_batch2(feedback, feedback_batch);
+            feedback_ms += engine::debug::elapsed_ms(t_fb, Clock::now());
+            const auto t_lm = Clock::now();
             auto step = global_runtime->decode_embeddings_batched(feedback_batch, 2);
             assign_step_outputs(std::move(step.logits), step.hidden, state);
+            lm_ms += engine::debug::elapsed_ms(t_lm, Clock::now());
         }
+        engine::debug::timing_log_scalar("minimax_music3.ar.semantic_ms", semantic_ms);
+        engine::debug::timing_log_scalar("minimax_music3.ar.depth_ms", depth_ms);
+        engine::debug::timing_log_scalar("minimax_music3.ar.feedback_ms", feedback_ms);
+        engine::debug::timing_log_scalar("minimax_music3.ar.lm_decode_ms", lm_ms);
         engine::debug::timing_log_scalar(
             "minimax_music3.ar.total_ms",
             engine::debug::elapsed_ms(ar_start, Clock::now()));
+    }
+
+    std::vector<std::vector<float>> generate_frame_hiddens_ensemble(
+        const MiniMaxMusic3Request & request,
+        int64_t target_frames,
+        const std::vector<uint64_t> & take_seeds,
+        std::vector<uint64_t> & rng_offset_blocks) {
+        const auto ar_start = Clock::now();
+        const int64_t takes = static_cast<int64_t>(take_seeds.size());
+        if (takes <= 0 || static_cast<int64_t>(rng_offset_blocks.size()) != takes) {
+            throw std::runtime_error("MiniMax Music 3 AR ensemble take shape mismatch");
+        }
+        const auto prompt = prompt_from_request(request);
+        const int64_t prompt_steps = static_cast<int64_t>(prompt.conditional_ids.size());
+        const int64_t required_cache_steps = std::max<int64_t>(1, prompt_steps + target_frames);
+        const int64_t rows = 2 * takes;
+        const int64_t hidden_size = assets->config.qwen.hidden_size;
+
+        const auto pair_ids = batch2_prompt_ids(prompt);
+        std::vector<int32_t> prompt_ids;
+        prompt_ids.reserve(pair_ids.size() * static_cast<size_t>(takes));
+        for (int64_t take = 0; take < takes; ++take) {
+            prompt_ids.insert(prompt_ids.end(), pair_ids.begin(), pair_ids.end());
+        }
+        auto prefill = global_runtime->prefill_tokens_batched(prompt_ids, rows, prompt_steps);
+        global_runtime->start_decode_embeddings_batched(prefill.state, required_cache_steps);
+
+        // Per-take state. The shared graph advances every take each frame;
+        // takes that already sampled EOS keep occupying their rows (frozen
+        // feedback, discarded samples with restored counters) so graph shapes
+        // stay stable for CUDA-graph reuse.
+        struct TakeState {
+            MiniMaxMusic3Request request;
+            uint64_t sample_call_index = 0;
+            std::mt19937 fallback_rng;
+            std::vector<float> cond_hidden;
+            std::vector<float> uncond_hidden;
+            std::vector<float> frame_hiddens;
+            std::vector<float> last_feedback;
+            int32_t semantic_code = 0;
+            bool finished = false;
+        };
+        std::vector<TakeState> take_states(static_cast<size_t>(takes));
+        for (int64_t take = 0; take < takes; ++take) {
+            auto & ts = take_states[static_cast<size_t>(take)];
+            ts.request = request;
+            ts.request.seed = take_seeds[static_cast<size_t>(take)];
+            ts.fallback_rng.seed(static_cast<uint32_t>(ts.request.seed));
+            ts.frame_hiddens.reserve(static_cast<size_t>(
+                target_frames * assets->config.condition.condition_layers * hidden_size));
+        }
+
+        std::vector<float> batch_logits = std::move(prefill.logits);
+        std::vector<float> batch_hidden = prefill.hidden;
+        const int64_t logits_width = static_cast<int64_t>(batch_logits.size()) / rows;
+        if (static_cast<int64_t>(batch_logits.size()) != rows * logits_width ||
+            static_cast<int64_t>(batch_hidden.size()) != rows * hidden_size) {
+            throw std::runtime_error("MiniMax Music 3 AR ensemble prefill shape mismatch");
+        }
+
+        std::vector<float> pair_logits;
+        std::vector<float> depth_hiddens(static_cast<size_t>(rows * hidden_size));
+        std::vector<int32_t> depth_semantic(static_cast<size_t>(takes));
+        std::vector<uint64_t> depth_calls(static_cast<size_t>(takes));
+        std::vector<uint64_t> depth_offsets(static_cast<size_t>(takes));
+
+        for (int64_t frame = 0; frame <= target_frames; ++frame) {
+            for (int64_t take = 0; take < takes; ++take) {
+                auto & ts = take_states[static_cast<size_t>(take)];
+                assign_batch_row(batch_hidden, 2 * take, hidden_size, ts.cond_hidden);
+                assign_batch_row(batch_hidden, 2 * take + 1, hidden_size, ts.uncond_hidden);
+                if (ts.finished) {
+                    continue;
+                }
+                pair_logits.resize(static_cast<size_t>(2 * logits_width));
+                std::copy_n(
+                    batch_logits.begin() + static_cast<std::ptrdiff_t>(2 * take * logits_width),
+                    static_cast<size_t>(2 * logits_width),
+                    pair_logits.begin());
+                const int32_t token = sample_semantic_token(
+                    prompt,
+                    pair_logits,
+                    assets->config.qwen.vocab_size,
+                    semantic_logits,
+                    topk_window,
+                    compact_candidates,
+                    ts.request,
+                    ts.sample_call_index,
+                    rng_offset_blocks[static_cast<size_t>(take)],
+                    sampling_policy,
+                    semantic_scratch,
+                    semantic_weights,
+                    ts.fallback_rng);
+                if (token == prompt.audio_end_token_id) {
+                    ts.finished = true;
+                    continue;
+                }
+                if (token < prompt.audio_code_offset ||
+                    token >= prompt.audio_code_offset + prompt.semantic_vocab_size) {
+                    throw std::runtime_error("MiniMax Music 3 sampled token outside semantic audio range");
+                }
+                ts.semantic_code = token - prompt.audio_code_offset;
+            }
+            bool any_active = false;
+            for (const auto & ts : take_states) {
+                any_active = any_active || !ts.finished;
+            }
+            if (!any_active) {
+                break;
+            }
+            for (int64_t take = 0; take < takes; ++take) {
+                const auto & ts = take_states[static_cast<size_t>(take)];
+                std::copy(
+                    ts.cond_hidden.begin(), ts.cond_hidden.end(),
+                    depth_hiddens.begin() + static_cast<std::ptrdiff_t>((2 * take) * hidden_size));
+                std::copy(
+                    ts.uncond_hidden.begin(), ts.uncond_hidden.end(),
+                    depth_hiddens.begin() + static_cast<std::ptrdiff_t>((2 * take + 1) * hidden_size));
+                depth_semantic[static_cast<size_t>(take)] = ts.semantic_code;
+                depth_calls[static_cast<size_t>(take)] = ts.sample_call_index;
+                depth_offsets[static_cast<size_t>(take)] = rng_offset_blocks[static_cast<size_t>(take)];
+            }
+            auto depth_codes = depth->generate_batch(
+                depth_hiddens,
+                takes,
+                depth_semantic,
+                request.ar_guidance_scale,
+                request.top_k,
+                take_seeds,
+                depth_calls,
+                depth_offsets);
+            for (int64_t take = 0; take < takes; ++take) {
+                auto & ts = take_states[static_cast<size_t>(take)];
+                if (ts.finished) {
+                    continue;  // discard the row's output, counters stay frozen
+                }
+                ts.sample_call_index = depth_calls[static_cast<size_t>(take)];
+                rng_offset_blocks[static_cast<size_t>(take)] = depth_offsets[static_cast<size_t>(take)];
+                if (frame > 0) {
+                    auto & take_codes = depth_codes[static_cast<size_t>(take)];
+                    ts.frame_hiddens.insert(
+                        ts.frame_hiddens.end(), ts.cond_hidden.begin(), ts.cond_hidden.end());
+                    ts.frame_hiddens.insert(
+                        ts.frame_hiddens.end(), take_codes.hidden.begin(), take_codes.hidden.end());
+                }
+            }
+            if (frame == target_frames) {
+                break;
+            }
+            feedback_batch.resize(static_cast<size_t>(rows * hidden_size));
+            for (int64_t take = 0; take < takes; ++take) {
+                auto & ts = take_states[static_cast<size_t>(take)];
+                if (!ts.finished) {
+                    ts.last_feedback = depth->feedback_embedding(depth_codes[static_cast<size_t>(take)].codes);
+                }
+                if (ts.last_feedback.empty()) {
+                    ts.last_feedback.assign(static_cast<size_t>(hidden_size), 0.0F);
+                }
+                std::copy(
+                    ts.last_feedback.begin(), ts.last_feedback.end(),
+                    feedback_batch.begin() + static_cast<std::ptrdiff_t>((2 * take) * hidden_size));
+                std::copy(
+                    ts.last_feedback.begin(), ts.last_feedback.end(),
+                    feedback_batch.begin() + static_cast<std::ptrdiff_t>((2 * take + 1) * hidden_size));
+            }
+            auto step = global_runtime->decode_embeddings_batched(feedback_batch, rows);
+            batch_logits = std::move(step.logits);
+            batch_hidden = std::move(step.hidden);
+            if (static_cast<int64_t>(batch_logits.size()) != rows * logits_width ||
+                static_cast<int64_t>(batch_hidden.size()) != rows * hidden_size) {
+                throw std::runtime_error("MiniMax Music 3 AR ensemble step shape mismatch");
+            }
+        }
+        engine::debug::timing_log_scalar(
+            "minimax_music3.ar.ensemble_total_ms",
+            engine::debug::elapsed_ms(ar_start, Clock::now()));
+        std::vector<std::vector<float>> out;
+        out.reserve(static_cast<size_t>(takes));
+        for (auto & ts : take_states) {
+            out.push_back(std::move(ts.frame_hiddens));
+        }
+        return out;
     }
 
     std::vector<float> generate_frame_hiddens(
@@ -493,6 +700,14 @@ void MiniMaxMusic3ArRuntime::generate_frame_hiddens_into(
     std::vector<float> & frame_hiddens,
     const std::function<void(int64_t)> * progress) {
     impl_->generate_frame_hiddens_into(request, target_frames, rng_offset_blocks, frame_hiddens, progress);
+}
+
+std::vector<std::vector<float>> MiniMaxMusic3ArRuntime::generate_frame_hiddens_ensemble(
+    const MiniMaxMusic3Request & request,
+    int64_t target_frames,
+    const std::vector<uint64_t> & take_seeds,
+    std::vector<uint64_t> & rng_offset_blocks) {
+    return impl_->generate_frame_hiddens_ensemble(request, target_frames, take_seeds, rng_offset_blocks);
 }
 
 void MiniMaxMusic3ArRuntime::release_runtime_graphs() {

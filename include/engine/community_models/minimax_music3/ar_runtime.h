@@ -41,6 +41,17 @@ public:
         std::vector<float> & frame_hiddens,
         const std::function<void(int64_t rows_done)> * progress);
 
+    // Ensemble decode: K independent takes of the same prompt advance in one
+    // batched pass (global LM and depth run at batch 2K), each take sampling
+    // with its own seed. Weight reads are amortized across takes, which is
+    // where the bandwidth-bound AR stage spends its time. Returns per-take
+    // frame hiddens; rng_offset_blocks[i] carries take i's counter onward.
+    std::vector<std::vector<float>> generate_frame_hiddens_ensemble(
+        const MiniMaxMusic3Request & request,
+        int64_t target_frames,
+        const std::vector<uint64_t> & take_seeds,
+        std::vector<uint64_t> & rng_offset_blocks);
+
     void release_runtime_graphs();
 
 private:
