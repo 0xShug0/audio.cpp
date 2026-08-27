@@ -33,7 +33,7 @@
         "required": false
       },
       {
-        "name": "cfg_scale_text",
+        "name": "text_guidance_scale",
         "type": "float",
         "description": "Classifier-free guidance scale on the text condition.",
         "required": false,
@@ -41,7 +41,7 @@
         "default": 3.0
       },
       {
-        "name": "cfg_scale_speaker",
+        "name": "speaker_guidance_scale",
         "type": "float",
         "description": "Classifier-free guidance scale on the speaker condition.",
         "required": false,
@@ -49,7 +49,7 @@
         "default": 8.0
       },
       {
-        "name": "num_steps",
+        "name": "num_inference_steps",
         "type": "int",
         "description": "Euler sampler steps.",
         "required": false,
@@ -81,22 +81,22 @@
         "default": 0
       },
       {
-        "name": "reference_max_seconds",
+        "name": "reference_duration_sec",
         "type": "float",
         "required": false,
         "description": "Trim the speaker reference to at most this many seconds before encoding. Shorter references are cheaper and often clone better; upstream's guidance favours around 10 s. Defaults to 15 s. Values above the trained maximum of 297.1 s are clamped. Set per request, or as a session default from CLI or server config.",
         "default": 15.0
       },
       {
-        "name": "sequence_length",
-        "type": "int",
-        "description": "Pin the generation window in latents (1..640; 640 = 29.72 s). Left unset, the window is estimated per chunk from text length and widened automatically if the utterance does not finish inside it, which is substantially cheaper for short text.",
+        "name": "max_duration_sec",
+        "type": "float",
+        "description": "Cap the generation window, in seconds (up to 29.7215 s, the trained maximum; larger values are clamped to it). Quantised down to a whole latent frame of 46.44 ms. Left unset, the window is estimated per chunk from text length and widened automatically if the utterance does not finish inside it, which is substantially cheaper for short text.",
         "required": false,
-        "min": 1,
-        "max": 640
+        "min": 0.05,
+        "max": 29.7215
       },
       {
-        "name": "cfg_interval",
+        "name": "guidance_interval",
         "type": "int",
         "description": "Refresh the two unconditional CFG lanes only every Nth step inside the guidance window, reusing the previous guidance correction in between. 1 reproduces upstream exactly. Worth raising to 2 at 30+ steps, where the correction is still measured 8-10 times across the guided phase (roughly 1.3x fewer denoiser evaluations); not recommended below ~20 steps, where it is already coarsely sampled and staleness shows up as degraded timbre and text adherence.",
         "required": false,
@@ -106,7 +106,7 @@
     ],
     "session": [
       {
-        "name": "reference_max_seconds",
+        "name": "reference_duration_sec",
         "type": "float",
         "required": false,
         "description": "Trim the speaker reference to at most this many seconds before encoding. Shorter references are cheaper and often clone better; upstream's guidance favours around 10 s. Defaults to 15 s. Values above the trained maximum of 297.1 s are clamped. Set per request, or as a session default from CLI or server config.",

@@ -202,12 +202,18 @@ buffers. These are regenerated at runtime rather than shipped in the GGUF.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `target_voice` | string | — | Reference wav for cloning. No transcript needed. |
-| `cfg_scale_text` | float | 3.0 | Guidance scale on the text condition. |
-| `cfg_scale_speaker` | float | 8.0 | Guidance scale on the speaker condition. |
-| `num_steps` | int | 40 | Euler sampler steps. |
+| `text_guidance_scale` | float | 3.0 | Guidance scale on the text condition. |
+| `speaker_guidance_scale` | float | 8.0 | Guidance scale on the speaker condition. |
+| `num_inference_steps` | int | 40 | Euler sampler steps. |
 | `truncation_factor` | float | 0.8 | Initial-noise truncation. |
 | `speaker_kv_scale` | float | 1.0 | Force-speaker KV scaling; 1.5 is upstream's default when enabled. Raise only if the model drifts to a different speaker on out-of-distribution text. |
 | `seed` | int | 0 | RNG seed for the initial latent. |
+| `reference_duration_sec` | float | 15.0 | Trim the speaker reference before encoding. Also available as a session default. |
+| `max_duration_sec` | float | — | Cap the generation window (up to 29.7215 s). Quantised down to a 46.44 ms latent frame; larger values clamp. Unset, the window is estimated per chunk. |
+| `guidance_interval` | int | 1 | Refresh the two unconditional CFG lanes only every Nth guided step. 1 reproduces upstream exactly. See [performance notes](echo_tts_performance.md). |
+
+Session options are `echo_tts.reference_duration_sec` and
+`echo_tts.reference_cache_slots`.
 
 ## Text format
 
@@ -239,8 +245,8 @@ audiocpp_cli \
 
 The speaker reference is `--voice-ref`, not `--target-voice`; the latter is for
 path-based voice conversion. No transcript of the reference is needed. Useful
-request options: `num_steps` (default 40), `cfg_scale_text` (3.0),
-`cfg_scale_speaker` (8.0), `truncation_factor` (0.8), and `seed`.
+request options: `num_inference_steps` (default 40), `text_guidance_scale`
+(3.0), `speaker_guidance_scale` (8.0), `truncation_factor` (0.8), and `seed`.
 
 ## Quantisation
 
@@ -273,21 +279,21 @@ treat Q8_0 as an experiment until someone listens to both.
 
 ## Limiting the reference length
 
-`reference_max_seconds` trims the speaker reference before encoding. Shorter
+`reference_duration_sec` trims the speaker reference before encoding. Shorter
 references cost less and often clone better -- upstream's guidance favours
 around 10 s, and a long clip averages timbre over more prosodic variation.
 
 Per request (bare name):
 
 ```
---request-option reference_max_seconds=30
+--request-option reference_duration_sec=30
 ```
 
 As a default for a CLI run or a server, in the session scope (family-prefixed,
 which is how the framework namespaces session and load options):
 
 ```
---session-option echo_tts.reference_max_seconds=30
+--session-option echo_tts.reference_duration_sec=30
 ```
 
 In a server config file the same key goes under `session_options`, with a string
@@ -312,7 +318,7 @@ once per request:
 
 Default 4; `0` disables it. Each slot holds only the projected latent, at most
 2 MB. The cache lives with the session, so it helps a running server and not a
-one-shot CLI invocation. Beyond caching, the levers are `reference_max_seconds`
+one-shot CLI invocation. Beyond caching, the levers are `reference_duration_sec`
 and shorter references generally -- around 10 s is one chunk, the floor.
 
 ## The Fish S1-DAC autoencoder

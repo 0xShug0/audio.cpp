@@ -76,7 +76,7 @@ constexpr std::size_t kDefaultReferenceCacheSlots = 4;
 // itself is linear in reference length, so an untrimmed 4.5-minute clip charges
 // 1600 tokens to all 24 blocks x 40 steps. 15 s is ~81 tokens, and the model
 // card's own guidance is that ~10 s clones at least as well. Override with
-// reference_max_seconds per request or echo_tts.reference_max_seconds per
+// reference_duration_sec per request or echo_tts.reference_duration_sec per
 // session; the trained maximum is still reachable that way.
 constexpr int64_t kDefaultReferenceMaxSamples = 15 * kSampleRate;
 
@@ -220,11 +220,11 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     const std::unordered_map<std::string, std::string> & options) const {
     EchoSamplerOptions sampler;
     sampler.num_steps =
-        runtime::parse_int_option(options, {"num_steps"}).value_or(sampler.num_steps);
-    sampler.cfg_scale_text =
-        runtime::parse_float_option(options, {"cfg_scale_text"}).value_or(sampler.cfg_scale_text);
-    sampler.cfg_scale_speaker =
-        runtime::parse_float_option(options, {"cfg_scale_speaker"}).value_or(sampler.cfg_scale_speaker);
+        runtime::parse_int_option(options, {"num_inference_steps"}).value_or(sampler.num_steps);
+    sampler.cfg_scale_text = runtime::parse_float_option(options, {"text_guidance_scale"})
+                                 .value_or(sampler.cfg_scale_text);
+    sampler.cfg_scale_speaker = runtime::parse_float_option(options, {"speaker_guidance_scale"})
+                                    .value_or(sampler.cfg_scale_speaker);
     if (const auto truncation = runtime::parse_float_option(options, {"truncation_factor"})) {
         sampler.truncation_factor = *truncation;
     }
@@ -242,22 +242,30 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     // per chunk unless the caller pins it here, in which case the estimate is
     // skipped entirely and the requested value is used verbatim.
     sampler.sequence_length = assets_->config.max_sequence_length;
-    if (const auto window = runtime::parse_int_option(options, {"sequence_length"})) {
-        if (*window <= 0 || *window > assets_->config.max_sequence_length) {
-            throw std::runtime_error(
-                "Echo-TTS sequence_length must be in 1..max_sequence_length");
+    if (const auto window_sec = runtime::parse_float_option(options, {"max_duration_sec"})) {
+        if (!(*window_sec > 0.0F)) {
+            throw std::runtime_error("Echo-TTS max_duration_sec must be positive");
         }
-        sampler.sequence_length = *window;
+        // The window is quantised to whole latent frames. Round *down* so the
+        // option keeps its name: the result is never longer than what was asked
+        // for. A request below one frame still gets one; a request above the
+        // trained window is clamped rather than rejected, which is what a
+        // ceiling should do.
+        const double frames = std::floor(
+            static_cast<double>(*window_sec) * static_cast<double>(kSampleRate) /
+            static_cast<double>(assets_->config.ae_downsample_factor));
+        sampler.sequence_length = std::clamp<int64_t>(
+            static_cast<int64_t>(frames), 1, assets_->config.max_sequence_length);
         sampler.window_pinned = true;
     }
-    if (const auto interval = runtime::parse_int_option(options, {"cfg_interval"})) {
+    if (const auto interval = runtime::parse_int_option(options, {"guidance_interval"})) {
         if (*interval < 1) {
-            throw std::runtime_error("Echo-TTS cfg_interval must be at least 1");
+            throw std::runtime_error("Echo-TTS guidance_interval must be at least 1");
         }
         sampler.cfg_interval = *interval;
     }
     if (sampler.num_steps <= 0) {
-        throw std::runtime_error("Echo-TTS num_steps must be positive");
+        throw std::runtime_error("Echo-TTS num_inference_steps must be positive");
     }
     return sampler;
 }
@@ -312,16 +320,16 @@ int64_t EchoTtsSession::resolve_reference_max_samples(
     // publishes 15.0 as the default in both scopes. Request options are bare names,
     // session options carry the family prefix -- parse_cli_options adds it for
     // the session and load scopes only.
-    auto seconds = runtime::parse_float_option(request_options, {"reference_max_seconds"});
+    auto seconds = runtime::parse_float_option(request_options, {"reference_duration_sec"});
     if (!seconds.has_value()) {
         seconds = runtime::parse_float_option(
-            options().options, {"echo_tts.reference_max_seconds"});
+            options().options, {"echo_tts.reference_duration_sec"});
     }
     if (!seconds.has_value()) {
         return kDefaultReferenceMaxSamples;
     }
     if (!(*seconds > 0.0F)) {
-        throw std::runtime_error("Echo-TTS reference_max_seconds must be positive");
+        throw std::runtime_error("Echo-TTS reference_duration_sec must be positive");
     }
     const auto requested = static_cast<int64_t>(
         static_cast<double>(*seconds) * static_cast<double>(kSampleRate));

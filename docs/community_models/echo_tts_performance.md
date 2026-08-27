@@ -34,7 +34,7 @@ default that was wrong.
 Estimates snap to a 64-frame grid (`kWindowQuantum`) because denoiser graphs are
 keyed on `sequence_length` and rebuilt when it changes.
 
-- Pin explicitly: `sequence_length` request option (skips the estimate).
+- Pin explicitly: `max_duration_sec` request option (skips the estimate).
 - Enable: `AUDIOCPP_ECHO_TTS_ADAPTIVE_WINDOW=1` (off by default).
 
 Confirmed in your logs: 23 bytes → 128-frame window, `keys` 824 → 312.
@@ -62,14 +62,14 @@ than the graph, and returns the cache untouched when it is narrower, leaving
 **Tradeoff:** the cache is 3x larger. Confirmed active in your logs by
 `kv_text.0.k n=141312` = 23 × 2048 × 3.
 
-### 3. `reference_max_seconds` defaults to 15 s
+### 3. `reference_duration_sec` defaults to 15 s
 
 Previously unbounded to the trained maximum, so an untrimmed clip charged up to
 1600 speaker tokens to `keys` in all 24 blocks at every step, plus a linear
 encode pass per chunk of reference. Confirmed in your logs: 30 s → 161 tokens
 became 15 s → 80 tokens, taking `keys` from 824 to 744 at the same window.
 
-### 4. `cfg_interval` (opt-in, default 1 = off)
+### 4. `guidance_interval` (opt-in, default 1 = off)
 
 Echo guides every step in the t >= 0.5 window with three forward passes:
 
@@ -77,11 +77,11 @@ Echo guides every step in the t >= 0.5 window with three forward passes:
 v_pred = v_cond + 3.0*(v_cond - v_text_uncond) + 8.0*(v_cond - v_speaker_uncond)
 ```
 
-`v_cond` moves quickly in t; the *correction* does not. `cfg_interval` measures
+`v_cond` moves quickly in t; the *correction* does not. `guidance_interval` measures
 the correction every Nth guided step and reuses it in between, so skipped steps
 cost one forward pass instead of three.
 
-| num_steps | interval | guided | refreshes | lane-evals | vs 40/1 |
+| steps | interval | guided | refreshes | lane-evals | vs 40/1 |
 |---|---|---|---|---|---|
 | 40 | 1 | 20 | 20 | 80 | 1.00x |
 | 40 | 2 | 20 | 10 | 60 | 1.33x |
@@ -125,13 +125,13 @@ so treat those as a lower bound, not a measurement on real audio.
 ```json
 "session_options": {
   "echo_tts.reference_cache_slots": "8",
-  "echo_tts.reference_max_seconds": "15"
+  "echo_tts.reference_duration_sec": "15"
 },
 "default_request_options": {
-  "num_steps": 14,
-  "cfg_interval": 1
+  "num_inference_steps": 14,
+  "guidance_interval": 1
 }
 ```
 
-Do **not** put `sequence_length` here — it pins the window and gives back the
+Do **not** put `max_duration_sec` here — it pins the window and gives back the
 whole of change 1.
