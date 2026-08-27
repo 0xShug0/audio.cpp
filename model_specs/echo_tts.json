@@ -27,12 +27,6 @@
   "options": {
     "request": [
       {
-        "name": "target_voice",
-        "type": "audio_path",
-        "description": "Reference audio path for zero-shot cloning. Wav only; no transcript required.",
-        "required": false
-      },
-      {
         "name": "text_guidance_scale",
         "type": "float",
         "description": "Classifier-free guidance scale on the text condition.",
@@ -123,25 +117,42 @@
   },
   "packages": [
     {
-      "id": "echo_tts_orig",
-      "display_name": "Echo-TTS Original-Dtype GGUF",
+      "id": "echo_tts_q8_0",
+      "display_name": "Echo-TTS Q8_0 GGUF",
       "default": true,
       "format": "gguf",
-      "precision": "orig",
+      "precision": "q8_0",
       "target_directory": "Echo-TTS-GGUF",
       "files": [
-        "Echo-TTS-GGUF/model.gguf"
+        "echo-tts-q8_0.gguf"
       ],
       "download": {
-        "kind": "unsupported",
-        "reason": "Echo-TTS model packaging is not implemented yet."
-      },
-      "strip_prefix": "Echo-TTS-GGUF"
+        "kind": "huggingface_snapshot",
+        "repo": "dignome/Echo-TTS",
+        "revision": "919681c9906c88963352d5f96e0f732ddd3989ce",
+        "gated": false
+      }
+    },
+    {
+      "id": "echo_tts_f16",
+      "display_name": "Echo-TTS F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Echo-TTS-GGUF",
+      "files": [
+        "echo-tts-f16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "dignome/Echo-TTS",
+        "revision": "919681c9906c88963352d5f96e0f732ddd3989ce",
+        "gated": false
+      }
     }
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "echo_tts_orig",
+    "recommended_package": "echo_tts_q8_0",
     "tags": [
       "TTS",
       "Clone",

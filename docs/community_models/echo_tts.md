@@ -214,7 +214,6 @@ buffers. These are regenerated at runtime rather than shipped in the GGUF.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `target_voice` | string | — | Reference wav for cloning. No transcript needed. |
 | `text_guidance_scale` | float | 3.0 | Guidance scale on the text condition. |
 | `speaker_guidance_scale` | float | 8.0 | Guidance scale on the speaker condition. |
 | `num_inference_steps` | int | 40 | Euler sampler steps. |
