@@ -325,10 +325,7 @@ core::TensorValue causal_conv_transpose1d(
 }
 
 core::TensorValue l2_normalize_last(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
-    const bool materialize_input = ctx.backend_type == core::BackendType::Metal;
-    const auto normalized_input = materialize_input
-        ? core::ensure_backend_addressable_layout(ctx, input)
-        : input;
+    const auto normalized_input = core::wrap_tensor(ggml_cont(ctx.ggml, input.tensor), input.shape, input.type);
     auto squared = modules::MulModule{}.build(ctx, normalized_input, normalized_input);
     auto sum = modules::ReduceSumModule({static_cast<int>(input.shape.rank - 1)}).build(ctx, squared);
     auto shifted = core::wrap_tensor(ggml_scale_bias(ctx.ggml, sum.tensor, 1.0F, 1.0e-12F), sum.shape, GGML_TYPE_F32);
@@ -592,7 +589,8 @@ core::TensorValue build_encode_quantizer(
     x = build_window_transformer(ctx, constants, x, weights.pre_module, 128);
     trace_outputs.push_back({"audio8_tts.codec.after_pre_module", x});
 
-    auto residual = x;
+    auto cont_x = core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, x.type);
+    auto residual = cont_x;
     auto quantize_one = [&](const QuantizerUnitWeights & quantizer, int64_t codebook_size) {
         auto projected = modules::Conv1dModule({kCodecDim, 8, 1, 1, 0, 1, true}).build(ctx, residual, quantizer.in_proj);
         auto projected_btd = l2_normalize_last(ctx, modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, projected));

@@ -321,8 +321,12 @@ Audio8TtsSession::Audio8TtsSession(
       contract_(require_contract(std::move(contract))),
       reference_cache_(resolve_reference_cache_slots(this->options())) {
     runtime::validate_spec_backed_session_options(this->options(), *contract_, kFamily, "Audio8 TTS");
-    if (task_.task != runtime::VoiceTaskKind::Tts || task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Audio8 TTS only supports offline TTS sessions");
+    // Voice cloning reuses the TTS path; references only switch the prompt form
+    // (processing_arktts.py:_prompt_segments).
+    if ((task_.task != runtime::VoiceTaskKind::Tts &&
+         task_.task != runtime::VoiceTaskKind::VoiceCloning) ||
+        task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("Audio8 TTS supports offline TTS and voice cloning sessions only");
     }
     const auto ar_weight_type =
         option_weight_type(options, "audio8_tts.weight_type", assets::TensorStorageType::Native);
@@ -423,6 +427,11 @@ Audio8TtsRequest Audio8TtsSession::make_request(const runtime::TaskRequest & req
         out.references = std::move(references);
     } else if (request.text_input.has_value()) {
         out.references.clear();
+    }
+    if (task_.task == runtime::VoiceTaskKind::VoiceCloning && out.references.empty()) {
+        throw std::runtime_error(
+            "Audio8 TTS voice cloning requires a speaker reference: --voice-ref <wav> with "
+            "--reference-text, a cached --voice-id, or the multi_reference_cond option");
     }
     if (out.text.empty()) {
         throw std::runtime_error("Audio8 TTS request text must not be empty");
