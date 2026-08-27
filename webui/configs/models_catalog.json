@@ -62,6 +62,9 @@
       "input_hint": "**Confucius4-TTS**：需要参考音色；当前中文/英语路径更可靠，非中英语种仍在验证中。",
       "input_hint_en": "**Confucius4-TTS**: requires a reference voice. Chinese/English are the most reliable paths; other languages are still being validated." },
 
+    { "id": "echo-tts",               "display_name": "Echo-TTS (voice clone)",                "family": "echo_tts",             "path": "models/Echo-TTS-GGUF",                   "task": "clon",  "mode": "offline", "download_id": "echo_tts_orig",           "min_vram_gb": 10,
+      "input_hint_en": "**Echo-TTS**: English zero-shot cloning at 44.1 kHz. Upload a reference voice -- no transcript needed. Output is CC-BY-NC-SA and may not be used commercially." },
+
     { "id": "chatterbox",             "display_name": "Chatterbox (voice clone)",              "family": "chatterbox",           "path": "models/chatterbox",                      "task": "clon",  "mode": "offline", "download_id": "chatterbox",              "min_vram_gb": 12 },
 
     { "id": "ace-step",               "display_name": "ACE-Step 1.5 (music gen)",              "family": "ace_step",             "path": "models/Ace-Step1.5",                     "task": "gen",   "mode": "offline", "download_id": "ace_step",                "session_options": { "ace_step.mem_saver": "true", "ace_step.dit_weight_type": "q8_0", "ace_step.text_encoder_weight_type": "q8_0", "ace_step.planner_weight_type": "q8_0" }, "min_vram_gb": 8 },
