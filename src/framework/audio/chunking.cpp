@@ -556,7 +556,9 @@ void append_chunk_word_timestamps(
         const int64_t local_start = std::max<int64_t>(word.span.start_sample, 0);
         const int64_t local_end = std::min<int64_t>(word.span.end_sample, source_samples);
         if (local_start >= local_end) {
-            throw std::runtime_error("Audio chunker word merge received a timestamp outside the chunk span");
+            // Skip words that fall entirely outside the chunk span (e.g. aligner
+            // hallucinations at silent tails) instead of failing the whole request.
+            continue;
         }
         const int64_t global_start = source_span.start_sample + local_start;
         if (global_start < keep_span.start_sample || global_start >= keep_span.end_sample) {

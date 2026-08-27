@@ -765,6 +765,26 @@ void test_chunk_word_timestamp_merge_keeps_non_overlapping_source_span() {
     require_span(merged[1].span, 1160, 1220, "inside word source span");
 }
 
+void test_chunk_word_timestamp_merge_skips_out_of_span_words() {
+    // Words that lie entirely outside the chunk span (e.g. forced-aligner
+    // hallucinations over zero-padded tail samples) are dropped instead of
+    // failing the whole transcription request.
+    std::vector<engine::runtime::WordTimestamp> merged;
+    engine::audio::append_chunk_word_timestamps(
+        merged,
+        {
+            word("kept", 10, 40),
+            word("past_end", 150, 180),
+            word("before_start", -50, -10),
+            word("starts_at_chunk_end", 100, 160),
+        },
+        engine::runtime::TimeSpan{1000, 1100});
+
+    engine::test::require_eq(merged.size(), static_cast<size_t>(1), "out-of-span merged word count");
+    engine::test::require_eq(merged[0].word, std::string("kept"), "in-span word kept");
+    require_span(merged[0].span, 1010, 1040, "in-span word span");
+}
+
 void test_chunk_word_timestamp_merge_rejects_invalid_spans() {
     require_throws(
         []() {
@@ -785,16 +805,6 @@ void test_chunk_word_timestamp_merge_rejects_invalid_spans() {
                 engine::runtime::TimeSpan{100, 90});
         },
         "inverted chunk span");
-
-    require_throws(
-        []() {
-            std::vector<engine::runtime::WordTimestamp> merged;
-            engine::audio::append_chunk_word_timestamps(
-                merged,
-                {word("outside", 120, 140)},
-                engine::runtime::TimeSpan{1000, 1100});
-        },
-        "word outside chunk");
 
     require_throws(
         []() {
@@ -837,6 +847,7 @@ int main() {
         test_chunk_word_timestamp_merge_offsets_and_clips();
         test_chunk_word_timestamp_merge_appends_multiple_chunks();
         test_chunk_word_timestamp_merge_keeps_non_overlapping_source_span();
+        test_chunk_word_timestamp_merge_skips_out_of_span_words();
         test_chunk_word_timestamp_merge_rejects_invalid_spans();
         std::cout << "audio_chunking_test passed\n";
     } catch (const std::exception & ex) {
