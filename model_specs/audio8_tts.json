@@ -233,28 +233,6 @@
         "Audio8-TTS-Preview-0.1B-GGUF/audio8-tts-preview-0.1b-bf16.gguf"
       ],
       "strip_prefix": "Audio8-TTS-Preview-0.1B-GGUF"
-    },
-    {
-      "id": "audio8_tts_preview_1_0b_q8_0",
-      "display_name": "Audio8 TTS Preview 1.0B Q8_0 GGUF",
-      "format": "gguf",
-      "precision": "q8_0",
-      "target_directory": "Audio8-TTS-Preview-1.0B-GGUF",
-      "files": [
-        "Audio8-TTS-Preview-1.0B-GGUF/audio8-tts-preview-1.0b-q8_0.gguf"
-      ],
-      "strip_prefix": "Audio8-TTS-Preview-1.0B-GGUF"
-    },
-    {
-      "id": "audio8_tts_preview_1_0b_bf16",
-      "display_name": "Audio8 TTS Preview 1.0B BF16 GGUF",
-      "format": "gguf",
-      "precision": "bf16",
-      "target_directory": "Audio8-TTS-Preview-1.0B-GGUF",
-      "files": [
-        "Audio8-TTS-Preview-1.0B-GGUF/audio8-tts-preview-1.0b-bf16.gguf"
-      ],
-      "strip_prefix": "Audio8-TTS-Preview-1.0B-GGUF"
     }
   ],
   "sources": [
