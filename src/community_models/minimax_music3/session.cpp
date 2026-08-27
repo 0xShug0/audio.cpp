@@ -140,7 +140,7 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"ar_guidance_scale", "float", "Autoregressive semantic and depth CFG scale.", false, "1.5", "0.0"},
         {"top_k", "int", "Top-k sampling for semantic and residual code sampling.", false, "50", "1"},
         {"seed", "int", "Generation seed.", false, "0", "0"},
-        {"flow_uncond_interval", "int", "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between (1 = every step).", false, "1", "1"},
+        {"flow_uncond_interval", "int", "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between. Default 2 is the accepted recipe (~-15..-21% wall, mel-L1 ~0.4 dB); 1 restores the exact reference trajectory.", false, "2", "1"},
         {"flow_uncond_warmup", "int", "Number of initial flow steps that always evaluate both CFG branches when delta reuse is enabled.", false, "2", "0"},
     };
     out.session_options = {

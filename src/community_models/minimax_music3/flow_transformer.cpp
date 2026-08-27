@@ -375,11 +375,12 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
             k = core::reshape_tensor(ctx, k, core::TensorShape::from_dims({batch, steps, config.attention_heads, config.head_dim}));
             v = core::reshape_tensor(ctx, v, core::TensorShape::from_dims({batch, steps, config.attention_heads, config.head_dim}));
             if (!skip_rope) {
-                if (batch == 1) {
-                    // The framework split-rope lowering aliases buffers at
-                    // batch 1 (bitwise-reproducible call-to-call divergence);
-                    // the native partial NEOX rope computes the identical
-                    // rotation from positions and sidesteps that path.
+                static const bool legacy_rope = getenv("MM3_LEGACY_ROPE") != nullptr;
+                if (!legacy_rope) {
+                    // Native partial NEOX rope from integer positions: one
+                    // fused kernel per projection instead of the split-table
+                    // slice/mul/concat chain (which also aliased buffers at
+                    // batch 1), for every batch size.
                     q = core::wrap_tensor(
                         ggml_rope_ext(ctx.ggml, q.tensor, slot.rope_positions.tensor, nullptr,
                                       static_cast<int>(config.rotary_dim), GGML_ROPE_TYPE_NEOX, 0,
@@ -420,13 +421,25 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
 
             auto ffn = modules::LayerNormModule({inner, 1.0e-5F, true, true, false}).build(ctx, x, block.norm2);
             ffn = modules::LinearModule({inner, 2 * config.ff_inner_dim, true}).build(ctx, ffn, block.ff_in);
-            const auto gate_states = modules::SliceModule({2, 0, config.ff_inner_dim}).build(ctx, ffn);
-            auto gate = modules::SliceModule({2, config.ff_inner_dim, config.ff_inner_dim}).build(ctx, ffn);
-            gate = modules::SiluModule().build(ctx, gate);
-            auto gated = core::wrap_tensor(
-                ggml_mul(ctx.ggml, gate_states.tensor, gate.tensor),
-                gate_states.shape,
-                GGML_TYPE_F32);
+            static const bool legacy_glu = getenv("MM3_LEGACY_GLU") != nullptr;
+            core::TensorValue gated;
+            if (!legacy_glu) {
+                // Fused SwiGLU over the packed [states | gate] projection (our gate
+                // half feeds silu, i.e. the swapped ggml convention): one
+                // kernel instead of slice+silu+mul.
+                gated = core::wrap_tensor(
+                    ggml_swiglu_swapped(ctx.ggml, ffn.tensor),
+                    ffn.shape.with_last_dim(config.ff_inner_dim),
+                    GGML_TYPE_F32);
+            } else {
+                const auto gate_states = modules::SliceModule({2, 0, config.ff_inner_dim}).build(ctx, ffn);
+                auto gate = modules::SliceModule({2, config.ff_inner_dim, config.ff_inner_dim}).build(ctx, ffn);
+                gate = modules::SiluModule().build(ctx, gate);
+                gated = core::wrap_tensor(
+                    ggml_mul(ctx.ggml, gate_states.tensor, gate.tensor),
+                    gate_states.shape,
+                    GGML_TYPE_F32);
+            }
             gated = modules::LinearModule({config.ff_inner_dim, inner, true}).build(ctx, gated, block.ff_out);
             if (!skip_ffn) {
                 x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, gated.tensor), x.shape, GGML_TYPE_F32);

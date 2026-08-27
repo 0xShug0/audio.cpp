@@ -88,7 +88,10 @@ struct MiniMaxMusic3Request {
     // Flow CFG guidance-delta reuse: when interval > 1 the unconditional
     // branch is evaluated only on warmup steps, every interval-th step and
     // the final step; other steps reuse the cached (cond - uncond) delta.
-    int64_t flow_uncond_interval = 1;
+    // The default of 2 is the listening-accepted recipe (mel-L1 ~0.4 dB to
+    // the exact reference at -15..-21% wall); set 1 for the exact-reference
+    // trajectory.
+    int64_t flow_uncond_interval = 2;
     int64_t flow_uncond_warmup = 2;
 };
 

@@ -166,8 +166,16 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         const int64_t target_frames = std::min<int64_t>(
             assets->config.max_audio_frames,
             static_cast<int64_t>(request.duration_sec * static_cast<double>(assets->config.frame_rate)));
-        if (pipeline_overlap) {
+        // Overlap pays off only while the flow tail can hide under AR slack;
+        // on long requests the constant SM contention degrades AR far more
+        // than the tail saves (measured +70% AR at 60 s), so it is applied
+        // to short requests only.
+        constexpr int64_t kOverlapMaxFrames = 600;
+        if (pipeline_overlap && target_frames <= kOverlapMaxFrames) {
             return generate_overlapped(request, target_frames);
+        }
+        if (pipeline_overlap) {
+            engine::debug::timing_log_scalar("minimax_music3.pipeline.overlap_skipped_long", 1.0);
         }
         return generate_sequential(request, target_frames);
     }
