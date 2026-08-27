@@ -207,7 +207,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         {
             auto & ar_runtime = ensure_ar();
             take_hiddens = ar_runtime.generate_frame_hiddens_ensemble(
-                request, target_frames, take_seeds, rng_offsets);
+                request, target_frames, take_seeds, rng_offsets,
+                request.ensemble_prefix_frames);
             release_ar_after_phase();
         }
         const int64_t hidden_frame_width =
@@ -225,7 +226,12 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
                 throw std::runtime_error("MiniMax Music 3 AR produced no frames");
             }
             MiniMaxMusic3Request take_request = request;
-            take_request.seed = take_seeds[static_cast<size_t>(take)];
+            // With an intro-lock prefix the flow noise is shared (master
+            // seed): the locked intro renders identically for every take,
+            // and post-fork divergence comes from the conditions themselves.
+            take_request.seed = request.ensemble_prefix_frames > 0
+                ? take_seeds[0]
+                : take_seeds[static_cast<size_t>(take)];
             out.push_back(denoise_and_vocode(
                 frame_hiddens, generated_frames, take_request, rng_offsets[static_cast<size_t>(take)]));
         }

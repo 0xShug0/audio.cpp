@@ -98,6 +98,11 @@ struct MiniMaxMusic3Request {
     // bandwidth-bound, so K takes cost far less than K runs; flow/vocoder run
     // per take. 1 keeps the plain single-song path.
     int64_t ensemble_takes = 1;
+    // Intro-lock fork: the first N frames are decoded once at batch 2 (one
+    // master trajectory shared by every take), then the batched decode KV is
+    // replicated to 2K rows and the takes diverge with their own seeds. Take
+    // 0 continues the master trajectory exactly. 0 disables the fork.
+    int64_t ensemble_prefix_frames = 0;
 };
 
 }  // namespace engine::models::minimax_music3

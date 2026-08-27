@@ -50,7 +50,8 @@ public:
         const MiniMaxMusic3Request & request,
         int64_t target_frames,
         const std::vector<uint64_t> & take_seeds,
-        std::vector<uint64_t> & rng_offset_blocks);
+        std::vector<uint64_t> & rng_offset_blocks,
+        int64_t prefix_frames = 0);
 
     void release_runtime_graphs();
 

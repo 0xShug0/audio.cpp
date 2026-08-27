@@ -143,6 +143,7 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"flow_uncond_interval", "int", "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between. Default 2 is the accepted recipe (~-15..-21% wall, mel-L1 ~0.4 dB); 1 restores the exact reference trajectory.", false, "2", "1"},
         {"flow_uncond_warmup", "int", "Number of initial flow steps that always evaluate both CFG branches when delta reuse is enabled.", false, "2", "0"},
         {"ensemble_takes", "int", "Decode N independent takes of the same prompt in one batched AR pass (seeds seed..seed+N-1); flow and vocoder run per take. Outputs are returned as named audio (take_01..take_NN) for --out-dir.", false, "1", "1"},
+        {"ensemble_prefix_frames", "int", "Intro-lock for ensembles: decode the first N frames once as a shared master trajectory (~25 frames per second), then fork the takes (take_01 continues the master exactly). 0 disables.", false, "0", "0"},
     };
     out.session_options = {
         {"minimax_music3.weight_type", "native|bf16|f16|q8_0|q4_0|q4_k", "Shared weight storage type.", false, "native"},
@@ -278,6 +279,12 @@ MiniMaxMusic3Request MiniMaxMusic3Session::parse_request(const runtime::TaskRequ
     }
     if (out.ensemble_takes < 1 || out.ensemble_takes > 16) {
         throw std::runtime_error("MiniMax Music 3 ensemble_takes must be in [1, 16]");
+    }
+    if (const auto value = runtime::parse_i64_option(request.options, {"ensemble_prefix_frames"})) {
+        out.ensemble_prefix_frames = *value;
+    }
+    if (out.ensemble_prefix_frames < 0) {
+        throw std::runtime_error("MiniMax Music 3 ensemble_prefix_frames must be non-negative");
     }
     return out;
 }
