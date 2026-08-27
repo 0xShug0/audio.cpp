@@ -42,6 +42,8 @@ struct HubertEncoderConfig {
     bool apply_encoder_input_layer_norm = false;
     bool apply_final_layer_norm = true;
     bool pad_odd_tokens_with_attention_mask = false;
+    bool materialize_output = false;
+    bool release_graph_after_encode = false;
     int64_t final_projection_size = 0;
     HubertFeatureExtractorNorm feature_extractor_norm = HubertFeatureExtractorNorm::LayerNormEveryLayer;
     HubertEncoderLayerNormOrder encoder_layer_norm_order = HubertEncoderLayerNormOrder::PreNorm;

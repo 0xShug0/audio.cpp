@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { onDestroy, onMount } from 'svelte';
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
@@ -19,16 +20,21 @@
     setModelsRoot,
     speech,
     stopModelInstall,
-    transcription,
-    unloadModel,
-    uploadWav,
+        transcription,
+        unloadModel,
+        uploadFile,
+        uploadWav,
+        voicePreviewUrl,
     type ModelInstallJob,
     type ModelPackageSize,
     type DirectoryBrowserResponse
   } from '$lib/api';
   import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
+  import MediaPreview from '$lib/MediaPreview.svelte';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
+  import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
+  import Arena from './Arena.svelte';
   import type {
     AudioOutput,
     CatalogEntry,
@@ -45,7 +51,8 @@
   } from '$lib/voices';
   import '../app.css';
 
-  let tab: 'studio' | 'models' | 'logs' = 'studio';
+  let tab: 'studio' | 'arena' | 'models' | 'logs' = 'studio';
+  let arenaComponent: { runArena: () => Promise<void> } | null = null;
   let selectedId = catalog[0]?.id || '';
   let selected: CatalogEntry = catalog[0];
   let modelPath = selected?.path || '';
@@ -65,11 +72,15 @@
   let lyrics = '';
   let duration = 30;
   let seed = 1234;
-  let maxTokens = 1024;
-  let sourceFile: File | null = null;
-  let voiceFile: File | null = null;
+      let maxTokens = 1024;
+      let sourceFile: File | null = null;
+      let videoFile: File | null = null;
+      let voiceFile: File | null = null;
   let vibeVoiceSpeakerFiles: Array<File | null> = [null, null, null, null];
+  let sourceInput: HTMLInputElement | null = null;
+  let videoInput: HTMLInputElement | null = null;
   let voiceInput: HTMLInputElement | null = null;
+  let vibeVoiceSpeakerInputs: Array<HTMLInputElement | null> = [null, null, null, null];
   let referenceTextFile: File | null = null;
   let referenceTextInput: HTMLInputElement | null = null;
   let advancedJson = '{}';
@@ -117,6 +128,10 @@
   let bundledVoices: string[] = [];
   let quickStartVoice = '';
   let uiLanguage = 'en';
+  let uiTheme: UiTheme = 'system';
+  let systemPrefersDark = true;
+  let themePreferenceQuery: MediaQueryList | null = null;
+  let themePreferenceListener: ((event: MediaQueryListEvent) => void) | null = null;
   let tr = createTranslator(uiLanguage);
   $: tr = createTranslator(uiLanguage);
 
@@ -126,11 +141,35 @@
     demo_3_woman: 'demo_3_woman',
     demo_4_woman: 'demo_4_woman'
   };
+  const exposeAllStudioPackageFamilies = new Set([
+    'audiosr',
+    'controlfoley',
+    'firered_audio',
+    'fireredtts3',
+    'meanvc2',
+    'midashenglm_gen'
+  ]);
 
   function chooseUiLanguage(code: string) {
     uiLanguage = resolveUiLanguage([code]);
     localStorage.setItem('audiocpp.ui.language', uiLanguage);
     document.documentElement.lang = uiLanguage;
+  }
+
+  function applyUiTheme(theme = uiTheme) {
+    if (!browser) return;
+    const nextTheme = resolvedTheme(theme, systemPrefersDark);
+    document.documentElement.dataset.theme = nextTheme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute(
+      'content',
+      nextTheme === 'dark' ? '#07101f' : '#f6f8fb'
+    );
+  }
+
+  function chooseUiTheme(theme: string) {
+    uiTheme = resolveUiTheme(theme);
+    localStorage.setItem(UI_THEME_STORAGE_KEY, uiTheme);
+    applyUiTheme(uiTheme);
   }
 
   async function clearLegacyUiCaches() {
@@ -345,8 +384,15 @@
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
     modelMatchesSelectedPackage(model, selected));
-  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task);
+  $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
+    selected?.id === 'firered-audio-acoustic-edit';
+  $: usesDurationSecOption =
+    selected?.family === 'controlfoley' ||
+    selected?.family === 'midashenglm_gen';
+  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
+    isFireRedAudioEdit;
   $: acceptsSource = needsSource || selected?.task === 'gen';
+  $: acceptsVideo = selected?.request_options?.includes('video') === true;
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
@@ -364,6 +410,9 @@
     : Object.entries(demoVoiceSources)
       .filter(([, source]) => bundledVoices.includes(source))
       .map(([voice]) => voice);
+  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false
+    ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
+    : '';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr'].includes(selected?.family);
@@ -468,7 +517,8 @@
 
   function studioPackageSlots(entry: CatalogEntry) {
     const choices = entry.install_packages || [];
-    if (entry.family === 'ace_step' || entry.family === 'minimax_music3') {
+    if (entry.family === 'ace_step' || entry.family === 'minimax_music3' ||
+        exposeAllStudioPackageFamilies.has(entry.family)) {
       return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
     }
     const q8 = choices.find((choice) => choice.format === 'gguf' &&
@@ -527,9 +577,35 @@
     }
   }
 
+  function clearVoiceReference() {
+    quickStartVoice = '';
+    savedVoiceId = '';
+    voiceFile = null;
+    voiceName = '';
+    referenceTextFile = null;
+    referenceText = '';
+    if (voiceInput) voiceInput.value = '';
+    if (referenceTextInput) referenceTextInput.value = '';
+  }
+
+  function clearSourceFile() {
+    sourceFile = null;
+    if (sourceInput) sourceInput.value = '';
+  }
+
+  function clearVideoFile() {
+    videoFile = null;
+    if (videoInput) videoInput.value = '';
+  }
+
   function chooseVibeVoiceSpeaker(index: number, file: File | null) {
     vibeVoiceSpeakerFiles = vibeVoiceSpeakerFiles.map((current, currentIndex) =>
       currentIndex === index ? file : current);
+  }
+
+  function clearVibeVoiceSpeaker(index: number) {
+    chooseVibeVoiceSpeaker(index, null);
+    if (vibeVoiceSpeakerInputs[index]) vibeVoiceSpeakerInputs[index].value = '';
   }
 
   function chooseQuickStartVoice(voice: string) {
@@ -820,8 +896,9 @@
   function clearModelSelection() {
     selectedId = '';
     quickStartVoice = '';
-    configuredVoices = [];
-    modelPath = '';
+        configuredVoices = [];
+        videoFile = null;
+        modelPath = '';
     installed = null;
     paramSpecs = [];
     advancedValues = {};
@@ -897,9 +974,10 @@
 
   function resetParams() {
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
-    paramSpecs = selected?.family === 'vibevoice'
-      ? byId.filter((spec) => spec.name !== 'voice_samples')
-      : byId;
+    const hidesDurationSec = selected?.family === 'controlfoley' || selected?.family === 'midashenglm_gen';
+    paramSpecs = byId.filter((spec) =>
+      !(selected?.family === 'vibevoice' && spec.name === 'voice_samples') &&
+      !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     if (selected?.family === 'minimax_h3') {
       duration = 15;
@@ -1421,12 +1499,15 @@
         throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires lyrics.`);
       }
       await ensureLoaded();
-      const options = requestOptions();
-      if (usesVibeVoiceSpeakerFiles) {
-        const samples = await vibeVoiceSamplePaths();
-        if (samples) options.voice_samples = samples;
-      }
-      const audio = acceptsSource ? await stagedPath(sourceFile) : undefined;
+        const options = requestOptions();
+        if (usesVibeVoiceSpeakerFiles) {
+          const samples = await vibeVoiceSamplePaths();
+          if (samples) options.voice_samples = samples;
+        }
+        if (acceptsVideo && videoFile) {
+          options.video = await uploadFile(videoFile, aborter?.signal);
+        }
+        const audio = acceptsSource ? await stagedPath(sourceFile) : undefined;
       const voiceRef = needsVoice && !usesVibeVoiceSpeakerFiles ? await stagedPath(voiceFile) : undefined;
 
       if (['tts', 'clon', 'vdes'].includes(selected.task)) {
@@ -1491,7 +1572,10 @@
         if (['gen', 's2s', 'align'].includes(selected.task) && language.trim()) request.language = language;
         if (selected.task === 'gen') {
           if (lyrics.trim()) request.lyrics = lyrics;
-          request.duration_seconds = duration;
+          if (!isFireRedAudioEdit) {
+            if (usesDurationSecOption) options.duration_sec = duration;
+            else request.duration_seconds = duration;
+          }
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
@@ -1561,7 +1645,8 @@
     }
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !running) {
       event.preventDefault();
-      run();
+      if (tab === 'arena') arenaComponent?.runArena();
+      else run();
     }
   }
 
@@ -1796,6 +1881,15 @@
 
   onMount(async () => {
     await clearLegacyUiCaches();
+    themePreferenceQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    systemPrefersDark = themePreferenceQuery.matches;
+    themePreferenceListener = (event) => {
+      systemPrefersDark = event.matches;
+      if (uiTheme === 'system') applyUiTheme();
+    };
+    themePreferenceQuery.addEventListener('change', themePreferenceListener);
+    uiTheme = resolveUiTheme(localStorage.getItem(UI_THEME_STORAGE_KEY));
+    applyUiTheme(uiTheme);
     const savedLanguage = localStorage.getItem('audiocpp.ui.language');
     uiLanguage = resolveUiLanguage(savedLanguage ? [savedLanguage] : navigator.languages);
     document.documentElement.lang = uiLanguage;
@@ -1856,6 +1950,9 @@
     for (const output of outputAudio) URL.revokeObjectURL(output.url);
     if (installPoll !== null) window.clearInterval(installPoll);
     if (packageSizePoll !== null) window.clearInterval(packageSizePoll);
+    if (themePreferenceQuery && themePreferenceListener) {
+      themePreferenceQuery.removeEventListener('change', themePreferenceListener);
+    }
   });
 </script>
 
@@ -1872,6 +1969,7 @@
   </div>
   <nav aria-label={tr('nav.primary')}>
     <button class:active={tab === 'studio'} on:click={openStudioPage}>{tr('nav.studio')}</button>
+    <button class:active={tab === 'arena'} on:click={() => tab = 'arena'}>{tr('nav.arena')}</button>
     {#if server?.ui_management !== false}
       <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
     {/if}
@@ -1883,6 +1981,15 @@
       on:change={(event) => chooseUiLanguage(event.currentTarget.value)}>
       {#each uiLanguages as language}
         <option value={language.code}>{language.name}</option>
+      {/each}
+    </select>
+  </label>
+  <label class="theme-picker">
+    <span>{tr('theme.label')}</span>
+    <select value={uiTheme} aria-label={tr('theme.label')}
+      on:change={(event) => chooseUiTheme(event.currentTarget.value)}>
+      {#each uiThemes as theme}
+        <option value={theme.id}>{tr(`theme.${theme.id}`, {}, theme.label)}</option>
       {/each}
     </select>
   </label>
@@ -2049,10 +2156,11 @@
           {/if}
         </div>
 
-        {#if acceptsSource}
-          <label for="source">{tr('request.sourceAudio')} {needsSource ? '' : `(${tr('request.optional')})`}</label>
-          <input id="source" class="file file-native" type="file" accept="audio/*"
-            on:change={(event) => sourceFile = event.currentTarget.files?.[0] || null} />
+            {#if acceptsSource}
+              <label for="source">{tr('request.sourceAudio')} {needsSource ? '' : `(${tr('request.optional')})`}</label>
+              <input id="source" class="file file-native" type="file" accept="audio/*"
+                bind:this={sourceInput}
+                on:change={(event) => sourceFile = event.currentTarget.files?.[0] || null} />
           <label class="file-picker" for="source"><strong>{tr('file.choose')}</strong><span>{sourceFile?.name || tr('file.none')}</span></label>
           <div class="media-actions">
             {#if recordingTarget === 'source'}
@@ -2061,9 +2169,11 @@
             {:else}
               <button type="button" disabled={Boolean(recorder) || liveRecording}
                 on:click={() => startRecording('source')}>{tr('request.recordMicrophone')}</button>
+              <button type="button" disabled={!sourceFile} on:click={clearSourceFile}>{tr('file.clear')}</button>
               {#if sourceFile}<span>{sourceFile.name}</span>{/if}
             {/if}
           </div>
+          <MediaPreview file={sourceFile} kind="audio" label={tr('file.preview')} />
           {#if supportsLiveAsr}
             <div class="live-card">
               <div>
@@ -2076,11 +2186,24 @@
                 <button type="button" disabled={running || Boolean(recorder)}
                   on:click={startLiveTranscription}>{tr('request.startLive')}</button>
               {/if}
-            </div>
-          {/if}
-        {/if}
+                </div>
+              {/if}
+            {/if}
 
-        {#if needsVoice && !usesVibeVoiceSpeakerFiles}
+            {#if acceptsVideo}
+              <label for="video">Video <span>{tr('request.optional')}</span></label>
+              <input id="video" class="file file-native" type="file" accept="video/*"
+                bind:this={videoInput}
+                on:change={(event) => videoFile = event.currentTarget.files?.[0] || null} />
+              <label class="file-picker" for="video"><strong>{tr('file.choose')}</strong><span>{videoFile?.name || tr('file.none')}</span></label>
+              <div class="media-actions">
+                <button type="button" disabled={!videoFile} on:click={clearVideoFile}>{tr('file.clear')}</button>
+                {#if videoFile}<span>{videoFile.name}</span>{/if}
+              </div>
+              <MediaPreview file={videoFile} kind="video" label={tr('file.preview')} />
+            {/if}
+
+            {#if needsVoice && !usesVibeVoiceSpeakerFiles}
           {#if allowsQuickStartVoice && quickStartVoices.length}
             <label for="quick-start-voice">{server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
@@ -2092,6 +2215,7 @@
               <div class="quick-voice-note">
                 {tr('voice.bundledNote')}
               </div>
+              <MediaPreview src={quickStartVoicePreview} name={quickStartVoice} kind="audio" label={tr('file.preview')} />
             {/if}
           {/if}
           <div class="reference-input-grid">
@@ -2117,9 +2241,13 @@
             {:else}
               <button type="button" disabled={Boolean(recorder) || liveRecording}
                 on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
+              <button type="button"
+                disabled={!quickStartVoice && !savedVoiceId && !voiceFile && !referenceTextFile && !referenceText.trim()}
+                on:click={clearVoiceReference}>Clear reference</button>
               {#if voiceFile}<span>{voiceFile.name}</span>{/if}
             {/if}
           </div>
+          <MediaPreview file={voiceFile} kind="audio" label={tr('file.preview')} />
           <label for="reference">{tr('voice.transcript')}
             <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
           </label>
@@ -2159,11 +2287,17 @@
                 <div>
                   <label for={'vibevoice-speaker-' + speaker}>Speaker {speaker + 1}</label>
                   <input id={'vibevoice-speaker-' + speaker} class="file file-native" type="file" accept="audio/*"
+                    bind:this={vibeVoiceSpeakerInputs[speaker]}
                     on:change={(event) => chooseVibeVoiceSpeaker(speaker, event.currentTarget.files?.[0] || null)} />
                   <label class="file-picker" for={'vibevoice-speaker-' + speaker}>
                     <strong>{tr('file.choose')}</strong>
                     <span>{vibeVoiceSpeakerFiles[speaker]?.name || tr('file.none')}</span>
                   </label>
+                  <div class="media-actions">
+                    <button type="button" disabled={!vibeVoiceSpeakerFiles[speaker]}
+                      on:click={() => clearVibeVoiceSpeaker(speaker)}>{tr('file.clear')}</button>
+                  </div>
+                  <MediaPreview file={vibeVoiceSpeakerFiles[speaker]} kind="audio" label={tr('file.preview')} />
                 </div>
               {/each}
             </div>
@@ -2268,6 +2402,25 @@
         {#if outputJson}<pre>{outputJson}</pre>{/if}
       </section>
     </div>
+  {:else if tab === 'arena'}
+    <Arena
+      bind:this={arenaComponent}
+      {activeCatalog}
+      {loadedModels}
+      {server}
+      {modelsFolder}
+      {maxTokens}
+      {entrySelectable}
+      {studioPackageSlots}
+      {packageIsAvailable}
+      {packageSessionOptionsMatch}
+      {supportsMaxTokens}
+      {supportsRequestOption}
+      {requiresRequestOption}
+      {refresh}
+      {log}
+      {tr}
+    />
   {:else if tab === 'models'}
     <section class="page-head">
       <p class="eyebrow">{tr('models.eyebrow')}</p><h1>{tr('models.title')}</h1>

@@ -15,6 +15,9 @@ WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
 DEPLOYMENT_BUILD_SET="OFF"
+AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="OFF"
+AUDIOCPP_USE_SYSTEM_OPENSSL="OFF"
+AUDIOCPP_BORINGSSL_ARCHIVE=""
 AUDIOCPP_MODEL_SET="full"
 AUDIOCPP_MODELS=""
 NATIVE_CPU="ON"
@@ -101,6 +104,18 @@ while [[ $# -gt 0 ]]; do
             DEPLOYMENT_BUILD_SET="ON"
             shift
             ;;
+        --native-model-manager)
+            AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="ON"
+            shift
+            ;;
+        --system-openssl)
+            AUDIOCPP_USE_SYSTEM_OPENSSL="ON"
+            shift
+            ;;
+        --boringssl-archive)
+            AUDIOCPP_BORINGSSL_ARCHIVE="$2"
+            shift 2
+            ;;
         --model-set)
             case "$2" in
                 full|core|custom)
@@ -161,6 +176,17 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" != "ON" ]]; then
+    if [[ "$AUDIOCPP_USE_SYSTEM_OPENSSL" == "ON" ]]; then
+        echo "--system-openssl requires --native-model-manager" >&2
+        exit 1
+    fi
+    if [[ -n "$AUDIOCPP_BORINGSSL_ARCHIVE" ]]; then
+        echo "--boringssl-archive requires --native-model-manager" >&2
+        exit 1
+    fi
+fi
 
 GENERATOR="Unix Makefiles"
 if command -v ninja >/dev/null 2>&1; then
@@ -324,7 +350,7 @@ echo "Using generator: $GENERATOR"
 echo "Using build dir: $BUILD_DIR"
 echo "Including CUDA backend: $ENGINE_ENABLE_CUDA"
 if [[ "$ENGINE_ENABLE_CUDA" == "ON" ]]; then
-    echo "CUDA architectures: ${CUDA_ARCH:-<auto: machine-native at configure time>}"
+    echo "CUDA architectures: ${CUDA_ARCH:-<portable default list>}"
 fi
 echo "Including Vulkan backend: $ENGINE_ENABLE_VULKAN"
 echo "Including HIP backend: $ENGINE_ENABLE_HIP"
@@ -338,6 +364,11 @@ echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
 echo "Building warmbench: $WITH_WARMBENCH"
 echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
+echo "Native model manager: $AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
+if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" == "ON" ]]; then
+    echo "System OpenSSL: $AUDIOCPP_USE_SYSTEM_OPENSSL"
+    echo "BoringSSL archive: ${AUDIOCPP_BORINGSSL_ARCHIVE:-<download at configure time>}"
+fi
 echo "Model composite: $AUDIOCPP_MODEL_SET"
 if [[ -n "$AUDIOCPP_MODELS" ]]; then
     echo "Selected models: $AUDIOCPP_MODELS"
@@ -357,9 +388,15 @@ CMAKE_ARGS=(
     -DENGINE_BUILD_TESTS="$WITH_TESTS"
     -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
     -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
+    -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
+    -DAUDIOCPP_USE_SYSTEM_OPENSSL="$AUDIOCPP_USE_SYSTEM_OPENSSL"
+    -UAUDIOCPP_BORINGSSL_ARCHIVE
     -DAUDIOCPP_MODEL_SET="$AUDIOCPP_MODEL_SET"
     -DAUDIOCPP_MODELS="$AUDIOCPP_MODELS"
 )
+if [[ -n "$AUDIOCPP_BORINGSSL_ARCHIVE" ]]; then
+    CMAKE_ARGS+=(-DAUDIOCPP_BORINGSSL_ARCHIVE="$AUDIOCPP_BORINGSSL_ARCHIVE")
+fi
 
 if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
     CMAKE_ARGS+=(

@@ -6,6 +6,7 @@
 | MarbleNet VAD | `marblenet_vad` | `vad` | [MarbleNet VAD](#marblenet-vad) |
 | Sortformer Diarization | `sortformer_diar` | `diar` | [Sortformer Diarization](#sortformer-diarization) |
 | MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |
+| Qwen3 Forced Aligner | `qwen3_forced_aligner` | `align` | [Qwen3 Forced Aligner](models/qwen3.md#qwen3-forced-aligner) |
 
 This page covers VAD, diarization, and forced-aligner models. ASR models are documented in [ASR models](asr.md).
 

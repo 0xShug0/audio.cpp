@@ -16,7 +16,7 @@ Enable the backend you plan to run: `ENGINE_ENABLE_CUDA=ON` for CUDA, `ENGINE_EN
 Pick the mode that matches the behavior you want:
 
 | If you want... | Build with... | Run with... | Behavior |
-|---|---|---|
+|---|---|---|---|
 | API/config-driven server | default build | `audiocpp_server --config server.json` | Uses models declared in the config. The UI is available unless disabled by config or `--no-ui`. |
 | Read-only UI for configured models | default build | `audiocpp_server --config server.json --ui` | Browser UI is available for configured models, without downloads, deletes, or dynamic package management. |
 | Full UI with downloads and model switching | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | UI can browse packages, download models, load/unload models, delete packages, and use temporary uploads. |
@@ -93,7 +93,13 @@ Set top-level `"backend"` to `"cuda"`, `"cpu"`, `"vulkan"`, or `"metal"`. CUDA i
 Set top-level `"lazy_load": true` to register all configured model ids at startup but defer each model's framework load and session creation until its first request. A model can override the default with `"lazy": true` or `"lazy": false`.
 
 > [!WARNING]
-> Lazy loading does not unload models after a request. Once a model is first used, the server keeps that model and session in memory for reuse until the server exits.
+> Lazy loading does not unload models after a request. Once a model is first used, the server keeps that model and session in memory for reuse until the server exits, unless `max_loaded_models` limits residency.
+
+Set top-level `"max_loaded_models"` to bound how many models are resident in memory at once. When a request needs a model that is not loaded and the limit is already reached, the server first unloads the least recently used idle model (freeing VRAM on GPU backends) and reloads it on its own next request. `1` enforces a single loaded model at a time, which is the practical choice when each model alone nearly fills the device. Higher values keep that many most recently used models warm. The default `0` disables the limit. A model that is mid-inference is never unloaded; if the limit is reached and every loaded model is busy, the request fails with `503` so the client can retry. With more non-lazy models configured than the limit allows, startup loads the first `max_loaded_models` of them and defers the rest to their first request. The equivalent command-line option is `--max-loaded-models <n>`.
+
+Set top-level `"idle_unload_ms"` to have the server unload every resident model after it has gone that long without any model load/run. The next request reloads lazily; a model mid-inference is never unloaded. This complements `max_loaded_models`: that bounds peak residency, this frees memory during quiet periods. Defaults to `0` (disabled). The `--idle-unload-ms <ms>` command-line flag overrides the config value.
+
+Set top-level `"min_free_memory_mb"` to refuse a model load when the host or the GPU backend does not have that much free memory left after the estimated footprint of the new model. The estimate covers only what the loader will actually read: a single-file model's weights, the one GGUF a model directory selects (`model.gguf` or the sole `*.gguf`), or a full safetensors/HF checkpoint tree, plus any session auxiliary files. A directory holding several GGUFs with no `model.gguf` is ambiguous, so the guard makes no estimate there: the loader's own error surfaces for spec-driven loads, and family-specific layouts the estimator cannot resolve load unguarded (the server logs that the guard skipped the model). The estimate is scaled by a runtime overhead factor plus a fixed floor. When the check fails, the request returns HTTP 503 with `insufficient_memory`; the client may retry later. Defaults to `0`, which disables the guard entirely so existing deployments are unaffected; set a positive value to opt in. The `--min-free-memory-mb <mb>` command-line flag overrides the config value.
 
 Set per-model `"default_request_options"` to apply request-option defaults to every request for that model. Values supplied by the actual request body override these defaults.
 

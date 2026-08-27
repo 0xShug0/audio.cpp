@@ -7,9 +7,11 @@
 | Confucius4-TTS | `confucius4_tts` | `clon` | [Confucius4-TTS](#confucius4-tts) |
 | DramaBox | `dramabox` | `tts`, `clon` | [DramaBox](#dramabox) |
 | DotTTS | `dots_tts` | `tts`, `clon` | [DotTTS](#dottts) |
+| F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](community_models/f5_tts.md) |
 | MioTTS | `miotts` | `tts` | [MioTTS](#miotts) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
+| MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](community_models/moss_voicegen.md) |
 | MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](community_models/minimax_h3.md) |
 | MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
 | NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
@@ -19,6 +21,8 @@
 | VoxCPM2 | `voxcpm2` | `tts`, `vdes` | [VoxCPM2](#voxcpm2) |
 | Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](#higgs-audio-v3-tts) |
 | Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
+| FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
+| FireRedAudio | `firered_audio` | `asr`, `tts`, `clon`, `vdes` | [FireRedAudio](models/firered_audio.md) |
 | IndexTTS2 | `index_tts2` | `tts` | [IndexTTS](models/index_tts.md) |
 | IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS](models/index_tts.md) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
@@ -26,6 +30,7 @@
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
+| VieNeu-TTS | `vietneu_tts` | `tts`, `clon` | [VieNeu-TTS](community_models/vietneu_tts.md) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
 
 This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/community_models/` when a model needs more space.

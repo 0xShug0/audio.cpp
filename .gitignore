@@ -19,10 +19,12 @@ __pycache__/
 /tests/omnivoice/outputs/
 /unittests/
 /models/
+/granite5asr/
 /reference/
 /resources/
 /patches/
 /target_proj/
+/tools_local/
 /nocommit/
 /perf/
 /logs/
@@ -40,3 +42,5 @@ __pycache__/
 /webui/native/.svelte-kit/
 /webui/native/dist/*
 !/webui/native/dist/index.html
+
+audio-vtest-*

@@ -18,6 +18,14 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// The host/GPU does not currently have enough free memory to load a model.
+// Mapped to HTTP 503: a transient server condition the caller may retry after
+// other models have been evicted or the system has freed memory.
+class InsufficientMemoryError : public std::runtime_error {
+public:
+    explicit InsufficientMemoryError(const std::string & message) : std::runtime_error(message) {}
+};
+
 inline std::int64_t steady_now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
@@ -113,6 +121,19 @@ public:
                     "model '" + std::string(label) + "' is busy: timed out after " +
                     std::to_string(timeout_ms) + " ms waiting for the inference lock");
             }
+        }
+        busy_since_ms_.store(steady_now_ms(), std::memory_order_release);
+        return Lock(*this, std::move(lock));
+    }
+
+    // Non-blocking variant: the lock only if the model is idle right now, nullopt
+    // otherwise. Eviction sweeps use this so a caller that already holds one
+    // model's guard never waits on another's -- two loads evicting each other's
+    // target would otherwise deadlock.
+    std::optional<Lock> try_acquire() {
+        std::unique_lock<std::timed_mutex> lock(mutex_, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            return std::nullopt;
         }
         busy_since_ms_.store(steady_now_ms(), std::memory_order_release);
         return Lock(*this, std::move(lock));

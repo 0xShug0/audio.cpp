@@ -234,6 +234,9 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         config.max_request_body_bytes = parse_max_request_body_bytes(*value);
     }
     config.busy_timeout_ms = engine::io::json::optional_i32(root, "busy_timeout_ms", config.busy_timeout_ms);
+    config.max_loaded_models = engine::io::json::optional_i32(root, "max_loaded_models", config.max_loaded_models);
+    config.idle_unload_ms = engine::io::json::optional_i32(root, "idle_unload_ms", config.idle_unload_ms);
+    config.min_free_memory_mb = engine::io::json::optional_i32(root, "min_free_memory_mb", config.min_free_memory_mb);
     if (const auto * value = root.find("live_ingest")) {
         config.live_ingest = parse_live_ingest_limits(*value, config.live_ingest, "server live_ingest");
     }
@@ -251,6 +254,15 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
     }
     if (config.busy_timeout_ms < 0) {
         throw std::runtime_error("server busy_timeout_ms must be >= 0 (0 disables the guard)");
+    }
+    if (config.max_loaded_models < 0) {
+        throw std::runtime_error("server max_loaded_models must be >= 0 (0 disables the limit)");
+    }
+    if (config.idle_unload_ms < 0) {
+        throw std::runtime_error("server idle_unload_ms must be >= 0 (0 disables idle unload)");
+    }
+    if (config.min_free_memory_mb < 0) {
+        throw std::runtime_error("server min_free_memory_mb must be >= 0 (0 disables the memory guard)");
     }
     if (config.threads <= 0) {
         throw std::runtime_error("server threads must be positive");

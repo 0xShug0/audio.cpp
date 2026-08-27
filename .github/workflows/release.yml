@@ -1,0 +1,474 @@
+# audio.cpp - release.yml
+#
+# Ported from llama.cpp's release workflow and stripped to the backends
+# audio.cpp ships: CPU, CUDA, Vulkan, Metal (ROCm kept as best-effort,
+# disabled like llama.cpp). Windows CUDA uses the GGML_BACKEND_DL model so the
+# CUDA backend is shipped once as ggml-cuda.dll (thin cli/server/gguf shells)
+# with the heavy CUDA runtime DLLs in a separate cudart...zip, and the release
+# job publishes.
+#
+# Semantic-version, tag-driven releases. The workflow runs when a `v*` (semver)
+# tag is pushed (drafting a Release and Publishing it) or when run manually
+# from the Actions UI with an explicit version. Publishing attaches the built
+# binaries to that version's GitHub Release. There is NO auto-release on every
+# push to `main`.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic version to release, e.g. 1.2.0 or v1.2.0 (used for manual runs; tag-triggered runs use the pushed tag).'
+        required: true
+        default: ''
+        type: string
+      publish:
+        description: 'Publish a GitHub Release after the build. Leave unchecked for a build-only dry run.'
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - 'v*'
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  BUILD_TARGETS: audiocpp_cli audiocpp_server audiocpp_gguf
+  VULKAN_VERSION: '1.4.357.0'
+  CMAKE_ARGS: "-DAUDIOCPP_DEPLOYMENT_BUILD=ON -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_CUDA_GRAPHS=ON"
+
+# note: run this workflow one at a time for better cache reuse
+concurrency:
+  group: release
+  queue: max
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      # The only triggers are a manually-run workflow or a pushed `v*` tag -
+      # both are intentional, so always proceed.
+      - id: check
+        run: echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    needs: check-release
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve release tag
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            TAG="${{ inputs.version }}"
+          else
+            echo "::error::No semver tag or version provided (push a v* tag, or run manually with a version)."
+            exit 1
+          fi
+          [[ "$TAG" == v* ]] || TAG="v${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  macos-metal:
+    name: macOS (${{ matrix.build }})
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build: 'arm64'
+            arch: 'arm64'
+            os: macos-26
+            defines: '-DGGML_METAL=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF'
+          - build: 'x64'
+            arch: 'x64'
+            os: macos-15-intel
+            # Metal disabled on x64 (GitHub Intel runners have no usable GPU)
+            defines: '-DGGML_METAL=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_RPATH='@loader_path' -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF \
+            ${{ matrix.defines }} ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(sysctl -n hw.logicalcpu)" --target ${{ env.BUILD_TARGETS }}
+      - name: Stage bundle
+        run: |
+          cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-macos-${{ matrix.arch }}-metal
+          path: build/bin/*
+
+  linux-cpu:
+    name: Ubuntu x64 (CPU)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake make glslc libvulkan-dev spirv-headers
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Stage bundle
+        run: |
+          cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu
+          path: build/bin/*
+
+  linux-vulkan:
+    name: Ubuntu x64 (Vulkan)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake make glslc libvulkan-dev spirv-headers
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Stage bundle
+        run: |
+          cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan
+          path: build/bin/*
+
+  windows-cpu:
+    name: Windows x64 (CPU)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -DeploymentBuild -NativeModelManager
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager
+      - name: Bundle VC runtime
+        shell: pwsh
+        working-directory: build/windows-cpu-release/bin
+        # App-local deployment of the MSVC runtime so the prebuilt binaries run
+        # on clean Windows without a separately installed VC++ Redistributable.
+        # Sizes: vcruntime140* + msvcp140* + vcomp140 ~2 MB (well under 1 MB
+        # compressed), negligible against the CPU/Vulkan/CUDA zip sizes.
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending |
+            Select-Object -First 1
+          foreach ($sub in 'x64\Microsoft.VC143.CRT', 'x64\Microsoft.VC143.OPENMP') {
+            $dir = Join-Path $redist.FullName $sub
+            if (Test-Path $dir) {
+              Get-ChildItem "$dir\*.dll" | Where-Object {
+                $_.Name -match '^(vcruntime140|msvcp140|vcomp140)'
+              } | Copy-Item -Destination . -ErrorAction SilentlyContinue
+            }
+          }
+          Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
+      - name: Stage bundle
+        shell: pwsh
+        working-directory: build/windows-cpu-release/bin
+        run: |
+          cp ..\..\..\LICENSE . 2>$null
+          Copy-Item -Recurse ..\..\..\tools .\tools -ErrorAction SilentlyContinue
+          Copy-Item -Recurse ..\..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu
+          path: build/windows-cpu-release/bin/*
+
+  windows-vulkan:
+    name: Windows x64 (Vulkan)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          curl.exe -o "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" -L "https://sdk.lunarg.com/sdk/download/${env:VULKAN_VERSION}/windows/vulkansdk-windows-X64-${env:VULKAN_VERSION}.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\\VulkanSDK\\${env:VULKAN_VERSION}"
+          Add-Content $env:GITHUB_PATH "C:\\VulkanSDK\\${env:VULKAN_VERSION}\\bin"
+      - name: Build
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_server -DeploymentBuild -NativeModelManager
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager
+      - name: Bundle VC runtime
+        shell: pwsh
+        working-directory: build/windows-vulkan-release/bin
+        # App-local deployment of the MSVC runtime (see windows-cpu comments).
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending |
+            Select-Object -First 1
+          foreach ($sub in 'x64\Microsoft.VC143.CRT', 'x64\Microsoft.VC143.OPENMP') {
+            $dir = Join-Path $redist.FullName $sub
+            if (Test-Path $dir) {
+              Get-ChildItem "$dir\*.dll" | Where-Object {
+                $_.Name -match '^(vcruntime140|msvcp140|vcomp140)'
+              } | Copy-Item -Destination . -ErrorAction SilentlyContinue
+            }
+          }
+          Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
+      - name: Stage bundle
+        shell: pwsh
+        working-directory: build/windows-vulkan-release/bin
+        run: |
+          cp ..\..\..\LICENSE . 2>$null
+          Copy-Item -Recurse ..\..\..\tools .\tools -ErrorAction SilentlyContinue
+          Copy-Item -Recurse ..\..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-vulkan
+          path: build/windows-vulkan-release/bin/*
+
+  windows-cuda:
+    name: 'Windows x64 (CUDA ${{ matrix.label }})'
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cuda: '12.4.1'
+            label: '12.4'
+            cuda_archs: '70;75;80;86;89;90'
+          - cuda: '13.3.0'
+            label: '13.3'
+            cuda_archs: '75;80;86;89;90;120'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install CUDA build tools
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: ${{ matrix.cuda }}
+          method: 'local'
+      - name: Configure + Build (OpenMP off)
+        shell: cmd
+        # Direct CMake (bypasses build_windows.ps1, which hard-requires OpenMP and
+        # asserts under the CUDA toolchain). OpenMP off matches llama.cpp's CUDA
+        # path. vcvarsall.bat puts cl.exe on PATH for nvcc.
+        #
+        # ENGINE_ENABLE_CPU_ALL_VARIANTS flips BUILD_SHARED_LIBS=ON +
+        # GGML_BACKEND_DL=ON (audio.cpp/CMakeLists.txt), building the CUDA backend
+        # once as ggml-cuda.dll and keeping cli/server/gguf as thin shells that
+        # load backends at runtime -- the same distribution model llama.cpp uses.
+        # CUDA kernels are no longer duplicated into 3 executables.
+        #
+        # CMAKE_CUDA_ARCHITECTURES must be pinned: audio.cpp defaults to
+        # "native" (the build host GPU), which is meaningless on GPU-less CI
+        # runners and yields an unreliable CUDA fatbin. Use fixed arch lists per
+        # toolkit so the released binaries carry correct kernels for the
+        # supported GPUs (RTX 20/30/40/50-series and datacenter-class). The
+        # value is quoted so the ';' separators survive cmd's tokenizer.
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64 >nul
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+            -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF ^
+            -DENGINE_ENABLE_CUDA_GRAPHS=ON -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_METAL=OFF ^
+            -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_NATIVE_CPU=ON -DENGINE_BUILD_TESTS=OFF ^
+            -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON ^
+            "-DCMAKE_CUDA_ARCHITECTURES=${{ matrix.cuda_archs }}" ^
+            -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DCUDAToolkit_ROOT="%CUDA_PATH%"
+          cmake --build build --config Release -j %NUMBER_OF_PROCESSORS% --target ${{ env.BUILD_TARGETS }}
+      - name: Bundle CUDA runtime
+        shell: pwsh
+        # llama.cpp copies the runtime DLLs from every candidate dir without
+        # looking at robocopy's exit code: bin\x64 is a CUDA 13 layout, so on
+        # CUDA 12.x robocopy returns 16 for that missing dir, which is benign
+        # (llama's step ends on the successful 7z). Mirror that here -- copy
+        # from whichever dir exists and terminate on exit 0. The trailing guard
+        # only trips if NO cudart was copied at all (a broken/empty toolkit).
+        # cufft64_*.dll is included because engine_runtime links CUDA::cufft
+        # for its CUDA inverse-STFT kernel (CMakeLists.txt).
+        #
+        # Staged outside build/bin so the bin artifact stays free of the heavy
+        # runtime DLLs; the cudart artifact is uploaded separately below.
+        run: |
+          $dst = "build\cudart"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          $dlls = "cudart64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll", "cufft64_*.dll"
+          robocopy "$env:CUDA_PATH\bin" $dst $dlls
+          robocopy "$env:CUDA_PATH\lib" $dst $dlls
+          robocopy "$env:CUDA_PATH\bin\x64" $dst $dlls
+          if (-not (Get-ChildItem -Path $dst -Filter 'cudart64_*.dll' -ErrorAction SilentlyContinue)) {
+            Write-Error "CUDA runtime DLLs were not found under $env:CUDA_PATH"
+            exit 1
+          }
+          exit 0
+      - name: Bundle VC runtime
+        shell: pwsh
+        working-directory: build/bin
+        # App-local deployment of the MSVC runtime (see windows-cpu comments).
+        # The CUDA build disables OpenMP, so vcomp140 is not needed - only the
+        # CRT DLLs for the host-side /MD runtime.
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending |
+            Select-Object -First 1
+          $dir = Join-Path $redist.FullName 'x64\Microsoft.VC143.CRT'
+          if (Test-Path $dir) {
+            Get-ChildItem "$dir\*.dll" | Where-Object {
+              $_.Name -match '^(vcruntime140|msvcp140)'
+            } | Copy-Item -Destination . -ErrorAction SilentlyContinue
+          }
+          Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
+      - name: Stage bundle
+        shell: pwsh
+        working-directory: build/bin
+        run: |
+          cp ..\..\LICENSE . 2>$null
+          Copy-Item -Recurse ..\..\tools .\tools -ErrorAction SilentlyContinue
+          Copy-Item -Recurse ..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cuda${{ matrix.label }}
+          path: build/bin/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-cudart-windows-x64-cuda${{ matrix.label }}
+          path: build/cudart/*
+
+  # Best-effort ROCm builds. Kept OUT of the release `needs` and commented by
+  # default (llama.cpp ships its ROCm job disabled as well) because GitHub
+  # runners have no AMD GPU and HIP toolchain provisioning is heavy. Enable by
+  # uncommenting and pointing at a runner that can provide a ROCm/HIP runtime.
+  #   linux-rocm:
+  #     ...
+
+  release:
+    name: Create release
+    needs:
+      - check-release
+      - get-version
+      - macos-metal
+      - linux-cpu
+      - linux-vulkan
+      - windows-cpu
+      - windows-vulkan
+      - windows-cuda
+    if: ${{ needs.check-release.outputs.should_release == 'true' && (github.ref_type == 'tag' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+      # Each artifact downloads into assets/<artifact-name>/ holding the raw
+      # bundle (binaries + tools/ + model_specs/). Archive per platform here so
+      # the release ships the same zip/tar.gz layout as before; artifact names
+      # already match the final asset basenames.
+      - name: Create release archives
+        run: |
+          set -euo pipefail
+          if ! command -v zip >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y zip
+          fi
+          cd assets
+          for d in */; do
+            name="${d%/}"
+            echo "Packing ${name}"
+            case "$name" in
+              *windows*)
+                (cd "$d" && zip -qqr "../${name}.zip" .)
+                ;;
+              *)
+                (cd "$d" && tar -czf "../${name}.tar.gz" .)
+                ;;
+            esac
+          done
+          rm -rf -- */
+          ls -la
+      - name: Create and push git tag
+        run: |
+          TAG="${{ needs.get-version.outputs.tag }}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists, skipping creation"
+          else
+            git tag "${TAG}"
+            git push origin "${TAG}"
+          fi
+      - name: Check for existing release
+        id: relstate
+        run: |
+          TAG="${{ needs.get-version.outputs.tag }}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Existing release (e.g. one the maintainer drafted and published):
+      # attach the built binaries only, preserving its pre-release flag and
+      # hand-written notes. --clobber allows rebuilding the same version.
+      - name: Upload binaries to existing release
+        if: ${{ steps.relstate.outputs.exists == 'true' }}
+        run: |
+          gh release upload "${{ needs.get-version.outputs.tag }}" assets/*.zip assets/*.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+      # Newly-created tag with no release yet: create the release w/ notes.
+      - name: Create release
+        if: ${{ steps.relstate.outputs.exists != 'true' }}
+        run: |
+          gh release create "${{ needs.get-version.outputs.tag }}" assets/*.zip assets/*.tar.gz --title "${{ needs.get-version.outputs.tag }}" --generate-notes --repo "$GITHUB_REPOSITORY"

@@ -15,6 +15,11 @@
 
 namespace engine::modules {
 
+enum class CampplusEncoderWeightLayout {
+    Unfused,
+    Fused,
+};
+
 struct CampplusEncoderConfig {
     int64_t feat_dim = 80;
     int64_t embedding_size = 192;
@@ -25,6 +30,7 @@ struct CampplusEncoderConfig {
     bool normalize_partial_segment_by_full_length = false;
     std::string tensor_prefix = "speaker_encoder";
     float stats_variance_floor = 0.0F;
+    CampplusEncoderWeightLayout weight_layout = CampplusEncoderWeightLayout::Unfused;
 };
 
 struct CampplusEncoderOutputs {

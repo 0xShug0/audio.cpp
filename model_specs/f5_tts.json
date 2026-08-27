@@ -1,0 +1,314 @@
+{
+  "schema_version": 1,
+  "family": "f5_tts",
+  "display_name": "F5-TTS",
+  "description": "Community F5-TTS flow-matching diffusion transformer for zero-shot voice cloning, including Arabic via the Habibi-TTS finetune (SWivid). Text conv conditioner, RoPE DiT, CFM sampler, Vocos vocoder.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "ar"
+  ],
+  "runtime": {
+    "tags": [
+      "server"
+    ]
+  },
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript matching the reference voice audio; required by F5-TTS zero-shot cloning.",
+        "required": true
+      },
+      {
+        "name": "dialect",
+        "type": "string",
+        "description": "Habibi dialect token: UNK MSA SAU UAE ALG IRQ EGY MAR OMN TUN LEV SDN LBY; default UNK.",
+        "required": false,
+        "default": "UNK"
+      },
+      {
+        "name": "cfg_strength",
+        "type": "float",
+        "description": "Classifier-free guidance strength; default 2.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 10.0,
+        "default": 2.0
+      },
+      {
+        "name": "sway_sampling_coef",
+        "type": "float",
+        "description": "Sway sampling coefficient for inference timesteps; default -1.0.",
+        "required": false,
+        "min": -5.0,
+        "max": 5.0,
+        "default": -1.0
+      },
+      {
+        "name": "speed",
+        "type": "float",
+        "description": "Speech speed multiplier applied via the F5 fix_duration parameter; default 1.0.",
+        "required": false,
+        "min": 0.5,
+        "max": 2.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Non-negative noise seed; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "CFM Euler steps (NFE); default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance strength; default 2.0.",
+        "required": false,
+        "min": 0.0,
+        "max": 10.0,
+        "default": 2.0
+      },
+      {
+        "name": "strip_diacritics",
+        "type": "bool",
+        "description": "Strip Arabic combining marks (harakat/tanwin/shadda/tatweel) before synthesis; Habibi is trained on undiacritized ASR transcripts and garbles diacritized input. Default true.",
+        "required": false,
+        "default": true
+      }
+    ],
+    "session": [
+      {
+        "name": "vocos_path",
+        "type": "string",
+        "description": "Path to the Vocos vocoder checkpoint (vocos.safetensors); required unless placed next to the DiT checkpoint.",
+        "required": false
+      },
+      {
+        "name": "dialect",
+        "type": "string",
+        "description": "Default Habibi dialect token for requests that do not set it; default UNK.",
+        "required": false,
+        "default": "UNK"
+      },
+      {
+        "name": "frame_budget",
+        "type": "int",
+        "description": "Total mel frames per CFM pass (ref + generated); larger budgets allow sentence-scale chunks at higher VRAM. 0 = default 2048.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "trklou/audio.cpp",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "habibi_unified",
+      "display_name": "Habibi-TTS Unified (Arabic, multi-dialect)",
+      "description": "Unified multi-dialect Arabic checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32).",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Habibi-TTS/Unified",
+      "files": [
+        "habibi-unified/habibi-unified-orig.gguf",
+        "habibi-unified/vocab.txt"
+      ],
+      "strip_prefix": "habibi-unified"
+    },
+    {
+      "id": "vocos_mel_24khz",
+      "display_name": "Vocos mel 24kHz vocoder (GGUF)",
+      "description": "Standalone Vocos vocoder GGUF for use with the original safetensors checkpoints.",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "vocos-mel-24khz",
+      "files": [
+        "vocos-mel-24khz/vocos-mel-24khz-orig.gguf"
+      ],
+      "strip_prefix": "vocos-mel-24khz"
+    },
+    {
+      "id": "habibi_alg",
+      "display_name": "Habibi-TTS ALG specialized checkpoint (GGUF)",
+      "description": "Single-dialect ALG checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger ALG accent than the unified model.",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Habibi-TTS/Specialized/ALG",
+      "files": [
+        "habibi-alg/habibi-alg-orig.gguf",
+        "habibi-alg/vocab.txt"
+      ],
+      "strip_prefix": "habibi-alg"
+    },
+    {
+      "id": "habibi_egy",
+      "display_name": "Habibi-TTS EGY specialized checkpoint (GGUF)",
+      "description": "Single-dialect EGY checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger EGY accent than the unified model.",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Habibi-TTS/Specialized/EGY",
+      "files": [
+        "habibi-egy/habibi-egy-orig.gguf",
+        "habibi-egy/vocab.txt"
+      ],
+      "strip_prefix": "habibi-egy"
+    },
+    {
+      "id": "habibi_irq",
+      "display_name": "Habibi-TTS IRQ specialized checkpoint (GGUF)",
+      "description": "Single-dialect IRQ checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger IRQ accent than the unified model.",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Habibi-TTS/Specialized/IRQ",
+      "files": [
+        "habibi-irq/habibi-irq-orig.gguf",
+        "habibi-irq/vocab.txt"
+      ],
+      "strip_prefix": "habibi-irq"
+    },
+    {
+      "id": "habibi_mar",
+      "display_name": "Habibi-TTS MAR specialized checkpoint (GGUF)",
+      "description": "Single-dialect MAR checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger MAR accent than the unified model.",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Habibi-TTS/Specialized/MAR",
+      "files": [
+        "habibi-mar/habibi-mar-orig.gguf",
+        "habibi-mar/vocab.txt"
+      ],
+      "strip_prefix": "habibi-mar"
+    },
+    {
+      "id": "habibi_msa",
+      "display_name": "Habibi-TTS MSA specialized checkpoint (GGUF)",
+      "description": "Single-dialect MSA checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger MSA accent than the unified model.",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Habibi-TTS/Specialized/MSA",
+      "files": [
+        "habibi-msa/habibi-msa-orig.gguf",
+        "habibi-msa/vocab.txt"
+      ],
+      "strip_prefix": "habibi-msa"
+    },
+    {
+      "id": "habibi_sau",
+      "display_name": "Habibi-TTS SAU specialized checkpoint (GGUF)",
+      "description": "Single-dialect SAU checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger SAU accent than the unified model.",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Habibi-TTS/Specialized/SAU",
+      "files": [
+        "habibi-sau/habibi-sau-orig.gguf",
+        "habibi-sau/vocab.txt"
+      ],
+      "strip_prefix": "habibi-sau"
+    },
+    {
+      "id": "habibi_uae",
+      "display_name": "Habibi-TTS UAE specialized checkpoint (GGUF)",
+      "description": "Single-dialect UAE checkpoint from SWivid/Habibi-TTS, converted to GGUF (DiT transformer + Vocos vocoder namespaces, f32). Stronger UAE accent than the unified model.",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Habibi-TTS/Specialized/UAE",
+      "files": [
+        "habibi-uae/habibi-uae-orig.gguf",
+        "habibi-uae/vocab.txt"
+      ],
+      "strip_prefix": "habibi-uae"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "habibi_unified",
+    "tags": [
+      "TTS",
+      "Clone"
+    ],
+    "docs": [
+      "docs/community_models/f5_tts.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "vocab": "model:vocab.txt"
+      },
+      "tensors": {
+        "transformer": {
+          "source": "weights:",
+          "prefix": "transformer"
+        }
+      },
+      "optional_tensors": {
+        "vocos_vocoder": {
+          "source": "weights:",
+          "prefix": "vocos"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "vocab": "model:vocab.txt"
+      },
+      "tensors": {
+        "transformer": {
+          "source": "model:model_200000.safetensors",
+          "prefix": "ema_model.transformer"
+        }
+      }
+    }
+  ]
+}

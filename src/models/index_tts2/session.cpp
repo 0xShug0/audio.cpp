@@ -235,6 +235,13 @@ IndexTTS2Session::IndexTTS2Session(
         conv_weight_storage_type_ = engine::assets::parse_tensor_storage_type(it->second);
         validate_conv_weight_storage(conv_weight_storage_type_, "index_tts2.conv_weight_type");
     }
+    // Derived conv weights (weight-norm recomputed at load) with Native storage are kept
+    // as F32, doubling conv weight bandwidth; on HIP the conv/im2col paths support F16
+    // and measure significantly faster with it, so make F16 the default there.
+    if (conv_weight_storage_type_ == engine::assets::TensorStorageType::Native &&
+        execution_context().backend_type() == engine::core::BackendType::Hip) {
+        conv_weight_storage_type_ = engine::assets::TensorStorageType::F16;
+    }
     mem_saver_ = mem_saver_from_options(options);
     for (const auto & [key, _] : options.options) {
         if (key.rfind("index_tts2.", 0) == 0 &&

@@ -211,7 +211,7 @@ or commercial use.
 
 ## Converting IndexTTS2.5 From Upstream Weights
 
-`tools/convert_index_tts2_5.py` turns an official `IndexTeam/IndexTTS-2.5`
+`tools/community_models/convert_index_tts2_5.py` turns an official `IndexTeam/IndexTTS-2.5`
 snapshot (the `.pth` checkpoints) into the Safetensors staging layout the
 engine expects, and prints or runs the matching `audiocpp_gguf` command. The
 w2v-bert-2.0, CAMPPlus, and BigVGAN checkpoints are auto-detected under
@@ -219,7 +219,7 @@ w2v-bert-2.0, CAMPPlus, and BigVGAN checkpoints are auto-detected under
 and each has an explicit override flag:
 
 ```bash
-python tools/convert_index_tts2_5.py \
+python tools/community_models/convert_index_tts2_5.py \
     --model-dir /path/to/IndexTTS-2.5 \
     --output-dir /path/to/staging \
     --run-converter /path/to/audiocpp_gguf --type q8_0

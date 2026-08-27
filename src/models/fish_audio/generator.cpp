@@ -16,7 +16,7 @@ using Clock = std::chrono::steady_clock;
 FishAudioGenerator::FishAudioGenerator(
     std::shared_ptr<const FishAudioAssets> assets,
     std::unique_ptr<FishAudioARRuntime> ar,
-    std::unique_ptr<FishAudioCodecRuntime> codec)
+    std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec)
     : assets_(std::move(assets)),
       tokenizer_(assets_),
       prompt_builder_(assets_, tokenizer_),
@@ -29,15 +29,15 @@ FishAudioGenerator::FishAudioGenerator(
 
 FishAudioGenerator::~FishAudioGenerator() = default;
 
-FishAudioCodes FishAudioGenerator::encode_reference(const runtime::AudioBuffer & audio) {
-    auto codes = codec_->encode_reference(audio);
+engine::codecs::FishDacCodes FishAudioGenerator::encode_reference(const runtime::AudioBuffer & audio) {
+    auto codes = codec_->encode_codes(audio);
     codec_->release_encode_graph();
     return codes;
 }
 
 FishAudioGenerationResult FishAudioGenerator::generate(
     const FishAudioRequest & request,
-    const std::vector<FishAudioCodes> & reference_codes,
+    const std::vector<engine::codecs::FishDacCodes> & reference_codes,
     const std::optional<FishAudioConversationTurn> & previous_turn,
     bool mem_saver) {
     engine::debug::trace_log_scalar("fish_audio.request.has_reference", !request.references.empty());
@@ -61,7 +61,7 @@ FishAudioGenerationResult FishAudioGenerator::generate(
         engine::debug::elapsed_ms(ar_start, Clock::now()));
 
     const auto decode_start = Clock::now();
-    result.audio = codec_->decode(result.codes);
+    result.audio = codec_->decode_codes(result.codes);
     engine::debug::timing_log_scalar(
         "fish_audio.codec_decode_ms",
         engine::debug::elapsed_ms(decode_start, Clock::now()));

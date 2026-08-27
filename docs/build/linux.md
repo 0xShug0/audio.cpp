@@ -30,6 +30,15 @@ CUDA:
 cmake -S . -B build -DENGINE_ENABLE_CUDA=ON
 ```
 
+Without `CMAKE_CUDA_ARCHITECTURES`, the portable default arch list is built:
+works on many GPUs, but builds slower. To build only for the local GPUs,
+`native` is recommended (CMake >= 3.24; on older CMake it falls back to the
+portable list) or set an arch manually.
+
+```bash
+cmake -S . -B build -DENGINE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=native
+```
+
 CMake picks the first `nvcc` on `PATH`, which is often **not** the toolkit you want:
 distro packages install an old one to `/usr/bin/nvcc` (Ubuntu 22.04's
 `nvidia-cuda-toolkit` is CUDA 11.5) while the toolkit from NVIDIA lands in
@@ -54,20 +63,11 @@ readelf -d build/bin/audiocpp_server | grep NEEDED | grep cuda
 # want libcudart.so.12 / libcublas.so.12 — libcudart.so.11.0 means a mixed build
 ```
 
-Leaving `CMAKE_CUDA_ARCHITECTURES` unset does **not** reliably build for the GPUs
-present at build time on this codebase, even though ggml's own `ggml-cuda/CMakeLists.txt`
-implements exactly that native-detect fallback. The reason: this project's top-level
-`CMakeLists.txt` calls `enable_language(CUDA)` itself, before ggml's subdirectory is
-processed — CMake computes its own default `CMAKE_CUDA_ARCHITECTURES` at that point, so
-ggml's fallback logic (gated on the variable still being undefined) never runs. Verified
-directly: on an RTX 5060 (sm_120), leaving the flag unset made CMake default to bare `75`
-(Turing) even though `CMAKE_CUDA_ARCHITECTURES_NATIVE` was correctly autodetected as
-`120a-real` in the same configure log — computed but never used. Any
-`__CUDA_ARCH__`-gated kernel path newer than the default silently compiles *out*, not
-merely unoptimized. **Always pass `CMAKE_CUDA_ARCHITECTURES` explicitly.**
-
-Note that CMake caches the CUDA compiler: switching toolkits in an
-existing build directory requires deleting `CMakeCache.txt` and `CMakeFiles/`.
+Leave `CMAKE_CUDA_ARCHITECTURES` unset to build the portable default arch list
+(works on many GPUs, slower to build); set it to `native` (CMake >= 3.24) to
+build only for the GPUs present at build time. Note that CMake caches the CUDA
+compiler: switching toolkits in an existing build directory requires deleting
+`CMakeCache.txt` and `CMakeFiles/`.
 
 
 Old CUDA GPUs (cm<89):

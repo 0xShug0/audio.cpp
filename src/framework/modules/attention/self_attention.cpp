@@ -119,6 +119,13 @@ core::TensorValue SelfAttentionModule::build(
             config_.attention_precision,
             config_.causal ? AttentionCausality::Causal : AttentionCausality::NonCausal,
         }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
+    } else if (config_.use_flash_attention && !config_.causal) {
+        context = GroupedQueryAttentionModule({
+            head_dim,
+            GroupedQueryAttentionLowering::FlashGroupedViewKV,
+            config_.attention_precision,
+            AttentionCausality::NonCausal,
+        }).build(ctx, q_heads, k_heads, v_heads);
     } else {
         auto kt = permute_tensor(ctx, k_heads, {0, 1, 3, 2});
         auto scores = MatMulModule().build(ctx, q_heads, kt);

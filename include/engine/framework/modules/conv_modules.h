@@ -77,6 +77,47 @@ private:
     Conv2dConfig config_;
 };
 
+struct Conv3dConfig {
+    int64_t in_channels = 0;
+    int64_t out_channels = 0;
+    int64_t kernel_depth = 0;
+    int64_t kernel_height = 0;
+    int64_t kernel_width = 0;
+    int stride_depth = 1;
+    int stride_height = 1;
+    int stride_width = 1;
+    int padding_depth = 0;
+    int padding_height = 0;
+    int padding_width = 0;
+    int dilation_depth = 1;
+    int dilation_height = 1;
+    int dilation_width = 1;
+    bool use_bias = true;
+};
+
+struct Conv3dWeights {
+    core::TensorValue weight;
+    std::optional<core::TensorValue> bias;
+};
+
+class Conv3dModule {
+public:
+    explicit Conv3dModule(Conv3dConfig config);
+
+    const Conv3dConfig & config() const noexcept;
+    const core::ModuleSchema & schema() const noexcept;
+
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const Conv3dWeights & weights) const;
+
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    Conv3dConfig config_;
+};
+
 struct CausalConv2dConfig {
     Conv2dConfig conv;
     int64_t pad_left = 0;

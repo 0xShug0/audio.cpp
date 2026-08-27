@@ -60,6 +60,22 @@ struct ConvFeedForwardWeights {
     Conv1dWeights out;
 };
 
+struct GatedConvFeedForwardConfig {
+    int64_t hidden_size = 0;
+    int64_t intermediate_size = 0;
+    int64_t kernel_size = 0;
+    bool causal = false;
+    bool explicit_symmetric_padding = false;
+    bool use_bias = false;
+    GatedFeedForwardActivation activation = GatedFeedForwardActivation::Silu;
+};
+
+struct GatedConvFeedForwardWeights {
+    Conv1dWeights gate_proj;
+    Conv1dWeights up_proj;
+    Conv1dWeights down_proj;
+};
+
 class FeedForwardModule {
 public:
     explicit FeedForwardModule(FeedForwardConfig config);
@@ -130,6 +146,24 @@ public:
 
 private:
     ConvFeedForwardConfig config_;
+};
+
+class GatedConvFeedForwardModule {
+public:
+    explicit GatedConvFeedForwardModule(GatedConvFeedForwardConfig config);
+
+    const GatedConvFeedForwardConfig & config() const noexcept;
+    const core::ModuleSchema & schema() const noexcept;
+
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const GatedConvFeedForwardWeights & weights) const;
+
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    GatedConvFeedForwardConfig config_;
 };
 
 }  // namespace engine::modules

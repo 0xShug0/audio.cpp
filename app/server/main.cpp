@@ -2,6 +2,7 @@
 #include "http.h"
 #include "runtime.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
 
 #include <csignal>
@@ -60,7 +61,8 @@ std::filesystem::path executable_directory(const char * argv0) {
 void print_help() {
     std::cout
         << "audiocpp_server [--config <server.json>] [--ui] [--host <ip>] [--port <port>] [--backend <backend>]\n"
-        << "                [--device <id>] [--threads <n>] [--busy-timeout-ms <ms>]\n"
+        << "                [--device <id>] [--list-devices] [--threads <n>] [--busy-timeout-ms <ms>]\n"
+        << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
         << "                [--model-spec-override <json-or-directory>] [--voice-dir <directory>]\n"
         << "                [--log] [--log-file <path>]\n"
         << "                [--cors-origins <origins>]\n"
@@ -69,8 +71,18 @@ void print_help() {
         << "  --ui-management                  allow WebUI model management and downloads; requires\n"
         << "                                   AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON at build time\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
+        << "  --list-devices                   list available backend devices and exit\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
         << "                                   busy this long; default 300000, 0 disables\n"
+        << "  --max-loaded-models <n>          keep at most n models resident in memory, unloading\n"
+        << "                                   the least recently used idle model first; 1 enforces\n"
+        << "                                   a single loaded model, default 0 (no limit)\n"
+        << "  --idle-unload-ms <ms>            unload all resident models after this many ms without\n"
+        << "                                   any model load/run; default 0 (disabled), next request\n"
+        << "                                   reloads lazily\n"
+        << "  --min-free-memory-mb <mb>        refuse a model load unless host and GPU each keep at\n"
+        << "                                   least this many MiB free after the load; default 0\n"
+        << "                                   (guard disabled)\n"
         << "  --voice-dir <directory>          override the shared reference voice library directory\n"
         << "  --cors-origins \"*\"              experimental; disabled by default. Allows browser\n"
         << "                                   requests from any origin for trusted local demos only\n"
@@ -107,6 +119,10 @@ void print_help() {
 
 int main(int argc, char ** argv) {
     try {
+        if (has_arg(argc, argv, "--list-devices")) {
+            engine::core::print_backend_devices(std::cout);
+            return 0;
+        }
         if (has_arg(argc, argv, "--help") || has_arg(argc, argv, "-h")) {
             print_help();
             return 0;
@@ -175,6 +191,15 @@ int main(int argc, char ** argv) {
         if (const auto busy_timeout = arg_value(argc, argv, "--busy-timeout-ms")) {
             config.busy_timeout_ms = std::stoi(*busy_timeout);
         }
+        if (const auto max_loaded_models = arg_value(argc, argv, "--max-loaded-models")) {
+            config.max_loaded_models = std::stoi(*max_loaded_models);
+        }
+        if (const auto idle_unload_ms = arg_value(argc, argv, "--idle-unload-ms")) {
+            config.idle_unload_ms = std::stoi(*idle_unload_ms);
+        }
+        if (const auto min_free_memory_mb = arg_value(argc, argv, "--min-free-memory-mb")) {
+            config.min_free_memory_mb = std::stoi(*min_free_memory_mb);
+        }
         if (const auto model_spec = arg_value(argc, argv, "--model-spec-override")) {
             config.model_spec_override = std::filesystem::path(*model_spec);
         }
@@ -189,6 +214,15 @@ int main(int argc, char ** argv) {
         }
         if (config.busy_timeout_ms < 0) {
             throw std::runtime_error("--busy-timeout-ms must be >= 0 (0 disables the guard)");
+        }
+        if (config.max_loaded_models < 0) {
+            throw std::runtime_error("--max-loaded-models must be >= 0 (0 disables the limit)");
+        }
+        if (config.idle_unload_ms < 0) {
+            throw std::runtime_error("--idle-unload-ms must be >= 0 (0 disables idle unload)");
+        }
+        if (config.min_free_memory_mb < 0) {
+            throw std::runtime_error("--min-free-memory-mb must be >= 0 (0 disables the memory guard)");
         }
 
         const auto ui_resource_anchor = executable_directory(argc > 0 ? argv[0] : nullptr);

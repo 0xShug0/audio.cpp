@@ -1,5 +1,6 @@
 #include "busy_guard.h"
 #include "config.h"
+#include "model_memory.h"
 
 #include "engine/framework/io/json.h"
 
@@ -294,6 +295,42 @@ void test_negative_busy_timeout_is_rejected() {
     require(rejected, "negative busy_timeout_ms is rejected");
 }
 
+void test_max_loaded_models_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "max_loaded_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).max_loaded_models == 0,
+        "max_loaded_models defaults to 0 (no limit) when omitted");
+
+    const auto single_path = write_config(
+        root, "max_loaded_single.json", std::string(R"JSON({"max_loaded_models": 1,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(single_path).max_loaded_models == 1,
+        "max_loaded_models accepts 1 to enforce a single resident model");
+
+    const auto multi_path = write_config(
+        root, "max_loaded_multi.json", std::string(R"JSON({"max_loaded_models": 3,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(multi_path).max_loaded_models == 3,
+        "max_loaded_models is read from the config");
+}
+
+void test_negative_max_loaded_models_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root, "max_loaded_negative.json", std::string(R"JSON({"max_loaded_models": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("max_loaded_models") != std::string::npos;
+    }
+    require(rejected, "negative max_loaded_models is rejected");
+}
+
 void test_per_model_busy_timeout() {
     const auto root = make_temp_root();
     const auto config_path = write_config(
@@ -396,6 +433,66 @@ void test_request_timeout_is_clamped_to_policy() {
         "unbounded on both sides stays unbounded");
 }
 
+void test_idle_unload_ms_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "idle_unload_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).idle_unload_ms == 0,
+        "idle_unload_ms defaults to 0 (disabled) when omitted");
+
+    const auto set_path = write_config(
+        root, "idle_unload_set.json", std::string(R"JSON({"idle_unload_ms": 300000,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(set_path).idle_unload_ms == 300000,
+        "idle_unload_ms is read from the config");
+}
+
+void test_negative_idle_unload_ms_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root, "idle_unload_negative.json", std::string(R"JSON({"idle_unload_ms": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("idle_unload_ms") != std::string::npos;
+    }
+    require(rejected, "negative idle_unload_ms is rejected");
+}
+
+void test_min_free_memory_mb_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "min_free_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).min_free_memory_mb == 0,
+        "min_free_memory_mb defaults to 0 (guard disabled) when omitted");
+
+    const auto set_path = write_config(
+        root, "min_free_set.json", std::string(R"JSON({"min_free_memory_mb": 256,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(set_path).min_free_memory_mb == 256,
+        "min_free_memory_mb is read from the config to opt into the guard");
+}
+
+void test_negative_min_free_memory_mb_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root, "min_free_negative.json", std::string(R"JSON({"min_free_memory_mb": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("min_free_memory_mb") != std::string::npos;
+    }
+    require(rejected, "negative min_free_memory_mb is rejected");
+}
+
 void test_model_run_overrun_predicate() {
     using minitts::server::model_run_has_overrun;
 
@@ -405,6 +502,107 @@ void test_model_run_overrun_predicate() {
     require(model_run_has_overrun(1000, 2001, 1000), "a run past the timeout fails fast");
     require(!model_run_has_overrun(1000, 10'000'000, 0), "timeout 0 disables the guard");
     require(!model_run_has_overrun(1000, 10'000'000, -1), "a non-positive timeout disables the guard");
+}
+
+// Mirror of the estimator's formula: weights * 1.5 plus the fixed floor, so the
+// tests assert absolute values rather than "greater than".
+size_t expected_estimate(size_t weights) {
+    constexpr double kRuntimeOverheadFactor = 1.5;
+    constexpr size_t kFixedOverhead = 128ull * 1024 * 1024;
+    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead;
+}
+
+void write_file(const std::filesystem::path & path, size_t bytes) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << std::string(bytes, 'x');
+    if (!out) {
+        throw std::runtime_error("failed to write test file: " + path.string());
+    }
+}
+
+void test_model_memory_estimator() {
+    using minitts::server::estimate_model_memory_bytes;
+    using minitts::server::ServerModelConfig;
+    const auto root = make_temp_root();
+
+    // A single-file model contributes that file.
+    {
+        const auto path = root / "single.gguf";
+        write_file(path, 1000);
+        ServerModelConfig model;
+        model.path = path;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "single-file model has a determinate footprint");
+        require(*estimate == expected_estimate(1000), "single-file estimate sums the file");
+    }
+
+    // A directory with exactly one GGUF contributes that file.
+    {
+        const auto dir = root / "sole";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "variant.gguf", 2000);
+        ServerModelConfig model;
+        model.path = dir;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "sole-GGUF directory has a determinate footprint");
+        require(*estimate == expected_estimate(2000), "the sole GGUF is selected");
+    }
+
+    // model.gguf disambiguates a multi-GGUF directory, ignoring other variants.
+    {
+        const auto dir = root / "named";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "a.gguf", 3000);
+        write_file(dir / "model.gguf", 4000);
+        ServerModelConfig model;
+        model.path = dir;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "model.gguf makes the directory determinate");
+        require(*estimate == expected_estimate(4000), "model.gguf wins over the other variants");
+    }
+
+    // Several GGUFs and no model.gguf: the loader rejects the spec-driven case
+    // with its own error, so the footprint is indeterminate and the guard skips.
+    {
+        const auto dir = root / "ambiguous";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "a.gguf", 100);
+        write_file(dir / "b.gguf", 100);
+        ServerModelConfig model;
+        model.path = dir;
+        require(
+            !estimate_model_memory_bytes(model).has_value(),
+            "an ambiguous multi-GGUF directory has an indeterminate footprint");
+    }
+
+    // A directory with no GGUF is a safetensors/HF checkpoint: the tree is summed.
+    {
+        const auto dir = root / "tree";
+        std::filesystem::create_directories(dir / "sub");
+        write_file(dir / "model.safetensors", 5000);
+        write_file(dir / "sub" / "chunk.bin", 6000);
+        ServerModelConfig model;
+        model.path = dir;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "a no-GGUF directory has a determinate footprint");
+        require(*estimate == expected_estimate(11000), "a checkpoint tree is summed recursively");
+    }
+
+    // Relative auxiliary session files resolve against the model directory.
+    {
+        // Not named "aux": that is a reserved DOS device name and cannot be
+        // created on Windows.
+        const auto dir = root / "sidecar";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        write_file(dir / "head.bin", 8000);
+        ServerModelConfig model;
+        model.path = dir;
+        model.session_options["aux_path"] = "head.bin";
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "an aux-resolved directory has a determinate footprint");
+        require(*estimate == expected_estimate(15000), "a relative aux path resolves against the model directory");
+    }
 }
 
 }  // namespace
@@ -421,12 +619,19 @@ int main() {
         test_negative_max_request_body_is_rejected();
         test_unsafe_numeric_max_request_body_is_rejected();
         test_negative_busy_timeout_is_rejected();
+        test_max_loaded_models_defaults_and_overrides();
+        test_negative_max_loaded_models_is_rejected();
+        test_idle_unload_ms_defaults_and_overrides();
+        test_negative_idle_unload_ms_is_rejected();
+        test_min_free_memory_mb_defaults_and_overrides();
+        test_negative_min_free_memory_mb_is_rejected();
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
         test_ui_configuration();
         test_empty_models_require_ui_management();
         test_request_timeout_is_clamped_to_policy();
         test_model_run_overrun_predicate();
+        test_model_memory_estimator();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;

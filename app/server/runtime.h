@@ -19,7 +19,9 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -56,6 +58,10 @@ private:
         engine::runtime::IOfflineVoiceTaskSession * offline = nullptr;
         engine::runtime::IStreamingVoiceTaskSession * streaming = nullptr;
         std::atomic<bool> loaded{false};
+        // Steady-clock ms of the most recent load or run of this model. Orders
+        // eviction when max_loaded_models forces an unload: the least recently
+        // used idle model goes first.
+        std::atomic<std::int64_t> last_used_ms{0};
         mutable std::shared_mutex metadata_mutex;
         std::unordered_map<std::string, RuntimeVoicePreset> voice_presets;
         std::optional<RuntimeVoicePreset> default_voice_preset;
@@ -96,9 +102,18 @@ private:
     HttpResponse handle_directory_browser(const std::string & body_text) const;
 #endif
     HttpResponse handle_ui_asset() const;
+    HttpResponse handle_ui_voice_preview(const HttpRequest & request) const;
     LoadedModel::RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
     void load_voice_presets(LoadedModel & model) const;
     void ensure_model_loaded_locked(LoadedModel & model);
+    // With max_loaded_models set, unload least recently used idle models until
+    // `loading` fits within the limit. A model mid-inference is never a victim;
+    // when nothing can be evicted this throws ServerBusyError (-> HTTP 503).
+    void evict_for_model_limit(const LoadedModel & loading);
+    // Refuse the load with InsufficientMemoryError (-> HTTP 503) when the
+    // estimated footprint plus configured headroom does not fit the free host
+    // memory and (for GPU backends) the backend device memory.
+    void ensure_model_fits_memory(const ServerModelConfig & model);
     LoadedModel & require_model(const engine::io::json::Value & body);
     const LoadedModel::RuntimeVoicePreset * select_voice_preset(
         const LoadedModel & model,
@@ -160,6 +175,10 @@ private:
     HttpResponse handle_voices(const HttpRequest & request) const;
     HttpResponse handle_unload_models(const std::string & body_text);
     HttpResponse handle_unload_all_models();
+    // Background loop started when idle_unload_ms > 0: when the server has gone
+    // that long without a model load/run, unloads every resident (non-busy) model.
+    void idle_unload_loop();
+    void unload_idle_models();
     std::string models_json(bool include_session_options = false) const;
     std::string get_allowed_origin(const HttpRequest & request) const;
 
@@ -168,6 +187,11 @@ private:
     std::vector<std::unique_ptr<LoadedModel>> models_;
     std::unordered_map<std::string, size_t> model_index_;
     mutable std::mutex models_mutex_;
+    // Serializes framework loads while max_loaded_models or the memory guard
+    // (min_free_memory_mb) is active, so two concurrent lazy loads cannot both
+    // pass the eviction/memory check and overshoot. Not taken when both are off:
+    // unrelated first loads stay concurrent there.
+    std::mutex model_load_mutex_;
     std::filesystem::path upload_root_;
     std::filesystem::path repository_root_;
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
@@ -177,6 +201,12 @@ private:
     std::unique_ptr<ModelInstaller> model_installer_;
 #endif
     std::atomic<uint64_t> next_upload_id_{1};
+    // Steady-clock ms of the most recent model load/run completion; drives idle
+    // unload. Updated at run start and again at completion so a long inference
+    // does not read as idle the moment it finishes.
+    std::atomic<std::int64_t> last_activity_ms_{0};
+    std::atomic<bool> idle_unload_shutdown_{false};
+    std::thread idle_unload_thread_;
 };
 
 }  // namespace minitts::server

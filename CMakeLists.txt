@@ -166,17 +166,74 @@ if (ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
 endif()
 
 if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
-    enable_language(CUDA)
-    # 12.0 is a floor, not a target: any 12.x or 13.x works (the Dockerfile pins
-    # 12.9.0, and docs/build/windows.md ships a CUDA 13 package). The minimum is
-    # enforced because an older toolkit configures happily and only fails at the
-    # first .cu file, which reads as a code bug rather than a toolchain one: nvcc
-    # < 11.6 cannot parse libstdc++ >= 11.3 headers ("parameter packs not expanded
-    # with '...'" in <functional>), and distros still ship such pairings (Ubuntu
-    # 22.04's nvidia-cuda-toolkit is 11.5). Fail here, with a pointer, instead.
-    # The upper bound is the host compiler the chosen toolkit accepts, not CUDA
-    # itself (e.g. CUDA 12.9 supports GCC <= 14), so it is left to the toolkit.
+    # Require at least CUDA 12.0. Older toolkits configure fine but die at the
+    # first .cu file. Run this before enable_language(CUDA) because the version
+    # is needed for the default arch list below.
     find_package(CUDAToolkit 12.0 REQUIRED)
+
+    # Define default CUDA architectures for every build path.
+    # We stay close to llama.cpp/ggml-cuda here, unless there is a reason
+    # to deviate. See llama.cpp's ggml-cuda CMakeLists.txt for additional
+    # comments.
+    # Must be set before enable_language(CUDA), as that call otherwise seeds
+    # CMAKE_CUDA_ARCHITECTURES from nvcc's default arch (sm_75 for CUDA 13,
+    # sm_52 for CUDA 12), silently making every build without an explicit
+    # list single-arch (the seed ignores the local GPU).
+    # This can be overridden with -DCMAKE_CUDA_ARCHITECTURES=... or CUDAARCHS;
+    # set to "native" to build for the local GPU only (needs CMake >= 3.24).
+
+    # "native" fallback for CMake < 3.24
+    if ((CMAKE_CUDA_ARCHITECTURES STREQUAL "native" OR "$ENV{CUDAARCHS}" STREQUAL "native")
+        AND CMAKE_VERSION VERSION_LESS "3.24")
+        message(STATUS "CMAKE_CUDA_ARCHITECTURES=native requires CMake >= 3.24; "
+                       "falling back to the portable default architecture list")
+        set(CMAKE_CUDA_ARCHITECTURES "")
+    endif()
+
+    # Define default archs
+    if ("${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "" AND "$ENV{CUDAARCHS}" STREQUAL "")
+        # XX-virtual = PTX (JIT, forward-compatible); XX-real = SASS (native).
+        if (CUDAToolkit_VERSION VERSION_LESS "13")
+            # 50/61/70 (Maxwell/Pascal/Volta) unsupported by CUDA 13 toolkits
+            list(APPEND CMAKE_CUDA_ARCHITECTURES 50-virtual 61-virtual 70-virtual)
+        endif()
+        list(APPEND CMAKE_CUDA_ARCHITECTURES 75-virtual 80-virtual 86-real)
+        if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "11.8")
+            list(APPEND CMAKE_CUDA_ARCHITECTURES 89-real 90-virtual)
+        endif()
+        if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")
+            # 12Xa, not 12X: Blackwell FP4 tensor cores are arch-specific.
+            list(APPEND CMAKE_CUDA_ARCHITECTURES 120a-real)
+        endif()
+        if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.9")
+            list(APPEND CMAKE_CUDA_ARCHITECTURES 121a-real)
+        endif()
+    endif()
+
+    enable_language(CUDA)
+
+    # Upgrade plain 12X (user value or resolved "native") to 12Xa (Blackwell).
+    foreach (_ARCHS_VAR IN ITEMS CMAKE_CUDA_ARCHITECTURES CMAKE_CUDA_ARCHITECTURES_NATIVE)
+        set(_FIXED_ARCHS "")
+        foreach (_ARCH IN LISTS ${_ARCHS_VAR})
+            if (_ARCH MATCHES "^12[0-9](-real|-virtual)?$")
+                string(REGEX REPLACE "^(12[0-9])((-real|-virtual)?)$" "\\1a\\2" _FIXED_ARCH "${_ARCH}")
+                message(STATUS "Replacing ${_ARCH} in ${_ARCHS_VAR} with ${_FIXED_ARCH}")
+                list(APPEND _FIXED_ARCHS "${_FIXED_ARCH}")
+            else()
+                list(APPEND _FIXED_ARCHS "${_ARCH}")
+            endif()
+        endforeach()
+        set(${_ARCHS_VAR} "${_FIXED_ARCHS}")
+    endforeach()
+
+    # Resolve "native" for the log; left as-is when no GPU was detected
+    # (nvcc then warns and uses its default arch).
+    if (CMAKE_CUDA_ARCHITECTURES STREQUAL "native" AND CMAKE_CUDA_ARCHITECTURES_NATIVE MATCHES "^[0-9]+(a|f)?(-real|-virtual)?(;[0-9]+(a|f)?(-real|-virtual)?|;)*$")
+        set(CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES_NATIVE}")
+    endif()
+    message(STATUS "Using CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} CMAKE_CUDA_ARCHITECTURES_NATIVE=${CMAKE_CUDA_ARCHITECTURES_NATIVE}")
+
     if (NOT MSVC)
         set(CMAKE_CUDA_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug CUDA flags" FORCE)
     endif()
@@ -343,9 +400,11 @@ add_library(engine_core OBJECT
     src/framework/modules/speech_encoders/whisper_embedding.cpp
     src/framework/modules/speech_encoders/whisper_frontend.cpp
     src/framework/modules/speech_encoders/campplus_encoder.cpp
+    src/framework/modules/speech_encoders/s3_tokenizer.cpp
     src/framework/modules/codecs/nemo_nano_codec.cpp
     src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
     src/framework/modules/vocoders/bigvgan_vocoder.cpp
+    src/framework/modules/vocoders/hifigan_vocoder.cpp
     src/framework/modules/vocoders/hift_vocoder.cpp
     src/framework/modules/speech_encoders/hubert_encoder.cpp
     src/framework/modules/speech_encoders/wav2vec2_bert_encoder.cpp
@@ -409,8 +468,17 @@ add_library(engine_core OBJECT
     src/framework/modules/speaker_encoders/ecapa_tdnn_runtime.cpp
     src/framework/modules/speaker_encoders/titanet_runtime.cpp
     src/framework/codecs/fsq_audio_codec_runtime.cpp
+    src/framework/codecs/fish_dac_codec_runtime.cpp
+    src/framework/codecs/mel_latent_vae44k_runtime.cpp
     src/framework/codecs/mimi_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
+    src/framework/codecs/redae_codec_runtime.cpp
+    src/framework/conditioners/clap_audio_conditioner_runtime.cpp
+    src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
+    src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
+    src/framework/conditioners/open_clip_conditioner_runtime.cpp
+    src/framework/conditioners/synchformer_conditioner_runtime.cpp
+    src/models/controlfoley/flow_denoiser.cpp
     src/framework/sampling/decode_modules.cpp
     src/framework/sampling/diffusion_math.cpp
     src/framework/sampling/hf_sampler.cpp
@@ -568,6 +636,23 @@ audiocpp_add_model(inflect_v2
         engine/community_models/inflect_v2/session.h
     LOADERS
         engine::models::inflect_v2::make_inflect_v2_loader
+)
+
+audiocpp_add_model(f5_tts
+    SOURCES
+        src/community_models/f5_tts/session.cpp
+        src/community_models/f5_tts/runtime.cpp
+        src/community_models/f5_tts/weights.cpp
+        src/community_models/f5_tts/dit_modules.cpp
+        src/community_models/f5_tts/synthesize.cpp
+    INCLUDES
+        engine/community_models/f5_tts/session.h
+        engine/community_models/f5_tts/runtime.h
+    LOADERS
+        engine::models::f5_tts::make_f5_tts_loader
+    ALIASES
+        habibi
+        habibi_tts
 )
 
 audiocpp_add_model(minimax_h3
@@ -837,7 +922,6 @@ audiocpp_add_model(fish_audio
     SOURCES
         src/models/fish_audio/ar.cpp
         src/models/fish_audio/assets.cpp
-        src/models/fish_audio/codec.cpp
         src/models/fish_audio/generator.cpp
         src/models/fish_audio/loader.cpp
         src/models/fish_audio/prompt_builder.cpp
@@ -1205,6 +1289,22 @@ audiocpp_add_model(citrinet_asr
         engine::models::citrinet_asr::make_citrinet_asr_loader
 )
 
+audiocpp_add_model(granite5asr
+    SOURCES
+        src/community_models/granite5asr/assets.cpp
+        src/community_models/granite5asr/frontend.cpp
+        src/community_models/granite5asr/encoder.cpp
+        src/community_models/granite5asr/session.cpp
+    INCLUDES
+        engine/community_models/granite5asr/session.h
+    LOADERS
+        engine::community_models::granite5asr::make_granite5asr_loader
+    ALIASES
+        granite_speech5_asr
+        granite_speech
+        granite_speech5_ctc
+)
+
 audiocpp_add_model(vevo2
     SOURCES
         src/models/vevo2/ar.cpp
@@ -1327,6 +1427,115 @@ audiocpp_add_model(ace_step
         engine/models/ace_step/loader.h
     LOADERS
         engine::models::ace_step::make_ace_step_loader
+)
+
+audiocpp_add_model(midashenglm_gen
+    SOURCES
+        src/models/midashenglm_gen/assets.cpp
+        src/models/midashenglm_gen/ar_runtime.cpp
+        src/models/midashenglm_gen/audio_tokenizer.cpp
+        src/models/midashenglm_gen/flow_runtime.cpp
+        src/models/midashenglm_gen/prompt_encoder.cpp
+        src/models/midashenglm_gen/session.cpp
+        src/models/midashenglm_gen/tokenizer_text.cpp
+    INCLUDES
+        engine/models/midashenglm_gen/assets.h
+        engine/models/midashenglm_gen/ar_runtime.h
+        engine/models/midashenglm_gen/audio_tokenizer.h
+        engine/models/midashenglm_gen/flow_runtime.h
+        engine/models/midashenglm_gen/prompt_encoder.h
+        engine/models/midashenglm_gen/session.h
+        engine/models/midashenglm_gen/tokenizer_text.h
+    LOADERS
+        engine::models::midashenglm_gen::make_midashenglm_gen_loader
+)
+
+audiocpp_add_model(audiosr
+    SOURCES
+        src/models/audiosr/assets.cpp
+        src/models/audiosr/autoencoder.cpp
+        src/models/audiosr/ddim.cpp
+        src/models/audiosr/frontend.cpp
+        src/models/audiosr/hifigan.cpp
+        src/models/audiosr/pipeline.cpp
+        src/models/audiosr/session.cpp
+        src/models/audiosr/unet.cpp
+    INCLUDES
+        engine/models/audiosr/assets.h
+        engine/models/audiosr/autoencoder.h
+        engine/models/audiosr/ddim.h
+        engine/models/audiosr/frontend.h
+        engine/models/audiosr/hifigan.h
+        engine/models/audiosr/pipeline.h
+        engine/models/audiosr/session.h
+        engine/models/audiosr/unet.h
+    LOADERS
+        engine::models::audiosr::make_audiosr_loader
+)
+
+audiocpp_add_model(controlfoley
+    SOURCES
+        src/models/controlfoley/assets.cpp
+        src/models/controlfoley/conditioning.cpp
+        src/models/controlfoley/pipeline.cpp
+        src/models/controlfoley/session.cpp
+        src/models/controlfoley/video_processing.cpp
+    INCLUDES
+        engine/models/controlfoley/assets.h
+        engine/models/controlfoley/conditioning.h
+        engine/models/controlfoley/pipeline.h
+        engine/models/controlfoley/session.h
+        engine/models/controlfoley/video_processing.h
+    LOADERS
+        engine::models::controlfoley::make_controlfoley_loader
+)
+
+audiocpp_add_model(fireredtts3
+    SOURCES
+        src/models/fireredtts3/assets.cpp
+        src/models/fireredtts3/ar.cpp
+        src/models/fireredtts3/flow.cpp
+        src/models/fireredtts3/pipeline.cpp
+        src/models/fireredtts3/redae.cpp
+        src/models/fireredtts3/session.cpp
+        src/models/fireredtts3/tokenizer_text.cpp
+    INCLUDES
+        engine/models/fireredtts3/assets.h
+        engine/models/fireredtts3/ar.h
+        engine/models/fireredtts3/flow.h
+        engine/models/fireredtts3/pipeline.h
+        engine/models/fireredtts3/redae.h
+        engine/models/fireredtts3/session.h
+        engine/models/fireredtts3/tokenizer_text.h
+    LOADERS
+        engine::models::fireredtts3::make_fireredtts3_loader
+)
+
+audiocpp_add_model(firered_audio
+    SOURCES
+        src/models/firered_audio/assets.cpp
+        src/models/firered_audio/audio_encoder.cpp
+        src/models/firered_audio/flow.cpp
+        src/models/firered_audio/patch_encoder.cpp
+        src/models/firered_audio/pipeline.cpp
+        src/models/firered_audio/qwen35_runtime.cpp
+        src/models/firered_audio/redae.cpp
+        src/models/firered_audio/session.cpp
+        src/models/firered_audio/tokenizer.cpp
+        src/models/firered_audio/understanding.cpp
+    INCLUDES
+        engine/models/firered_audio/assets.h
+        engine/models/firered_audio/audio_encoder.h
+        engine/models/firered_audio/flow.h
+        engine/models/firered_audio/patch_encoder.h
+        engine/models/firered_audio/pipeline.h
+        engine/models/firered_audio/qwen35_runtime.h
+        engine/models/firered_audio/redae.h
+        engine/models/firered_audio/session.h
+        engine/models/firered_audio/tokenizer.h
+        engine/models/firered_audio/understanding.h
+    LOADERS
+        engine::models::firered_audio::make_firered_audio_loader
 )
 
 set(AUDIOCPP_ENABLED_MODELS "")
@@ -1490,11 +1699,6 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED ON
     )
-    if (CMAKE_CUDA_ARCHITECTURES)
-        set_target_properties(engine_runtime PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
-    else()
-        set_target_properties(engine_runtime PROPERTIES CUDA_ARCHITECTURES native)
-    endif()
     target_compile_definitions(engine_core PRIVATE ENGINE_HAS_CUDA_ISTFT=1 ENGINE_HAS_CUDA_TORCH_RANDOM=1)
     target_compile_definitions(engine_runtime PUBLIC ENGINE_HAS_CUDA_ISTFT=1 ENGINE_HAS_CUDA_TORCH_RANDOM=1)
     target_link_libraries(engine_runtime PRIVATE CUDA::cudart CUDA::cufft)
@@ -1574,6 +1778,7 @@ add_executable(audiocpp_server
     app/server/base64.cpp
     app/server/config.cpp
     app/server/http.cpp
+    app/server/model_memory.cpp
     app/server/multipart.cpp
     app/server/runtime.cpp
     app/server/ui_assets.cpp
@@ -1624,34 +1829,64 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(model_perf PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
-add_executable(miocodec_wavlm_parity
+add_executable(miocodec_wavlm_parity EXCLUDE_FROM_ALL
     tests/miocodec/miocodec_wavlm_parity.cpp
 )
 
 target_link_libraries(miocodec_wavlm_parity PRIVATE engine_runtime ggml)
 
-add_executable(torch_bin_parity
-    tests/vibevoice/torch_bin_parity.cpp
-)
-
-target_link_libraries(torch_bin_parity PRIVATE engine_runtime ggml)
-if (ENGINE_ENABLE_OPENMP)
-    target_link_libraries(torch_bin_parity PRIVATE OpenMP::OpenMP_CXX)
-endif()
-
-# Only build this parity check when the vibevoice model is linked, since it
-# directly references model-internal symbols (load_vibevoice_assets etc.).
-if (vibevoice IN_LIST AUDIOCPP_LINKED_MODELS)
-    add_executable(vibevoice_finetune_overlay_check
-        tests/vibevoice/finetune_overlay_check.cpp
-    )
-    target_link_libraries(vibevoice_finetune_overlay_check PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
-    endif()
+# F5/Habibi tests: parity harnesses + e2e sample generator. Only when the
+# f5_tts model is linked (they call model-internal symbols) AND test hooks
+# are explicitly enabled — F5_MEL_TEST must never leak into production
+# model libraries (PR #275 review feedback).
+option(ENGINE_F5_TEST_HOOKS "Build F5-TTS test hooks (f5_test_* symbols) and parity binaries" OFF)
+if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS AND ENGINE_F5_TEST_HOOKS)
+    target_compile_definitions(engine_model_f5_tts PRIVATE F5_MEL_TEST=1)
+    foreach(f5_test IN ITEMS f5_e2e f5_parity f5_cfg_parity f5_tokenizer)
+        add_executable(${f5_test} tests/f5_tts/${f5_test}_main.cpp)
+        target_compile_definitions(${f5_test} PRIVATE F5_MEL_TEST=1)
+        target_link_libraries(${f5_test} PRIVATE engine_runtime ggml)
+        target_include_directories(${f5_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(${f5_test} PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endforeach()
 endif()
 
 if (ENGINE_BUILD_TESTS)
+    add_executable(test_granite5asr_golden_transcription
+        tests/granite5asr/test_granite5asr_golden_transcription.cpp
+    )
+    target_compile_definitions(test_granite5asr_golden_transcription PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_link_libraries(test_granite5asr_golden_transcription PRIVATE engine_runtime ggml)
+    target_include_directories(test_granite5asr_golden_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(test_granite5asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(torch_bin_parity
+        tests/vibevoice/torch_bin_parity.cpp
+    )
+
+    target_link_libraries(torch_bin_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(torch_bin_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    # Only build this parity check when the vibevoice model is linked, since it
+    # directly references model-internal symbols (load_vibevoice_assets etc.).
+    if (vibevoice IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(vibevoice_finetune_overlay_check
+            tests/vibevoice/finetune_overlay_check.cpp
+        )
+        target_link_libraries(vibevoice_finetune_overlay_check PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(vibevoice_finetune_overlay_check PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endif()
+
     add_executable(moss_tts_local_smoke
         tests/moss_tts_local/moss_tts_local_smoke.cpp
     )
@@ -1659,24 +1894,6 @@ if (ENGINE_BUILD_TESTS)
     target_link_libraries(moss_tts_local_smoke PRIVATE engine_runtime ggml)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-
-    add_executable(codec_dequant_parity
-        tests/moss_tts_local/codec_dequant_parity.cpp
-    )
-
-    target_link_libraries(codec_dequant_parity PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(codec_dequant_parity PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-
-    add_executable(codec_decode_parity
-        tests/moss_tts_local/codec_decode_parity.cpp
-    )
-
-    target_link_libraries(codec_decode_parity PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(codec_decode_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
     add_executable(moss_voicegen_codec_parity
@@ -1724,15 +1941,6 @@ if (ENGINE_BUILD_TESTS)
         target_link_libraries(moss_voicegen_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
-    add_executable(codec_encode_parity
-        tests/moss_tts_local/codec_encode_parity.cpp
-    )
-
-    target_link_libraries(codec_encode_parity PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-
     add_executable(personaplex_ring_kv_cache_parity
         tests/personaplex/personaplex_ring_kv_cache_parity.cpp
     )
@@ -1740,6 +1948,14 @@ if (ENGINE_BUILD_TESTS)
     target_link_libraries(personaplex_ring_kv_cache_parity PRIVATE engine_runtime ggml)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(personaplex_ring_kv_cache_parity PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(hifigan_vocoder_variant_parity
+        tests/unittests/test_hifigan_vocoder_variants.cpp
+    )
+    target_link_libraries(hifigan_vocoder_variant_parity PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(hifigan_vocoder_variant_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
 endif()
 
@@ -1758,8 +1974,12 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(chatterbox_warm_bench tests/chatterbox/chatterbox_warm_bench.cpp)
     add_engine_warmbench(citrinet_asr_warm_bench tests/citrinet_asr/citrinet_asr_warm_bench.cpp)
     add_engine_warmbench(confucius4_tts_warm_bench tests/confucius4_tts/confucius4_tts_warm_bench.cpp)
-    add_engine_warmbench(dramabox_warm_bench tools/dramabox/dramabox_warm_bench.cpp)
+    add_engine_warmbench(controlfoley_warm_bench tests/controlfoley/controlfoley_warm_bench.cpp)
     add_engine_warmbench(fun_asr_nano_warm_bench tests/fun_asr_nano/fun_asr_nano_warm_bench.cpp)
+    add_engine_warmbench(granite5asr_warm_bench tests/granite5asr/granite5asr_warm_bench.cpp)
+    target_compile_definitions(granite5asr_warm_bench PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_engine_warmbench(higgs_audio_stt_warm_bench tests/higgs_audio_stt/higgs_audio_stt_warm_bench.cpp)
     add_engine_warmbench(higgs_audio_tts_warm_bench tests/higgs_audio_tts/higgs_audio_tts_warm_bench.cpp)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)
@@ -1806,6 +2026,20 @@ endif()
 
 if (ENGINE_BUILD_TESTS)
     enable_testing()
+
+    add_test(
+        NAME audiocpp_cli_list_devices
+        COMMAND audiocpp_cli --list-devices
+    )
+    add_test(
+        NAME audiocpp_server_list_devices
+        COMMAND audiocpp_server --list-devices
+    )
+    set_tests_properties(
+        audiocpp_cli_list_devices
+        audiocpp_server_list_devices
+        PROPERTIES PASS_REGULAR_EXPRESSION "available_devices=[0-9]+"
+    )
 
     set(ENGINE_UNITTEST_ASSET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/assets")
 
@@ -2484,6 +2718,7 @@ if (ENGINE_BUILD_TESTS)
     add_executable(server_config_test
         tests/unittests/test_server_config.cpp
         app/server/config.cpp
+        app/server/model_memory.cpp
         app/cli/args.cpp
         app/cli/request.cpp
     )

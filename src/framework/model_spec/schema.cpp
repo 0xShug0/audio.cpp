@@ -152,7 +152,7 @@ const std::unordered_set<std::string> & capabilities_for_task(const std::string 
                  "multi_speaker", "long_form", "built_in_voices"}},
         {"clone", {"speaker_reference", "emotion_control", "style_control", "multi_speaker", "long_form"}},
         {"vc", {"speaker_reference", "singing"}},
-        {"s2s", {"speaker_reference"}},
+        {"s2s", {"speaker_reference", "audio_enhancement"}},
         {"svc", {"speaker_reference", "singing"}},
         {"align", {"word_timestamps"}},
         {"vad", {"speech_segments", "chunk_planning"}},
