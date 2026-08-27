@@ -310,8 +310,21 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
                 rng_offset_blocks += sampling::torch_cuda_tensor_iterator_offset_blocks(
                     static_cast<uint64_t>(latents.size()),
                     sampling_policy);
-                previous_latent = std::move(carry_latent);
-                previous_condition = std::move(carry_condition);
+                // Carry-free probe: with MM3_FLOW_NO_CARRY=1 every chunk
+                // denoises independently (the crop overlap still smooths the
+                // seams). If listening/panel accept this, chunks can be
+                // denoised in parallel across GPUs.
+                static const bool no_carry = [] {
+                    const char * env = std::getenv("MM3_FLOW_NO_CARRY");
+                    return env != nullptr && env[0] == '1';
+                }();
+                if (no_carry) {
+                    previous_latent.clear();
+                    previous_condition.clear();
+                } else {
+                    previous_latent = std::move(carry_latent);
+                    previous_condition = std::move(carry_condition);
+                }
                 denoised.push_back({std::move(latents), condition_frames});
             }
             release_flow_after_phase();
