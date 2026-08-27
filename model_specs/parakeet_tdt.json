@@ -48,7 +48,8 @@
   "capabilities": {
     "asr": [
       "word_timestamps",
-      "partial_results"
+      "partial_results",
+      "vad_chunking"
     ]
   },
   "options": {
@@ -67,6 +68,27 @@
         "description": "Keep language tag tokens in decoded text; default false.",
         "required": false,
         "default": false
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Offline audio chunking mode. vad uses Silero VAD to skip silence; auto keeps Parakeet's existing offline_mode behavior.",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Request-level chunk duration in seconds for fixed or VAD offline chunking. Falls back to the session chunk duration when omitted.",
+        "required": false,
+        "min": 0.001,
+        "default": 2.0
       }
     ],
     "session": [
@@ -178,6 +200,13 @@
         "required": false,
         "min": 0.001,
         "default": 30.0
+      },
+      {
+        "name": "vad_model_path",
+        "type": "path",
+        "description": "Silero VAD model path used by audio_chunk_mode=vad; default assets/framework/models/silero_vad.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
       }
     ],
     "load": []
