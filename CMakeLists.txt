@@ -710,6 +710,24 @@ audiocpp_add_model(neutts
         engine::models::neutts::make_neutts_loader
 )
 
+audiocpp_add_model(echo_tts
+    SOURCES
+        src/community_models/echo_tts/session.cpp
+        src/community_models/echo_tts/tokenizer.cpp
+        src/community_models/echo_tts/latent_post.cpp
+        src/community_models/echo_tts/sampler.cpp
+        src/community_models/echo_tts/dit.cpp
+    INCLUDES
+        engine/community_models/echo_tts/session.h
+        engine/community_models/echo_tts/config.h
+        engine/community_models/echo_tts/tokenizer.h
+        engine/community_models/echo_tts/latent_post.h
+        engine/community_models/echo_tts/sampler.h
+        engine/community_models/echo_tts/dit.h
+    LOADERS
+        engine::models::echo_tts::make_echo_tts_loader
+)
+
 if (MSVC)
     set_source_files_properties(
         src/community_models/inflect_v2/frontend.cpp
@@ -2062,6 +2080,17 @@ if (ENGINE_BUILD_TESTS)
     )
 
     add_engine_unittest(dots_tts_vocoder_parity tests/dots_tts/dots_tts_vocoder_parity.cpp)
+
+    # Needs the GGUF and a PyTorch reference dump, so it is driven by hand
+    # rather than registered with add_test -- same as dots_tts_vocoder_parity.
+    add_engine_unittest(echo_tts_dit_parity tests/echo_tts/echo_tts_dit_parity.cpp)
+
+    add_engine_unittest(echo_tts_host_units tests/echo_tts/echo_tts_host_units.cpp)
+
+    add_test(
+        NAME echo_tts_host_units
+        COMMAND echo_tts_host_units
+    )
 
     add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
 

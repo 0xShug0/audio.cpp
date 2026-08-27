@@ -1,4 +1,13 @@
 {
+  "echo_tts": [
+    {"name": "num_inference_steps", "type": "slider", "label": "num_inference_steps", "label_en": "Sampling steps", "default": 40, "minimum": 8, "maximum": 40, "step": 1, "precision": 0, "info": "Euler sampler steps."},
+    {"name": "text_guidance_scale", "type": "slider", "label": "text_guidance_scale", "label_en": "Text guidance", "default": 3.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "speaker_guidance_scale", "type": "slider", "label": "speaker_guidance_scale", "label_en": "Speaker guidance", "default": 8.0, "minimum": 0.0, "maximum": 15.0, "step": 0.1},
+    {"name": "truncation_factor", "type": "slider", "label": "truncation_factor", "label_en": "Noise truncation", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
+    {"name": "guidance_interval", "type": "slider", "label": "guidance_interval", "label_en": "Guidance interval", "default": 1, "minimum": 1, "maximum": 3, "step": 1, "precision": 0, "info": "Refresh the unconditional CFG lanes every Nth guided step. Higher is faster and works best with more steps; 1 is highest fidelity."},
+    {"name": "reference_duration_sec", "type": "slider", "label": "reference_duration_sec", "label_en": "Reference trim (s)", "default": 15.0, "minimum": 1.0, "maximum": 60.0, "step": 1.0, "info": "Trim the speaker reference before encoding. Around 10 s usually clones best."},
+    {"name": "seed", "type": "number", "label": "seed", "label_en": "Seed", "default": 0, "minimum": 0, "step": 1, "precision": 0}
+  ],
   "_comment": "WebUI TTS 高级参数控件配置：按模型 family 动态生成控件（gr.render）。每项字段：name=选项键(随请求 options 透传给模型)；type=slider|number|bool|text|choice；label/info=显示文案；default=默认值(应等于模型默认，已按 src/models/<family>/*.cpp 校对)；minimum/maximum/step=数值范围；precision=0 表示整数；choices=下拉候选。规则：只有被用户改动过的控件值才会随请求发送；seed/max_tokens 已有专用输入框，勿在此重复；参考文本用『参考文本』框(reference_text)；文件路径/parity 类参数(如 *_noise_file)未纳入，可用『其它参数(JSON)』兜底框传。",
 
   "qwen3_tts": [
