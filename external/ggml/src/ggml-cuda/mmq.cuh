@@ -4008,6 +4008,10 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     ggml_cuda_pool_alloc<float> tmp_fixup(pool);
     if (fixup_needed) {
         tmp_fixup.alloc(block_nums_stream_k.x * mmq_x*mmq_y);
+        // Pool memory is recycled uninitialized; zero the partial-sum staging
+        // so any fixup cell the merge pass visits before/without a producer
+        // contributes exactly nothing instead of stale pool bytes.
+        CUDA_CHECK(cudaMemsetAsync(tmp_fixup.ptr, 0, block_nums_stream_k.x * mmq_x*mmq_y * sizeof(float), stream));
     }
 
     const dim3 block_nums_fixup(block_nums_stream_k.x, mmq_y/warp_size, 1);
