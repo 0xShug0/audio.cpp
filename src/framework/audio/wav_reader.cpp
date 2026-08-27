@@ -167,11 +167,15 @@ WavData read_wav_f32(std::istream & input) {
         throw std::runtime_error("could not open WAV input");
     }
 
+    // Consume the 12-byte RIFF header once and keep it: it doubles as the magic
+    // for naming a non-WAV container below. Deliberately no rewind afterwards --
+    // these bytes are spent, and an absolute seek back to 12 would be wrong for
+    // an istream that did not begin at offset 0 and impossible for one that
+    // cannot seek at all, such as a pipe.
     std::array<char, 12> header{};
     input.read(header.data(), static_cast<std::streamsize>(header.size()));
     const auto header_read = static_cast<size_t>(input.gcount());
     input.clear();
-    input.seekg(static_cast<std::streamoff>(header_read), std::ios::beg);
 
     if (header_read < 12 || std::memcmp(header.data(), "RIFF", 4) != 0 ||
         std::memcmp(header.data() + 8, "WAVE", 4) != 0) {
@@ -199,6 +203,11 @@ WavData read_wav_f32(std::istream & input) {
         const uint32_t chunk_size = read_scalar<uint32_t>(input);
         const std::string id(chunk_id, 4);
         if (id == "fmt ") {
+            if (chunk_size < 16) {
+                throw std::runtime_error(
+                    "malformed WAV fmt chunk (needs 16 bytes, got " +
+                    std::to_string(chunk_size) + ")");
+            }
             audio_format = read_scalar<uint16_t>(input);
             channels = read_scalar<uint16_t>(input);
             sample_rate = read_scalar<uint32_t>(input);
@@ -269,7 +278,16 @@ WavData read_wav_f32(std::istream & input) {
             skip_bytes(input, chunk_size);
         }
         if (chunk_size % 2 == 1) {
-            skip_bytes(input, 1);
+            // RIFF pads an odd-sized chunk to an even boundary, but plenty of
+            // writers omit that byte when the chunk is the last thing in the
+            // file. It carries no data, so a missing one at EOF is not an error.
+            // This matters more than it used to: PCM8, A-law and mu-law are one
+            // byte per sample, so odd data chunks are now common.
+            input.seekg(1, std::ios::cur);
+            if (!input) {
+                input.clear();
+                break;
+            }
         }
     }
 

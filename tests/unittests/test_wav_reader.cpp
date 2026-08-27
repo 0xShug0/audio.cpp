@@ -5,6 +5,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -75,18 +76,14 @@ void write_pcm24_wav(
     }
 }
 
-// G.711 decode tables, all 256 codes each.
+// G.711 decode tables, all 256 codes each. Ground truth from outside this
+// codebase: ffmpeg 9.0.1 decoding a 256-byte file of every code, matching the
+// values implied by the ITU-T G.711 segment definitions.
 //
-// These are ground truth from OUTSIDE this codebase: produced by decoding a
-// 256-byte A-law and mu-law file with ffmpeg 9.0.1, and independently matching
-// the values reconstructed from the ITU-T G.711 segment definitions. They are
-// deliberately NOT a re-derivation of the shift-and-bias arithmetic in
-// wav_reader.cpp -- an earlier revision of this test spot-checked four codes
-// whose expected values had been worked out from that same arithmetic, and so
-// happily confirmed an A-law sign inversion across every one of the 256 codes.
-//
-// The two codings do not share a sign convention: mu-law sets the top bit for
-// negative samples, A-law for positive ones. That is the trap.
+// Every expected value in this file must come from an external decoder, never
+// from the arithmetic in wav_reader.cpp. The two codings do not share a sign
+// convention -- mu-law sets the top bit for negative samples, A-law for
+// positive ones -- and a table derived from the implementation cannot see that.
 constexpr int16_t kALawExpected[256] = {
      -5504,  -5248,  -6016,  -5760,  -4480,  -4224,  -4992,  -4736,
      -7552,  -7296,  -8064,  -7808,  -6528,  -6272,  -7040,  -6784,
@@ -321,39 +318,52 @@ int main() {
             const auto path8 = root / "pcm8.wav";
             write_wav(path8, 0x0001, 8, 8000, 1,
                       std::vector<char>{static_cast<char>(128), static_cast<char>(255),
-                                        static_cast<char>(0), static_cast<char>(64)});
+                                        static_cast<char>(0), static_cast<char>(64),
+                                        static_cast<char>(1)});
             const auto wav = engine::audio::read_wav_f32(path8);
-            require(wav.samples.size() == 4, "PCM8 sample count mismatch");
-            require_near(wav.samples[0], 0.0F, 1.0e-7F, "PCM8 midpoint is silence");
-            require_near(wav.samples[1], 127.0F / 128.0F, 1.0e-7F, "PCM8 max positive");
-            require_near(wav.samples[2], -1.0F, 1.0e-7F, "PCM8 min negative");
-            require_near(wav.samples[3], -0.5F, 1.0e-7F, "PCM8 quarter scale");
+            require(wav.samples.size() == 5, "PCM8 sample count mismatch");
+            // Frozen from `ffmpeg -i pcm8.wav -f f32le -`. Note the endpoints are
+            // asymmetric: 255 is 127/128, not 1.0. ffmpeg agrees.
+            const float expected8[5] = {0.0F, 0.9921875F, -1.0F, -0.5F, -0.9921875F};
+            for (int i = 0; i < 5; ++i) {
+                require_near(wav.samples[static_cast<size_t>(i)], expected8[i], 1.0e-7F,
+                             "PCM8 sample " + std::to_string(i));
+            }
         }
 
         // --- PCM32 -----------------------------------------------------------
         {
             const auto path32 = root / "pcm32.wav";
             write_wav(path32, 0x0001, 32, 96000, 1,
-                      to_bytes<int32_t>({0, 1073741824, -2147483647 - 1}));
+                      to_bytes<int32_t>({0, 1073741824, -2147483647 - 1, 2147483647, 1}));
             const auto wav = engine::audio::read_wav_f32(path32);
             require(wav.sample_rate == 96000, "PCM32 sample rate mismatch");
-            require(wav.samples.size() == 3, "PCM32 sample count mismatch");
-            require_near(wav.samples[0], 0.0F, 1.0e-7F, "PCM32 zero");
-            require_near(wav.samples[1], 0.5F, 1.0e-7F, "PCM32 half");
-            require_near(wav.samples[2], -1.0F, 1.0e-7F, "PCM32 full negative");
+            require(wav.samples.size() == 5, "PCM32 sample count mismatch");
+            // Frozen from ffmpeg. INT32_MAX lands on exactly 1.0 rather than
+            // 2147483647/2^31, because float32's ULP at that magnitude is 256 and
+            // the cast rounds up before the divide. ffmpeg does the same.
+            const float expected32[5] = {0.0F, 0.5F, -1.0F, 1.0F, 4.656612873077393e-10F};
+            for (int i = 0; i < 5; ++i) {
+                require_near(wav.samples[static_cast<size_t>(i)], expected32[i], 1.0e-12F,
+                             "PCM32 sample " + std::to_string(i));
+            }
         }
 
         // --- float64 ---------------------------------------------------------
         {
             const auto path64 = root / "float64.wav";
             write_wav(path64, 0x0003, 64, 44100, 2,
-                      to_bytes<double>({0.0, 0.125, -0.875, 1.0}));
+                      to_bytes<double>({0.0, 0.125, -0.875, 1.0, 1.0 + 0x1p-30}));
             const auto wav = engine::audio::read_wav_f32(path64);
             require(wav.channels == 2, "float64 channel count mismatch");
-            require(wav.samples.size() == 4, "float64 sample count mismatch");
-            require_near(wav.samples[1], 0.125F, 1.0e-7F, "float64 eighth");
-            require_near(wav.samples[2], -0.875F, 1.0e-7F, "float64 negative");
-            require_near(wav.samples[3], 1.0F, 1.0e-7F, "float64 unity");
+            require(wav.samples.size() == 5, "float64 sample count mismatch");
+            // Frozen from ffmpeg. The last one is deliberately not representable
+            // in float32 and collapses to 1.0 on both sides.
+            const float expected64[5] = {0.0F, 0.125F, -0.875F, 1.0F, 1.0F};
+            for (int i = 0; i < 5; ++i) {
+                require_near(wav.samples[static_cast<size_t>(i)], expected64[i], 1.0e-7F,
+                             "float64 sample " + std::to_string(i));
+            }
         }
 
         // --- G.711 mu-law and A-law, every code ---------------------------
@@ -433,6 +443,66 @@ int main() {
             require_throws_containing(
                 [&] { (void)engine::audio::read_wav_f32(path64); },
                 "malformed float64", "float64 partial sample rejection");
+        }
+
+        // --- All three overloads agree, including on a missing final pad -----
+        // RIFF pads odd-sized chunks, but writers routinely omit the byte when
+        // the chunk ends the file, and one-byte-per-sample formats make odd data
+        // chunks common. The path overload tolerated this because seeking past
+        // EOF is legal on an ifstream; the in-memory overload did not, so the
+        // same bytes parsed from a file and rejected from an upload buffer.
+        {
+            const auto odd = root / "pcm8_odd_no_pad.wav";
+            write_wav(odd, 0x0001, 8, 8000, 1,
+                      std::vector<char>{static_cast<char>(0), static_cast<char>(128),
+                                        static_cast<char>(254)});
+            std::ifstream in(odd, std::ios::binary);
+            const std::string blob((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            require(blob.size() % 2 == 1, "test file should end without the pad byte");
+
+            const auto from_path = engine::audio::read_wav_f32(odd);
+            const auto from_memory = engine::audio::read_wav_f32(std::string_view(blob));
+            require(from_path.samples.size() == 3, "odd-size PCM8 sample count from path");
+            require(from_memory.samples.size() == 3, "odd-size PCM8 sample count from memory");
+            for (size_t i = 0; i < from_path.samples.size(); ++i) {
+                require_near(from_memory.samples[i], from_path.samples[i], 0.0F,
+                             "path and memory overloads disagree at " + std::to_string(i));
+            }
+
+            // The istream overload must not assume the stream began at offset 0,
+            // which an absolute rewind after the header sniff would.
+            std::istringstream prefixed(std::string("PREFIX!!") + blob, std::ios::binary);
+            prefixed.seekg(8);
+            const auto from_stream = engine::audio::read_wav_f32(prefixed);
+            require(from_stream.samples.size() == 3, "offset istream sample count");
+            require_near(from_stream.samples[0], from_path.samples[0], 0.0F,
+                         "offset istream disagrees with path");
+        }
+
+        // --- A short fmt chunk is an error, not a read into the next chunk ----
+        {
+            const auto short_fmt = root / "short_fmt.wav";
+            {
+                std::ofstream out(short_fmt, std::ios::binary);
+                const std::vector<char> payload = to_bytes<int16_t>({0, 16384});
+                write_bytes(out, "RIFF", 4);
+                write_le<uint32_t>(out, 20u + 14u + static_cast<uint32_t>(payload.size()));
+                write_bytes(out, "WAVE", 4);
+                write_bytes(out, "fmt ", 4);
+                write_le<uint32_t>(out, 14u);          // one field short of the minimum
+                write_le<uint16_t>(out, uint16_t{1});
+                write_le<uint16_t>(out, uint16_t{1});
+                write_le<uint32_t>(out, uint32_t{44100});
+                write_le<uint32_t>(out, uint32_t{88200});
+                write_le<uint16_t>(out, uint16_t{2});
+                write_bytes(out, "data", 4);
+                write_le<uint32_t>(out, static_cast<uint32_t>(payload.size()));
+                write_bytes(out, payload.data(), static_cast<std::streamsize>(payload.size()));
+            }
+            require_throws_containing(
+                [&] { (void)engine::audio::read_wav_f32(short_fmt); },
+                "malformed WAV fmt chunk", "short fmt chunk rejection");
         }
 
         // --- Still rejects what it genuinely cannot decode -------------------
