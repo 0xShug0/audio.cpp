@@ -52,6 +52,14 @@ DEFAULT_TEXT = (
     "Hopefully this works, I'm super excited to try this and see what it can do."
 )
 
+# The reference's weight dtype is the single largest lever on the parity
+# numbers, so it is selectable rather than fixed. Contributed by @dignome.
+DTYPES = {
+    "bfloat16": torch.bfloat16,
+    "float16": torch.float16,
+    "float32": torch.float32,
+}
+
 SEED = 0
 FIXED_T = 0.7
 SEQUENCE_LENGTH = 640
@@ -85,12 +93,29 @@ def main() -> int:
     parser.add_argument(
         "--steps", type=int, default=40, help="sampler steps (default: 40)"
     )
+    parser.add_argument(
+        "--force-dtype",
+        choices=sorted(DTYPES),
+        default="bfloat16",
+        help="dtype for the DiT weights (default: bfloat16, upstream's default). "
+             "float32 is the one to use for a parity gate: ggml accumulates in "
+             "f32 regardless of the stored weight type, so a float32 reference "
+             "is the like-for-like comparison even against an F16 GGUF.",
+    )
     args = parser.parse_args()
+
+    if args.force_dtype == "float32":
+        # TF32 has a 10-bit mantissa -- no better than F16 -- and Ampere will
+        # silently use it for matmuls, which would defeat the point of this run.
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.set_float32_matmul_precision("highest")
 
     torch.manual_seed(SEED)
     out: Dict[str, Any] = {}
 
-    model = load_model_from_hf(delete_blockwise_modules=True)
+    model = load_model_from_hf(
+        delete_blockwise_modules=True, dtype=DTYPES[args.force_dtype])
     fish_ae = load_fish_ae_from_hf()
     pca_state = load_pca_state_from_hf()
     device, dtype = model.device, model.dtype

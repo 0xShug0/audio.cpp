@@ -5,10 +5,16 @@
 // way dots_tts_vocoder_parity is.
 //
 //   python3 tools/community_models/echo_tts_reference.py --speaker ref.wav
-//       --full-blocks -o echo_ref.npz
+//       --force-dtype float32 --full-blocks -o echo_ref.npz
 //   python3 tools/community_models/echo_tts_pack_reference.py echo_ref.npz
 //       -o echo_ref.bin
 //   ./echo_tts_dit_parity --model /path/to/Echo-TTS-GGUF --reference echo_ref.bin
+//
+// --force-dtype float32 is load-bearing, not a nicety. ggml accumulates in F32
+// whatever the stored weight type is, so a float32 reference is the like-for-like
+// comparison even against an F16 GGUF. A bfloat16 reference -- upstream's default
+// -- scores the 40-step trajectory at 0.905 and looks like a defect in this port;
+// the same run against float32 scores 0.9995.
 //
 // Two checks, deliberately separate:
 //

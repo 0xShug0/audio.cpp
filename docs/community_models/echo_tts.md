@@ -24,7 +24,7 @@ prove neither.
 | Milestone | Scope | Implemented | Numerically verified |
 |---|---|---|---|
 | M0 | Family registration, model spec v1 | yes | n/a |
-| M1 | GGUF conversion, DiT, PCA inverse, Fish decode | yes | **denoiser yes, trajectory no** |
+| M1 | GGUF conversion, DiT, PCA inverse, Fish decode | yes | **yes** — denoiser and 40-step trajectory both above gate |
 | M2 | Native speaker encoding (Fish encoder + RVQ) | yes | folded into the denoiser probe below |
 | M3 | Long-form via the framework text chunker | yes | **no** |
 | M4 | Q8_0 conversion, RTF and memory evidence | partial | **no** |
@@ -39,14 +39,28 @@ against a dump from `tools/community_models/echo_tts_reference.py`. Gates are co
 flattened tensors **and** max-absolute-error, never equality: cosine alone cannot see a uniform
 scale error, and the host Philox stream matches CUDA to ~2 ULP rather than bit-exactly.
 
-The reference defaults to **bfloat16** while the GGUF here is **F16**. Both dumps are shown because
-the difference between them is the single largest term in the table:
+**The reference's own weight dtype dominates every number here**, and getting it wrong is what made
+the sampler look broken for most of this port's life. ggml accumulates in F32 regardless of the
+stored weight type, so the like-for-like comparison against an F16 GGUF is a **float32** reference,
+not an F16 one. Run that way, every check passes:
 
-| Check | vs bfloat16 reference | vs float16 reference | Gate | Verdict |
-|---|---|---|---|---|
-| Denoiser, one conditional forward at t = 0.7 | cosine 0.999977, max-abs 0.086 | **cosine 0.999999188, max-abs 0.010** | ≥ 0.999 | **PASS** |
-| 40-step sampler, reference initial noise injected | cosine 0.913082 | cosine 0.988459, max-abs 1.07 | ≥ 0.999 | **below gate** |
-| 40-step sampler, our own seeded draw | cosine 0.905481 | cosine 0.976972, max-abs 1.87 | ≥ 0.999 | **below gate** |
+| Check | vs float32 reference | Gate | Verdict |
+|---|---|---|---|
+| Denoiser, one conditional forward at t = 0.7 | cosine 0.999999899, max-abs 0.0126 | ≥ 0.999, ≤ 0.25 | **PASS** |
+| 40-step sampler, reference initial noise injected | cosine 0.999516, max-abs 0.318 | ≥ 0.999, ≤ 4.0 | **PASS** |
+| 40-step sampler, our own seeded draw | cosine 0.999542, max-abs 0.319 | ≥ 0.999, ≤ 4.0 | **PASS** |
+
+For contrast, the same GGUF against lower-precision references — this is the whole of the residual
+that earlier revisions of this document reported as unexplained:
+
+| Check | vs bfloat16 reference | vs float16 reference |
+|---|---|---|
+| Denoiser | cosine 0.999977 | cosine 0.999999188 |
+| Sampler, injected noise | cosine 0.913082 | cosine 0.988459 |
+| Sampler, seeded draw | cosine 0.905481 | cosine 0.976972 |
+
+Generate the F32 dump with `--force-dtype float32`, which also disables TF32 — TF32 has a 10-bit
+mantissa, no better than F16, and Ampere would otherwise use it for matmuls and defeat the point.
 
 **The denoiser probe passes and is the number that carries the port.** It is what settles the four
 details that fail *silently* rather than loudly — half-head RoPE, the interleaved (not NEOX) rotary
@@ -60,23 +74,23 @@ projections, so the number covers the combined conditioning-plus-denoiser path. 
 catch a wrong block; it is not enough to localise one. Per-block activation dumps
 (`echo_tts_pack_reference.py --blocks`) exist for that and have not been run.
 
-**The 40-step trajectory is below the gate, and that is reported as a failure of the check as
-written.** What is established about it:
+**The 40-step trajectory now passes, and the earlier shortfall was the reference, not this port.**
+The evidence that pointed there before it was confirmed:
 
-- **It is not the RNG.** Injecting the reference's own initial noise scores no better than our
-  seeded draw (0.988 vs 0.977), so the Philox difference is not the mechanism.
-- **It is dominated by dtype.** Re-dumping the reference at float16 to match the GGUF moves the
-  seeded trajectory from 0.905 to 0.977 and the denoiser from 0.999977 to 0.999999.
-- **It compounds with step count.** At 4 steps the same comparison scores 0.9965/0.9966; at 40 it
-  scores 0.9131/0.9055 (bfloat16 reference). Monotonic degradation with step count is the signature
-  of accumulating per-step rounding, amplified every step by dual CFG at 3.0 and 8.0, rather than of
-  a structural defect.
-- **An independent line-by-line review of the sampler found no defect** — schedule, inclusive CFG
-  bounds, single application of `truncation_factor`, three-lane CFG combination, the Euler update
-  and the speaker-KV boundary all agree with `inference.py`.
+- **It was not the RNG.** Injecting the reference's own initial noise scored no better than our
+  seeded draw (0.988 vs 0.977), so the Philox difference was never the mechanism.
+- **It tracked dtype.** Each step up in reference precision moved the seeded trajectory: 0.905 at
+  bfloat16, 0.977 at float16, 0.9995 at float32.
+- **It compounded with step count.** At 4 steps the bfloat16 comparison scored 0.9965; at 40 it
+  scored 0.9055. Monotonic degradation with step count is the signature of accumulating rounding in
+  one of the two implementations, amplified every step by dual CFG at 3.0 and 8.0.
+- **A line-by-line review of the sampler found no defect** — schedule, inclusive CFG bounds, single
+  application of `truncation_factor`, three-lane CFG combination, the Euler update and the
+  speaker-KV boundary all agree with `inference.py`.
 
-That is an explanation, not a proof. Until the residual is closed or the gate is deliberately
-restated, treat the trajectory as **unverified**.
+The rounding was PyTorch's, not ours. Credit to @dignome for running the float32 reference that
+settled it; the numbers above were then reproduced independently on an RTX 3090 with the gates
+enforced.
 
 ### Host-side checks
 
@@ -114,7 +128,6 @@ end and produces the right words; the denoiser cosine above is what shows the gr
 
 - No per-block DiT activation dump, so the passing denoiser cosine proves correctness without
   localising where any future regression lives.
-- The 40-step trajectory residual above is explained but not closed.
 - No A/B of the flash-attention path against `AUDIOCPP_ECHO_TTS_NO_FLASH=1` on a fixed seed.
 - No listening comparison of F16 against Q8_0.
 - Warm RTF and VRAM-stability-across-requests numbers.
