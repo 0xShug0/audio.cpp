@@ -147,7 +147,7 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
     out.session_options = {
         {"minimax_music3.weight_type", "native|bf16|f16|q8_0|q4_0|q4_k", "Shared weight storage type.", false, "native"},
         {"minimax_music3.language_model_gguf", "string", "Language model component GGUF file relative to the model root.", false, "language_model_q4_0.gguf"},
-        {"minimax_music3.rvq_depth_decoder_gguf", "string", "RVQ depth decoder component GGUF file relative to the model root.", false, "rvq_depth_decoder_q8_0.gguf"},
+        {"minimax_music3.rvq_depth_decoder_gguf", "string", "RVQ depth decoder component GGUF file relative to the model root. The q4_k default is the wave-2 recipe (depth is weight-bandwidth-bound: -24% depth, ~-6% wall, instrument-panel clean); q8_0 restores the previous default.", false, "rvq_depth_decoder_q4_k.gguf"},
         {"minimax_music3.flow_transformer_gguf", "string", "Flow transformer component GGUF file relative to the model root.", false, "transformer_q4_0.gguf"},
         {"minimax_music3.graph_context_mb", "int", "Runtime graph arena size in MiB.", false, "32", "1"},
         {"minimax_music3.weight_context_mb", "int", "Weight context size in MiB.", false, "32", "1"},
