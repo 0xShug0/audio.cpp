@@ -85,6 +85,11 @@ struct MiniMaxMusic3Request {
     float ar_guidance_scale = 1.5F;
     int64_t top_k = 50;
     uint64_t seed = 0;
+    // Flow CFG guidance-delta reuse: when interval > 1 the unconditional
+    // branch is evaluated only on warmup steps, every interval-th step and
+    // the final step; other steps reuse the cached (cond - uncond) delta.
+    int64_t flow_uncond_interval = 1;
+    int64_t flow_uncond_warmup = 2;
 };
 
 }  // namespace engine::models::minimax_music3

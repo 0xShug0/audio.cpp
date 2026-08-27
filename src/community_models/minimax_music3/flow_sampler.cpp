@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -145,7 +147,14 @@ public:
         frames_ = frames;
         channels_ = channels;
         overlap_ = overlap;
+        delta_cache_.clear();
         flow_.prepare_chunk_condition(condition, frames);
+    }
+
+    void set_guidance_reuse(int64_t uncond_interval, int64_t uncond_warmup) {
+        uncond_interval_ = uncond_interval;
+        uncond_warmup_ = uncond_warmup;
+        delta_cache_.clear();
     }
 
     void reset_sampler_caches(const std::vector<modules::FlowSamplerCacheState> & caches) override {
@@ -188,16 +197,72 @@ public:
         if (overlap_ > 0) {
             apply_overlap_prompt(denoiser_latent, input.state.schedule.t);
         }
+        const size_t branch_size = static_cast<size_t>(channels_ * frames_);
+        const int64_t step = input.state.schedule.index;
+        const bool reuse_delta =
+            uncond_interval_ > 1 &&
+            delta_cache_.size() == branch_size &&
+            step >= uncond_warmup_ &&
+            step + 1 < active_schedule_steps_ &&
+            (step % uncond_interval_) != 0;
+        modules::FlowSamplerDenoiserOutput output;
+        if (reuse_delta) {
+            auto cond = flow_.predict_velocity_cond(
+                denoiser_latent,
+                *condition_,
+                frames_,
+                input.state.schedule.t);
+            if (cond.size() != branch_size) {
+                throw std::runtime_error("MiniMax Music 3 flow cond velocity shape mismatch");
+            }
+            static const bool verify = getenv("MM3_DC_VERIFY") != nullptr;
+            if (verify) {
+                const auto full = flow_.predict_velocity_branches(
+                    denoiser_latent, *condition_, frames_, input.state.schedule.t);
+                float cond_diff = 0.0F;
+                float synth_diff = 0.0F;
+                float cond_mag = 0.0F;
+                for (size_t i = 0; i < branch_size; ++i) {
+                    cond_diff = std::max(cond_diff, std::fabs(cond[i] - full[i]));
+                    const float synth = cond[i] - delta_cache_[i];
+                    synth_diff = std::max(synth_diff, std::fabs(synth - full[branch_size + i]));
+                    cond_mag = std::max(cond_mag, std::fabs(full[i]));
+                }
+                fprintf(stderr,
+                        "MM3_DC_VERIFY step=%lld cond_maxdiff=%.6f synth_uncond_maxdiff=%.6f cond_maxabs=%.6f\n",
+                        static_cast<long long>(step), cond_diff, synth_diff, cond_mag);
+                output.predictions.push_back({
+                    "cond",
+                    std::vector<float>(full.begin(), full.begin() + static_cast<std::ptrdiff_t>(branch_size)),
+                });
+                output.predictions.push_back({
+                    "uncond",
+                    std::vector<float>(full.begin() + static_cast<std::ptrdiff_t>(branch_size), full.end()),
+                });
+                return output;
+            }
+            std::vector<float> uncond(branch_size);
+            for (size_t i = 0; i < branch_size; ++i) {
+                uncond[i] = cond[i] - delta_cache_[i];
+            }
+            output.predictions.push_back({"cond", std::move(cond)});
+            output.predictions.push_back({"uncond", std::move(uncond)});
+            return output;
+        }
         const auto branches = flow_.predict_velocity_branches(
             denoiser_latent,
             *condition_,
             frames_,
             input.state.schedule.t);
-        const size_t branch_size = static_cast<size_t>(channels_ * frames_);
         if (branches.size() != 2 * branch_size) {
             throw std::runtime_error("MiniMax Music 3 flow velocity shape mismatch");
         }
-        modules::FlowSamplerDenoiserOutput output;
+        if (uncond_interval_ > 1) {
+            delta_cache_.resize(branch_size);
+            for (size_t i = 0; i < branch_size; ++i) {
+                delta_cache_[i] = branches[i] - branches[branch_size + i];
+            }
+        }
         output.predictions.push_back({
             "cond",
             std::vector<float>(branches.begin(), branches.begin() + static_cast<std::ptrdiff_t>(branch_size)),
@@ -233,10 +298,13 @@ private:
     const std::vector<float> * condition_ = nullptr;
     const std::vector<float> * previous_latent_ = nullptr;
     std::vector<float> noise_prompt_;
+    std::vector<float> delta_cache_;
     int64_t frames_ = 0;
     int64_t channels_ = 0;
     int64_t overlap_ = 0;
     int64_t active_schedule_steps_ = 0;
+    int64_t uncond_interval_ = 1;
+    int64_t uncond_warmup_ = 2;
 };
 
 class MiniMaxMusic3FlowUpdateRuntime final : public modules::FlowSamplerUpdateRuntime {
@@ -315,13 +383,19 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
         }
     }
 
-    void ensure_sampler(int64_t latent_values, int64_t steps, float guidance_scale) {
+    void ensure_sampler(
+        int64_t latent_values,
+        int64_t steps,
+        float guidance_scale,
+        int64_t uncond_interval,
+        int64_t uncond_warmup) {
         if (sampler != nullptr &&
             denoiser != nullptr &&
             updater != nullptr &&
             sampler_latent_values == latent_values &&
             sampler_steps == steps &&
             sampler_guidance_scale == guidance_scale) {
+            denoiser->set_guidance_reuse(uncond_interval, uncond_warmup);
             return;
         }
         auto new_denoiser = std::make_unique<MiniMaxMusic3FlowDenoiserRuntime>(*flow);
@@ -347,6 +421,7 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
         sampler_latent_values = latent_values;
         sampler_steps = steps;
         sampler_guidance_scale = guidance_scale;
+        denoiser->set_guidance_reuse(uncond_interval, uncond_warmup);
     }
 
     std::vector<float> denoise_chunk(
@@ -378,7 +453,9 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
         ensure_sampler(
             config.flow.in_channels * frames,
             request.num_inference_steps,
-            request.guidance_scale);
+            request.guidance_scale,
+            request.flow_uncond_interval,
+            request.flow_uncond_warmup);
         denoiser->set_chunk_inputs(
             chunk_condition,
             frames,
