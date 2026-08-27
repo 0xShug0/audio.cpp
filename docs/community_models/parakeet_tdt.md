@@ -135,6 +135,7 @@ Request options are bare names. Session options use the
 |---|---|---|---|
 | `max_tokens` | request | integer >= 0; `0` | TDT token limit; `0` uses the model-derived limit |
 | `keep_language_tags` | request | boolean; `false` | Preserve language-tag tokens in decoded text |
+| `audio_chunk_mode` | request | `auto`, `fixed`, `vad`, `none`; `auto` | Offline chunking mode; `vad` skips silent spans with Silero VAD |
 | `weight_type` | session | `native`, `f32`, `f16`, `bf16`, `q8_0`; `native` | Fallback storage type for matmul weights |
 | `matmul_weight_type` | session | same values; inherits `weight_type` | Encoder and decoder matmul storage type |
 | `conv_weight_type` | session | `native`, `f32`, `f16`; `native` | True convolution-weight storage type |
@@ -148,6 +149,7 @@ Request options are bare names. Session options use the
 | `streaming_attention_mode` | session | `full_context`; `full_context` | Bidirectional attention within each bounded streaming window |
 | `offline_mode` | session | `full_context`, `long_form`, `auto`; `full_context` | Offline scheduling policy |
 | `audio_chunk_threshold_sec` | session | float >= 0.001; `30` | `auto` threshold for switching to long-form execution |
+| `vad_model_path` | session | path; `assets/framework/models/silero_vad` | Silero VAD model directory for `audio_chunk_mode=vad` |
 
 Word timestamps are built from the decoder's actual nonblank token-emission
 frames. SentencePiece fragments and following punctuation are merged into
@@ -182,6 +184,12 @@ default). Long-form mode preserves global timestamps and predictor state while
 decoding every center region exactly once. Because each region sees bounded
 rather than utterance-wide context, its transcript can differ from the default
 full-context result.
+
+Set `--request-option audio_chunk_mode=vad` to use Silero VAD-planned speech
+spans instead of fixed windows. VAD mode uses
+`parakeet_tdt.audio_chunk_duration_sec` as the maximum speech chunk duration and
+`parakeet_tdt.vad_model_path` to locate the bundled Silero VAD model. `auto`
+keeps the existing Parakeet `offline_mode` behavior.
 
 ## Performance
 
