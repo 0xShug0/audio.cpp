@@ -404,10 +404,18 @@ ArkttsARWeights load_ar_weights(
         backend_type,
         "audio8_tts.ar.weights",
         weight_context_bytes);
-    weights.text_embedding_host = source.require_tensor(
-        "embeddings.weight",
-        assets::TensorStorageType::Native,
-        {config.text.vocab_size, config.text.dim});
+    const bool is_mamba = config.text.slow_backbone == "falcon_h1" || source.has_tensor("slow.embed_tokens.weight");
+    if (is_mamba) {
+        weights.text_embedding_host = source.require_tensor(
+            "slow.embed_tokens.weight",
+            assets::TensorStorageType::Native,
+            {config.text.vocab_size, config.text.dim});
+    } else {
+        weights.text_embedding_host = source.require_tensor(
+            "embeddings.weight",
+            assets::TensorStorageType::Native,
+            {config.text.vocab_size, config.text.dim});
+    }
     weights.codebook_embedding_host = source.require_tensor(
         "codebook_embeddings.weight",
         assets::TensorStorageType::Native,
@@ -416,12 +424,26 @@ ArkttsARWeights load_ar_weights(
         "fast_embeddings.weight",
         assets::TensorStorageType::Native,
         {config.fast.vocab_size, config.fast.dim});
-    weights.text_embedding = weights.store->load_tensor(
-        source,
-        "embeddings.weight",
-        storage_type,
-        {config.text.vocab_size, config.text.dim});
+    if (is_mamba) {
+        weights.text_embedding = weights.store->load_tensor(
+            source,
+            "slow.embed_tokens.weight",
+            storage_type,
+            {config.text.vocab_size, config.text.dim});
+    } else {
+        weights.text_embedding = weights.store->load_tensor(
+            source,
+            "embeddings.weight",
+            storage_type,
+            {config.text.vocab_size, config.text.dim});
+    }
     weights.slow_layers.reserve(static_cast<size_t>(config.text.n_layer));
+    if (is_mamba) {
+        throw std::runtime_error(
+            "Audio8 TTS Falcon-H1/Mamba slow backbone (0.1B/1.0B) is not yet implemented in audio.cpp — "
+            "model loads but generation requires the Mamba hybrid runtime (see docs/audio.cpp/2026-08-27_*.md). "
+            "Use the 0.6B Qwen model for now, or follow the Mamba TODO in src/community_models/audio8_tts/ar.cpp.");
+    }
     for (int64_t i = 0; i < config.text.n_layer; ++i) {
         weights.slow_layers.push_back(load_layer(
             *weights.store,

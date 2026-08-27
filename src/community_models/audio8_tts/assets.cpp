@@ -19,19 +19,35 @@ Audio8TtsTextConfig parse_text_config(const json::Value & value) {
     config.vocab_size = json::require_i64(value, "vocab_size");
     config.n_layer = json::require_i64(value, "n_layer");
     config.dim = json::require_i64(value, "dim");
-    config.intermediate_size = json::require_i64(value, "intermediate_size");
+    config.intermediate_size = json::optional_i64(value, "intermediate_size", config.dim);
+    if (config.intermediate_size == config.dim) {
+        config.intermediate_size = json::optional_i64(value, "hidden_size", config.dim);
+    }
     config.n_head = json::require_i64(value, "n_head");
     config.n_local_heads = json::optional_i64(value, "n_local_heads", config.n_head);
-    config.head_dim = json::require_i64(value, "head_dim");
+    if (config.n_local_heads == config.n_head) {
+        config.n_local_heads = json::optional_i64(value, "num_key_value_heads", config.n_head);
+        config.n_local_heads = json::optional_i64(value, "n_local_heads", config.n_local_heads);
+    }
+    config.head_dim = json::optional_i64(value, "head_dim", 64);
     config.max_seq_len = json::require_i64(value, "max_seq_len");
     config.rope_base = json::optional_f32(value, "rope_base", config.rope_base);
+    config.rope_base = json::optional_f32(value, "rope_theta", config.rope_base);
     config.norm_eps = json::optional_f32(value, "norm_eps", config.norm_eps);
     config.tie_word_embeddings = json::optional_bool(value, "tie_word_embeddings", config.tie_word_embeddings);
     config.attention_qk_norm = json::optional_bool(value, "attention_qk_norm", config.attention_qk_norm);
+    config.slow_backbone = json::optional_string(value, "slow_backbone", "qwen");
+    config.mamba_d_state = json::optional_i64(value, "mamba_d_state", config.mamba_d_state);
+    config.mamba_d_conv = json::optional_i64(value, "mamba_d_conv", config.mamba_d_conv);
+    config.mamba_expand = json::optional_i64(value, "mamba_expand", config.mamba_expand);
+    config.mamba_n_heads = json::optional_i64(value, "mamba_n_heads", config.mamba_n_heads);
+    config.mamba_n_groups = json::optional_i64(value, "mamba_n_groups", config.mamba_n_groups);
+    config.mamba_d_head = json::optional_i64(value, "mamba_d_head", config.mamba_d_head);
+    config.mamba_d_ssm = json::optional_i64(value, "mamba_d_ssm", config.mamba_d_ssm);
+    config.mamba_chunk_size = json::optional_i64(value, "mamba_chunk_size", config.mamba_chunk_size);
     engine::io::require_positive(config.vocab_size, "text vocab_size");
     engine::io::require_positive(config.n_layer, "text n_layer");
     engine::io::require_positive(config.dim, "text dim");
-    engine::io::require_positive(config.intermediate_size, "text intermediate_size");
     engine::io::require_positive(config.n_head, "text n_head");
     engine::io::require_positive(config.n_local_heads, "text n_local_heads");
     engine::io::require_positive(config.head_dim, "text head_dim");
@@ -101,12 +117,24 @@ Audio8TtsConfig parse_config(const assets::ResourceBundle & resources) {
 
 // model.safetensors stores QKV pre-packed per layer as wqkv (+ a bias row on slow
 // layers only) — AGENTS.md §4.2; anchors pin that layout before graph building.
+// Supports both Qwen (0.6B/1.0B: embeddings.weight, layers.*) and Falcon-H1/Mamba
+// (0.1B: slow.embed_tokens.weight, slow.layers.*.mamba/self_attn).
 void validate_weight_anchors(const Audio8TtsAssets & assets) {
-    assets.model_weights->require_metadata("embeddings.weight");
+    const bool is_qwen = assets.model_weights->has_tensor("embeddings.weight");
+    const bool is_mamba = assets.model_weights->has_tensor("slow.embed_tokens.weight");
+    if (!is_qwen && !is_mamba) {
+        throw std::runtime_error("Audio8 TTS model_weights missing embeddings (expected embeddings.weight or slow.embed_tokens.weight)");
+    }
     assets.model_weights->require_metadata("codebook_embeddings.weight");
-    assets.model_weights->require_metadata("layers.0.attention.wqkv.weight");
-    assets.model_weights->require_metadata("layers.0.attention.wqkv.bias");
-    assets.model_weights->require_metadata("layers.0.attention.wo.weight");
+    if (is_qwen) {
+        assets.model_weights->require_metadata("layers.0.attention.wqkv.weight");
+        assets.model_weights->require_metadata("layers.0.attention.wqkv.bias");
+        assets.model_weights->require_metadata("layers.0.attention.wo.weight");
+    } else {
+        assets.model_weights->require_metadata("slow.layers.0.mamba.in_proj.weight");
+        assets.model_weights->require_metadata("slow.layers.0.self_attn.q_proj.weight");
+        assets.model_weights->require_metadata("slow.final_layernorm.weight");
+    }
     assets.model_weights->require_metadata("fast_layers.0.attention.wqkv.weight");
     assets.model_weights->require_metadata("fast_embeddings.weight");
     assets.model_weights->require_metadata("fast_output.weight");

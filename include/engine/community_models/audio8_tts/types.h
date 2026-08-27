@@ -61,6 +61,16 @@ struct Audio8TtsTextConfig {
     float norm_eps = 1.0e-6F;
     bool tie_word_embeddings = true;
     bool attention_qk_norm = true;
+    // Falcon-H1 / Mamba hybrid (0.1B, 1.0B) — absent for 0.6B Qwen.
+    std::string slow_backbone = "qwen";
+    int64_t mamba_d_state = 64;
+    int64_t mamba_d_conv = 4;
+    int64_t mamba_expand = 2;
+    int64_t mamba_n_heads = 24;
+    int64_t mamba_n_groups = 1;
+    int64_t mamba_d_head = 32;
+    int64_t mamba_d_ssm = 768;
+    int64_t mamba_chunk_size = 128;
 };
 
 struct Audio8TtsFastConfig {
