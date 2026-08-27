@@ -91,7 +91,7 @@ struct MiniMaxMusic3Request {
     // The default of 2 is the listening-accepted recipe (mel-L1 ~0.4 dB to
     // the exact reference at -15..-21% wall); set 1 for the exact-reference
     // trajectory.
-    int64_t flow_uncond_interval = 3;
+    int64_t flow_uncond_interval = 1;
     int64_t flow_uncond_warmup = 2;
     // Number of independent takes decoded together in one batched AR pass
     // (per-take seeds seed, seed+1, ...). The global LM and depth decoder are
@@ -108,7 +108,7 @@ struct MiniMaxMusic3Request {
     // Crops and the carry window are rederived from the hop so the seams stay
     // consistent: kept = latents(hop), overlap = (chunk - kept)/2, left crop
     // = overlap/2 (hop 100 reproduces the historical 86/258/172 exactly).
-    int64_t flow_chunk_hop_frames = 150;
+    int64_t flow_chunk_hop_frames = 0;
     // Derived internally by the pipeline from the hop; 0 keeps the config's
     // overlap_latent_length. Not a user knob.
     int64_t flow_overlap_latent_length = 0;

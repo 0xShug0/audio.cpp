@@ -139,7 +139,7 @@ std::shared_ptr<const MiniMaxMusic3Assets> load_minimax_music3_assets(
     assets->config.flow = parse_flow_config(assets->model_root);
     assets->config.vocoder = parse_vocoder_config(assets->model_root);
     assets->language_model_weights = open_model_root_gguf(assets->model_root, "language_model_q4_0.gguf");
-    assets->depth_decoder_weights = open_model_root_gguf(assets->model_root, "rvq_depth_decoder_q4_k.gguf");
+    assets->depth_decoder_weights = open_model_root_gguf(assets->model_root, "rvq_depth_decoder_q8_0.gguf");
     assets->condition_encoder_weights = open_model_root_gguf(assets->model_root, "condition_encoder.gguf");
     assets->transformer_weights = open_model_root_gguf(assets->model_root, "transformer_q4_0.gguf");
     assets->vocoder_weights = open_model_root_gguf(assets->model_root, "vocoder.gguf");
