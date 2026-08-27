@@ -12,6 +12,7 @@ namespace engine::models::qwen3_asr {
 struct Qwen3ASRGenerationOptions {
     int64_t max_new_tokens = 512;
     bool return_timestamps = false;
+    bool clamp_timestamps_to_audio = false;
 };
 
 struct Qwen3ASRRequest {
