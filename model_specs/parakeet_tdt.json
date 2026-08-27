@@ -81,6 +81,14 @@
         ],
         "required": false,
         "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Request-level chunk duration in seconds for fixed or VAD offline chunking. Falls back to the session chunk duration when omitted.",
+        "required": false,
+        "min": 0.001,
+        "default": 2.0
       }
     ],
     "session": [

@@ -72,6 +72,7 @@ private:
         const ParakeetDecodeOptions & options);
     runtime::TaskResult run_vad_chunks(
         const runtime::AudioBuffer & audio,
+        const std::unordered_map<std::string, std::string> & request_options,
         const ParakeetDecodeOptions & options);
     runtime::IOfflineVoiceTaskSession & vad_session();
 

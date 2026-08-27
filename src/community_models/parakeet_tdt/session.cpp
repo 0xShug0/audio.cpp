@@ -63,6 +63,37 @@ void validate_session_option_keys(
     }
 }
 
+std::unordered_map<std::string, std::string> normalize_request_options(
+    std::unordered_map<std::string, std::string> options,
+    const engine::model_spec::ModelContract & contract) {
+    options = runtime::apply_option_v1_compatibility(
+        std::move(options),
+        {
+            {"audio_chunk_seconds", "audio_chunk_duration_sec"},
+            {"audio_chunk_duration_seconds", "audio_chunk_duration_sec"},
+            {"audio_chunk_duration", "audio_chunk_duration_sec"},
+        },
+        "Parakeet TDT",
+        "request");
+    auto validation_options = options;
+    // Older standalone GGUF packages embed a v1 contract that predates native
+    // Parakeet VAD request controls. Keep those packages usable while still
+    // rejecting unrelated unknown request options.
+    if (contract.request_option_keys.find("audio_chunk_mode") ==
+        contract.request_option_keys.end()) {
+        validation_options.erase("audio_chunk_mode");
+    }
+    if (contract.request_option_keys.find("audio_chunk_duration_sec") ==
+        contract.request_option_keys.end()) {
+        validation_options.erase("audio_chunk_duration_sec");
+    }
+    runtime::validate_spec_backed_request_options(
+        validation_options,
+        contract,
+        "Parakeet TDT");
+    return options;
+}
+
 bool use_flash_attention(const runtime::SessionOptions & options) {
     const auto value =
         runtime::find_option(options.options, {"parakeet_tdt.perf_mode"}).value_or("off");
@@ -338,31 +369,33 @@ void ParakeetTDTOfflineSession::prepare(const runtime::SessionPreparationRequest
 
 runtime::TaskResult ParakeetTDTOfflineSession::run(const runtime::TaskRequest & request) {
     require_prepared("Parakeet TDT run()");
-    if (!request.audio_input.has_value()) {
+    auto normalized_request = request;
+    normalized_request.options = normalize_request_options(request.options, *contract_);
+    if (!normalized_request.audio_input.has_value()) {
         throw std::runtime_error("Parakeet TDT run() requires audio_input");
     }
-    if (request.audio_input->sample_rate <= 0 ||
-        request.audio_input->channels <= 0 ||
-        request.audio_input->samples.size() %
-                static_cast<size_t>(request.audio_input->channels) !=
+    if (normalized_request.audio_input->sample_rate <= 0 ||
+        normalized_request.audio_input->channels <= 0 ||
+        normalized_request.audio_input->samples.size() %
+                static_cast<size_t>(normalized_request.audio_input->channels) !=
             0) {
         throw std::runtime_error("Parakeet TDT run() received an invalid audio layout");
     }
     const auto wall_start = Clock::now();
-    const auto decode_options = decode_options_for_request(request);
+    const auto decode_options = decode_options_for_request(normalized_request);
     const int64_t source_frames =
-        static_cast<int64_t>(request.audio_input->samples.size()) /
-        std::max(request.audio_input->channels, 1);
+        static_cast<int64_t>(normalized_request.audio_input->samples.size()) /
+        std::max(normalized_request.audio_input->channels, 1);
     const int64_t target_samples = static_cast<int64_t>(std::ceil(
         static_cast<double>(source_frames) *
         static_cast<double>(assets_->config.frontend.sample_rate) /
-        static_cast<double>(request.audio_input->sample_rate)));
-    const auto chunk_mode = engine::audio::parse_audio_chunk_mode(request.options);
+        static_cast<double>(normalized_request.audio_input->sample_rate)));
+    const auto chunk_mode = engine::audio::parse_audio_chunk_mode(normalized_request.options);
     if (chunk_mode == engine::audio::AudioChunkMode::QuietEnergy) {
         throw std::runtime_error("Parakeet TDT supports audio_chunk_mode=auto, fixed, vad, or none");
     }
     if (chunk_mode == engine::audio::AudioChunkMode::Vad) {
-        auto result = run_vad_chunks(*request.audio_input, decode_options);
+        auto result = run_vad_chunks(*normalized_request.audio_input, normalized_request.options, decode_options);
         debug::timing_log_scalar(
             "session.wall_ms",
             engine::debug::elapsed_ms(wall_start, Clock::now()));
@@ -374,14 +407,14 @@ runtime::TaskResult ParakeetTDTOfflineSession::run(const runtime::TaskRequest & 
          (offline_mode_ == "long_form" ||
           (offline_mode_ == "auto" && target_samples > auto_full_context_max_samples_)));
     if (use_long_form) {
-        auto result = run_long_form(*request.audio_input, decode_options);
+        auto result = run_long_form(*normalized_request.audio_input, decode_options);
         debug::timing_log_scalar(
             "session.wall_ms",
             engine::debug::elapsed_ms(wall_start, Clock::now()));
         return result;
     }
 
-    const auto frontend = frontend_.extract(*request.audio_input, true);
+    const auto frontend = frontend_.extract(*normalized_request.audio_input, true);
     const auto encoded = encoder_->encode(frontend);
     auto decoded = decoder_->decode(encoded, decode_options);
 
@@ -493,15 +526,22 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_long_form(
 
 runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
     const runtime::AudioBuffer& audio,
+    const std::unordered_map<std::string, std::string> & request_options,
     const ParakeetDecodeOptions& decode_options) {
     if (audio.sample_rate <= 0 || audio.channels <= 0 ||
         audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {
         throw std::runtime_error("Parakeet TDT VAD mode received an invalid audio layout");
     }
+    auto chunk_seconds_override =
+        engine::audio::parse_audio_chunk_seconds_override(request_options);
+    if (!chunk_seconds_override.has_value()) {
+        chunk_seconds_override =
+            engine::audio::parse_audio_chunk_seconds_override(this->options().options);
+    }
     const auto chunk_seconds =
-        engine::audio::parse_audio_chunk_seconds_override(this->options().options)
-            .value_or(static_cast<float>(center_samples_) /
-                      static_cast<float>(assets_->config.frontend.sample_rate));
+        chunk_seconds_override.value_or(
+            static_cast<float>(center_samples_) /
+            static_cast<float>(assets_->config.frontend.sample_rate));
     if (!(chunk_seconds > 0.0F)) {
         throw std::runtime_error("Parakeet TDT audio_chunk_duration_sec must be positive");
     }
@@ -658,7 +698,9 @@ runtime::StreamingPolicy ParakeetTDTStreamingSession::streaming_policy() const {
 
 void ParakeetTDTStreamingSession::start_stream(const runtime::TaskRequest& request) {
     reset();
-    streaming_decode_options_ = decode_options_for_request(request);
+    auto normalized_request = request;
+    normalized_request.options = normalize_request_options(request.options, *contract_);
+    streaming_decode_options_ = decode_options_for_request(normalized_request);
 }
 
 void ParakeetTDTStreamingSession::set_stream_event_sink(

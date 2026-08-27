@@ -136,6 +136,7 @@ Request options are bare names. Session options use the
 | `max_tokens` | request | integer >= 0; `0` | TDT token limit; `0` uses the model-derived limit |
 | `keep_language_tags` | request | boolean; `false` | Preserve language-tag tokens in decoded text |
 | `audio_chunk_mode` | request | `auto`, `fixed`, `vad`, `none`; `auto` | Offline chunking mode; `vad` skips silent spans with Silero VAD |
+| `audio_chunk_duration_sec` | request | float >= 0.001; session value | Request-level chunk duration for fixed or VAD offline chunking |
 | `weight_type` | session | `native`, `f32`, `f16`, `bf16`, `q8_0`; `native` | Fallback storage type for matmul weights |
 | `matmul_weight_type` | session | same values; inherits `weight_type` | Encoder and decoder matmul storage type |
 | `conv_weight_type` | session | `native`, `f32`, `f16`; `native` | True convolution-weight storage type |
@@ -187,9 +188,10 @@ full-context result.
 
 Set `--request-option audio_chunk_mode=vad` to use Silero VAD-planned speech
 spans instead of fixed windows. VAD mode uses
-`parakeet_tdt.audio_chunk_duration_sec` as the maximum speech chunk duration and
-`parakeet_tdt.vad_model_path` to locate the bundled Silero VAD model. `auto`
-keeps the existing Parakeet `offline_mode` behavior.
+`audio_chunk_duration_sec` as the maximum speech chunk duration, falling back to
+`parakeet_tdt.audio_chunk_duration_sec` when omitted. `parakeet_tdt.vad_model_path`
+locates the bundled Silero VAD model. `auto` keeps the existing Parakeet
+`offline_mode` behavior.
 
 ## Performance
 
