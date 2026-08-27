@@ -5034,6 +5034,13 @@ static ggml_guid_t ggml_backend_cuda_guid() {
     return &guid;
 }
 
+void * ggml_backend_cuda_get_stream(ggml_backend_t backend) {
+    GGML_ASSERT(ggml_backend_is_cuda(backend));
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    ggml_cuda_set_device(cuda_ctx->device);
+    return (void *) cuda_ctx->stream();
+}
+
 bool ggml_backend_is_cuda(ggml_backend_t backend) {
     return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_cuda_guid());
 }

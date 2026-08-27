@@ -4,6 +4,11 @@
 #include "engine/framework/io/dynamic_library.h"
 #ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
 #include "torch_random_cuda_runtime.h"
+
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+#include "ggml-backend.h"
+#include "ggml-cuda.h"
+#endif
 #endif
 
 #include <algorithm>
@@ -435,6 +440,118 @@ uint64_t torch_cuda_tensor_iterator_offset_blocks(
     grid = std::max<uint64_t>(1, std::min(grid_cap, grid));
     const uint64_t stride = block_size * grid;
     return ((total_elements - 1) / (stride * unroll_factor) + 1);
+}
+
+bool torch_cuda_sample_topk_exponential_pairs_available() {
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+    return true;
+#else
+    return false;
+#endif
+}
+
+void torch_cuda_sample_topk_exponential_pairs(
+    const void * device_logits_f32,
+    int64_t songs,
+    int64_t vocab,
+    float guidance_scale,
+    int64_t top_k,
+    const uint64_t * seeds,
+    const uint64_t * offset_blocks,
+    uint64_t offset_step_blocks,
+    const TorchCudaSamplingPolicy & policy,
+    int32_t * out_codes) {
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+    detail::sample_topk_exponential_pairs_cuda(
+        device_logits_f32, songs, vocab, guidance_scale, top_k,
+        seeds, offset_blocks, offset_step_blocks, policy, out_codes);
+#else
+    (void) device_logits_f32;
+    (void) songs;
+    (void) vocab;
+    (void) guidance_scale;
+    (void) top_k;
+    (void) seeds;
+    (void) offset_blocks;
+    (void) policy;
+    (void) out_codes;
+    throw std::runtime_error("torch CUDA top-k exponential sampler is unavailable in this build");
+#endif
+}
+
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+#define ENGINE_TORCH_RANDOM_CUDA_ONLY(...) __VA_ARGS__
+#else
+#define ENGINE_TORCH_RANDOM_CUDA_ONLY(...) \
+    throw std::runtime_error("torch CUDA depth frame runtime is unavailable in this build")
+#endif
+
+void * torch_cuda_backend_stream(void * ggml_backend) {
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+    return ggml_backend_cuda_get_stream(static_cast<ggml_backend_t>(ggml_backend));
+#else
+    (void) ggml_backend;
+    return nullptr;
+#endif
+}
+
+void torch_cuda_depth_frame_ensure(int64_t songs, int64_t levels, int64_t hidden_size, const TorchCudaSamplingPolicy & policy) {
+    (void) songs; (void) levels; (void) hidden_size; (void) policy;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_ensure_cuda(songs, levels, hidden_size, policy));
+}
+
+void torch_cuda_depth_frame_begin(const uint64_t * seeds, const uint64_t * offset_blocks, int64_t songs, void * stream) {
+    (void) seeds; (void) offset_blocks; (void) songs; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_begin_cuda(seeds, offset_blocks, songs, stream));
+}
+
+void torch_cuda_depth_frame_sample(
+    const void * device_logits_f32,
+    int64_t level_index,
+    int64_t songs,
+    int64_t vocab,
+    float guidance_scale,
+    int64_t top_k,
+    const TorchCudaSamplingPolicy & policy,
+    void * stream) {
+    (void) device_logits_f32; (void) level_index; (void) songs; (void) vocab;
+    (void) guidance_scale; (void) top_k; (void) policy; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_sample_cuda(
+        device_logits_f32, level_index, songs, vocab, guidance_scale, top_k, policy, stream));
+}
+
+void torch_cuda_depth_frame_residual_fill(
+    void * residual_ids_i32,
+    int64_t previous_levels,
+    int64_t songs,
+    int64_t audio_vocab,
+    void * stream) {
+    (void) residual_ids_i32; (void) previous_levels; (void) songs; (void) audio_vocab; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_residual_fill_cuda(
+        residual_ids_i32, previous_levels, songs, audio_vocab, stream));
+}
+
+void torch_cuda_depth_frame_accumulate_hidden(
+    const void * hidden_f32,
+    int64_t level_index,
+    int64_t songs,
+    int64_t hidden_size,
+    void * stream) {
+    (void) hidden_f32; (void) level_index; (void) songs; (void) hidden_size; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_accumulate_hidden_cuda(
+        hidden_f32, level_index, songs, hidden_size, stream));
+}
+
+void torch_cuda_depth_frame_end(
+    int32_t * host_codes,
+    float * host_hidden,
+    int64_t levels,
+    int64_t songs,
+    int64_t hidden_size,
+    void * stream) {
+    (void) host_codes; (void) host_hidden; (void) levels; (void) songs; (void) hidden_size; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_end_cuda(
+        host_codes, host_hidden, levels, songs, hidden_size, stream));
 }
 
 float torch_cuda_tensor_iterator_exponential_element(

@@ -431,6 +431,108 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
         return std::move(batch.front());
     }
 
+    void generate_batch_gpu_frame(
+        const std::vector<float> & interleaved_hiddens,
+        int64_t songs,
+        const std::vector<int32_t> & semantic_codes,
+        float guidance_scale,
+        int64_t top_k,
+        const std::vector<uint64_t> & seeds,
+        std::vector<uint64_t> & sample_call_indices,
+        std::vector<uint64_t> & rng_offset_blocks,
+        std::vector<MiniMaxMusic3DepthCodes> & out) {
+        const auto & config = assets->config.depth;
+        const int64_t rows = 2 * songs;
+        const int64_t levels = config.codebooks - 1;
+        const int64_t hidden_size = config.hidden_size;
+        sampling::torch_cuda_depth_frame_ensure(songs, levels, hidden_size, sampling_policy);
+        void * stream = sampling::torch_cuda_backend_stream(execution.backend());
+        ggml_backend_t backend = execution.backend();
+
+        semantic_ids_scratch.resize(static_cast<size_t>(rows));
+        for (int64_t song = 0; song < songs; ++song) {
+            const int32_t id = semantic_codes[static_cast<size_t>(song)] + 151675;
+            semantic_ids_scratch[static_cast<size_t>(2 * song)] = id;
+            semantic_ids_scratch[static_cast<size_t>(2 * song + 1)] = id;
+        }
+        positions_scratch.resize(static_cast<size_t>(config.codebooks));
+        for (int64_t i = 0; i < config.codebooks; ++i) {
+            positions_scratch[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+        }
+        sampling::torch_cuda_depth_frame_begin(
+            seeds.data(), rng_offset_blocks.data(), songs, stream);
+
+        for (int64_t codebook = 1; codebook < config.codebooks; ++codebook) {
+            auto & graph = decode_graph(codebook, rows);
+            ggml_backend_tensor_set_async(
+                backend, graph.last_hidden.tensor,
+                interleaved_hiddens.data(), 0,
+                interleaved_hiddens.size() * sizeof(float));
+            ggml_backend_tensor_set_async(
+                backend, graph.semantic_ids.tensor,
+                semantic_ids_scratch.data(), 0,
+                semantic_ids_scratch.size() * sizeof(int32_t));
+            if (codebook > 1) {
+                sampling::torch_cuda_depth_frame_residual_fill(
+                    graph.residual_ids.tensor->data,
+                    codebook - 1,
+                    songs,
+                    config.audio_vocab_size,
+                    stream);
+            }
+            ggml_backend_tensor_set_async(
+                backend, graph.positions.tensor,
+                positions_scratch.data(), 0,
+                static_cast<size_t>(codebook + 1) * sizeof(int32_t));
+            if (ggml_backend_graph_compute_async(backend, graph.graph) != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("MiniMax Music 3 depth graph compute failed");
+            }
+            sampling::torch_cuda_depth_frame_sample(
+                graph.logits->data,
+                codebook - 1,
+                songs,
+                config.audio_vocab_size,
+                guidance_scale,
+                top_k,
+                sampling_policy,
+                stream);
+            sampling::torch_cuda_depth_frame_accumulate_hidden(
+                graph.hidden->data,
+                codebook - 1,
+                songs,
+                hidden_size,
+                stream);
+        }
+        frame_codes_scratch.resize(static_cast<size_t>(levels * songs));
+        frame_hidden_scratch.resize(static_cast<size_t>(levels * songs * hidden_size));
+        sampling::torch_cuda_depth_frame_end(
+            frame_codes_scratch.data(),
+            frame_hidden_scratch.data(),
+            levels,
+            songs,
+            hidden_size,
+            stream);
+        core::round_f32_to_bf16_in_place(frame_hidden_scratch);
+        const uint64_t step_blocks = sampling::torch_cuda_tensor_iterator_offset_blocks(
+            static_cast<uint64_t>(config.audio_vocab_size),
+            sampling_policy);
+        for (int64_t level = 0; level < levels; ++level) {
+            for (int64_t song = 0; song < songs; ++song) {
+                auto & take = out[static_cast<size_t>(song)];
+                const int32_t code = frame_codes_scratch[static_cast<size_t>(level * songs + song)];
+                if (code < 0) {
+                    throw std::runtime_error("MiniMax Music 3 depth GPU frame sampler selected no token");
+                }
+                take.codes.push_back(code);
+                const float * hidden_row = frame_hidden_scratch.data() +
+                    static_cast<size_t>((level * songs + song) * hidden_size);
+                take.hidden.insert(take.hidden.end(), hidden_row, hidden_row + hidden_size);
+                ++sample_call_indices[static_cast<size_t>(song)];
+                rng_offset_blocks[static_cast<size_t>(song)] += step_blocks;
+            }
+        }
+    }
+
     std::vector<MiniMaxMusic3DepthCodes> generate_batch(
         const std::vector<float> & interleaved_hiddens,
         int64_t songs,
@@ -458,6 +560,36 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
             out[static_cast<size_t>(song)].hidden.reserve(
                 static_cast<size_t>((config.codebooks - 1) * config.hidden_size));
             fallback_rngs.emplace_back(static_cast<uint32_t>(seeds[static_cast<size_t>(song)]));
+        }
+
+        // The CUDA sampler consumes the logits where they already live and
+        // returns one code per song, replacing the logits readback plus the
+        // per-song CPU top-k/exponential scan (the depth stage's dominant
+        // cost). Sample-for-sample it matches the CPU path up to logf ULPs.
+        static const bool gpu_sampler_requested = [] {
+            const char * env = std::getenv("MM3_DEPTH_GPU_SAMPLE");
+            return env != nullptr && env[0] == '1';
+        }();
+        const bool use_gpu_sampler = gpu_sampler_requested &&
+            sampling_policy.cuda_fast_path &&
+            sampling::torch_cuda_sample_topk_exponential_pairs_available();
+        // v2: the whole codebook chain stays on the backend stream — inputs go
+        // in with async sets, sampled codes feed the next codebook's residual
+        // ids device-side, cond hiddens accumulate on device, and the frame
+        // ends with a single host sync. Latency was the depth stage's cost
+        // (write->launch->sync->readback per codebook), not compute.
+        static const bool gpu_frame_requested = [] {
+            const char * env = std::getenv("MM3_DEPTH_GPU_FRAME");
+            return env != nullptr && env[0] == '1';
+        }();
+        const bool use_gpu_frame = gpu_frame_requested &&
+            sampling_policy.cuda_fast_path &&
+            sampling::torch_cuda_sample_topk_exponential_pairs_available();
+        if (use_gpu_frame) {
+            generate_batch_gpu_frame(
+                interleaved_hiddens, songs, semantic_codes, guidance_scale, top_k,
+                seeds, sample_call_indices, rng_offset_blocks, out);
+            return out;
         }
 
         for (int64_t codebook = 1; codebook < config.codebooks; ++codebook) {
@@ -492,8 +624,43 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
             if (core::compute_graph(execution, graph.graph, graph.plan, "minimax_music3.depth") != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("MiniMax Music 3 depth graph compute failed");
             }
+            // Reading hidden synchronizes the backend, so the graph's logits
+            // are complete before the sampler kernel touches them in place.
             auto hidden = core::read_tensor_f32(graph.hidden);
             core::round_f32_to_bf16_in_place(hidden);
+            if (use_gpu_sampler) {
+                gpu_codes_scratch.resize(static_cast<size_t>(songs));
+                const uint64_t step_blocks = sampling::torch_cuda_tensor_iterator_offset_blocks(
+                    static_cast<uint64_t>(config.audio_vocab_size),
+                    sampling_policy);
+                sampling::torch_cuda_sample_topk_exponential_pairs(
+                    graph.logits->data,
+                    songs,
+                    config.audio_vocab_size,
+                    guidance_scale,
+                    top_k,
+                    codebook == 1 ? seeds.data() : nullptr,
+                    codebook == 1 ? rng_offset_blocks.data() : nullptr,
+                    static_cast<uint64_t>(codebook - 1) * step_blocks,
+                    sampling_policy,
+                    gpu_codes_scratch.data());
+                for (int64_t song = 0; song < songs; ++song) {
+                    auto & take = out[static_cast<size_t>(song)];
+                    const float * cond_hidden = hidden.data() + static_cast<size_t>(2 * song) * config.hidden_size;
+                    take.hidden.insert(take.hidden.end(), cond_hidden, cond_hidden + config.hidden_size);
+                    const int32_t code = gpu_codes_scratch[static_cast<size_t>(song)];
+                    if (code < 0) {
+                        throw std::runtime_error("MiniMax Music 3 depth GPU sampler selected no token");
+                    }
+                    take.codes.push_back(code);
+                    ++sample_call_indices[static_cast<size_t>(song)];
+                    rng_offset_blocks[static_cast<size_t>(song)] +=
+                        sampling::torch_cuda_tensor_iterator_offset_blocks(
+                            static_cast<uint64_t>(config.audio_vocab_size),
+                            sampling_policy);
+                }
+                continue;
+            }
             auto logits = core::read_tensor_f32(graph.logits);
             core::round_f32_to_bf16_in_place(logits);
             for (int64_t song = 0; song < songs; ++song) {
@@ -572,6 +739,9 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
     sampling::TorchCudaSamplingPolicy sampling_policy;
     sampling::HfSamplerScratch scratch;
     std::vector<float> last_hidden_scratch;
+    std::vector<int32_t> gpu_codes_scratch;
+    std::vector<int32_t> frame_codes_scratch;
+    std::vector<float> frame_hidden_scratch;
     std::vector<int32_t> semantic_ids_scratch;
     std::vector<float> song_logits_scratch;
     std::vector<int32_t> active_residual_ids_scratch;
