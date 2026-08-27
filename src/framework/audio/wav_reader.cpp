@@ -76,6 +76,13 @@ constexpr uint16_t kFormatALaw = 0x0006;
 constexpr uint16_t kFormatMuLaw = 0x0007;
 constexpr uint16_t kFormatExtensible = 0xFFFE;
 
+// Bytes 2..15 of every KSDATAFORMAT_SUBTYPE_* GUID:
+// XXXXXXXX-0000-0010-8000-00aa00389b71.
+constexpr std::array<char, 14> kKsDataFormatSubtypeTail = {
+    0x00, 0x00, 0x00, 0x00, 0x10, 0x00, static_cast<char>(0x80),
+    0x00, 0x00, static_cast<char>(0xAA), 0x00, 0x38, static_cast<char>(0x9B), 0x71,
+};
+
 // Names a container we can recognise but not decode, so the error can say what
 // the file actually is instead of "invalid WAV RIFF header".
 const char * identify_foreign_container(const std::array<char, 12> & header) {
@@ -124,7 +131,11 @@ float decode_mu_law(uint8_t value) {
 
 float decode_a_law(uint8_t value) {
     value ^= 0x55;
-    const int sign = (value & 0x80) != 0 ? -1 : 1;
+    // Note the inversion relative to mu-law above: in A-law the sign bit marks a
+    // POSITIVE sample. Getting this backwards is silent -- the audio decodes at
+    // the right amplitude, just phase-inverted -- so it is pinned by an
+    // exhaustive 256-code table in the tests rather than by spot checks.
+    const int sign = (value & 0x80) != 0 ? 1 : -1;
     const int exponent = (value >> 4) & 0x07;
     const int mantissa = value & 0x0F;
     int magnitude = 0;
@@ -194,13 +205,39 @@ WavData read_wav_f32(std::istream & input) {
             skip_bytes(input, 6);
             bits_per_sample = read_scalar<uint16_t>(input);
             std::streamoff consumed = 16;
-            if (audio_format == kFormatExtensible && chunk_size >= 40) {
-                skip_bytes(input, 2);   // cbSize
+            if (audio_format == kFormatExtensible) {
+                if (chunk_size < 40) {
+                    throw std::runtime_error(
+                        "malformed WAVEFORMATEXTENSIBLE fmt chunk (needs 40 bytes, got " +
+                        std::to_string(chunk_size) + ")");
+                }
+                const uint16_t cb_size = read_scalar<uint16_t>(input);
+                if (cb_size < 22) {
+                    throw std::runtime_error(
+                        "malformed WAVEFORMATEXTENSIBLE fmt chunk (cbSize " +
+                        std::to_string(cb_size) + ", needs at least 22)");
+                }
                 skip_bytes(input, 2);   // wValidBitsPerSample
                 skip_bytes(input, 4);   // dwChannelMask
-                // The SubFormat GUID begins with the real format tag.
-                audio_format = read_scalar<uint16_t>(input);
-                skip_bytes(input, 14);  // remainder of the GUID
+                // Only the first two bytes of the SubFormat GUID carry the real
+                // format tag. The remaining fourteen are a fixed suffix shared by
+                // every KSDATAFORMAT_SUBTYPE_*; checking them is what separates a
+                // genuine format tag from an unrelated codec whose GUID merely
+                // happens to start with the same two bytes.
+                const uint16_t sub_format = read_scalar<uint16_t>(input);
+                std::array<char, 14> guid_tail{};
+                input.read(guid_tail.data(), static_cast<std::streamsize>(guid_tail.size()));
+                if (!input) {
+                    throw std::runtime_error("truncated WAVEFORMATEXTENSIBLE SubFormat GUID");
+                }
+                if (std::memcmp(guid_tail.data(), kKsDataFormatSubtypeTail.data(),
+                                kKsDataFormatSubtypeTail.size()) != 0) {
+                    throw std::runtime_error(
+                        "unsupported WAV encoding (extensible SubFormat is not a "
+                        "KSDATAFORMAT_SUBTYPE_* GUID); convert with "
+                        "`ffmpeg -i input -ac 1 -ar 44100 -c:a pcm_s16le output.wav`");
+                }
+                audio_format = sub_format;
                 consumed = 40;
             }
             if (chunk_size > consumed) {
@@ -273,6 +310,9 @@ WavData read_wav_f32(std::istream & input) {
     }
 
     if (audio_format == kFormatPcm && bits_per_sample == 32) {
+        if (data.size() % sizeof(int32_t) != 0) {
+            throw std::runtime_error("malformed PCM32 WAV data chunk");
+        }
         const size_t sample_count = data.size() / sizeof(int32_t);
         wav.samples.resize(sample_count);
         const auto * pcm = reinterpret_cast<const int32_t *>(data.data());
@@ -283,6 +323,9 @@ WavData read_wav_f32(std::istream & input) {
     }
 
     if (audio_format == kFormatFloat && bits_per_sample == 64) {
+        if (data.size() % sizeof(double) != 0) {
+            throw std::runtime_error("malformed float64 WAV data chunk");
+        }
         const size_t sample_count = data.size() / sizeof(double);
         wav.samples.resize(sample_count);
         const auto * pcm = reinterpret_cast<const double *>(data.data());

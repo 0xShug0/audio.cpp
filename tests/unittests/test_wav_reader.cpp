@@ -75,6 +75,88 @@ void write_pcm24_wav(
     }
 }
 
+// G.711 decode tables, all 256 codes each.
+//
+// These are ground truth from OUTSIDE this codebase: produced by decoding a
+// 256-byte A-law and mu-law file with ffmpeg 9.0.1, and independently matching
+// the values reconstructed from the ITU-T G.711 segment definitions. They are
+// deliberately NOT a re-derivation of the shift-and-bias arithmetic in
+// wav_reader.cpp -- an earlier revision of this test spot-checked four codes
+// whose expected values had been worked out from that same arithmetic, and so
+// happily confirmed an A-law sign inversion across every one of the 256 codes.
+//
+// The two codings do not share a sign convention: mu-law sets the top bit for
+// negative samples, A-law for positive ones. That is the trap.
+constexpr int16_t kALawExpected[256] = {
+     -5504,  -5248,  -6016,  -5760,  -4480,  -4224,  -4992,  -4736,
+     -7552,  -7296,  -8064,  -7808,  -6528,  -6272,  -7040,  -6784,
+     -2752,  -2624,  -3008,  -2880,  -2240,  -2112,  -2496,  -2368,
+     -3776,  -3648,  -4032,  -3904,  -3264,  -3136,  -3520,  -3392,
+    -22016, -20992, -24064, -23040, -17920, -16896, -19968, -18944,
+    -30208, -29184, -32256, -31232, -26112, -25088, -28160, -27136,
+    -11008, -10496, -12032, -11520,  -8960,  -8448,  -9984,  -9472,
+    -15104, -14592, -16128, -15616, -13056, -12544, -14080, -13568,
+      -344,   -328,   -376,   -360,   -280,   -264,   -312,   -296,
+      -472,   -456,   -504,   -488,   -408,   -392,   -440,   -424,
+       -88,    -72,   -120,   -104,    -24,     -8,    -56,    -40,
+      -216,   -200,   -248,   -232,   -152,   -136,   -184,   -168,
+     -1376,  -1312,  -1504,  -1440,  -1120,  -1056,  -1248,  -1184,
+     -1888,  -1824,  -2016,  -1952,  -1632,  -1568,  -1760,  -1696,
+      -688,   -656,   -752,   -720,   -560,   -528,   -624,   -592,
+      -944,   -912,  -1008,   -976,   -816,   -784,   -880,   -848,
+      5504,   5248,   6016,   5760,   4480,   4224,   4992,   4736,
+      7552,   7296,   8064,   7808,   6528,   6272,   7040,   6784,
+      2752,   2624,   3008,   2880,   2240,   2112,   2496,   2368,
+      3776,   3648,   4032,   3904,   3264,   3136,   3520,   3392,
+     22016,  20992,  24064,  23040,  17920,  16896,  19968,  18944,
+     30208,  29184,  32256,  31232,  26112,  25088,  28160,  27136,
+     11008,  10496,  12032,  11520,   8960,   8448,   9984,   9472,
+     15104,  14592,  16128,  15616,  13056,  12544,  14080,  13568,
+       344,    328,    376,    360,    280,    264,    312,    296,
+       472,    456,    504,    488,    408,    392,    440,    424,
+        88,     72,    120,    104,     24,      8,     56,     40,
+       216,    200,    248,    232,    152,    136,    184,    168,
+      1376,   1312,   1504,   1440,   1120,   1056,   1248,   1184,
+      1888,   1824,   2016,   1952,   1632,   1568,   1760,   1696,
+       688,    656,    752,    720,    560,    528,    624,    592,
+       944,    912,   1008,    976,    816,    784,    880,    848,
+};
+
+constexpr int16_t kMuLawExpected[256] = {
+    -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
+    -23932, -22908, -21884, -20860, -19836, -18812, -17788, -16764,
+    -15996, -15484, -14972, -14460, -13948, -13436, -12924, -12412,
+    -11900, -11388, -10876, -10364,  -9852,  -9340,  -8828,  -8316,
+     -7932,  -7676,  -7420,  -7164,  -6908,  -6652,  -6396,  -6140,
+     -5884,  -5628,  -5372,  -5116,  -4860,  -4604,  -4348,  -4092,
+     -3900,  -3772,  -3644,  -3516,  -3388,  -3260,  -3132,  -3004,
+     -2876,  -2748,  -2620,  -2492,  -2364,  -2236,  -2108,  -1980,
+     -1884,  -1820,  -1756,  -1692,  -1628,  -1564,  -1500,  -1436,
+     -1372,  -1308,  -1244,  -1180,  -1116,  -1052,   -988,   -924,
+      -876,   -844,   -812,   -780,   -748,   -716,   -684,   -652,
+      -620,   -588,   -556,   -524,   -492,   -460,   -428,   -396,
+      -372,   -356,   -340,   -324,   -308,   -292,   -276,   -260,
+      -244,   -228,   -212,   -196,   -180,   -164,   -148,   -132,
+      -120,   -112,   -104,    -96,    -88,    -80,    -72,    -64,
+       -56,    -48,    -40,    -32,    -24,    -16,     -8,      0,
+     32124,  31100,  30076,  29052,  28028,  27004,  25980,  24956,
+     23932,  22908,  21884,  20860,  19836,  18812,  17788,  16764,
+     15996,  15484,  14972,  14460,  13948,  13436,  12924,  12412,
+     11900,  11388,  10876,  10364,   9852,   9340,   8828,   8316,
+      7932,   7676,   7420,   7164,   6908,   6652,   6396,   6140,
+      5884,   5628,   5372,   5116,   4860,   4604,   4348,   4092,
+      3900,   3772,   3644,   3516,   3388,   3260,   3132,   3004,
+      2876,   2748,   2620,   2492,   2364,   2236,   2108,   1980,
+      1884,   1820,   1756,   1692,   1628,   1564,   1500,   1436,
+      1372,   1308,   1244,   1180,   1116,   1052,    988,    924,
+       876,    844,    812,    780,    748,    716,    684,    652,
+       620,    588,    556,    524,    492,    460,    428,    396,
+       372,    356,    340,    324,    308,    292,    276,    260,
+       244,    228,    212,    196,    180,    164,    148,    132,
+       120,    112,    104,     96,     88,     80,     72,     64,
+        56,     48,     40,     32,     24,     16,      8,      0,
+};
+
 void require_near(float actual, float expected, const std::string & label) {
     if (std::fabs(actual - expected) > 1.0e-7F) {
         throw std::runtime_error(label + " mismatch");
@@ -92,7 +174,9 @@ void write_wav(
     int sample_rate,
     int channels,
     const std::vector<char> & payload,
-    bool extensible = false) {
+    bool extensible = false,
+    bool valid_guid_tail = true,
+    uint16_t cb_size = 22) {
     const uint16_t block_align = static_cast<uint16_t>(channels * ((bits + 7) / 8));
     const uint32_t byte_rate = static_cast<uint32_t>(sample_rate) * block_align;
     const uint32_t data_bytes = static_cast<uint32_t>(payload.size());
@@ -114,17 +198,22 @@ void write_wav(
     write_le<uint16_t>(output, block_align);
     write_le<uint16_t>(output, bits);
     if (extensible) {
-        write_le<uint16_t>(output, uint16_t{22});      // cbSize
+        write_le<uint16_t>(output, cb_size);           // cbSize
         write_le<uint16_t>(output, bits);              // wValidBitsPerSample
         write_le<uint32_t>(output, uint32_t{0x3});     // dwChannelMask
         write_le<uint16_t>(output, format_tag);        // SubFormat GUID, first field
         // Remainder of KSDATAFORMAT_SUBTYPE_*: 0000-0010-8000-00aa00389b71
-        const char guid_tail[14] = {
+        const char valid_tail[14] = {
             0x00, 0x00, 0x00, 0x00, 0x10, 0x00, static_cast<char>(0x80),
             0x00, 0x00, static_cast<char>(0xAA), 0x00, 0x38, static_cast<char>(0x9B),
             0x71,
         };
-        write_bytes(output, guid_tail, 14);
+        const char foreign_tail[14] = {
+            static_cast<char>(0xBE), static_cast<char>(0xEF), static_cast<char>(0xDE),
+            static_cast<char>(0xAD), 0x42, 0x41, 0x44, 0x47, 0x55, 0x49, 0x44, 0x21,
+            0x00, 0x00,
+        };
+        write_bytes(output, valid_guid_tail ? valid_tail : foreign_tail, 14);
     }
     write_bytes(output, "data", 4);
     write_le<uint32_t>(output, data_bytes);
@@ -267,38 +356,83 @@ int main() {
             require_near(wav.samples[3], 1.0F, 1.0e-7F, "float64 unity");
         }
 
-        // --- G.711 mu-law ----------------------------------------------------
-        // Anchored on the published G.711 decode values, not on our own
-        // implementation: 0x00 -> -32124, 0x80 -> +32124, and both 0x7F and 0xFF
-        // -> 0. Pinning against a re-derivation of the same bit-twiddling would
-        // prove nothing.
+        // --- G.711 mu-law and A-law, every code ---------------------------
+        // One byte per code, decoded in one pass and compared against the
+        // external tables above. A spot check cannot catch a whole-table sign
+        // inversion; this can.
         {
-            const auto path_mu = root / "mulaw.wav";
-            write_wav(path_mu, 0x0007, 8, 8000, 1,
-                      std::vector<char>{static_cast<char>(0xFF), static_cast<char>(0x7F),
-                                        static_cast<char>(0x00), static_cast<char>(0x80)});
-            const auto wav = engine::audio::read_wav_f32(path_mu);
-            require(wav.samples.size() == 4, "mu-law sample count mismatch");
-            require_near(wav.samples[0], 0.0F, 1.0e-7F, "mu-law 0xFF is silence");
-            require_near(wav.samples[1], 0.0F, 1.0e-7F, "mu-law 0x7F is silence");
-            require_near(wav.samples[2], -32124.0F / 32768.0F, 1.0e-7F, "mu-law 0x00 minimum");
-            require_near(wav.samples[3], 32124.0F / 32768.0F, 1.0e-7F, "mu-law 0x80 maximum");
+            std::vector<char> codes(256);
+            for (int i = 0; i < 256; ++i) {
+                codes[static_cast<size_t>(i)] = static_cast<char>(i);
+            }
+
+            const auto path_mu = root / "mulaw_all.wav";
+            write_wav(path_mu, 0x0007, 8, 8000, 1, codes);
+            const auto mu = engine::audio::read_wav_f32(path_mu);
+            require(mu.samples.size() == 256, "mu-law sample count mismatch");
+            for (int i = 0; i < 256; ++i) {
+                require_near(
+                    mu.samples[static_cast<size_t>(i)],
+                    static_cast<float>(kMuLawExpected[i]) / 32768.0F,
+                    1.0e-7F,
+                    "mu-law code " + std::to_string(i));
+            }
+
+            const auto path_a = root / "alaw_all.wav";
+            write_wav(path_a, 0x0006, 8, 8000, 1, codes);
+            const auto alaw = engine::audio::read_wav_f32(path_a);
+            require(alaw.samples.size() == 256, "A-law sample count mismatch");
+            for (int i = 0; i < 256; ++i) {
+                require_near(
+                    alaw.samples[static_cast<size_t>(i)],
+                    static_cast<float>(kALawExpected[i]) / 32768.0F,
+                    1.0e-7F,
+                    "A-law code " + std::to_string(i));
+            }
         }
 
-        // --- G.711 A-law -----------------------------------------------------
-        // Published anchors again: 0x55 -> +8, 0xD5 -> -8, 0x2A -> +32256,
-        // 0xAA -> -32256. A-law has no exact zero, which is itself worth pinning.
+        // --- Extensible headers are validated, not trusted -------------------
+        // Only the first two bytes of the SubFormat GUID are the format tag. The
+        // other fourteen are a fixed suffix; without checking them, any codec
+        // whose GUID happens to start with 0x0001 decodes as PCM.
         {
-            const auto path_a = root / "alaw.wav";
-            write_wav(path_a, 0x0006, 8, 8000, 1,
-                      std::vector<char>{static_cast<char>(0x55), static_cast<char>(0xD5),
-                                        static_cast<char>(0x2A), static_cast<char>(0xAA)});
-            const auto wav = engine::audio::read_wav_f32(path_a);
-            require(wav.samples.size() == 4, "A-law sample count mismatch");
-            require_near(wav.samples[0], 8.0F / 32768.0F, 1.0e-7F, "A-law 0x55 smallest positive");
-            require_near(wav.samples[1], -8.0F / 32768.0F, 1.0e-7F, "A-law 0xD5 smallest negative");
-            require_near(wav.samples[2], 32256.0F / 32768.0F, 1.0e-7F, "A-law 0x2A maximum");
-            require_near(wav.samples[3], -32256.0F / 32768.0F, 1.0e-7F, "A-law 0xAA minimum");
+            const auto bad_guid = root / "extensible_foreign_guid.wav";
+            write_wav(bad_guid, 0x0001, 16, 44100, 1,
+                      to_bytes<int16_t>({0, 16384}), true, /*valid_guid_tail=*/false);
+            require_throws_containing(
+                [&] { (void)engine::audio::read_wav_f32(bad_guid); },
+                "KSDATAFORMAT_SUBTYPE", "foreign SubFormat GUID rejection");
+
+            // WAVEFORMATEXTENSIBLE requires cbSize >= 22; anything less is an
+            // internally inconsistent header.
+            const auto bad_cb = root / "extensible_bad_cbsize.wav";
+            write_wav(bad_cb, 0x0001, 16, 44100, 1,
+                      to_bytes<int16_t>({0, 16384}), true, true, /*cb_size=*/0);
+            require_throws_containing(
+                [&] { (void)engine::audio::read_wav_f32(bad_cb); },
+                "cbSize", "extensible cbSize rejection");
+        }
+
+        // --- Truncated sample data is an error, not a silent trim ------------
+        // PCM24 already rejected a partial trailing sample; PCM32 and float64
+        // divided and dropped it, which turns a truncated download into audio
+        // that looks fine.
+        {
+            auto pcm32 = to_bytes<int32_t>({1073741824});
+            pcm32.push_back(0x7F);
+            const auto path32 = root / "pcm32_partial.wav";
+            write_wav(path32, 0x0001, 32, 44100, 1, pcm32);
+            require_throws_containing(
+                [&] { (void)engine::audio::read_wav_f32(path32); },
+                "malformed PCM32", "PCM32 partial sample rejection");
+
+            auto f64 = to_bytes<double>({0.25});
+            f64.push_back(static_cast<char>(0xAA));
+            const auto path64 = root / "float64_partial.wav";
+            write_wav(path64, 0x0003, 64, 44100, 1, f64);
+            require_throws_containing(
+                [&] { (void)engine::audio::read_wav_f32(path64); },
+                "malformed float64", "float64 partial sample rejection");
         }
 
         // --- Still rejects what it genuinely cannot decode -------------------
