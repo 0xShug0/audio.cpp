@@ -355,10 +355,12 @@ struct MiniMaxMusic3ArRuntime::Impl {
         assign_batch2_row(hidden, 1, assets->config.qwen.hidden_size, state.uncond.hidden);
     }
 
-    std::vector<float> generate_frame_hiddens(
+    void generate_frame_hiddens_into(
         const MiniMaxMusic3Request & request,
         int64_t target_frames,
-        uint64_t & rng_offset_blocks) {
+        uint64_t & rng_offset_blocks,
+        std::vector<float> & frame_hiddens,
+        const std::function<void(int64_t)> * progress) {
         const auto ar_start = Clock::now();
         const auto prompt = prompt_from_request(request);
         const int64_t prompt_steps = static_cast<int64_t>(prompt.conditional_ids.size());
@@ -369,7 +371,7 @@ struct MiniMaxMusic3ArRuntime::Impl {
         ArStepState state;
         assign_step_outputs(std::move(prefill.logits), prefill.hidden, state);
 
-        std::vector<float> frame_hiddens;
+        frame_hiddens.clear();
         frame_hiddens.reserve(static_cast<size_t>(
             target_frames * assets->config.condition.condition_layers * assets->config.qwen.hidden_size));
         uint64_t sample_call_index = 0;
@@ -409,6 +411,9 @@ struct MiniMaxMusic3ArRuntime::Impl {
             if (frame > 0) {
                 frame_hiddens.insert(frame_hiddens.end(), state.cond.hidden.begin(), state.cond.hidden.end());
                 frame_hiddens.insert(frame_hiddens.end(), depth_codes.hidden.begin(), depth_codes.hidden.end());
+                if (progress != nullptr && *progress) {
+                    (*progress)(frame);
+                }
             }
             if (frame == target_frames) {
                 break;
@@ -421,6 +426,14 @@ struct MiniMaxMusic3ArRuntime::Impl {
         engine::debug::timing_log_scalar(
             "minimax_music3.ar.total_ms",
             engine::debug::elapsed_ms(ar_start, Clock::now()));
+    }
+
+    std::vector<float> generate_frame_hiddens(
+        const MiniMaxMusic3Request & request,
+        int64_t target_frames,
+        uint64_t & rng_offset_blocks) {
+        std::vector<float> frame_hiddens;
+        generate_frame_hiddens_into(request, target_frames, rng_offset_blocks, frame_hiddens, nullptr);
         return frame_hiddens;
     }
 
@@ -471,6 +484,15 @@ std::vector<float> MiniMaxMusic3ArRuntime::generate_frame_hiddens(
     int64_t target_frames,
     uint64_t & rng_offset_blocks) {
     return impl_->generate_frame_hiddens(request, target_frames, rng_offset_blocks);
+}
+
+void MiniMaxMusic3ArRuntime::generate_frame_hiddens_into(
+    const MiniMaxMusic3Request & request,
+    int64_t target_frames,
+    uint64_t & rng_offset_blocks,
+    std::vector<float> & frame_hiddens,
+    const std::function<void(int64_t)> * progress) {
+    impl_->generate_frame_hiddens_into(request, target_frames, rng_offset_blocks, frame_hiddens, progress);
 }
 
 void MiniMaxMusic3ArRuntime::release_runtime_graphs() {

@@ -8,6 +8,7 @@
 #include "engine/framework/sampling/torch_random.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -28,6 +29,17 @@ public:
         const MiniMaxMusic3Request & request,
         int64_t target_frames,
         uint64_t & rng_offset_blocks);
+
+    // Identical generation, but appends into a caller-owned buffer (which must
+    // survive without reallocation: callers reserve target capacity up front)
+    // and reports completed hidden rows so a consumer thread can start work on
+    // finished frames while later frames are still decoding.
+    void generate_frame_hiddens_into(
+        const MiniMaxMusic3Request & request,
+        int64_t target_frames,
+        uint64_t & rng_offset_blocks,
+        std::vector<float> & frame_hiddens,
+        const std::function<void(int64_t rows_done)> * progress);
 
     void release_runtime_graphs();
 

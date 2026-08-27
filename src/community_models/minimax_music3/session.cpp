@@ -149,6 +149,7 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"minimax_music3.graph_context_mb", "int", "Runtime graph arena size in MiB.", false, "32", "1"},
         {"minimax_music3.weight_context_mb", "int", "Weight context size in MiB.", false, "32", "1"},
         {"minimax_music3.mem_saver", "bool", "Load large generation stages only while they are needed to reduce peak VRAM.", false, "true"},
+        {"minimax_music3.pipeline_overlap", "bool", "Overlap AR decoding with per-chunk condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; output is validated to stay identical to the sequential pipeline (automatic sequential fallback otherwise).", false, "false"},
     };
     return out;
 }
@@ -200,13 +201,18 @@ MiniMaxMusic3Session::MiniMaxMusic3Session(
     if (const auto value = runtime::find_option(this->options().options, {"minimax_music3.mem_saver"})) {
         memory_saver = runtime::parse_bool_option(*value, "minimax_music3.mem_saver");
     }
+    bool pipeline_overlap = false;
+    if (const auto value = runtime::find_option(this->options().options, {"minimax_music3.pipeline_overlap"})) {
+        pipeline_overlap = runtime::parse_bool_option(*value, "minimax_music3.pipeline_overlap");
+    }
     pipeline_ = std::make_unique<MiniMaxMusic3PipelineRuntime>(
         execution_context(),
         assets_,
         graph_arena_bytes,
         weight_context_bytes,
         weight_type,
-        memory_saver);
+        memory_saver,
+        pipeline_overlap);
 }
 
 MiniMaxMusic3Session::~MiniMaxMusic3Session() = default;
