@@ -87,16 +87,47 @@ MiniMaxMusic3ConditionWeights load_condition_weights(
 
 }  // namespace
 
+std::vector<float> detail::project_frame_hiddens(
+    const float * frame_hiddens,
+    size_t value_count,
+    int64_t frames,
+    int64_t layers,
+    int64_t hidden_size,
+    const std::vector<float> & layer_weights) {
+    if (frames <= 0 || layers <= 0 || hidden_size <= 0) {
+        throw std::runtime_error("MiniMax Music 3 condition projection requires positive dimensions");
+    }
+    const size_t expected = static_cast<size_t>(frames * layers * hidden_size);
+    if (frame_hiddens == nullptr || value_count != expected ||
+        layer_weights.size() != static_cast<size_t>(layers)) {
+        throw std::runtime_error("MiniMax Music 3 condition frame hidden shape mismatch");
+    }
+    std::vector<float> projected(static_cast<size_t>(hidden_size * frames), 0.0F);
+    for (int64_t frame = 0; frame < frames; ++frame) {
+        for (int64_t layer = 0; layer < layers; ++layer) {
+            const float weight = layer_weights[static_cast<size_t>(layer)];
+            const size_t src_base = static_cast<size_t>((frame * layers + layer) * hidden_size);
+            for (int64_t channel = 0; channel < hidden_size; ++channel) {
+                projected[static_cast<size_t>(channel * frames + frame)] +=
+                    frame_hiddens[src_base + static_cast<size_t>(channel)] * weight;
+            }
+        }
+    }
+    return projected;
+}
+
 struct MiniMaxMusic3ConditionEncoderRuntime::Impl {
     Impl(
         std::shared_ptr<const MiniMaxMusic3Assets> input_assets,
         core::ExecutionContext & input_execution,
         size_t input_graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        bool input_evict_cuda_graph_cache_on_release)
         : assets(std::move(input_assets)),
           execution(input_execution),
           graph_arena_bytes(input_graph_arena_bytes),
+          evict_cuda_graph_cache_on_release(input_evict_cuda_graph_cache_on_release),
           weights(load_condition_weights(*assets, execution, weight_context_bytes, storage_type)) {
         if (assets == nullptr) {
             throw std::runtime_error("MiniMax Music 3 condition encoder requires assets");
@@ -109,7 +140,8 @@ struct MiniMaxMusic3ConditionEncoderRuntime::Impl {
 
     void release_runtime_graphs() {
         if (graph != nullptr) {
-            core::release_backend_graph_resources(execution.backend(), graph);
+            core::release_backend_graph_resources(
+                execution.backend(), graph, evict_cuda_graph_cache_on_release);
         }
         graph = nullptr;
         input = {};
@@ -164,12 +196,12 @@ struct MiniMaxMusic3ConditionEncoderRuntime::Impl {
         condition_frames = output_frames;
     }
 
-    std::vector<float> encode(const std::vector<float> & frame_hiddens, int64_t input_frames, int64_t & out_frames) {
+    std::vector<float> encode(
+        const float * frame_hiddens,
+        size_t value_count,
+        int64_t input_frames,
+        int64_t & out_frames) {
         const auto & config = assets->config.condition;
-        const int64_t expected = input_frames * config.condition_layers * config.condition_hidden_dim;
-        if (static_cast<int64_t>(frame_hiddens.size()) != expected) {
-            throw std::runtime_error("MiniMax Music 3 condition frame hidden shape mismatch");
-        }
         out_frames = static_cast<int64_t>(
             static_cast<double>(input_frames) * static_cast<double>(config.output_sample_rate) /
             static_cast<double>(config.input_sample_rate) * static_cast<double>(config.input_hop_length) /
@@ -177,17 +209,13 @@ struct MiniMaxMusic3ConditionEncoderRuntime::Impl {
         if (out_frames <= 0) {
             throw std::runtime_error("MiniMax Music 3 condition encoder produced non-positive frame count");
         }
-        std::vector<float> projected_input(static_cast<size_t>(config.condition_hidden_dim * input_frames), 0.0F);
-        for (int64_t frame = 0; frame < input_frames; ++frame) {
-            for (int64_t layer = 0; layer < config.condition_layers; ++layer) {
-                const float weight = weights.layer_weights[static_cast<size_t>(layer)];
-                const size_t src_base = static_cast<size_t>((frame * config.condition_layers + layer) * config.condition_hidden_dim);
-                for (int64_t channel = 0; channel < config.condition_hidden_dim; ++channel) {
-                    projected_input[static_cast<size_t>(channel * input_frames + frame)] +=
-                        frame_hiddens[src_base + static_cast<size_t>(channel)] * weight;
-                }
-            }
-        }
+        auto projected_input = detail::project_frame_hiddens(
+            frame_hiddens,
+            value_count,
+            input_frames,
+            config.condition_layers,
+            config.condition_hidden_dim,
+            weights.layer_weights);
         ensure_graph(input_frames, out_frames);
         core::write_tensor_f32(input, projected_input);
         if (core::compute_graph(execution, graph, plan, "minimax_music3.condition") != GGML_STATUS_SUCCESS) {
@@ -207,6 +235,7 @@ struct MiniMaxMusic3ConditionEncoderRuntime::Impl {
     std::shared_ptr<const MiniMaxMusic3Assets> assets;
     core::ExecutionContext & execution;
     size_t graph_arena_bytes = 0;
+    bool evict_cuda_graph_cache_on_release = false;
     MiniMaxMusic3ConditionWeights weights;
     int64_t frames = 0;
     int64_t condition_frames = 0;
@@ -223,21 +252,31 @@ MiniMaxMusic3ConditionEncoderRuntime::MiniMaxMusic3ConditionEncoderRuntime(
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type)
+    assets::TensorStorageType storage_type,
+    bool evict_cuda_graph_cache_on_release)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           graph_arena_bytes,
           weight_context_bytes,
-          storage_type)) {}
+          storage_type,
+          evict_cuda_graph_cache_on_release)) {}
 
 MiniMaxMusic3ConditionEncoderRuntime::~MiniMaxMusic3ConditionEncoderRuntime() = default;
+
+std::vector<float> MiniMaxMusic3ConditionEncoderRuntime::encode(
+    const float * frame_hiddens,
+    size_t value_count,
+    int64_t frames,
+    int64_t & condition_frames) {
+    return impl_->encode(frame_hiddens, value_count, frames, condition_frames);
+}
 
 std::vector<float> MiniMaxMusic3ConditionEncoderRuntime::encode(
     const std::vector<float> & frame_hiddens,
     int64_t frames,
     int64_t & condition_frames) {
-    return impl_->encode(frame_hiddens, frames, condition_frames);
+    return impl_->encode(frame_hiddens.data(), frame_hiddens.size(), frames, condition_frames);
 }
 
 void MiniMaxMusic3ConditionEncoderRuntime::release_runtime_graphs() {

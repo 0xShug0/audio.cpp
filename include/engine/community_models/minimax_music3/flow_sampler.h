@@ -15,7 +15,8 @@ public:
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type);
+        assets::TensorStorageType storage_type,
+        bool evict_cuda_graph_cache_on_release = false);
     ~MiniMaxMusic3FlowSamplerRuntime();
 
     std::vector<float> denoise_chunk(

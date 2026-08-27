@@ -299,14 +299,17 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        bool input_evict_cuda_graph_cache_on_release)
         : assets(std::move(input_assets)),
+          evict_cuda_graph_cache_on_release(input_evict_cuda_graph_cache_on_release),
           flow(std::make_unique<MiniMaxMusic3FlowTransformerRuntime>(
               assets,
               execution,
               graph_arena_bytes,
               weight_context_bytes,
-              storage_type)) {
+              storage_type,
+              evict_cuda_graph_cache_on_release)) {
         if (assets == nullptr) {
             throw std::runtime_error("MiniMax Music 3 flow sampler requires assets");
         }
@@ -411,6 +414,7 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
     }
 
     std::shared_ptr<const MiniMaxMusic3Assets> assets;
+    bool evict_cuda_graph_cache_on_release = false;
     std::unique_ptr<MiniMaxMusic3FlowTransformerRuntime> flow;
     MiniMaxMusic3FlowDenoiserRuntime * denoiser = nullptr;
     MiniMaxMusic3FlowUpdateRuntime * updater = nullptr;
@@ -425,13 +429,15 @@ MiniMaxMusic3FlowSamplerRuntime::MiniMaxMusic3FlowSamplerRuntime(
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type)
+    assets::TensorStorageType storage_type,
+    bool evict_cuda_graph_cache_on_release)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           graph_arena_bytes,
           weight_context_bytes,
-          storage_type)) {}
+          storage_type,
+          evict_cuda_graph_cache_on_release)) {}
 
 MiniMaxMusic3FlowSamplerRuntime::~MiniMaxMusic3FlowSamplerRuntime() = default;
 

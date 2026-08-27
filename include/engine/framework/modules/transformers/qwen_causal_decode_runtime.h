@@ -28,6 +28,7 @@ struct QwenCausalDecodeRuntimeConfig {
     std::optional<ggml_type> readback_round_type;
     std::vector<int32_t> logits_readback_token_ids;
     int64_t sliding_window = 0;
+    bool evict_cuda_graph_cache_on_release = false;
 };
 
 struct QwenCausalDecodeRuntimeWeights {

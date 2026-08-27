@@ -294,9 +294,11 @@ struct MiniMaxMusic3ArRuntime::Impl {
         core::ExecutionContext & input_execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        bool input_evict_cuda_graph_cache_on_release)
         : assets(std::move(input_assets)),
           execution(input_execution),
+          evict_cuda_graph_cache_on_release(input_evict_cuda_graph_cache_on_release),
           prompt_builder(assets),
           global_weights(load_minimax_music3_global_lm_weights(*assets, execution, weight_context_bytes, storage_type)),
           depth(std::make_unique<MiniMaxMusic3DepthDecoderRuntime>(
@@ -305,7 +307,8 @@ struct MiniMaxMusic3ArRuntime::Impl {
               execution,
               graph_arena_bytes,
               weight_context_bytes,
-              storage_type)),
+              storage_type,
+              evict_cuda_graph_cache_on_release)),
           sampling_policy(sampling::resolve_torch_cuda_sampling_policy(
               execution.backend_type(),
               execution.config().device,
@@ -317,11 +320,15 @@ struct MiniMaxMusic3ArRuntime::Impl {
         }
         auto qwen_config = make_minimax_music3_global_lm_runtime_config(
             assets->config,
+            global_weights.lm_head_layout,
             execution.backend_type(),
             graph_arena_bytes,
             graph_arena_bytes);
+        qwen_config.evict_cuda_graph_cache_on_release = evict_cuda_graph_cache_on_release;
         qwen_config.return_hidden = true;
-        qwen_config.logits_readback_token_ids = semantic_logits_readback_token_ids(MiniMaxMusic3Prompt{});
+        if (global_weights.lm_head_layout == MiniMaxMusic3LmHeadLayout::FullVocab) {
+            qwen_config.logits_readback_token_ids = semantic_logits_readback_token_ids(MiniMaxMusic3Prompt{});
+        }
         global_runtime = std::make_unique<modules::QwenCausalDecodeRuntime>(
             execution,
             qwen_config,
@@ -428,6 +435,7 @@ struct MiniMaxMusic3ArRuntime::Impl {
 
     std::shared_ptr<const MiniMaxMusic3Assets> assets;
     core::ExecutionContext & execution;
+    bool evict_cuda_graph_cache_on_release = false;
     MiniMaxMusic3PromptBuilder prompt_builder;
     MiniMaxMusic3GlobalLMWeights global_weights;
     std::unique_ptr<modules::QwenCausalDecodeRuntime> global_runtime;
@@ -446,13 +454,15 @@ MiniMaxMusic3ArRuntime::MiniMaxMusic3ArRuntime(
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type)
+    assets::TensorStorageType storage_type,
+    bool evict_cuda_graph_cache_on_release)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           graph_arena_bytes,
           weight_context_bytes,
-          storage_type)) {}
+          storage_type,
+          evict_cuda_graph_cache_on_release)) {}
 
 MiniMaxMusic3ArRuntime::~MiniMaxMusic3ArRuntime() = default;
 

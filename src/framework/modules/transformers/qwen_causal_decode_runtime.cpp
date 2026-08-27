@@ -1326,7 +1326,8 @@ private:
 
     void release_prefill_graph() {
         if (prefill_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, prefill_graph_);
+            core::release_backend_graph_resources(
+                backend_, prefill_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (prefill_gallocr_ != nullptr) {
             ggml_gallocr_free(prefill_gallocr_);
@@ -1348,7 +1349,8 @@ private:
 
     void release_batched_prefill_graph() {
         if (batched_prefill_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, batched_prefill_graph_);
+            core::release_backend_graph_resources(
+                backend_, batched_prefill_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (batched_prefill_gallocr_ != nullptr) {
             ggml_gallocr_free(batched_prefill_gallocr_);
@@ -1371,7 +1373,8 @@ private:
 
     void release_decode_graph() {
         if (decode_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, decode_graph_);
+            core::release_backend_graph_resources(
+                backend_, decode_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (decode_buffer_ != nullptr) {
             ggml_backend_buffer_free(decode_buffer_);
@@ -1394,7 +1397,8 @@ private:
 
     void release_batched_decode_graph() {
         if (batched_decode_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, batched_decode_graph_);
+            core::release_backend_graph_resources(
+                backend_, batched_decode_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (batched_decode_buffer_ != nullptr) {
             ggml_backend_buffer_free(batched_decode_buffer_);

@@ -1,5 +1,6 @@
 #include "engine/community_models/minimax_music3/pipeline.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/sampling/hf_sampler.h"
 
@@ -32,45 +33,31 @@ std::vector<int64_t> chunk_starts(int64_t frames, const MiniMaxMusic3Config & co
     return out;
 }
 
-std::vector<float> condition_slice(
-    const std::vector<float> & condition,
-    int64_t start,
-    int64_t frames,
-    int64_t dim) {
-    if (start < 0 || frames <= 0 || dim <= 0 ||
-        static_cast<int64_t>(condition.size()) < (start + frames) * dim) {
-        throw std::runtime_error("MiniMax Music 3 condition slice is out of range");
-    }
-    return std::vector<float>(
-        condition.begin() + static_cast<std::ptrdiff_t>(start * dim),
-        condition.begin() + static_cast<std::ptrdiff_t>((start + frames) * dim));
-}
-
-std::vector<float> crop_interleaved_audio(
-    const runtime::AudioBuffer & audio,
-    int64_t left_samples,
-    int64_t right_samples) {
-    if (audio.channels != 2 || audio.sample_rate <= 0 ||
-        audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {
-        throw std::runtime_error("MiniMax Music 3 vocoder returned invalid stereo audio");
-    }
-    const int64_t frames = static_cast<int64_t>(audio.samples.size()) / audio.channels;
-    const int64_t start = std::min(std::max<int64_t>(0, left_samples), frames);
-    const int64_t end = std::max(start, frames - std::max<int64_t>(0, right_samples));
-    std::vector<float> out(static_cast<size_t>((end - start) * audio.channels));
-    std::copy(
-        audio.samples.begin() + static_cast<std::ptrdiff_t>(start * audio.channels),
-        audio.samples.begin() + static_cast<std::ptrdiff_t>(end * audio.channels),
-        out.begin());
-    return out;
-}
-
 struct DenoisedChunk {
     std::vector<float> latents;
     int64_t latent_frames = 0;
 };
 
 }  // namespace
+
+void detail::append_cropped_interleaved_audio(
+    runtime::AudioBuffer & destination,
+    const runtime::AudioBuffer & chunk,
+    int64_t left_frames,
+    int64_t right_frames) {
+    if (destination.channels != 2 || destination.sample_rate <= 0 ||
+        chunk.channels != destination.channels || chunk.sample_rate != destination.sample_rate ||
+        chunk.samples.size() % static_cast<size_t>(chunk.channels) != 0) {
+        throw std::runtime_error("MiniMax Music 3 chunk audio format mismatch");
+    }
+    const int64_t frames = static_cast<int64_t>(chunk.samples.size()) / chunk.channels;
+    const int64_t start = std::min(std::max<int64_t>(0, left_frames), frames);
+    const int64_t end = std::max(start, frames - std::max<int64_t>(0, right_frames));
+    destination.samples.insert(
+        destination.samples.end(),
+        chunk.samples.begin() + static_cast<std::ptrdiff_t>(start * chunk.channels),
+        chunk.samples.begin() + static_cast<std::ptrdiff_t>(end * chunk.channels));
+}
 
 struct MiniMaxMusic3PipelineRuntime::Impl {
     Impl(
@@ -123,31 +110,32 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         const int64_t target_frames = std::min<int64_t>(
             assets->config.max_audio_frames,
             static_cast<int64_t>(request.duration_sec * static_cast<double>(assets->config.frame_rate)));
-        uint64_t rng_offset_blocks = 0;
-        std::vector<float> frame_hiddens;
-        {
-            auto & ar_runtime = ensure_ar();
-            frame_hiddens = ar_runtime.generate_frame_hiddens(request, target_frames, rng_offset_blocks);
-            release_ar_after_phase();
-        }
-        const int64_t generated_frames =
-            static_cast<int64_t>(frame_hiddens.size()) /
-            (assets->config.condition.condition_layers * assets->config.qwen.hidden_size);
-        if (static_cast<int64_t>(frame_hiddens.size()) !=
-            generated_frames * assets->config.condition.condition_layers * assets->config.qwen.hidden_size) {
-            throw std::runtime_error("MiniMax Music 3 frame hidden shape mismatch");
-        }
-        if (generated_frames <= 0) {
-            throw std::runtime_error("MiniMax Music 3 AR produced no frames");
-        }
-
-        const auto denoise_start = Clock::now();
-        const auto starts = chunk_starts(generated_frames, assets->config);
         std::vector<DenoisedChunk> denoised;
-        denoised.reserve(starts.size());
-        std::vector<float> previous_latent;
-        std::vector<float> previous_condition;
+        Clock::time_point denoise_start;
         {
+            uint64_t rng_offset_blocks = 0;
+            std::vector<float> frame_hiddens;
+            {
+                auto & ar_runtime = ensure_ar();
+                frame_hiddens = ar_runtime.generate_frame_hiddens(request, target_frames, rng_offset_blocks);
+                release_ar_after_phase();
+            }
+            const int64_t hidden_frame_width =
+                assets->config.condition.condition_layers * assets->config.qwen.hidden_size;
+            const int64_t generated_frames =
+                static_cast<int64_t>(frame_hiddens.size()) / hidden_frame_width;
+            if (static_cast<int64_t>(frame_hiddens.size()) != generated_frames * hidden_frame_width) {
+                throw std::runtime_error("MiniMax Music 3 frame hidden shape mismatch");
+            }
+            if (generated_frames <= 0) {
+                throw std::runtime_error("MiniMax Music 3 AR produced no frames");
+            }
+
+            denoise_start = Clock::now();
+            const auto starts = chunk_starts(generated_frames, assets->config);
+            denoised.reserve(starts.size());
+            std::vector<float> previous_latent;
+            std::vector<float> previous_condition;
             auto & condition_runtime = ensure_condition();
             auto & flow_runtime = ensure_flow();
             for (size_t chunk_index = 0; chunk_index < starts.size(); ++chunk_index) {
@@ -157,11 +145,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
                 int64_t condition_frames = 0;
                 const auto condition_start = Clock::now();
                 auto condition_values = condition_runtime.encode(
-                    condition_slice(
-                        frame_hiddens,
-                        start,
-                        frame_count,
-                        assets->config.condition.condition_layers * assets->config.qwen.hidden_size),
+                    frame_hiddens.data() + static_cast<std::ptrdiff_t>(start * hidden_frame_width),
+                    static_cast<size_t>(frame_count * hidden_frame_width),
                     frame_count,
                     condition_frames);
                 core::round_f32_to_bf16_in_place(condition_values);
@@ -193,23 +178,38 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
             }
             release_flow_after_phase();
         }
-        std::vector<runtime::AudioBuffer> chunks;
-        chunks.reserve(denoised.size());
+
+        runtime::AudioBuffer out;
+        out.sample_rate = assets->config.vocoder.sample_rate;
+        out.channels = 2;
+        size_t output_samples = 0;
+        for (size_t chunk_index = 0; chunk_index < denoised.size(); ++chunk_index) {
+            const int64_t estimated_decoded_frames =
+                denoised[chunk_index].latent_frames * assets->config.vocoder.hop_length;
+            const int64_t left =
+                chunk_index == 0 ? 0 : kCropLeftLatent * assets->config.vocoder.hop_length;
+            const int64_t right =
+                chunk_index + 1 == denoised.size()
+                    ? 0
+                    : kCropRightLatent * assets->config.vocoder.hop_length;
+            const int64_t estimated_kept_frames =
+                std::max<int64_t>(0, estimated_decoded_frames - left - right);
+            output_samples += static_cast<size_t>(estimated_kept_frames * out.channels);
+        }
+        out.samples.reserve(output_samples);
         {
             auto & vocoder_runtime = ensure_vocoder();
             for (size_t chunk_index = 0; chunk_index < denoised.size(); ++chunk_index) {
+                auto chunk = std::move(denoised[chunk_index]);
                 const auto vocoder_start = Clock::now();
-                auto audio = vocoder_runtime.decode(
-                    denoised[chunk_index].latents,
-                    denoised[chunk_index].latent_frames);
+                const auto audio = vocoder_runtime.decode(chunk.latents, chunk.latent_frames);
                 engine::debug::timing_log_scalar(
                     "minimax_music3.vocoder.total_ms",
                     engine::debug::elapsed_ms(vocoder_start, Clock::now()));
                 const int64_t left = chunk_index == 0 ? 0 : kCropLeftLatent * assets->config.vocoder.hop_length;
                 const int64_t right =
                     chunk_index + 1 == denoised.size() ? 0 : kCropRightLatent * assets->config.vocoder.hop_length;
-                audio.samples = crop_interleaved_audio(audio, left, right);
-                chunks.push_back(std::move(audio));
+                detail::append_cropped_interleaved_audio(out, audio, left, right);
             }
             release_vocoder_after_phase();
         }
@@ -217,15 +217,6 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
             "minimax_music3.flow_vocoder.total_ms",
             engine::debug::elapsed_ms(denoise_start, Clock::now()));
 
-        runtime::AudioBuffer out;
-        out.sample_rate = assets->config.vocoder.sample_rate;
-        out.channels = 2;
-        for (const auto & chunk : chunks) {
-            if (chunk.sample_rate != out.sample_rate || chunk.channels != out.channels) {
-                throw std::runtime_error("MiniMax Music 3 chunk audio format mismatch");
-            }
-            out.samples.insert(out.samples.end(), chunk.samples.begin(), chunk.samples.end());
-        }
         for (float & sample : out.samples) {
             sample = std::clamp(sample, -1.0F, 1.0F);
         }
@@ -282,6 +273,7 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         ar->release_runtime_graphs();
         if (memory_saver) {
             ar.reset();
+            core::trim_backend_pools(execution.backend());
         }
     }
 
@@ -295,6 +287,7 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         if (memory_saver) {
             flow.reset();
             condition.reset();
+            core::trim_backend_pools(execution.backend());
         }
     }
 
@@ -305,6 +298,7 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         vocoder->release_runtime_graphs();
         if (memory_saver) {
             vocoder.reset();
+            core::trim_backend_pools(execution.backend());
         }
     }
 
@@ -314,7 +308,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
             execution,
             graph_arena_bytes,
             weight_context_bytes,
-            storage_type);
+            storage_type,
+            memory_saver);
     }
 
     std::unique_ptr<MiniMaxMusic3ConditionEncoderRuntime> make_condition() {
@@ -323,7 +318,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
             execution,
             graph_arena_bytes,
             weight_context_bytes,
-            storage_type);
+            storage_type,
+            memory_saver);
     }
 
     std::unique_ptr<MiniMaxMusic3FlowSamplerRuntime> make_flow() {
@@ -332,7 +328,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
             execution,
             graph_arena_bytes,
             weight_context_bytes,
-            storage_type);
+            storage_type,
+            memory_saver);
     }
 
     std::unique_ptr<MiniMaxMusic3VocoderRuntime> make_vocoder() {
@@ -341,7 +338,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
             execution,
             graph_arena_bytes,
             weight_context_bytes,
-            storage_type);
+            storage_type,
+            memory_saver);
     }
 
     core::ExecutionContext & execution;

@@ -243,11 +243,13 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
         core::ExecutionContext & input_execution,
         size_t input_graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        bool input_evict_cuda_graph_cache_on_release)
         : assets(std::move(input_assets)),
           global_token_embedding(input_global_token_embedding),
           execution(input_execution),
           graph_arena_bytes(input_graph_arena_bytes),
+          evict_cuda_graph_cache_on_release(input_evict_cuda_graph_cache_on_release),
           weights(load_depth_weights(*assets, execution, weight_context_bytes, storage_type)),
           sampling_policy(sampling::resolve_torch_cuda_sampling_policy(
               execution.backend_type(),
@@ -498,12 +500,14 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
     void release_runtime_graphs() {
         for (auto & graph : decode_graphs) {
             if (graph.graph != nullptr) {
-                core::release_backend_graph_resources(execution.backend(), graph.graph);
+                core::release_backend_graph_resources(
+                    execution.backend(), graph.graph, evict_cuda_graph_cache_on_release);
             }
             graph = {};
         }
         if (feedback.graph != nullptr) {
-            core::release_backend_graph_resources(execution.backend(), feedback.graph);
+            core::release_backend_graph_resources(
+                execution.backend(), feedback.graph, evict_cuda_graph_cache_on_release);
         }
         feedback = {};
     }
@@ -512,6 +516,7 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
     core::TensorValue global_token_embedding;
     core::ExecutionContext & execution;
     size_t graph_arena_bytes = 0;
+    bool evict_cuda_graph_cache_on_release = false;
     MiniMaxMusic3DepthWeights weights;
     std::array<DecodeGraph, 7> decode_graphs;
     FeedbackGraph feedback;
@@ -528,14 +533,16 @@ MiniMaxMusic3DepthDecoderRuntime::MiniMaxMusic3DepthDecoderRuntime(
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type)
+    assets::TensorStorageType storage_type,
+    bool evict_cuda_graph_cache_on_release)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           global_token_embedding,
           execution,
           graph_arena_bytes,
           weight_context_bytes,
-          storage_type)) {}
+          storage_type,
+          evict_cuda_graph_cache_on_release)) {}
 
 MiniMaxMusic3DepthDecoderRuntime::~MiniMaxMusic3DepthDecoderRuntime() = default;
 

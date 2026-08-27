@@ -140,10 +140,12 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
         core::ExecutionContext & input_execution,
         size_t input_graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        bool input_evict_cuda_graph_cache_on_release)
         : assets(std::move(input_assets)),
           execution(input_execution),
           graph_arena_bytes(input_graph_arena_bytes),
+          evict_cuda_graph_cache_on_release(input_evict_cuda_graph_cache_on_release),
           weights(load_flow_weights(*assets, execution, weight_context_bytes, storage_type)) {
         time_proj = assets->transformer_weights->require_f32(
             "time_proj.weight",
@@ -156,7 +158,8 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
 
     void release_runtime_graphs() {
         if (graph != nullptr) {
-            core::release_backend_graph_resources(execution.backend(), graph);
+            core::release_backend_graph_resources(
+                execution.backend(), graph, evict_cuda_graph_cache_on_release);
         }
         graph = nullptr;
         latents = {};
@@ -335,6 +338,7 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
     std::shared_ptr<const MiniMaxMusic3Assets> assets;
     core::ExecutionContext & execution;
     size_t graph_arena_bytes = 0;
+    bool evict_cuda_graph_cache_on_release = false;
     MiniMaxMusic3FlowWeights weights;
     std::vector<float> time_proj;
     int64_t latent_frames = 0;
@@ -361,13 +365,15 @@ MiniMaxMusic3FlowTransformerRuntime::MiniMaxMusic3FlowTransformerRuntime(
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type)
+    assets::TensorStorageType storage_type,
+    bool evict_cuda_graph_cache_on_release)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           graph_arena_bytes,
           weight_context_bytes,
-          storage_type)) {}
+          storage_type,
+          evict_cuda_graph_cache_on_release)) {}
 
 MiniMaxMusic3FlowTransformerRuntime::~MiniMaxMusic3FlowTransformerRuntime() = default;
 

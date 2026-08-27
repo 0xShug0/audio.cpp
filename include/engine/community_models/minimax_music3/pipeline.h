@@ -11,6 +11,16 @@
 
 namespace engine::models::minimax_music3 {
 
+namespace detail {
+
+void append_cropped_interleaved_audio(
+    runtime::AudioBuffer & destination,
+    const runtime::AudioBuffer & chunk,
+    int64_t left_frames,
+    int64_t right_frames);
+
+}  // namespace detail
+
 class MiniMaxMusic3PipelineRuntime {
 public:
     MiniMaxMusic3PipelineRuntime(
