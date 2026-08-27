@@ -140,10 +140,11 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"ar_guidance_scale", "float", "Autoregressive semantic and depth CFG scale.", false, "1.5", "0.0"},
         {"top_k", "int", "Top-k sampling for semantic and residual code sampling.", false, "50", "1"},
         {"seed", "int", "Generation seed.", false, "0", "0"},
-        {"flow_uncond_interval", "int", "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between. Default 2 is the accepted recipe (~-15..-21% wall, mel-L1 ~0.4 dB); 1 restores the exact reference trajectory.", false, "2", "1"},
+        {"flow_uncond_interval", "int", "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between. Default 3 is the wave-5 recipe; 1 restores the exact reference trajectory.", false, "3", "1"},
         {"flow_uncond_warmup", "int", "Number of initial flow steps that always evaluate both CFG branches when delta reuse is enabled.", false, "2", "0"},
         {"ensemble_takes", "int", "Decode N independent takes of the same prompt in one batched AR pass (seeds seed..seed+N-1); flow and vocoder run per take. Outputs are returned as named audio (take_01..take_NN) for --out-dir.", false, "1", "1"},
         {"ensemble_prefix_frames", "int", "Intro-lock for ensembles: decode the first N frames once as a shared master trajectory (~25 frames per second), then fork the takes (take_01 continues the master exactly). 0 disables.", false, "0", "0"},
+        {"flow_chunk_hop_frames", "int", "Flow chunk hop in AR frames (~25/sec). Default 150 is the wave-5 recipe (flow ~-35% vs the model's 100); crops/carry are rederived consistently. 100 restores the stock geometry.", false, "150", "0"},
     };
     out.session_options = {
         {"minimax_music3.weight_type", "native|bf16|f16|q8_0|q4_0|q4_k", "Shared weight storage type.", false, "native"},
@@ -285,6 +286,12 @@ MiniMaxMusic3Request MiniMaxMusic3Session::parse_request(const runtime::TaskRequ
     }
     if (out.ensemble_prefix_frames < 0) {
         throw std::runtime_error("MiniMax Music 3 ensemble_prefix_frames must be non-negative");
+    }
+    if (const auto value = runtime::parse_i64_option(request.options, {"flow_chunk_hop_frames"})) {
+        out.flow_chunk_hop_frames = *value;
+    }
+    if (out.flow_chunk_hop_frames < 0) {
+        throw std::runtime_error("MiniMax Music 3 flow_chunk_hop_frames must be non-negative");
     }
     return out;
 }

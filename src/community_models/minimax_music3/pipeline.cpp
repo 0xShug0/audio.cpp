@@ -27,7 +27,14 @@ using Clock = std::chrono::steady_clock;
 constexpr int64_t kCropLeftLatent = 86;
 constexpr int64_t kCropRightLatent = 344 - kCropLeftLatent;
 
-std::vector<int64_t> chunk_starts(int64_t frames, const MiniMaxMusic3Config & config) {
+int64_t effective_chunk_hop(const MiniMaxMusic3Config & config, const MiniMaxMusic3Request & request) {
+    if (request.flow_chunk_hop_frames <= 0) {
+        return config.chunk_hop_frames;
+    }
+    return std::min(request.flow_chunk_hop_frames, config.chunk_frames);
+}
+
+std::vector<int64_t> chunk_starts(int64_t frames, const MiniMaxMusic3Config & config, int64_t hop_frames) {
     if (frames <= 0) {
         throw std::runtime_error("MiniMax Music 3 requires positive AR frame count");
     }
@@ -35,7 +42,7 @@ std::vector<int64_t> chunk_starts(int64_t frames, const MiniMaxMusic3Config & co
         return {0};
     }
     std::vector<int64_t> out;
-    for (int64_t start = 0; start < frames - config.chunk_hop_frames; start += config.chunk_hop_frames) {
+    for (int64_t start = 0; start < frames - hop_frames; start += hop_frames) {
         out.push_back(start);
     }
     return out;
@@ -171,7 +178,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         // than the tail saves (measured +70% AR at 60 s), so it is applied
         // to short requests only.
         constexpr int64_t kOverlapMaxFrames = 600;
-        if (pipeline_overlap && target_frames <= kOverlapMaxFrames) {
+        if (pipeline_overlap && target_frames <= kOverlapMaxFrames &&
+            request.flow_chunk_hop_frames <= 0) {
             return generate_overlapped(request, target_frames);
         }
         if (pipeline_overlap) {
@@ -263,14 +271,25 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
     runtime::AudioBuffer denoise_and_vocode(
         const std::vector<float> & frame_hiddens,
         int64_t generated_frames,
-        const MiniMaxMusic3Request & request,
+        const MiniMaxMusic3Request & caller_request,
         uint64_t rng_offset_blocks) {
         const int64_t hidden_frame_width =
             assets->config.condition.condition_layers * assets->config.qwen.hidden_size;
+        // Chunk geometry from the effective hop: kept = latents(hop),
+        // overlap = (chunk - kept)/2, left crop = overlap/2. Hop 100 yields
+        // the historical 86/258/172 unchanged.
+        const int64_t hop_frames = effective_chunk_hop(assets->config, caller_request);
+        const int64_t chunk_latents = predicted_condition_frames(assets->config, assets->config.chunk_frames);
+        const int64_t kept_latents = predicted_condition_frames(assets->config, hop_frames);
+        const int64_t overlap_latents = std::max<int64_t>(0, (chunk_latents - kept_latents) / 2);
+        const int64_t crop_left = overlap_latents / 2;
+        const int64_t crop_right = std::max<int64_t>(0, chunk_latents - crop_left - kept_latents);
+        MiniMaxMusic3Request request = caller_request;
+        request.flow_overlap_latent_length = overlap_latents;
         std::vector<DenoisedChunk> denoised;
         const auto denoise_start = Clock::now();
         {
-            const auto starts = chunk_starts(generated_frames, assets->config);
+            const auto starts = chunk_starts(generated_frames, assets->config, hop_frames);
             denoised.reserve(starts.size());
             std::vector<float> previous_latent;
             std::vector<float> previous_condition;
@@ -338,11 +357,11 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
             const int64_t estimated_decoded_frames =
                 denoised[chunk_index].latent_frames * assets->config.vocoder.hop_length;
             const int64_t left =
-                chunk_index == 0 ? 0 : kCropLeftLatent * assets->config.vocoder.hop_length;
+                chunk_index == 0 ? 0 : crop_left * assets->config.vocoder.hop_length;
             const int64_t right =
                 chunk_index + 1 == denoised.size()
                     ? 0
-                    : kCropRightLatent * assets->config.vocoder.hop_length;
+                    : crop_right * assets->config.vocoder.hop_length;
             const int64_t estimated_kept_frames =
                 std::max<int64_t>(0, estimated_decoded_frames - left - right);
             output_samples += static_cast<size_t>(estimated_kept_frames * out.channels);
@@ -357,9 +376,9 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
                 engine::debug::timing_log_scalar(
                     "minimax_music3.vocoder.total_ms",
                     engine::debug::elapsed_ms(vocoder_start, Clock::now()));
-                const int64_t left = chunk_index == 0 ? 0 : kCropLeftLatent * assets->config.vocoder.hop_length;
+                const int64_t left = chunk_index == 0 ? 0 : crop_left * assets->config.vocoder.hop_length;
                 const int64_t right =
-                    chunk_index + 1 == denoised.size() ? 0 : kCropRightLatent * assets->config.vocoder.hop_length;
+                    chunk_index + 1 == denoised.size() ? 0 : crop_right * assets->config.vocoder.hop_length;
                 detail::append_cropped_interleaved_audio(out, audio, left, right);
             }
             release_vocoder_after_phase();
@@ -399,7 +418,7 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         const uint64_t predicted_after_ar =
             static_cast<uint64_t>(target_frames + 1) * (semantic_blocks + depth_blocks);
 
-        const auto starts = chunk_starts(target_frames, config);
+        const auto starts = chunk_starts(target_frames, config, config.chunk_hop_frames);
         std::vector<ChunkPlan> plans(starts.size());
         {
             uint64_t running = predicted_after_ar;

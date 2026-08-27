@@ -486,8 +486,11 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
         if (overlap > 0) {
             copy_latent_prefix(latents, previous_latent, overlap, frames, config.flow.in_channels);
         }
-        const int64_t overlap_start = std::max<int64_t>(0, frames - 2 * config.overlap_latent_length);
-        const int64_t overlap_end = std::max(overlap_start, frames - config.overlap_latent_length);
+        const int64_t overlap_latent = request.flow_overlap_latent_length > 0
+            ? request.flow_overlap_latent_length
+            : config.overlap_latent_length;
+        const int64_t overlap_start = std::max<int64_t>(0, frames - 2 * overlap_latent);
+        const int64_t overlap_end = std::max(overlap_start, frames - overlap_latent);
         carry_latent = latent_tail_window(latents, frames, config.flow.in_channels, overlap_start, overlap_end);
         carry_condition = condition_tail_window(chunk_condition, frames, config.flow.condition_dim, overlap_start, overlap_end);
         return latents;
