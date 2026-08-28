@@ -101,6 +101,7 @@ option(AUDIOCPP_STATIC_ESPEAK "Build and statically link GPL-3.0-or-later eSpeak
 option(AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER
     "Build native model-manager tools and server download/install support"
     OFF)
+include("${CMAKE_CURRENT_SOURCE_DIR}/app/server/frontends/server_frontends.cmake")
 option(AUDIOCPP_USE_SYSTEM_OPENSSL
     "Use system OpenSSL for native model management instead of bundled BoringSSL"
     OFF)
@@ -2251,6 +2252,7 @@ add_executable(audiocpp_server
     app/server/main.cpp
     app/server/base64.cpp
     app/server/config.cpp
+    app/server/frontend.cpp
     app/server/http.cpp
     app/server/model_memory.cpp
     app/server/multipart.cpp
@@ -2266,6 +2268,7 @@ target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
 if(AUDIOCPP_STATIC_ESPEAK)
     audiocpp_stage_espeak(audiocpp_server)
 endif()
+audiocpp_configure_server_frontends(audiocpp_server)
 if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_sources(audiocpp_server PRIVATE app/server/model_installer.cpp)
     target_link_libraries(audiocpp_server PRIVATE audiocpp_package_manager)
