@@ -65,6 +65,12 @@ private:
         mutable std::shared_mutex metadata_mutex;
         std::unordered_map<std::string, RuntimeVoicePreset> voice_presets;
         std::optional<RuntimeVoicePreset> default_voice_preset;
+        // Whether this model's contract accepts the `reference_text` request
+        // option, resolved once at registration (refresh_model_option_flags).
+        // Resolving it per request re-reads the model file's embedded spec on
+        // the request thread, which costs ~0.9 s per request for large GGUFs.
+        // `true` mirrors model_accepts_request_option's no-contract behavior.
+        bool accepts_reference_text = true;
         // Serializes runs on this model and bounds how long a caller waits for its
         // turn; see BusyGuard.
         BusyGuard busy;
@@ -85,6 +91,9 @@ private:
 
     void load_models();
     std::unique_ptr<LoadedModel> make_model(ServerModelConfig config);
+    // Recompute the per-model, config-derived request-option flags (currently
+    // accepts_reference_text). Called at registration and on reconfiguration.
+    void refresh_model_option_flags(LoadedModel & model);
     std::filesystem::path resolve_ui_model_path(const std::filesystem::path & path) const;
     HttpResponse handle_model_load(const std::string & body_text);
     HttpResponse handle_model_unload(const std::string & body_text);
