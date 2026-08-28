@@ -3,8 +3,10 @@
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
 | Qwen3 TTS | `qwen3_tts` | `tts`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
+| BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
 | Chatterbox | `chatterbox` | `clon`, `vc` | [Chatterbox](#chatterbox) |
 | Confucius4-TTS | `confucius4_tts` | `clon` | [Confucius4-TTS](#confucius4-tts) |
+| CosyVoice3 | `cosyvoice3` | `tts`, `clon` | [CosyVoice3](models/cosyvoice3.md) |
 | DramaBox | `dramabox` | `tts`, `clon` | [DramaBox](#dramabox) |
 | DotTTS | `dots_tts` | `tts`, `clon` | [DotTTS](#dottts) |
 | F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](community_models/f5_tts.md) |

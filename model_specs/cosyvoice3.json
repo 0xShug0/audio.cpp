@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "family": "cosyvoice3",
+  "display_name": "CosyVoice3",
+  "description": "Fun-CosyVoice3 native GGUF package for zero-shot, cross-lingual, and instruction-conditioned text-to-speech using CosyVoice3 speech-token AR generation, causal masked flow mel decoding, CAM++ speaker conditioning, and causal HiFT waveform decoding.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en",
+    "ja",
+    "ko",
+    "de",
+    "es",
+    "fr",
+    "it",
+    "ru",
+    "yue"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "dependencies": [],
+  "capabilities": {
+    "tts": [
+      "speaker_reference",
+      "style_control"
+    ],
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "template_name",
+        "type": "enum",
+        "description": "CosyVoice3 request template.",
+        "required": false,
+        "values": [
+          "zero_shot",
+          "cross_lingual",
+          "instruct"
+        ],
+        "default": "zero_shot"
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript for the prompt audio.",
+        "required": false
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Instruction text for instruct mode.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 600.",
+        "required": false,
+        "min": 1,
+        "default": 600
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated CosyVoice3 speech tokens.",
+        "required": false,
+        "min": 1,
+        "default": 1600
+      },
+      {
+        "name": "min_tokens",
+        "type": "int",
+        "description": "Minimum generated CosyVoice3 speech tokens before stop tokens are accepted.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "AR speech-token top-k sampling limit; default 25.",
+        "required": false,
+        "min": 1,
+        "default": 25
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Flow decoder Euler steps; default 10.",
+        "required": false,
+        "min": 1,
+        "default": 10
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "required": false,
+        "min": 0,
+        "default": 1986
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "CosyVoice3 matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "CosyVoice3 convolution weight storage type; default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Reusable runtime graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight loading context size in MiB; default 2048.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-audio cache slots; set 0 to disable reuse.",
+        "required": false,
+        "min": 0,
+        "default": 4
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release cached runtime graphs after each request to reduce peak VRAM; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "cosyvoice3_q8_0",
+      "display_name": "CosyVoice3 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "CosyVoice3-GGUF",
+      "files": [
+        "CosyVoice3-GGUF/cosyvoice3-q8_0.gguf"
+      ],
+      "strip_prefix": "CosyVoice3-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/CosyVoice3-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "cosyvoice3_f32",
+      "display_name": "CosyVoice3 F32 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "CosyVoice3-GGUF",
+      "files": [
+        "CosyVoice3-GGUF/cosyvoice3-f32.gguf"
+      ],
+      "strip_prefix": "CosyVoice3-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/CosyVoice3-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "ui": {
+    "recommended_package": "cosyvoice3_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "cosyvoice3_yaml": "model:cosyvoice3.yaml",
+        "qwen_config": "model:CosyVoice-BlankEN/config.json",
+        "tokenizer_config": "model:CosyVoice-BlankEN/tokenizer_config.json",
+        "vocab_json": "model:CosyVoice-BlankEN/vocab.json",
+        "merges_txt": "model:CosyVoice-BlankEN/merges.txt"
+      },
+      "tensors": {
+        "llm_weights": {
+          "source": "weights:",
+          "prefix": "llm"
+        },
+        "flow_weights": {
+          "source": "weights:",
+          "prefix": "flow"
+        },
+        "hift_weights": {
+          "source": "weights:",
+          "prefix": "hift"
+        },
+        "campplus_weights": {
+          "source": "weights:",
+          "prefix": "campplus"
+        },
+        "speech_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "speech_tokenizer"
+        },
+        "blank_en_weights": {
+          "source": "weights:",
+          "prefix": "blank_en"
+        }
+      }
+    }
+  ]
+}

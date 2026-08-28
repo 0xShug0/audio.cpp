@@ -90,15 +90,6 @@ std::vector<int32_t> position_ids(int64_t steps) {
     return out;
 }
 
-std::vector<int64_t> trace_dims(const core::TensorShape & shape) {
-    std::vector<int64_t> out;
-    out.reserve(shape.rank);
-    for (size_t i = 0; i < shape.rank; ++i) {
-        out.push_back(shape.dims[i]);
-    }
-    return out;
-}
-
 std::vector<float> cosine_time_schedule(int64_t steps) {
     if (steps <= 0) {
         throw std::runtime_error("CosyVoice3 num_inference_steps must be positive");
@@ -426,7 +417,6 @@ public:
             throw std::runtime_error("CosyVoice3 flow condition graph compute failed");
         }
         auto output = core::read_tensor_f32(output_.tensor);
-        engine::debug::trace_log_f32("cosyvoice3.flow.condition_mu", {tokens * config_.token_mel_ratio, config_.flow_mel_channels}, output);
         return output;
     }
 
@@ -547,13 +537,6 @@ public:
         if (core::compute_backend_graph(execution_.backend(), mem_.graph, nullptr, "cosyvoice3.flow.dit") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("CosyVoice3 DiT graph compute failed");
         }
-        if (!traced_first_step_ && engine::debug::trace_log_enabled()) {
-            traced_first_step_ = true;
-            engine::debug::trace_log_f32("cosyvoice3.flow.dit.input_cat", trace_dims(debug_input_cat_.shape), core::read_tensor_f32(debug_input_cat_.tensor));
-            engine::debug::trace_log_f32("cosyvoice3.flow.dit.input_proj", trace_dims(debug_input_proj_.shape), core::read_tensor_f32(debug_input_proj_.tensor));
-            engine::debug::trace_log_f32("cosyvoice3.flow.dit.input_pos", trace_dims(debug_input_pos_.shape), core::read_tensor_f32(debug_input_pos_.tensor));
-            engine::debug::trace_log_f32("cosyvoice3.flow.dit.input_embed", trace_dims(debug_input_embed_.shape), core::read_tensor_f32(debug_input_embed_.tensor));
-        }
         return core::read_tensor_f32(output_.tensor);
     }
 
@@ -567,11 +550,6 @@ public:
         time_ = nullptr;
         positions_ = nullptr;
         output_ = {};
-        debug_input_cat_ = {};
-        debug_input_proj_ = {};
-        debug_input_pos_ = {};
-        debug_input_embed_ = {};
-        traced_first_step_ = false;
     }
 
 private:
@@ -620,16 +598,12 @@ private:
         input = modules::ConcatModule({2}).build(ctx, input, mu);
         input = modules::ConcatModule({2}).build(ctx, input, spks_btf);
         input = core::ensure_backend_addressable_layout(ctx, input);
-        debug_input_cat_ = input;
         input = modules::LinearModule({320, config_.flow_hidden_size, true}).build(ctx, input, weights_->input_projection);
-        debug_input_proj_ = core::ensure_backend_addressable_layout(ctx, input);
-        input = debug_input_proj_;
+        input = core::ensure_backend_addressable_layout(ctx, input);
         auto pos = causal_conv_pos_embed(ctx, input, *weights_);
-        debug_input_pos_ = core::ensure_backend_addressable_layout(ctx, pos);
-        pos = debug_input_pos_;
+        pos = core::ensure_backend_addressable_layout(ctx, pos);
         input = modules::AddModule().build(ctx, input, pos);
-        debug_input_embed_ = core::ensure_backend_addressable_layout(ctx, input);
-        input = debug_input_embed_;
+        input = core::ensure_backend_addressable_layout(ctx, input);
 
         time = modules::LinearModule({kTimeEmbeddingSize, config_.flow_hidden_size, true}).build(ctx, time, weights_->time_fc1);
         time = modules::SiluModule().build(ctx, time);
@@ -677,11 +651,6 @@ private:
     ggml_tensor * time_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     core::TensorValue output_;
-    core::TensorValue debug_input_cat_;
-    core::TensorValue debug_input_proj_;
-    core::TensorValue debug_input_pos_;
-    core::TensorValue debug_input_embed_;
-    bool traced_first_step_ = false;
 };
 
 std::vector<float> normalize_and_project_speaker(
@@ -821,24 +790,6 @@ public:
         const auto schedule = cosine_time_schedule(request.num_inference_steps);
         const auto dit_start = std::chrono::steady_clock::now();
         for (int64_t step = 1; step < static_cast<int64_t>(schedule.size()); ++step) {
-            if (step == 1) {
-                engine::debug::trace_log_f32(
-                    "cosyvoice3.flow.dit.x_in",
-                    {2, c.flow_mel_channels, total_frames},
-                    x_batched);
-                engine::debug::trace_log_f32(
-                    "cosyvoice3.flow.dit.mu_in",
-                    {2, c.flow_mel_channels, total_frames},
-                    mu);
-                engine::debug::trace_log_f32(
-                    "cosyvoice3.flow.dit.cond_in",
-                    {2, c.flow_mel_channels, total_frames},
-                    cond);
-                engine::debug::trace_log_f32(
-                    "cosyvoice3.flow.dit.spks_in",
-                    {2, c.flow_mel_channels},
-                    spks);
-            }
             const float t = schedule[static_cast<size_t>(step - 1)];
             const float dt = schedule[static_cast<size_t>(step)] - t;
             auto temb = timestep_embedding(t);
@@ -846,12 +797,6 @@ public:
             std::copy(temb.begin(), temb.end(), time_batched.begin());
             std::copy(temb.begin(), temb.end(), time_batched.begin() + kTimeEmbeddingSize);
             auto pred = dit_.run(x_batched, mu, cond, spks, time_batched, total_frames);
-            if (step == 1) {
-                engine::debug::trace_log_f32(
-                    "cosyvoice3.flow.dit.pred_step1",
-                    {2, c.flow_mel_channels, total_frames},
-                    pred);
-            }
             const size_t branch = static_cast<size_t>(c.flow_mel_channels * total_frames);
             for (size_t i = 0; i < branch; ++i) {
                 const float guided = (1.0F + kInferenceCfgRate) * pred[i] - kInferenceCfgRate * pred[branch + i];
@@ -870,7 +815,6 @@ public:
                     x_batched[static_cast<size_t>(ch * total_frames + request.prompt_mel_frames + frame)];
             }
         }
-        engine::debug::trace_log_f32("cosyvoice3.flow.output_mel", {target_frames, c.flow_mel_channels}, out.mel);
         engine::debug::timing_log_scalar("cosyvoice3.flow.total_ms", engine::debug::elapsed_ms(start));
         engine::debug::trace_log_scalar("cosyvoice3.flow.total_frames", static_cast<double>(total_frames));
         engine::debug::trace_log_scalar("cosyvoice3.flow.target_frames", static_cast<double>(target_frames));
