@@ -3593,7 +3593,7 @@
       "id": "cosyvoice3_official_paths",
       "coverage": "CosyVoice3 official zero-shot, cross-lingual, instruction, and hotfix-pronunciation paths after a short same-session warmup",
       "family": "cosyvoice3",
-      "model": "models/CosyVoice3-GGUF/cosyvoice3-orig.gguf",
+      "model": "models/audio.cpp-gguf/CosyVoice3-GGUF/cosyvoice3-q8_0.gguf",
       "task": "clon",
       "mode": "offline",
       "outputs": [
@@ -3656,7 +3656,7 @@
       "id": "breeze_tts_clone_official_paths",
       "coverage": "BreezeTTS 2 official voice clone and voice direction paths using prompt audio, prompt transcript, T5Gemma text conditioning, Qwen acoustic generation, depth codebook decoding, and Mimi decode",
       "family": "breeze_tts",
-      "model": "models/audio.cpp-gguf/Breeze-TTS-2-GGUF/breeze-tts-2-orig.gguf",
+      "model": "models/audio.cpp-gguf/Breeze-TTS-2-GGUF/breeze-tts-2-bf16.gguf",
       "task": "clon",
       "mode": "offline",
       "outputs": [
@@ -3688,7 +3688,7 @@
       "id": "breeze_tts_design_official_paths",
       "coverage": "BreezeTTS 2 official English and Chinese voice design paths using instruction conditioning, T5Gemma text conditioning, Qwen acoustic generation, depth codebook decoding, and Mimi decode",
       "family": "breeze_tts",
-      "model": "models/audio.cpp-gguf/Breeze-TTS-2-GGUF/breeze-tts-2-orig.gguf",
+      "model": "models/audio.cpp-gguf/Breeze-TTS-2-GGUF/breeze-tts-2-bf16.gguf",
       "task": "tts",
       "mode": "offline",
       "outputs": [

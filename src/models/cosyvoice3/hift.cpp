@@ -61,8 +61,7 @@ public:
     engine::runtime::AudioBuffer synthesize(
         const std::vector<float> & mel,
         int64_t frames,
-        uint64_t seed,
-        const std::vector<float> * source_random_values) {
+        uint64_t seed) {
         if (frames <= 0 || static_cast<int64_t>(mel.size()) != frames * 80) {
             throw std::runtime_error("CosyVoice3 HiFT mel shape mismatch");
         }
@@ -73,7 +72,7 @@ public:
                     mel[static_cast<size_t>(frame * 80 + channel)];
             }
         }
-        auto out = component_.synthesize(channel_major, frames, seed, 0, source_random_values);
+        auto out = component_.synthesize(channel_major, frames, seed, 0);
         engine::runtime::AudioBuffer audio;
         audio.sample_rate = static_cast<int>(out.sample_rate);
         audio.channels = 1;
@@ -101,9 +100,8 @@ CosyVoice3HiftRuntime::~CosyVoice3HiftRuntime() = default;
 engine::runtime::AudioBuffer CosyVoice3HiftRuntime::synthesize(
     const std::vector<float> & mel,
     int64_t frames,
-    uint64_t seed,
-    const std::vector<float> * source_random_values) {
-    return impl_->synthesize(mel, frames, seed, source_random_values);
+    uint64_t seed) {
+    return impl_->synthesize(mel, frames, seed);
 }
 
 void CosyVoice3HiftRuntime::release_graphs() {
