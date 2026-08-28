@@ -992,6 +992,7 @@ ServerState::ServerState(
             models_root_);
     }
 #endif
+    register_static_server_frontends(frontends_);
     load_models();
     if (config_.idle_unload_ms > 0) {
         idle_unload_thread_ = std::thread(&ServerState::idle_unload_loop, this);
@@ -1010,6 +1011,31 @@ ServerState::~ServerState() {
 }
 
 HttpResponse ServerState::handle(const HttpRequest & request) {
+    return handle_request(request, true);
+}
+
+HttpResponse ServerState::forward_to_core(const HttpRequest & request) {
+    return handle_request(request, false);
+}
+
+std::filesystem::path ServerState::resolve_request_path(const std::filesystem::path & path) const {
+    return resolve_path(request_base_, path);
+}
+
+std::filesystem::path ServerState::make_frontend_temp_path(std::string_view filename) {
+    std::lock_guard<std::mutex> lock(upload_root_mutex_);
+    if (upload_root_.empty()) {
+        upload_root_ = std::filesystem::temp_directory_path() /
+            ("audiocpp-server-" + std::to_string(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count()));
+        std::filesystem::create_directories(upload_root_);
+    }
+    const auto id = next_upload_id_.fetch_add(1);
+    return upload_root_ / (std::to_string(id) + "-" + safe_upload_name(std::string(filename)));
+}
+
+HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_frontends) {
   HttpResponse response;
   const std::string allowed_origin = get_allowed_origin(request);
   try {
@@ -1019,6 +1045,9 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
         response.content_type = "text/plain";
         response.headers["Access-Control-Allow-Headers"] = "*";
         response.headers["Access-Control-Allow-Methods"] = "GET, POST";
+    }
+    else if (use_frontends && !frontends_.empty()) {
+        response = frontends_.handle(*this, request);
     }
     else if (request.method == "GET" && (request.path == "/" || request.path == "/index.html")) {
         response = handle_ui_asset();

@@ -2,6 +2,7 @@
 
 #include "busy_guard.h"
 #include "config.h"
+#include "frontend.h"
 #include "http.h"
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 #include "model_installer.h"
@@ -27,7 +28,7 @@
 
 namespace minitts::server {
 
-class ServerState final : public IHttpHandler {
+class ServerState final : public IHttpHandler, public ServerFrontendContext {
 public:
     ServerState(
         ServerConfig config,
@@ -36,6 +37,9 @@ public:
     ~ServerState() override;
 
     HttpResponse handle(const HttpRequest & request) override;
+    HttpResponse forward_to_core(const HttpRequest & request) override;
+    std::filesystem::path resolve_request_path(const std::filesystem::path & path) const override;
+    std::filesystem::path make_frontend_temp_path(std::string_view filename) override;
 
     // Server-level `live_ingest` policy with this request's model override applied.
     // Deliberately does not reject an unknown or non-streaming model: it runs before
@@ -84,6 +88,7 @@ private:
     engine::runtime::RunMode model_run_mode(const LoadedModel & model) const;
 
     void load_models();
+    HttpResponse handle_request(const HttpRequest & request, bool use_frontends);
     std::unique_ptr<LoadedModel> make_model(ServerModelConfig config);
     std::filesystem::path resolve_ui_model_path(const std::filesystem::path & path) const;
     HttpResponse handle_model_load(const std::string & body_text);
@@ -193,6 +198,7 @@ private:
     // unrelated first loads stay concurrent there.
     std::mutex model_load_mutex_;
     std::filesystem::path upload_root_;
+    std::mutex upload_root_mutex_;
     std::filesystem::path repository_root_;
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     std::filesystem::path default_models_root_;
@@ -207,6 +213,7 @@ private:
     std::atomic<std::int64_t> last_activity_ms_{0};
     std::atomic<bool> idle_unload_shutdown_{false};
     std::thread idle_unload_thread_;
+    ServerFrontendRegistry frontends_;
 };
 
 }  // namespace minitts::server
