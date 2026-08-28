@@ -192,7 +192,7 @@
       "strip_prefix": "CosyVoice3-GGUF",
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/CosyVoice3-GGUF",
+        "repo": "audio-cpp/audio.cpp-gguf",
         "revision": "main",
         "gated": false
       }
@@ -210,7 +210,7 @@
       "strip_prefix": "CosyVoice3-GGUF",
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/CosyVoice3-GGUF",
+        "repo": "audio-cpp/audio.cpp-gguf",
         "revision": "main",
         "gated": false
       }
