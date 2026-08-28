@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/json.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/models/ace_step/prompt_builder.h"
 #include "engine/models/ace_step/repaint.h"
@@ -9,9 +10,11 @@
 #include "engine/models/ace_step/task_route.h"
 
 #include <chrono>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 namespace engine::models::ace_step {
@@ -143,6 +146,39 @@ bool mem_saver_from_options(const runtime::SessionOptions & options) {
     return false;
 }
 
+bool rewrite_caption_requested(const std::unordered_map<std::string, std::string> & options) {
+    const auto value = runtime::find_option(options, {"rewrite_caption"});
+    return value.has_value() && runtime::parse_bool_option(*value, "rewrite_caption");
+}
+
+std::string plan_json(const AceStepPlan & plan, const AceStepRequest & request) {
+    std::ostringstream out;
+    out << "{"
+        << "\"caption\":" << engine::io::json::stringify_string(plan.caption)
+        << ",\"cot_caption\":" << engine::io::json::stringify_string(plan.cot_caption)
+        << ",\"lyrics\":" << engine::io::json::stringify_string(request.lyrics);
+    if (plan.metadata.bpm.has_value()) {
+        out << ",\"bpm\":" << *plan.metadata.bpm;
+    }
+    if (plan.metadata.duration.has_value()) {
+        out << ",\"duration_seconds\":" << *plan.metadata.duration;
+    }
+    if (plan.metadata.keyscale.has_value()) {
+        out << ",\"keyscale\":" << engine::io::json::stringify_string(*plan.metadata.keyscale);
+    }
+    if (plan.metadata.timesignature.has_value()) {
+        out << ",\"timesignature\":" << engine::io::json::stringify_string(*plan.metadata.timesignature);
+    }
+    if (plan.metadata.language.has_value()) {
+        out << ",\"language\":" << engine::io::json::stringify_string(*plan.metadata.language);
+    }
+    if (plan.metadata.genres.has_value()) {
+        out << ",\"genres\":" << engine::io::json::stringify_string(*plan.metadata.genres);
+    }
+    out << "}";
+    return out.str();
+}
+
 }  // namespace
 
 AceStepSession::AceStepSession(runtime::TaskSpec task, runtime::SessionOptions options,
@@ -178,8 +214,11 @@ runtime::RunMode AceStepSession::run_mode() const {
 }
 
 void AceStepSession::prepare(const runtime::SessionPreparationRequest &request) {
-    (void)request;
     ensure_planner();
+    if (rewrite_caption_requested(request.options)) {
+        mark_prepared();
+        return;
+    }
     ensure_vae_decoder();
     ensure_pre_dit();
     pre_dit_->prepare_runtime();
@@ -196,9 +235,46 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
     const AceStepTaskRoute &route = ace_step_task_route(ace_request);
     validate_task_route_request(ace_request, route);
     engine::debug::timing_log_scalar("ace_step.session.parse_request_ms", engine::debug::elapsed_ms(parse_start, Clock::now()));
+    const bool flow_edit_morph = ace_step_request_uses_flow_edit_morph(ace_request);
+    if (ace_request.rewrite_caption) {
+        if (flow_edit_morph || !route.uses_planner) {
+            throw std::runtime_error("ACE-Step rewrite_caption requires a planner route");
+        }
+        const auto planner_ensure_start = Clock::now();
+        ensure_planner();
+        engine::debug::timing_log_scalar("ace_step.session.ensure_planner_ms",
+                                         engine::debug::elapsed_ms(planner_ensure_start, Clock::now()));
+        const auto planner_start = Clock::now();
+        AceStepPlan plan = planner_->generate(ace_request, false);
+        engine::debug::timing_log_scalar("ace_step.session.planner_generate_ms",
+                                         engine::debug::elapsed_ms(planner_start, Clock::now()));
+        const auto planner_release_start = Clock::now();
+        planner_->release_graph_workspace();
+        if (execution_context().backend_type() == core::BackendType::Metal) {
+            planner_.reset();
+        }
+        engine::debug::timing_log_scalar("ace_step.session.planner_release.graph.workspace_ms",
+                                         engine::debug::elapsed_ms(planner_release_start, Clock::now()));
+
+        runtime::TaskResult result;
+        result.text_output = runtime::Transcript{
+            plan.caption,
+            plan.metadata.language.value_or(ace_request.vocal_language),
+        };
+        result.output_artifacts.push_back(runtime::make_text_artifact(
+            runtime::ArtifactKind::Custom,
+            "ace_step_caption_plan",
+            plan_json(plan, ace_request),
+            {
+                {"format", "json"},
+                {"extension", "json"},
+                {"mime", "application/json"},
+            }));
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(total_start, Clock::now()));
+        return result;
+    }
 
     AceStepPlan plan;
-    const bool flow_edit_morph = ace_step_request_uses_flow_edit_morph(ace_request);
     const bool has_request_audio_codes = !flow_edit_morph && !ace_request.audio_code_ids.empty();
     const bool use_planner =
         !flow_edit_morph &&
