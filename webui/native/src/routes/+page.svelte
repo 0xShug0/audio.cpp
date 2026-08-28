@@ -145,6 +145,8 @@
   const exposeAllStudioPackageFamilies = new Set([
     'audiosr',
     'controlfoley',
+    'breeze_tts',
+    'cosyvoice3',
     'firered_audio',
     'fireredtts3',
     'meanvc2',
@@ -272,6 +274,8 @@
     qwen3_asr: 'Qwen3-ASR',
     vevo2: 'Vevo2',
     seed_vc: 'Seed-VC',
+    breeze_tts: 'BreezeTTS 2',
+    cosyvoice3: 'CosyVoice3',
     magpie_tts: 'MagpieTTS',
     meanvc2: 'MeanVC2',
     personaplex: 'PersonaPlex'
@@ -392,13 +396,14 @@
   $: usesDurationSecOption =
     selected?.family === 'controlfoley' ||
     selected?.family === 'midashenglm_gen';
+  $: supportsTextOnlyTts = selected?.family === 'breeze_tts' && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
     isFireRedAudioEdit;
   $: acceptsSource = needsSource || selected?.task === 'gen';
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
-    (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
+    (selected?.task === 'tts' && !['supertonic'].includes(selected?.family) && !supportsTextOnlyTts);
   $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
