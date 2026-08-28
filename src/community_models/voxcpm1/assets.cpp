@@ -527,10 +527,6 @@ private:
             {"proj.lm_to_dit.bias", "lm_to_dit_proj.bias"},
             {"proj.res_to_dit.weight", "res_to_dit_proj.weight"},
             {"proj.res_to_dit.bias", "res_to_dit_proj.bias"},
-            // V1→V2 mapping for fusion_concat_proj (critical for V1 models with fusion)
-            {"proj.fusion_concat.weight", "fusion_concat_proj.weight"},
-            {"proj.fusion_concat.bias", "fusion_concat_proj.bias"},
-            {"fusion_concat_proj.weight", "fusion_concat_proj.weight"},
             {"stop.stop_proj.weight", "stop_proj.weight"},
             {"stop.stop_proj.bias", "stop_proj.bias"},
             {"stop.stop_head.weight", "stop_head.weight"},
@@ -677,16 +673,6 @@ private:
                 }
             }
         }
-
-        // Missing projection weights for V1 (not in VoxCPM1 GGUF)
-        if (routes_.find("fusion_concat_proj.weight") == routes_.end()) {
-            synthesized_tensors_["fusion_concat_proj.weight"] =
-                assets::TensorMetadata{"fusion_concat_proj.weight", "F32", {lm_hidden, lm_hidden * 2}};
-        }
-        if (routes_.find("fusion_concat_proj.bias") == routes_.end()) {
-            synthesized_tensors_["fusion_concat_proj.bias"] =
-                assets::TensorMetadata{"fusion_concat_proj.bias", "F32", {lm_hidden}};
-        }
     }
 
     std::vector<float> fold_weight_norm(
@@ -754,17 +740,6 @@ private:
             // Fill with small values
             for (size_t i = 0; i < out.size(); ++i) {
                 out[i] = 0.01F;
-            }
-            return out;
-        }
-        if (name == "fusion_concat_proj.weight") {
-            // Xavier/Glorot initialization for fusion_concat_proj weight
-            // shape is [lm_hidden, lm_hidden * 2]
-            std::vector<float> out(num_elements);
-            const float scale = std::sqrt(2.0f / (config_.lm.hidden_size + config_.lm.hidden_size * 2));
-            for (size_t i = 0; i < out.size(); ++i) {
-                // Simple uniform distribution in [-scale, scale]
-                out[i] = (static_cast<float>(std::rand()) / RAND_MAX * 2.0f - 1.0f) * scale;
             }
             return out;
         }
@@ -883,7 +858,6 @@ void validate_weight_anchors(const VoxCPM1Assets & assets) {
     assets::require_tensor_shape(weights, "enc_to_lm_proj.weight", {config.lm.hidden_size, config.encoder.hidden_dim});
     assets::require_tensor_shape(weights, "lm_to_dit_proj.weight", {config.dit.hidden_dim, config.lm.hidden_size});
     assets::require_tensor_shape(weights, "res_to_dit_proj.weight", {config.dit.hidden_dim, config.lm.hidden_size});
-    assets::require_tensor_shape(weights, "fusion_concat_proj.weight", {config.lm.hidden_size, config.lm.hidden_size * 2});
     assets::require_tensor_shape(weights, "stop_proj.weight", {config.lm.hidden_size, config.lm.hidden_size});
     assets::require_tensor_shape(weights, "stop_head.weight", {2, config.lm.hidden_size});
 

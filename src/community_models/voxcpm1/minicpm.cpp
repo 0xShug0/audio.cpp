@@ -249,9 +249,6 @@ load_model_weights(const VoxCPM1Assets &assets,
   weights->projections.res_to_dit_proj = linear_weights(
       store, source, "res_to_dit_proj", storage_type,
       assets.config.dit.hidden_dim, assets.config.lm.hidden_size, true);
-  weights->projections.fusion_concat_proj = linear_weights(
-      store, source, "fusion_concat_proj", storage_type,
-      assets.config.lm.hidden_size, assets.config.lm.hidden_size * 2, true);
   weights->projections.stop_proj = linear_weights(
       store, source, "stop_proj", storage_type, assets.config.lm.hidden_size,
       assets.config.lm.hidden_size, true);
@@ -809,15 +806,7 @@ private:
 
     auto masked_current = mask_sequence(ctx, current_embeddings, audio_mask);
     auto residual_input =
-        config.v1
-            ? engine::modules::AddModule{}.build(ctx, lm_hidden, masked_current)
-            : engine::modules::LinearModule(
-                  binding::linear_config(config.lm.hidden_size * 2,
-                                         config.lm.hidden_size, true))
-                  .build(ctx,
-                         engine::modules::ConcatModule({2}).build(
-                             ctx, lm_hidden, masked_current),
-                         model_weights.projections.fusion_concat_proj);
+        engine::modules::AddModule{}.build(ctx, lm_hidden, masked_current);
 
     auto residual_hidden = residual_input;
     for (const auto &layer : model_weights.residual_lm.layers) {

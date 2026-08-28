@@ -66,7 +66,6 @@ struct VoxCPM1ProjectionWeights {
   engine::modules::LinearWeights enc_to_lm_proj;
   engine::modules::LinearWeights lm_to_dit_proj;
   engine::modules::LinearWeights res_to_dit_proj;
-  engine::modules::LinearWeights fusion_concat_proj;
   engine::modules::LinearWeights stop_proj;
   engine::modules::LinearWeights stop_head;
 };
