@@ -1188,21 +1188,16 @@ void ServerState::refresh_model_option_flags(LoadedModel & model) {
     const auto effective_override = model.config.model_spec_override.has_value()
         ? model.config.model_spec_override
         : config_.model_spec_override;
-    try {
-        model.accepts_reference_text = model_accepts_request_option(
-            model.config.family,
-            "reference_text",
-            effective_override,
-            model.config.path);
-    } catch (const std::exception & ex) {
-        // Keep registration robust: a model whose contract cannot be resolved gets
-        // the same permissive behavior as a model with no contract; the failure is
-        // reported so the misconfiguration stays visible.
-        std::cerr << "[server] model '" << model.config.id
-                  << "': reference_text option check failed (" << ex.what()
-                  << "); assuming the option is accepted\n";
-        model.accepts_reference_text = true;
-    }
+    // Deliberately uncaught: model_accepts_request_option already returns true for a
+    // model with no contract, swallowing only the missing-contract errors and
+    // rethrowing the rest. Anything that propagates here is therefore a real
+    // misconfiguration (invalid spec, missing override file, family mismatch) and
+    // must fail at registration rather than be assumed away.
+    model.accepts_reference_text = model_accepts_request_option(
+        model.config.family,
+        "reference_text",
+        effective_override,
+        model.config.path);
 }
 
 HttpResponse ServerState::handle_model_load(const std::string & body_text) {
