@@ -97,13 +97,35 @@ struct ArkttsLayerWeights {
     core::TensorValue down_proj;
 };
 
+struct FalconH1LayerWeights {
+    // Mirrors ../SenseVoice/runtime/llama.cpp/build/_deps/llama-src/src/models/falcon-h1.cpp
+    // and /workspace/models/Audio8-TTS-Preview-0.1b/modeling_arktts.py FalconH1DecoderLayer
+    assets::TensorDataF32 input_layernorm;          // slow.layers.*.input_layernorm.weight [512]
+    core::TensorValue ssm_in;                        // slow.layers.*.mamba.in_proj.weight [1688,512]
+    core::TensorValue ssm_conv1d;                    // slow.layers.*.mamba.conv1d.weight [896,1,4] -> [4,896] after convert
+    assets::TensorDataF32 ssm_conv1d_b;              // slow.layers.*.mamba.conv1d.bias [896]
+    core::TensorValue ssm_dt_b;                      // slow.layers.*.mamba.dt_bias [24]
+    core::TensorValue ssm_A;                         // slow.layers.*.mamba.A_log [24] -> [1,24]
+    core::TensorValue ssm_D;                         // slow.layers.*.mamba.D [24] -> [1,24]
+    core::TensorValue ssm_out;                       // slow.layers.*.mamba.out_proj.weight [512,768]
+    core::TensorValue attn_q_proj;                   // slow.layers.*.self_attn.q_proj.weight [512,512]
+    core::TensorValue attn_k_proj;                   // slow.layers.*.self_attn.k_proj.weight [128,512]
+    core::TensorValue attn_v_proj;                   // slow.layers.*.self_attn.v_proj.weight [128,512]
+    core::TensorValue attn_o_proj;                   // slow.layers.*.self_attn.o_proj.weight [512,512]
+    assets::TensorDataF32 pre_ff_layernorm;          // slow.layers.*.pre_ff_layernorm.weight [512]
+    core::TensorValue ffn_gate;                      // slow.layers.*.feed_forward.gate_proj.weight [768,512]
+    core::TensorValue ffn_up;                        // slow.layers.*.feed_forward.up_proj.weight [768,512]
+    core::TensorValue ffn_down;                      // slow.layers.*.feed_forward.down_proj.weight [512,768]
+};
+
 struct ArkttsARWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     assets::TensorData text_embedding_host;
     assets::TensorData codebook_embedding_host;
     assets::TensorData fast_embedding_host;
     core::TensorValue text_embedding;
-    std::vector<ArkttsLayerWeights> slow_layers;
+    std::vector<ArkttsLayerWeights> slow_layers;           // Qwen 0.6B path
+    std::vector<FalconH1LayerWeights> falcon_layers;       // Falcon-H1 0.1B path (native ggml)
     assets::TensorDataF32 slow_norm;
     std::vector<ArkttsLayerWeights> fast_layers;
     assets::TensorDataF32 fast_norm;
@@ -390,6 +412,76 @@ ArkttsLayerWeights load_layer(
     return w;
 }
 
+FalconH1LayerWeights load_falcon_layer(
+    core::BackendWeightStore & store,
+    const assets::TensorSource & source,
+    const std::string & prefix,
+    const Audio8TtsTextConfig & text_config,
+    assets::TensorStorageType storage_type) {
+    // Ported from ../SenseVoice/runtime/llama.cpp/build/_deps/llama-src/src/models/falcon-h1.cpp
+    // and HF /workspace/models/Audio8-TTS-Preview-0.1b/modeling_arktts.py
+    // FalconH1DecoderLayer: input_layernorm -> parallel mamba (FalconH1Mixer) + attention -> sum -> residual -> pre_ff_layernorm -> ffn
+    // Shapes reflect HF safetensors (safetensors) and GGUF (after convert) – use actual metadata shape to stay compatible.
+    FalconH1LayerWeights w;
+    w.input_layernorm = source.require_f32_tensor(prefix + ".input_layernorm.weight", {text_config.dim});
+    // Mamba in_proj: HF [1688,512] (out, in), GGUF may be transposed; load with actual shape
+    {
+        auto meta = source.require_metadata(prefix + ".mamba.in_proj.weight");
+        w.ssm_in = store.load_tensor(source, prefix + ".mamba.in_proj.weight", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".mamba.conv1d.weight");
+        w.ssm_conv1d = store.load_tensor(source, prefix + ".mamba.conv1d.weight", storage_type, meta.shape);
+    }
+    w.ssm_conv1d_b = source.require_f32_tensor(prefix + ".mamba.conv1d.bias");
+    {
+        auto meta = source.require_metadata(prefix + ".mamba.dt_bias");
+        w.ssm_dt_b = store.load_tensor(source, prefix + ".mamba.dt_bias", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".mamba.A_log");
+        w.ssm_A = store.load_tensor(source, prefix + ".mamba.A_log", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".mamba.D");
+        w.ssm_D = store.load_tensor(source, prefix + ".mamba.D", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".mamba.out_proj.weight");
+        w.ssm_out = store.load_tensor(source, prefix + ".mamba.out_proj.weight", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".self_attn.q_proj.weight");
+        w.attn_q_proj = store.load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".self_attn.k_proj.weight");
+        w.attn_k_proj = store.load_tensor(source, prefix + ".self_attn.k_proj.weight", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".self_attn.v_proj.weight");
+        w.attn_v_proj = store.load_tensor(source, prefix + ".self_attn.v_proj.weight", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".self_attn.o_proj.weight");
+        w.attn_o_proj = store.load_tensor(source, prefix + ".self_attn.o_proj.weight", storage_type, meta.shape);
+    }
+    w.pre_ff_layernorm = source.require_f32_tensor(prefix + ".pre_ff_layernorm.weight", {text_config.dim});
+    {
+        auto meta = source.require_metadata(prefix + ".feed_forward.gate_proj.weight");
+        w.ffn_gate = store.load_tensor(source, prefix + ".feed_forward.gate_proj.weight", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".feed_forward.up_proj.weight");
+        w.ffn_up = store.load_tensor(source, prefix + ".feed_forward.up_proj.weight", storage_type, meta.shape);
+    }
+    {
+        auto meta = source.require_metadata(prefix + ".feed_forward.down_proj.weight");
+        w.ffn_down = store.load_tensor(source, prefix + ".feed_forward.down_proj.weight", storage_type, meta.shape);
+    }
+    return w;
+}
+
 ArkttsARWeights load_ar_weights(
     const Audio8TtsAssets & assets,
     ggml_backend_t backend,
@@ -438,17 +530,16 @@ ArkttsARWeights load_ar_weights(
             {config.text.vocab_size, config.text.dim});
     }
     weights.slow_layers.reserve(static_cast<size_t>(config.text.n_layer));
+    weights.falcon_layers.reserve(is_mamba ? static_cast<size_t>(config.text.n_layer) : 0);
     if (is_mamba) {
-        // Falcon-H1 slow backbone uses Mamba + attention hybrid (see
-        // /workspace/models/Audio8-TTS-Preview-0.1b/modeling_arktts.py:303 and
-        // transformers/models/falcon_h1). Native ggml kernels (ggml_ssm_conv/scan)
-        // are wired via llama.cpp/src/models/mamba-base.cpp:149 build_mamba2_layer.
-        // Until that hybrid graph is complete, keep weights loadable and route
-        // generation via Python torch fallback (falcon_torch_bridge) so 0.1B is
-        // usable and STT-verifiable. See falcon_torch_bridge.{h,cpp}.
-        // Load the final layernorm for config completeness; slow_layers are stubbed.
+        // Falcon-H1 hybrid: weights are loadable via native ggml; graph will be via
+        // ../SenseVoice/runtime/llama.cpp/build/_deps/llama-src/src/models/mamba-base.cpp:149
+        // build_mamba2_layer + falcon-h1.cpp aggregation (ggml_ssm_conv/scan).
+        for (int64_t i = 0; i < config.text.n_layer; ++i) {
+            weights.falcon_layers.push_back(load_falcon_layer(
+                *weights.store, source, "slow.layers." + std::to_string(i), config.text, storage_type));
+        }
         weights.slow_norm = source.require_f32_tensor("slow.final_layernorm.weight", {config.text.dim});
-        // Leave slow_layers empty – generation will be via torch bridge.
     } else {
         for (int64_t i = 0; i < config.text.n_layer; ++i) {
             weights.slow_layers.push_back(load_layer(
@@ -863,6 +954,15 @@ public:
         ArkttsARProfile profile;
         const auto & assets = runtime_->assets();
         const auto & weights = runtime_->weights();
+        if (assets.config.text.slow_backbone == "falcon_h1" ||
+            assets.model_weights->has_tensor("slow.embed_tokens.weight")) {
+            throw std::runtime_error(
+                "Audio8 TTS Falcon-H1/Mamba (0.1B) native ggml not yet landed — "
+                "torch bridge was removed per request. Port from "
+                "../SenseVoice/runtime/llama.cpp/build/_deps/llama-src/src/models/mamba-base.cpp:149 "
+                "build_mamba2_layer + falcon-h1.cpp hybrid (ssm_conv/scan + parallel attn). "
+                "Use 0.6B Qwen for now.");
+        }
         if (prompt.codebook_rows != assets.config.fast.num_codebooks + 1 ||
             static_cast<int64_t>(prompt.matrix.size()) != prompt.codebook_rows * prompt.steps) {
             throw std::runtime_error("Audio8 TTS AR prompt shape mismatch");
