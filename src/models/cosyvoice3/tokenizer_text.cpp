@@ -3,12 +3,16 @@
 #include "engine/framework/tokenizers/llama_bpe.h"
 
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace engine::models::cosyvoice3 {
 namespace {
 
 constexpr int32_t kEndOfPromptId = 151646;
+constexpr std::string_view kEndOfPromptText = "<|endofprompt|>";
+constexpr std::string_view kDefaultPromptPrefix = "You are a helpful assistant.";
 
 std::vector<engine::tokenizers::LlamaBpeAddedToken> cosyvoice3_special_tokens() {
     std::vector<engine::tokenizers::LlamaBpeAddedToken> tokens;
@@ -305,6 +309,22 @@ void require_end_of_prompt(const std::vector<int32_t> & tokens, const char * con
     throw std::runtime_error(std::string("CosyVoice3 ") + context + " must contain <|endofprompt|>");
 }
 
+std::string prompt_with_boundary(std::string_view text) {
+    std::string out(text);
+    if (out.find(kEndOfPromptText) == std::string::npos) {
+        out = std::string(kDefaultPromptPrefix) + std::string(kEndOfPromptText) + out;
+    }
+    return out;
+}
+
+std::string instruction_with_boundary(std::string_view instruction) {
+    std::string out(instruction);
+    if (out.find(kEndOfPromptText) == std::string::npos) {
+        out = std::string(kDefaultPromptPrefix) + " " + out + std::string(kEndOfPromptText);
+    }
+    return out;
+}
+
 }  // namespace
 
 class CosyVoice3TextTokenizer::Impl {
@@ -335,17 +355,15 @@ CosyVoice3TextTokens CosyVoice3TextTokenizer::encode_zero_shot(
     std::string_view text,
     std::string_view prompt_text) const {
     CosyVoice3TextTokens out;
-    out.prompt = impl_->tokenizer->encode(std::string(prompt_text), true);
+    out.prompt = impl_->tokenizer->encode(prompt_with_boundary(prompt_text), true);
     out.target = impl_->tokenizer->encode(std::string(text), true);
-    std::vector<int32_t> joined = out.prompt;
-    joined.insert(joined.end(), out.target.begin(), out.target.end());
-    require_end_of_prompt(joined, "zero-shot prompt/text");
+    require_end_of_prompt(out.prompt, "zero-shot prompt");
     return out;
 }
 
 CosyVoice3TextTokens CosyVoice3TextTokenizer::encode_cross_lingual(std::string_view text) const {
     CosyVoice3TextTokens out;
-    out.target = impl_->tokenizer->encode(std::string(text), true);
+    out.target = impl_->tokenizer->encode(prompt_with_boundary(text), true);
     require_end_of_prompt(out.target, "cross-lingual text");
     return out;
 }
@@ -354,7 +372,7 @@ CosyVoice3TextTokens CosyVoice3TextTokenizer::encode_instruct(
     std::string_view text,
     std::string_view instruction) const {
     CosyVoice3TextTokens out;
-    out.prompt = impl_->tokenizer->encode(std::string(instruction), true);
+    out.prompt = impl_->tokenizer->encode(instruction_with_boundary(instruction), true);
     out.target = impl_->tokenizer->encode(std::string(text), true);
     require_end_of_prompt(out.prompt, "instruction");
     return out;

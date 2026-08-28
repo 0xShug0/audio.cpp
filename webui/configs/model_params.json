@@ -98,6 +98,27 @@
     {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
   ],
 
+  "breeze_tts": [
+    {"name": "instruction", "type": "text", "label": "instruction", "label_en": "Instruction", "default": "", "placeholder": "Describe the target voice for VoiceDesign."},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "default": 600, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "depth_temperature", "type": "slider", "label": "depth_temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01}
+  ],
+
+  "cosyvoice3": [
+    {"name": "template_name", "type": "choice", "label": "template_name", "default": "zero_shot", "choices": ["zero_shot", "cross_lingual", "instruct"]},
+    {"name": "instruction", "type": "text", "label": "instruction", "label_en": "Instruction", "default": "", "placeholder": "Used by template_name=instruct."},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "default": 600, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "min_tokens", "type": "number", "label": "min_tokens", "default": 0, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 25, "minimum": 1, "step": 1, "precision": 0}
+  ],
+
   "inflect_v2": [
     {"name": "speaking_rate", "type": "slider", "label": "speaking_rate（语速倍率）", "label_en": "speaking_rate", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
     {"name": "variation", "type": "slider", "label": "variation（音色变化）", "label_en": "variation", "default": 0.667, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
