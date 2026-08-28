@@ -71,6 +71,15 @@ struct Audio8TtsTextConfig {
     int64_t mamba_d_head = 32;
     int64_t mamba_d_ssm = 768;
     int64_t mamba_chunk_size = 128;
+    float embedding_multiplier = 1.0F;
+    float lm_head_multiplier = 1.0F;
+    float attention_in_multiplier = 1.0F;
+    float attention_out_multiplier = 1.0F;
+    float ssm_in_multiplier = 1.0F;
+    float ssm_out_multiplier = 1.0F;
+    float key_multiplier = 1.0F;
+    std::vector<float> ssm_multipliers = {1.0F, 1.0F, 1.0F, 1.0F, 1.0F};
+    std::vector<float> mlp_multipliers = {1.0F, 1.0F};
 };
 
 struct Audio8TtsFastConfig {

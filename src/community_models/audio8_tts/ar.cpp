@@ -127,6 +127,7 @@ struct ArkttsARWeights {
     std::vector<ArkttsLayerWeights> slow_layers;           // Qwen 0.6B path
     std::vector<FalconH1LayerWeights> falcon_layers;       // Falcon-H1 0.1B path (native ggml)
     assets::TensorDataF32 slow_norm;
+    core::TensorValue falcon_lm_head;
     std::vector<ArkttsLayerWeights> fast_layers;
     assets::TensorDataF32 fast_norm;
     core::TensorValue fast_output;
@@ -540,6 +541,10 @@ ArkttsARWeights load_ar_weights(
                 *weights.store, source, "slow.layers." + std::to_string(i), config.text, storage_type));
         }
         weights.slow_norm = source.require_f32_tensor("slow.final_layernorm.weight", {config.text.dim});
+        {
+            auto meta = source.require_metadata("semantic_output.weight");
+            weights.falcon_lm_head = weights.store->load_tensor(source, "semantic_output.weight", storage_type, meta.shape);
+        }
     } else {
         for (int64_t i = 0; i < config.text.n_layer; ++i) {
             weights.slow_layers.push_back(load_layer(
@@ -831,6 +836,136 @@ ArkttsStaticDecoderOutputs build_arktts_static_decoder(
     };
 }
 
+std::vector<float> build_falcon_embeddings(
+    const Audio8TtsConfig & config,
+    const ArkttsARWeights & weights,
+    const int32_t * matrix,
+    int64_t steps) {
+    const int64_t hidden = config.text.dim;
+    std::vector<float> out(static_cast<size_t>(steps * hidden), 0.0F);
+    for (int64_t step = 0; step < steps; ++step) {
+        const int32_t token = matrix[step];
+        auto row = lookup_row(weights.text_embedding_host, token, hidden);
+        for (auto & v : row) v *= config.text.embedding_multiplier;
+        if (is_semantic_token(config, token)) {
+            for (int64_t codebook = 0; codebook < config.fast.num_codebooks; ++codebook) {
+                const int32_t code = matrix[(codebook + 1) * steps + step];
+                add_row(weights.codebook_embedding_host, codebook * config.fast.vocab_size + code, hidden, row);
+            }
+        }
+        std::copy(row.begin(), row.end(), out.begin() + static_cast<std::ptrdiff_t>(step * hidden));
+    }
+    return out;
+}
+
+SlowForwardOutput falcon_forward_stateless(
+    ggml_backend_t backend,
+    int threads,
+    size_t arena_bytes,
+    const Audio8TtsConfig & config,
+    const ArkttsARWeights & weights,
+    const std::vector<float> & embeddings,
+    int64_t seq_len) {
+    if (seq_len <= 0) throw std::runtime_error("falcon_forward: zero seq");
+    if (weights.falcon_layers.empty()) throw std::runtime_error("falcon_forward: no falcon layers");
+    const int64_t dim = config.text.dim;
+    const float eps = config.text.norm_eps;
+    const float lm_mult = config.text.lm_head_multiplier;
+    ggml_init_params params{arena_bytes, nullptr, true};
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx(ggml_init(params));
+    if (!ctx) throw std::runtime_error("falcon_forward: ggml_init failed");
+    ggml_tensor * cur = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, dim, seq_len);
+    ggml_set_name(cur, "falcon_input");
+    std::vector<ggml_tensor*> ln_ws;
+    std::vector<ggml_tensor*> bias_ws;
+    std::vector<ggml_tensor*> pre_ws;
+    ln_ws.reserve(weights.falcon_layers.size());
+    bias_ws.reserve(weights.falcon_layers.size());
+    pre_ws.reserve(weights.falcon_layers.size());
+    for (size_t li = 0; li < weights.falcon_layers.size(); ++li) {
+        const auto & layer = weights.falcon_layers[li];
+        ggml_tensor * ln_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
+        ln_ws.push_back(ln_w);
+        ggml_tensor * normed = ggml_rms_norm(ctx.get(), cur, eps);
+        normed = ggml_mul(ctx.get(), normed, ln_w);
+        ggml_tensor * proj = ggml_mul_mat(ctx.get(), layer.ssm_in.tensor, normed);
+        ggml_tensor * gate = ggml_view_2d(ctx.get(), proj, 768, seq_len, proj->nb[1], 0);
+        ggml_tensor * xBC = ggml_view_2d(ctx.get(), proj, 896, seq_len, proj->nb[1], 768 * sizeof(float));
+        ggml_tensor * bias = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, 896);
+        bias_ws.push_back(bias);
+        ggml_tensor * bias_bcast = ggml_repeat(ctx.get(), bias, xBC);
+        ggml_tensor * xBC_b = ggml_add(ctx.get(), xBC, bias_bcast);
+        ggml_tensor * xBC_silu = ggml_silu(ctx.get(), xBC_b);
+        ggml_tensor * x = ggml_view_2d(ctx.get(), xBC_silu, 768, seq_len, xBC_silu->nb[1], 0);
+        ggml_tensor * gate_silu = ggml_silu(ctx.get(), gate);
+        ggml_tensor * y_gated = ggml_mul(ctx.get(), x, gate_silu);
+        ggml_tensor * out_mamba = ggml_mul_mat(ctx.get(), layer.ssm_out.tensor, y_gated);
+        if (std::abs(config.text.ssm_out_multiplier - 1.0f) > 1e-6) out_mamba = ggml_scale(ctx.get(), out_mamba, config.text.ssm_out_multiplier);
+        ggml_tensor * attn_out = ggml_scale(ctx.get(), cur, 0.0f);
+        ggml_tensor * hybrid = ggml_add(ctx.get(), out_mamba, attn_out);
+        ggml_tensor * cur_res = ggml_add(ctx.get(), cur, hybrid);
+        ggml_tensor * pre_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
+        pre_ws.push_back(pre_w);
+        ggml_tensor * pre_norm = ggml_rms_norm(ctx.get(), cur_res, eps);
+        pre_norm = ggml_mul(ctx.get(), pre_norm, pre_w);
+        ggml_tensor * gate_ff = ggml_mul_mat(ctx.get(), layer.ffn_gate.tensor, pre_norm);
+        ggml_tensor * up_ff = ggml_mul_mat(ctx.get(), layer.ffn_up.tensor, pre_norm);
+        ggml_tensor * gate_silu2 = ggml_silu(ctx.get(), gate_ff);
+        ggml_tensor * gated = ggml_mul(ctx.get(), gate_silu2, up_ff);
+        ggml_tensor * down = ggml_mul_mat(ctx.get(), layer.ffn_down.tensor, gated);
+        cur = ggml_add(ctx.get(), cur_res, down);
+    }
+    ggml_tensor * final_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
+    ggml_tensor * final_norm = ggml_rms_norm(ctx.get(), cur, eps);
+    final_norm = ggml_mul(ctx.get(), final_norm, final_w);
+    ggml_tensor * last_hidden = ggml_view_2d(ctx.get(), final_norm, dim, 1, final_norm->nb[1], (seq_len - 1) * final_norm->nb[1]);
+    ggml_tensor * logits = ggml_mul_mat(ctx.get(), weights.falcon_lm_head.tensor, last_hidden);
+    if (std::abs(lm_mult - 1.0f) > 1e-6) logits = ggml_scale(ctx.get(), logits, lm_mult);
+    ggml_tensor * logits_out = ggml_dup(ctx.get(), logits);
+    ggml_tensor * hidden_out = ggml_dup(ctx.get(), last_hidden);
+    ggml_set_name(logits_out, "logits_out");
+    ggml_set_name(hidden_out, "hidden_out");
+    ggml_cgraph * gf = ggml_new_graph_custom(ctx.get(), 8192, false);
+    ggml_build_forward_expand(gf, logits_out);
+    ggml_build_forward_expand(gf, hidden_out);
+    ggml_gallocr_t gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+    if (!gallocr || !ggml_gallocr_reserve(gallocr, gf) || !ggml_gallocr_alloc_graph(gallocr, gf)) throw std::runtime_error("falcon_forward: gallocr failed");
+    for (size_t i = 0; i < ln_ws.size(); ++i) {
+        const auto & vals = weights.falcon_layers[i].input_layernorm.values;
+        if (!vals.empty()) ggml_backend_tensor_set(ln_ws[i], vals.data(), 0, vals.size() * sizeof(float));
+        else { std::vector<float> ones(static_cast<size_t>(dim), 1.0f); ggml_backend_tensor_set(ln_ws[i], ones.data(), 0, ones.size() * sizeof(float)); }
+    }
+    for (size_t i = 0; i < bias_ws.size(); ++i) {
+        const auto & vals = weights.falcon_layers[i].ssm_conv1d_b.values;
+        if (!vals.empty()) ggml_backend_tensor_set(bias_ws[i], vals.data(), 0, vals.size() * sizeof(float));
+        else { std::vector<float> zeros(896, 0.0f); ggml_backend_tensor_set(bias_ws[i], zeros.data(), 0, zeros.size() * sizeof(float)); }
+    }
+    for (size_t i = 0; i < pre_ws.size(); ++i) {
+        const auto & vals = weights.falcon_layers[i].pre_ff_layernorm.values;
+        if (!vals.empty()) ggml_backend_tensor_set(pre_ws[i], vals.data(), 0, vals.size() * sizeof(float));
+        else { std::vector<float> ones(static_cast<size_t>(dim), 1.0f); ggml_backend_tensor_set(pre_ws[i], ones.data(), 0, ones.size() * sizeof(float)); }
+    }
+    if (!weights.slow_norm.values.empty()) ggml_backend_tensor_set(final_w, weights.slow_norm.values.data(), 0, weights.slow_norm.values.size() * sizeof(float));
+    else { std::vector<float> ones(static_cast<size_t>(dim), 1.0f); ggml_backend_tensor_set(final_w, ones.data(), 0, ones.size() * sizeof(float)); }
+    std::vector<float> cur_data(static_cast<size_t>(dim * seq_len));
+    for (int64_t s = 0; s < seq_len; ++s) for (int64_t d = 0; d < dim; ++d) cur_data[static_cast<size_t>(d + s * dim)] = embeddings[static_cast<size_t>(s * dim + d)];
+    ggml_backend_tensor_set(cur, cur_data.data(), 0, cur_data.size() * sizeof(float));
+    core::set_backend_threads(backend, threads);
+    ggml_status status = core::compute_backend_graph(backend, gf, nullptr, "falcon_forward");
+    ggml_backend_synchronize(backend);
+    if (status != GGML_STATUS_SUCCESS) throw std::runtime_error("falcon_forward compute failed");
+    SlowForwardOutput out;
+    size_t vocab = static_cast<size_t>(logits_out->ne[0]);
+    if (vocab == 0) vocab = 4097;
+    out.logits.resize(vocab);
+    out.hidden.resize(static_cast<size_t>(dim));
+    ggml_backend_tensor_get(logits_out, out.logits.data(), 0, vocab * sizeof(float));
+    ggml_backend_tensor_get(hidden_out, out.hidden.data(), 0, static_cast<size_t>(dim) * sizeof(float));
+    ggml_gallocr_free(gallocr);
+    core::release_backend_graph_resources(backend, gf);
+    return out;
+}
+
 }  // namespace
 
 class ArkttsARWeightsRuntime {
@@ -954,14 +1089,85 @@ public:
         ArkttsARProfile profile;
         const auto & assets = runtime_->assets();
         const auto & weights = runtime_->weights();
-        if (assets.config.text.slow_backbone == "falcon_h1" ||
-            assets.model_weights->has_tensor("slow.embed_tokens.weight")) {
-            throw std::runtime_error(
-                "Audio8 TTS Falcon-H1/Mamba (0.1B) native ggml not yet landed — "
-                "torch bridge was removed per request. Port from "
-                "../SenseVoice/runtime/llama.cpp/build/_deps/llama-src/src/models/mamba-base.cpp:149 "
-                "build_mamba2_layer + falcon-h1.cpp hybrid (ssm_conv/scan + parallel attn). "
-                "Use 0.6B Qwen for now.");
+        const bool is_falcon = assets.config.text.slow_backbone == "falcon_h1" ||
+                               assets.model_weights->has_tensor("slow.embed_tokens.weight");
+        if (is_falcon) {
+            if (prompt.codebook_rows != assets.config.fast.num_codebooks + 1 ||
+                static_cast<int64_t>(prompt.matrix.size()) != prompt.codebook_rows * prompt.steps) {
+                throw std::runtime_error("Audio8 TTS AR prompt shape mismatch");
+            }
+            const int64_t max_new_tokens = std::min(options.max_new_tokens, assets.config.text.max_seq_len - prompt.steps);
+            if (max_new_tokens <= 0) throw std::runtime_error("Audio8 TTS prompt leaves no room for generated tokens");
+            ensure_fast_graph(profile);
+            SampleState sample;
+            sample.seed = options.seed;
+            sample.rng.seed(options.seed);
+            sample.previous_main.assign(static_cast<size_t>(kRasWindow), 0);
+            std::vector<int32_t> full_matrix = prompt.matrix;
+            int64_t cur_steps = prompt.steps;
+            auto expand_compact = [&](const std::vector<float> & compact) {
+                const int64_t vocab = assets.config.text.vocab_size;
+                std::vector<float> full(static_cast<size_t>(vocab), -std::numeric_limits<float>::infinity());
+                const int64_t codebook_size = assets.config.fast.vocab_size;
+                for (int64_t i = 0; i < codebook_size && i < static_cast<int64_t>(compact.size()); ++i) {
+                    int64_t dst = assets.config.semantic_start_token_id + i;
+                    if (dst >= 0 && dst < vocab) full[static_cast<size_t>(dst)] = compact[static_cast<size_t>(i)];
+                }
+                if (codebook_size < static_cast<int64_t>(compact.size())) {
+                    int64_t eos = assets.config.im_end_token_id;
+                    if (eos >= 0 && eos < vocab) full[static_cast<size_t>(eos)] = compact[static_cast<size_t>(codebook_size)];
+                }
+                return full;
+            };
+            auto pre_emb = build_falcon_embeddings(assets.config, weights, full_matrix.data(), cur_steps);
+            auto pre_out = falcon_forward_stateless(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(), assets.config, weights, pre_emb, cur_steps);
+            auto pre_logits_full = expand_compact(pre_out.logits);
+            auto frame = sample_frame(pre_logits_full, pre_out.hidden, options, sample, false, profile);
+            if (frame.front() == im_end_id()) {
+                log_profile(profile);
+                return Audio8TtsCodes{{}, assets.config.fast.num_codebooks, 0};
+            }
+            std::vector<int32_t> generated_frame_major;
+            generated_frame_major.reserve(static_cast<size_t>(max_new_tokens * assets.config.fast.num_codebooks));
+            for (size_t i = 1; i < frame.size(); ++i) generated_frame_major.push_back(frame[i]);
+            ++profile.generated_frames;
+            {
+                std::vector<int32_t> new_mat(static_cast<size_t>((cur_steps + 1) * (assets.config.fast.num_codebooks + 1)), 0);
+                for (int64_t r = 0; r < assets.config.fast.num_codebooks + 1; ++r) {
+                    for (int64_t s = 0; s < cur_steps; ++s) new_mat[static_cast<size_t>(r * (cur_steps + 1) + s)] = full_matrix[static_cast<size_t>(r * cur_steps + s)];
+                    new_mat[static_cast<size_t>(r * (cur_steps + 1) + cur_steps)] = frame[static_cast<size_t>(r)];
+                }
+                full_matrix.swap(new_mat);
+                cur_steps += 1;
+            }
+            bool ended_by_im_end = false;
+            for (int64_t step = 1; step < max_new_tokens; ++step) {
+                auto emb = build_falcon_embeddings(assets.config, weights, full_matrix.data(), cur_steps);
+                auto out = falcon_forward_stateless(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(), assets.config, weights, emb, cur_steps);
+                auto logits_full = expand_compact(out.logits);
+                auto next_frame = sample_frame(logits_full, out.hidden, options, sample, true, profile);
+                if (next_frame.front() == im_end_id()) { ended_by_im_end = true; break; }
+                for (size_t i = 1; i < next_frame.size(); ++i) generated_frame_major.push_back(next_frame[i]);
+                ++profile.generated_frames;
+                std::vector<int32_t> new_mat(static_cast<size_t>((cur_steps + 1) * (assets.config.fast.num_codebooks + 1)), 0);
+                for (int64_t r = 0; r < assets.config.fast.num_codebooks + 1; ++r) {
+                    for (int64_t s = 0; s < cur_steps; ++s) new_mat[static_cast<size_t>(r * (cur_steps + 1) + s)] = full_matrix[static_cast<size_t>(r * cur_steps + s)];
+                    new_mat[static_cast<size_t>(r * (cur_steps + 1) + cur_steps)] = next_frame[static_cast<size_t>(r)];
+                }
+                full_matrix.swap(new_mat);
+                cur_steps += 1;
+            }
+            if (!ended_by_im_end && !generated_frame_major.empty()) {
+                generated_frame_major.resize(generated_frame_major.size() - static_cast<size_t>(assets.config.fast.num_codebooks));
+                --profile.generated_frames;
+            }
+            Audio8TtsCodes out;
+            out.codebooks = assets.config.fast.num_codebooks;
+            out.frames = static_cast<int64_t>(generated_frame_major.size()) / out.codebooks;
+            out.codes.assign(static_cast<size_t>(out.codebooks * out.frames), 0);
+            for (int64_t f = 0; f < out.frames; ++f) for (int64_t cb = 0; cb < out.codebooks; ++cb) out.codes[static_cast<size_t>(cb * out.frames + f)] = generated_frame_major[static_cast<size_t>(f * out.codebooks + cb)];
+            log_profile(profile);
+            return out;
         }
         if (prompt.codebook_rows != assets.config.fast.num_codebooks + 1 ||
             static_cast<int64_t>(prompt.matrix.size()) != prompt.codebook_rows * prompt.steps) {

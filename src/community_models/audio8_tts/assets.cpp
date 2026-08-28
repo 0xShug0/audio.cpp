@@ -45,6 +45,21 @@ Audio8TtsTextConfig parse_text_config(const json::Value & value) {
     config.mamba_d_head = json::optional_i64(value, "mamba_d_head", config.mamba_d_head);
     config.mamba_d_ssm = json::optional_i64(value, "mamba_d_ssm", config.mamba_d_ssm);
     config.mamba_chunk_size = json::optional_i64(value, "mamba_chunk_size", config.mamba_chunk_size);
+    config.embedding_multiplier = json::optional_f32(value, "embedding_multiplier", config.embedding_multiplier);
+    config.lm_head_multiplier = json::optional_f32(value, "lm_head_multiplier", config.lm_head_multiplier);
+    config.attention_in_multiplier = json::optional_f32(value, "attention_in_multiplier", config.attention_in_multiplier);
+    config.attention_out_multiplier = json::optional_f32(value, "attention_out_multiplier", config.attention_out_multiplier);
+    config.ssm_in_multiplier = json::optional_f32(value, "ssm_in_multiplier", config.ssm_in_multiplier);
+    config.ssm_out_multiplier = json::optional_f32(value, "ssm_out_multiplier", config.ssm_out_multiplier);
+    config.key_multiplier = json::optional_f32(value, "key_multiplier", config.key_multiplier);
+    {
+        auto v = json::optional_f32_array(value, "ssm_multipliers");
+        if (!v.empty()) config.ssm_multipliers = v;
+    }
+    {
+        auto v = json::optional_f32_array(value, "mlp_multipliers");
+        if (!v.empty()) config.mlp_multipliers = v;
+    }
     engine::io::require_positive(config.vocab_size, "text vocab_size");
     engine::io::require_positive(config.n_layer, "text n_layer");
     engine::io::require_positive(config.dim, "text dim");
