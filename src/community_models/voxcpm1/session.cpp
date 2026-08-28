@@ -54,21 +54,7 @@ void reject_denoiser_option(
 
 std::unordered_map<std::string, std::string> normalize_v1_session_options(
     std::unordered_map<std::string, std::string> options) {
-  // This community family serves only VoxCPM1 and canonically advertises
-  // "voxcpm1.*" session options; accept legacy "voxcpm2.*" spellings by
-  // aliasing them to "voxcpm1.*" so both keep working.
-  std::unordered_map<std::string, std::string> out;
-  out.reserve(options.size());
-  for (auto &[key, value] : options) {
-    constexpr std::string_view kLegacyPrefix = "voxcpm2.";
-    if (key.rfind(kLegacyPrefix, 0) == 0) {
-      out[std::string("voxcpm1.") +
-          key.substr(kLegacyPrefix.size())] = std::move(value);
-    } else {
-      out[std::move(key)] = std::move(value);
-    }
-  }
-  return out;
+  return options;
 }
 
 bool audio_buffer_equal(const runtime::AudioBuffer &lhs,

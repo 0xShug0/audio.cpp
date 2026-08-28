@@ -147,8 +147,8 @@ VoxCPM1Config parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
     VoxCPM1Config config;
     config.architecture = json::require_string(root, "architecture");
-    if (config.architecture != "voxcpm2" && config.architecture != "voxcpm") {
-        throw std::runtime_error("VoxCPM config architecture mismatch: " + config.architecture);
+    if (config.architecture != "voxcpm") {
+        throw std::runtime_error("VoxCPM1 config architecture mismatch: " + config.architecture);
     }
     config.lm = parse_lm_config(root.require("lm_config"));
     config.patch_size = json::optional_i64(root, "patch_size", config.patch_size);

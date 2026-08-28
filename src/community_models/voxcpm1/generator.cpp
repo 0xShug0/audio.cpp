@@ -108,15 +108,6 @@ int stop_class(const std::vector<float> &logits) {
   return logits[1] > logits[0] ? 1 : 0;
 }
 
-std::vector<float> concat_dit_mu(const std::vector<float> &lm,
-                                 const std::vector<float> &residual) {
-  std::vector<float> out;
-  out.reserve(lm.size() + residual.size());
-  out.insert(out.end(), lm.begin(), lm.end());
-  out.insert(out.end(), residual.begin(), residual.end());
-  return out;
-}
-
 std::vector<float> add_dit_mu(const std::vector<float> &lm,
                               const std::vector<float> &residual) {
   if (lm.size() != residual.size()) {
@@ -440,41 +431,13 @@ private:
               .build(ctx, fsq, proj.fsq_out_proj);
     fsq_hidden_output_ = fsq.tensor;
 
-    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
-    // This matches VoxCPM.cpp behavior which checks weight existence
-    // For V1 models, synthesized weights (Xavier init) should not count as present
-    const bool has_fusion_proj =
-        proj.fusion_concat_proj.weight.tensor != nullptr &&
-        config.architecture == "voxcpm2";
-
-    if (has_fusion_proj) {
-      // Concat + Linear (used by V2 and some V1 models trained with fusion)
-      auto current_residual_concat =
-          engine::modules::ConcatModule({1}).build(ctx, lm_hidden, current_embed);
-      auto current_residual_input =
-          engine::modules::LinearModule(
-              binding::linear_config(config.lm.hidden_size * 2,
-                                     config.lm.hidden_size, true))
-              .build(ctx, current_residual_concat, proj.fusion_concat_proj);
-      current_residual_input_output_ = current_residual_input.tensor;
-
-      auto residual_concat =
-          engine::modules::ConcatModule({1}).build(ctx, fsq, current_embed);
-      auto residual_input =
-          engine::modules::LinearModule(
-              binding::linear_config(config.lm.hidden_size * 2,
-                                     config.lm.hidden_size, true))
-              .build(ctx, residual_concat, proj.fusion_concat_proj);
-      residual_input_output_ = residual_input.tensor;
-    } else {
-      // Simple ADD (true V1 without fusion_concat_proj)
-      current_residual_input_output_ =
-          engine::modules::AddModule()
-              .build(ctx, lm_hidden, current_embed)
-              .tensor;
-      residual_input_output_ =
-          engine::modules::AddModule().build(ctx, fsq, current_embed).tensor;
-    }
+    // V1 path: simple ADD (no fusion_concat_proj projection).
+    current_residual_input_output_ =
+        engine::modules::AddModule()
+            .build(ctx, lm_hidden, current_embed)
+            .tensor;
+    residual_input_output_ =
+        engine::modules::AddModule().build(ctx, fsq, current_embed).tensor;
 
     auto current_lm_dit =
         engine::modules::LinearModule(
@@ -809,12 +772,6 @@ public:
                          const std::vector<float> &time_embedding,
                          const std::vector<float> &delta_time_embedding) {
     const auto &config = weights_->assets().config;
-    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
-    // This matches VoxCPM.cpp behavior which checks weight existence
-    // For V1 models, synthesized weights (Xavier init) should not count as present
-    const bool has_fusion_proj =
-        weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
-        config.architecture == "voxcpm2";
     const int64_t patch_elems = 2 * config.feat_dim * config.patch_size;
     if (static_cast<int64_t>(x.size()) != patch_elems) {
       throw std::runtime_error("VoxCPM1 DiT estimator x size mismatch");
@@ -822,8 +779,7 @@ public:
     if (static_cast<int64_t>(cond.size()) != patch_elems) {
       throw std::runtime_error("VoxCPM1 DiT estimator cond size mismatch");
     }
-    const int64_t expected_mu =
-        has_fusion_proj ? 2 * config.dit.hidden_dim * 2 : 2 * config.dit.hidden_dim;
+    const int64_t expected_mu = 2 * config.dit.hidden_dim;
     if (static_cast<int64_t>(mu.size()) != expected_mu) {
       throw std::runtime_error("VoxCPM1 DiT estimator mu size mismatch");
     }
@@ -912,19 +868,10 @@ private:
     if (mem_saver_) {
       ggml_set_input(cond_);
     }
-    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
-    // This matches VoxCPM.cpp behavior which checks weight existence
-    // For V1 models, synthesized weights (Xavier init) should not count as present
-    const bool has_fusion_proj =
-        weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
-        root_config.architecture == "voxcpm2";
     mu_ = engine::core::make_tensor(
               ctx, GGML_TYPE_F32,
-              has_fusion_proj
-                  ? engine::core::TensorShape::from_dims(
-                        {2, 2, config.hidden_dim})
-                  : engine::core::TensorShape::from_dims(
-                        {2, config.hidden_dim}))
+              engine::core::TensorShape::from_dims(
+                  {2, config.hidden_dim}))
               .tensor;
     if (mem_saver_) {
       ggml_set_input(mu_);
@@ -995,14 +942,13 @@ private:
              .build(ctx, dt, weights.delta_time_mlp_2);
     time = engine::modules::AddModule{}.build(ctx, time, dt);
 
-    const int64_t prefix_token_count =
-        has_fusion_proj ? 2 + 1 : 1;
+    // V1 path: the DiT conditioning mu is a single hidden vector that is
+    // ADDED into the timestep token. Batch 0 carries mu (conditioned branch);
+    // batch 1 carries zeros (unconditioned branch), mirroring
+    // LocDiTModel::forward_cfg_pair_projected with mu_tokens == 1.
+    const int64_t prefix_token_count = 1;
     auto hidden = time;
-    if (!has_fusion_proj) {
-      // True V1 (no fusion projection): the DiT conditioning mu is a single
-      // hidden vector that is ADDED into the timestep token. Batch 0 carries
-      // mu (conditioned branch); batch 1 carries zeros (unconditioned branch),
-      // mirroring LocDiTModel::forward_cfg_pair_projected with mu_tokens == 1.
+    {
       auto mu = engine::core::wrap_tensor(
           mu_, engine::core::TensorShape::from_dims({2, config.hidden_dim}),
           GGML_TYPE_F32);
@@ -1011,15 +957,6 @@ private:
     hidden = engine::core::reshape_tensor(
         ctx, hidden,
         engine::core::TensorShape::from_dims({2, 1, config.hidden_dim}));
-    if (has_fusion_proj) {
-      // V2 (or V1 with fusion projection): mu is two hidden vectors concatenated as
-      // separate prefix tokens before the timestep token, matching
-      // LocDiTModel with mu_tokens == 2.
-      auto mu = engine::core::wrap_tensor(
-          mu_, engine::core::TensorShape::from_dims({2, 2, config.hidden_dim}),
-          GGML_TYPE_F32);
-      hidden = engine::modules::ConcatModule({1}).build(ctx, mu, hidden);
-    }
     hidden = engine::modules::ConcatModule({1}).build(ctx, hidden, cond);
     hidden = engine::modules::ConcatModule({1}).build(ctx, hidden, x);
 
@@ -1158,12 +1095,6 @@ public:
                                     const std::string &noise_file,
                                     float temperature) {
     const auto &config = weights_->assets().config;
-    // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
-    // This matches VoxCPM.cpp behavior which checks weight existence
-    // For V1 models, synthesized weights (Xavier init) should not count as present
-    const bool has_fusion_proj =
-        weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
-        config.architecture == "voxcpm2";
     if (timesteps <= 0) {
       throw std::runtime_error("VoxCPM1 CFM requires positive timesteps");
     }
@@ -1171,7 +1102,7 @@ public:
       throw std::runtime_error("VoxCPM1 CFM received non-finite scalar input");
     }
     const int64_t patch_elems = config.feat_dim * config.patch_size;
-    const int64_t mu_dim = config.dit.hidden_dim * (has_fusion_proj ? 2 : 1);
+    const int64_t mu_dim = config.dit.hidden_dim;
     if (static_cast<int64_t>(mu.size()) != mu_dim) {
       throw std::runtime_error("VoxCPM1 CFM mu size mismatch");
     }
@@ -1207,14 +1138,9 @@ public:
     const std::vector<float> cond = patch_major_to_channel_major(cond_patch);
     std::vector<float> x_in(static_cast<size_t>(2 * patch_elems), 0.0F);
     std::vector<float> cond_in(static_cast<size_t>(2 * patch_elems), 0.0F);
-    const int64_t mu_elements =
-        has_fusion_proj ? 4 * config.dit.hidden_dim : 2 * config.dit.hidden_dim;
+    const int64_t mu_elements = 2 * config.dit.hidden_dim;
     std::vector<float> mu_in(static_cast<size_t>(mu_elements), 0.0F);
     std::copy(mu.begin(), mu.end(), mu_in.begin());
-    if (std::getenv("VOXCPM_TEST_BATCH_MU") != nullptr) {
-      std::copy(mu.begin(), mu.end(),
-                mu_in.begin() + static_cast<std::ptrdiff_t>(mu.size()));
-    }
     std::copy(cond.begin(), cond.end(), cond_in.begin());
     std::copy(cond.begin(), cond.end(),
               cond_in.begin() + static_cast<std::ptrdiff_t>(patch_elems));
@@ -1751,17 +1677,8 @@ private:
     for (int64_t index = 0; index < max_tokens; ++index) {
       const auto projected =
           projection_.run(lm_hidden, residual_hidden, zero_hidden);
-      // Check if fusion_concat_proj weight exists and was loaded (not synthesized)
-      // This matches VoxCPM.cpp behavior which checks weight existence
-      // For V1 models, synthesized weights (Xavier init) should not count as present
-      const bool has_fusion_proj =
-          weights_->weights().projections.fusion_concat_proj.weight.tensor != nullptr &&
-          config.architecture == "voxcpm2";
-      const auto mu = has_fusion_proj
-                          ? concat_dit_mu(projected.current_lm_dit_hidden,
-                                          projected.residual_dit_hidden)
-                          : add_dit_mu(projected.current_lm_dit_hidden,
-                                       projected.residual_dit_hidden);
+      const auto mu = add_dit_mu(projected.current_lm_dit_hidden,
+                                 projected.residual_dit_hidden);
       const auto patch = cfm_.generate_patch(
           mu, prefix_cond, options.num_inference_steps, options.guidance_scale,
           options.seed, patch_noise_start, options.cfm_noise_file);
