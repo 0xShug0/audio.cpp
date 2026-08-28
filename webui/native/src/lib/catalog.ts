@@ -42,6 +42,8 @@ const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.fam
 const exposeAllGgufPackageFamilies = new Set([
   'audiosr',
   'controlfoley',
+  'breeze_tts',
+  'cosyvoice3',
   'firered_audio',
   'fireredtts3',
   'meanvc2',
