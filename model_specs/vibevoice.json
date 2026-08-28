@@ -75,9 +75,14 @@
       "precision": "q8_0",
       "target_directory": "VibeVoice-7B-GGUF",
       "files": [
-        "VibeVoice-7B-GGUF/vibevoice-7b-q8_0.gguf"
+        "vibevoice-7b-q8_0.gguf"
       ],
-      "strip_prefix": "VibeVoice-7B-GGUF"
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/VibeVoice-7B-GGUF",
+        "revision": "main",
+        "gated": false
+      }
     }
   ],
   "sources": [
