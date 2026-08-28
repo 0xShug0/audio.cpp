@@ -4,7 +4,6 @@
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/debug/trace.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention_modules.h"
@@ -68,15 +67,6 @@ struct GgmlGallocrDeleter {
         }
     }
 };
-
-std::vector<int64_t> dims_vector(const core::TensorShape & shape) {
-    std::vector<int64_t> out;
-    out.reserve(shape.rank);
-    for (size_t i = 0; i < shape.rank; ++i) {
-        out.push_back(shape.dims[i]);
-    }
-    return out;
-}
 
 std::vector<float> prepare_codec_mono(
     const runtime::AudioBuffer & audio,
@@ -610,16 +600,13 @@ core::TensorValue build_encode_quantizer(
     const core::TensorValue & encoder_latent,
     const FishCodecWeights & weights,
     std::vector<ggml_tensor *> & code_outputs,
-    std::vector<std::pair<std::string, core::TensorValue>> & trace_outputs,
     core::TensorValue * z_q_out) {
     auto x = encoder_latent;
     for (const auto & stage : weights.downsample) {
         x = causal_conv1d(ctx, x, stage.first, kCodecDim, kCodecDim, 2, 2, 1, true);
         x = build_convnext(ctx, x, stage.second, kCodecDim);
     }
-    trace_outputs.push_back({"fish_audio.codec.after_downsample", x});
     x = build_window_transformer(ctx, constants, x, weights.pre_module, 128);
-    trace_outputs.push_back({"fish_audio.codec.after_pre_module", x});
 
     auto residual = x;
     auto quantize_one = [&](const QuantizerUnitWeights & quantizer, int64_t codebook_size) {
@@ -1114,7 +1101,6 @@ struct EncodeGraph {
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, sample_capacity_}));
         ggml_set_input(input_.tensor);
         auto encoded = build_encoder(ctx, constants_, input_, *weights_);
-        trace_outputs_.push_back({"fish_audio.codec.encoder_latent", encoded});
         core::TensorValue z_q;
         build_encode_quantizer(
             ctx,
@@ -1122,7 +1108,6 @@ struct EncodeGraph {
             encoded,
             *weights_,
             code_outputs_,
-            trace_outputs_,
             wants_latents_ ? &z_q : nullptr);
         if (wants_latents_) {
             z_q_output_ = core::ensure_backend_addressable_layout(ctx, z_q).tensor;
@@ -1131,10 +1116,6 @@ struct EncodeGraph {
         graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
         if (z_q_output_ != nullptr) {
             ggml_build_forward_expand(graph_, z_q_output_);
-        }
-        for (const auto & trace_output : trace_outputs_) {
-            ggml_set_output(trace_output.second.tensor);
-            ggml_build_forward_expand(graph_, trace_output.second.tensor);
         }
         for (ggml_tensor * code_output : code_outputs_) {
             ggml_build_forward_expand(graph_, code_output);
@@ -1175,14 +1156,6 @@ struct EncodeGraph {
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Fish DAC codec encode graph compute failed");
         }
-        if (engine::debug::trace_log_enabled()) {
-            for (const auto & trace_output : trace_outputs_) {
-                engine::debug::trace_log_f32(
-                    trace_output.first,
-                    dims_vector(trace_output.second.shape),
-                    core::read_tensor_f32(trace_output.second.tensor));
-            }
-        }
         FishDacCodes out;
         out.codebooks = static_cast<int64_t>(code_outputs_.size());
         out.frames = frames;
@@ -1193,10 +1166,6 @@ struct EncodeGraph {
                 out.codes[static_cast<size_t>(codebook * out.frames + frame)] = values[static_cast<size_t>(frame)];
             }
         }
-        engine::debug::trace_log_i32(
-            "fish_audio.codec.reference_codes",
-            {out.codebooks, out.frames},
-            out.codes);
         return out;
     }
 
@@ -1235,7 +1204,6 @@ private:
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::TensorValue input_;
     std::vector<ggml_tensor *> code_outputs_;
-    std::vector<std::pair<std::string, core::TensorValue>> trace_outputs_;
     ggml_cgraph * graph_ = nullptr;
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
     core::ConstantTensorCache constants_;

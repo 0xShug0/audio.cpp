@@ -16,6 +16,7 @@ Practical expectations:
 
 | Family | Task | Supported language(s) | Contributor | What They Added |
 |---|---|---|---|---|
+| **echo_tts** | TTS, voice cloning | en | Tym [@5uck1ess](https://github.com/5uck1ess), [@dignome](https://github.com/dignome) | [Echo-TTS](echo_tts.md) 44.1 kHz zero-shot voice cloning: 2.8B diffusion transformer in 80-D PCA space, decoded by the Fish S1-DAC autoencoder. Byte-level text, no phonemiser, no reference transcript |
 | **f5_tts** | TTS, voice cloning | en, ar (Habibi) | Community | [F5-TTS](f5_tts.md) flow-matching DiT — M0 scaffolding, aliases `habibi`/`habibi_tts` |
 | **glm_tts** | TTS, voice cloning | zh, en | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](glm_tts.md) zero-shot synthesis and voice cloning support |
 | **granite5asr** | ASR | en | Community | [IBM Granite Speech 5.0 470M TurboCTC](granite5asr.md) ultra-fast Conformer-CTC ASR with Shaw relative positional embeddings and ByteLevel BPE |

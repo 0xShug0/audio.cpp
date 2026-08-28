@@ -61,6 +61,7 @@
   let installed: boolean | null = null;
   let loadingModel = false;
   let running = false;
+  let rewritingCaption = false;
   let status = 'Ready';
   let warningStatus = '';
   let errorStatus = '';
@@ -230,7 +231,8 @@
   }
 
   function setDuration(value: number) {
-    duration = Math.max(1, Number.isFinite(value) ? value : 1);
+    const minimum = selected?.family === 'ace_step' ? -1 : 1;
+    duration = Math.max(minimum, Number.isFinite(value) ? value : minimum);
     if (selected?.family === 'minimax_h3') {
       advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration) };
     }
@@ -386,6 +388,7 @@
     modelMatchesSelectedPackage(model, selected));
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
+  $: allowsAutoDuration = selected?.family === 'ace_step';
   $: usesDurationSecOption =
     selected?.family === 'controlfoley' ||
     selected?.family === 'midashenglm_gen';
@@ -1218,6 +1221,74 @@
     }
     const defaults = selected.default_options || {};
     return { ...defaults, ...advancedValues, ...raw };
+  }
+
+  function base64Text(value: string): string {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return new TextDecoder().decode(bytes);
+  }
+
+  function acePlanFromResult(result: Record<string, unknown>): Record<string, unknown> {
+    if (Array.isArray(result.artifacts)) {
+      const artifact = result.artifacts.find((entry): entry is { id: string; payload: string } =>
+        typeof entry === 'object' && entry !== null &&
+          (entry as { id?: unknown }).id === 'ace_step_caption_plan' &&
+          typeof (entry as { payload?: unknown }).payload === 'string');
+      if (artifact) return JSON.parse(base64Text(artifact.payload));
+    }
+    if (typeof result.text === 'string') return { caption: result.text };
+    return {};
+  }
+
+  async function rewriteAceCaption() {
+    if (selected?.family !== 'ace_step' || running || rewritingCaption) return;
+    if (!text.trim() && !lyrics.trim()) {
+      status = 'Enter a caption or lyrics to rewrite.';
+      warningStatus = status;
+      errorStatus = '';
+      return;
+    }
+    rewritingCaption = true;
+    warningStatus = '';
+    errorStatus = '';
+    status = tr('request.rewritingCaption');
+    try {
+      await ensureLoaded();
+      const options = { ...requestOptions(), rewrite_caption: true };
+      const request: Record<string, unknown> = {
+        text,
+        seed: resolveRequestSeed(seed),
+        duration_seconds: duration,
+        options
+      };
+      if (language.trim()) request.language = language;
+      if (lyrics.trim()) request.lyrics = lyrics;
+      const result = await runTask({ model: selected.id, request });
+      const plan = acePlanFromResult(result);
+      if (typeof plan.caption === 'string' && plan.caption.trim()) text = plan.caption;
+      if (typeof plan.language === 'string' && plan.language.trim()) language = plan.language;
+      if (typeof plan.duration_seconds === 'number' && Number.isFinite(plan.duration_seconds) && plan.duration_seconds > 0) {
+        duration = plan.duration_seconds;
+      }
+      const nextAdvanced = { ...advancedValues };
+      if (typeof plan.bpm === 'number' && Number.isFinite(plan.bpm)) nextAdvanced.bpm = plan.bpm;
+      if (typeof plan.keyscale === 'string') nextAdvanced.keyscale = plan.keyscale;
+      if (typeof plan.timesignature === 'string') nextAdvanced.timesignature = plan.timesignature;
+      advancedValues = nextAdvanced;
+      outputText = typeof result.text === 'string' ? result.text : '';
+      outputJson = JSON.stringify(plan, null, 2);
+      status = 'Caption rewritten.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+      errorStatus = status;
+      log(`Caption rewrite failed: ${status}`);
+    } finally {
+      rewritingCaption = false;
+    }
   }
 
   function clearOutput() {
@@ -2112,6 +2183,14 @@
           <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
           <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
             aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
+          {#if selected.family === 'ace_step'}
+            <div class="media-actions">
+              <button type="button" disabled={running || rewritingCaption || (!text.trim() && !lyrics.trim())}
+                on:click={rewriteAceCaption}>
+                {rewritingCaption ? tr('request.rewritingCaption') : tr('request.rewriteCaption')}
+              </button>
+            </div>
+          {/if}
         {/if}
 
         {#if selected.task === 'asr'}
@@ -2147,8 +2226,11 @@
           {#if selected.task === 'gen'}
             <div>
               <label for="duration">{tr('request.duration')}</label>
-              <input id="duration" type="number" min="1" step="0.1" value={duration}
+              <input id="duration" type="number" min={allowsAutoDuration ? -1 : 1} step="0.1" value={duration}
                 on:input={(event) => setDuration(event.currentTarget.valueAsNumber)} />
+              {#if allowsAutoDuration}
+                <small>{tr('request.autoDuration')}</small>
+              {/if}
               {#if selected.family === 'minimax_h3'}
                 <small>{tr('request.minimaxFrames', { frames: Number(advancedValues.num_frames || 0) })}</small>
               {/if}

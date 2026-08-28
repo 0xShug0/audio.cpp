@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -69,12 +70,20 @@ private:
     runtime::TaskResult run_long_form(
         const runtime::AudioBuffer & audio,
         const ParakeetDecodeOptions & options);
+    runtime::TaskResult run_vad_chunks(
+        const runtime::AudioBuffer & audio,
+        const std::unordered_map<std::string, std::string> & request_options,
+        const ParakeetDecodeOptions & options);
+    runtime::IOfflineVoiceTaskSession & vad_session();
 
     std::string offline_mode_ = "full_context";
     int64_t center_samples_ = 0;
     int64_t left_context_samples_ = 0;
     int64_t right_context_samples_ = 0;
     int64_t auto_full_context_max_samples_ = 0;
+    std::filesystem::path vad_model_path_;
+    std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
+    std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
 };
 
 class ParakeetTDTStreamingSession final

@@ -45,6 +45,7 @@ private:
     engine::models::qwen3_asr::Qwen3ASRAudioEncoderRuntime audio_encoder_;
     engine::models::qwen3_asr::Qwen3ASRThinkerRuntime thinker_;
     Qwen3ForcedAlignProcessor processor_;
+    int64_t run_index_ = 0;
 };
 
 }  // namespace engine::models::qwen3_forced_aligner
