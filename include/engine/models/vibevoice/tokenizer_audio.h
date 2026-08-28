@@ -130,6 +130,7 @@ public:
     std::vector<runtime::AudioBuffer> decode_acoustic_streaming_batch(
         const std::vector<VibeVoiceTokenizerLatents> & latents,
         std::vector<VibeVoiceTokenizerStreamingState *> states) const;
+    void release_prompt_graphs() const;
 
 private:
     std::shared_ptr<const VibeVoiceAssets> assets_;
