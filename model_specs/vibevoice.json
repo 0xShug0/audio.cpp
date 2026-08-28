@@ -67,6 +67,17 @@
         "VibeVoice-1.5B-GGUF/vibevoice-1.5b-bf16.gguf"
       ],
       "strip_prefix": "VibeVoice-1.5B-GGUF"
+    },
+    {
+      "id": "vibevoice_7b_q8_0",
+      "display_name": "VibeVoice 7B Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-7B-GGUF",
+      "files": [
+        "VibeVoice-7B-GGUF/vibevoice-7b-q8_0.gguf"
+      ],
+      "strip_prefix": "VibeVoice-7B-GGUF"
     }
   ],
   "sources": [
