@@ -10,11 +10,8 @@
 #include "engine/models/cosyvoice3/hift.h"
 
 #include <chrono>
-#include <cctype>
-#include <fstream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 namespace engine::models::cosyvoice3 {
@@ -50,64 +47,6 @@ std::string reference_text(const runtime::TaskRequest & request) {
 
 std::string instruction_text(const runtime::TaskRequest & request) {
     return runtime::find_option(request.options, {"instruction"}).value_or("");
-}
-
-std::unordered_map<std::string, std::string> validation_options(
-    const std::unordered_map<std::string, std::string> & options) {
-    auto out = options;
-    out.erase("teacher_force_tokens");
-    out.erase("teacher_force_source_random");
-    return out;
-}
-
-std::vector<int32_t> read_teacher_force_tokens(const std::string & path) {
-    std::ifstream in(path);
-    if (!in) {
-        throw std::runtime_error("CosyVoice3 teacher_force_tokens file cannot be opened: " + path);
-    }
-    std::vector<int32_t> out;
-    std::string token;
-    char ch = '\0';
-    while (in.get(ch)) {
-        if (std::isdigit(static_cast<unsigned char>(ch)) || ch == '-') {
-            token.push_back(ch);
-        } else if (!token.empty()) {
-            out.push_back(static_cast<int32_t>(std::stoi(token)));
-            token.clear();
-        }
-    }
-    if (!token.empty()) {
-        out.push_back(static_cast<int32_t>(std::stoi(token)));
-    }
-    if (out.empty()) {
-        throw std::runtime_error("CosyVoice3 teacher_force_tokens file contains no tokens: " + path);
-    }
-    return out;
-}
-
-std::vector<float> read_float_list(const std::string & path, const char * label) {
-    std::ifstream in(path);
-    if (!in) {
-        throw std::runtime_error(std::string("CosyVoice3 ") + label + " file cannot be opened: " + path);
-    }
-    std::vector<float> out;
-    std::string token;
-    char ch = '\0';
-    while (in.get(ch)) {
-        if (std::isdigit(static_cast<unsigned char>(ch)) || ch == '-' || ch == '+' || ch == '.' || ch == 'e' || ch == 'E') {
-            token.push_back(ch);
-        } else if (!token.empty()) {
-            out.push_back(std::stof(token));
-            token.clear();
-        }
-    }
-    if (!token.empty()) {
-        out.push_back(std::stof(token));
-    }
-    if (out.empty()) {
-        throw std::runtime_error(std::string("CosyVoice3 ") + label + " file contains no values: " + path);
-    }
-    return out;
 }
 
 std::vector<runtime::TaskRequest> split_request(const runtime::TaskRequest & request) {
@@ -218,13 +157,13 @@ runtime::RunMode CosyVoice3Session::run_mode() const {
 }
 
 void CosyVoice3Session::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(validation_options(request.options), *contract_, kModelName);
+    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
     mark_prepared();
 }
 
 runtime::TaskResult CosyVoice3Session::run(const runtime::TaskRequest & request) {
     const auto wall_start = std::chrono::steady_clock::now();
-    runtime::validate_spec_backed_request_options(validation_options(request.options), *contract_, kModelName);
+    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
     require_prepared("CosyVoice3 run");
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("CosyVoice3 requires text input");
@@ -267,12 +206,7 @@ runtime::TaskResult CosyVoice3Session::run(const runtime::TaskRequest & request)
         if (index > 0) {
             ar_request.seed += static_cast<uint32_t>(index);
         }
-        CosyVoice3ArOutput ar_output;
-        if (const auto teacher_force_path = runtime::find_option(chunk.options, {"teacher_force_tokens"})) {
-            ar_output.speech_tokens = read_teacher_force_tokens(*teacher_force_path);
-        } else {
-            ar_output = ar_->generate(ar_request);
-        }
+        CosyVoice3ArOutput ar_output = ar_->generate(ar_request);
         if (mem_saver_) {
             ar_->release_graphs();
         }
@@ -292,15 +226,9 @@ runtime::TaskResult CosyVoice3Session::run(const runtime::TaskRequest & request)
         if (mem_saver_) {
             flow_->release_graphs();
         }
-        std::vector<float> source_random_values;
-        const std::vector<float> * source_random_ptr = nullptr;
-        if (const auto random_path = runtime::find_option(chunk.options, {"teacher_force_source_random"})) {
-            source_random_values = read_float_list(*random_path, "teacher_force_source_random");
-            source_random_ptr = &source_random_values;
-        }
         runtime::append_audio_buffer(
             merged_audio,
-            hift_->synthesize(flow_output.mel, flow_output.frames, flow_request.seed, source_random_ptr));
+            hift_->synthesize(flow_output.mel, flow_output.frames, flow_request.seed));
         if (mem_saver_) {
             hift_->release_graphs();
         }

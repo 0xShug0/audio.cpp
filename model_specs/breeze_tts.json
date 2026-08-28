@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "family": "breeze_tts",
+  "display_name": "BreezeTTS 2",
+  "description": "BreezeTTS 2 native GGUF package for instruction-conditioned text-to-speech and prompt-audio voice cloning with T5Gemma text conditioning, Qwen-style acoustic code generation, depth codebook decoding, and Mimi waveform decoding.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "dependencies": [],
+  "capabilities": {
+    "tts": [
+      "style_control"
+    ],
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "BreezeTTS generation instruction.",
+        "required": false,
+        "default": "Speak clearly and naturally."
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript for the prompt audio when cloning.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 600.",
+        "required": false,
+        "min": 1,
+        "default": 600
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated BreezeTTS acoustic frames.",
+        "required": false,
+        "min": 1,
+        "default": 1500
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Backbone first-codebook sampling temperature.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.9
+      },
+      {
+        "name": "depth_temperature",
+        "type": "float",
+        "description": "Depth decoder codebook sampling temperature.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.9
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling limit; 0 disables top-k filtering.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Top-p sampling limit.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "BreezeTTS matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Reusable runtime graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight loading context size in MiB; default 2048.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-audio cache slots; set 0 to disable reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "breeze_tts_2_q8_0",
+      "display_name": "BreezeTTS 2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Breeze-TTS-2-GGUF",
+      "files": [
+        "Breeze-TTS-2-GGUF/breeze-tts-2-q8_0.gguf"
+      ],
+      "strip_prefix": "Breeze-TTS-2-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/Breeze-TTS-2-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "breeze_tts_2_bf16",
+      "display_name": "BreezeTTS 2 BF16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Breeze-TTS-2-GGUF",
+      "files": [
+        "Breeze-TTS-2-GGUF/breeze-tts-2-bf16.gguf"
+      ],
+      "strip_prefix": "Breeze-TTS-2-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/Breeze-TTS-2-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "ui": {
+    "recommended_package": "breeze_tts_2_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config_json": "model:config.json",
+        "audio_tokenizer_config_json": "model:audio_tokenizer/config.json",
+        "tokenizer_config_json": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model"
+        }
+      }
+    }
+  ]
+}

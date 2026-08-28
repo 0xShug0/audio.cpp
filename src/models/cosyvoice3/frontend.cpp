@@ -8,7 +8,6 @@
 #include "engine/framework/modules/speech_encoders/campplus_encoder.h"
 #include "engine/framework/modules/speech_encoders/s3_tokenizer.h"
 #include "engine/framework/runtime/cache_slots.h"
-#include "engine/framework/debug/trace.h"
 
 #include <algorithm>
 #include <chrono>
@@ -221,10 +220,8 @@ public:
         compute_prompt_mel(audio, features.prompt_mel, features.prompt_mel_frames);
         int64_t fbank_frames = 0;
         auto fbank = compute_campplus_fbank(audio, fbank_frames);
-        engine::debug::trace_log_f32("cosyvoice3.frontend.campplus_fbank", {fbank_frames, 80}, fbank);
         auto speaker = campplus_.embed_from_features(fbank, fbank_frames, 80);
         features.speaker_embedding = std::move(speaker.embedding);
-        engine::debug::trace_log_f32("cosyvoice3.frontend.speaker_embedding", {assets_->config.speaker_dim}, features.speaker_embedding);
         if (static_cast<int64_t>(features.speaker_embedding.size()) != assets_->config.speaker_dim) {
             throw std::runtime_error("CosyVoice3 CAMPPlus speaker embedding size mismatch");
         }
