@@ -910,6 +910,7 @@ audiocpp_add_model(audio8_tts
         src/community_models/audio8_tts/ar.cpp
         src/community_models/audio8_tts/assets.cpp
         src/community_models/audio8_tts/codec.cpp
+        src/community_models/audio8_tts/falcon_torch_bridge.cpp
         src/community_models/audio8_tts/generator.cpp
         src/community_models/audio8_tts/prompt_builder.cpp
         src/community_models/audio8_tts/session.cpp

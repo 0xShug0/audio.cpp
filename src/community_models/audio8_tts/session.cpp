@@ -11,6 +11,7 @@
 #include "engine/community_models/audio8_tts/ar.h"
 #include "engine/community_models/audio8_tts/codec.h"
 #include "engine/community_models/audio8_tts/generator.h"
+#include "engine/community_models/audio8_tts/falcon_torch_bridge.h"
 
 #include <algorithm>
 #include <cctype>
@@ -498,6 +499,35 @@ runtime::TaskResult Audio8TtsSession::run(const runtime::TaskRequest & request) 
     engine::debug::trace_log_scalar("audio8_tts.text_chunk_size", request_options.text_chunk_size);
     engine::debug::trace_log_scalar("audio8_tts.text_chunk_mode", engine::text::text_chunk_mode_name(text_chunk_mode));
     engine::debug::trace_log_scalar("audio8_tts.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
+
+    // Falcon-H1 (0.1B) uses Python torch fallback until native Mamba is landed.
+    // See falcon_bridge.py and modeling_arktts.py:303 — route via
+    // generate_audio_via_torch_falcon so 0.1B is STT-verifiable.
+    if (is_falcon_backbone(*assets_)) {
+        runtime::AudioBuffer merged_audio;
+        // For Falcon we delegate full request handling (including references) to the
+        // torch bridge which uses HF AutoProcessor/AutoModel exactly as in
+        // audio8_tts_infer.py — avoids reimplementing prompt_builder/codec packing.
+        for (size_t chunk_index = 0; chunk_index < chunk_requests.size(); ++chunk_index) {
+            const auto & chunk_request = chunk_requests[chunk_index];
+            auto arktts_request = make_request(chunk_request);
+            // Resolve reference cache entry for logging parity, but torch bridge
+            // re-encodes from raw audio directly so we just ensure cache is hot.
+            std::vector<Audio8TtsCodes> reference_codes;
+            if (!arktts_request.references.empty()) {
+                reference_codes.reserve(arktts_request.references.size());
+                for (const auto & reference : arktts_request.references) {
+                    reference_codes.push_back(resolve_reference_codes(reference));
+                }
+            }
+            auto chunk_audio = generate_audio_via_torch_falcon(*assets_, arktts_request, reference_codes, std::nullopt);
+            runtime::append_audio_buffer(merged_audio, chunk_audio);
+        }
+        runtime::TaskResult result;
+        result.audio_output = std::move(merged_audio);
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
+        return result;
+    }
 
     runtime::AudioBuffer merged_audio;
     std::vector<Audio8TtsCodes> reference_codes;

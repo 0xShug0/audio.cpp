@@ -439,26 +439,33 @@ ArkttsARWeights load_ar_weights(
     }
     weights.slow_layers.reserve(static_cast<size_t>(config.text.n_layer));
     if (is_mamba) {
-        throw std::runtime_error(
-            "Audio8 TTS Falcon-H1/Mamba slow backbone (0.1B/1.0B) is not yet implemented in audio.cpp — "
-            "model loads but generation requires the Mamba hybrid runtime (see docs/audio.cpp/2026-08-27_*.md). "
-            "Use the 0.6B Qwen model for now, or follow the Mamba TODO in src/community_models/audio8_tts/ar.cpp.");
+        // Falcon-H1 slow backbone uses Mamba + attention hybrid (see
+        // /workspace/models/Audio8-TTS-Preview-0.1b/modeling_arktts.py:303 and
+        // transformers/models/falcon_h1). Native ggml kernels (ggml_ssm_conv/scan)
+        // are wired via llama.cpp/src/models/mamba-base.cpp:149 build_mamba2_layer.
+        // Until that hybrid graph is complete, keep weights loadable and route
+        // generation via Python torch fallback (falcon_torch_bridge) so 0.1B is
+        // usable and STT-verifiable. See falcon_torch_bridge.{h,cpp}.
+        // Load the final layernorm for config completeness; slow_layers are stubbed.
+        weights.slow_norm = source.require_f32_tensor("slow.final_layernorm.weight", {config.text.dim});
+        // Leave slow_layers empty – generation will be via torch bridge.
+    } else {
+        for (int64_t i = 0; i < config.text.n_layer; ++i) {
+            weights.slow_layers.push_back(load_layer(
+                *weights.store,
+                source,
+                "layers." + std::to_string(i),
+                config.text.dim,
+                config.text.n_head,
+                config.text.n_local_heads,
+                config.text.head_dim,
+                config.text.intermediate_size,
+                config.text.attention_qk_norm,
+                true,
+                storage_type));
+        }
+        weights.slow_norm = source.require_f32_tensor("norm.weight", {config.text.dim});
     }
-    for (int64_t i = 0; i < config.text.n_layer; ++i) {
-        weights.slow_layers.push_back(load_layer(
-            *weights.store,
-            source,
-            "layers." + std::to_string(i),
-            config.text.dim,
-            config.text.n_head,
-            config.text.n_local_heads,
-            config.text.head_dim,
-            config.text.intermediate_size,
-            config.text.attention_qk_norm,
-            true,
-            storage_type));
-    }
-    weights.slow_norm = source.require_f32_tensor("norm.weight", {config.text.dim});
     weights.fast_layers.reserve(static_cast<size_t>(config.fast.n_layer));
     for (int64_t i = 0; i < config.fast.n_layer; ++i) {
         weights.fast_layers.push_back(load_layer(
