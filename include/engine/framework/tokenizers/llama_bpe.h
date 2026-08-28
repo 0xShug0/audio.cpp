@@ -96,13 +96,15 @@ struct LlamaBpeTokenizerSpec {
         std::filesystem::path tokenizer_config_path_ = {},
         std::optional<std::filesystem::path> tokenizer_json_path_ = std::nullopt,
         LlamaBpePreTokenizer pre_type_ = LlamaBpePreTokenizer::Gpt2,
-        std::vector<LlamaBpeAddedToken> additional_special_tokens_ = {})
+        std::vector<LlamaBpeAddedToken> additional_special_tokens_ = {},
+        std::string normalizer_space_replacement_ = {})
         : vocab_path(std::move(vocab_path_)),
           merges_path(std::move(merges_path_)),
           tokenizer_config_path(std::move(tokenizer_config_path_)),
           tokenizer_json_path(std::move(tokenizer_json_path_)),
           pre_type(pre_type_),
-          additional_special_tokens(std::move(additional_special_tokens_)) {}
+          additional_special_tokens(std::move(additional_special_tokens_)),
+          normalizer_space_replacement(std::move(normalizer_space_replacement_)) {}
 
     std::filesystem::path vocab_path;
     std::filesystem::path merges_path;
@@ -110,6 +112,7 @@ struct LlamaBpeTokenizerSpec {
     std::optional<std::filesystem::path> tokenizer_json_path;
     LlamaBpePreTokenizer pre_type = LlamaBpePreTokenizer::Gpt2;
     std::vector<LlamaBpeAddedToken> additional_special_tokens;
+    std::string normalizer_space_replacement;
 };
 
 class LlamaBpeTokenizer final : public ITokenizer {
