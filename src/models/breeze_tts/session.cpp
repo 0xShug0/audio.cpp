@@ -101,8 +101,10 @@ BreezeTTSSession::BreezeTTSSession(
       contract_(require_contract(std::move(contract))),
       reference_cache_(reference_cache_slots_from_options(options)) {
     runtime::validate_spec_backed_session_options(options, *contract_, kFamily, kModelName);
-    if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) {
-        throw std::runtime_error("BreezeTTS supports tts and clone tasks");
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning &&
+        task_.task != runtime::VoiceTaskKind::VoiceDesign) {
+        throw std::runtime_error("BreezeTTS supports tts, clone, and voice design tasks");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("BreezeTTS supports offline sessions");

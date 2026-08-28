@@ -7,7 +7,8 @@
   "status": "supported",
   "tasks": [
     "tts",
-    "clone"
+    "clone",
+    "design"
   ],
   "modes": [
     "offline"
@@ -23,6 +24,9 @@
   },
   "dependencies": [],
   "capabilities": {
+    "design": [
+      "voice_design"
+    ],
     "tts": [
       "style_control"
     ],
@@ -174,7 +178,7 @@
       "strip_prefix": "Breeze-TTS-2-GGUF",
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/Breeze-TTS-2-GGUF",
+        "repo": "audio-cpp/audio.cpp-gguf",
         "revision": "main",
         "gated": false
       }
@@ -192,7 +196,7 @@
       "strip_prefix": "Breeze-TTS-2-GGUF",
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/Breeze-TTS-2-GGUF",
+        "repo": "audio-cpp/audio.cpp-gguf",
         "revision": "main",
         "gated": false
       }
@@ -203,6 +207,7 @@
     "tags": [
       "TTS",
       "Clone",
+      "Design",
       "GGUF"
     ],
     "docs": [
