@@ -1180,7 +1180,24 @@ std::unique_ptr<ServerState::LoadedModel> ServerState::make_model(ServerModelCon
         engine::runtime::parse_run_mode(loaded->config.mode),
     };
     load_voice_presets(*loaded);
+    refresh_model_option_flags(*loaded);
     return loaded;
+}
+
+void ServerState::refresh_model_option_flags(LoadedModel & model) {
+    const auto effective_override = model.config.model_spec_override.has_value()
+        ? model.config.model_spec_override
+        : config_.model_spec_override;
+    // Deliberately uncaught: model_accepts_request_option already returns true for a
+    // model with no contract, swallowing only the missing-contract errors and
+    // rethrowing the rest. Anything that propagates here is therefore a real
+    // misconfiguration (invalid spec, missing override file, family mismatch) and
+    // must fail at registration rather than be assumed away.
+    model.accepts_reference_text = model_accepts_request_option(
+        model.config.family,
+        "reference_text",
+        effective_override,
+        model.config.path);
 }
 
 HttpResponse ServerState::handle_model_load(const std::string & body_text) {
@@ -1221,6 +1238,7 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
                 engine::runtime::parse_run_mode(existing->config.mode),
             };
             load_voice_presets(*existing);
+            refresh_model_option_flags(*existing);
         }
         ensure_model_loaded_locked(*existing);
         return json_response(
@@ -1869,15 +1887,10 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
 
     bool voice_field_is_preset = false;
     const auto * preset = select_voice_preset(model, body, voice_field_is_preset);
-    const auto effective_model_spec_override = model.config.model_spec_override.has_value()
-        ? model.config.model_spec_override
-        : config_.model_spec_override;
-    const bool can_inject_reference_text =
-        model_accepts_request_option(
-            model.config.family,
-            "reference_text",
-            effective_model_spec_override,
-            model.config.path);
+    // Resolved once at registration (refresh_model_option_flags): calling
+    // model_accepts_request_option per request re-reads the model file's embedded
+    // spec on the request thread, which cost ~0.9 s per request for large GGUFs.
+    const bool can_inject_reference_text = model.accepts_reference_text;
 
     engine::runtime::VoiceCondition voice;
     bool has_voice = false;
