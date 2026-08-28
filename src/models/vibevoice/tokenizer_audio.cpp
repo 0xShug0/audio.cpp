@@ -1852,6 +1852,11 @@ VibeVoiceTokenizerLatents VibeVoiceTokenizerWeightsRuntime::encode_semantic(cons
     return std::move(encoded.front());
 }
 
+void VibeVoiceTokenizerWeightsRuntime::release_prompt_graphs() const {
+    acoustic_encoder_graph_.reset();
+    semantic_encoder_graph_.reset();
+}
+
 runtime::AudioBuffer VibeVoiceTokenizerWeightsRuntime::decode_acoustic(const VibeVoiceTokenizerLatents & latents) const {
     if (latents.frames <= 0 || latents.dim != assets_->config.acoustic_tokenizer.vae_dim) {
         throw std::runtime_error("VibeVoice acoustic decoder received invalid latent shape");
