@@ -24,6 +24,10 @@ GGML_BACKEND_API ggml_backend_t ggml_backend_cuda_init(int device);
 
 GGML_BACKEND_API bool ggml_backend_is_cuda(ggml_backend_t backend);
 GGML_BACKEND_API void ggml_backend_cuda_trim_pools(ggml_backend_t backend);
+// Sets the CUDA scheduling priority used for this backend instance's lazily
+// created streams (lower = higher priority, 0 = default). Scoped to the
+// instance; already-created streams keep their priority.
+GGML_BACKEND_API void ggml_backend_cuda_set_stream_priority(ggml_backend_t backend, int priority);
 // Returns the backend's current compute CUDA stream (cudaStream_t) so host
 // code can enqueue its own kernels/copies ordered with graph computes.
 GGML_BACKEND_API void * ggml_backend_cuda_get_stream(ggml_backend_t backend);

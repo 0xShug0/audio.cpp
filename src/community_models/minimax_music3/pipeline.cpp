@@ -116,14 +116,15 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         }
         if (pipeline_overlap) {
             // The AR stage runs a stream of short kernels that must not queue
-            // behind the denoise stream's long GEMM waves, so its lazily
-            // created streams get the highest CUDA priority. The env is read
-            // by the CUDA backend at stream creation: AR streams materialize
-            // during the AR weight upload below, denoise-context streams
-            // afterwards at default priority.
-            set_stream_priority_env("-5");
+            // behind the denoise stream's long GEMM waves, so this context's
+            // lazily created streams get the highest CUDA priority. The
+            // priority is scoped to this backend instance (per-context field,
+            // not process state): AR streams materialize during the AR weight
+            // upload below; the separate overlap execution context created
+            // afterwards keeps the default priority.
+            core::set_backend_stream_priority(execution.backend(), -5);
             ggml_backend_synchronize(execution.backend());
-            set_stream_priority_env(nullptr);
+            core::set_backend_stream_priority(execution.backend(), 0);
             ar = make_ar();
             overlap_execution = std::make_unique<core::ExecutionContext>(execution.config());
             condition = make_condition();
@@ -137,17 +138,6 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         }
     }
 
-    static void set_stream_priority_env(const char * value) {
-#ifndef _WIN32
-        if (value != nullptr) {
-            setenv("GGML_CUDA_STREAM_PRIORITY", value, 1);
-        } else {
-            unsetenv("GGML_CUDA_STREAM_PRIORITY");
-        }
-#else
-        (void) value;
-#endif
-    }
 
     ~Impl() {
         release_runtime_graphs();
@@ -329,21 +319,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
                 rng_offset_blocks += sampling::torch_cuda_tensor_iterator_offset_blocks(
                     static_cast<uint64_t>(latents.size()),
                     sampling_policy);
-                // Carry-free probe: with MM3_FLOW_NO_CARRY=1 every chunk
-                // denoises independently (the crop overlap still smooths the
-                // seams). If listening/panel accept this, chunks can be
-                // denoised in parallel across GPUs.
-                static const bool no_carry = [] {
-                    const char * env = std::getenv("MM3_FLOW_NO_CARRY");
-                    return env != nullptr && env[0] == '1';
-                }();
-                if (no_carry) {
-                    previous_latent.clear();
-                    previous_condition.clear();
-                } else {
-                    previous_latent = std::move(carry_latent);
-                    previous_condition = std::move(carry_condition);
-                }
+                previous_latent = std::move(carry_latent);
+                previous_condition = std::move(carry_condition);
                 denoised.push_back({std::move(latents), condition_frames});
             }
             release_flow_after_phase();

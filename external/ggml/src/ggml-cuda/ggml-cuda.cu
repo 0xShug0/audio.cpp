@@ -5060,6 +5060,14 @@ void ggml_backend_cuda_trim_pools(ggml_backend_t backend) {
     }
 }
 
+void ggml_backend_cuda_set_stream_priority(ggml_backend_t backend, int priority) {
+    if (backend == nullptr || !ggml_backend_is_cuda(backend)) {
+        return;
+    }
+    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
+    ctx->stream_priority = priority;
+}
+
 void ggml_backend_cuda_clear_graph(ggml_backend_t backend, const ggml_cgraph * graph) {
 #ifdef USE_CUDA_GRAPH
     if (!ggml_backend_is_cuda(backend) || graph == nullptr || graph->n_nodes <= 0) {
@@ -5885,6 +5893,9 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     }
     if (strcmp(name, "ggml_backend_cuda_trim_pools") == 0) {
         return (void *)ggml_backend_cuda_trim_pools;
+    }
+    if (strcmp(name, "ggml_backend_cuda_set_stream_priority") == 0) {
+        return (void *)ggml_backend_cuda_set_stream_priority;
     }
     return nullptr;
 }

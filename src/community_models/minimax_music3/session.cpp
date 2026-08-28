@@ -301,11 +301,7 @@ runtime::TaskResult MiniMaxMusic3Session::run(const runtime::TaskRequest & reque
     const auto parsed = parse_request(request);
     const auto start = Clock::now();
     runtime::TaskResult result;
-    // Debug aid: route K=1 through the ensemble machinery to verify the
-    // batched path reproduces the plain path (it must at batch 2).
-    const char * force_env = std::getenv("MM3_ENSEMBLE_FORCE");
-    const bool force_ensemble = force_env != nullptr && force_env[0] == '1';
-    if (parsed.ensemble_takes > 1 || force_ensemble) {
+    if (parsed.ensemble_takes > 1) {
         std::vector<uint64_t> take_seeds(static_cast<size_t>(parsed.ensemble_takes));
         for (size_t take = 0; take < take_seeds.size(); ++take) {
             take_seeds[take] = parsed.seed + static_cast<uint64_t>(take);

@@ -334,6 +334,18 @@ void trim_backend_pools(ggml_backend_t backend) {
     if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_trim_pools(backend);
 }
 
+void set_backend_stream_priority(ggml_backend_t backend, int priority) {
+    if (backend == nullptr) return;
+    if (!is_cuda_backend_handle(backend) && !is_hip_backend_handle(backend)) return;
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    if (device == nullptr) return;
+    auto fn = (void (*)(ggml_backend_t, int))
+        ggml_backend_reg_get_proc_address(
+            ggml_backend_dev_backend_reg(device),
+            "ggml_backend_cuda_set_stream_priority");
+    if (fn != nullptr) fn(backend, priority);
+}
+
 // evict_cuda_graph_cache defaults to false, preserving historical behavior
 // for existing call sites: before the CUDA backend exported
 // ggml_backend_cuda_clear_graph the lookup resolved nothing, and families

@@ -190,92 +190,6 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
         time_proj = assets->transformer_weights->require_f32(
             "time_proj.weight",
             {assets->config.flow.fourier_embedding_dim / 2, 1});
-    
-        if (getenv("MM3_DC_B1_SELFTEST") != nullptr) {
-            run_b1_selftest();
-        }
-    }
-
-    void run_b1_selftest() {
-        const auto & config = assets->config.flow;
-        const int64_t frames = 344;
-        std::vector<float> latents(static_cast<size_t>(config.in_channels * frames));
-        std::vector<float> condition(static_cast<size_t>(config.condition_dim * frames));
-        for (size_t i = 0; i < latents.size(); ++i) {
-            latents[i] = std::sin(0.001F * static_cast<float>(i));
-        }
-        for (size_t i = 0; i < condition.size(); ++i) {
-            condition[i] = std::cos(0.0007F * static_cast<float>(i));
-        }
-        prepare_chunk_condition(condition, frames);
-        std::vector<float> batch2_cond;
-        {
-            // batch-2 determinism control at full depth
-            std::vector<float> runs2[2];
-            for (int r = 0; r < 2; ++r) {
-                runs2[r] = predict_velocity(latents, condition, frames, 0.85F, 2);
-            }
-            float d2 = 0.0F;
-            for (size_t i = 0; i < runs2[0].size(); ++i) {
-                d2 = std::max(d2, std::fabs(runs2[0][i] - runs2[1][i]));
-            }
-            fprintf(stderr, "MM3_B1_SELFTEST batch2_control rep01=%.6f\n", d2);
-            batch2_cond.assign(runs2[0].begin(), runs2[0].begin() + static_cast<std::ptrdiff_t>(runs2[0].size() / 2));
-        }
-        for (const char * skip : {"", "rope", "attn", "ffn", "rope,attn", "attn,ffn"}) {
-#ifndef _WIN32
-            if (skip[0] != '\0') setenv("MM3_DC_B1_SKIP", skip, 1); else unsetenv("MM3_DC_B1_SKIP");
-#endif
-            release_slot(slots[1]);
-            std::vector<float> runsk[2];
-            for (int r = 0; r < 2; ++r) {
-                runsk[r] = predict_velocity(latents, condition, frames, 0.85F, 1);
-            }
-            float dk = 0.0F;
-            for (size_t i = 0; i < runsk[0].size(); ++i) {
-                dk = std::max(dk, std::fabs(runsk[0][i] - runsk[1][i]));
-            }
-            float db2 = 0.0F;
-            if (skip[0] == '\0' && batch2_cond.size() == runsk[0].size()) {
-                for (size_t i = 0; i < runsk[0].size(); ++i) {
-                    db2 = std::max(db2, std::fabs(runsk[0][i] - batch2_cond[i]));
-                }
-            }
-            fprintf(stderr, "MM3_B1_SELFTEST skip='%s' rep01=%.6f b1_vs_b2cond=%.6f\n", skip, dk, db2);
-        }
-#ifndef _WIN32
-        unsetenv("MM3_DC_B1_SKIP");
-#endif
-        const char * caps_env = getenv("MM3_DC_B1_SELFTEST");
-        std::string caps = caps_env != nullptr && std::string(caps_env) != "1" ? caps_env : "1,2,4,8,16,36";
-        size_t pos = 0;
-        while (pos <= caps.size()) {
-            size_t comma = caps.find(',', pos);
-            if (comma == std::string::npos) comma = caps.size();
-            const std::string tok = caps.substr(pos, comma - pos);
-            pos = comma + 1;
-            if (tok.empty()) continue;
-#ifndef _WIN32
-            setenv("MM3_DC_B1_LAYERS", tok.c_str(), 1);
-#endif
-            release_slot(slots[1]);
-            std::vector<float> runs[3];
-            for (int r = 0; r < 3; ++r) {
-                runs[r] = predict_velocity(latents, condition, frames, 0.85F, 1);
-            }
-            float d01 = 0.0F, d12 = 0.0F, mag = 0.0F;
-            for (size_t i = 0; i < runs[0].size(); ++i) {
-                d01 = std::max(d01, std::fabs(runs[0][i] - runs[1][i]));
-                d12 = std::max(d12, std::fabs(runs[1][i] - runs[2][i]));
-                mag = std::max(mag, std::fabs(runs[2][i]));
-            }
-            fprintf(stderr, "MM3_B1_SELFTEST layers=%s rep01=%.6f rep12=%.6f maxabs=%.6f\n",
-                    tok.c_str(), d01, d12, mag);
-        }
-#ifndef _WIN32
-        unsetenv("MM3_DC_B1_LAYERS");
-#endif
-        release_slot(slots[1]);
     }
 
     ~Impl() {
@@ -313,21 +227,6 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
         if (slot.ggml == nullptr) {
             throw std::runtime_error("failed to initialize MiniMax Music 3 flow graph context");
         }
-        int64_t layer_cap = static_cast<int64_t>(weights.blocks.size());
-        bool skip_rope = false;
-        bool skip_attn = false;
-        bool skip_ffn = false;
-        if (batch == 1) {
-            if (const char * cap_env = getenv("MM3_DC_B1_LAYERS")) {
-                layer_cap = std::min<int64_t>(layer_cap, std::max<int64_t>(0, atoll(cap_env)));
-            }
-            if (const char * skip_env = getenv("MM3_DC_B1_SKIP")) {
-                const std::string skips = skip_env;
-                skip_rope = skips.find("rope") != std::string::npos;
-                skip_attn = skips.find("attn") != std::string::npos;
-                skip_ffn = skips.find("ffn") != std::string::npos;
-            }
-        }
         core::ModuleBuildContext ctx{slot.ggml.get(), "minimax_music3.flow", execution.backend_type()};
         slot.latents = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, config.in_channels, frames}));
         slot.condition = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, config.condition_dim, frames}));
@@ -362,11 +261,7 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
         temb = core::reshape_tensor(ctx, temb, core::TensorShape::from_dims({batch, 1, inner}));
         x = modules::ConcatModule({1}).build(ctx, temb, x);
 
-        int64_t built_layers = 0;
         for (const auto & block : weights.blocks) {
-            if (built_layers++ >= layer_cap) {
-                break;
-            }
             auto normed = modules::LayerNormModule({inner, 1.0e-5F, true, true, false}).build(ctx, x, block.norm1);
             auto q = modules::LinearModule({inner, inner, false}).build(ctx, normed, block.q);
             auto k = modules::LinearModule({inner, inner, false}).build(ctx, normed, block.k);
@@ -374,7 +269,7 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
             q = core::reshape_tensor(ctx, q, core::TensorShape::from_dims({batch, steps, config.attention_heads, config.head_dim}));
             k = core::reshape_tensor(ctx, k, core::TensorShape::from_dims({batch, steps, config.attention_heads, config.head_dim}));
             v = core::reshape_tensor(ctx, v, core::TensorShape::from_dims({batch, steps, config.attention_heads, config.head_dim}));
-            if (!skip_rope) {
+            {
                 static const bool legacy_rope = getenv("MM3_LEGACY_ROPE") != nullptr;
                 if (!legacy_rope) {
                     // Native partial NEOX rope from integer positions: one
@@ -399,9 +294,7 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
             q = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
             k = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
             v = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-            const bool flash_ok =
-                core::uses_ggml_cuda_or_hip_backend(execution.backend_type()) &&
-                !(batch == 1 && getenv("MM3_DC_B1_EXPLICIT_ATTN") != nullptr);
+            const bool flash_ok = core::uses_ggml_cuda_or_hip_backend(execution.backend_type());
             auto attn = modules::ScaledDotProductAttentionModule({
                 config.head_dim,
                 flash_ok
@@ -415,9 +308,7 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
                 core::ensure_backend_addressable_layout(ctx, attn),
                 core::TensorShape::from_dims({batch, steps, inner}));
             attn = modules::LinearModule({inner, inner, false}).build(ctx, attn, block.out);
-            if (!skip_attn) {
-                x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, attn.tensor), x.shape, GGML_TYPE_F32);
-            }
+            x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, attn.tensor), x.shape, GGML_TYPE_F32);
 
             auto ffn = modules::LayerNormModule({inner, 1.0e-5F, true, true, false}).build(ctx, x, block.norm2);
             ffn = modules::LinearModule({inner, 2 * config.ff_inner_dim, true}).build(ctx, ffn, block.ff_in);
@@ -441,9 +332,7 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
                     GGML_TYPE_F32);
             }
             gated = modules::LinearModule({config.ff_inner_dim, inner, true}).build(ctx, gated, block.ff_out);
-            if (!skip_ffn) {
-                x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, gated.tensor), x.shape, GGML_TYPE_F32);
-            }
+            x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, gated.tensor), x.shape, GGML_TYPE_F32);
         }
 
         x = modules::SliceModule({1, 1, frames}).build(ctx, x);
@@ -468,24 +357,6 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
         if (rope_cos_table.size() != static_cast<size_t>(steps * config.attention_heads * config.rotary_dim / 2)) {
             rope_cos_table = split_rope_table(steps, config.attention_heads, config.rotary_dim, true);
             rope_sin_table = split_rope_table(steps, config.attention_heads, config.rotary_dim, false);
-        }
-        static const bool trace = getenv("MM3_DC_B1_TRACE") != nullptr;
-        if (trace) {
-            int rope_as_src = 0;
-            int rope_as_leaf = 0;
-            for (int n = 0; n < ggml_graph_n_nodes(slot.graph); ++n) {
-                ggml_tensor * node = ggml_graph_node(slot.graph, n);
-                for (int si = 0; si < GGML_MAX_SRC; ++si) {
-                    if (node->src[si] == slot.rope_cos.tensor || node->src[si] == slot.rope_sin.tensor) {
-                        ++rope_as_src;
-                    }
-                }
-            }
-            fprintf(stderr, "MM3_B1_TRACE build batch=%lld frames=%lld nodes=%d rope_src=%d rope_leaf=%d rope_buf=%p rope_flags=%d latents_buf=%p\n",
-                    (long long) batch, (long long) frames,
-                    ggml_graph_n_nodes(slot.graph), rope_as_src, rope_as_leaf,
-                    (void *) slot.rope_cos.tensor->buffer, slot.rope_cos.tensor->flags,
-                    (void *) slot.latents.tensor->buffer);
         }
         if (slot.rope_cos.tensor->buffer != nullptr) {
             core::write_tensor_f32(slot.rope_cos, rope_cos_table);
@@ -526,12 +397,6 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
         int64_t frames,
         float timestep,
         int64_t batch) {
-        static const bool b1_as_batch2 = getenv("MM3_DC_B1_BATCH2") != nullptr;
-        if (batch == 1 && b1_as_batch2) {
-            auto both = predict_velocity(input_latents, input_condition, frames, timestep, 2);
-            both.resize(both.size() / 2);
-            return both;
-        }
         const auto & config = assets->config.flow;
         if (static_cast<int64_t>(input_latents.size()) != config.in_channels * frames ||
             static_cast<int64_t>(input_condition.size()) != config.condition_dim * frames) {

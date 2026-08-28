@@ -149,13 +149,6 @@ public:
         overlap_ = overlap;
         delta_cache_.clear();
         flow_.prepare_chunk_condition(condition, frames);
-        static const bool warm_cond = getenv("MM3_DC_B1_WARMUP") != nullptr;
-        if (uncond_interval_ > 1 && warm_cond) {
-            const std::vector<float> zero_latent(static_cast<size_t>(channels * frames), 0.0F);
-            (void) flow_.predict_velocity_cond(zero_latent, condition, frames, 0.0F);
-            (void) flow_.predict_velocity_cond(zero_latent, condition, frames, 0.0F);
-            (void) flow_.predict_velocity_cond(zero_latent, condition, frames, 0.0F);
-        }
     }
 
     void set_guidance_reuse(int64_t uncond_interval, int64_t uncond_warmup) {
@@ -221,36 +214,6 @@ public:
                 input.state.schedule.t);
             if (cond.size() != branch_size) {
                 throw std::runtime_error("MiniMax Music 3 flow cond velocity shape mismatch");
-            }
-            static const bool verify = getenv("MM3_DC_VERIFY") != nullptr;
-            if (verify) {
-                const auto cond_repeat = flow_.predict_velocity_cond(
-                    denoiser_latent, *condition_, frames_, input.state.schedule.t);
-                const auto full = flow_.predict_velocity_branches(
-                    denoiser_latent, *condition_, frames_, input.state.schedule.t);
-                float cond_diff = 0.0F;
-                float repeat_diff = 0.0F;
-                float synth_diff = 0.0F;
-                float cond_mag = 0.0F;
-                for (size_t i = 0; i < branch_size; ++i) {
-                    cond_diff = std::max(cond_diff, std::fabs(cond[i] - full[i]));
-                    repeat_diff = std::max(repeat_diff, std::fabs(cond[i] - cond_repeat[i]));
-                    const float synth = cond[i] - delta_cache_[i];
-                    synth_diff = std::max(synth_diff, std::fabs(synth - full[branch_size + i]));
-                    cond_mag = std::max(cond_mag, std::fabs(full[i]));
-                }
-                fprintf(stderr,
-                        "MM3_DC_VERIFY step=%lld cond_maxdiff=%.6f b1_repeat_maxdiff=%.6f synth_uncond_maxdiff=%.6f cond_maxabs=%.6f\n",
-                        static_cast<long long>(step), cond_diff, repeat_diff, synth_diff, cond_mag);
-                output.predictions.push_back({
-                    "cond",
-                    std::vector<float>(full.begin(), full.begin() + static_cast<std::ptrdiff_t>(branch_size)),
-                });
-                output.predictions.push_back({
-                    "uncond",
-                    std::vector<float>(full.begin() + static_cast<std::ptrdiff_t>(branch_size), full.end()),
-                });
-                return output;
             }
             std::vector<float> uncond(branch_size);
             for (size_t i = 0; i < branch_size; ++i) {
