@@ -3588,6 +3588,132 @@
           }
         }
       ]
+    },
+    {
+      "id": "cosyvoice3_official_paths",
+      "coverage": "CosyVoice3 official zero-shot, cross-lingual, instruction, and hotfix-pronunciation paths after a short same-session warmup",
+      "family": "cosyvoice3",
+      "model": "models/CosyVoice3-GGUF/cosyvoice3-orig.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup_short_random",
+          "text": "你好。",
+          "reference_text": "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "zero_shot",
+            "max_tokens": 80
+          },
+          "seed": 20260828
+        },
+        {
+          "id": "zero_shot_zh_official",
+          "text": "八百标兵奔北坡，北坡炮兵并排跑，炮兵怕把标兵碰，标兵怕碰炮兵炮。",
+          "reference_text": "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "zero_shot"
+          },
+          "seed": 1986
+        },
+        {
+          "id": "fine_grained_control_official",
+          "text": "You are a helpful assistant.<|endofprompt|>[breath]因为他们那一辈人[breath]在乡里面住的要习惯一点，[breath]邻居都很活络，[breath]嗯，都很熟悉。[breath]",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "cross_lingual"
+          },
+          "seed": 1986
+        },
+        {
+          "id": "instruct_cantonese_official",
+          "text": "好少咯，一般系放嗰啲国庆啊，中秋嗰啲可能会咯。",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "instruct",
+            "instruction": "You are a helpful assistant. 请用广东话表达。<|endofprompt|>"
+          },
+          "seed": 1986
+        },
+        {
+          "id": "hotfix_pronunciation_official",
+          "text": "高管也通过电话、短信、微信等方式对报道[j][ǐ]予好评。",
+          "reference_text": "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "zero_shot"
+          },
+          "seed": 1986
+        }
+      ]
+    },
+    {
+      "id": "breeze_tts_clone_official_paths",
+      "coverage": "BreezeTTS 2 official voice clone and voice direction paths using prompt audio, prompt transcript, T5Gemma text conditioning, Qwen acoustic generation, depth codebook decoding, and Mimi decode",
+      "family": "breeze_tts",
+      "model": "models/audio.cpp-gguf/Breeze-TTS-2-GGUF/breeze-tts-2-orig.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "voice_clone_en_official",
+          "text": "(sigh) It is good to hear your voice again after all this time.",
+          "reference_text": "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you.",
+          "voice_ref": "assets/resources/b.wav",
+          "guidance_scale": 1.0,
+          "seed": 42
+        },
+        {
+          "id": "voice_direction_en_official",
+          "text": "(clears throat) We need to discuss what happened last night.",
+          "reference_text": "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you.",
+          "voice_ref": "assets/resources/b.wav",
+          "options": {
+            "instruction": "Speak slowly with a restrained, serious tone."
+          },
+          "guidance_scale": 4.0,
+          "seed": 45
+        }
+      ]
+    },
+    {
+      "id": "breeze_tts_design_official_paths",
+      "coverage": "BreezeTTS 2 official English and Chinese voice design paths using instruction conditioning, T5Gemma text conditioning, Qwen acoustic generation, depth codebook decoding, and Mimi decode",
+      "family": "breeze_tts",
+      "model": "models/audio.cpp-gguf/Breeze-TTS-2-GGUF/breeze-tts-2-orig.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "voice_design_en_official",
+          "text": "(sigh) Welcome aboard. Your journey begins now.",
+          "options": {
+            "instruction": "A warm, thoughtful young woman with a clear voice and a calm, reflective delivery."
+          },
+          "guidance_scale": 4.0,
+          "seed": 43
+        },
+        {
+          "id": "voice_design_zh_official",
+          "text": "[笑] 欢迎来到今晚的故事时间，让我们一起开始吧。",
+          "options": {
+            "instruction": "一位温柔自信的年轻女性，声音清晰，语气亲切，表达轻快而富有感染力。"
+          },
+          "guidance_scale": 4.0,
+          "seed": 44
+        }
+      ]
     }
   ],
   "audit_gaps": [
