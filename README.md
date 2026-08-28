@@ -8,6 +8,8 @@ Tired of juggling a dozen Conda environments, hundreds of Python packages, and d
 
 > [!IMPORTANT]
 >
+> **2026-08-28 - Dev testing:** Fun-CozyVoice3 and BreezeTTS 2 are available for testing on the `dev` branch.
+>
 > **2026-08-26 - Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
 >
 > **CUDA performance headline:** multiple TTS paths already run **1.8x to up to 8x faster than their Python reference paths** while cutting end-to-end latency by **45%-85%**.
