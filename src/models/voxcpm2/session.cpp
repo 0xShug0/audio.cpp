@@ -278,10 +278,12 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
   double generator_ms = 0.0;
   double decoder_ms = 0.0;
   runtime::AudioBuffer merged_audio;
+  std::optional<VoxCPM2EncodedPrompt> continuation_prompt;
+  const VoxCPM2EncodedPrompt *active_prompt = prompt;
   for (const auto & chunk_request : chunk_requests) {
     const auto generator_start = Clock::now();
     const auto generated = generator_->generate(
-        chunk_request.text_input->text, prompt, generation_options);
+        chunk_request.text_input->text, active_prompt, generation_options);
     generator_ms += engine::debug::elapsed_ms(generator_start, Clock::now());
 
     const auto decoder_start = Clock::now();
@@ -301,6 +303,19 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
     }
     decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
     runtime::append_audio_buffer(merged_audio, audio);
+
+    if (chunk_requests.size() > 1 && generated.generated_patches > 0) {
+      VoxCPM2EncodedPrompt next_prompt;
+      if (prompt != nullptr) {
+        next_prompt.reference_features = prompt->reference_features;
+        next_prompt.reference_patches = prompt->reference_patches;
+      }
+      next_prompt.prompt_text = chunk_request.text_input->text;
+      next_prompt.prompt_features = generated.generated_features;
+      next_prompt.prompt_patches = generated.generated_patches;
+      continuation_prompt = std::move(next_prompt);
+      active_prompt = &*continuation_prompt;
+    }
   }
   result.audio_output = std::move(merged_audio);
 
