@@ -36,7 +36,7 @@ runtime::ModelCliInterface cli(const VoxCPM2Assets &) {
   };
   out.session_options = {
       {"voxcpm2.mem_saver", "true|false",
-       "Use tighter graph workspaces and release request runtime graphs; default false."},
+       "Use tighter graph workspaces and release request runtime graphs; default true."},
       {"voxcpm2.prompt_cache_slots", "n",
        "Prompt and prompt-audio embedding cache slots; default 1."},
   };
