@@ -14,7 +14,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/io/json.h"
-#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 
 #include <cmath>
 #include <cstdint>
@@ -73,20 +73,24 @@ int main(int argc, char ** argv) {
         backend_config.threads = std::stoi(arg_value(argc, argv, "--threads", "8"));
         engine::core::ExecutionContext execution_context(backend_config);
 
-        const engine::models::moss::MossAudioTokenizerDecoder codec(
-            *assets->audio_tokenizer_weights,
+        engine::codecs::MossAudioTokenizerCodecRuntime codec(
+            assets->audio_tokenizer_weights,
             execution_context,
             kCodebooks,
-            4096ull * 1024ull * 1024ull,
-            2048ull * 1024ull * 1024ull,
-            engine::models::moss::moss_audio_tokenizer_v1_config());
+            engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
+                4096ull * 1024ull * 1024ull,
+                2048ull * 1024ull * 1024ull,
+                2048ull * 1024ull * 1024ull,
+                false,
+            },
+            engine::codecs::moss_audio_tokenizer_v1_config());
 
-        const auto channels = codec.decode(code_matrix());
-        if (channels.size() != 1) {
-            std::cerr << "FAIL: v1 is mono but the decoder returned " << channels.size() << " channels\n";
+        const auto decoded = codec.decode(engine::codecs::MossAudioTokenizerCodes{kFrames, code_matrix()});
+        if (decoded.channels.size() != 1) {
+            std::cerr << "FAIL: v1 is mono but the decoder returned " << decoded.channels.size() << " channels\n";
             return 1;
         }
-        const auto & audio = channels.front();
+        const auto & audio = decoded.channels.front();
 
         double peak = 0.0;
         double energy = 0.0;

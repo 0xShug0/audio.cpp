@@ -15,6 +15,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/modules/multi_codebook_embedding.h"
 #include "engine/models/moss/shared/token_rows.h"
 
 #include <algorithm>
@@ -138,13 +139,13 @@ int main(int argc, char ** argv) {
         // handed in as a per-position bias. The shared helper skips pad codes, which is
         // exact for this checkpoint: every emb_ext table's pad row (index audio_vocab_size)
         // is all zeros, so adding it the way the reference does changes nothing.
-        engine::models::moss::AudioCodebookSpec codebook_spec;
+        engine::modules::MultiCodebookEmbeddingSpec codebook_spec;
         codebook_spec.hidden_size = hidden_size;
         codebook_spec.num_codebooks = config.num_codebooks;
-        codebook_spec.audio_vocab_size = config.audio_vocab_size + 1;
-        codebook_spec.audio_pad_token_id = config.audio_pad_code;
+        codebook_spec.vocab_size = config.audio_vocab_size + 1;
+        codebook_spec.pad_token_id = config.audio_pad_code;
         codebook_spec.tensor_prefix = "emb_ext";
-        const engine::models::moss::AudioCodebookEmbeddings codebooks(*assets->model_weights, codebook_spec);
+        const engine::modules::MultiCodebookEmbedding codebooks(*assets->model_weights, codebook_spec);
 
         std::vector<float> audio_bias(static_cast<size_t>(steps * hidden_size), 0.0F);
         for (int64_t row = 0; row < steps; ++row) {

@@ -5,7 +5,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 
 #include <algorithm>
 #include <cmath>
@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -101,11 +102,21 @@ int main(int argc, char ** argv) {
 
         std::cout << "codec=" << codec_dir.string() << "\n";
         std::cout << "loading decoder weights...\n" << std::flush;
-        engine::models::moss::MossAudioTokenizerDecoder decoder(
-            codec_dir, execution_context, num_quantizers, kWeightContextBytes, kGraphArenaBytes);
+        auto codec_weights = engine::assets::open_tensor_source(codec_dir);
+        engine::codecs::MossAudioTokenizerCodecRuntime decoder(
+            codec_weights,
+            execution_context,
+            num_quantizers,
+            engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
+                kWeightContextBytes,
+                kGraphArenaBytes,
+                kGraphArenaBytes,
+                false,
+            });
 
         std::cout << "decoding " << frames << " frames...\n" << std::flush;
-        const auto stereo = decoder.decode(codes);
+        const auto decoded = decoder.decode(engine::codecs::MossAudioTokenizerCodes{frames, std::move(codes)});
+        const auto & stereo = decoded.channels;
 
         std::cout << "\n=== RESULT ===\n";
         std::cout << "channels=" << stereo.size() << " samples_per_channel=" << stereo.front().size() << "\n";

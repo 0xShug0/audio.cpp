@@ -35,7 +35,7 @@ public:
         const std::optional<std::string> & language = std::nullopt) const;
 
     // Builds a voice-clone prompt. reference_codes is [num_codebooks][frames] as produced
-    // by MossAudioTokenizerEncoder for the reference speaker.
+    // by the MOSS audio tokenizer codec runtime for the reference speaker.
     MossGenerationPrefix build_clone_prefix(
         const std::string & text,
         const std::vector<std::vector<int32_t>> & reference_codes,

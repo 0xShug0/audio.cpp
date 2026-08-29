@@ -12,7 +12,8 @@
 #include "engine/framework/audio/wav_writer.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
+#include "engine/framework/modules/multi_codebook_embedding.h"
 #include "engine/models/moss/shared/token_rows.h"
 
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -86,13 +88,13 @@ int main(int argc, char ** argv) {
         std::cout << "prompt rows=" << prompt_rows << " frame bounds=[" << min_frames << ", "
                   << max_frames << "] max steps=" << max_steps << "\n";
 
-        engine::models::moss::AudioCodebookSpec codebook_spec;
+        engine::modules::MultiCodebookEmbeddingSpec codebook_spec;
         codebook_spec.hidden_size = hidden_size;
         codebook_spec.num_codebooks = n_vq;
-        codebook_spec.audio_vocab_size = config.audio_vocab_size + 1;
-        codebook_spec.audio_pad_token_id = config.audio_pad_code;
+        codebook_spec.vocab_size = config.audio_vocab_size + 1;
+        codebook_spec.pad_token_id = config.audio_pad_code;
         codebook_spec.tensor_prefix = "emb_ext";
-        const engine::models::moss::AudioCodebookEmbeddings codebooks(*assets->model_weights, codebook_spec);
+        const engine::modules::MultiCodebookEmbedding codebooks(*assets->model_weights, codebook_spec);
 
         std::vector<float> prompt_bias(static_cast<size_t>(prompt_rows * hidden_size), 0.0F);
         for (int64_t row = 0; row < prompt_rows; ++row) {
@@ -191,18 +193,25 @@ int main(int argc, char ** argv) {
         }
 
         const auto decode_start = std::chrono::steady_clock::now();
-        const engine::models::moss::MossAudioTokenizerDecoder codec(
-            *assets->audio_tokenizer_weights,
+        engine::codecs::MossAudioTokenizerCodecRuntime codec(
+            assets->audio_tokenizer_weights,
             execution_context,
             codebooks_out,
-            4096ull * 1024ull * 1024ull,
-            2048ull * 1024ull * 1024ull,
-            engine::models::moss::moss_audio_tokenizer_v1_config());
-        const auto channels = codec.decode(codes);
+            engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
+                4096ull * 1024ull * 1024ull,
+                2048ull * 1024ull * 1024ull,
+                2048ull * 1024ull * 1024ull,
+                false,
+            },
+            engine::codecs::moss_audio_tokenizer_v1_config());
+        const auto decoded = codec.decode(engine::codecs::MossAudioTokenizerCodes{
+            codes.empty() ? 0 : static_cast<int64_t>(codes.front().size()),
+            std::move(codes),
+        });
         const double decode_seconds =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - decode_start).count();
 
-        const auto & waveform = channels.at(0);
+        const auto & waveform = decoded.channels.at(0);
         double peak = 0.0;
         double energy = 0.0;
         for (const float sample : waveform) {

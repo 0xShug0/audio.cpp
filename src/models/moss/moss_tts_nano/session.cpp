@@ -4,7 +4,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
-#include "engine/models/moss/shared/audio_tokenizer_config.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 
 #include <algorithm>
 #include <chrono>
@@ -205,19 +205,24 @@ MossTTSNanoSession::MossTTSNanoSession(
           local_frame_weight_context_bytes_,
           local_frame_weight_storage_type_),
       generator_(global_transformer_, local_frame_decoder_),
-      decoder_(
-          *assets_->audio_tokenizer_weights,
+      codec_(
+          assets_->audio_tokenizer_weights,
           execution_context(),
           assets_->config.n_vq,
-          audio_tokenizer_weight_context_bytes_,
-          audio_tokenizer_decoder_graph_arena_bytes_,
-          moss::moss_audio_tokenizer_nano_config()) {
+          engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
+              audio_tokenizer_weight_context_bytes_,
+              audio_tokenizer_encoder_graph_arena_bytes_,
+              audio_tokenizer_decoder_graph_arena_bytes_,
+              true,
+          },
+          engine::codecs::moss_audio_tokenizer_nano_config()) {
     if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("MOSS-TTS-Nano only supports the Tts and VoiceCloning tasks");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("MOSS-TTS-Nano currently supports offline sessions");
     }
+    codec_.prepare_decoder();
     for (const auto & [key, value] : options.options) {
         (void) value;
         if (key.rfind("moss_tts_nano.", 0) == 0 &&
@@ -267,29 +272,19 @@ void MossTTSNanoSession::prepare(const runtime::SessionPreparationRequest & requ
     mark_prepared();
 }
 
-moss::MossAudioTokenizerEncoder & MossTTSNanoSession::encoder() {
-    if (encoder_ == nullptr) {
-        reference_encoder_execution_context_ = std::make_unique<core::ExecutionContext>(options().backend);
-        encoder_ = std::make_unique<moss::MossAudioTokenizerEncoder>(
-            *assets_->audio_tokenizer_weights,
-            *reference_encoder_execution_context_,
-            assets_->config.n_vq,
-            audio_tokenizer_weight_context_bytes_,
-            audio_tokenizer_encoder_graph_arena_bytes_,
-            moss::moss_audio_tokenizer_nano_config());
-    }
-    return *encoder_;
-}
-
 MossTTSNanoAudioCodes MossTTSNanoSession::encode_reference_audio(
     const runtime::AudioBuffer & audio,
     int64_t active_codebooks) {
-    const auto stereo = reference_to_audio_tokenizer_stereo(audio);
-    const auto codes = encoder().encode(stereo);
+    auto stereo = reference_to_audio_tokenizer_stereo(audio);
+    const auto encoded = codec_.encode(engine::codecs::MossAudioTokenizerAudio{
+        codec_.sampling_rate(),
+        std::move(stereo),
+    });
+    const auto & codes = encoded.codebooks;
     if (static_cast<int64_t>(codes.size()) < active_codebooks) {
         throw std::runtime_error("MOSS-TTS-Nano reference encoder returned too few codebooks");
     }
-    const int64_t frames = codes.empty() ? 0 : static_cast<int64_t>(codes.front().size());
+    const int64_t frames = encoded.frames;
     if (frames <= 0) {
         throw std::runtime_error("MOSS-TTS-Nano reference encoder returned no frames");
     }
@@ -327,14 +322,18 @@ runtime::AudioBuffer MossTTSNanoSession::decode_generated_audio(
                 codes.token_ids[static_cast<size_t>(frame * codes.codebooks + codebook)];
         }
     }
-    const auto channels = decoder_.decode(tokenizer_codes);
+    const auto decoded = codec_.decode(engine::codecs::MossAudioTokenizerCodes{
+        codes.frames,
+        std::move(tokenizer_codes),
+    });
+    const auto & channels = decoded.channels;
     const int channel_count = static_cast<int>(channels.size());
     const size_t samples_per_channel = channels.empty() ? 0 : channels.front().size();
     if (channel_count <= 0 || samples_per_channel == 0) {
         throw std::runtime_error("MOSS-TTS-Nano audio tokenizer decoder produced no audio");
     }
     runtime::AudioBuffer audio;
-    audio.sample_rate = static_cast<int>(decoder_.sampling_rate());
+    audio.sample_rate = static_cast<int>(decoded.sampling_rate);
     audio.channels = channel_count;
     audio.samples.resize(samples_per_channel * static_cast<size_t>(channel_count));
     const int64_t sample_count = static_cast<int64_t>(samples_per_channel);

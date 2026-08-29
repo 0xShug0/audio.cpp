@@ -195,13 +195,13 @@ MossGenerator::MossGenerator(
         throw std::runtime_error("MOSS-TTS-Local generator only supports the binary local text head");
     }
     const auto & source = *assets_->model_weights;
-    moss::AudioCodebookSpec codebooks;
+    engine::modules::MultiCodebookEmbeddingSpec codebooks;
     codebooks.hidden_size = hidden_size_;
     codebooks.num_codebooks = num_codebooks_;
-    codebooks.audio_vocab_size = config.audio_vocab_size;
-    codebooks.audio_codebook_sizes = config.audio_codebook_sizes;
-    codebooks.audio_pad_token_id = config.audio_pad_token_id;
-    audio_codebooks_ = std::make_unique<moss::AudioCodebookEmbeddings>(source, std::move(codebooks));
+    codebooks.vocab_size = config.audio_vocab_size;
+    codebooks.codebook_sizes = config.audio_codebook_sizes;
+    codebooks.pad_token_id = config.audio_pad_token_id;
+    audio_codebooks_ = std::make_unique<engine::modules::MultiCodebookEmbedding>(source, std::move(codebooks));
     local_text_head_ = source.require_f32("local_text_lm_head.weight", {2, hidden_size_});
     projection_ = std::make_unique<ProjectionRuntime>(
         *assets_,
