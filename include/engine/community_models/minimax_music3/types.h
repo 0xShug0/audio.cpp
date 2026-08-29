@@ -85,6 +85,33 @@ struct MiniMaxMusic3Request {
     float ar_guidance_scale = 1.5F;
     int64_t top_k = 50;
     uint64_t seed = 0;
+    // Flow CFG guidance-delta reuse: when interval > 1 the unconditional
+    // branch is evaluated only on warmup steps, every interval-th step and
+    // the final step; other steps reuse the cached (cond - uncond) delta.
+    // The default of 2 is the listening-accepted recipe (mel-L1 ~0.4 dB to
+    // the exact reference at -15..-21% wall); set 1 for the exact-reference
+    // trajectory.
+    int64_t flow_uncond_interval = 1;
+    int64_t flow_uncond_warmup = 2;
+    // Number of independent takes decoded together in one batched AR pass
+    // (per-take seeds seed, seed+1, ...). The global LM and depth decoder are
+    // bandwidth-bound, so K takes cost far less than K runs; flow/vocoder run
+    // per take. 1 keeps the plain single-song path.
+    int64_t ensemble_takes = 1;
+    // Intro-lock fork: the first N frames are decoded once at batch 2 (one
+    // master trajectory shared by every take), then the batched decode KV is
+    // replicated to 2K rows and the takes diverge with their own seeds. Take
+    // 0 continues the master trajectory exactly. 0 disables the fork.
+    int64_t ensemble_prefix_frames = 0;
+    // Flow chunk hop in AR frames (0 = the model config's 100). A larger hop
+    // means fewer chunks and less double-denoising: hop 150 cuts flow ~-28%.
+    // Crops and the carry window are rederived from the hop so the seams stay
+    // consistent: kept = latents(hop), overlap = (chunk - kept)/2, left crop
+    // = overlap/2 (hop 100 reproduces the historical 86/258/172 exactly).
+    int64_t flow_chunk_hop_frames = 0;
+    // Derived internally by the pipeline from the hop; 0 keeps the config's
+    // overlap_latent_length. Not a user knob.
+    int64_t flow_overlap_latent_length = 0;
 };
 
 }  // namespace engine::models::minimax_music3

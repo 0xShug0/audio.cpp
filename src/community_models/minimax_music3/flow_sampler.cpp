@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -145,7 +147,14 @@ public:
         frames_ = frames;
         channels_ = channels;
         overlap_ = overlap;
+        delta_cache_.clear();
         flow_.prepare_chunk_condition(condition, frames);
+    }
+
+    void set_guidance_reuse(int64_t uncond_interval, int64_t uncond_warmup) {
+        uncond_interval_ = uncond_interval;
+        uncond_warmup_ = uncond_warmup;
+        delta_cache_.clear();
     }
 
     void reset_sampler_caches(const std::vector<modules::FlowSamplerCacheState> & caches) override {
@@ -188,16 +197,46 @@ public:
         if (overlap_ > 0) {
             apply_overlap_prompt(denoiser_latent, input.state.schedule.t);
         }
+        const size_t branch_size = static_cast<size_t>(channels_ * frames_);
+        const int64_t step = input.state.schedule.index;
+        const bool reuse_delta =
+            uncond_interval_ > 1 &&
+            delta_cache_.size() == branch_size &&
+            step >= uncond_warmup_ &&
+            step + 1 < active_schedule_steps_ &&
+            (step % uncond_interval_) != 0;
+        modules::FlowSamplerDenoiserOutput output;
+        if (reuse_delta) {
+            auto cond = flow_.predict_velocity_cond(
+                denoiser_latent,
+                *condition_,
+                frames_,
+                input.state.schedule.t);
+            if (cond.size() != branch_size) {
+                throw std::runtime_error("MiniMax Music 3 flow cond velocity shape mismatch");
+            }
+            std::vector<float> uncond(branch_size);
+            for (size_t i = 0; i < branch_size; ++i) {
+                uncond[i] = cond[i] - delta_cache_[i];
+            }
+            output.predictions.push_back({"cond", std::move(cond)});
+            output.predictions.push_back({"uncond", std::move(uncond)});
+            return output;
+        }
         const auto branches = flow_.predict_velocity_branches(
             denoiser_latent,
             *condition_,
             frames_,
             input.state.schedule.t);
-        const size_t branch_size = static_cast<size_t>(channels_ * frames_);
         if (branches.size() != 2 * branch_size) {
             throw std::runtime_error("MiniMax Music 3 flow velocity shape mismatch");
         }
-        modules::FlowSamplerDenoiserOutput output;
+        if (uncond_interval_ > 1) {
+            delta_cache_.resize(branch_size);
+            for (size_t i = 0; i < branch_size; ++i) {
+                delta_cache_[i] = branches[i] - branches[branch_size + i];
+            }
+        }
         output.predictions.push_back({
             "cond",
             std::vector<float>(branches.begin(), branches.begin() + static_cast<std::ptrdiff_t>(branch_size)),
@@ -233,10 +272,13 @@ private:
     const std::vector<float> * condition_ = nullptr;
     const std::vector<float> * previous_latent_ = nullptr;
     std::vector<float> noise_prompt_;
+    std::vector<float> delta_cache_;
     int64_t frames_ = 0;
     int64_t channels_ = 0;
     int64_t overlap_ = 0;
     int64_t active_schedule_steps_ = 0;
+    int64_t uncond_interval_ = 1;
+    int64_t uncond_warmup_ = 2;
 };
 
 class MiniMaxMusic3FlowUpdateRuntime final : public modules::FlowSamplerUpdateRuntime {
@@ -299,26 +341,35 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        bool input_evict_cuda_graph_cache_on_release)
         : assets(std::move(input_assets)),
+          evict_cuda_graph_cache_on_release(input_evict_cuda_graph_cache_on_release),
           flow(std::make_unique<MiniMaxMusic3FlowTransformerRuntime>(
               assets,
               execution,
               graph_arena_bytes,
               weight_context_bytes,
-              storage_type)) {
+              storage_type,
+              evict_cuda_graph_cache_on_release)) {
         if (assets == nullptr) {
             throw std::runtime_error("MiniMax Music 3 flow sampler requires assets");
         }
     }
 
-    void ensure_sampler(int64_t latent_values, int64_t steps, float guidance_scale) {
+    void ensure_sampler(
+        int64_t latent_values,
+        int64_t steps,
+        float guidance_scale,
+        int64_t uncond_interval,
+        int64_t uncond_warmup) {
         if (sampler != nullptr &&
             denoiser != nullptr &&
             updater != nullptr &&
             sampler_latent_values == latent_values &&
             sampler_steps == steps &&
             sampler_guidance_scale == guidance_scale) {
+            denoiser->set_guidance_reuse(uncond_interval, uncond_warmup);
             return;
         }
         auto new_denoiser = std::make_unique<MiniMaxMusic3FlowDenoiserRuntime>(*flow);
@@ -344,6 +395,7 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
         sampler_latent_values = latent_values;
         sampler_steps = steps;
         sampler_guidance_scale = guidance_scale;
+        denoiser->set_guidance_reuse(uncond_interval, uncond_warmup);
     }
 
     std::vector<float> denoise_chunk(
@@ -375,7 +427,9 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
         ensure_sampler(
             config.flow.in_channels * frames,
             request.num_inference_steps,
-            request.guidance_scale);
+            request.guidance_scale,
+            request.flow_uncond_interval,
+            request.flow_uncond_warmup);
         denoiser->set_chunk_inputs(
             chunk_condition,
             frames,
@@ -395,8 +449,11 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
         if (overlap > 0) {
             copy_latent_prefix(latents, previous_latent, overlap, frames, config.flow.in_channels);
         }
-        const int64_t overlap_start = std::max<int64_t>(0, frames - 2 * config.overlap_latent_length);
-        const int64_t overlap_end = std::max(overlap_start, frames - config.overlap_latent_length);
+        const int64_t overlap_latent = request.flow_overlap_latent_length > 0
+            ? request.flow_overlap_latent_length
+            : config.overlap_latent_length;
+        const int64_t overlap_start = std::max<int64_t>(0, frames - 2 * overlap_latent);
+        const int64_t overlap_end = std::max(overlap_start, frames - overlap_latent);
         carry_latent = latent_tail_window(latents, frames, config.flow.in_channels, overlap_start, overlap_end);
         carry_condition = condition_tail_window(chunk_condition, frames, config.flow.condition_dim, overlap_start, overlap_end);
         return latents;
@@ -411,6 +468,7 @@ struct MiniMaxMusic3FlowSamplerRuntime::Impl {
     }
 
     std::shared_ptr<const MiniMaxMusic3Assets> assets;
+    bool evict_cuda_graph_cache_on_release = false;
     std::unique_ptr<MiniMaxMusic3FlowTransformerRuntime> flow;
     MiniMaxMusic3FlowDenoiserRuntime * denoiser = nullptr;
     MiniMaxMusic3FlowUpdateRuntime * updater = nullptr;
@@ -425,13 +483,15 @@ MiniMaxMusic3FlowSamplerRuntime::MiniMaxMusic3FlowSamplerRuntime(
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type)
+    assets::TensorStorageType storage_type,
+    bool evict_cuda_graph_cache_on_release)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           graph_arena_bytes,
           weight_context_bytes,
-          storage_type)) {}
+          storage_type,
+          evict_cuda_graph_cache_on_release)) {}
 
 MiniMaxMusic3FlowSamplerRuntime::~MiniMaxMusic3FlowSamplerRuntime() = default;
 

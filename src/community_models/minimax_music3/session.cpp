@@ -140,15 +140,21 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"ar_guidance_scale", "float", "Autoregressive semantic and depth CFG scale.", false, "1.5", "0.0"},
         {"top_k", "int", "Top-k sampling for semantic and residual code sampling.", false, "50", "1"},
         {"seed", "int", "Generation seed.", false, "0", "0"},
+        {"flow_uncond_interval", "int", "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between (measured flow -25..-40% at mel-L1 ~0.3 dB for 2-3). Default 1 keeps the exact reference trajectory.", false, "1", "1"},
+        {"flow_uncond_warmup", "int", "Number of initial flow steps that always evaluate both CFG branches when delta reuse is enabled.", false, "2", "0"},
+        {"ensemble_takes", "int", "Decode N independent takes of the same prompt in one batched AR pass (seeds seed..seed+N-1); flow and vocoder run per take. Outputs are returned as named audio (take_01..take_NN) for --out-dir.", false, "1", "1"},
+        {"ensemble_prefix_frames", "int", "Intro-lock for ensembles: decode the first N frames once as a shared master trajectory (~25 frames per second), then fork the takes (take_01 continues the master exactly). 0 disables.", false, "0", "0"},
+        {"flow_chunk_hop_frames", "int", "Flow chunk hop in AR frames (~25/sec). Default 0 keeps the model config (100, 50% chunk overlap). 150 measures flow ~-35% with consistently rederived crops/carry.", false, "0", "0"},
     };
     out.session_options = {
         {"minimax_music3.weight_type", "native|bf16|f16|q8_0|q4_0|q4_k", "Shared weight storage type.", false, "native"},
         {"minimax_music3.language_model_gguf", "string", "Language model component GGUF file relative to the model root.", false, "language_model_q4_0.gguf"},
-        {"minimax_music3.rvq_depth_decoder_gguf", "string", "RVQ depth decoder component GGUF file relative to the model root.", false, "rvq_depth_decoder_q8_0.gguf"},
+        {"minimax_music3.rvq_depth_decoder_gguf", "string", "RVQ depth decoder component GGUF file relative to the model root. q4_k measures ~-24% depth-stage time at instrument-panel-clean quality.", false, "rvq_depth_decoder_q8_0.gguf"},
         {"minimax_music3.flow_transformer_gguf", "string", "Flow transformer component GGUF file relative to the model root.", false, "transformer_q4_0.gguf"},
         {"minimax_music3.graph_context_mb", "int", "Runtime graph arena size in MiB.", false, "32", "1"},
         {"minimax_music3.weight_context_mb", "int", "Weight context size in MiB.", false, "32", "1"},
         {"minimax_music3.mem_saver", "bool", "Load large generation stages only while they are needed to reduce peak VRAM.", false, "true"},
+        {"minimax_music3.pipeline_overlap", "bool", "Overlap AR decoding with per-chunk condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; output is validated to stay identical to the sequential pipeline (automatic sequential fallback otherwise).", false, "false"},
     };
     return out;
 }
@@ -200,13 +206,18 @@ MiniMaxMusic3Session::MiniMaxMusic3Session(
     if (const auto value = runtime::find_option(this->options().options, {"minimax_music3.mem_saver"})) {
         memory_saver = runtime::parse_bool_option(*value, "minimax_music3.mem_saver");
     }
+    bool pipeline_overlap = false;
+    if (const auto value = runtime::find_option(this->options().options, {"minimax_music3.pipeline_overlap"})) {
+        pipeline_overlap = runtime::parse_bool_option(*value, "minimax_music3.pipeline_overlap");
+    }
     pipeline_ = std::make_unique<MiniMaxMusic3PipelineRuntime>(
         execution_context(),
         assets_,
         graph_arena_bytes,
         weight_context_bytes,
         weight_type,
-        memory_saver);
+        memory_saver,
+        pipeline_overlap);
 }
 
 MiniMaxMusic3Session::~MiniMaxMusic3Session() = default;
@@ -258,6 +269,30 @@ MiniMaxMusic3Request MiniMaxMusic3Session::parse_request(const runtime::TaskRequ
     if (const auto value = runtime::parse_u64_option(request.options, {"seed"})) {
         out.seed = *value;
     }
+    if (const auto value = runtime::parse_i64_option(request.options, {"flow_uncond_interval"})) {
+        out.flow_uncond_interval = *value;
+    }
+    if (const auto value = runtime::parse_i64_option(request.options, {"flow_uncond_warmup"})) {
+        out.flow_uncond_warmup = *value;
+    }
+    if (const auto value = runtime::parse_i64_option(request.options, {"ensemble_takes"})) {
+        out.ensemble_takes = *value;
+    }
+    if (out.ensemble_takes < 1 || out.ensemble_takes > 16) {
+        throw std::runtime_error("MiniMax Music 3 ensemble_takes must be in [1, 16]");
+    }
+    if (const auto value = runtime::parse_i64_option(request.options, {"ensemble_prefix_frames"})) {
+        out.ensemble_prefix_frames = *value;
+    }
+    if (out.ensemble_prefix_frames < 0) {
+        throw std::runtime_error("MiniMax Music 3 ensemble_prefix_frames must be non-negative");
+    }
+    if (const auto value = runtime::parse_i64_option(request.options, {"flow_chunk_hop_frames"})) {
+        out.flow_chunk_hop_frames = *value;
+    }
+    if (out.flow_chunk_hop_frames < 0) {
+        throw std::runtime_error("MiniMax Music 3 flow_chunk_hop_frames must be non-negative");
+    }
     return out;
 }
 
@@ -266,7 +301,25 @@ runtime::TaskResult MiniMaxMusic3Session::run(const runtime::TaskRequest & reque
     const auto parsed = parse_request(request);
     const auto start = Clock::now();
     runtime::TaskResult result;
-    result.audio_output = pipeline_->generate(parsed);
+    if (parsed.ensemble_takes > 1) {
+        std::vector<uint64_t> take_seeds(static_cast<size_t>(parsed.ensemble_takes));
+        for (size_t take = 0; take < take_seeds.size(); ++take) {
+            take_seeds[take] = parsed.seed + static_cast<uint64_t>(take);
+        }
+        auto takes = pipeline_->generate_ensemble(parsed, take_seeds);
+        result.audio_output = takes.front();
+        for (size_t take = 0; take < takes.size(); ++take) {
+            runtime::NamedAudioBuffer named;
+            char id[16];
+            std::snprintf(id, sizeof(id), "take_%02zu", take + 1);
+            named.id = id;
+            named.audio = std::move(takes[take]);
+            named.meta.emplace("seed", std::to_string(take_seeds[take]));
+            result.named_audio_outputs.push_back(std::move(named));
+        }
+    } else {
+        result.audio_output = pipeline_->generate(parsed);
+    }
     engine::debug::timing_log_scalar(
         "session.wall_ms",
         engine::debug::elapsed_ms(start, Clock::now()));

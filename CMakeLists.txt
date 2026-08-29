@@ -2363,6 +2363,35 @@ if (ENGINE_BUILD_TESTS)
         COMMAND gguf_tensor_source_test
     )
 
+    add_engine_unittest(minimax_music3_lm_head_test tests/unittests/test_minimax_music3_lm_head.cpp)
+    target_include_directories(minimax_music3_lm_head_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME minimax_music3_lm_head_test
+        COMMAND minimax_music3_lm_head_test
+    )
+
+    add_engine_unittest(
+        minimax_music3_pipeline_buffers_test
+        tests/unittests/test_minimax_music3_pipeline_buffers.cpp)
+    target_include_directories(
+        minimax_music3_pipeline_buffers_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME minimax_music3_pipeline_buffers_test
+        COMMAND minimax_music3_pipeline_buffers_test
+    )
+
+    add_engine_unittest(
+        minimax_music3_graph_release_policy_test
+        tests/unittests/test_minimax_music3_graph_release_policy.cpp)
+
+    add_test(
+        NAME minimax_music3_graph_release_policy_test
+        COMMAND minimax_music3_graph_release_policy_test
+    )
+
     add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
     target_include_directories(model_spec_system_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
 
