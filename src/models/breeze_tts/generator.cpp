@@ -405,6 +405,7 @@ public:
         for (int64_t codebook = 1; codebook < config.num_codebooks; ++codebook) {
             head_graphs_.push_back(build_head_graph(ctx, packed_heads, codebook));
         }
+        head_paired_staging_.assign(static_cast<size_t>(2 * vocab_), 0.0F);
         graph_buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
         if (graph_buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate BreezeTTS depth projection graphs");
@@ -422,8 +423,35 @@ public:
         }
     }
 
+    void project_single(const float * hidden, float * out) const {
+        run_graph_direct(projector_single_, hidden, hidden_, out, depth_hidden_);
+    }
+
     std::vector<float> project_single(const std::vector<float> & hidden) const {
-        return run_graph(projector_single_, hidden);
+        if (static_cast<int64_t>(hidden.size()) != hidden_) {
+            throw std::runtime_error("BreezeTTS depth projection input size mismatch");
+        }
+        std::vector<float> out(static_cast<size_t>(depth_hidden_));
+        project_single(hidden.data(), out.data());
+        return out;
+    }
+
+    void project_pair(
+        const float * cond_hidden,
+        const float * uncond_hidden,
+        float * out) const {
+        ggml_backend_tensor_set(projector_pair_.input, cond_hidden, 0, static_cast<size_t>(hidden_) * sizeof(float));
+        ggml_backend_tensor_set(
+            projector_pair_.input,
+            uncond_hidden,
+            static_cast<size_t>(hidden_) * sizeof(float),
+            static_cast<size_t>(hidden_) * sizeof(float));
+        core::set_backend_threads(backend_, threads_);
+        if (core::compute_backend_graph(backend_, projector_pair_.graph, nullptr, projector_pair_.label) != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("BreezeTTS depth projection graph compute failed");
+        }
+        ggml_backend_synchronize(backend_);
+        ggml_backend_tensor_get(projector_pair_.output, out, 0, static_cast<size_t>(2 * depth_hidden_) * sizeof(float));
     }
 
     std::vector<float> project_pair(
@@ -433,11 +461,38 @@ public:
             static_cast<int64_t>(uncond_hidden.size()) != hidden_) {
             throw std::runtime_error("BreezeTTS depth projector pair input size mismatch");
         }
-        std::vector<float> input;
-        input.reserve(static_cast<size_t>(2 * hidden_));
-        input.insert(input.end(), cond_hidden.begin(), cond_hidden.end());
-        input.insert(input.end(), uncond_hidden.begin(), uncond_hidden.end());
-        return run_graph(projector_pair_, input);
+        std::vector<float> out(static_cast<size_t>(2 * depth_hidden_));
+        project_pair(cond_hidden.data(), uncond_hidden.data(), out.data());
+        return out;
+    }
+
+    void logits_cfg(
+        const float * cond_hidden,
+        const float * uncond_hidden,
+        int64_t codebook,
+        float guidance_scale,
+        float * out) const {
+        if (codebook <= 0 || static_cast<size_t>(codebook) > head_graphs_.size()) {
+            throw std::runtime_error("BreezeTTS depth codebook index is invalid");
+        }
+        const auto & graph = head_graphs_[static_cast<size_t>(codebook - 1)];
+        ggml_backend_tensor_set(graph.input, cond_hidden, 0, static_cast<size_t>(depth_hidden_) * sizeof(float));
+        ggml_backend_tensor_set(
+            graph.input,
+            uncond_hidden,
+            static_cast<size_t>(depth_hidden_) * sizeof(float),
+            static_cast<size_t>(depth_hidden_) * sizeof(float));
+        core::set_backend_threads(backend_, threads_);
+        if (core::compute_backend_graph(backend_, graph.graph, nullptr, graph.label) != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("BreezeTTS depth projection graph compute failed");
+        }
+        ggml_backend_synchronize(backend_);
+        ggml_backend_tensor_get(graph.output, head_paired_staging_.data(), 0, head_paired_staging_.size() * sizeof(float));
+        const size_t vocab = static_cast<size_t>(vocab_);
+        for (int64_t token = 0; token < vocab_; ++token) {
+            const size_t index = static_cast<size_t>(token);
+            out[index] = head_paired_staging_[vocab + index] + guidance_scale * (head_paired_staging_[index] - head_paired_staging_[vocab + index]);
+        }
     }
 
     std::vector<float> logits_cfg(
@@ -445,24 +500,12 @@ public:
         const std::vector<float> & uncond_hidden,
         int64_t codebook,
         float guidance_scale) const {
-        if (codebook <= 0 || static_cast<size_t>(codebook) > head_graphs_.size()) {
-            throw std::runtime_error("BreezeTTS depth codebook index is invalid");
-        }
         if (static_cast<int64_t>(cond_hidden.size()) != depth_hidden_ ||
             static_cast<int64_t>(uncond_hidden.size()) != depth_hidden_) {
             throw std::runtime_error("BreezeTTS depth head input size mismatch");
         }
-        std::vector<float> input;
-        input.reserve(static_cast<size_t>(2 * depth_hidden_));
-        input.insert(input.end(), cond_hidden.begin(), cond_hidden.end());
-        input.insert(input.end(), uncond_hidden.begin(), uncond_hidden.end());
-        const auto paired = run_graph(head_graphs_[static_cast<size_t>(codebook - 1)], input);
         std::vector<float> out(static_cast<size_t>(vocab_));
-        const size_t vocab = static_cast<size_t>(vocab_);
-        for (int64_t token = 0; token < vocab_; ++token) {
-            const size_t index = static_cast<size_t>(token);
-            out[index] = paired[vocab + index] + guidance_scale * (paired[index] - paired[vocab + index]);
-        }
+        logits_cfg(cond_hidden.data(), uncond_hidden.data(), codebook, guidance_scale, out.data());
         return out;
     }
 
@@ -518,18 +561,30 @@ private:
         core::release_backend_graph_resources(backend_, graph.graph);
     }
 
-    std::vector<float> run_graph(const Graph & graph, const std::vector<float> & input) const {
-        if (static_cast<int64_t>(input.size()) != graph.input_size) {
+    void run_graph_direct(
+        const Graph & graph,
+        const float * input,
+        int64_t in_size,
+        float * output,
+        int64_t out_size) const {
+        if (in_size != graph.input_size || out_size != graph.output_size) {
             throw std::runtime_error("BreezeTTS depth projection input size mismatch");
         }
-        ggml_backend_tensor_set(graph.input, input.data(), 0, input.size() * sizeof(float));
+        ggml_backend_tensor_set(graph.input, input, 0, static_cast<size_t>(in_size) * sizeof(float));
         core::set_backend_threads(backend_, threads_);
         if (core::compute_backend_graph(backend_, graph.graph, nullptr, graph.label) != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("BreezeTTS depth projection graph compute failed");
         }
         ggml_backend_synchronize(backend_);
+        ggml_backend_tensor_get(graph.output, output, 0, static_cast<size_t>(out_size) * sizeof(float));
+    }
+
+    std::vector<float> run_graph(const Graph & graph, const std::vector<float> & input) const {
+        if (static_cast<int64_t>(input.size()) != graph.input_size) {
+            throw std::runtime_error("BreezeTTS depth projection input size mismatch");
+        }
         std::vector<float> output(static_cast<size_t>(graph.output_size));
-        ggml_backend_tensor_get(graph.output, output.data(), 0, output.size() * sizeof(float));
+        run_graph_direct(graph, input.data(), static_cast<int64_t>(input.size()), output.data(), graph.output_size);
         return output;
     }
 
@@ -543,6 +598,7 @@ private:
     Graph projector_single_;
     Graph projector_pair_;
     std::vector<Graph> head_graphs_;
+    mutable std::vector<float> head_paired_staging_;
 };
 
 }  // namespace
@@ -595,6 +651,14 @@ struct BreezeGeneratorRuntime::Impl {
             weight_context_bytes,
             storage_type,
             storage_type);
+        depth_first_embed_staging_.assign(static_cast<size_t>(config.depth_hidden_size), 0.0F);
+        depth_projected_pair_staging_.assign(static_cast<size_t>(2 * config.depth_hidden_size), 0.0F);
+        depth_prefill_staging_.assign(static_cast<size_t>(4 * config.depth_hidden_size), 0.0F);
+        depth_next_embed_staging_.assign(static_cast<size_t>(config.depth_hidden_size), 0.0F);
+        depth_next_pair_staging_.assign(static_cast<size_t>(2 * config.depth_hidden_size), 0.0F);
+        depth_logits_staging_.assign(static_cast<size_t>(config.vocab_size), 0.0F);
+        depth_cond_hidden_now_.assign(static_cast<size_t>(config.depth_hidden_size), 0.0F);
+        depth_uncond_hidden_now_.assign(static_cast<size_t>(config.depth_hidden_size), 0.0F);
     }
 
     std::vector<float> merge_prompt(const BreezePromptBranch & branch, const std::vector<int32_t> & reference_codes) {
@@ -674,44 +738,49 @@ struct BreezeGeneratorRuntime::Impl {
         frame.reserve(static_cast<size_t>(config.num_codebooks));
         frame.push_back(first_token);
 
-        const auto project_audio_embedding_row = [&](int64_t row) {
+        const size_t depth_hidden_size = static_cast<size_t>(config.depth_hidden_size);
+        const size_t depth_hidden_bytes = depth_hidden_size * sizeof(float);
+
+        const auto project_audio_embedding_row = [&](int64_t row, float * out) {
             const int64_t rows = config.num_codebooks * config.vocab_size;
             if (row < 0 || row >= rows) {
                 throw std::runtime_error("BreezeTTS embedding row is outside table");
             }
             const size_t begin = static_cast<size_t>(row * config.hidden_size);
-            std::vector<float> embedding(
-                weights->audio_embedding.begin() + static_cast<std::ptrdiff_t>(begin),
-                weights->audio_embedding.begin() + static_cast<std::ptrdiff_t>(begin + static_cast<size_t>(config.hidden_size)));
-            return depth_projection->project_single(embedding);
+            depth_projection->project_single(
+                weights->audio_embedding.data() + begin,
+                out);
         };
 
-        const auto first_embed = project_audio_embedding_row(first_token);
-        const auto projected = depth_projection->project_pair(cond_hidden, uncond_hidden);
-        const auto split = projected.begin() + static_cast<std::ptrdiff_t>(config.depth_hidden_size);
-        std::vector<float> cond_prefill;
-        cond_prefill.reserve(static_cast<size_t>(2 * config.depth_hidden_size));
-        cond_prefill.insert(cond_prefill.end(), projected.begin(), split);
-        cond_prefill.insert(cond_prefill.end(), first_embed.begin(), first_embed.end());
-        std::vector<float> uncond_prefill;
-        uncond_prefill.reserve(static_cast<size_t>(2 * config.depth_hidden_size));
-        uncond_prefill.insert(uncond_prefill.end(), split, projected.end());
-        uncond_prefill.insert(uncond_prefill.end(), first_embed.begin(), first_embed.end());
+        project_audio_embedding_row(first_token, depth_first_embed_staging_.data());
+        depth_projection->project_pair(
+            cond_hidden.data(),
+            uncond_hidden.data(),
+            depth_projected_pair_staging_.data());
 
-        std::vector<float> prefill;
-        prefill.reserve(static_cast<size_t>(4 * config.depth_hidden_size));
-        prefill.insert(prefill.end(), cond_prefill.begin(), cond_prefill.end());
-        prefill.insert(prefill.end(), uncond_prefill.begin(), uncond_prefill.end());
-        auto depth = depth_pair->prefill_embeddings_batched(prefill, 2, 2);
+        std::memcpy(depth_prefill_staging_.data(),
+                    depth_projected_pair_staging_.data(),
+                    depth_hidden_bytes);
+        std::memcpy(depth_prefill_staging_.data() + depth_hidden_size,
+                    depth_first_embed_staging_.data(),
+                    depth_hidden_bytes);
+        std::memcpy(depth_prefill_staging_.data() + 2 * depth_hidden_size,
+                    depth_projected_pair_staging_.data() + depth_hidden_size,
+                    depth_hidden_bytes);
+        std::memcpy(depth_prefill_staging_.data() + 3 * depth_hidden_size,
+                    depth_first_embed_staging_.data(),
+                    depth_hidden_bytes);
+
+        auto depth = depth_pair->prefill_embeddings_batched(depth_prefill_staging_, 2, 2);
         if (static_cast<int64_t>(depth.hidden.size()) != 2 * config.depth_hidden_size) {
             throw std::runtime_error("BreezeTTS batched depth prefill hidden size mismatch");
         }
-        std::vector<float> cond_hidden_now(
-            depth.hidden.begin(),
-            depth.hidden.begin() + static_cast<std::ptrdiff_t>(config.depth_hidden_size));
-        std::vector<float> uncond_hidden_now(
-            depth.hidden.begin() + static_cast<std::ptrdiff_t>(config.depth_hidden_size),
-            depth.hidden.end());
+        std::memcpy(depth_cond_hidden_now_.data(),
+                    depth.hidden.data(),
+                    depth_hidden_bytes);
+        std::memcpy(depth_uncond_hidden_now_.data(),
+                    depth.hidden.data() + depth_hidden_size,
+                    depth_hidden_bytes);
         depth_pair->start_decode_embeddings_batched(depth.state, config.num_codebooks + 1);
 
         sampling::HfSamplingOptions options;
@@ -721,10 +790,15 @@ struct BreezeGeneratorRuntime::Impl {
         options.top_p = request.top_p;
         options.min_tokens_to_keep = 1;
         for (int64_t codebook = 1; codebook < config.num_codebooks; ++codebook) {
-            auto logits = depth_projection->logits_cfg(cond_hidden_now, uncond_hidden_now, codebook, request.guidance_scale);
-            suppress_reserved(logits, kCodecCodebookSize, config.vocab_size);
+            depth_projection->logits_cfg(
+                depth_cond_hidden_now_.data(),
+                depth_uncond_hidden_now_.data(),
+                codebook,
+                request.guidance_scale,
+                depth_logits_staging_.data());
+            suppress_reserved(depth_logits_staging_, kCodecCodebookSize, config.vocab_size);
             const int32_t token = sample_logits(
-                std::move(logits),
+                depth_logits_staging_,
                 {},
                 options,
                 scratch,
@@ -736,21 +810,23 @@ struct BreezeGeneratorRuntime::Impl {
                 "BreezeTTS depth sampler");
             frame.push_back(token);
             if (codebook + 1 < config.num_codebooks) {
-                const auto next = project_audio_embedding_row(codebook * config.vocab_size + token);
-                std::vector<float> next_pair;
-                next_pair.reserve(static_cast<size_t>(2 * config.depth_hidden_size));
-                next_pair.insert(next_pair.end(), next.begin(), next.end());
-                next_pair.insert(next_pair.end(), next.begin(), next.end());
-                const auto step = depth_pair->decode_embeddings_batched(next_pair, 2);
+                project_audio_embedding_row(codebook * config.vocab_size + token, depth_next_embed_staging_.data());
+                std::memcpy(depth_next_pair_staging_.data(),
+                            depth_next_embed_staging_.data(),
+                            depth_hidden_bytes);
+                std::memcpy(depth_next_pair_staging_.data() + depth_hidden_size,
+                            depth_next_embed_staging_.data(),
+                            depth_hidden_bytes);
+                const auto step = depth_pair->decode_embeddings_batched(depth_next_pair_staging_, 2);
                 if (static_cast<int64_t>(step.hidden.size()) != 2 * config.depth_hidden_size) {
                     throw std::runtime_error("BreezeTTS batched depth decode hidden size mismatch");
                 }
-                cond_hidden_now.assign(
-                    step.hidden.begin(),
-                    step.hidden.begin() + static_cast<std::ptrdiff_t>(config.depth_hidden_size));
-                uncond_hidden_now.assign(
-                    step.hidden.begin() + static_cast<std::ptrdiff_t>(config.depth_hidden_size),
-                    step.hidden.end());
+                std::memcpy(depth_cond_hidden_now_.data(),
+                            step.hidden.data(),
+                            depth_hidden_bytes);
+                std::memcpy(depth_uncond_hidden_now_.data(),
+                            step.hidden.data() + depth_hidden_size,
+                            depth_hidden_bytes);
             }
         }
         return frame;
@@ -933,6 +1009,14 @@ struct BreezeGeneratorRuntime::Impl {
     std::unique_ptr<BreezeDepthProjectionRuntime> depth_projection;
     std::unique_ptr<BreezeSpeechEncoderRuntime> speech_encoder;
     std::unique_ptr<BreezeSpeechDecoderRuntime> speech_decoder;
+    std::vector<float> depth_first_embed_staging_;
+    std::vector<float> depth_projected_pair_staging_;
+    std::vector<float> depth_prefill_staging_;
+    std::vector<float> depth_next_embed_staging_;
+    std::vector<float> depth_next_pair_staging_;
+    std::vector<float> depth_logits_staging_;
+    std::vector<float> depth_cond_hidden_now_;
+    std::vector<float> depth_uncond_hidden_now_;
 };
 
 BreezeGeneratorRuntime::BreezeGeneratorRuntime(
