@@ -2,10 +2,8 @@
 
 #include "engine/framework/io/json.h"
 
-#include <algorithm>
 #include <cctype>
 #include <stdexcept>
-#include <string_view>
 #include <utility>
 
 namespace engine::community_models::soprano_tts {
@@ -20,18 +18,6 @@ int32_t token_id(const std::unordered_map<std::string, int32_t> & token_to_id,
         throw std::runtime_error("Soprano tokenizer missing token: " + token);
     }
     return it->second;
-}
-
-std::string utf8_to_lower_ascii(std::string_view input) {
-    // English-focused fold + diacritic strip (unidecode-like). For the prompt
-    // tokens Soprano was trained on (ASCII letters/digits/punctuation) a
-    // byte-level fold is sufficient.
-    std::string out;
-    out.reserve(input.size());
-    for (const unsigned char c : input) {
-        out.push_back(static_cast<char>(std::tolower(c)));
-    }
-    return out;
 }
 
 std::vector<std::string> pre_tokenize(const std::string & text) {
