@@ -58,6 +58,27 @@ struct MossAudioTokenizerCodes {
     std::vector<std::vector<int32_t>> codebooks;
 };
 
+struct MossTokenRows {
+    std::vector<int32_t> text_tokens;
+    std::vector<int32_t> audio_codes;
+};
+
+class MossTokenRowBuilder {
+public:
+    MossTokenRowBuilder(int64_t num_codebooks, int32_t audio_pad_token_id);
+
+    void push_text_token(int32_t token_id);
+    void push_text_tokens(const std::vector<int32_t> & token_ids);
+    void push_audio_row(int32_t text_slot_token_id, const int32_t * codes, int64_t num_codebooks);
+    void push_audio_row(int32_t text_slot_token_id, const std::vector<std::vector<int32_t>> & codes, int64_t frame);
+    MossTokenRows finish();
+
+private:
+    int64_t num_codebooks_ = 0;
+    int32_t audio_pad_token_id_ = 0;
+    MossTokenRows rows_;
+};
+
 struct MossAudioTokenizerCodecRuntimeOptions {
     size_t weight_context_bytes = 256ull * 1024ull * 1024ull;
     size_t encoder_graph_arena_bytes = 2048ull * 1024ull * 1024ull;

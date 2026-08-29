@@ -1,8 +1,10 @@
-// End-to-end smoke test for MOSS-VoiceGenerator: designs a voice from a written
-// instruction, speaks the given text in it, and writes a WAV.
-//
-//   moss_voicegen_smoke --model <dir> --instruct "<voice description>" --text "<sentence>" \
-//       --language English --output out.wav [--weight-type bf16] [--seed 0] [--threads N]
+/*
+ * End-to-end smoke test for MOSS-VoiceGenerator: designs a voice from a written
+ * instruction, speaks the given text in it, and writes a WAV.
+ *
+ *   moss_voicegen_smoke --model <dir> --instruct "<voice description>" --text "<sentence>" \
+ *       --language English --output out.wav [--weight-type bf16] [--seed 0] [--threads N]
+ */
 
 #include "engine/community_models/moss_voicegen/assets.h"
 #include "engine/community_models/moss_voicegen/backbone.h"
@@ -14,7 +16,6 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 #include "engine/framework/modules/multi_codebook_embedding.h"
-#include "engine/models/moss/shared/token_rows.h"
 
 #include <algorithm>
 #include <chrono>

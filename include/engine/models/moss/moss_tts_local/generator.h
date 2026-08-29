@@ -4,7 +4,6 @@
 #include "engine/models/moss/moss_tts_local/backbone.h"
 #include "engine/models/moss/moss_tts_local/depth_transformer.h"
 #include "engine/framework/modules/multi_codebook_embedding.h"
-#include "engine/models/moss/shared/token_rows.h"
 #include "engine/framework/sampling/torch_random.h"
 
 #include <cstddef>

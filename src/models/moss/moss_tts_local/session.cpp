@@ -39,7 +39,7 @@ uint64_t mix_reference_audio_key(uint64_t key, uint64_t value) {
     return key;
 }
 
-uint64_t prefix_hash(const moss::TokenRows & prefix, int64_t num_codebooks) {
+uint64_t prefix_hash(const engine::codecs::MossTokenRows & prefix, int64_t num_codebooks) {
     uint64_t key = 1469598103934665603ull;
     for (size_t row = 0; row < prefix.text_tokens.size(); ++row) {
         key = mix_reference_audio_key(key, static_cast<uint32_t>(prefix.text_tokens[row]));
@@ -53,7 +53,7 @@ uint64_t prefix_hash(const moss::TokenRows & prefix, int64_t num_codebooks) {
     return key;
 }
 
-int64_t prefix_audio_nonpad_count(const moss::TokenRows & prefix, int32_t audio_pad_token_id) {
+int64_t prefix_audio_nonpad_count(const engine::codecs::MossTokenRows & prefix, int32_t audio_pad_token_id) {
     int64_t count = 0;
     for (const int32_t code : prefix.audio_codes) {
         if (code != audio_pad_token_id) {

@@ -9,7 +9,6 @@
 #include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 #include "engine/framework/modules/multi_codebook_embedding.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/moss/shared/token_rows.h"
 
 #include <cstddef>
 #include <memory>

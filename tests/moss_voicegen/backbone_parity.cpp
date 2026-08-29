@@ -1,13 +1,15 @@
-// Backbone parity for MOSS-VoiceGenerator. Builds the prompt with the audio.cpp text
-// processor, embeds it the way MossTTSDelayModel.get_input_embeddings does (text embedding
-// plus one embedding per audio codebook), runs the Qwen3 backbone, and compares the
-// resulting hidden states against a dump from the reference PyTorch model.
-//
-// It also re-runs the last position through the cached single-step path, which catches
-// rope/mask/cache-slot mistakes that a prefill-only comparison would miss.
-//
-//   moss_voicegen_backbone_parity --model <dir> --prompt <ref_prompt.json> \
-//       --hidden <ref_hidden.json> [--weight-type bf16] [--tolerance 0.02]
+/*
+ * Backbone parity for MOSS-VoiceGenerator. Builds the prompt with the audio.cpp text
+ * processor, embeds it the way MossTTSDelayModel.get_input_embeddings does (text embedding
+ * plus one embedding per audio codebook), runs the Qwen3 backbone, and compares the
+ * resulting hidden states against a dump from the reference PyTorch model.
+ *
+ * It also re-runs the last position through the cached single-step path, which catches
+ * rope/mask/cache-slot mistakes that a prefill-only comparison would miss.
+ *
+ *   moss_voicegen_backbone_parity --model <dir> --prompt <ref_prompt.json> \
+ *       --hidden <ref_hidden.json> [--weight-type bf16] [--tolerance 0.02]
+ */
 
 #include "engine/community_models/moss_voicegen/assets.h"
 #include "engine/community_models/moss_voicegen/backbone.h"
@@ -16,7 +18,6 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/modules/multi_codebook_embedding.h"
-#include "engine/models/moss/shared/token_rows.h"
 
 #include <algorithm>
 #include <cmath>

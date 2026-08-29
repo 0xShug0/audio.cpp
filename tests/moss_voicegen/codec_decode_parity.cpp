@@ -1,13 +1,16 @@
-// Codec parity for MOSS-Audio-Tokenizer v1 (codes -> 24 kHz mono waveform). Decodes the
-// same fixed, deterministic code matrix as the reference dumper and compares length, peak,
-// RMS and a spread of individual samples against
-// tests/moss_voicegen/reference/ref_codec_v1.json.
-//
-// This is the check that the v1 additions to moss/shared are right: the mono tail, the hop
-// taken from the config, the optional stage output projection, and the v1 tensor names.
-//
-//   moss_voicegen_codec_parity --codec <audio_tokenizer-dir-or-model> \
-//       --reference tests/moss_voicegen/reference/ref_codec_v1.json [--out out.wav]
+/*
+ * Codec parity for MOSS-Audio-Tokenizer v1 (codes -> 24 kHz mono waveform). Decodes the
+ * same fixed, deterministic code matrix as the reference dumper and compares length, peak,
+ * RMS and a spread of individual samples against
+ * tests/moss_voicegen/reference/ref_codec_v1.json.
+ *
+ * This is the check that the v1 additions to the MOSS audio tokenizer runtime are right:
+ * the mono tail, the hop taken from the config, the optional stage output projection, and
+ * the v1 tensor names.
+ *
+ *   moss_voicegen_codec_parity --codec <audio_tokenizer-dir-or-model> \
+ *       --reference tests/moss_voicegen/reference/ref_codec_v1.json [--out out.wav]
+ */
 
 #include "engine/community_models/moss_voicegen/assets.h"
 #include "engine/framework/audio/wav_writer.h"
@@ -112,7 +115,7 @@ int main(int argc, char ** argv) {
         std::cout << "samples=" << audio.size() << " (reference " << expected_samples << ")\n";
         std::cout << "peak=" << peak << " (reference " << expected_peak << ")\n";
         std::cout << "rms=" << rms << " (reference " << expected_rms << ")\n";
-        std::cout << "sample rate=" << codec.sampling_rate() << " Hz, channels=" << channels.size() << "\n";
+        std::cout << "sample rate=" << codec.sampling_rate() << " Hz, channels=" << decoded.channels.size() << "\n";
 
         bool passed = non_finite == 0
             && static_cast<int64_t>(audio.size()) == expected_samples

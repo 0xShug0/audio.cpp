@@ -1,10 +1,12 @@
-// Generation parity for MOSS-VoiceGenerator: runs the backbone, the 1 + n_vq heads and the
-// delay-pattern state machine greedily, and compares the emitted rows against a dump from
-// the reference PyTorch generate(). Greedy with the repetition penalty off, so a mismatch
-// is a real divergence rather than an RNG difference.
-//
-//   moss_voicegen_generation_parity --model <dir> --prompt <ref_prompt.json> \
-//       --generation <ref_generation.json> [--weight-type bf16] [--threads N]
+/*
+ * Generation parity for MOSS-VoiceGenerator: runs the backbone, the 1 + n_vq heads and the
+ * delay-pattern state machine greedily, and compares the emitted rows against a dump from
+ * the reference PyTorch generate(). Greedy with the repetition penalty off, so a mismatch
+ * is a real divergence rather than an RNG difference.
+ *
+ *   moss_voicegen_generation_parity --model <dir> --prompt <ref_prompt.json> \
+ *       --generation <ref_generation.json> [--weight-type bf16] [--threads N]
+ */
 
 #include "engine/community_models/moss_voicegen/assets.h"
 #include "engine/community_models/moss_voicegen/backbone.h"
@@ -15,7 +17,6 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/modules/multi_codebook_embedding.h"
-#include "engine/models/moss/shared/token_rows.h"
 
 #include <algorithm>
 #include <cstdint>

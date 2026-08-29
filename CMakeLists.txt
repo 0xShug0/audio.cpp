@@ -801,7 +801,6 @@ audiocpp_add_model(moss
         src/models/moss/moss_tts_nano/prompt_builder.cpp
         src/models/moss/moss_tts_nano/session.cpp
         src/models/moss/moss_tts_nano/tokenizer_text.cpp
-        src/models/moss/shared/token_rows.cpp
         src/models/moss/moss_tts_local/depth_transformer.cpp
         src/models/moss/moss_tts_local/generator.cpp
         src/models/moss/moss_tts_local/loader.cpp

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/models/moss/shared/token_rows.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 #include "engine/models/moss/moss_tts_local/assets.h"
 
 #include <cstdint>
@@ -14,7 +14,7 @@ namespace engine::models::moss_tts_local {
 // Decoder input for a generation request: the text channel (input_ids[..., 0]) plus the
 // n_vq audio channels flattened row-major as [seq, n_vq] (input_ids[..., 1:]). Every audio
 // slot of the prompt carries audio_pad_token_id, matching MossTTSLocalProcessor._build_text_rows.
-using MossGenerationPrefix = moss::TokenRows;
+using MossGenerationPrefix = engine::codecs::MossTokenRows;
 
 // Reproduces the direct-generation branch of MossTTSLocalProcessor: it renders the
 // <user_inst> template, byte-level BPE encodes each piece with the Qwen tokenizer, and
