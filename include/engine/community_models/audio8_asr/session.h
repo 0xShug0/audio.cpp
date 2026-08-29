@@ -30,8 +30,6 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
-    friend class Audio8ASRLoader;
-
     std::string transcribe_clip(const runtime::AudioBuffer & audio);
     runtime::Transcript transcribe_audio(const runtime::AudioBuffer & audio);
 

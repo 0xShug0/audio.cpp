@@ -20,10 +20,10 @@ namespace json = engine::io::json;
 namespace {
 
 using Clock = std::chrono::steady_clock;
-constexpr size_t kDefaultGraphArenaBytes = 256ull * 1024ull * 1024ull;
-constexpr size_t kEncoderGraphArenaBytes = 128ull * 1024ull * 1024ull;
 constexpr size_t kWeightContextBytes = 64ull * 1024ull * 1024ull;
-constexpr int64_t kMaxClipSamples = 480000;  // 30 s at 16 kHz, the reference window.
+// Languages advertised by the loader and the loaded model; kept in one list.
+const std::vector<std::string> kLanguages = {
+    "Chinese", "English", "Cantonese", "French", "German", "Japanese", "Korean"};
 
 std::filesystem::path default_spec_path() {
     return engine::model_spec::default_spec_path("audio8_asr");
@@ -36,53 +36,88 @@ std::shared_ptr<const Audio8ASRAssets> require_assets(std::shared_ptr<const Audi
     return assets;
 }
 
-assets::TensorStorageType parse_weight_storage(
-    const runtime::SessionOptions & options,
-    const std::string & family) {
-    const std::string key = family + ".weight_type";
-    const auto it = options.options.find(key);
-    if (it == options.options.end()) {
-        return assets::TensorStorageType::Native;
+void validate_audio_encoder_weight_storage(assets::TensorStorageType storage_type) {
+    if (storage_type == assets::TensorStorageType::Native ||
+        storage_type == assets::TensorStorageType::F32 ||
+        storage_type == assets::TensorStorageType::F16) {
+        return;
     }
-    const auto type = assets::parse_tensor_storage_type(it->second);
-    if (type == assets::TensorStorageType::Native ||
-        type == assets::TensorStorageType::F32 ||
-        type == assets::TensorStorageType::F16 ||
-        type == assets::TensorStorageType::BF16 ||
-        type == assets::TensorStorageType::Q8_0) {
-        return type;
-    }
-    throw std::runtime_error(key + " supports only native, f32, f16, bf16, and q8_0");
+    throw std::runtime_error("audio8_asr.audio_encoder_weight_type currently supports only native, f32, and f16");
 }
 
-size_t parse_graph_arena_bytes(
-    const runtime::SessionOptions & options,
-    const std::string & key) {
-    const auto it = options.options.find(key);
-    if (it == options.options.end()) {
-        return kDefaultGraphArenaBytes;
+void validate_matmul_weight_storage(assets::TensorStorageType storage_type) {
+    if (storage_type == assets::TensorStorageType::Native ||
+        storage_type == assets::TensorStorageType::F32 ||
+        storage_type == assets::TensorStorageType::F16 ||
+        storage_type == assets::TensorStorageType::BF16 ||
+        storage_type == assets::TensorStorageType::Q8_0) {
+        return;
     }
-    try {
-        const int64_t mb = std::stoll(it->second);
-        if (mb > 0) {
-            return static_cast<size_t>(mb) * 1024ull * 1024ull;
-        }
-    } catch (...) {}
-    return kDefaultGraphArenaBytes;
+    throw std::runtime_error("audio8_asr.weight_type supports only native, f32, f16, bf16, and q8_0");
+}
+
+assets::TensorStorageType parse_encoder_weight_storage(const runtime::SessionOptions & session_options) {
+    const auto & options = session_options.options;
+    // The encoder rejects on-the-fly quantized weights; already-quantized
+    // GGUF tensors load as Native regardless of this option.
+    const auto type = runtime::parse_tensor_storage_option(
+        options,
+        "audio8_asr.audio_encoder_weight_type",
+        assets::TensorStorageType::Native,
+        {assets::TensorStorageType::Native, assets::TensorStorageType::F32, assets::TensorStorageType::F16});
+    validate_audio_encoder_weight_storage(type);
+    return type;
+}
+
+assets::TensorStorageType parse_matmul_weight_storage(const runtime::SessionOptions & session_options) {
+    const auto & options = session_options.options;
+    const auto type = runtime::parse_tensor_storage_option(
+        options,
+        "audio8_asr.weight_type",
+        assets::TensorStorageType::Native,
+        {assets::TensorStorageType::Native, assets::TensorStorageType::F32,
+         assets::TensorStorageType::F16, assets::TensorStorageType::BF16,
+         assets::TensorStorageType::Q8_0});
+    validate_matmul_weight_storage(type);
+    return type;
+}
+
+size_t encoder_graph_arena_bytes(const runtime::SessionOptions & session_options) {
+    const auto & options = session_options.options;
+    return runtime::parse_size_mb_option(options, {"audio8_asr.encoder_graph_arena_mb"}, 128ull * 1024ull * 1024ull);
+}
+
+size_t projector_graph_arena_bytes(const runtime::SessionOptions & session_options) {
+    const auto & options = session_options.options;
+    return runtime::parse_size_mb_option(options, {"audio8_asr.projector_graph_arena_mb"}, 256ull * 1024ull * 1024ull);
+}
+
+size_t prefill_graph_arena_bytes(const runtime::SessionOptions & session_options) {
+    const auto & options = session_options.options;
+    return runtime::parse_size_mb_option(options, {"audio8_asr.prefill_graph_arena_mb"}, 256ull * 1024ull * 1024ull);
+}
+
+size_t decode_graph_arena_bytes(const runtime::SessionOptions & session_options) {
+    const auto & options = session_options.options;
+    return runtime::parse_size_mb_option(options, {"audio8_asr.decode_graph_arena_mb"}, 256ull * 1024ull * 1024ull);
 }
 
 // The reference processor hands the model a bfloat16 mel tensor; replicate
 // that rounding (audio8_asr_round_f32_to_bf16) before encoding.
 
+// Join window transcripts. Whitespace is only inserted between ASCII words;
+// CJK text has no word boundaries, so a byte >= 0x80 on either side means the
+// windows are concatenated directly (the reference has no multi-window path;
+// this mirrors how CJK text is written).
 void append_clip_transcript(std::string & merged, std::string clip_text) {
     clip_text = engine::io::trim_ascii_whitespace(std::move(clip_text));
     if (clip_text.empty()) {
         return;
     }
     if (!merged.empty()) {
-        const char last = merged.back();
-        const char first = clip_text.front();
-        if (last != ' ' && first != ' ') {
+        const unsigned char last = static_cast<unsigned char>(merged.back());
+        const unsigned char first = static_cast<unsigned char>(clip_text.front());
+        if (last < 0x80 && first < 0x80 && last != ' ' && first != ' ') {
             merged.push_back(' ');
         }
     }
@@ -104,8 +139,7 @@ public:
         out.supported_tasks = {
             {runtime::VoiceTaskKind::Asr, {runtime::RunMode::Offline}},
         };
-        out.languages = {
-            "Chinese", "English", "Cantonese", "French", "German", "Japanese", "Korean"};
+        out.languages = kLanguages;
         out.supports_timestamps = false;
         return out;
     }
@@ -165,15 +199,34 @@ Audio8ASRSession::Audio8ASRSession(
       task_(std::move(task)),
       assets_(require_assets(std::move(assets))),
       frontend_(assets_->encoder_assets),
-      audio_encoder_(assets_->encoder_assets, execution_context(), kEncoderGraphArenaBytes, parse_weight_storage(RuntimeSessionBase::options(), family())),
-      projector_(assets_->resources.open_tensor_source("weights"), assets_->config.tower, execution_context(), parse_graph_arena_bytes(RuntimeSessionBase::options(), family() + ".projector_graph_arena_mb"), kWeightContextBytes, parse_weight_storage(RuntimeSessionBase::options(), family())),
-      thinker_(assets_->resources.open_tensor_source("weights"), assets_->config.text_decoder, execution_context(), parse_graph_arena_bytes(RuntimeSessionBase::options(), family() + ".prefill_graph_arena_mb"), parse_graph_arena_bytes(RuntimeSessionBase::options(), family() + ".decode_graph_arena_mb"), kWeightContextBytes, parse_weight_storage(RuntimeSessionBase::options(), family())) {
+      audio_encoder_(
+          assets_->encoder_assets,
+          execution_context(),
+          encoder_graph_arena_bytes(RuntimeSessionBase::options()),
+          parse_encoder_weight_storage(RuntimeSessionBase::options())),
+      projector_(
+          assets_->resources.open_tensor_source("weights"),
+          assets_->config.tower,
+          execution_context(),
+          projector_graph_arena_bytes(RuntimeSessionBase::options()),
+          kWeightContextBytes,
+          parse_matmul_weight_storage(RuntimeSessionBase::options())),
+      thinker_(
+          assets_->resources.open_tensor_source("weights"),
+          assets_->config.text_decoder,
+          execution_context(),
+          prefill_graph_arena_bytes(RuntimeSessionBase::options()),
+          decode_graph_arena_bytes(RuntimeSessionBase::options()),
+          kWeightContextBytes,
+          parse_matmul_weight_storage(RuntimeSessionBase::options())) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Audio8 ASR only supports VoiceTaskKind::Asr");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Audio8 ASR only supports offline sessions");
     }
+    // All weight stores have uploaded by now; drop the resident file blob.
+    assets_->resources.open_tensor_source("weights")->release_storage();
 }
 
 Audio8ASRSession::~Audio8ASRSession() = default;
@@ -250,22 +303,33 @@ runtime::Transcript Audio8ASRSession::transcribe_audio(const runtime::AudioBuffe
     if (audio.samples.empty()) {
         return {"", ""};
     }
-    // The reference clips input at 30 seconds; longer recordings are covered
-    // by transcribing fixed 30-second windows and joining the text. The
-    // window is in interleaved samples: 30 s of frames per channel.
-    const int64_t window_values = kMaxClipSamples * std::max(1, audio.channels);
+    // The reference clips input at max_audio_samples (16 kHz samples, 30 s by
+    // default); longer recordings are covered by transcribing fixed windows
+    // and joining the text. The window is sized in the input sample domain
+    // (interleaved values, input rate) so it always covers the same wall
+    // time as the reference clip. A tail shorter than half a second folds
+    // into the previous window instead of triggering a near-silent pass.
+    const int64_t channels = std::max(1, audio.channels);
+    const int64_t sample_rate = std::max(1, audio.sample_rate);
+    const int64_t window_values =
+        assets_->config.max_audio_samples * channels * sample_rate / 16000;
+    const int64_t min_tail_values = sample_rate * channels / 2;
     std::string merged;
-    for (int64_t offset = 0; offset < static_cast<int64_t>(audio.samples.size()); offset += window_values) {
-        const int64_t span_values = std::min<int64_t>(
-            window_values,
-            static_cast<int64_t>(audio.samples.size()) - offset);
+    int64_t offset = 0;
+    const int64_t total = static_cast<int64_t>(audio.samples.size());
+    while (offset < total) {
+        int64_t span = std::min<int64_t>(window_values, total - offset);
+        if (total - (offset + span) < min_tail_values) {
+            span = total - offset;
+        }
         runtime::AudioBuffer clip;
         clip.sample_rate = audio.sample_rate;
         clip.channels = audio.channels;
         clip.samples.assign(
             audio.samples.begin() + static_cast<ptrdiff_t>(offset),
-            audio.samples.begin() + static_cast<ptrdiff_t>(offset + span_values));
+            audio.samples.begin() + static_cast<ptrdiff_t>(offset + span));
         append_clip_transcript(merged, transcribe_clip(clip));
+        offset += span;
     }
     return {engine::io::trim_ascii_whitespace(std::move(merged)), ""};
 }
@@ -302,12 +366,7 @@ const runtime::CapabilitySet & Audio8ASRLoadedModel::capabilities() const noexce
 std::unique_ptr<runtime::IVoiceTaskSession> Audio8ASRLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.task != runtime::VoiceTaskKind::Asr) {
-        throw std::runtime_error("Audio8 ASR only supports the Asr task");
-    }
-    if (task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Audio8 ASR supports offline sessions only");
-    }
+    // The session constructor validates the task/mode combination.
     return std::make_unique<Audio8ASRSession>(task, options, assets_);
 }
 

@@ -24,8 +24,9 @@ converted weights only; the converted GGUF must not be redistributed.
   head_dim 64, SwiGLU FFN 1408, tied embeddings over a 151,936 Qwen BPE
   vocabulary, RoPE theta 1e6, RMSNorm eps 1e-6.
 - **Prompt**: `<|user|><|begin_of_audio|><|audio|>×N<|end_of_audio|>Please
-  transcribe this audio.<|assistant|>` with
-  `N = max((((samples / hop) + 1) / 2) / merge_factor, 1)`.
+  transcribe this audio.<|assistant|>` where
+  `N = max(floor(floor((floor(samples / hop) + 1) / 2) / merge_factor), 1)`
+  (all divisions integer).
 
 ## Usage
 
@@ -63,17 +64,24 @@ exactly with the Q8_0 GGUF on both the Metal and CPU backends:
 | `assets/resources/a.wav` (5.95 s) | "This little work was finished in the year eighteen o three, and intended for immediate publication." | identical |
 | `assets/resources/sample_16k.wav` (14.07 s) | "Some call me nature. Others call me Mother Nature. I've been here for over four point five billion years, twenty-two thousand five hundred times longer than you." | identical |
 
-A 61-second clip transcribed through fixed 30-second windows matched the
-per-window reference transcripts. `test_audio8_asr_golden_transcription`
-asserts the first row end-to-end (skipped when the weights are absent);
-`test_audio8_asr_units` covers the token-count formula and bfloat16 rounding.
+A 61-second clip transcribed through rate-correct 30-second windows matched
+the per-window reference transcripts (also verified by an independent review
+pass). `test_audio8_asr_golden_transcription` asserts the first row
+end-to-end — run it manually once weights exist (it is not part of ctest,
+matching the granite5asr golden-test convention); `test_audio8_asr_units`
+covers the token-count formula and bfloat16 rounding and runs under ctest.
 
 ## Known limitations
 
 - **Offline only**: no streaming mode, no word timestamps, no language-id
   output.
 - **30-second windows**: audio longer than 30 s is transcribed in fixed
-  windows and space-joined, without VAD segmentation.
+  windows sized at the input sample rate (0.5 s minimum tail folds into the
+  previous window) and space-joined, without VAD segmentation. Unlike the
+  single-pass reference, each window is peak-normalized independently, so
+  relative loudness across a window boundary can shift.
 - **CC-BY-NC-4.0**: non-commercial use only; convert locally, do not
-  redistribute the converted GGUF. There is no release GGUF package.
+  redistribute the converted GGUF. There is no release GGUF package and no
+  WebUI catalog entry (the package manager cannot download
+  unsupported-license packages).
 - Hotword logit boosting from the reference implementation is not ported.

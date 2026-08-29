@@ -23,7 +23,17 @@ public:
         std::shared_ptr<const assets::TensorSource> inner,
         std::vector<std::pair<std::string, std::string>> mappings)
         : inner_(std::move(inner)),
-          mappings_(std::move(mappings)) {}
+          mappings_(std::move(mappings)) {
+        // Longest `to` prefix first so the exact-inverse projection entries
+        // win over the catch-all tower mapping during reverse lookups.
+        reverse_ordered_ = mappings_;
+        std::stable_sort(
+            reverse_ordered_.begin(),
+            reverse_ordered_.end(),
+            [](const auto & left, const auto & right) {
+                return left.second.size() > right.second.size();
+            });
+    }
 
     const std::filesystem::path & source_path() const noexcept override {
         return inner_->source_path();
@@ -80,9 +90,10 @@ private:
     }
 
     std::string rewrite_back(const std::string & name) const {
-        // Reverse mapping is only used for diagnostics listings, so the first
-        // mapping wins for ambiguous namespaces.
-        for (const auto & [from, to] : mappings_) {
+        // Reverse mapping is only used for diagnostics listings. Check the
+        // longest `to` prefixes first so proj1/proj2 map back to the
+        // multi-modal projector names instead of the tower prefix.
+        for (const auto & [from, to] : reverse_ordered_) {
             if (name.rfind(to, 0) == 0) {
                 return from + name.substr(to.size());
             }
@@ -92,6 +103,7 @@ private:
 
     std::shared_ptr<const assets::TensorSource> inner_;
     std::vector<std::pair<std::string, std::string>> mappings_;
+    std::vector<std::pair<std::string, std::string>> reverse_ordered_;
 };
 
 qwen3_asr::Qwen3ASRAudioEncoderConfig parse_audio_encoder_config(const json::Value & value) {
@@ -131,7 +143,11 @@ Audio8ASRConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
 
     Audio8ASRConfig config;
-    config.model_type = json::require_string(root, "model_type");
+    const auto model_type = json::require_string(root, "model_type");
+    if (model_type != "arkasr") {
+        throw std::runtime_error(
+            "Audio8 ASR requires model_type 'arkasr', got: " + model_type);
+    }
     config.merge_factor = json::optional_i64(root, "merge_factor", 4);
     if (config.merge_factor <= 0) {
         throw std::runtime_error("Audio8 ASR merge_factor must be positive");
@@ -190,7 +206,7 @@ Audio8ASRConfig parse_config(const assets::ResourceBundle & resources) {
     config.text_decoder.audio_token_id = require_added_token_id(resources, "<|audio|>");
 
     config.supported_languages = {
-        "Auto", "Chinese", "English", "Cantonese", "French", "German", "Japanese", "Korean"};
+        "Chinese", "English", "Cantonese", "French", "German", "Japanese", "Korean"};
     return config;
 }
 
@@ -218,9 +234,8 @@ std::shared_ptr<const Audio8ASRAssets> load_audio8_asr_assets(const std::filesys
     if (!resources.has_file("preprocessor_config")) {
         throw std::runtime_error("Audio8 ASR requires preprocessor_config.json");
     }
-    const bool has_legacy_tokenizer = resources.has_file("vocab") && resources.has_file("merges");
-    if (!has_legacy_tokenizer && !resources.has_file("tokenizer_json")) {
-        throw std::runtime_error("Audio8 ASR requires vocab.json plus merges.txt, or tokenizer.json");
+    if (!resources.has_file("tokenizer_json")) {
+        throw std::runtime_error("Audio8 ASR requires tokenizer.json");
     }
 
     auto assets = std::make_shared<Audio8ASRAssets>();

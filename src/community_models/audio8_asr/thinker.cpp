@@ -542,10 +542,11 @@ public:
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Audio8 ASR thinker decode graph compute failed");
         }
-        std::vector<float> logits(static_cast<size_t>(config.vocab_size));
-        ggml_backend_tensor_get(logits_, logits.data(), 0, logits.size() * sizeof(float));
+        logits_buffer_.resize(static_cast<size_t>(config.vocab_size));
+        ggml_backend_tensor_get(logits_, logits_buffer_.data(), 0, logits_buffer_.size() * sizeof(float));
         step_cache_.advance_after_direct_append(1);
-        return logits;
+        // The caller moves out of this buffer before the next step.
+        return std::move(logits_buffer_);
     }
 
 private:
@@ -558,6 +559,7 @@ private:
     ggml_tensor * attention_mask_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     std::vector<ggml_fp16_t> attention_mask_values_;
+    std::vector<float> logits_buffer_;
     runtime::TransformerKVCache step_cache_;
     ggml_cgraph * graph_ = nullptr;
     ggml_backend_buffer_t buffer_ = nullptr;

@@ -241,7 +241,9 @@ public:
             throw std::runtime_error("Audio8 ASR projector encoder output size mismatch");
         }
         const auto upload_start = Clock::now();
-        // Re-uploaded every run: leaves are not pinned by the graph allocator.
+        // Re-uploaded every run: leaves are not pinned by the graph allocator
+        // (the gallocr may hand a leaf's buffer to a later node once consumed),
+        // so both the input and the constant pool matrix are rewritten here.
         ggml_backend_tensor_set(input_, encoder_output.data(), 0, encoder_output.size() * sizeof(float));
         ggml_backend_tensor_set(
             pool_matrix_, pool_values_.data(), 0, pool_values_.size() * sizeof(float));

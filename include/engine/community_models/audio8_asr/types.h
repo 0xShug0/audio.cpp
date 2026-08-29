@@ -43,22 +43,14 @@ struct Audio8TowerConfig {
     float norm_eps = 1.0e-5F;
 };
 
-struct Audio8FrontendConfig {
-    int sample_rate = 16000;
-    int64_t feature_size = 128;
-    int64_t hop_length = 160;
-    int64_t n_fft = 400;
-};
-
 struct Audio8ASRConfig {
-    std::string model_type;
     int64_t merge_factor = 4;
     int64_t max_audio_samples = 480000;
     int64_t user_token_id = 0;
     int64_t begin_audio_token_id = 0;
     int64_t end_audio_token_id = 0;
     int64_t assistant_token_id = 0;
-    Audio8FrontendConfig frontend;
+    qwen3_asr::Qwen3ASRFrontendConfig frontend;
     qwen3_asr::Qwen3ASRAudioEncoderConfig audio_encoder;
     Audio8TowerConfig tower;
     Audio8ASRDecoderConfig text_decoder;

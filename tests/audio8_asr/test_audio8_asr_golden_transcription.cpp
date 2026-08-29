@@ -123,8 +123,14 @@ int main(int argc, char ** argv) {
         std::cout << "Normalized actual:   " << actual << "\n";
         std::cout << "Normalized expected: " << expected << "\n";
 
+        // Exact raw match pins punctuation and casing, matching the fp32
+        // reference verbatim; the normalized comparison localizes failures.
+        if (actual_raw != kExpectedText) {
+            std::cerr << "FAIL: raw transcript mismatch!\n";
+            return kExitFail;
+        }
         if (actual != expected) {
-            std::cerr << "FAIL: transcript mismatch!\n";
+            std::cerr << "FAIL: normalized transcript mismatch!\n";
             return kExitFail;
         }
 

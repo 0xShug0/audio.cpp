@@ -38,7 +38,14 @@ def convert(
         candidates = sorted(checkpoint.glob("*.safetensors"))
         if not candidates:
             raise SystemExit(f"No .safetensors checkpoint found in {checkpoint}")
-        ckpt = candidates[-1]
+        if len(candidates) > 1:
+            raise SystemExit(
+                f"Sharded safetensors checkpoints are not supported by this converter; "
+                f"found {len(candidates)} shards in {checkpoint}. Merge the shards into a "
+                f"single model.safetensors first (e.g. with safetensors.torch.save_file after "
+                f"concatenating the shard state dicts)."
+            )
+        ckpt = candidates[0]
 
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -64,10 +71,11 @@ def convert(
 
     for asset_name in ["config.json", "generation_config.json", "preprocessor_config.json", "tokenizer_config.json", "tokenizer.json", "vocab.json", "merges.txt"]:
         src_asset = checkpoint / asset_name
-        if src_asset.exists():
-            dst_asset = output.parent / asset_name
-            shutil.copyfile(src_asset, dst_asset)
-            print(f"copied {asset_name} -> {output.parent}")
+        dst_asset = output.parent / asset_name
+        if not src_asset.exists() or src_asset.resolve() == dst_asset.resolve():
+            continue
+        shutil.copyfile(src_asset, dst_asset)
+        print(f"copied {asset_name} -> {output.parent}")
 
 
 def main() -> None:
