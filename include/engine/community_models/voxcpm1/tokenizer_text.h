@@ -1,9 +1,11 @@
 #pragma once
 
-#include "engine/community_models/voxcpm1/tokenizer_common.h"
 #include "engine/community_models/voxcpm1/types.h"
 
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace engine::community_models::voxcpm1 {
 
@@ -25,7 +27,8 @@ public:
     int32_t unk_token_id() const noexcept;
 
 private:
-    std::shared_ptr<const VoxCPM1TokenizerCommon> common_;
+    struct Impl;
+    std::shared_ptr<const Impl> impl_;
 };
 
 }  // namespace engine::community_models::voxcpm1
