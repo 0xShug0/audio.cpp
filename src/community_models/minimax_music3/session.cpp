@@ -56,31 +56,27 @@ std::shared_ptr<const MiniMaxMusic3Assets> select_component_assets(
     std::shared_ptr<const MiniMaxMusic3Assets> base,
     const std::unordered_map<std::string, std::string> & options) {
     auto selected = std::make_shared<MiniMaxMusic3Assets>(*base);
-    bool changed = false;
-    if (const auto value = runtime::find_option(options, {"minimax_music3.language_model_gguf"})) {
-        selected->language_model_weights = assets::open_tensor_source(resolve_component_gguf_path(
-            *base,
-            "minimax_music3.language_model_gguf",
-            *value));
-        changed = true;
-    }
-    if (const auto value = runtime::find_option(options, {"minimax_music3.rvq_depth_decoder_gguf"})) {
-        selected->depth_decoder_weights = assets::open_tensor_source(resolve_component_gguf_path(
-            *base,
-            "minimax_music3.rvq_depth_decoder_gguf",
-            *value));
-        changed = true;
-    }
-    if (const auto value = runtime::find_option(options, {"minimax_music3.flow_transformer_gguf"})) {
-        selected->transformer_weights = assets::open_tensor_source(resolve_component_gguf_path(
-            *base,
-            "minimax_music3.flow_transformer_gguf",
-            *value));
-        changed = true;
-    }
-    if (!changed) {
-        return base;
-    }
+    const std::string language_model_gguf =
+        runtime::find_option(options, {"minimax_music3.language_model_gguf"}).value_or("language_model_q4_0.gguf");
+    selected->language_model_weights = assets::open_tensor_source(resolve_component_gguf_path(
+        *base,
+        "minimax_music3.language_model_gguf",
+        language_model_gguf));
+
+    const std::string depth_decoder_gguf =
+        runtime::find_option(options, {"minimax_music3.rvq_depth_decoder_gguf"}).value_or("rvq_depth_decoder_q8_0.gguf");
+    selected->depth_decoder_weights = assets::open_tensor_source(resolve_component_gguf_path(
+        *base,
+        "minimax_music3.rvq_depth_decoder_gguf",
+        depth_decoder_gguf));
+
+    const std::string flow_transformer_gguf =
+        runtime::find_option(options, {"minimax_music3.flow_transformer_gguf"}).value_or("transformer_q4_0.gguf");
+    selected->transformer_weights = assets::open_tensor_source(resolve_component_gguf_path(
+        *base,
+        "minimax_music3.flow_transformer_gguf",
+        flow_transformer_gguf));
+
     validate_minimax_music3_anchors(*selected);
     return selected;
 }
