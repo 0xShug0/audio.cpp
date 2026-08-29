@@ -10,13 +10,13 @@
 
 namespace engine::core {
 
-namespace {
-
 void ensure_backends_loaded() {
     if (ggml_backend_reg_count() == 0) {
         ggml_backend_load_all();
     }
 }
+
+namespace {
 
 // A backend is identified by the name of the ggml registry that owns it. The device type
 // (GPU/IGPU/ACCEL) deliberately plays no part in that: Metal reports GPU rather than ACCEL,
@@ -332,6 +332,18 @@ static void cuda_trim_pools(ggml_backend_t backend) {
 
 void trim_backend_pools(ggml_backend_t backend) {
     if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_trim_pools(backend);
+}
+
+void set_backend_stream_priority(ggml_backend_t backend, int priority) {
+    if (backend == nullptr) return;
+    if (!is_cuda_backend_handle(backend) && !is_hip_backend_handle(backend)) return;
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    if (device == nullptr) return;
+    auto fn = (void (*)(ggml_backend_t, int))
+        ggml_backend_reg_get_proc_address(
+            ggml_backend_dev_backend_reg(device),
+            "ggml_backend_cuda_set_stream_priority");
+    if (fn != nullptr) fn(backend, priority);
 }
 
 // evict_cuda_graph_cache defaults to false, preserving historical behavior

@@ -52,6 +52,9 @@ void validate_runtime_config(const QwenCausalDecodeRuntimeConfig & config) {
             }
         }
     }
+    if (config.sliding_window < 0) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding_window must be non-negative");
+    }
 }
 
 core::TensorValue token_embedding_input(
@@ -120,6 +123,128 @@ void round_readback(std::vector<float> & values, const QwenCausalDecodeRuntimeCo
     if (*config.readback_round_type == GGML_TYPE_BF16) {
         core::round_f32_to_bf16_in_place(values);
     }
+}
+
+std::vector<ggml_fp16_t> prefill_attention_mask_values(
+    const QwenCausalDecodeRuntimeConfig & config,
+    int64_t batch_size,
+    int64_t steps) {
+    if (config.sliding_window <= 0) {
+        return qwen_causal_prefill_mask_values(batch_size, steps);
+    }
+    if (batch_size <= 0) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding prefill mask requires positive batch size");
+    }
+    if (steps <= 0) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding prefill mask requires positive steps");
+    }
+    const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
+    const auto visible = ggml_fp32_to_fp16(0.0F);
+    std::vector<ggml_fp16_t> one(static_cast<size_t>(steps * steps), masked);
+    for (int64_t row = 0; row < steps; ++row) {
+        const int64_t begin = std::max<int64_t>(0, row - config.sliding_window + 1);
+        const size_t row_offset = static_cast<size_t>(row * steps);
+        for (int64_t col = begin; col <= row; ++col) {
+            one[row_offset + static_cast<size_t>(col)] = visible;
+        }
+    }
+    if (batch_size == 1) {
+        return one;
+    }
+    std::vector<ggml_fp16_t> out;
+    out.reserve(static_cast<size_t>(batch_size) * one.size());
+    for (int64_t batch = 0; batch < batch_size; ++batch) {
+        out.insert(out.end(), one.begin(), one.end());
+    }
+    return out;
+}
+
+void write_cached_step_mask(
+    const QwenCausalDecodeRuntimeConfig & config,
+    ggml_tensor * tensor,
+    std::vector<ggml_fp16_t> & scratch,
+    int64_t mask_steps,
+    int64_t visible_prefix_steps,
+    int64_t current_slot,
+    int64_t position) {
+    if (config.sliding_window <= 0) {
+        write_qwen_cached_step_mask(tensor, scratch, mask_steps, visible_prefix_steps, current_slot);
+        return;
+    }
+    if (tensor == nullptr) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding cached mask requires a tensor");
+    }
+    if (mask_steps <= 0) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding cached mask requires positive steps");
+    }
+    if (visible_prefix_steps < 0 || visible_prefix_steps > mask_steps) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding cached mask visible prefix is out of range");
+    }
+    if (current_slot < 0 || current_slot >= mask_steps) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding cached mask current slot is out of range");
+    }
+    const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
+    const auto visible = ggml_fp32_to_fp16(0.0F);
+    if (scratch.size() != static_cast<size_t>(mask_steps)) {
+        scratch.resize(static_cast<size_t>(mask_steps));
+    }
+    std::fill(scratch.begin(), scratch.end(), masked);
+    const int64_t begin = std::max<int64_t>(0, position - config.sliding_window + 1);
+    for (int64_t i = begin; i < visible_prefix_steps; ++i) {
+        scratch[static_cast<size_t>(i)] = visible;
+    }
+    scratch[static_cast<size_t>(current_slot)] = visible;
+    ggml_backend_tensor_set(tensor, scratch.data(), 0, scratch.size() * sizeof(ggml_fp16_t));
+}
+
+void write_batched_cached_step_mask(
+    const QwenCausalDecodeRuntimeConfig & config,
+    ggml_tensor * tensor,
+    std::vector<ggml_fp16_t> & scratch,
+    int64_t batch_size,
+    int64_t mask_steps,
+    int64_t visible_prefix_steps,
+    int64_t current_slot,
+    int64_t position) {
+    if (config.sliding_window <= 0) {
+        write_qwen_batched_cached_step_mask(tensor, scratch, batch_size, mask_steps, visible_prefix_steps, current_slot);
+        return;
+    }
+    if (tensor == nullptr) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask requires a tensor");
+    }
+    if (batch_size <= 0) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask requires positive batch size");
+    }
+    if (mask_steps <= 0) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask requires positive steps");
+    }
+    if (visible_prefix_steps < 0 || visible_prefix_steps > mask_steps) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask visible prefix is out of range");
+    }
+    if (current_slot < 0 || current_slot >= mask_steps) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask current slot is out of range");
+    }
+    const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
+    const auto visible = ggml_fp32_to_fp16(0.0F);
+    const size_t row_size = static_cast<size_t>(mask_steps);
+    const size_t total_size = static_cast<size_t>(batch_size) * row_size;
+    if (scratch.size() != total_size) {
+        scratch.resize(total_size);
+    }
+    const int64_t begin = std::max<int64_t>(0, position - config.sliding_window + 1);
+    for (int64_t batch = 0; batch < batch_size; ++batch) {
+        const size_t offset = static_cast<size_t>(batch) * row_size;
+        std::fill(
+            scratch.begin() + static_cast<std::ptrdiff_t>(offset),
+            scratch.begin() + static_cast<std::ptrdiff_t>(offset + row_size),
+            masked);
+        for (int64_t i = begin; i < visible_prefix_steps; ++i) {
+            scratch[offset + static_cast<size_t>(i)] = visible;
+        }
+        scratch[offset + static_cast<size_t>(current_slot)] = visible;
+    }
+    ggml_backend_tensor_set(tensor, scratch.data(), 0, scratch.size() * sizeof(ggml_fp16_t));
 }
 
 core::TensorValue compact_logits_readback(
@@ -443,6 +568,10 @@ public:
         batched_decode_cache_.import_state(state);
     }
 
+    runtime::TransformerBatchedKVState export_batched_decode_state() const {
+        return batched_decode_cache_.export_state();
+    }
+
     void start_decode_embeddings_batched(
         const runtime::TransformerBatchedKVState & state,
         int64_t required_cache_steps) {
@@ -624,7 +753,7 @@ private:
             positions_values.data(),
             0,
             positions_values.size() * sizeof(int32_t));
-        const auto mask = qwen_causal_prefill_mask_values(1, steps);
+        const auto mask = prefill_attention_mask_values(config_, 1, steps);
         ggml_backend_tensor_set(
             prefill_attention_mask_,
             mask.data(),
@@ -799,7 +928,7 @@ private:
             positions_values.data(),
             0,
             positions_values.size() * sizeof(int32_t));
-        const auto mask = qwen_causal_prefill_mask_values(batch_size, steps);
+        const auto mask = prefill_attention_mask_values(config_, batch_size, steps);
         ggml_backend_tensor_set(
             batched_prefill_attention_mask_,
             mask.data(),
@@ -1118,12 +1247,14 @@ private:
         ggml_backend_tensor_set(decode_positions_, &position, 0, sizeof(int32_t));
         const int32_t cache_slot = static_cast<int32_t>(decode_cache_.valid_steps());
         ggml_backend_tensor_set(decode_cache_slot_, &cache_slot, 0, sizeof(int32_t));
-        write_qwen_cached_step_mask(
+        write_cached_step_mask(
+            config_,
             decode_attention_mask_,
             decode_attention_mask_values_,
             decode_cache_steps_,
             decode_cache_.valid_steps(),
-            cache_slot);
+            cache_slot,
+            position);
         core::set_backend_threads(backend_, threads_);
         const ggml_status status = core::compute_backend_graph(backend_, decode_graph_);
         ggml_backend_synchronize(backend_);
@@ -1160,13 +1291,15 @@ private:
             batched_decode_cache_slots_.data(),
             0,
             batched_decode_cache_slots_.size() * sizeof(int32_t));
-        write_qwen_batched_cached_step_mask(
+        write_batched_cached_step_mask(
+            config_,
             batched_decode_attention_mask_,
             batched_decode_attention_mask_values_,
             batched_decode_batch_size_,
             batched_decode_cache_steps_,
             batched_decode_cache_.valid_steps(),
-            cache_slot);
+            cache_slot,
+            position);
         core::set_backend_threads(backend_, threads_);
         const ggml_status status = core::compute_backend_graph(backend_, batched_decode_graph_);
         ggml_backend_synchronize(backend_);
@@ -1197,7 +1330,8 @@ private:
 
     void release_prefill_graph() {
         if (prefill_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, prefill_graph_);
+            core::release_backend_graph_resources(
+                backend_, prefill_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (prefill_gallocr_ != nullptr) {
             ggml_gallocr_free(prefill_gallocr_);
@@ -1219,7 +1353,8 @@ private:
 
     void release_batched_prefill_graph() {
         if (batched_prefill_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, batched_prefill_graph_);
+            core::release_backend_graph_resources(
+                backend_, batched_prefill_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (batched_prefill_gallocr_ != nullptr) {
             ggml_gallocr_free(batched_prefill_gallocr_);
@@ -1242,7 +1377,8 @@ private:
 
     void release_decode_graph() {
         if (decode_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, decode_graph_);
+            core::release_backend_graph_resources(
+                backend_, decode_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (decode_buffer_ != nullptr) {
             ggml_backend_buffer_free(decode_buffer_);
@@ -1265,7 +1401,8 @@ private:
 
     void release_batched_decode_graph() {
         if (batched_decode_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, batched_decode_graph_);
+            core::release_backend_graph_resources(
+                backend_, batched_decode_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (batched_decode_buffer_ != nullptr) {
             ggml_backend_buffer_free(batched_decode_buffer_);
@@ -1428,6 +1565,10 @@ QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_embeddings_batched(
     const std::vector<float> & embeddings,
     int64_t batch_size) {
     return impl_->decode_embeddings_batched(embeddings, batch_size);
+}
+
+runtime::TransformerBatchedKVState QwenCausalDecodeRuntime::export_batched_decode_state() const {
+    return impl_->export_batched_decode_state();
 }
 
 int64_t QwenCausalDecodeRuntime::decode_cache_steps() const noexcept {

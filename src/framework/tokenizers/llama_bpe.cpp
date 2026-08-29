@@ -102,6 +102,26 @@ uint32_t token_attr_from_json(const engine::io::json::Value & token_config) {
     return attr;
 }
 
+uint32_t token_attr_from_added_token(const LlamaBpeAddedToken & token) {
+    uint32_t attr = 0;
+    if (token.user_defined) {
+        attr |= vendor::TOKEN_ATTR_USER_DEFINED;
+    }
+    if (token.special) {
+        attr |= vendor::TOKEN_ATTR_CONTROL;
+    }
+    if (token.unknown) {
+        attr |= vendor::TOKEN_ATTR_UNKNOWN;
+    }
+    if (token.lstrip) {
+        attr |= vendor::TOKEN_ATTR_LSTRIP;
+    }
+    if (token.rstrip) {
+        attr |= vendor::TOKEN_ATTR_RSTRIP;
+    }
+    return attr;
+}
+
 void load_vocab_json(const std::filesystem::path & vocab_path, BpeVocabulary & vocab) {
     const auto vocab_json = engine::io::json::parse_file(vocab_path);
     for (const auto & [token, id] : vocab_json.as_object()) {
@@ -186,6 +206,36 @@ void load_added_tokens_from_config(const std::filesystem::path & config_path, Bp
     }
 }
 
+void add_runtime_special_tokens(const std::vector<LlamaBpeAddedToken> & tokens, BpeVocabulary & vocab) {
+    if (tokens.empty()) {
+        return;
+    }
+    int32_t next_id = 0;
+    for (const auto & [id, _] : vocab.id_to_token) {
+        next_id = std::max(next_id, id + 1);
+    }
+    for (const auto & token : tokens) {
+        if (token.content.empty()) {
+            throw std::runtime_error("llama BPE runtime added token cannot be empty");
+        }
+        const auto existing_token = vocab.token_to_id.find(token.content);
+        if (existing_token != vocab.token_to_id.end()) {
+            if (token.id.has_value() && existing_token->second != *token.id) {
+                throw std::runtime_error("llama BPE runtime added token id mismatch for token: " + token.content);
+            }
+            continue;
+        }
+        const int32_t token_id = token.id.value_or(next_id);
+        const auto existing_id = vocab.id_to_token.find(token_id);
+        if (existing_id != vocab.id_to_token.end()) {
+            throw std::runtime_error("llama BPE runtime added token id collision for token: " + token.content);
+        }
+        vocab.token_to_id[token.content] = token_id;
+        vocab.id_to_token[token_id] = TokenData{token.content, token_attr_from_added_token(token)};
+        next_id = std::max(next_id, token_id + 1);
+    }
+}
+
 void load_merges(const std::filesystem::path & merges_path, BpeVocabulary & vocab) {
     std::ifstream merges(merges_path);
     if (!merges) {
@@ -228,6 +278,7 @@ struct LlamaBpeTokenizer::Impl {
         if (!spec.tokenizer_config_path.empty()) {
             load_added_tokens_from_config(spec.tokenizer_config_path, vocab);
         }
+        add_runtime_special_tokens(spec.additional_special_tokens, vocab);
         vendor::rebuild_special_tokens_cache(vocab);
     }
 

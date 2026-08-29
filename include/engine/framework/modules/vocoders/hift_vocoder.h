@@ -20,6 +20,16 @@ enum class HiftVocoderWeightLayout {
     TorchParametrizedWeightNorm,
 };
 
+enum class HiftVocoderUpsampleMode {
+    ConvTranspose1d,
+    CausalConv1dNearest,
+};
+
+enum class HiftVocoderSourceMode {
+    Standard,
+    CausalSineGen2,
+};
+
 struct HiftVocoderConfig {
     int64_t in_channels = 0;
     int64_t base_channels = 0;
@@ -38,12 +48,17 @@ struct HiftVocoderConfig {
     std::vector<std::vector<int64_t>> source_resblock_dilation_sizes;
     float lrelu_slope = 0.1F;
     float audio_limit = 0.99F;
+    int64_t conv_pre_kernel_size = 7;
+    bool causal_convolutions = false;
     int64_t f0_num_class = 0;
     int64_t f0_in_channels = 0;
     int64_t f0_cond_channels = 0;
+    std::vector<int64_t> f0_condnet_kernel_sizes;
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
     std::string tensor_prefix;
     HiftVocoderWeightLayout weight_layout = HiftVocoderWeightLayout::Canonical;
+    HiftVocoderUpsampleMode upsample_mode = HiftVocoderUpsampleMode::ConvTranspose1d;
+    HiftVocoderSourceMode source_mode = HiftVocoderSourceMode::Standard;
 };
 
 struct HiftVocoderWeights {
@@ -57,6 +72,8 @@ struct HiftVocoderWeights {
         int64_t kernel = 0;
         int64_t stride = 1;
         int64_t padding = 0;
+        int64_t pad_left = 0;
+        int64_t pad_right = 0;
         int64_t dilation = 1;
         bool use_bias = false;
     };
@@ -109,6 +126,7 @@ struct HiftVocoderWeights {
     F0PredictorWeights f0_predictor;
     Conv1dWeights conv_pre;
     std::vector<ConvTranspose1dWeights> ups;
+    std::vector<Conv1dWeights> up_convs;
     std::vector<Conv1dWeights> source_downs;
     std::vector<ResBlockWeights> source_resblocks;
     std::vector<ResBlockWeights> resblocks;

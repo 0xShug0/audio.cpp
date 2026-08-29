@@ -39,6 +39,14 @@ const packages: PackageEntry[] = Object.values(specModules).flatMap((spec) =>
 );
 
 const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.family, spec]));
+const exposeAllGgufPackageFamilies = new Set([
+  'audiosr',
+  'controlfoley',
+  'firered_audio',
+  'fireredtts3',
+  'meanvc2',
+  'midashenglm_gen'
+]);
 
 const hanCharacters = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u;
 
@@ -102,6 +110,27 @@ function relatedPackages(entry: CatalogEntry): PackageEntry[] {
     return matches.length ? matches : targetMatches;
   }
   return family;
+}
+
+function relatedExposeAllGgufPackages(entry: CatalogEntry): PackageEntry[] {
+  const family = packages.filter((candidate) =>
+    candidate.family === entry.family && candidate.format === 'gguf');
+  if (!family.length) return [];
+  if (!entry.download_id) return family;
+  const exact = family.find((candidate) => candidate.id === entry.download_id);
+  if (!exact) return relatedPackages(entry);
+  const matches = family.filter((candidate) => candidate.target_directory === exact.target_directory);
+  return matches.length ? matches : [exact];
+}
+
+function exposedPackageRank(entry: PackageEntry, selectedId?: string): number {
+  if (selectedId && entry.id === selectedId) return 0;
+  if (entry.default) return 1;
+  if (['q4_k', 'q4_0', 'q8_0', 'q8'].includes(entry.precision)) return 2;
+  if (['f16', 'fp16', 'bf16'].includes(entry.precision)) return 3;
+  if (entry.precision === 'f32') return 4;
+  if (entry.precision === 'orig') return 5;
+  return 6;
 }
 
 function packageLabel(entry: PackageEntry): string {
@@ -171,10 +200,15 @@ function packageSessionOptions(entry: PackageEntry): Record<string, string> | un
 }
 
 function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
-  const related = relatedPackages(entry);
-  if (entry.family === 'ace_step' || entry.family === 'minimax_music3') {
+  const exposesAllGguf = exposeAllGgufPackageFamilies.has(entry.family);
+  const related = exposesAllGguf ? relatedExposeAllGgufPackages(entry) : relatedPackages(entry);
+  if (entry.family === 'ace_step' || entry.family === 'minimax_music3' ||
+      exposesAllGguf) {
     return related
       .filter((candidate) => candidate.format === 'gguf')
+      .sort((left, right) => exposesAllGguf
+        ? exposedPackageRank(left, entry.download_id) - exposedPackageRank(right, entry.download_id)
+        : Number(right.default === true) - Number(left.default === true))
       .map((candidate) => ({
         id: candidate.id,
         label: packageLabel(candidate),

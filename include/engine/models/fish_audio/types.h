@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/codecs/fish_dac_codec_runtime.h"
 #include "engine/framework/runtime/session.h"
 
 #include <cstdint>
@@ -30,15 +31,9 @@ struct FishAudioRequest {
     FishAudioGenerationOptions generation;
 };
 
-struct FishAudioCodes {
-    std::vector<int32_t> codes;
-    int64_t codebooks = 0;
-    int64_t frames = 0;
-};
-
 struct FishAudioConversationTurn {
     std::string text;
-    FishAudioCodes codes;
+    engine::codecs::FishDacCodes codes;
 };
 
 struct FishAudioPrompt {
@@ -79,17 +74,6 @@ struct FishAudioFastConfig {
     bool attention_qk_norm = false;
 };
 
-struct FishAudioCodecConfig {
-    int sample_rate = 44100;
-    int64_t semantic_codebook_size = 4096;
-    int64_t residual_codebook_size = 1024;
-    int64_t quantizer_codebooks = 9;
-    int64_t total_codebooks = 10;
-    int64_t codebook_dim = 8;
-    int64_t latent_dim = 1024;
-    int64_t frame_length = 2048;
-};
-
 struct FishAudioConfig {
     std::string model_type;
     std::string torch_dtype;
@@ -99,7 +83,7 @@ struct FishAudioConfig {
     bool norm_fastlayer_input = false;
     FishAudioTextConfig text;
     FishAudioFastConfig fast;
-    FishAudioCodecConfig codec;
+    engine::codecs::FishDacCodecConfig codec;
 };
 
 }  // namespace engine::models::fish_audio

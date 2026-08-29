@@ -1,0 +1,58 @@
+{
+  "official_examples": {
+    "warmup": {
+      "id": "warmup_t2a",
+      "prompt": "A bird sings melodically in a forest.",
+      "duration_sec": 2.0,
+      "num_inference_steps": 8,
+      "cfg_strength": 4.5,
+      "seed": 123
+    },
+    "requests": [
+      {
+        "id": "t2a",
+        "prompt": "A bird sings melodically in a forest.",
+        "duration_sec": 10.0,
+        "num_inference_steps": 25,
+        "cfg_strength": 4.5,
+        "seed": 123
+      },
+      {
+        "id": "tv2a",
+        "prompt": "skateboarding",
+        "video": "reference/controlfoley/examples/tv2a/tv2a_video_input.mp4",
+        "duration_sec": 8.0,
+        "num_inference_steps": 25,
+        "cfg_strength": 4.5,
+        "seed": 123
+      },
+      {
+        "id": "tc_v2a",
+        "prompt": "thunder strike",
+        "video": "reference/controlfoley/examples/tc_v2a/tcv2a_video_input.mp4",
+        "mask_away_clip": true,
+        "duration_sec": 6.0,
+        "num_inference_steps": 25,
+        "cfg_strength": 4.5,
+        "seed": 123
+      },
+      {
+        "id": "ac_v2a",
+        "video": "reference/controlfoley/examples/ac_v2a/acv2a_video_input.mp4",
+        "audio": "reference/controlfoley/examples/ac_v2a/acv2a_reference.wav",
+        "duration_sec": 5.0,
+        "num_inference_steps": 25,
+        "cfg_strength": 4.5,
+        "seed": 123
+      },
+      {
+        "id": "v2a",
+        "video": "reference/controlfoley/examples/v2a/v2a_video_input.mp4",
+        "duration_sec": 6.0,
+        "num_inference_steps": 25,
+        "cfg_strength": 4.5,
+        "seed": 123
+      }
+    ]
+  }
+}

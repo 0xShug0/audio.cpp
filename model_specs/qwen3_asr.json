@@ -51,6 +51,17 @@
       "partial_results"
     ]
   },
+  "options": {
+    "request": [
+      {
+        "name": "clamp_timestamps_to_audio",
+        "type": "bool",
+        "description": "Opt-in guard for word timestamp output: keep repaired forced-aligner word spans inside the local audio chunk. Defaults to false to preserve existing timestamp repair behavior.",
+        "required": false,
+        "default": false
+      }
+    ]
+  },
   "runtime": {
     "tags": [
       "gguf",

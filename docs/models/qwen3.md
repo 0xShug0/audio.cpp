@@ -207,6 +207,7 @@ audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B-GGUF/qw
 | `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Let the model choose, force fixed chunks, force internal VAD chunks, or disable model-side chunking. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
 | `--words-out` | JSON path | not set | Word timestamp output. Requires `qwen3_asr.forced_aligner_model_path`. |
+| `--request-option clamp_timestamps_to_audio=true\|false` | bool | `false` | Opt-in guard for `--words-out`: keep repaired forced-aligner word spans inside each local audio chunk. Default preserves existing timestamp repair behavior. |
 | `--session-option qwen3_asr.forced_aligner_model_path=<path>` | model directory | not set | Qwen3 Forced Aligner model used to generate word timestamps after ASR. |
 | `--session-option qwen3_asr.vad_model_path=<path>` | model directory | `assets/framework/models/silero_vad` | Optional internal VAD model override for timestamp-safe chunking. |
 
@@ -239,6 +240,7 @@ audiocpp_cli --task align --family qwen3_forced_aligner --model models/Qwen3-For
 | `--language` | language code | required | Transcript language. |
 | `--audio-chunk-mode` | `auto`, `none` | `auto` | Standalone forced alignment runs one audio/transcript pair. `fixed` and `vad` are rejected because transcript chunk boundaries would be ambiguous. |
 | `--words-out` | JSON path | not set | Word timestamp output. |
+| `--request-option clamp_timestamps_to_audio=true\|false` | bool | `false` | Opt-in guard for word timestamps: keep repaired spans inside the local audio input. Default preserves existing timestamp repair behavior. |
 
 ## Weight Options
 

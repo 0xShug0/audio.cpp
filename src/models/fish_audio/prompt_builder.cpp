@@ -13,7 +13,7 @@ void append_tokens(std::vector<int32_t> & out, const std::vector<int32_t> & toke
 
 struct CodeSpan {
     int64_t start = 0;
-    const FishAudioCodes * codes = nullptr;
+    const engine::codecs::FishDacCodes * codes = nullptr;
 };
 
 std::string reference_text_with_speakers(const std::string & text, int64_t speaker) {
@@ -28,7 +28,7 @@ void append_code_span(
     std::vector<int32_t> & row0,
     std::vector<CodeSpan> & spans,
     const FishAudioTextTokenizer & tokenizer,
-    const FishAudioCodes & codes,
+    const engine::codecs::FishDacCodes & codes,
     int64_t expected_codebooks) {
     if (codes.codebooks != expected_codebooks) {
         throw std::runtime_error("Fish Audio prompt codebook count mismatch");
@@ -55,7 +55,7 @@ FishAudioPromptBuilder::FishAudioPromptBuilder(
 
 FishAudioPrompt FishAudioPromptBuilder::build(
     const FishAudioRequest & request,
-    const std::vector<FishAudioCodes> & reference_codes,
+    const std::vector<engine::codecs::FishDacCodes> & reference_codes,
     const std::optional<FishAudioConversationTurn> & previous_turn) const {
     if (request.text.empty()) {
         throw std::runtime_error("Fish Audio request text must not be empty");

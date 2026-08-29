@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -126,24 +128,64 @@ core::TensorValue apply_partial_rope(
     const core::TensorValue & cos,
     const core::TensorValue & sin,
     int64_t rotary_dim) {
-    const auto rotary = modules::SliceModule({3, 0, rotary_dim}).build(ctx, input);
-    const auto rest = modules::SliceModule({3, rotary_dim, input.shape.dims[3] - rotary_dim}).build(ctx, input);
-    const auto rotated = modules::SplitRoPEModule({rotary_dim}).build(ctx, rotary, cos, sin);
+    auto rotary = modules::SliceModule({3, 0, rotary_dim}).build(ctx, input);
+    auto rest = modules::SliceModule({3, rotary_dim, input.shape.dims[3] - rotary_dim}).build(ctx, input);
+    auto cos_used = cos;
+    auto sin_used = sin;
+    if (input.shape.dims[0] == 1) {
+        // Break every view chain feeding the rope elementwise ops: at batch 1
+        // the graph allocator produced buffer aliasing along these views
+        // (bitwise-reproducible call-to-call divergence, absent at batch 2
+        // where ggml_repeat materializes the chain).
+        rotary = core::wrap_tensor(ggml_cont(ctx.ggml, rotary.tensor), rotary.shape, GGML_TYPE_F32);
+        rest = core::wrap_tensor(ggml_cont(ctx.ggml, rest.tensor), rest.shape, GGML_TYPE_F32);
+        // At batch 1 the rope tables match the sliced shape exactly, so the
+        // generic rope helper would feed the graph-input tensors straight
+        // into the elementwise chain (its repeat short-circuit). That path
+        // produced nondeterministic outputs on CUDA; materializing a copy
+        // restores the batch>1 behavior where ggml_repeat isolates the
+        // inputs from downstream scheduling.
+        cos_used = core::wrap_tensor(ggml_cont(ctx.ggml, cos.tensor), cos.shape, GGML_TYPE_F32);
+        sin_used = core::wrap_tensor(ggml_cont(ctx.ggml, sin.tensor), sin.shape, GGML_TYPE_F32);
+    }
+    const auto rotated = modules::SplitRoPEModule({rotary_dim}).build(ctx, rotary, cos_used, sin_used);
     return modules::ConcatModule({3}).build(ctx, rotated, rest);
 }
 
 }  // namespace
 
 struct MiniMaxMusic3FlowTransformerRuntime::Impl {
+    // Two independently cached graphs share the weights: slot 0 evaluates the
+    // usual cond+uncond batch, slot 1 evaluates the cond branch alone for
+    // guidance-delta reuse steps. Keeping both alive avoids rebuilding when a
+    // sampling schedule alternates between them.
+    struct GraphSlot {
+        int64_t batch = 0;
+        int64_t latent_frames = 0;
+        std::unique_ptr<std::remove_pointer_t<ggml_context *>, GgmlContextDeleter> ggml;
+        ggml_cgraph * graph = nullptr;
+        std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr;
+        core::HostGraphPlan plan;
+        core::TensorValue latents;
+        core::TensorValue condition;
+        core::TensorValue time_features;
+        core::TensorValue rope_cos;
+        core::TensorValue rope_sin;
+        core::TensorValue rope_positions;
+        ggml_tensor * output = nullptr;
+    };
+
     Impl(
         std::shared_ptr<const MiniMaxMusic3Assets> input_assets,
         core::ExecutionContext & input_execution,
         size_t input_graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        bool input_evict_cuda_graph_cache_on_release)
         : assets(std::move(input_assets)),
           execution(input_execution),
           graph_arena_bytes(input_graph_arena_bytes),
+          evict_cuda_graph_cache_on_release(input_evict_cuda_graph_cache_on_release),
           weights(load_flow_weights(*assets, execution, weight_context_bytes, storage_type)) {
         time_proj = assets->transformer_weights->require_f32(
             "time_proj.weight",
@@ -154,54 +196,54 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
         release_runtime_graphs();
     }
 
-    void release_runtime_graphs() {
-        if (graph != nullptr) {
-            core::release_backend_graph_resources(execution.backend(), graph);
+    void release_slot(GraphSlot & slot) {
+        if (slot.graph != nullptr) {
+            core::release_backend_graph_resources(
+                execution.backend(), slot.graph, evict_cuda_graph_cache_on_release);
         }
-        graph = nullptr;
-        latents = {};
-        condition = {};
-        time_features = {};
-        rope_cos = {};
-        rope_sin = {};
-        output = nullptr;
-        gallocr.reset();
-        ggml.reset();
-        plan.reset();
-        latent_frames = 0;
+        slot = {};
+    }
+
+    void release_runtime_graphs() {
+        release_slot(slots[0]);
+        release_slot(slots[1]);
+        condition_frames = 0;
         rope_cos_table.clear();
         rope_sin_table.clear();
     }
 
-    void ensure_graph(int64_t frames) {
-        if (graph != nullptr && latent_frames == frames) {
-            return;
+    GraphSlot & ensure_graph(int64_t frames, int64_t batch) {
+        GraphSlot & slot = slots[batch == 2 ? 0 : 1];
+        if (slot.graph != nullptr && slot.latent_frames == frames && slot.batch == batch) {
+            return slot;
         }
-        release_runtime_graphs();
+        release_slot(slot);
         const auto & config = assets->config.flow;
         const int64_t inner = config.attention_heads * config.head_dim;
         const int64_t steps = frames + 1;
         const int64_t concat_channels = 2 * config.in_channels + config.condition_dim;
         ggml_init_params params{graph_arena_bytes, nullptr, true};
-        ggml.reset(ggml_init(params));
-        if (ggml == nullptr) {
+        slot.ggml.reset(ggml_init(params));
+        if (slot.ggml == nullptr) {
             throw std::runtime_error("failed to initialize MiniMax Music 3 flow graph context");
         }
-        core::ModuleBuildContext ctx{ggml.get(), "minimax_music3.flow", execution.backend_type()};
-        latents = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, config.in_channels, frames}));
-        condition = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, config.condition_dim, frames}));
-        time_features = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, config.fourier_embedding_dim}));
-        rope_cos = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, steps, config.attention_heads, config.rotary_dim / 2}));
-        rope_sin = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, steps, config.attention_heads, config.rotary_dim / 2}));
-        ggml_set_input(latents.tensor);
-        ggml_set_input(condition.tensor);
-        ggml_set_input(time_features.tensor);
-        ggml_set_input(rope_cos.tensor);
-        ggml_set_input(rope_sin.tensor);
+        core::ModuleBuildContext ctx{slot.ggml.get(), "minimax_music3.flow", execution.backend_type()};
+        slot.latents = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, config.in_channels, frames}));
+        slot.condition = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, config.condition_dim, frames}));
+        slot.time_features = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, config.fourier_embedding_dim}));
+        slot.rope_cos = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, steps, config.attention_heads, config.rotary_dim / 2}));
+        slot.rope_sin = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, steps, config.attention_heads, config.rotary_dim / 2}));
+        slot.rope_positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
+        ggml_set_input(slot.latents.tensor);
+        ggml_set_input(slot.condition.tensor);
+        ggml_set_input(slot.time_features.tensor);
+        ggml_set_input(slot.rope_cos.tensor);
+        ggml_set_input(slot.rope_sin.tensor);
+        ggml_set_input(slot.rope_positions.tensor);
 
-        auto zeros = core::wrap_tensor(ggml_scale(ctx.ggml, latents.tensor, 0.0F), latents.shape, GGML_TYPE_F32);
-        auto x = modules::ConcatModule({1}).build(ctx, latents, zeros);
-        x = modules::ConcatModule({1}).build(ctx, x, condition);
+        auto zeros = core::wrap_tensor(ggml_scale(ctx.ggml, slot.latents.tensor, 0.0F), slot.latents.shape, GGML_TYPE_F32);
+        auto x = modules::ConcatModule({1}).build(ctx, slot.latents, zeros);
+        x = modules::ConcatModule({1}).build(ctx, x, slot.condition);
         auto conv = modules::Conv1dModule({concat_channels, concat_channels, 1, 1, 0, 1, false}).build(
             ctx,
             x,
@@ -212,11 +254,11 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
 
         auto temb = modules::LinearModule({config.fourier_embedding_dim, inner, true}).build(
             ctx,
-            time_features,
+            slot.time_features,
             weights.time_linear_1);
         temb = modules::SiluModule().build(ctx, temb);
         temb = modules::LinearModule({inner, inner, true}).build(ctx, temb, weights.time_linear_2);
-        temb = core::reshape_tensor(ctx, temb, core::TensorShape::from_dims({2, 1, inner}));
+        temb = core::reshape_tensor(ctx, temb, core::TensorShape::from_dims({batch, 1, inner}));
         x = modules::ConcatModule({1}).build(ctx, temb, x);
 
         for (const auto & block : weights.blocks) {
@@ -224,17 +266,38 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
             auto q = modules::LinearModule({inner, inner, false}).build(ctx, normed, block.q);
             auto k = modules::LinearModule({inner, inner, false}).build(ctx, normed, block.k);
             auto v = modules::LinearModule({inner, inner, false}).build(ctx, normed, block.v);
-            q = core::reshape_tensor(ctx, q, core::TensorShape::from_dims({2, steps, config.attention_heads, config.head_dim}));
-            k = core::reshape_tensor(ctx, k, core::TensorShape::from_dims({2, steps, config.attention_heads, config.head_dim}));
-            v = core::reshape_tensor(ctx, v, core::TensorShape::from_dims({2, steps, config.attention_heads, config.head_dim}));
-            q = apply_partial_rope(ctx, q, rope_cos, rope_sin, config.rotary_dim);
-            k = apply_partial_rope(ctx, k, rope_cos, rope_sin, config.rotary_dim);
+            q = core::reshape_tensor(ctx, q, core::TensorShape::from_dims({batch, steps, config.attention_heads, config.head_dim}));
+            k = core::reshape_tensor(ctx, k, core::TensorShape::from_dims({batch, steps, config.attention_heads, config.head_dim}));
+            v = core::reshape_tensor(ctx, v, core::TensorShape::from_dims({batch, steps, config.attention_heads, config.head_dim}));
+            {
+                static const bool legacy_rope = getenv("MM3_LEGACY_ROPE") != nullptr;
+                if (!legacy_rope) {
+                    // Native partial NEOX rope from integer positions: one
+                    // fused kernel per projection instead of the split-table
+                    // slice/mul/concat chain (which also aliased buffers at
+                    // batch 1), for every batch size.
+                    q = core::wrap_tensor(
+                        ggml_rope_ext(ctx.ggml, q.tensor, slot.rope_positions.tensor, nullptr,
+                                      static_cast<int>(config.rotary_dim), GGML_ROPE_TYPE_NEOX, 0,
+                                      10000.0F, 1.0F, 0.0F, 1.0F, 0.0F, 0.0F),
+                        q.shape, GGML_TYPE_F32);
+                    k = core::wrap_tensor(
+                        ggml_rope_ext(ctx.ggml, k.tensor, slot.rope_positions.tensor, nullptr,
+                                      static_cast<int>(config.rotary_dim), GGML_ROPE_TYPE_NEOX, 0,
+                                      10000.0F, 1.0F, 0.0F, 1.0F, 0.0F, 0.0F),
+                        k.shape, GGML_TYPE_F32);
+                } else {
+                    q = apply_partial_rope(ctx, q, slot.rope_cos, slot.rope_sin, config.rotary_dim);
+                    k = apply_partial_rope(ctx, k, slot.rope_cos, slot.rope_sin, config.rotary_dim);
+                }
+            }
             q = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
             k = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
             v = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
+            const bool flash_ok = core::uses_ggml_cuda_or_hip_backend(execution.backend_type());
             auto attn = modules::ScaledDotProductAttentionModule({
                 config.head_dim,
-                core::uses_ggml_cuda_or_hip_backend(execution.backend_type())
+                flash_ok
                     ? modules::ScaledDotProductAttentionLowering::FlashPreserveViews
                     : modules::ScaledDotProductAttentionLowering::Explicit,
                 GGML_PREC_F32,
@@ -243,19 +306,31 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
             attn = core::reshape_tensor(
                 ctx,
                 core::ensure_backend_addressable_layout(ctx, attn),
-                core::TensorShape::from_dims({2, steps, inner}));
+                core::TensorShape::from_dims({batch, steps, inner}));
             attn = modules::LinearModule({inner, inner, false}).build(ctx, attn, block.out);
             x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, attn.tensor), x.shape, GGML_TYPE_F32);
 
             auto ffn = modules::LayerNormModule({inner, 1.0e-5F, true, true, false}).build(ctx, x, block.norm2);
             ffn = modules::LinearModule({inner, 2 * config.ff_inner_dim, true}).build(ctx, ffn, block.ff_in);
-            const auto gate_states = modules::SliceModule({2, 0, config.ff_inner_dim}).build(ctx, ffn);
-            auto gate = modules::SliceModule({2, config.ff_inner_dim, config.ff_inner_dim}).build(ctx, ffn);
-            gate = modules::SiluModule().build(ctx, gate);
-            auto gated = core::wrap_tensor(
-                ggml_mul(ctx.ggml, gate_states.tensor, gate.tensor),
-                gate_states.shape,
-                GGML_TYPE_F32);
+            static const bool legacy_glu = getenv("MM3_LEGACY_GLU") != nullptr;
+            core::TensorValue gated;
+            if (!legacy_glu) {
+                // Fused SwiGLU over the packed [states | gate] projection (our gate
+                // half feeds silu, i.e. the swapped ggml convention): one
+                // kernel instead of slice+silu+mul.
+                gated = core::wrap_tensor(
+                    ggml_swiglu_swapped(ctx.ggml, ffn.tensor),
+                    ffn.shape.with_last_dim(config.ff_inner_dim),
+                    GGML_TYPE_F32);
+            } else {
+                const auto gate_states = modules::SliceModule({2, 0, config.ff_inner_dim}).build(ctx, ffn);
+                auto gate = modules::SliceModule({2, config.ff_inner_dim, config.ff_inner_dim}).build(ctx, ffn);
+                gate = modules::SiluModule().build(ctx, gate);
+                gated = core::wrap_tensor(
+                    ggml_mul(ctx.ggml, gate_states.tensor, gate.tensor),
+                    gate_states.shape,
+                    GGML_TYPE_F32);
+            }
             gated = modules::LinearModule({config.ff_inner_dim, inner, true}).build(ctx, gated, block.ff_out);
             x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, gated.tensor), x.shape, GGML_TYPE_F32);
         }
@@ -268,22 +343,35 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
             x,
             weights.postprocess_conv);
         x = core::wrap_tensor(ggml_add(ctx.ggml, post.tensor, x.tensor), post.shape, GGML_TYPE_F32);
-        output = x.tensor;
-        graph = ggml_new_graph_custom(ggml.get(), 524288, false);
-        ggml_build_forward_expand(graph, output);
-        gallocr.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
-        if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr.get(), graph) ||
-            !ggml_gallocr_alloc_graph(gallocr.get(), graph)) {
+        slot.output = x.tensor;
+        slot.graph = ggml_new_graph_custom(slot.ggml.get(), 524288, false);
+        ggml_build_forward_expand(slot.graph, slot.output);
+        slot.gallocr.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
+        if (slot.gallocr == nullptr || !ggml_gallocr_reserve(slot.gallocr.get(), slot.graph) ||
+            !ggml_gallocr_alloc_graph(slot.gallocr.get(), slot.graph)) {
             throw std::runtime_error("failed to allocate MiniMax Music 3 flow graph");
         }
-        core::prepare_host_graph_plan(execution, graph, plan);
-        latent_frames = frames;
-        rope_cos_table = split_rope_table(steps, config.attention_heads, config.rotary_dim, true);
-        rope_sin_table = split_rope_table(steps, config.attention_heads, config.rotary_dim, false);
-        core::write_tensor_f32(rope_cos, rope_cos_table);
-        core::write_tensor_f32(rope_sin, rope_sin_table);
+        core::prepare_host_graph_plan(execution, slot.graph, slot.plan);
+        slot.latent_frames = frames;
+        slot.batch = batch;
+        if (rope_cos_table.size() != static_cast<size_t>(steps * config.attention_heads * config.rotary_dim / 2)) {
+            rope_cos_table = split_rope_table(steps, config.attention_heads, config.rotary_dim, true);
+            rope_sin_table = split_rope_table(steps, config.attention_heads, config.rotary_dim, false);
+        }
+        if (slot.rope_cos.tensor->buffer != nullptr) {
+            core::write_tensor_f32(slot.rope_cos, rope_cos_table);
+            core::write_tensor_f32(slot.rope_sin, rope_sin_table);
+        }
+        if (slot.rope_positions.tensor->buffer != nullptr) {
+            std::vector<int32_t> positions(static_cast<size_t>(steps));
+            for (int64_t i = 0; i < steps; ++i) {
+                positions[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+            }
+            core::write_tensor_i32(slot.rope_positions, positions);
+        }
         latent_batch.resize(static_cast<size_t>(2 * config.in_channels * frames));
         time_batch.resize(static_cast<size_t>(2 * config.fourier_embedding_dim));
+        return slot;
     }
 
     void prepare_chunk_condition(
@@ -303,57 +391,53 @@ struct MiniMaxMusic3FlowTransformerRuntime::Impl {
         condition_frames = frames;
     }
 
-    std::vector<float> predict_velocity_branches(
+    std::vector<float> predict_velocity(
         const std::vector<float> & input_latents,
         const std::vector<float> & input_condition,
         int64_t frames,
-        float timestep) {
+        float timestep,
+        int64_t batch) {
         const auto & config = assets->config.flow;
         if (static_cast<int64_t>(input_latents.size()) != config.in_channels * frames ||
             static_cast<int64_t>(input_condition.size()) != config.condition_dim * frames) {
             throw std::runtime_error("MiniMax Music 3 flow input shape mismatch");
         }
-        ensure_graph(frames);
+        auto & slot = ensure_graph(frames, batch);
         if (condition_frames != frames ||
             condition_batch.size() != static_cast<size_t>(2 * config.condition_dim * frames)) {
             throw std::runtime_error("MiniMax Music 3 flow condition was not prepared for this chunk");
         }
         std::copy(input_latents.begin(), input_latents.end(), latent_batch.begin());
-        std::copy(input_latents.begin(), input_latents.end(), latent_batch.begin() + input_latents.size());
+        if (batch == 2) {
+            std::copy(input_latents.begin(), input_latents.end(), latent_batch.begin() + input_latents.size());
+        }
         const auto time_feature = fourier_embedding(time_proj, config.fourier_embedding_dim, timestep);
         std::copy(time_feature.begin(), time_feature.end(), time_batch.begin());
-        std::copy(time_feature.begin(), time_feature.end(), time_batch.begin() + time_feature.size());
-        core::write_tensor_f32(latents, latent_batch);
-        core::write_tensor_f32(condition, condition_batch);
-        core::write_tensor_f32(time_features, time_batch);
-        if (core::compute_graph(execution, graph, plan, "minimax_music3.flow") != GGML_STATUS_SUCCESS) {
+        if (batch == 2) {
+            std::copy(time_feature.begin(), time_feature.end(), time_batch.begin() + time_feature.size());
+        }
+        core::write_tensor_f32(slot.latents, latent_batch.data(), static_cast<size_t>(batch * config.in_channels * frames));
+        core::write_tensor_f32(slot.condition, condition_batch.data(), static_cast<size_t>(batch * config.condition_dim * frames));
+        core::write_tensor_f32(slot.time_features, time_batch.data(), static_cast<size_t>(batch * config.fourier_embedding_dim));
+        if (core::compute_graph(execution, slot.graph, slot.plan, "minimax_music3.flow") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("MiniMax Music 3 flow graph compute failed");
         }
-        return core::read_tensor_f32(output);
+        return core::read_tensor_f32(slot.output);
     }
 
     std::shared_ptr<const MiniMaxMusic3Assets> assets;
     core::ExecutionContext & execution;
     size_t graph_arena_bytes = 0;
+    bool evict_cuda_graph_cache_on_release = false;
     MiniMaxMusic3FlowWeights weights;
     std::vector<float> time_proj;
-    int64_t latent_frames = 0;
     int64_t condition_frames = 0;
     std::vector<float> latent_batch;
     std::vector<float> condition_batch;
     std::vector<float> time_batch;
     std::vector<float> rope_cos_table;
     std::vector<float> rope_sin_table;
-    std::unique_ptr<std::remove_pointer_t<ggml_context *>, GgmlContextDeleter> ggml;
-    ggml_cgraph * graph = nullptr;
-    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr;
-    core::HostGraphPlan plan;
-    core::TensorValue latents;
-    core::TensorValue condition;
-    core::TensorValue time_features;
-    core::TensorValue rope_cos;
-    core::TensorValue rope_sin;
-    ggml_tensor * output = nullptr;
+    GraphSlot slots[2];
 };
 
 MiniMaxMusic3FlowTransformerRuntime::MiniMaxMusic3FlowTransformerRuntime(
@@ -361,13 +445,15 @@ MiniMaxMusic3FlowTransformerRuntime::MiniMaxMusic3FlowTransformerRuntime(
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type)
+    assets::TensorStorageType storage_type,
+    bool evict_cuda_graph_cache_on_release)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           graph_arena_bytes,
           weight_context_bytes,
-          storage_type)) {}
+          storage_type,
+          evict_cuda_graph_cache_on_release)) {}
 
 MiniMaxMusic3FlowTransformerRuntime::~MiniMaxMusic3FlowTransformerRuntime() = default;
 
@@ -376,7 +462,15 @@ std::vector<float> MiniMaxMusic3FlowTransformerRuntime::predict_velocity_branche
     const std::vector<float> & condition,
     int64_t latent_frames,
     float timestep) {
-    return impl_->predict_velocity_branches(latents, condition, latent_frames, timestep);
+    return impl_->predict_velocity(latents, condition, latent_frames, timestep, 2);
+}
+
+std::vector<float> MiniMaxMusic3FlowTransformerRuntime::predict_velocity_cond(
+    const std::vector<float> & latents,
+    const std::vector<float> & condition,
+    int64_t latent_frames,
+    float timestep) {
+    return impl_->predict_velocity(latents, condition, latent_frames, timestep, 1);
 }
 
 void MiniMaxMusic3FlowTransformerRuntime::prepare_chunk_condition(

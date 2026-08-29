@@ -5034,6 +5034,13 @@ static ggml_guid_t ggml_backend_cuda_guid() {
     return &guid;
 }
 
+void * ggml_backend_cuda_get_stream(ggml_backend_t backend) {
+    GGML_ASSERT(ggml_backend_is_cuda(backend));
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    ggml_cuda_set_device(cuda_ctx->device);
+    return (void *) cuda_ctx->stream();
+}
+
 bool ggml_backend_is_cuda(ggml_backend_t backend) {
     return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_cuda_guid());
 }
@@ -5051,6 +5058,14 @@ void ggml_backend_cuda_trim_pools(ggml_backend_t backend) {
             }
         }
     }
+}
+
+void ggml_backend_cuda_set_stream_priority(ggml_backend_t backend, int priority) {
+    if (backend == nullptr || !ggml_backend_is_cuda(backend)) {
+        return;
+    }
+    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
+    ctx->stream_priority = priority;
 }
 
 void ggml_backend_cuda_clear_graph(ggml_backend_t backend, const ggml_cgraph * graph) {
@@ -5878,6 +5893,9 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     }
     if (strcmp(name, "ggml_backend_cuda_trim_pools") == 0) {
         return (void *)ggml_backend_cuda_trim_pools;
+    }
+    if (strcmp(name, "ggml_backend_cuda_set_stream_priority") == 0) {
+        return (void *)ggml_backend_cuda_set_stream_priority;
     }
     return nullptr;
 }

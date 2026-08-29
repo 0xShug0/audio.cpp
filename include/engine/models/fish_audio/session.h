@@ -41,11 +41,11 @@ private:
     };
 
     struct ReferenceCacheEntry {
-        FishAudioCodes codes;
+        engine::codecs::FishDacCodes codes;
     };
 
     FishAudioRequest make_request(const runtime::TaskRequest & request) const;
-    const FishAudioCodes & resolve_reference_codes(const FishAudioReference & reference);
+    const engine::codecs::FishDacCodes & resolve_reference_codes(const FishAudioReference & reference);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const FishAudioAssets> assets_;

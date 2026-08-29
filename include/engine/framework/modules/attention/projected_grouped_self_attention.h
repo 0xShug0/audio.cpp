@@ -29,6 +29,7 @@ struct ProjectedGroupedSelfAttentionConfig {
     ProjectedGroupedSelfAttentionQKNorm qk_norm = ProjectedGroupedSelfAttentionQKNorm::None;
     float qk_norm_eps = 1.0e-6F;
     bool use_rope = true;
+    bool apply_rope_to_projected_prefix = false;
     int rope_type = GGML_ROPE_TYPE_NEOX;
     float rope_theta = 1000000.0F;
     float local_rope_theta = 10000.0F;

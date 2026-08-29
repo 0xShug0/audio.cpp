@@ -160,6 +160,10 @@ export async function availableVoices(model = ''): Promise<string[]> {
   return response.voices;
 }
 
+export function voicePreviewUrl(voice: string): string {
+  return `/v1/ui/voice-preview?voice=${encodeURIComponent(voice)}`;
+}
+
 export async function uploadWav(blob: Blob, signal?: AbortSignal): Promise<string> {
   const response = await jsonRequest<{ path: string }>('/v1/ui/upload', {
     method: 'POST',
@@ -167,6 +171,20 @@ export async function uploadWav(blob: Blob, signal?: AbortSignal): Promise<strin
       'Content-Type': 'audio/wav'
     },
     body: blob
+  }, signal);
+  return response.path;
+}
+
+export async function uploadFile(file: File, signal?: AbortSignal): Promise<string> {
+  const match = /\.([A-Za-z0-9]{1,8})$/.exec(file.name);
+  const filename = `upload.${match?.[1]?.toLowerCase() || 'bin'}`;
+  const response = await jsonRequest<{ path: string }>('/v1/ui/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      'X-AudioCPP-Filename': filename
+    },
+    body: file
   }, signal);
   return response.path;
 }

@@ -27,6 +27,8 @@ struct QwenCausalDecodeRuntimeConfig {
     bool return_hidden = false;
     std::optional<ggml_type> readback_round_type;
     std::vector<int32_t> logits_readback_token_ids;
+    int64_t sliding_window = 0;
+    bool evict_cuda_graph_cache_on_release = false;
 };
 
 struct QwenCausalDecodeRuntimeWeights {
@@ -91,6 +93,11 @@ public:
     QwenCausalDecodeStepResult decode_embeddings_batched(
         const std::vector<float> & embeddings,
         int64_t batch_size);
+
+    // Snapshot of the batched decode KV cache (host vectors), suitable for
+    // replication and re-import via start_decode_*_batched with a different
+    // batch size — the runtime rebuilds its decode graphs for the new batch.
+    runtime::TransformerBatchedKVState export_batched_decode_state() const;
 
     int64_t decode_cache_steps() const noexcept;
     int64_t decode_current_end() const noexcept;

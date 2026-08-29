@@ -496,6 +496,22 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "log_mel_cosine_min": 0.90,
         "cpp_session_options": ["heartmula.weight_type=f32"],
     },
+    "controlfoley": {
+        "kind": "controlfoley",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/controlfoley_warm_bench",
+        "python_script": "tests/controlfoley/controlfoley_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "/media/leo/Share/models/audio.cpp-gguf/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+        "python_model": "models/ControlFoley",
+        "case_catalog": "tests/controlfoley/controlfoley_warm_bench_cases.json",
+        "default_case_name": "official_examples",
+        "default_requests_per_session": 5,
+        "default_warmup": 0,
+        "wav_cosine_min": 0.80,
+        "log_mel_cosine_min": 0.90,
+        "similarity_vote_required": 1,
+    },
     "confucius4_tts": {
         "kind": "confucius4_tts",
         "display_name": "Confucius4-TTS",
@@ -4531,6 +4547,87 @@ def build_heartmula_commands(
     return python_command, cpp_command
 
 
+def build_controlfoley_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("ControlFoley warmbench is CUDA-only")
+    cpp_requests: list[dict[str, Any]] = []
+    for request in requests:
+        cpp_request = dict(request)
+        cpp_video = cpp_request.pop("cpp_video", None)
+        if cpp_video:
+            cpp_request["video"] = cpp_video
+        cpp_requests.append(cpp_request)
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    cpp_request_sequence_json = json.dumps(cpp_requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        cpp_request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
 def build_neutts_commands(
     config: dict[str, Any],
     backend: str,
@@ -5156,7 +5253,7 @@ def validate_sequence_result(summary: dict[str, Any], request_count: int, kind: 
             and len(step.get("stems", [])) > 0
             and isinstance(step.get("metrics", {}), dict)
             for step in steps)
-    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox", "personaplex"}:
+    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "controlfoley", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox", "personaplex"}:
         payload_valid = all(
             isinstance(step.get("stems", []), list)
             and len(step.get("stems", [])) > 0
@@ -5292,6 +5389,10 @@ def run_scenario(
         heartmula_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(heartmula_requests)
         python_command, cpp_command = build_heartmula_commands(scenario_config, backend, args, scenario_dir, heartmula_requests)
+    elif scenario_config["kind"] == "controlfoley":
+        controlfoley_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(controlfoley_requests)
+        python_command, cpp_command = build_controlfoley_commands(scenario_config, backend, args, scenario_dir, controlfoley_requests)
     elif scenario_config["kind"] == "neutts":
         neutts_warmup, neutts_requests, request_manifest = resolve_neutts_case(config, args)
         args.requests_per_session = len(neutts_requests)
@@ -5688,7 +5789,7 @@ def run_scenario(
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
             append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
-    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "neutts", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox", "personaplex"}:
+    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "controlfoley", "neutts", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox", "personaplex"}:
         python_valid = validate_sequence_result(python_summary, args.requests_per_session, scenario_config["kind"])
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, scenario_config["kind"])
         python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")

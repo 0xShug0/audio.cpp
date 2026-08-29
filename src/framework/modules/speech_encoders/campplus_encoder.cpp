@@ -185,7 +185,8 @@ CampplusEncoderWeights::Conv2dWeights load_conv2d(
     int64_t stride_h,
     int64_t stride_w,
     int64_t padding_h,
-    int64_t padding_w) {
+    int64_t padding_w,
+    bool use_bias = false) {
     CampplusEncoderWeights::Conv2dWeights conv;
     conv.out_channels = out_channels;
     conv.in_channels = in_channels;
@@ -195,11 +196,16 @@ CampplusEncoderWeights::Conv2dWeights load_conv2d(
     conv.stride_w = stride_w;
     conv.padding_h = padding_h;
     conv.padding_w = padding_w;
+    conv.use_bias = use_bias;
     conv.weight = read_f32_tensor(source, prefix + ".weight", {out_channels, in_channels, kernel_h, kernel_w});
     conv.weight_tensor = store.make_from_f32(
         core::TensorShape::from_dims({out_channels, in_channels, kernel_h, kernel_w}),
         assets::TensorStorageType::F32,
         conv.weight);
+    if (use_bias) {
+        conv.bias = read_f32_tensor(source, prefix + ".bias", {out_channels});
+        conv.bias_tensor = store.make_f32(core::TensorShape::from_dims({out_channels}), conv.bias);
+    }
     return conv;
 }
 
@@ -573,12 +579,13 @@ public:
         channels = 128;
         time_steps = (time_steps + 1) / 2;
         const int block_layers[3] = {12, 24, 16};
+        const bool fused = weights.config.weight_layout == CampplusEncoderWeightLayout::Fused;
         for (int block_index = 0; block_index < 3; ++block_index) {
             for (int layer_index = 0; layer_index < block_layers[block_index]; ++layer_index) {
                 const auto & layer = weights.blocks[static_cast<size_t>(block_index)].layers[static_cast<size_t>(layer_index)];
                 auto h = relu(batch_norm_1d(x, layer.nonlinear1_bn));
                 h = conv1d(h, channels, time_steps, layer.linear1);
-                h = relu(batch_norm_1d(h, layer.nonlinear2_bn));
+                h = fused ? relu(h) : relu(batch_norm_1d(h, layer.nonlinear2_bn));
                 auto local = conv1d(h, 128, time_steps, layer.cam_layer.linear_local);
                 auto avg = avg_pool_repeat(h, 128, time_steps, 100);
                 auto global = global_avg(h, 128, time_steps);
@@ -597,7 +604,7 @@ public:
             channels /= 2;
         }
 
-        x = relu(batch_norm_1d(x, weights.out_nonlinear_bn));
+        x = fused ? relu(x) : relu(batch_norm_1d(x, weights.out_nonlinear_bn));
         auto pooled = stats_pool(x, channels, time_steps);
         output_tensor_ = conv1d(pooled, channels * 2, 1, weights.dense_linear_folded);
 
@@ -680,31 +687,50 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
     auto tensor_name = [&](const std::string & suffix) {
         return base + "." + suffix;
     };
+    const bool fused = weights->config.weight_layout == CampplusEncoderWeightLayout::Fused;
+    auto has_bias = [&](const std::string & prefix) {
+        return source->has_tensor(prefix + ".bias");
+    };
 
     auto load_res_block = [&](const std::string & prefix, bool use_shortcut, int64_t stride_h) {
         CampplusEncoderWeights::BasicResBlockWeights block;
-        auto conv1 = load_conv2d(*weights->store, *source, prefix + ".conv1", 32, 32, 3, 3, stride_h, 1, 1, 1);
-        auto bn1 = load_bn2d(*weights->store, *source, prefix + ".bn1", 32);
-        block.conv1_folded = fold_bn_after_conv2d(*weights->store, conv1, bn1, weights->config.weight_storage_type);
-        auto conv2 = load_conv2d(*weights->store, *source, prefix + ".conv2", 32, 32, 3, 3, 1, 1, 1, 1);
-        auto bn2 = load_bn2d(*weights->store, *source, prefix + ".bn2", 32);
-        block.conv2_folded = fold_bn_after_conv2d(*weights->store, conv2, bn2, weights->config.weight_storage_type);
+        if (fused) {
+            block.conv1_folded = load_conv2d(*weights->store, *source, prefix + ".conv1", 32, 32, 3, 3, stride_h, 1, 1, 1, true);
+            block.conv2_folded = load_conv2d(*weights->store, *source, prefix + ".conv2", 32, 32, 3, 3, 1, 1, 1, 1, true);
+        } else {
+            auto conv1 = load_conv2d(*weights->store, *source, prefix + ".conv1", 32, 32, 3, 3, stride_h, 1, 1, 1);
+            auto bn1 = load_bn2d(*weights->store, *source, prefix + ".bn1", 32);
+            block.conv1_folded = fold_bn_after_conv2d(*weights->store, conv1, bn1, weights->config.weight_storage_type);
+            auto conv2 = load_conv2d(*weights->store, *source, prefix + ".conv2", 32, 32, 3, 3, 1, 1, 1, 1);
+            auto bn2 = load_bn2d(*weights->store, *source, prefix + ".bn2", 32);
+            block.conv2_folded = fold_bn_after_conv2d(*weights->store, conv2, bn2, weights->config.weight_storage_type);
+        }
         block.use_shortcut = use_shortcut;
         if (use_shortcut) {
-            auto shortcut_conv = load_conv2d(*weights->store, *source, prefix + ".shortcut.0", 32, 32, 1, 1, stride_h, 1, 0, 0);
-            auto shortcut_bn = load_bn2d(*weights->store, *source, prefix + ".shortcut.1", 32);
-            block.shortcut_conv_folded =
-                fold_bn_after_conv2d(*weights->store, shortcut_conv, shortcut_bn, weights->config.weight_storage_type);
+            if (fused) {
+                block.shortcut_conv_folded =
+                    load_conv2d(*weights->store, *source, prefix + ".shortcut.0", 32, 32, 1, 1, stride_h, 1, 0, 0, true);
+            } else {
+                auto shortcut_conv = load_conv2d(*weights->store, *source, prefix + ".shortcut.0", 32, 32, 1, 1, stride_h, 1, 0, 0);
+                auto shortcut_bn = load_bn2d(*weights->store, *source, prefix + ".shortcut.1", 32);
+                block.shortcut_conv_folded =
+                    fold_bn_after_conv2d(*weights->store, shortcut_conv, shortcut_bn, weights->config.weight_storage_type);
+            }
         }
         return block;
     };
 
-    auto head_conv1 = load_conv2d(*weights->store, *source, tensor_name("head.conv1"), 32, 1, 3, 3, 1, 1, 1, 1);
-    auto head_bn1 = load_bn2d(*weights->store, *source, tensor_name("head.bn1"), 32);
-    weights->head_conv1_folded = fold_bn_after_conv2d(*weights->store, head_conv1, head_bn1, weights->config.weight_storage_type);
-    auto head_conv2 = load_conv2d(*weights->store, *source, tensor_name("head.conv2"), 32, 32, 3, 3, 2, 1, 1, 1);
-    auto head_bn2 = load_bn2d(*weights->store, *source, tensor_name("head.bn2"), 32);
-    weights->head_conv2_folded = fold_bn_after_conv2d(*weights->store, head_conv2, head_bn2, weights->config.weight_storage_type);
+    if (fused) {
+        weights->head_conv1_folded = load_conv2d(*weights->store, *source, tensor_name("head.conv1"), 32, 1, 3, 3, 1, 1, 1, 1, true);
+        weights->head_conv2_folded = load_conv2d(*weights->store, *source, tensor_name("head.conv2"), 32, 32, 3, 3, 2, 1, 1, 1, true);
+    } else {
+        auto head_conv1 = load_conv2d(*weights->store, *source, tensor_name("head.conv1"), 32, 1, 3, 3, 1, 1, 1, 1);
+        auto head_bn1 = load_bn2d(*weights->store, *source, tensor_name("head.bn1"), 32);
+        weights->head_conv1_folded = fold_bn_after_conv2d(*weights->store, head_conv1, head_bn1, weights->config.weight_storage_type);
+        auto head_conv2 = load_conv2d(*weights->store, *source, tensor_name("head.conv2"), 32, 32, 3, 3, 2, 1, 1, 1);
+        auto head_bn2 = load_bn2d(*weights->store, *source, tensor_name("head.bn2"), 32);
+        weights->head_conv2_folded = fold_bn_after_conv2d(*weights->store, head_conv2, head_bn2, weights->config.weight_storage_type);
+    }
     weights->head_layer1 = {
         load_res_block(tensor_name("head.layer1.0"), true, 2),
         load_res_block(tensor_name("head.layer1.1"), false, 1),
@@ -724,10 +750,14 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
         2,
         2,
         1,
-        false,
+        fused && has_bias(tensor_name("xvector.tdnn.linear")),
         weights->config.weight_storage_type);
-    auto tdnn_bn = load_bn1d(*weights->store, *source, tensor_name("xvector.tdnn.nonlinear.batchnorm"), 128);
-    weights->tdnn_linear_folded = fold_bn_after_conv1d(*weights->store, tdnn_linear, tdnn_bn, weights->config.weight_storage_type);
+    if (fused) {
+        weights->tdnn_linear_folded = std::move(tdnn_linear);
+    } else {
+        auto tdnn_bn = load_bn1d(*weights->store, *source, tensor_name("xvector.tdnn.nonlinear.batchnorm"), 128);
+        weights->tdnn_linear_folded = fold_bn_after_conv1d(*weights->store, tdnn_linear, tdnn_bn, weights->config.weight_storage_type);
+    }
 
     const int block_layers[3] = {12, 24, 16};
     const int block_input_channels[3] = {128, 256, 512};
@@ -751,9 +781,11 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
                 1,
                 0,
                 1,
-                false,
+                fused && has_bias(prefix + ".linear1"),
                 weights->config.weight_storage_type);
-            layer_weights.nonlinear2_bn = load_bn1d(*weights->store, *source, prefix + ".nonlinear2.batchnorm", 128);
+            if (!fused) {
+                layer_weights.nonlinear2_bn = load_bn1d(*weights->store, *source, prefix + ".nonlinear2.batchnorm", 128);
+            }
             layer_weights.cam_layer.linear_local =
                 load_conv1d(
                     *weights->store,
@@ -811,11 +843,13 @@ std::shared_ptr<const CampplusEncoderWeights> load_typed_weights(
                 1,
                 0,
                 1,
-                false,
+                fused && has_bias(transit_prefix + ".linear"),
                 weights->config.weight_storage_type);
     }
 
-    weights->out_nonlinear_bn = load_bn1d(*weights->store, *source, tensor_name("xvector.out_nonlinear.batchnorm"), 512);
+    if (!fused) {
+        weights->out_nonlinear_bn = load_bn1d(*weights->store, *source, tensor_name("xvector.out_nonlinear.batchnorm"), 512);
+    }
     auto dense_linear = load_conv1d(
         *weights->store,
         *source,

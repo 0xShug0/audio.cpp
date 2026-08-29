@@ -41,6 +41,10 @@ void validate_config(const ProjectedGroupedSelfAttentionConfig & config) {
     if (config.use_rope && (!(config.rope_theta > 0.0F) || !(config.local_rope_theta > 0.0F))) {
         throw std::runtime_error("ProjectedGroupedSelfAttentionConfig RoPE theta values must be positive");
     }
+    if (config.apply_rope_to_projected_prefix &&
+        config.qk_norm != ProjectedGroupedSelfAttentionQKNorm::None) {
+        throw std::runtime_error("ProjectedGroupedSelfAttention projected-prefix RoPE is incompatible with Q/K norm");
+    }
     if (config.query_pre_attn_scalar > 0.0F && config.query_pre_attn_scalar != static_cast<float>(config.head_dim)) {
         throw std::runtime_error("ProjectedGroupedSelfAttention requires query_pre_attn_scalar == head_dim");
     }
@@ -88,6 +92,23 @@ core::TensorValue apply_rope(
     const float theta = full ? config.rope_theta : config.local_rope_theta;
     const float freq_scale = full ? config.rope_freq_scale : 1.0F;
     return RoPEModule({config.head_dim, config.rope_type, theta, freq_scale}).build(ctx, input, positions);
+}
+
+core::TensorValue apply_projected_prefix_rope(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const ProjectedGroupedSelfAttentionConfig & config,
+    int64_t layer_index) {
+    auto projected = core::reshape_tensor(
+        ctx,
+        core::ensure_backend_addressable_layout(ctx, input),
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], 1, input.shape.dims[2]}));
+    projected = apply_rope(ctx, projected, positions, config, layer_index);
+    return core::reshape_tensor(
+        ctx,
+        core::ensure_backend_addressable_layout(ctx, projected),
+        input.shape);
 }
 
 }  // namespace
@@ -150,13 +171,19 @@ core::TensorValue ProjectedGroupedSelfAttentionModule::build(
         config_.use_weight_type_projection_precision,
         config_.use_fast_cuda_projection);
 
+    if (config_.apply_rope_to_projected_prefix) {
+        q = apply_projected_prefix_rope(ctx, q, positions, config_, layer_index);
+        k = apply_projected_prefix_rope(ctx, k, positions, config_, layer_index);
+    }
     q = reshape_projected_heads(ctx, q, config_.attention_heads, config_.head_dim);
     k = reshape_projected_heads(ctx, k, config_.kv_heads, config_.head_dim);
     v = reshape_projected_heads(ctx, v, config_.kv_heads, config_.head_dim);
     q = apply_qk_norm(ctx, q, weights.q_norm, config_);
     k = apply_qk_norm(ctx, k, weights.k_norm, config_);
-    q = apply_rope(ctx, q, positions, config_, layer_index);
-    k = apply_rope(ctx, k, positions, config_, layer_index);
+    if (!config_.apply_rope_to_projected_prefix) {
+        q = apply_rope(ctx, q, positions, config_, layer_index);
+        k = apply_rope(ctx, k, positions, config_, layer_index);
+    }
 
     auto q_heads = TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);

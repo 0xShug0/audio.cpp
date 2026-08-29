@@ -456,7 +456,7 @@ public:
                 : chunk_value;
         }
         x = compacted;
-        const auto attention_mask_values = audio_attention_mask(output_tokens_, attention_window_lengths_);
+        attention_mask_values_ = audio_attention_mask(output_tokens_, attention_window_lengths_);
         auto attention_mask = core::make_tensor(
             ctx,
             GGML_TYPE_F32,
@@ -492,7 +492,7 @@ public:
             (engine::core::trim_backend_pools(backend_), !try_alloc())) {
             throw std::runtime_error("failed to allocate Qwen3 ASR audio encoder graph");
         }
-        ggml_backend_tensor_set(attention_mask_, attention_mask_values.data(), 0, attention_mask_values.size() * sizeof(float));
+        ggml_backend_tensor_set(attention_mask_, attention_mask_values_.data(), 0, attention_mask_values_.size() * sizeof(float));
         debug::timing_log_scalar("qwen3_asr.audio_encoder.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.audio_encoder.frames", frames_);
     }
@@ -529,6 +529,7 @@ public:
         }
         auto timing_start = Clock::now();
         ggml_backend_tensor_set(input_, padded_features.data(), 0, padded_features.size() * sizeof(float));
+        ggml_backend_tensor_set(attention_mask_, attention_mask_values_.data(), 0, attention_mask_values_.size() * sizeof(float));
         debug::timing_log_scalar("qwen3_asr.audio_encoder.input_upload_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         core::set_backend_threads(backend_, compute_threads_);
         timing_start = Clock::now();
@@ -561,6 +562,7 @@ private:
     std::vector<int64_t> chunk_lengths_;
     std::vector<int64_t> chunk_token_lengths_;
     std::vector<int64_t> attention_window_lengths_;
+    std::vector<float> attention_mask_values_;
     int64_t attention_window_tokens_ = 0;
     int64_t output_tokens_ = 0;
     int64_t output_dim_ = 0;

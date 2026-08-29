@@ -32,6 +32,11 @@ struct BackendDeviceInfo {
 std::vector<BackendDeviceInfo> list_backend_devices();
 void print_backend_devices(std::ostream & out);
 
+// Load every registered ggml backend registry (idempotent). Needed before
+// query_backend_memory() can report GPU memory on a process that has not yet
+// initialized a backend.
+void ensure_backends_loaded();
+
 struct BackendMemorySnapshot {
     bool available = false;
     int64_t total_bytes = 0;
@@ -49,6 +54,11 @@ bool requested_backend_uses_host_graph_plan(const BackendConfig & config);
 // Drop the CUDA/HIP context's cached (idle) pool memory back to the driver.
 // No-op on other backends. For use on allocation-failure paths before a retry.
 void trim_backend_pools(ggml_backend_t backend);
+
+// Sets the CUDA stream-creation priority for this backend instance (lower =
+// higher priority, 0 = default). No-op on non-CUDA backends and on builds
+// whose CUDA backend does not export the hook.
+void set_backend_stream_priority(ggml_backend_t backend, int priority);
 // evict_cuda_graph_cache=false (the default) is the historical no-op;
 // true drops the backend's cached compiled-graph state (CUDA/HIP graph
 // cache) for this cgraph at destruction — opt in per family.
