@@ -10,6 +10,10 @@
 
 namespace minitts::cli {
 
+// Reports any --flags on the command line that no lookup ever asked for, so a typo like
+// --bakend is not silently discarded. Call once, after the run has finished.
+void report_unused_args(int argc, char ** argv);
+
 std::optional<std::string> find_arg(int argc, char ** argv, const std::string & name);
 bool has_arg(int argc, char ** argv, const std::string & name);
 std::vector<std::string> collect_args(int argc, char ** argv, const std::string & name);

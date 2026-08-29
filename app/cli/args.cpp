@@ -1,10 +1,72 @@
 #include "args.h"
 
+#include <iostream>
+#include <set>
 #include <stdexcept>
 
 namespace minitts::cli {
 
+namespace {
+
+// Every option name the CLI looked for, split by whether the lookup consumes the following
+// argument. Populated by the lookups below, so a new flag is recognised the moment its lookup
+// is added and there is no second list to keep in sync.
+std::set<std::string> & value_names() {
+    static std::set<std::string> names;
+    return names;
+}
+
+std::set<std::string> & flag_names() {
+    static std::set<std::string> names;
+    return names;
+}
+
+void record_value_query(const std::string & name) {
+    value_names().insert(name);
+}
+
+void record_flag_query(const std::string & name) {
+    flag_names().insert(name);
+}
+
+}  // namespace
+
+void report_unused_args(int argc, char ** argv) {
+    const auto & values = value_names();
+    const auto & flags = flag_names();
+    std::vector<std::string> unused;
+    for (int i = 1; i < argc; ++i) {
+        const std::string token = argv[i];
+        if (token.rfind("--", 0) != 0 || token == "--") {
+            continue;
+        }
+        // Only an option that takes a value consumes the next argument, so only then can the
+        // next argument be something that merely looks like an option.
+        if (values.count(token) != 0) {
+            ++i;
+            continue;
+        }
+        if (flags.count(token) != 0) {
+            continue;
+        }
+        unused.push_back(token);
+    }
+    if (unused.empty()) {
+        return;
+    }
+    std::cerr << "audiocpp_cli warning: ignored unknown option";
+    if (unused.size() > 1) {
+        std::cerr << "s";
+    }
+    std::cerr << ":";
+    for (const auto & token : unused) {
+        std::cerr << " " << token;
+    }
+    std::cerr << "\n";
+}
+
 std::optional<std::string> find_arg(int argc, char ** argv, const std::string & name) {
+    record_value_query(name);
     for (int i = 1; i + 1 < argc; ++i) {
         if (argv[i] == name) {
             return std::string(argv[i + 1]);
@@ -14,6 +76,7 @@ std::optional<std::string> find_arg(int argc, char ** argv, const std::string & 
 }
 
 bool has_arg(int argc, char ** argv, const std::string & name) {
+    record_flag_query(name);
     for (int i = 1; i < argc; ++i) {
         if (argv[i] == name) {
             return true;
@@ -23,6 +86,7 @@ bool has_arg(int argc, char ** argv, const std::string & name) {
 }
 
 std::vector<std::string> collect_args(int argc, char ** argv, const std::string & name) {
+    record_value_query(name);
     std::vector<std::string> values;
     for (int i = 1; i + 1 < argc; ++i) {
         if (argv[i] == name) {

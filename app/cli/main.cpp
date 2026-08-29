@@ -975,7 +975,9 @@ int wmain(int argc, wchar_t ** wargv) {
             argv.push_back(arg.data());
         }
         argv.push_back(nullptr);
-        return audiocpp_cli_main(argc, argv.data());
+        const int status = audiocpp_cli_main(argc, argv.data());
+        minitts::cli::report_unused_args(argc, argv.data());
+        return status;
     } catch (const std::exception & ex) {
         std::cerr << "audiocpp_cli failed: " << ex.what() << "\n";
         return 1;
@@ -983,6 +985,8 @@ int wmain(int argc, wchar_t ** wargv) {
 }
 #else
 int main(int argc, char ** argv) {
-    return audiocpp_cli_main(argc, argv);
+    const int status = audiocpp_cli_main(argc, argv);
+    minitts::cli::report_unused_args(argc, argv);
+    return status;
 }
 #endif
