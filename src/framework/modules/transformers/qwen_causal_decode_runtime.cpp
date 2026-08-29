@@ -568,6 +568,10 @@ public:
         batched_decode_cache_.import_state(state);
     }
 
+    runtime::TransformerBatchedKVState export_batched_decode_state() const {
+        return batched_decode_cache_.export_state();
+    }
+
     void start_decode_embeddings_batched(
         const runtime::TransformerBatchedKVState & state,
         int64_t required_cache_steps) {
@@ -1326,7 +1330,8 @@ private:
 
     void release_prefill_graph() {
         if (prefill_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, prefill_graph_);
+            core::release_backend_graph_resources(
+                backend_, prefill_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (prefill_gallocr_ != nullptr) {
             ggml_gallocr_free(prefill_gallocr_);
@@ -1348,7 +1353,8 @@ private:
 
     void release_batched_prefill_graph() {
         if (batched_prefill_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, batched_prefill_graph_);
+            core::release_backend_graph_resources(
+                backend_, batched_prefill_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (batched_prefill_gallocr_ != nullptr) {
             ggml_gallocr_free(batched_prefill_gallocr_);
@@ -1371,7 +1377,8 @@ private:
 
     void release_decode_graph() {
         if (decode_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, decode_graph_);
+            core::release_backend_graph_resources(
+                backend_, decode_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (decode_buffer_ != nullptr) {
             ggml_backend_buffer_free(decode_buffer_);
@@ -1394,7 +1401,8 @@ private:
 
     void release_batched_decode_graph() {
         if (batched_decode_graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_, batched_decode_graph_);
+            core::release_backend_graph_resources(
+                backend_, batched_decode_graph_, config_.evict_cuda_graph_cache_on_release);
         }
         if (batched_decode_buffer_ != nullptr) {
             ggml_backend_buffer_free(batched_decode_buffer_);
@@ -1557,6 +1565,10 @@ QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_embeddings_batched(
     const std::vector<float> & embeddings,
     int64_t batch_size) {
     return impl_->decode_embeddings_batched(embeddings, batch_size);
+}
+
+runtime::TransformerBatchedKVState QwenCausalDecodeRuntime::export_batched_decode_state() const {
+    return impl_->export_batched_decode_state();
 }
 
 int64_t QwenCausalDecodeRuntime::decode_cache_steps() const noexcept {

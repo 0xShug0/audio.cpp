@@ -16,7 +16,8 @@ public:
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type);
+        assets::TensorStorageType storage_type,
+        bool evict_cuda_graph_cache_on_release = false);
     ~MiniMaxMusic3VocoderRuntime();
 
     runtime::AudioBuffer decode(const std::vector<float> & latents, int64_t latent_frames);
@@ -28,4 +29,3 @@ private:
 };
 
 }  // namespace engine::models::minimax_music3
-

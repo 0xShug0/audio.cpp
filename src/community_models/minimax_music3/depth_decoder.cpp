@@ -178,7 +178,7 @@ MiniMaxMusic3DepthWeights load_depth_weights(
 }
 
 int32_t sample_top_k(
-    std::vector<float> logits,
+    std::vector<float> & logits,
     int64_t top_k,
     uint64_t seed,
     uint64_t & sample_call_index,
@@ -243,11 +243,13 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
         core::ExecutionContext & input_execution,
         size_t input_graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        bool input_evict_cuda_graph_cache_on_release)
         : assets(std::move(input_assets)),
           global_token_embedding(input_global_token_embedding),
           execution(input_execution),
           graph_arena_bytes(input_graph_arena_bytes),
+          evict_cuda_graph_cache_on_release(input_evict_cuda_graph_cache_on_release),
           weights(load_depth_weights(*assets, execution, weight_context_bytes, storage_type)),
           sampling_policy(sampling::resolve_torch_cuda_sampling_policy(
               execution.backend_type(),
@@ -268,17 +270,21 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
         release_runtime_graphs();
     }
 
-    DecodeGraph & decode_graph(int64_t codebook) {
+    DecodeGraph & decode_graph(int64_t codebook, int64_t rows) {
         const int64_t sequence_steps = codebook + 1;
         auto & slot = decode_graphs[static_cast<size_t>(codebook - 1)];
-        if (slot.graph != nullptr) {
+        if (slot.graph != nullptr && graph_rows == rows) {
             return slot;
         }
-        build_decode_graph(slot, codebook, sequence_steps);
+        if (graph_rows != rows) {
+            release_runtime_graphs();
+            graph_rows = rows;
+        }
+        build_decode_graph(slot, codebook, sequence_steps, rows);
         return slot;
     }
 
-    void build_decode_graph(DecodeGraph & out, int64_t codebook, int64_t sequence_steps) {
+    void build_decode_graph(DecodeGraph & out, int64_t codebook, int64_t sequence_steps, int64_t rows) {
         const auto & config = assets->config.depth;
         ggml_init_params params{graph_arena_bytes, nullptr, true};
         out.ggml.reset(ggml_init(params));
@@ -288,8 +294,8 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
         core::ModuleBuildContext ctx{out.ggml.get(), "minimax_music3.depth", execution.backend_type()};
         out.codebook = codebook;
         out.sequence_steps = sequence_steps;
-        out.last_hidden = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, config.hidden_size}));
-        out.semantic_ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({2}));
+        out.last_hidden = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({rows, config.hidden_size}));
+        out.semantic_ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows}));
         out.positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({sequence_steps}));
         ggml_set_input(out.last_hidden.tensor);
         ggml_set_input(out.semantic_ids.tensor);
@@ -299,7 +305,7 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
             ctx,
             out.last_hidden,
             weights.projection);
-        hidden0 = core::reshape_tensor(ctx, hidden0, core::TensorShape::from_dims({2, 1, config.hidden_size}));
+        hidden0 = core::reshape_tensor(ctx, hidden0, core::TensorShape::from_dims({rows, 1, config.hidden_size}));
 
         auto semantic = modules::EmbeddingModule({assets->config.qwen.vocab_size, config.hidden_size})
                             .build(ctx, out.semantic_ids, global_token_embedding);
@@ -307,13 +313,13 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
             ctx,
             semantic,
             weights.projection);
-        semantic = core::reshape_tensor(ctx, semantic, core::TensorShape::from_dims({2, 1, config.hidden_size}));
+        semantic = core::reshape_tensor(ctx, semantic, core::TensorShape::from_dims({rows, 1, config.hidden_size}));
         auto sequence = modules::ConcatModule({1}).build(ctx, hidden0, semantic);
         if (codebook > 1) {
             out.residual_ids = core::make_tensor(
                 ctx,
                 GGML_TYPE_I32,
-                core::TensorShape::from_dims({2, codebook - 1}));
+                core::TensorShape::from_dims({rows, codebook - 1}));
             ggml_set_input(out.residual_ids.tensor);
             auto residual = modules::EmbeddingModule({
                                 config.audio_vocab_size * (config.codebooks - 1),
@@ -328,7 +334,7 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
         auto pos = modules::EmbeddingModule({config.max_position_embeddings, config.hidden_size})
                        .build(ctx, out.positions, weights.position_embedding);
         pos = core::reshape_tensor(ctx, pos, core::TensorShape::from_dims({1, sequence_steps, config.hidden_size}));
-        pos = modules::RepeatModule({core::TensorShape::from_dims({2, sequence_steps, config.hidden_size})}).build(ctx, pos);
+        pos = modules::RepeatModule({core::TensorShape::from_dims({rows, sequence_steps, config.hidden_size})}).build(ctx, pos);
         sequence = core::wrap_tensor(
             ggml_add(ctx.ggml, sequence.tensor, pos.tensor),
             sequence.shape,
@@ -342,7 +348,7 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
             weights.norm);
         auto last = modules::SliceModule({1, sequence_steps - 1, 1}).build(ctx, normalized);
         last = core::ensure_backend_addressable_layout(ctx, last);
-        last = core::reshape_tensor(ctx, last, core::TensorShape::from_dims({2, config.hidden_size}));
+        last = core::reshape_tensor(ctx, last, core::TensorShape::from_dims({rows, config.hidden_size}));
         auto logits = modules::LinearModule({config.hidden_size, config.audio_vocab_size, false}).build(
             ctx,
             last,
@@ -413,33 +419,204 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
             static_cast<int64_t>(last_hidden_uncond.size()) != config.hidden_size) {
             throw std::runtime_error("MiniMax Music 3 depth hidden input shape mismatch");
         }
-        last_hidden_scratch.resize(static_cast<size_t>(2 * config.hidden_size));
-        std::copy(last_hidden_cond.begin(), last_hidden_cond.end(), last_hidden_scratch.begin());
-        std::copy(last_hidden_uncond.begin(), last_hidden_uncond.end(), last_hidden_scratch.begin() + config.hidden_size);
-        std::vector<int32_t> out_codes{semantic_code};
-        std::vector<float> out_hidden;
-        out_hidden.reserve(static_cast<size_t>((config.codebooks - 1) * config.hidden_size));
-        std::mt19937 fallback_rng(static_cast<uint32_t>(seed));
+        std::vector<float> interleaved(static_cast<size_t>(2 * config.hidden_size));
+        std::copy(last_hidden_cond.begin(), last_hidden_cond.end(), interleaved.begin());
+        std::copy(last_hidden_uncond.begin(), last_hidden_uncond.end(), interleaved.begin() + config.hidden_size);
+        std::vector<uint64_t> seeds{seed};
+        std::vector<uint64_t> calls{sample_call_index};
+        std::vector<uint64_t> offsets{rng_offset_blocks};
+        auto batch = generate_batch(interleaved, 1, {semantic_code}, guidance_scale, top_k, seeds, calls, offsets);
+        sample_call_index = calls[0];
+        rng_offset_blocks = offsets[0];
+        return std::move(batch.front());
+    }
+
+    void generate_batch_gpu_frame(
+        const std::vector<float> & interleaved_hiddens,
+        int64_t songs,
+        const std::vector<int32_t> & semantic_codes,
+        float guidance_scale,
+        int64_t top_k,
+        const std::vector<uint64_t> & seeds,
+        std::vector<uint64_t> & sample_call_indices,
+        std::vector<uint64_t> & rng_offset_blocks,
+        std::vector<MiniMaxMusic3DepthCodes> & out) {
+        const auto & config = assets->config.depth;
+        const int64_t rows = 2 * songs;
+        const int64_t levels = config.codebooks - 1;
+        const int64_t hidden_size = config.hidden_size;
+        sampling::torch_cuda_depth_frame_ensure(songs, levels, hidden_size, sampling_policy);
+        void * stream = sampling::torch_cuda_backend_stream(execution.backend());
+        ggml_backend_t backend = execution.backend();
+
+        semantic_ids_scratch.resize(static_cast<size_t>(rows));
+        for (int64_t song = 0; song < songs; ++song) {
+            const int32_t id = semantic_codes[static_cast<size_t>(song)] + 151675;
+            semantic_ids_scratch[static_cast<size_t>(2 * song)] = id;
+            semantic_ids_scratch[static_cast<size_t>(2 * song + 1)] = id;
+        }
+        positions_scratch.resize(static_cast<size_t>(config.codebooks));
+        for (int64_t i = 0; i < config.codebooks; ++i) {
+            positions_scratch[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+        }
+        sampling::torch_cuda_depth_frame_begin(
+            seeds.data(), rng_offset_blocks.data(), songs, stream);
 
         for (int64_t codebook = 1; codebook < config.codebooks; ++codebook) {
-            auto & graph = decode_graph(codebook);
-            const int32_t semantic_ids[2] = {
-                semantic_code + 151675,
-                semantic_code + 151675,
-            };
-            active_residual_ids_scratch.assign(static_cast<size_t>(2 * std::max<int64_t>(1, codebook - 1)), 0);
-            for (int64_t previous = 1; previous < codebook; ++previous) {
-                const int32_t id = out_codes[static_cast<size_t>(previous)] +
-                    static_cast<int32_t>((previous - 1) * config.audio_vocab_size);
-                active_residual_ids_scratch[static_cast<size_t>(previous - 1)] = id;
-                active_residual_ids_scratch[static_cast<size_t>((codebook - 1) + previous - 1)] = id;
+            auto & graph = decode_graph(codebook, rows);
+            ggml_backend_tensor_set_async(
+                backend, graph.last_hidden.tensor,
+                interleaved_hiddens.data(), 0,
+                interleaved_hiddens.size() * sizeof(float));
+            ggml_backend_tensor_set_async(
+                backend, graph.semantic_ids.tensor,
+                semantic_ids_scratch.data(), 0,
+                semantic_ids_scratch.size() * sizeof(int32_t));
+            if (codebook > 1) {
+                sampling::torch_cuda_depth_frame_residual_fill(
+                    graph.residual_ids.tensor->data,
+                    codebook - 1,
+                    songs,
+                    config.audio_vocab_size,
+                    stream);
+            }
+            ggml_backend_tensor_set_async(
+                backend, graph.positions.tensor,
+                positions_scratch.data(), 0,
+                static_cast<size_t>(codebook + 1) * sizeof(int32_t));
+            if (ggml_backend_graph_compute_async(backend, graph.graph) != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("MiniMax Music 3 depth graph compute failed");
+            }
+            sampling::torch_cuda_depth_frame_sample(
+                graph.logits->data,
+                codebook - 1,
+                songs,
+                config.audio_vocab_size,
+                guidance_scale,
+                top_k,
+                sampling_policy,
+                stream);
+            sampling::torch_cuda_depth_frame_accumulate_hidden(
+                graph.hidden->data,
+                codebook - 1,
+                songs,
+                hidden_size,
+                stream);
+        }
+        frame_codes_scratch.resize(static_cast<size_t>(levels * songs));
+        frame_hidden_scratch.resize(static_cast<size_t>(levels * songs * hidden_size));
+        sampling::torch_cuda_depth_frame_end(
+            frame_codes_scratch.data(),
+            frame_hidden_scratch.data(),
+            levels,
+            songs,
+            hidden_size,
+            stream);
+        core::round_f32_to_bf16_in_place(frame_hidden_scratch);
+        const uint64_t step_blocks = sampling::torch_cuda_tensor_iterator_offset_blocks(
+            static_cast<uint64_t>(config.audio_vocab_size),
+            sampling_policy);
+        for (int64_t level = 0; level < levels; ++level) {
+            for (int64_t song = 0; song < songs; ++song) {
+                auto & take = out[static_cast<size_t>(song)];
+                const int32_t code = frame_codes_scratch[static_cast<size_t>(level * songs + song)];
+                if (code < 0) {
+                    throw std::runtime_error("MiniMax Music 3 depth GPU frame sampler selected no token");
+                }
+                take.codes.push_back(code);
+                const float * hidden_row = frame_hidden_scratch.data() +
+                    static_cast<size_t>((level * songs + song) * hidden_size);
+                take.hidden.insert(take.hidden.end(), hidden_row, hidden_row + hidden_size);
+                ++sample_call_indices[static_cast<size_t>(song)];
+                rng_offset_blocks[static_cast<size_t>(song)] += step_blocks;
+            }
+        }
+    }
+
+    std::vector<MiniMaxMusic3DepthCodes> generate_batch(
+        const std::vector<float> & interleaved_hiddens,
+        int64_t songs,
+        const std::vector<int32_t> & semantic_codes,
+        float guidance_scale,
+        int64_t top_k,
+        const std::vector<uint64_t> & seeds,
+        std::vector<uint64_t> & sample_call_indices,
+        std::vector<uint64_t> & rng_offset_blocks) {
+        const auto & config = assets->config.depth;
+        const int64_t rows = 2 * songs;
+        if (songs <= 0 ||
+            static_cast<int64_t>(interleaved_hiddens.size()) != rows * config.hidden_size ||
+            static_cast<int64_t>(semantic_codes.size()) != songs ||
+            static_cast<int64_t>(seeds.size()) != songs ||
+            static_cast<int64_t>(sample_call_indices.size()) != songs ||
+            static_cast<int64_t>(rng_offset_blocks.size()) != songs) {
+            throw std::runtime_error("MiniMax Music 3 depth batch input shape mismatch");
+        }
+        std::vector<MiniMaxMusic3DepthCodes> out(static_cast<size_t>(songs));
+        std::vector<std::mt19937> fallback_rngs;
+        fallback_rngs.reserve(static_cast<size_t>(songs));
+        for (int64_t song = 0; song < songs; ++song) {
+            out[static_cast<size_t>(song)].codes = {semantic_codes[static_cast<size_t>(song)]};
+            out[static_cast<size_t>(song)].hidden.reserve(
+                static_cast<size_t>((config.codebooks - 1) * config.hidden_size));
+            fallback_rngs.emplace_back(static_cast<uint32_t>(seeds[static_cast<size_t>(song)]));
+        }
+
+        // The CUDA sampler consumes the logits where they already live and
+        // returns one code per song, replacing the logits readback plus the
+        // per-song CPU top-k/exponential scan (the depth stage's dominant
+        // cost). Sample-for-sample it matches the CPU path up to logf ULPs.
+        static const bool gpu_sampler_requested = [] {
+            const char * env = std::getenv("MM3_DEPTH_GPU_SAMPLE");
+            return env != nullptr && env[0] == '1';
+        }();
+        const bool use_gpu_sampler = gpu_sampler_requested &&
+            sampling_policy.cuda_fast_path &&
+            sampling::torch_cuda_sample_topk_exponential_pairs_available();
+        // v2: the whole codebook chain stays on the backend stream — inputs go
+        // in with async sets, sampled codes feed the next codebook's residual
+        // ids device-side, cond hiddens accumulate on device, and the frame
+        // ends with a single host sync. Latency was the depth stage's cost
+        // (write->launch->sync->readback per codebook), not compute.
+        static const bool gpu_frame_requested = [] {
+            const char * env = std::getenv("MM3_DEPTH_GPU_FRAME");
+            return env != nullptr && env[0] == '1';
+        }();
+        const bool use_gpu_frame = gpu_frame_requested &&
+            sampling_policy.cuda_fast_path &&
+            sampling::torch_cuda_sample_topk_exponential_pairs_available();
+        if (use_gpu_frame) {
+            generate_batch_gpu_frame(
+                interleaved_hiddens, songs, semantic_codes, guidance_scale, top_k,
+                seeds, sample_call_indices, rng_offset_blocks, out);
+            return out;
+        }
+
+        for (int64_t codebook = 1; codebook < config.codebooks; ++codebook) {
+            auto & graph = decode_graph(codebook, rows);
+            semantic_ids_scratch.resize(static_cast<size_t>(rows));
+            for (int64_t song = 0; song < songs; ++song) {
+                const int32_t id = semantic_codes[static_cast<size_t>(song)] + 151675;
+                semantic_ids_scratch[static_cast<size_t>(2 * song)] = id;
+                semantic_ids_scratch[static_cast<size_t>(2 * song + 1)] = id;
+            }
+            const int64_t residual_width = std::max<int64_t>(1, codebook - 1);
+            active_residual_ids_scratch.assign(static_cast<size_t>(rows * residual_width), 0);
+            for (int64_t song = 0; song < songs; ++song) {
+                const auto & song_codes = out[static_cast<size_t>(song)].codes;
+                for (int64_t previous = 1; previous < codebook; ++previous) {
+                    const int32_t id = song_codes[static_cast<size_t>(previous)] +
+                        static_cast<int32_t>((previous - 1) * config.audio_vocab_size);
+                    active_residual_ids_scratch[static_cast<size_t>((2 * song) * (codebook - 1) + previous - 1)] = id;
+                    active_residual_ids_scratch[static_cast<size_t>((2 * song + 1) * (codebook - 1) + previous - 1)] = id;
+                }
             }
             positions_scratch.resize(static_cast<size_t>(codebook + 1));
             for (int64_t i = 0; i <= codebook; ++i) {
                 positions_scratch[static_cast<size_t>(i)] = static_cast<int32_t>(i);
             }
-            core::write_tensor_f32(graph.last_hidden, last_hidden_scratch);
-            core::write_tensor_i32(graph.semantic_ids, semantic_ids, 2);
+            core::write_tensor_f32(graph.last_hidden, interleaved_hiddens);
+            core::write_tensor_i32(graph.semantic_ids, semantic_ids_scratch);
             if (codebook > 1) {
                 core::write_tensor_i32(graph.residual_ids, active_residual_ids_scratch);
             }
@@ -447,30 +624,70 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
             if (core::compute_graph(execution, graph.graph, graph.plan, "minimax_music3.depth") != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("MiniMax Music 3 depth graph compute failed");
             }
+            // Reading hidden synchronizes the backend, so the graph's logits
+            // are complete before the sampler kernel touches them in place.
             auto hidden = core::read_tensor_f32(graph.hidden);
             core::round_f32_to_bf16_in_place(hidden);
-            out_hidden.insert(out_hidden.end(), hidden.begin(), hidden.begin() + config.hidden_size);
+            if (use_gpu_sampler) {
+                gpu_codes_scratch.resize(static_cast<size_t>(songs));
+                const uint64_t step_blocks = sampling::torch_cuda_tensor_iterator_offset_blocks(
+                    static_cast<uint64_t>(config.audio_vocab_size),
+                    sampling_policy);
+                sampling::torch_cuda_sample_topk_exponential_pairs(
+                    graph.logits->data,
+                    songs,
+                    config.audio_vocab_size,
+                    guidance_scale,
+                    top_k,
+                    codebook == 1 ? seeds.data() : nullptr,
+                    codebook == 1 ? rng_offset_blocks.data() : nullptr,
+                    static_cast<uint64_t>(codebook - 1) * step_blocks,
+                    sampling_policy,
+                    gpu_codes_scratch.data());
+                for (int64_t song = 0; song < songs; ++song) {
+                    auto & take = out[static_cast<size_t>(song)];
+                    const float * cond_hidden = hidden.data() + static_cast<size_t>(2 * song) * config.hidden_size;
+                    take.hidden.insert(take.hidden.end(), cond_hidden, cond_hidden + config.hidden_size);
+                    const int32_t code = gpu_codes_scratch[static_cast<size_t>(song)];
+                    if (code < 0) {
+                        throw std::runtime_error("MiniMax Music 3 depth GPU sampler selected no token");
+                    }
+                    take.codes.push_back(code);
+                    ++sample_call_indices[static_cast<size_t>(song)];
+                    rng_offset_blocks[static_cast<size_t>(song)] +=
+                        sampling::torch_cuda_tensor_iterator_offset_blocks(
+                            static_cast<uint64_t>(config.audio_vocab_size),
+                            sampling_policy);
+                }
+                continue;
+            }
             auto logits = core::read_tensor_f32(graph.logits);
             core::round_f32_to_bf16_in_place(logits);
-            for (int64_t i = 0; i < config.audio_vocab_size; ++i) {
-                const float cond = logits[static_cast<size_t>(i)];
-                const float uncond = logits[static_cast<size_t>(config.audio_vocab_size + i)];
-                logits[static_cast<size_t>(i)] = uncond + (cond - uncond) * guidance_scale;
+            for (int64_t song = 0; song < songs; ++song) {
+                auto & take = out[static_cast<size_t>(song)];
+                const float * cond_hidden = hidden.data() + static_cast<size_t>(2 * song) * config.hidden_size;
+                take.hidden.insert(take.hidden.end(), cond_hidden, cond_hidden + config.hidden_size);
+                song_logits_scratch.resize(static_cast<size_t>(config.audio_vocab_size));
+                const float * cond_logits = logits.data() + static_cast<size_t>(2 * song) * config.audio_vocab_size;
+                const float * uncond_logits = logits.data() + static_cast<size_t>(2 * song + 1) * config.audio_vocab_size;
+                for (int64_t i = 0; i < config.audio_vocab_size; ++i) {
+                    song_logits_scratch[static_cast<size_t>(i)] =
+                        uncond_logits[i] + (cond_logits[i] - uncond_logits[i]) * guidance_scale;
+                }
+                const int32_t code = sample_top_k(
+                    song_logits_scratch,
+                    top_k,
+                    seeds[static_cast<size_t>(song)],
+                    sample_call_indices[static_cast<size_t>(song)],
+                    rng_offset_blocks[static_cast<size_t>(song)],
+                    sampling_policy,
+                    scratch,
+                    fallback_rngs[static_cast<size_t>(song)],
+                    "MiniMax Music 3 depth");
+                take.codes.push_back(code);
             }
-            logits.resize(static_cast<size_t>(config.audio_vocab_size));
-            const int32_t code = sample_top_k(
-                std::move(logits),
-                top_k,
-                seed,
-                sample_call_index,
-                rng_offset_blocks,
-                sampling_policy,
-                scratch,
-                fallback_rng,
-                "MiniMax Music 3 depth");
-            out_codes.push_back(code);
         }
-        return {std::move(out_codes), std::move(out_hidden)};
+        return out;
     }
 
     std::vector<float> feedback_embedding(const std::vector<int32_t> & codes) {
@@ -498,12 +715,14 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
     void release_runtime_graphs() {
         for (auto & graph : decode_graphs) {
             if (graph.graph != nullptr) {
-                core::release_backend_graph_resources(execution.backend(), graph.graph);
+                core::release_backend_graph_resources(
+                    execution.backend(), graph.graph, evict_cuda_graph_cache_on_release);
             }
             graph = {};
         }
         if (feedback.graph != nullptr) {
-            core::release_backend_graph_resources(execution.backend(), feedback.graph);
+            core::release_backend_graph_resources(
+                execution.backend(), feedback.graph, evict_cuda_graph_cache_on_release);
         }
         feedback = {};
     }
@@ -512,12 +731,19 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
     core::TensorValue global_token_embedding;
     core::ExecutionContext & execution;
     size_t graph_arena_bytes = 0;
+    bool evict_cuda_graph_cache_on_release = false;
     MiniMaxMusic3DepthWeights weights;
     std::array<DecodeGraph, 7> decode_graphs;
+    int64_t graph_rows = 2;
     FeedbackGraph feedback;
     sampling::TorchCudaSamplingPolicy sampling_policy;
     sampling::HfSamplerScratch scratch;
     std::vector<float> last_hidden_scratch;
+    std::vector<int32_t> gpu_codes_scratch;
+    std::vector<int32_t> frame_codes_scratch;
+    std::vector<float> frame_hidden_scratch;
+    std::vector<int32_t> semantic_ids_scratch;
+    std::vector<float> song_logits_scratch;
     std::vector<int32_t> active_residual_ids_scratch;
     std::vector<int32_t> positions_scratch;
 };
@@ -528,16 +754,32 @@ MiniMaxMusic3DepthDecoderRuntime::MiniMaxMusic3DepthDecoderRuntime(
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type)
+    assets::TensorStorageType storage_type,
+    bool evict_cuda_graph_cache_on_release)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           global_token_embedding,
           execution,
           graph_arena_bytes,
           weight_context_bytes,
-          storage_type)) {}
+          storage_type,
+          evict_cuda_graph_cache_on_release)) {}
 
 MiniMaxMusic3DepthDecoderRuntime::~MiniMaxMusic3DepthDecoderRuntime() = default;
+
+std::vector<MiniMaxMusic3DepthCodes> MiniMaxMusic3DepthDecoderRuntime::generate_batch(
+    const std::vector<float> & interleaved_hiddens,
+    int64_t songs,
+    const std::vector<int32_t> & semantic_codes,
+    float guidance_scale,
+    int64_t top_k,
+    const std::vector<uint64_t> & seeds,
+    std::vector<uint64_t> & sample_call_indices,
+    std::vector<uint64_t> & rng_offset_blocks) {
+    return impl_->generate_batch(
+        interleaved_hiddens, songs, semantic_codes, guidance_scale, top_k,
+        seeds, sample_call_indices, rng_offset_blocks);
+}
 
 MiniMaxMusic3DepthCodes MiniMaxMusic3DepthDecoderRuntime::generate(
     const std::vector<float> & last_hidden_cond,

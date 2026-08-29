@@ -42,10 +42,18 @@ public:
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type);
+        assets::TensorStorageType storage_type,
+        bool evict_cuda_graph_cache_on_release = false);
     ~MiniMaxMusic3FlowTransformerRuntime();
 
     std::vector<float> predict_velocity_branches(
+        const std::vector<float> & latents,
+        const std::vector<float> & condition,
+        int64_t latent_frames,
+        float timestep);
+    // Evaluates only the conditional branch (batch 1) for guidance-delta
+    // reuse steps; returns one branch worth of velocity values.
+    std::vector<float> predict_velocity_cond(
         const std::vector<float> & latents,
         const std::vector<float> & condition,
         int64_t latent_frames,

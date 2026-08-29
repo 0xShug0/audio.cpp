@@ -110,6 +110,42 @@ Common session options:
 | `minimax_music3.weight_context_mb` | `32` | Weight context size in MiB. |
 | `minimax_music3.mem_saver` | `true` | Load large generation stages only while needed to reduce peak VRAM. |
 
+## Performance options
+
+Everything below is opt-in; the defaults reproduce the reference trajectory
+exactly. The two cheapest wins that need no extra GGUFs are
+`flow_uncond_interval=3` and `flow_chunk_hop_frames=150`.
+
+Request options:
+
+| Option | Default | Notes |
+|---|---:|---|
+| `flow_uncond_interval` | `1` | Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between. `2`-`3` measures flow -25..-40% at ~0.3 dB mel-L1. `1` keeps the exact reference trajectory. |
+| `flow_uncond_warmup` | `2` | Steps at the start of each chunk that always evaluate both CFG branches before delta reuse kicks in. |
+| `flow_chunk_hop_frames` | `0` | Flow chunk hop in AR frames (~25/sec). `0` keeps the model config (100, 50% chunk overlap); `150` measures flow ~-35% with consistently rederived crops and carry. |
+| `ensemble_takes` | `1` | Generate K takes that share one batched AR pass and return them as named outputs (`take_01`..). Amortizes the AR stage across takes. |
+| `ensemble_prefix_frames` | `0` | With ensembles: share a master AR prefix of this many frames across takes (intro-lock), then let takes diverge. |
+
+Session options:
+
+| Option | Default | Notes |
+|---|---:|---|
+| `minimax_music3.pipeline_overlap` | `false` | Overlap AR decoding with per-chunk denoise/vocode on a second, lower-priority CUDA stream. Requires `mem_saver=false` (all stages stay resident). |
+
+Optional component GGUFs: `rvq_depth_decoder_q4_k.gguf` (the depth stage is
+weight-bandwidth-bound; measures depth about -24% against `q8_0` with no
+audible difference in our listening) can be selected with
+`minimax_music3.rvq_depth_decoder_gguf` as shown above.
+
+Environment variables (supported):
+
+| Variable | Effect |
+|---|---|
+| `MM3_LEGACY_ROPE=1` | Use the original split-table rope path instead of the fused native NEOX rope. |
+| `MM3_LEGACY_GLU=1` | Use the original slice+silu+mul GLU instead of the fused SwiGLU kernel. |
+| `MM3_DEPTH_GPU_SAMPLE=1` | Device philox top-k sampler for the depth stage (byte-exact, perf-neutral option). |
+| `MM3_DEPTH_GPU_FRAME=1` | Full GPU depth frame with device residual ids and hidden accumulation (byte-exact, perf-neutral option). |
+
 ## Notes
 
 The default package is intended to make the model practical on common GPUs,

@@ -1446,12 +1446,23 @@ struct ggml_backend_cuda_context {
 
     ggml_cuda_stream_context concurrent_stream_context;
 
+    // Scheduling priority for this context's lazily created streams
+    // (CUDA: numerically lower = higher priority, 0 = default). Set through
+    // ggml_backend_cuda_set_stream_priority(); scoped to this backend
+    // instance, unlike a process-wide environment variable.
+    int stream_priority = 0;
+
     ~ggml_backend_cuda_context();
 
     cudaStream_t stream(int device, int stream) {
         if (streams[device][stream] == nullptr) {
             ggml_cuda_set_device(device);
-            CUDA_CHECK(cudaStreamCreateWithFlags(&streams[device][stream], cudaStreamNonBlocking));
+            if (stream_priority != 0) {
+                CUDA_CHECK(cudaStreamCreateWithPriority(
+                    &streams[device][stream], cudaStreamNonBlocking, stream_priority));
+            } else {
+                CUDA_CHECK(cudaStreamCreateWithFlags(&streams[device][stream], cudaStreamNonBlocking));
+            }
         }
         return streams[device][stream];
     }

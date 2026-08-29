@@ -18,8 +18,6 @@ elif [[ "$arg1" == "model-manager" ]]; then
     exec ./audiocpp_model_manager "$@"
 elif [[ "$arg1" == "perf" ]]; then
     exec ./model_perf "$@"
-elif [[ "$arg1" == "parity" ]]; then
-    exec ./miocodec_wavlm_parity "$@"
 else
     echo "Unknown command: $arg1"
     echo ""
@@ -28,6 +26,5 @@ else
     echo "  server  Run the HTTP server"
     echo "  model-manager  List, install, clean, or remove model packages"
     echo "  perf    Run model performance benchmarks"
-    echo "  parity  Run Miocodec WavLM parity tests"
     exit 1
 fi
