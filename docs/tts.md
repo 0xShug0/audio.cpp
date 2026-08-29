@@ -17,6 +17,7 @@
 | NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
 | OmniVoice | `omnivoice` | `tts` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
 | PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
+| VoxCPM1 | `voxcpm1` | `tts` | [VoxCPM1](#voxcpm1) |
 | VoxCPM2 | `voxcpm2` | `tts`, `vdes` | [VoxCPM2](#voxcpm2) |
 | Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](#higgs-audio-v3-tts) |
 | Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
@@ -426,6 +427,49 @@ audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend 
 | `--voice-ref` | WAV path | not set | Reference speaker audio for cloning. |
 | `--text-chunk-size` | integer chars | `256` | Long-form chunk size. |
 | `--session-option pocket_tts.voice_state_cache_slots=<n>` | integer slots | `4` | Prepared voice-state cache slots; set `0` to disable reuse. |
+
+## VoxCPM1
+
+VoxCPM1 supports offline and streaming TTS plus short-reference voice cloning. It reuses the VoxCPM2 runtime tree with a GGUF tensor-adaptation layer that understands the OpenBMB folded AudioVAE weights. The registered package is the 16 kHz 0.5B model; the runtime is size-agnostic, so a different VoxCPM1 GGUF can still be loaded via an explicit `--model <path>`.
+
+| Field | Value |
+|---|---|
+| Family | `voxcpm1` |
+| Model directory | `models/VoxCPM1-GGUF` (0.5B) |
+| Task | `tts` |
+| Modes | `offline`, `streaming` |
+| Languages | Model auto-handles supported languages |
+| Voice input | Optional reference WAV; optional transcript through `--reference-text` |
+| Built-in voices | Not exposed |
+
+Text to speech:
+
+```bash
+audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --text "Hello from VoxCPM1." --out out.wav
+```
+
+Voice clone:
+
+```bash
+audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --text "Hello from VoxCPM1." --voice-ref assets/resources/b.wav --out out.wav
+```
+
+Streaming output:
+
+```bash
+audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --mode streaming --text "Hello from VoxCPM1." --request-option retry_badcase=false --out out.wav
+```
+
+| Option | Values | Default | Meaning |
+|---|---:|---:|---|
+| `--voice-ref` | WAV path | not set | Reference speaker audio. |
+| `--reference-text` | text | empty string | Transcript for the reference audio (clone prompting). |
+| `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode; streaming requires `retry_badcase=false`. |
+| `--session-option voxcpm1.mem_saver=true\|false` | bool | `false` | Use tighter graph workspaces and release MiniCPM/AudioVAE request graphs after completion to reduce resident VRAM. |
+| `--session-option voxcpm1.prompt_cache_slots=<n>` | integer | `1` | Prompt and prompt-audio embedding cache slots. Set to `0` to disable prompt caching. |
+| `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
+| `--num-inference-steps` | integer | `10` | Flow matching steps. |
+| `--guidance-scale` | float | `2.0` | CFG strength. |
 
 ## VoxCPM2
 

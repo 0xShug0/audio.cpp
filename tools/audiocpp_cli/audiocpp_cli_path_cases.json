@@ -900,6 +900,74 @@
       ]
     },
     {
+      "id": "voxcpm1_tts",
+      "coverage": "VoxCPM1 text-to-speech path with MiniCPM generation, diffusion feature generation, and AudioVAE decode",
+      "family": "voxcpm1",
+      "model": "models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "tts",
+          "text": "This VoxCPM1 path test checks the text-to-speech interface through AudioCPP CLI.",
+          "seed": 1234,
+          "max_tokens": 160,
+          "guidance_scale": 2.0,
+          "num_inference_steps": 10
+        }
+      ]
+    },
+    {
+      "id": "voxcpm1_voice_clone",
+      "coverage": "VoxCPM1 voice clone path with reference audio encoding, MiniCPM generation, diffusion feature generation, and AudioVAE decode",
+      "family": "voxcpm1",
+      "model": "models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "clone",
+          "text": "This VoxCPM1 path test clones the reference speaker for a short review sentence.",
+          "voice_ref": "resources/sample.wav",
+          "seed": 1234,
+          "max_tokens": 160,
+          "guidance_scale": 2.0,
+          "num_inference_steps": 10
+        }
+      ]
+    },
+    {
+      "id": "voxcpm1_streaming_tts",
+      "coverage": "VoxCPM1 streaming text-to-speech path with MiniCPM streaming generation, diffusion feature generation, and AudioVAE chunk decode",
+      "family": "voxcpm1",
+      "model": "models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "chunk_size": 512,
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "streaming_tts",
+          "text": "This VoxCPM1 streaming path test checks that the CLI can emit audio chunks for a longer request while preserving a steady speaking style.",
+          "seed": 1234,
+          "max_tokens": 160,
+          "guidance_scale": 2.0,
+          "num_inference_steps": 10,
+          "options": {
+            "retry_badcase": false
+          }
+        }
+      ]
+    },
+    {
       "id": "higgs_audio_tts_voice_clone_chunked",
       "coverage": "Higgs Audio v3 voice clone path with framework text chunking, AR generation, and codec decode",
       "family": "higgs_audio_tts",

@@ -37,6 +37,13 @@
     {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "default": true}
   ],
 
+  "voxcpm1": [
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0, "info": "CFM/DiT 步数"},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
+    {"name": "min_tokens", "type": "number", "label": "min_tokens", "default": 2, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "default": true}
+  ],
+
   "miotts": [
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
