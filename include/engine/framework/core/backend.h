@@ -59,6 +59,7 @@ void trim_backend_pools(ggml_backend_t backend);
 // higher priority, 0 = default). No-op on non-CUDA backends and on builds
 // whose CUDA backend does not export the hook.
 void set_backend_stream_priority(ggml_backend_t backend, int priority);
+void * backend_cuda_stream(ggml_backend_t backend);
 // evict_cuda_graph_cache=false (the default) is the historical no-op;
 // true drops the backend's cached compiled-graph state (CUDA/HIP graph
 // cache) for this cgraph at destruction — opt in per family.

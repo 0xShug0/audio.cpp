@@ -346,6 +346,23 @@ void set_backend_stream_priority(ggml_backend_t backend, int priority) {
     if (fn != nullptr) fn(backend, priority);
 }
 
+void * backend_cuda_stream(ggml_backend_t backend) {
+    if (backend == nullptr) return nullptr;
+    if (!is_cuda_backend_handle(backend) && !is_hip_backend_handle(backend)) return nullptr;
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    if (device == nullptr) {
+        throw std::runtime_error("CUDA backend stream lookup failed: backend has no device");
+    }
+    auto fn = (void * (*)(ggml_backend_t))
+        ggml_backend_reg_get_proc_address(
+            ggml_backend_dev_backend_reg(device),
+            "ggml_backend_cuda_get_stream");
+    if (fn == nullptr) {
+        throw std::runtime_error("CUDA backend stream lookup failed: backend does not export ggml_backend_cuda_get_stream");
+    }
+    return fn(backend);
+}
+
 // evict_cuda_graph_cache defaults to false, preserving historical behavior
 // for existing call sites: before the CUDA backend exported
 // ggml_backend_cuda_clear_graph the lookup resolved nothing, and families
