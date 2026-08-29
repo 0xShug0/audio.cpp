@@ -1,8 +1,10 @@
 # Audio8 TTS
 
-Audio8 TTS Preview 0.6B and 0.1B are compact multilingual text-to-speech models with zero-shot voice cloning, ported natively into audio.cpp as the community family `audio8_tts`. It uses a DualAR architecture derived from Fish Audio
+Audio8 TTS Preview 0.6B (Qwen backbone) and 0.1B (Falcon-H1 hybrid Mamba2+attention) are compact multilingual text-to-speech models with zero-shot voice cloning, ported natively into audio.cpp as the community family `audio8_tts`. They use a DualAR architecture derived from Fish Audio
 S2 Pro: a slow semantic transformer generates speech semantics, a fast codebook transformer expands each semantic step into a full codec frame, and a neural codec renders 44.1 kHz audio. The native path executes all three
 stages directly on ggml with no Python dependency.
+
+> **Status 2026-08-29:** `0.6B` Qwen is fully native, CPU-validated via SenseVoice ASR round-trip (`The quick brown fox…`, `你好，欢迎使用audio8。`, `Artificial intelligence…`). `0.1B` Falcon-H1 is weight-complete and builds natively (GGUF `slow.embed_tokens` + `24× mamba/attention` + `semantic_output`), but the slow AR forward is a documented stub pending the Mamba2 port — see `docs/FALCON_H1_0.1B_PORT_PLAN.md` and `src/community_models/audio8_tts/ar.cpp:861` `TODO(Falcon-H1)`.
 
 | Field | Value |
 |---|---|
@@ -13,6 +15,9 @@ stages directly on ggml with no Python dependency.
 | Languages | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es |
 | Voice input | optional reference WAV plus its exact transcript (clone) |
 | Output | mono 44.1 kHz WAV |
+| Backbones | `0.6B`: Qwen `slow_backbone=qwen` (24L, dim 896, 14H/2KV, RoPE 1e6), `0.1B`: Falcon-H1 `slow_backbone=falcon_h1` (dim 512, `d_inner 768=32×24`, `d_state 64`, `d_conv 4`, `dt_rank 24`, `GQA 8/2`, RoPE 1e11) |
+| GGUF examples | `Audio8-TTS-Preview-0.6b-GGUF/audio8-tts-preview-0.6b-q8_0.gguf` (1.4G), `Audio8-TTS-Preview-0.1B-GGUF/audio8-tts-preview-0.1b-q8_0.gguf` (812M) |
+| External ggml SSM | `external/ggml` already provides `ggml_ssm_conv/scan` for `cpu/cuda/metal/vulkan/opencl/sycl/cann` — no fork needed |
 
 ## Source
 
@@ -112,7 +117,7 @@ Multiple ordered references can be conditioned through one request option:
 
 ## Architecture
 
-Three ggml graphs mirror the Python reference exactly:
+Three ggml graphs mirror the Python reference exactly (0.6B Qwen path):
 
 1. **Slow semantic AR** — 24-layer Llama-style decoder (dim 896, 14 heads +
    2 KV heads, head_dim 64, FFN 4864, RoPE base 1e6, packed QKV *with*
@@ -120,11 +125,21 @@ Three ggml graphs mirror the Python reference exactly:
    (`[1, steps, 896]`) and a step graph decodes one column per step against
    a static KV cache. Vocabulary is 155776 Qwen-style tokens; valid speech
    semantics span `[semantic_begin_id, semantic_end_id]` =
-   `[151678, 155773]`.
+   `[151678, 155773]`. **0.1B Falcon-H1 variant:** dim 512, hybrid per-layer
+   `input_layernorm → parallel mamba2 (in_proj 1688=768+896+24, conv1d 896×1×4,
+   dt_bias/A_log/D, out_proj) + GQA attention (q 512/512, k/v 128/512,
+   RoPE 1e11) → pre_ff_layernorm → FFN (768)**, plus `embedding_multiplier
+   0.1088`/`lm_head 0.0781`/`ssm/attn` multipliers from `types.h`. Current
+   `falcon_forward_stateless:861` is a **stub** (RMSNorm + in_proj split +
+   conv bias SiLU + gated out_proj + FFN, `attn_out=0`, no
+   `ggml_ssm_conv/B/C/dt/A/D/ggml_ssm_scan` nor recurrent `conv[3,896]/ssm[64,32,24]`
+   state, full recompute `O(N²)`); full Mamba2 tracked in
+   `docs/FALCON_H1_0.1B_PORT_PLAN.md` M2/M3 (reuses `external/ggml` SSM backends).
 2. **Fast codebook AR** — 4-layer decoder (same width, no attention biases,
    untied output head over 4096 codes). Conditioned on the slow hidden
    state, it autoregressively expands one semantic token into a frame of
-   10 codebook indices (10 × 4096-entry books).
+   10 codebook indices (10 × 4096-entry books). Shared by both backbones
+   (0.1B uses compact vocab 1024+EOS → expanded 4097 with `semantic 65537…`).
 3. **Neural codec** — window-transformer encoder/decoder (8 layers, 16
    heads, FFN 1216) with Snake1d residual units, ConvNeXt blocks, causal
    transposed upsampling, and a downsample quantizer holding one semantic +
@@ -219,16 +234,18 @@ Each output embeds 681 tensors (226 AR + 455 codec) in two namespaces `model_wei
 
 ## Limitations and TODO
 
-Current limitations:
+Current limitations (2026-08-29):
 
-- Validated on CPU so far; CUDA/Vulkan/Metal routes are untested for this family.
+- **0.6B**: validated on CPU via SenseVoice ASR (`The quick brown fox…` 3.02s RMS 0.15, `你好，欢迎使用audio8。` 2.32s, `Artificial intelligence…` 2.97s) with `--family audio8_tts` GGUF `q8_0`/`bf16`; CUDA/Vulkan/Metal SSM backends are built but not yet exercised for this family (ggml kernels already present).
+- **0.1B**: weight-complete and `audiocpp_cli` builds, but slow AR is a documented stub (`ar.cpp:861 TODO(Falcon-H1)`, `attn_out=0`, no `ggml_ssm_scan`/state, full recompute) — STT currently `like.` vs target; no `/tmp` writes or Python dependency. Full hybrid Mamba2 port is planned, not blocked on ggml (see `docs/FALCON_H1_0.1B_PORT_PLAN.md`).
 - Offline mode only — no streaming session path.
-- Cloning is exercised through the same generation loop but has not yet been quality-checked against reference voices; only plain TTS has ASR-round-trip evidence so far.
+- Cloning uses the same DualAR loop (reference WAV + `reference_text` → prompt builder) — 0.6B cloning path is structurally identical to TTS but has not yet been ASR-evaluated against real reference voices beyond the TTS evidence above.
 - No conversation-turn continuation (Python supports multi-turn prompting; the C++ v1 path is single-request).
 - ASR round-trip verifies intelligibility, not speaker similarity; formal parity runs against the Python/ONNX reference are still outstanding.
 
 TODO:
 
-- [ ] Support 0.1B preview model
-- [ ] Support streaimg
-- [ ] Clone-task validation with real reference voices.
+- [ ] Complete 0.1B Falcon-H1 Mamba2 port (`ggml_ssm_conv/B/C/dt/A/D/scan` + recurrent `conv/ssm` ring + hybrid attention `K=1`) — `docs/FALCON_H1_0.1B_PORT_PLAN.md` M2/M3 (3–3.5d), then SenseVoice verification of `out/*0.1b.wav`
+- [ ] Support streaming
+- [ ] Clone-task validation with real reference voices (0.6B first, then 0.1B after Mamba2)
+- [ ] Exercise CUDA/Metal/Vulkan backends for both models (ggml SSM kernels already vendored)
