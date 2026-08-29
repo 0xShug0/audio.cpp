@@ -1,6 +1,7 @@
 #include "engine/models/voxcpm2/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 
@@ -62,6 +63,56 @@ bool optional_audio_equal(const std::optional<runtime::AudioBuffer> &lhs,
     return false;
   }
   return !lhs.has_value() || audio_buffer_equal(*lhs, *rhs);
+}
+
+std::optional<std::pair<std::string, std::string>>
+split_leading_voice_tag(const std::string &text) {
+  const std::string trimmed = engine::io::trim_ascii_whitespace(text);
+  if (trimmed.empty() || trimmed.front() != '(') {
+    return std::nullopt;
+  }
+  const size_t close = trimmed.find(')');
+  if (close == std::string::npos || close + 1 >= trimmed.size()) {
+    return std::nullopt;
+  }
+  const std::string tag =
+      engine::io::trim_ascii_whitespace(trimmed.substr(0, close + 1));
+  const std::string body =
+      engine::io::trim_ascii_whitespace(trimmed.substr(close + 1));
+  if (tag.empty() || body.empty()) {
+    return std::nullopt;
+  }
+  return std::make_pair(tag, body);
+}
+
+std::vector<runtime::TaskRequest>
+chunk_voxcpm2_request(const runtime::TaskRequest &request,
+                      int64_t text_chunk_size,
+                      engine::text::TextChunkMode text_chunk_mode) {
+  if (!request.text_input.has_value() ||
+      text_chunk_mode != engine::text::TextChunkMode::TagAware) {
+    return runtime::chunk_text_request(request, text_chunk_size,
+                                       text_chunk_mode);
+  }
+  const auto split = split_leading_voice_tag(request.text_input->text);
+  if (!split.has_value()) {
+    return runtime::chunk_text_request(request, text_chunk_size,
+                                       text_chunk_mode);
+  }
+  const auto body_chunks = engine::text::split_text_chunks(
+      split->second, text_chunk_size, text_chunk_mode);
+  if (body_chunks.empty()) {
+    return {request};
+  }
+  std::vector<runtime::TaskRequest> out;
+  out.reserve(body_chunks.size());
+  for (size_t i = 0; i < body_chunks.size(); ++i) {
+    runtime::TaskRequest item = request;
+    item.text_input->text =
+        i == 0 ? split->first + " " + body_chunks[i] : body_chunks[i];
+    out.push_back(std::move(item));
+  }
+  return out;
 }
 
 size_t prompt_cache_slots_from_options(
@@ -259,7 +310,7 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
       engine::text::parse_text_chunk_mode_override(request.options)
           .value_or(engine::text::TextChunkMode::TagAware);
   const auto chunk_requests =
-      runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
+      chunk_voxcpm2_request(request, text_chunk_size, text_chunk_mode);
   const auto generation_options = generation_options_from_request(request);
   const auto prompt_text =
       runtime::find_option(request.options, {"voxcpm2.prompt_text",
