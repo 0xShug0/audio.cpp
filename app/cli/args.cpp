@@ -29,12 +29,10 @@ void record_flag_query(const std::string & name) {
     flag_names().insert(name);
 }
 
-}  // namespace
-
-void report_unused_args(int argc, char ** argv) {
+std::vector<std::string> args_nobody_asked_for(int argc, char ** argv) {
     const auto & values = value_names();
     const auto & flags = flag_names();
-    std::vector<std::string> unused;
+    std::vector<std::string> unknown;
     for (int i = 1; i < argc; ++i) {
         const std::string token = argv[i];
         if (token.rfind("--", 0) != 0 || token == "--") {
@@ -49,17 +47,43 @@ void report_unused_args(int argc, char ** argv) {
         if (flags.count(token) != 0) {
             continue;
         }
-        unused.push_back(token);
+        unknown.push_back(token);
     }
-    if (unused.empty()) {
+    return unknown;
+}
+
+// Set once the strict check has spoken for this run, so the warning below does not repeat it.
+bool strict_check_ran = false;
+
+}  // namespace
+
+void require_known_args(int argc, char ** argv) {
+    strict_check_ran = true;
+    const auto unknown = args_nobody_asked_for(argc, argv);
+    if (unknown.empty()) {
         return;
     }
-    std::cerr << "audiocpp_cli warning: ignored unknown option";
-    if (unused.size() > 1) {
+    std::string message = unknown.size() > 1 ? "unknown options:" : "unknown option:";
+    for (const auto & token : unknown) {
+        message += " " + token;
+    }
+    throw std::runtime_error(message);
+}
+
+void warn_ignored_args(int argc, char ** argv) {
+    if (strict_check_ran) {
+        return;
+    }
+    const auto ignored = args_nobody_asked_for(argc, argv);
+    if (ignored.empty()) {
+        return;
+    }
+    std::cerr << "audiocpp_cli warning: ignored option";
+    if (ignored.size() > 1) {
         std::cerr << "s";
     }
     std::cerr << ":";
-    for (const auto & token : unused) {
+    for (const auto & token : ignored) {
         std::cerr << " " << token;
     }
     std::cerr << "\n";
