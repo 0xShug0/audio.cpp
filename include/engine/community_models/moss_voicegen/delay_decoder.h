@@ -2,6 +2,7 @@
 
 #include "engine/community_models/moss_voicegen/assets.h"
 #include "engine/community_models/moss_voicegen/heads.h"
+#include "engine/framework/sampling/hf_sampler.h"
 
 #include <cstdint>
 #include <random>
@@ -68,8 +69,8 @@ private:
     MossVoiceGenConfig config_;
     MossVoiceGenSamplingOptions sampling_;
     MossVoiceGenLengthBounds bounds_;
-    uint32_t seed_ = 0;
     std::mt19937 rng_;
+    engine::sampling::HfSamplerScratch sampler_scratch_;
     uint64_t sample_call_index_ = 0;
 
     int64_t step_index_ = 0;

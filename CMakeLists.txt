@@ -394,6 +394,7 @@ add_library(engine_core OBJECT
     src/framework/modules/activation_modules.cpp
     src/framework/modules/norm_modules.cpp
     src/framework/modules/lookup_modules.cpp
+    src/framework/modules/multi_codebook_embedding.cpp
     src/framework/modules/structural_modules.cpp
     src/framework/modules/asr_helpers.cpp
     src/framework/modules/conv_modules.cpp
@@ -472,6 +473,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/fish_dac_codec_runtime.cpp
     src/framework/codecs/mel_latent_vae44k_runtime.cpp
     src/framework/codecs/mimi_codec_runtime.cpp
+    src/framework/codecs/moss_audio_tokenizer_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
     src/framework/codecs/redae_codec_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
@@ -799,12 +801,6 @@ audiocpp_add_model(moss
         src/models/moss/moss_tts_nano/prompt_builder.cpp
         src/models/moss/moss_tts_nano/session.cpp
         src/models/moss/moss_tts_nano/tokenizer_text.cpp
-        src/models/moss/shared/audio_tokenizer_decoder.cpp
-        src/models/moss/shared/audio_tokenizer_encoder.cpp
-        src/models/moss/shared/audio_tokenizer_config.cpp
-        src/models/moss/shared/audio_tokenizer_quantizer.cpp
-        src/models/moss/shared/sampling.cpp
-        src/models/moss/shared/token_rows.cpp
         src/models/moss/moss_tts_local/depth_transformer.cpp
         src/models/moss/moss_tts_local/generator.cpp
         src/models/moss/moss_tts_local/loader.cpp
@@ -1195,8 +1191,6 @@ audiocpp_add_model(vietneu_tts
         engine/community_models/vietneu_tts/loader.h
     LOADERS
         engine::models::vietneu_tts::make_vietneu_tts_loader
-    DEPENDS
-        moss
 )
 
 audiocpp_add_model(qwen3_asr

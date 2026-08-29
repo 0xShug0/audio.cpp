@@ -6,9 +6,9 @@
 #include "engine/community_models/moss_voicegen/heads.h"
 #include "engine/community_models/moss_voicegen/tokenizer_text.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
+#include "engine/framework/modules/multi_codebook_embedding.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
-#include "engine/models/moss/shared/token_rows.h"
 
 #include <cstddef>
 #include <memory>
@@ -63,10 +63,10 @@ private:
 
     // The execution context comes from RuntimeSessionBase; the runtimes below borrow it.
     std::unique_ptr<MossVoiceGenTextProcessor> text_processor_;
-    std::unique_ptr<moss::AudioCodebookEmbeddings> codebooks_;
+    std::unique_ptr<engine::modules::MultiCodebookEmbedding> codebooks_;
     std::unique_ptr<MossVoiceGenBackboneRuntime> backbone_;
     std::unique_ptr<MossVoiceGenHeadsRuntime> heads_;
-    std::unique_ptr<moss::MossAudioTokenizerDecoder> codec_;
+    std::unique_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> codec_;
 };
 
 }  // namespace engine::models::moss_voicegen

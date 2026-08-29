@@ -2,8 +2,7 @@
 
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
-#include "engine/models/moss/shared/audio_tokenizer_encoder.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 #include "engine/models/moss/moss_tts_nano/assets.h"
 #include "engine/models/moss/moss_tts_nano/generator.h"
 #include "engine/models/moss/moss_tts_nano/global_transformer.h"
@@ -33,7 +32,6 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
-    moss::MossAudioTokenizerEncoder & encoder();
     MossTTSNanoAudioCodes encode_reference_audio(const runtime::AudioBuffer & audio, int64_t active_codebooks);
     runtime::AudioBuffer decode_generated_audio(const MossTTSNanoAudioCodes & codes, int64_t active_codebooks);
     MossTTSNanoRequest make_request(const runtime::TaskRequest & request) const;
@@ -56,9 +54,7 @@ private:
     MossTTSNanoGlobalTransformerRuntime global_transformer_;
     MossTTSNanoLocalFrameDecoderRuntime local_frame_decoder_;
     MossTTSNanoGenerator generator_;
-    moss::MossAudioTokenizerDecoder decoder_;
-    std::unique_ptr<core::ExecutionContext> reference_encoder_execution_context_;
-    std::unique_ptr<moss::MossAudioTokenizerEncoder> encoder_;
+    engine::codecs::MossAudioTokenizerCodecRuntime codec_;
     std::optional<runtime::AudioBuffer> prepared_prompt_audio_;
     std::optional<MossTTSNanoAudioCodes> prepared_reference_codes_;
 };
