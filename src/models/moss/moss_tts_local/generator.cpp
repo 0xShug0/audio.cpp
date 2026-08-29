@@ -7,8 +7,8 @@
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/weight_binding.h"
+#include "engine/framework/sampling/hf_sampler.h"
 #include "engine/framework/sampling/torch_random.h"
-#include "engine/models/moss/shared/sampling.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -248,14 +248,8 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
     std::vector<std::vector<int32_t>> generated_frames;
     generated_frames.reserve(static_cast<size_t>(options.max_new_frames));
     std::vector<std::vector<int32_t>> code_history(static_cast<size_t>(n_vq));
-    const bool use_repetition_penalty = options.audio_repetition_penalty != 1.0F;
-    std::vector<std::vector<uint8_t>> code_seen(static_cast<size_t>(n_vq));
-    if (use_repetition_penalty) {
-        for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
-            const int64_t codebook_size = audio_codebooks_->codebook_size(codebook);
-            code_seen[static_cast<size_t>(codebook)].assign(static_cast<size_t>(codebook_size), 0);
-        }
-    }
+    engine::sampling::HfSampler sampler;
+    engine::sampling::HfSamplerScratch sampler_scratch;
     std::mt19937 rng(options.seed);
     uint64_t sample_call_index = 0;
     double bias_ms = 0.0;
@@ -304,18 +298,27 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
         int32_t gate_index = 0;
         add_timing(gate_ms, [&]() {
             gate_logits = project(local_text_head_, local_hidden, 2, hidden);
-            gate_index = options.do_sample
-                ? moss::sample_index(
-                      gate_logits,
-                      options.text_top_k,
-                      options.text_top_p,
-                      options.text_temperature,
-                      rng,
-                      "MOSS-TTS-Local sampler",
-                      &sampling_policy_,
-                      options.seed,
-                      sample_call_index++)
-                : moss::argmax_index(gate_logits, "MOSS-TTS-Local sampler");
+            engine::sampling::HfSamplingOptions hf_options;
+            hf_options.do_sample = options.do_sample;
+            hf_options.temperature = options.text_temperature;
+            hf_options.top_k = options.text_top_k;
+            hf_options.top_p = options.text_top_p;
+            const engine::sampling::HfTorchSamplingState torch_state{
+                &sampling_policy_,
+                options.seed,
+                sample_call_index,
+            };
+            gate_index = sampler.sample(
+                gate_logits,
+                {},
+                hf_options,
+                sampler_scratch,
+                rng,
+                options.do_sample && sampling_policy_.cuda_fast_path ? &torch_state : nullptr,
+                "MOSS-TTS-Local sampler");
+            if (options.do_sample) {
+                ++sample_call_index;
+            }
         });
         if (gate_index != 0) {
             break;
@@ -334,31 +337,32 @@ std::vector<std::vector<int32_t>> MossGenerator::generate(
             }
             int32_t code = 0;
             add_timing(sampling_ms, [&]() {
-                moss::apply_repetition_penalty(
+                engine::sampling::HfSamplingOptions hf_options;
+                hf_options.do_sample = options.do_sample;
+                hf_options.temperature = options.audio_temperature;
+                hf_options.top_k = options.audio_top_k;
+                hf_options.top_p = options.audio_top_p;
+                hf_options.repetition_penalty = options.audio_repetition_penalty;
+                const engine::sampling::HfTorchSamplingState torch_state{
+                    &sampling_policy_,
+                    options.seed,
+                    sample_call_index,
+                };
+                code = sampler.sample(
                     logits,
                     code_history[static_cast<size_t>(codebook)],
-                    options.audio_repetition_penalty,
+                    hf_options,
+                    sampler_scratch,
+                    rng,
+                    options.do_sample && sampling_policy_.cuda_fast_path ? &torch_state : nullptr,
                     "MOSS-TTS-Local sampler");
-                code = options.do_sample
-                    ? moss::sample_index(
-                          logits,
-                          options.audio_top_k,
-                          options.audio_top_p,
-                          options.audio_temperature,
-                          rng,
-                          "MOSS-TTS-Local sampler",
-                          &sampling_policy_,
-                          options.seed,
-                          sample_call_index++)
-                    : moss::argmax_index(logits, "MOSS-TTS-Local sampler");
+                if (options.do_sample) {
+                    ++sample_call_index;
+                }
             });
             frame_codes[static_cast<size_t>(codebook)] = code;
-            if (use_repetition_penalty) {
-                auto & seen = code_seen[static_cast<size_t>(codebook)];
-                if (code >= 0 && static_cast<size_t>(code) < seen.size() && seen[static_cast<size_t>(code)] == 0) {
-                    seen[static_cast<size_t>(code)] = 1;
-                    code_history[static_cast<size_t>(codebook)].push_back(code);
-                }
+            if (code >= 0) {
+                code_history[static_cast<size_t>(codebook)].push_back(code);
             }
 
             if (codebook + 1 < n_vq) {
