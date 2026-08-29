@@ -200,17 +200,6 @@
         "Audio8-TTS-Preview-0.6B-GGUF/audio8-tts-preview-0.6b-q8_0.gguf"
       ],
       "strip_prefix": "Audio8-TTS-Preview-0.6B-GGUF"
-    },
-    {
-      "id": "audio8_tts_preview_0_1b_q8_0",
-      "display_name": "Audio8 TTS Preview 0.1B Q8_0 GGUF",
-      "format": "gguf",
-      "precision": "q8_0",
-      "target_directory": "Audio8-TTS-Preview-0.1B-GGUF",
-      "files": [
-        "Audio8-TTS-Preview-0.1B-GGUF/audio8-tts-preview-0.1b-q8_0.gguf"
-      ],
-      "strip_prefix": "Audio8-TTS-Preview-0.1B-GGUF"
     }
   ],
   "sources": [
