@@ -29,7 +29,6 @@ constexpr size_t kGeneratorProjectionWeightContextBytes = 16ull * 1024 * 1024;
 constexpr size_t kGeneratorProjectionGraphArenaBytes = 16ull * 1024 * 1024;
 constexpr size_t kCodecWeightContextBytes = 256ull * 1024 * 1024;
 constexpr size_t kCodecGraphArenaBytes = 1536ull * 1024 * 1024;
-constexpr size_t kEncoderWeightContextBytes = 256ull * 1024 * 1024;
 constexpr size_t kEncoderGraphArenaBytes = 2048ull * 1024 * 1024;
 constexpr int kCodecSampleRate = 48000;
 constexpr int64_t kDefaultTextChunkSize = 2048;
@@ -40,7 +39,7 @@ uint64_t mix_reference_audio_key(uint64_t key, uint64_t value) {
     return key;
 }
 
-uint64_t prefix_hash(const moss::TokenRows & prefix, int64_t num_codebooks) {
+uint64_t prefix_hash(const engine::codecs::MossTokenRows & prefix, int64_t num_codebooks) {
     uint64_t key = 1469598103934665603ull;
     for (size_t row = 0; row < prefix.text_tokens.size(); ++row) {
         key = mix_reference_audio_key(key, static_cast<uint32_t>(prefix.text_tokens[row]));
@@ -54,7 +53,7 @@ uint64_t prefix_hash(const moss::TokenRows & prefix, int64_t num_codebooks) {
     return key;
 }
 
-int64_t prefix_audio_nonpad_count(const moss::TokenRows & prefix, int32_t audio_pad_token_id) {
+int64_t prefix_audio_nonpad_count(const engine::codecs::MossTokenRows & prefix, int32_t audio_pad_token_id) {
     int64_t count = 0;
     for (const int32_t code : prefix.audio_codes) {
         if (code != audio_pad_token_id) {
@@ -246,12 +245,16 @@ MossTTSLocalSession::MossTTSLocalSession(
     depth_ = std::make_unique<MossDepthTransformer>(
         assets_, execution_context(), kDepthGraphArenaBytes, kDepthWeightContextBytes);
     processor_ = std::make_unique<MossTextProcessor>(assets_);
-    codec_ = std::make_unique<moss::MossAudioTokenizerDecoder>(
-        *assets_->audio_tokenizer_weights,
+    codec_ = std::make_unique<engine::codecs::MossAudioTokenizerCodecRuntime>(
+        assets_->audio_tokenizer_weights,
         execution_context(),
         assets_->config.num_codebooks,
-        kCodecWeightContextBytes,
-        kCodecGraphArenaBytes);
+        engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
+            kCodecWeightContextBytes,
+            kEncoderGraphArenaBytes,
+            kCodecGraphArenaBytes,
+            true,
+        });
     generator_ = std::make_unique<MossGenerator>(
         assets_,
         execution_context(),
@@ -259,6 +262,7 @@ MossTTSLocalSession::MossTTSLocalSession(
         kGeneratorProjectionWeightContextBytes,
         *backbone_,
         *depth_);
+    codec_->prepare_decoder();
     assets_->model_weights->release_storage();
 }
 
@@ -278,22 +282,9 @@ void MossTTSLocalSession::prepare(const runtime::SessionPreparationRequest & req
     const bool has_reference = request.voice.has_value() && request.voice->speaker.has_value() &&
         request.voice->speaker->audio.has_value();
     if (has_reference) {
-        (void) encoder();
+        codec_->prepare_encoder();
     }
     mark_prepared();
-}
-
-moss::MossAudioTokenizerEncoder & MossTTSLocalSession::encoder() {
-    if (encoder_ == nullptr) {
-        reference_encoder_execution_context_ = std::make_unique<core::ExecutionContext>(options().backend);
-        encoder_ = std::make_unique<moss::MossAudioTokenizerEncoder>(
-            *assets_->audio_tokenizer_weights,
-            *reference_encoder_execution_context_,
-            assets_->config.num_codebooks,
-            kEncoderWeightContextBytes,
-            kEncoderGraphArenaBytes);
-    }
-    return *encoder_;
 }
 
 bool MossTTSLocalSession::ReferenceAudioCacheKeyEqual::operator()(
@@ -364,7 +355,10 @@ runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & reques
                 stereo = reference_to_codec_stereo(reference_audio);
             });
             time_once(reference_encode_ms, [&]() {
-                reference_codes = encoder().encode(stereo);
+                reference_codes = codec_->encode(engine::codecs::MossAudioTokenizerAudio{
+                    codec_->sampling_rate(),
+                    std::move(stereo),
+                }).codebooks;
             });
             ReferenceVoiceCacheEntry entry;
             entry.codes = reference_codes;
@@ -443,7 +437,10 @@ runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & reques
 
         std::vector<std::vector<float>> channels;
         time_once(codec_decode_ms, [&]() {
-            channels = codec_->decode(codes);
+            channels = codec_->decode(engine::codecs::MossAudioTokenizerCodes{
+                static_cast<int64_t>(codes.empty() ? 0 : codes.front().size()),
+                std::move(codes),
+            }).channels;
         });
         const int channel_count = static_cast<int>(channels.size());
         const size_t samples_per_channel = channels.empty() ? 0 : channels.front().size();

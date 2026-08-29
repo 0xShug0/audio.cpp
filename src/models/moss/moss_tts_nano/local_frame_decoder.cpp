@@ -10,7 +10,6 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
-#include "engine/models/moss/shared/sampling.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -439,19 +438,29 @@ std::vector<int32_t> MossTTSNanoLocalFrameDecoderRuntime::generate_frame(
         text_logits.at(static_cast<size_t>(text_candidates[0])),
         text_logits.at(static_cast<size_t>(text_candidates[1])),
     };
+    engine::sampling::HfSampler sampler;
+    engine::sampling::HfSamplingOptions text_sampling;
+    text_sampling.do_sample = sampling.do_sample;
+    text_sampling.temperature = sampling.text_temperature;
+    text_sampling.top_k = sampling.text_top_k;
+    text_sampling.top_p = sampling.text_top_p;
+    const engine::sampling::HfTorchSamplingState text_torch_state{
+        &sampling_policy_,
+        seed,
+        sample_call_index,
+    };
     const int32_t best_text = text_candidates[static_cast<size_t>(
-        sampling.do_sample
-            ? moss::sample_index(
-                  text_candidate_logits,
-                  sampling.text_top_k,
-                  sampling.text_top_p,
-                  sampling.text_temperature,
-                  rng,
-                  "MOSS-TTS-Nano local decoder",
-                  &sampling_policy_,
-                  seed,
-                  sample_call_index++)
-            : moss::argmax_index(text_candidate_logits, "MOSS-TTS-Nano local decoder"))];
+        sampler.sample(
+            text_candidate_logits,
+            {},
+            text_sampling,
+            sampler_scratch_,
+            rng,
+            sampling.do_sample && sampling_policy_.cuda_fast_path ? &text_torch_state : nullptr,
+            "MOSS-TTS-Nano local decoder"))];
+    if (sampling.do_sample) {
+        ++sample_call_index;
+    }
     if (best_text == assets_->config.audio_end_token_id) {
         return {};
     }
@@ -470,23 +479,28 @@ std::vector<int32_t> MossTTSNanoLocalFrameDecoderRuntime::generate_frame(
         for (size_t frame = 0; frame * static_cast<size_t>(assets_->config.n_vq) + static_cast<size_t>(q) < history.size(); ++frame) {
             codebook_history.push_back(history[frame * static_cast<size_t>(assets_->config.n_vq) + static_cast<size_t>(q)]);
         }
-        moss::apply_repetition_penalty(
+        engine::sampling::HfSamplingOptions audio_sampling;
+        audio_sampling.do_sample = sampling.do_sample;
+        audio_sampling.temperature = sampling.audio_temperature;
+        audio_sampling.top_k = sampling.audio_top_k;
+        audio_sampling.top_p = sampling.audio_top_p;
+        audio_sampling.repetition_penalty = sampling.audio_repetition_penalty;
+        const engine::sampling::HfTorchSamplingState audio_torch_state{
+            &sampling_policy_,
+            seed,
+            sample_call_index,
+        };
+        const int32_t token = sampler.sample(
             logits,
             codebook_history,
-            sampling.audio_repetition_penalty,
+            audio_sampling,
+            sampler_scratch_,
+            rng,
+            sampling.do_sample && sampling_policy_.cuda_fast_path ? &audio_torch_state : nullptr,
             "MOSS-TTS-Nano local decoder");
-        const int32_t token = sampling.do_sample
-            ? moss::sample_index(
-                  logits,
-                  sampling.audio_top_k,
-                  sampling.audio_top_p,
-                  sampling.audio_temperature,
-                  rng,
-                  "MOSS-TTS-Nano local decoder",
-                  &sampling_policy_,
-                  seed,
-                  sample_call_index++)
-            : moss::argmax_index(logits, "MOSS-TTS-Nano local decoder");
+        if (sampling.do_sample) {
+            ++sample_call_index;
+        }
         frame[static_cast<size_t>(q)] = token;
         previous.push_back(token);
     }

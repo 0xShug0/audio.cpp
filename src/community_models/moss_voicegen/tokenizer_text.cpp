@@ -85,12 +85,12 @@ MossVoiceGenTextProcessor::MossVoiceGenTextProcessor(std::shared_ptr<const MossV
 
 MossVoiceGenTextProcessor::~MossVoiceGenTextProcessor() = default;
 
-moss::TokenRows MossVoiceGenTextProcessor::build_generation_prefix(
+engine::codecs::MossTokenRows MossVoiceGenTextProcessor::build_generation_prefix(
     const std::string & text,
     const std::optional<std::string> & instruction,
     const std::optional<std::string> & language) const {
     const auto & config = impl_->assets->config;
-    moss::TokenRowBuilder builder(config.num_codebooks, static_cast<int32_t>(config.audio_pad_code));
+    engine::codecs::MossTokenRowBuilder builder(config.num_codebooks, static_cast<int32_t>(config.audio_pad_code));
 
     // Render the whole turn as one string and encode it in a single pass, the way the
     // reference processor does. Encoding the fragments separately would split merges

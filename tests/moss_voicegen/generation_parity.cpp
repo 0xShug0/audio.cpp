@@ -1,10 +1,12 @@
-// Generation parity for MOSS-VoiceGenerator: runs the backbone, the 1 + n_vq heads and the
-// delay-pattern state machine greedily, and compares the emitted rows against a dump from
-// the reference PyTorch generate(). Greedy with the repetition penalty off, so a mismatch
-// is a real divergence rather than an RNG difference.
-//
-//   moss_voicegen_generation_parity --model <dir> --prompt <ref_prompt.json> \
-//       --generation <ref_generation.json> [--weight-type bf16] [--threads N]
+/*
+ * Generation parity for MOSS-VoiceGenerator: runs the backbone, the 1 + n_vq heads and the
+ * delay-pattern state machine greedily, and compares the emitted rows against a dump from
+ * the reference PyTorch generate(). Greedy with the repetition penalty off, so a mismatch
+ * is a real divergence rather than an RNG difference.
+ *
+ *   moss_voicegen_generation_parity --model <dir> --prompt <ref_prompt.json> \
+ *       --generation <ref_generation.json> [--weight-type bf16] [--threads N]
+ */
 
 #include "engine/community_models/moss_voicegen/assets.h"
 #include "engine/community_models/moss_voicegen/backbone.h"
@@ -14,7 +16,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/io/json.h"
-#include "engine/models/moss/shared/token_rows.h"
+#include "engine/framework/modules/multi_codebook_embedding.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -95,13 +97,13 @@ int main(int argc, char ** argv) {
         const int64_t prompt_rows = static_cast<int64_t>(prompt.text_tokens.size());
         const auto steps = static_cast<int64_t>(expected.size());
 
-        engine::models::moss::AudioCodebookSpec codebook_spec;
+        engine::modules::MultiCodebookEmbeddingSpec codebook_spec;
         codebook_spec.hidden_size = hidden_size;
         codebook_spec.num_codebooks = n_vq;
-        codebook_spec.audio_vocab_size = config.audio_vocab_size + 1;
-        codebook_spec.audio_pad_token_id = config.audio_pad_code;
+        codebook_spec.vocab_size = config.audio_vocab_size + 1;
+        codebook_spec.pad_token_id = config.audio_pad_code;
         codebook_spec.tensor_prefix = "emb_ext";
-        const engine::models::moss::AudioCodebookEmbeddings codebooks(*assets->model_weights, codebook_spec);
+        const engine::modules::MultiCodebookEmbedding codebooks(*assets->model_weights, codebook_spec);
 
         std::vector<float> prompt_bias(static_cast<size_t>(prompt_rows * hidden_size), 0.0F);
         for (int64_t row = 0; row < prompt_rows; ++row) {

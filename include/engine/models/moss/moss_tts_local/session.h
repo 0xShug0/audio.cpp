@@ -2,8 +2,7 @@
 
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
-#include "engine/models/moss/shared/audio_tokenizer_encoder.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 #include "engine/models/moss/moss_tts_local/assets.h"
 #include "engine/models/moss/moss_tts_local/backbone.h"
 #include "engine/models/moss/moss_tts_local/depth_transformer.h"
@@ -38,8 +37,6 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
-    moss::MossAudioTokenizerEncoder & encoder();
-
     struct ReferenceAudioCacheKey {
         uint64_t hash = 0;
         int sample_rate = 0;
@@ -62,11 +59,8 @@ private:
     std::unique_ptr<MossBackboneRuntime> backbone_;
     std::unique_ptr<MossDepthTransformer> depth_;
     std::unique_ptr<MossTextProcessor> processor_;
-    std::unique_ptr<moss::MossAudioTokenizerDecoder> codec_;
+    std::unique_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> codec_;
     std::unique_ptr<MossGenerator> generator_;
-    // Lazily built the first time a speaker reference is provided (voice cloning).
-    std::unique_ptr<core::ExecutionContext> reference_encoder_execution_context_;
-    std::unique_ptr<moss::MossAudioTokenizerEncoder> encoder_;
     runtime::CacheSlots<ReferenceAudioCacheKey, ReferenceVoiceCacheEntry, ReferenceAudioCacheKeyEqual>
         reference_voice_cache_;
 };

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/community_models/moss_voicegen/assets.h"
-#include "engine/models/moss/shared/token_rows.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 
 #include <memory>
 #include <optional>
@@ -23,7 +23,7 @@ public:
 
     // `instruction` describes the speaker to design. `language` must be the full language
     // name the model was trained on ("English", not "en"); an empty value renders "None".
-    moss::TokenRows build_generation_prefix(
+    engine::codecs::MossTokenRows build_generation_prefix(
         const std::string & text,
         const std::optional<std::string> & instruction,
         const std::optional<std::string> & language) const;

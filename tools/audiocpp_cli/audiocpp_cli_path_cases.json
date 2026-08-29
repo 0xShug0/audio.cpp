@@ -1914,7 +1914,7 @@
       "id": "moss_tts_nano_voice_clone_long",
       "coverage": "MOSS-TTS-Nano voice clone, text/audio token generation, MOSS-Audio-Tokenizer-Nano decode",
       "family": "moss_tts_nano",
-      "model": "models/MOSS-TTS-Nano-100M",
+      "model": "models/MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf",
       "task": "tts",
       "mode": "offline",
       "outputs": [
@@ -1934,7 +1934,7 @@
       "id": "moss_tts_nano_sampled_multi_request",
       "coverage": "MOSS-TTS-Nano seeded sampled voice clone across varied request lengths in one session",
       "family": "moss_tts_nano",
-      "model": "models/MOSS-TTS-Nano-100M",
+      "model": "models/MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf",
       "task": "tts",
       "mode": "offline",
       "outputs": [
@@ -1969,7 +1969,7 @@
       "id": "moss_tts_nano_text_chunk_mode",
       "coverage": "MOSS-TTS-Nano framework text chunk mode override through request options",
       "family": "moss_tts_nano",
-      "model": "models/MOSS-TTS-Nano-100M",
+      "model": "models/MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf",
       "task": "tts",
       "mode": "offline",
       "outputs": [
@@ -1993,7 +1993,7 @@
       "id": "moss_tts_nano_continuation_text_chunk",
       "coverage": "MOSS-TTS-Nano continuation mode without reference audio, including framework text chunking",
       "family": "moss_tts_nano",
-      "model": "models/MOSS-TTS-Nano-100M",
+      "model": "models/MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf",
       "task": "tts",
       "mode": "offline",
       "outputs": [
@@ -2016,7 +2016,7 @@
       "id": "moss_tts_local_text_only_greedy",
       "coverage": "MOSS-TTS-Local text-only generation: Qwen3 backbone prefill, GPT-2 depth transformer, binary audio-end gate, 12-codebook sampling, MOSS-Audio-Tokenizer-v2 decode to 48 kHz stereo",
       "family": "moss_tts_local",
-      "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+      "model": "models/MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-q8_0.gguf",
       "task": "tts",
       "mode": "offline",
       "outputs": [
@@ -2035,7 +2035,7 @@
       "id": "moss_tts_local_voice_clone_sampled",
       "coverage": "MOSS-TTS-Local voice clone: reference resample and loudness normalization, MOSS-Audio-Tokenizer-v2 encode to codes, clone-prefix build, generation, codec decode",
       "family": "moss_tts_local",
-      "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+      "model": "models/MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-q8_0.gguf",
       "task": "tts",
       "mode": "offline",
       "outputs": [
@@ -2055,7 +2055,7 @@
       "id": "moss_tts_local_sampled_language",
       "coverage": "MOSS-TTS-Local default sampled generation path with an explicit language template slot",
       "family": "moss_tts_local",
-      "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+      "model": "models/MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-q8_0.gguf",
       "task": "tts",
       "mode": "offline",
       "outputs": [
@@ -2074,7 +2074,7 @@
       "id": "moss_tts_local_long_lived_session",
       "coverage": "MOSS-TTS-Local long-lived session: long text-only, short clone, then long clone requests in one session to exercise backbone/depth/codec graph reuse, lazy encoder build, and stable memory after warmup",
       "family": "moss_tts_local",
-      "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+      "model": "models/MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-q8_0.gguf",
       "task": "tts",
       "mode": "offline",
       "outputs": [
@@ -2122,6 +2122,28 @@
           "options": {
             "voice_samples": "reference/VibeVoiceCommunity/demo/voices/en-Alice_woman.wav,reference/VibeVoiceCommunity/demo/voices/en-Frank_man.wav"
           }
+        }
+      ]
+    },
+    {
+      "id": "moss_voicegen_radio_voice_design",
+      "coverage": "MOSS-VoiceGenerator voice design path: Qwen3 delay backbone, multi-codebook embeddings, delay decoder, heads, and MOSS-Audio-Tokenizer-v1 decode",
+      "family": "moss_voicegen",
+      "model": "models/MOSS-VoiceGenerator-GGUF/moss_voicegen_bf16_codec_f16_decode.gguf",
+      "task": "vdes",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "radio_voice_design",
+          "text": "Good evening, and welcome back to the late show. Tonight we are testing the audio.cpp path that designs a voice from text, generates codec tokens, and decodes them into speech.",
+          "language": "English",
+          "instruct": "A warm male radio host in his fifties, calm, confident, and never shrill.",
+          "seed": 1234,
+          "max_tokens": 220,
+          "do_sample": false
         }
       ]
     },

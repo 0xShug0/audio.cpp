@@ -1,7 +1,5 @@
 #include "engine/community_models/moss_voicegen/delay_decoder.h"
 
-#include "engine/models/moss/shared/sampling.h"
-
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -17,15 +15,6 @@ void forbid(std::vector<float> & logits, int64_t token_id) {
     }
 }
 
-void apply_temperature(std::vector<float> & logits, float temperature) {
-    if (temperature == 1.0F || temperature <= 0.0F) {
-        return;
-    }
-    for (float & value : logits) {
-        value /= temperature;
-    }
-}
-
 }  // namespace
 
 MossVoiceGenDelayDecoder::MossVoiceGenDelayDecoder(
@@ -36,7 +25,6 @@ MossVoiceGenDelayDecoder::MossVoiceGenDelayDecoder(
     : config_(std::move(config)),
       sampling_(sampling),
       bounds_(bounds),
-      seed_(seed),
       rng_(seed) {
     if (config_.num_codebooks <= 0) {
         throw std::runtime_error("MOSS-VoiceGenerator delay decoder requires a positive codebook count");
@@ -44,48 +32,58 @@ MossVoiceGenDelayDecoder::MossVoiceGenDelayDecoder(
 }
 
 int32_t MossVoiceGenDelayDecoder::sample_text(std::vector<float> & logits) {
-    if (!sampling_.do_sample) {
-        return engine::models::moss::argmax_index(logits, "moss_voicegen.text");
-    }
-    return engine::models::moss::sample_index(
+    engine::sampling::HfSampler sampler;
+    engine::sampling::HfSamplingOptions options;
+    options.do_sample = sampling_.do_sample;
+    options.temperature = sampling_.text_temperature;
+    options.top_k = sampling_.text_top_k;
+    options.top_p = sampling_.text_top_p;
+    const int32_t token = sampler.sample(
         logits,
-        sampling_.text_top_k,
-        sampling_.text_top_p,
-        1.0F,  // the temperature is already folded into the logits
+        {},
+        options,
+        sampler_scratch_,
         rng_,
-        "moss_voicegen.text",
         nullptr,
-        seed_,
-        sample_call_index_++);
+        "moss_voicegen.text");
+    if (sampling_.do_sample) {
+        ++sample_call_index_;
+    }
+    return token;
 }
 
 int32_t MossVoiceGenDelayDecoder::sample_code(std::vector<float> & logits, int64_t codebook) {
+    std::vector<int32_t> previous;
     if (sampling_.audio_repetition_penalty != 1.0F) {
         // The reference penalises against every earlier row of this codebook, prompt rows
         // included. Those are all pad, and pad is masked to -inf just below, so restricting
         // this to the generated history gives the same result.
-        std::vector<int32_t> previous;
         previous.reserve(history_.size());
         for (const auto & row : history_) {
             previous.push_back(row.codes[static_cast<size_t>(codebook)]);
         }
-        engine::models::moss::apply_repetition_penalty(
-            logits, previous, sampling_.audio_repetition_penalty, "moss_voicegen.audio");
     }
     forbid(logits, config_.audio_pad_code);
-    if (!sampling_.do_sample) {
-        return engine::models::moss::argmax_index(logits, "moss_voicegen.audio");
-    }
-    return engine::models::moss::sample_index(
+
+    engine::sampling::HfSampler sampler;
+    engine::sampling::HfSamplingOptions options;
+    options.do_sample = sampling_.do_sample;
+    options.temperature = sampling_.audio_temperature;
+    options.top_k = sampling_.audio_top_k;
+    options.top_p = sampling_.audio_top_p;
+    options.repetition_penalty = sampling_.audio_repetition_penalty;
+    const int32_t token = sampler.sample(
         logits,
-        sampling_.audio_top_k,
-        sampling_.audio_top_p,
-        1.0F,
+        previous,
+        options,
+        sampler_scratch_,
         rng_,
-        "moss_voicegen.audio",
         nullptr,
-        seed_,
-        sample_call_index_++);
+        "moss_voicegen.audio");
+    if (sampling_.do_sample) {
+        ++sample_call_index_;
+    }
+    return token;
 }
 
 MossVoiceGenDelayRow MossVoiceGenDelayDecoder::step(MossVoiceGenStepLogits & logits) {
@@ -123,7 +121,6 @@ MossVoiceGenDelayRow MossVoiceGenDelayDecoder::step(MossVoiceGenStepLogits & log
     }
 
     if (sample_text_token) {
-        apply_temperature(logits.text, sampling_.text_temperature);
         if (in_audio_) {
             // Mid-utterance the only legal continuations are "another audio frame" and
             // "start the flush", so everything else is masked out.
@@ -179,7 +176,6 @@ MossVoiceGenDelayRow MossVoiceGenDelayDecoder::step(MossVoiceGenStepLogits & log
             continue;
         }
         auto & codebook_logits = logits.audio[static_cast<size_t>(codebook)];
-        apply_temperature(codebook_logits, sampling_.audio_temperature);
         row.codes[static_cast<size_t>(codebook)] = sample_code(codebook_logits, codebook);
     }
 

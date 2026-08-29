@@ -10,7 +10,7 @@
 #include "engine/community_models/vietneu_tts/tokenizer_speech_encoder.h"
 #include "engine/community_models/vietneu_tts/tokenizer_text.h"
 
-#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -80,7 +80,7 @@ private:
     std::shared_ptr<const VietneuTalkerWeightsRuntime> talker_weights_;
     std::shared_ptr<VietneuTalkerStepRuntime> talker_step_;
     core::ExecutionContext voice_prompt_context_;
-    std::unique_ptr<engine::models::moss::MossAudioTokenizerDecoder> moss_speech_decoder_;
+    std::unique_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> moss_speech_decoder_;
     std::unique_ptr<Qwen3SpeechTokenizerEncoderRuntime> speech_encoder_;
     std::unique_ptr<VietneuSpeakerEncoderRuntime> speaker_encoder_;
     runtime::CacheSlots<VoicePromptCacheKey, VoicePromptCacheEntry, VoicePromptCacheKeyEqual> voice_prompt_cache_;
