@@ -747,18 +747,18 @@ private:
             !ggml_gallocr_alloc_graph(prefill_gallocr_, prefill_graph_)) {
             throw std::runtime_error("failed to allocate QwenCausalDecodeRuntime prefill graph");
         }
-        const auto positions_values = qwen_position_ids(steps);
+        prefill_positions_values_ = qwen_position_ids(steps);
         ggml_backend_tensor_set(
             prefill_positions_,
-            positions_values.data(),
+            prefill_positions_values_.data(),
             0,
-            positions_values.size() * sizeof(int32_t));
-        const auto mask = prefill_attention_mask_values(config_, 1, steps);
+            prefill_positions_values_.size() * sizeof(int32_t));
+        prefill_attention_mask_values_ = prefill_attention_mask_values(config_, 1, steps);
         ggml_backend_tensor_set(
             prefill_attention_mask_,
-            mask.data(),
+            prefill_attention_mask_values_.data(),
             0,
-            mask.size() * sizeof(ggml_fp16_t));
+            prefill_attention_mask_values_.size() * sizeof(ggml_fp16_t));
         if (prefill_logits_readback_token_ids_ != nullptr) {
             upload_logits_readback_token_ids(prefill_logits_readback_token_ids_, config_);
         }
@@ -771,6 +771,19 @@ private:
     }
 
     QwenCausalPrefillResult run_prefill() {
+        // The gallocr considers the persistent position/mask inputs dead after
+        // their last read inside a compute and may hand their memory to other
+        // tensors, so a cached prefill graph must be re-fed before recompute.
+        ggml_backend_tensor_set(
+            prefill_positions_,
+            prefill_positions_values_.data(),
+            0,
+            prefill_positions_values_.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(
+            prefill_attention_mask_,
+            prefill_attention_mask_values_.data(),
+            0,
+            prefill_attention_mask_values_.size() * sizeof(ggml_fp16_t));
         core::set_backend_threads(backend_, threads_);
         const ggml_status status = core::compute_backend_graph(backend_, prefill_graph_);
         ggml_backend_synchronize(backend_);
@@ -922,18 +935,18 @@ private:
             !ggml_gallocr_alloc_graph(batched_prefill_gallocr_, batched_prefill_graph_)) {
             throw std::runtime_error("failed to allocate QwenCausalDecodeRuntime batched prefill graph");
         }
-        const auto positions_values = qwen_position_ids(steps);
+        batched_prefill_positions_values_ = qwen_position_ids(steps);
         ggml_backend_tensor_set(
             batched_prefill_positions_,
-            positions_values.data(),
+            batched_prefill_positions_values_.data(),
             0,
-            positions_values.size() * sizeof(int32_t));
-        const auto mask = prefill_attention_mask_values(config_, batch_size, steps);
+            batched_prefill_positions_values_.size() * sizeof(int32_t));
+        batched_prefill_attention_mask_values_ = prefill_attention_mask_values(config_, batch_size, steps);
         ggml_backend_tensor_set(
             batched_prefill_attention_mask_,
-            mask.data(),
+            batched_prefill_attention_mask_values_.data(),
             0,
-            mask.size() * sizeof(ggml_fp16_t));
+            batched_prefill_attention_mask_values_.size() * sizeof(ggml_fp16_t));
         if (batched_prefill_logits_readback_token_ids_ != nullptr) {
             upload_logits_readback_token_ids(batched_prefill_logits_readback_token_ids_, config_);
         }
@@ -946,6 +959,17 @@ private:
     }
 
     QwenCausalBatchedPrefillResult run_batched_prefill() {
+        // Re-feed persistent inputs before recompute (see run_prefill note).
+        ggml_backend_tensor_set(
+            batched_prefill_positions_,
+            batched_prefill_positions_values_.data(),
+            0,
+            batched_prefill_positions_values_.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(
+            batched_prefill_attention_mask_,
+            batched_prefill_attention_mask_values_.data(),
+            0,
+            batched_prefill_attention_mask_values_.size() * sizeof(ggml_fp16_t));
         core::set_backend_threads(backend_, threads_);
         const ggml_status status = core::compute_backend_graph(backend_, batched_prefill_graph_);
         ggml_backend_synchronize(backend_);
@@ -1347,6 +1371,8 @@ private:
         prefill_keys_.clear();
         prefill_values_.clear();
         prefill_graph_ = nullptr;
+        prefill_positions_values_.clear();
+        prefill_attention_mask_values_.clear();
         prefill_steps_ = 0;
         prefill_input_kind_ = InputKind::None;
     }
@@ -1370,6 +1396,8 @@ private:
         batched_prefill_keys_.clear();
         batched_prefill_values_.clear();
         batched_prefill_graph_ = nullptr;
+        batched_prefill_positions_values_.clear();
+        batched_prefill_attention_mask_values_.clear();
         batched_prefill_batch_size_ = 0;
         batched_prefill_steps_ = 0;
         batched_prefill_input_kind_ = InputKind::None;
@@ -1442,6 +1470,11 @@ private:
     std::vector<ggml_tensor *> prefill_values_;
     ggml_cgraph * prefill_graph_ = nullptr;
     ggml_gallocr_t prefill_gallocr_ = nullptr;
+    // Host-side copies of the persistent graph inputs. The gallocr may reuse
+    // their memory after the last read within one compute, so they must be
+    // re-uploaded before every recompute of a cached prefill graph.
+    std::vector<int32_t> prefill_positions_values_;
+    std::vector<ggml_fp16_t> prefill_attention_mask_values_;
     int64_t prefill_steps_ = 0;
     InputKind prefill_input_kind_ = InputKind::None;
 
@@ -1456,6 +1489,9 @@ private:
     std::vector<ggml_tensor *> batched_prefill_values_;
     ggml_cgraph * batched_prefill_graph_ = nullptr;
     ggml_gallocr_t batched_prefill_gallocr_ = nullptr;
+    // Host-side copies, re-uploaded before every recompute (see prefill note).
+    std::vector<int32_t> batched_prefill_positions_values_;
+    std::vector<ggml_fp16_t> batched_prefill_attention_mask_values_;
     int64_t batched_prefill_batch_size_ = 0;
     int64_t batched_prefill_steps_ = 0;
     InputKind batched_prefill_input_kind_ = InputKind::None;
