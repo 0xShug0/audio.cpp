@@ -97,6 +97,7 @@ Status labels:
 | `qwen3_tts` voice design | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `rvc` | Done | --- | --- | Pass | --- |
 | `seed_vc` | Done | Pass | --- | Pass (drift) | Pass (drift) |
+| `soprano_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `silero_vad` | Skip (tiny model) | --- | --- | --- | --- |
 | `sortformer_diar` | Done | Pass | --- | Pass | Pass |
 | `stable_audio` | Done | Pass | --- | Pass (drift) | Pass (drift) |

@@ -1437,6 +1437,19 @@ audiocpp_add_model(ace_step
     LOADERS
         engine::models::ace_step::make_ace_step_loader
 )
+audiocpp_add_model(soprano_tts
+    SOURCES
+        src/community_models/soprano_tts/assets.cpp
+        src/community_models/soprano_tts/generator.cpp
+        src/community_models/soprano_tts/session.cpp
+        src/community_models/soprano_tts/tokenizer_text.cpp
+        src/community_models/soprano_tts/vocoder.cpp
+    INCLUDES
+        engine/community_models/soprano_tts/session.h
+    LOADERS
+        engine::community_models::soprano_tts::make_soprano_tts_loader
+)
+
 
 audiocpp_add_model(midashenglm_gen
     SOURCES
@@ -1895,6 +1908,10 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(qwen3_tts_warm_bench tests/qwen3_tts/qwen3_tts_warm_bench.cpp)
     add_engine_warmbench(seed_vc_warm_bench tests/seed_vc/seed_vc_warm_bench.cpp)
     add_engine_warmbench(silero_vad_warm_bench tests/silero_vad/silero_vad_warm_bench.cpp)
+    add_engine_warmbench(soprano_warm_bench tests/soprano_tts/soprano_warm_bench.cpp)
+    target_compile_definitions(soprano_warm_bench PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_engine_warmbench(sortformer_diar_warm_bench tests/sortformer_diar/sortformer_diar_warm_bench.cpp)
     add_engine_warmbench(supertonic_warm_bench tests/supertonic/supertonic_warm_bench.cpp)
     add_engine_warmbench(vevo2_warm_bench tests/vevo2/vevo2_warm_bench.cpp)
