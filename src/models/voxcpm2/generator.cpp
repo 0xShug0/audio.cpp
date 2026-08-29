@@ -1203,8 +1203,7 @@ public:
         tokenizer_(assets_),
         text_embedding_(weights_, config.text_embedding_graph_context_bytes,
                         config.mem_saver),
-        prefill_(weights_, config.lm_step_graph_context_bytes,
-                 config.mem_saver),
+        prefill_(weights_, config.lm_step_graph_context_bytes),
         base_lm_(weights_, VoxCPM2MiniCPMKind::BaseLM,
                  assets_->config.max_length,
                  config.lm_step_graph_context_bytes),
@@ -1274,6 +1273,7 @@ public:
   }
 
   void release_runtime_memory() {
+    prefill_.release_runtime_memory();
     base_lm_.release_runtime_memory();
     residual_lm_.release_runtime_memory();
   }
