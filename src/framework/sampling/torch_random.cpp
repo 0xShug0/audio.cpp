@@ -1,14 +1,10 @@
 #include "engine/framework/sampling/torch_random.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/dynamic_library.h"
 #ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
 #include "torch_random_cuda_runtime.h"
-
-#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
-#include "ggml-backend.h"
-#include "ggml-cuda.h"
-#endif
 #endif
 
 #include <algorithm>
@@ -488,7 +484,7 @@ void torch_cuda_sample_topk_exponential_pairs(
 
 void * torch_cuda_backend_stream(void * ggml_backend) {
 #ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
-    return ggml_backend_cuda_get_stream(static_cast<ggml_backend_t>(ggml_backend));
+    return core::backend_cuda_stream(static_cast<ggml_backend_t>(ggml_backend));
 #else
     (void) ggml_backend;
     return nullptr;
