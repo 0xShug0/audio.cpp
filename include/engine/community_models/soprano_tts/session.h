@@ -51,10 +51,12 @@ public:
 private:
     SopranoRequest make_request(const runtime::TaskRequest & request) const;
     runtime::AudioBuffer synthesize(const SopranoRequest & request);
-    // Streaming state
-    std::optional<std::vector<std::string>> streaming_chunks_;
-    size_t streaming_chunk_index_ = 0;
-    std::vector<runtime::AudioBuffer> streaming_audio_;
+    // Streaming state (NeuTTS-style: start_stream parses the full request
+    // once, next_stream_event consumes the stored per-chunk requests).
+    std::vector<SopranoRequest> streaming_requests_;
+    size_t streaming_index_ = 0;
+    std::vector<runtime::AudioBuffer> streaming_chunks_;
+    bool streaming_started_ = false;
     runtime::StreamEventCallback stream_sink_;
 
     runtime::TaskSpec task_;

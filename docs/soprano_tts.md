@@ -34,7 +34,7 @@ Or download the checkpoint directly and convert the decoder manually:
 git lfs install
 git clone https://huggingface.co/ekwek/Soprano-1.1-80M models/Soprano-1.1-80M
 
-# Convert the decoder (folds weight-norm from decoder.pth, emits plain safetensors)
+# Convert (folds weight-norm from decoder.pth, emits combined.safetensors)
 pip install torch numpy safetensors
 python3 tools/soprano_tts/convert_soprano.py \
   --input-dir models/Soprano-1.1-80M \
@@ -101,7 +101,7 @@ build/bin/audiocpp_cli --task tts --family soprano_tts \
 build/bin/audiocpp_cli --task tts --family soprano_tts \
   --model models/Soprano-1.1-80M-converted \
   --text "This is a longer text that will be split into sentence-aware chunks by the framework text chunker. Each chunk is generated and decoded separately, then concatenated into the final audio output." \
-  --session-option soprano_tts.text_chunk_size=320 \
+  --session-option text_chunk_size=320 \
   --out longform.wav
 ```
 
@@ -134,14 +134,14 @@ build/bin/audiocpp_cli --task tts --mode streaming --family soprano_tts \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--session-option soprano_tts.text_chunk_size=<n>` | chars | `200` | Max codepoints per chunk. |
+| `--session-option text_chunk_size=<n>` | chars | `200` | Max codepoints per chunk. |
 
 ### Load options
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--session-option soprano_tts.backbone_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `f32` | LM weight storage. F32 required on CPU. |
-| `--session-option soprano_tts.decoder_weight_type=<type>` | `native`, `f32`, `f16` | `f32` | Decoder weight storage. |
+| `--session-option backbone_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `f32` | LM weight storage. `f16`/`q8_0` are faster (see Performance). |
+| `--session-option decoder_weight_type=<type>` | `native`, `f32`, `f16` | `f32` | Decoder weight storage. |
 
 ---
 
@@ -204,7 +204,7 @@ To create a GGUF package from the converted safetensors yourself:
 
 ```bash
 build/bin/audiocpp_gguf \
-  --input models/Soprano-1.1-80M-converted/model.safetensors \
+  --input models/Soprano-1.1-80M-converted/combined.safetensors \
   --output Soprano-1.1-80M-GGUF/soprano-1.1-80m-q8_0.gguf \
   --type q8_0 \
   --root models/Soprano-1.1-80M-converted \
@@ -213,10 +213,37 @@ build/bin/audiocpp_gguf \
 ```
 ## Performance
 
-| Backend | RTF | Details |
-|---------|---:|--------|
-| CPU (warm) | ~0.22-0.23 | ~4-4.6x realtime. F32 storage required for correct output. |
-| Vulkan (RX Vega) | ~0.08-0.12 | ~8-13x realtime after one-time shader warmup. Decoder output has numerical drift on this GPU (Vega lacks matrix-core ops). |
+Measured on an Intel i5-10400 (6C/12T) CPU and an AMD Radeon RX Vega (8 GB) GPU,
+Release build, warm cache, short/medium sentences:
+
+| Backend | Backbone storage | RTF | Details |
+|---------|------------------|----:|--------|
+| CPU | F32 (default) | ~0.23 | ~4.3x realtime; LM decode dominates (~12.3 ms/frame) |
+| CPU | F16 | ~0.16 | ~6x realtime; output statistically identical to F32 |
+| CPU | Q8_0 | ~0.12 | ~8x realtime; sampling diverges slightly from F32 |
+| Vulkan | F32 (default) | ~0.15-0.21 | ~5-7x realtime after one-time shader warmup |
+| Vulkan | F16 | ~0.11-0.13 | ~8x realtime |
+| Vulkan | Q8_0 | ~0.11-0.13 | same as F16; long-form text amortizes to ~0.08 |
+
+The LM decode step is memory-bandwidth bound: halving weight traffic (F16)
+speeds it up ~1.6x on CPU. Storage types are selected per session (see below);
+F32 remains the bit-exact reference, while F16 measured numerically identical
+output for this checkpoint, and Q8_0 trades a small sampling drift for the
+fastest inference.
+
+### Tuning storage types
+
+```
+# CPU: F16 backbone (recommended)
+build/bin/audiocpp_cli --task tts --family soprano_tts --model models/soprano-1.1-80m-converted \
+  --text "..." --session-option backbone_weight_type=f16 --out out.wav
+
+# CPU: Q8_0 backbone (fastest)
+build/bin/audiocpp_cli --task tts --family soprano_tts --model models/soprano-1.1-80m-converted \
+  --text "..." --session-option backbone_weight_type=q8_0 --out out.wav
+
+# GPU: pre-quantized GGUF packages already run at the q8_0 rate
+```
 
 Timing logs are available through `--log`:
 - `soprano_tts.lm.generate_ms` -- LM AR decode time

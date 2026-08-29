@@ -14,9 +14,10 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DENGINE_ENABLE_VULKAN=ON
 cmake --build build --target audiocpp_cli --parallel
 
-# Build warmbench
+# Build warmbench (the target is gated behind ENGINE_BUILD_WARMBENCH)
 cmake -B build -DCMAKE_BUILD_TYPE=Release \
-  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=soprano_tts
+  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=soprano_tts \
+  -DENGINE_BUILD_WARMBENCH=ON
 cmake --build build --target soprano_warm_bench --parallel
 ```
 

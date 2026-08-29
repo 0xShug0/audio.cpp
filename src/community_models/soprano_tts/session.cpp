@@ -62,6 +62,9 @@ SopranoGenerationOptions request_generation_options(const runtime::TaskRequest &
     if (const auto value = runtime::parse_finite_float_option(request.options, {"repetition_penalty"})) {
         out.repetition_penalty = *value;
     }
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"eos_bias"})) {
+        out.eos_bias = *value;
+    }
     if (const auto value = runtime::parse_u64_option(request.options, {"seed"})) {
         out.seed = *value;
         out.has_seed = true;
@@ -97,9 +100,11 @@ SopranoTTSOfflineSession::SopranoTTSOfflineSession(
       contract_(require_contract(std::move(contract))) {
     runtime::validate_spec_backed_session_options(options, *contract_, kFamily, "Soprano");
     core::ExecutionContext & execution = execution_context();
+    // Spec-declared session/load options are validated against their bare
+    // names, so only those spellings are accepted (no prefixed aliases).
     const auto backbone_storage = runtime::parse_tensor_storage_option(
         options.options,
-        "soprano_tts.backbone_weight_type",
+        "backbone_weight_type",
         assets::TensorStorageType::F32,
         {assets::TensorStorageType::Native,
          assets::TensorStorageType::F32,
@@ -108,7 +113,7 @@ SopranoTTSOfflineSession::SopranoTTSOfflineSession(
          assets::TensorStorageType::Q8_0});
     const auto decoder_storage = runtime::parse_tensor_storage_option(
         options.options,
-        "soprano_tts.decoder_weight_type",
+        "decoder_weight_type",
         assets::TensorStorageType::F32,
         {assets::TensorStorageType::Native,
          assets::TensorStorageType::F32,
@@ -132,7 +137,7 @@ runtime::VoiceTaskKind SopranoTTSOfflineSession::task_kind() const {
 }
 
 runtime::RunMode SopranoTTSOfflineSession::run_mode() const {
-    return runtime::RunMode::Offline;
+    return task_.mode;
 }
 
 SopranoRequest SopranoTTSOfflineSession::make_request(const runtime::TaskRequest & request) const {
@@ -149,6 +154,9 @@ void SopranoTTSOfflineSession::prepare(const runtime::SessionPreparationRequest 
 
 runtime::TaskResult SopranoTTSOfflineSession::run(const runtime::TaskRequest & request) {
     require_prepared("Soprano run");
+    if (task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("Soprano run requires an offline session");
+    }
     const SopranoRequest req = make_request(request);
     const auto audio = synthesize(req);
 
@@ -162,7 +170,7 @@ runtime::AudioBuffer SopranoTTSOfflineSession::synthesize(const SopranoRequest &
         assets_->resources.require_file("tokenizer_json");
     SopranoTextTokenizer tokenizer(tokenizer_path);
     const int64_t chunk_codepoints = runtime::parse_i64_option(
-        options().options, {"soprano_tts.text_chunk_size"})
+        options().options, {"text_chunk_size"})
         .value_or(200);
     const auto chunks = engine::text::split_text_chunks(
         request.text, chunk_codepoints, engine::text::TextChunkMode::Default);
@@ -210,50 +218,57 @@ void SopranoTTSOfflineSession::start_stream(const runtime::TaskRequest & request
         throw std::runtime_error("Soprano start_stream requires a streaming session");
     }
     reset();
-    const auto parsed = make_request(request);
+    // Parse the request (and its sampling options) once, then keep one full
+    // request per text chunk so next_stream_event honors the user options.
     const auto chunk_codepoints = runtime::parse_i64_option(
-        options().options, {"soprano_tts.text_chunk_size"}).value_or(200);
-    streaming_chunks_ = engine::text::split_text_chunks(
-        parsed.text, chunk_codepoints, engine::text::TextChunkMode::Default);
-    streaming_chunk_index_ = 0;
-    streaming_audio_.clear();
+        options().options, {"text_chunk_size"}).value_or(200);
+    const auto chunks = engine::text::split_text_chunks(
+        request_text(request), chunk_codepoints, engine::text::TextChunkMode::Default);
+    SopranoRequest parsed;
+    parsed.generation = request_generation_options(request);
+    streaming_requests_.reserve(chunks.size());
+    for (const auto & chunk : chunks) {
+        SopranoRequest chunk_request;
+        chunk_request.text = chunk;
+        chunk_request.generation = parsed.generation;
+        streaming_requests_.push_back(std::move(chunk_request));
+    }
+    if (streaming_requests_.empty()) {
+        throw std::runtime_error("Soprano streaming text chunking produced no segments");
+    }
+    streaming_started_ = true;
 }
 std::optional<runtime::StreamEvent> SopranoTTSOfflineSession::next_stream_event() {
-    if (!streaming_chunks_.has_value()) {
+    if (!streaming_started_) {
         throw std::runtime_error("Soprano streaming has not been started");
     }
-    if (streaming_chunk_index_ >= streaming_chunks_->size()) {
+    if (streaming_index_ >= streaming_requests_.size()) {
         return std::nullopt;
     }
-    const auto & chunk_text = (*streaming_chunks_)[streaming_chunk_index_];
-    const std::filesystem::path tokenizer_path = assets_->resources.require_file("tokenizer_json");
-    SopranoTextTokenizer tokenizer(tokenizer_path);
-    SopranoRequest soprano_req;
-    soprano_req.text = chunk_text;
-    const auto audio = synthesize(soprano_req);
-    streaming_audio_.push_back(audio);
+    auto audio = synthesize(streaming_requests_[streaming_index_]);
     runtime::StreamEvent event;
     event.named_audio_outputs.push_back({
-        "chunk_" + std::to_string(streaming_chunk_index_),
+        "chunk_" + std::to_string(streaming_index_),
         audio,
         {},
     });
+    streaming_chunks_.push_back(std::move(audio));
     if (stream_sink_) {
         stream_sink_(event);
     }
-    ++streaming_chunk_index_;
+    ++streaming_index_;
     return event;
 }
 void SopranoTTSOfflineSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
     stream_sink_ = std::move(sink);
 }
 runtime::TaskResult SopranoTTSOfflineSession::finish_stream() {
-    if (!streaming_chunks_.has_value()) {
+    if (!streaming_started_) {
         throw std::runtime_error("Soprano streaming has not been started");
     }
     runtime::TaskResult result;
     runtime::AudioBuffer merged;
-    for (const auto & chunk_audio : streaming_audio_) {
+    for (const auto & chunk_audio : streaming_chunks_) {
         if (merged.sample_rate == 0) {
             merged = chunk_audio;
         } else {
@@ -265,9 +280,10 @@ runtime::TaskResult SopranoTTSOfflineSession::finish_stream() {
     return result;
 }
 void SopranoTTSOfflineSession::reset() {
-    streaming_chunks_.reset();
-    streaming_chunk_index_ = 0;
-    streaming_audio_.clear();
+    streaming_requests_.clear();
+    streaming_index_ = 0;
+    streaming_chunks_.clear();
+    streaming_started_ = false;
 }
 runtime::StreamEvent SopranoTTSOfflineSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
     (void)chunk;
