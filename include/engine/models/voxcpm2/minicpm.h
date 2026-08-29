@@ -145,11 +145,11 @@ class VoxCPM2PromptPrefillRuntime final {
 public:
   VoxCPM2PromptPrefillRuntime(
       std::shared_ptr<const VoxCPM2WeightsRuntime> weights,
-      size_t graph_context_bytes,
-      bool mem_saver = false);
+      size_t graph_context_bytes);
   ~VoxCPM2PromptPrefillRuntime();
 
   VoxCPM2PromptPrefillOutput run(const VoxCPM2PromptPrefillInput &input);
+  void release_runtime_memory();
 
 private:
   class Impl;
