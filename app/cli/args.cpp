@@ -1,10 +1,96 @@
 #include "args.h"
 
+#include <iostream>
+#include <set>
 #include <stdexcept>
 
 namespace minitts::cli {
 
+namespace {
+
+// Every option name the CLI looked for, split by whether the lookup consumes the following
+// argument. Populated by the lookups below, so a new flag is recognised the moment its lookup
+// is added and there is no second list to keep in sync.
+std::set<std::string> & value_names() {
+    static std::set<std::string> names;
+    return names;
+}
+
+std::set<std::string> & flag_names() {
+    static std::set<std::string> names;
+    return names;
+}
+
+void record_value_query(const std::string & name) {
+    value_names().insert(name);
+}
+
+void record_flag_query(const std::string & name) {
+    flag_names().insert(name);
+}
+
+std::vector<std::string> args_nobody_asked_for(int argc, char ** argv) {
+    const auto & values = value_names();
+    const auto & flags = flag_names();
+    std::vector<std::string> unknown;
+    for (int i = 1; i < argc; ++i) {
+        const std::string token = argv[i];
+        if (token.rfind("--", 0) != 0 || token == "--") {
+            continue;
+        }
+        // Only an option that takes a value consumes the next argument, so only then can the
+        // next argument be something that merely looks like an option.
+        if (values.count(token) != 0) {
+            ++i;
+            continue;
+        }
+        if (flags.count(token) != 0) {
+            continue;
+        }
+        unknown.push_back(token);
+    }
+    return unknown;
+}
+
+// Set once the strict check has spoken for this run, so the warning below does not repeat it.
+bool strict_check_ran = false;
+
+}  // namespace
+
+void require_known_args(int argc, char ** argv) {
+    strict_check_ran = true;
+    const auto unknown = args_nobody_asked_for(argc, argv);
+    if (unknown.empty()) {
+        return;
+    }
+    std::string message = unknown.size() > 1 ? "unknown options:" : "unknown option:";
+    for (const auto & token : unknown) {
+        message += " " + token;
+    }
+    throw std::runtime_error(message);
+}
+
+void warn_ignored_args(int argc, char ** argv) {
+    if (strict_check_ran) {
+        return;
+    }
+    const auto ignored = args_nobody_asked_for(argc, argv);
+    if (ignored.empty()) {
+        return;
+    }
+    std::cerr << "audiocpp_cli warning: ignored option";
+    if (ignored.size() > 1) {
+        std::cerr << "s";
+    }
+    std::cerr << ":";
+    for (const auto & token : ignored) {
+        std::cerr << " " << token;
+    }
+    std::cerr << "\n";
+}
+
 std::optional<std::string> find_arg(int argc, char ** argv, const std::string & name) {
+    record_value_query(name);
     for (int i = 1; i + 1 < argc; ++i) {
         if (argv[i] == name) {
             return std::string(argv[i + 1]);
@@ -14,6 +100,7 @@ std::optional<std::string> find_arg(int argc, char ** argv, const std::string & 
 }
 
 bool has_arg(int argc, char ** argv, const std::string & name) {
+    record_flag_query(name);
     for (int i = 1; i < argc; ++i) {
         if (argv[i] == name) {
             return true;
@@ -23,6 +110,7 @@ bool has_arg(int argc, char ** argv, const std::string & name) {
 }
 
 std::vector<std::string> collect_args(int argc, char ** argv, const std::string & name) {
+    record_value_query(name);
     std::vector<std::string> values;
     for (int i = 1; i + 1 < argc; ++i) {
         if (argv[i] == name) {

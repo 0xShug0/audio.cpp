@@ -261,7 +261,8 @@ bool has_batch_input(int argc, char ** argv) {
 minitts::app::AppBatchRequest build_batch_request_from_cli(
     int argc,
     char ** argv,
-    const engine::runtime::TaskRequest & base_request) {
+    const engine::runtime::TaskRequest & base_request,
+    const std::string & audio_role) {
     const auto request_sequence_path = optional_path_arg(argc, argv, "--request-sequence");
     const auto batch_text_file = optional_path_arg(argc, argv, "--batch-text-file");
     const auto batch_text_dir = optional_path_arg(argc, argv, "--batch-text-dir");
@@ -293,10 +294,7 @@ minitts::app::AppBatchRequest build_batch_request_from_cli(
             base_request,
             find_arg(argc, argv, "--language").value_or(""));
     }
-    return build_audio_dir_batch(
-        *batch_audio_dir,
-        base_request,
-        find_arg(argc, argv, "--batch-audio-role").value_or("audio"));
+    return build_audio_dir_batch(*batch_audio_dir, base_request, audio_role);
 }
 
 }  // namespace minitts::cli
