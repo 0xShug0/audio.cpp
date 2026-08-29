@@ -20,10 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
-#include <fstream>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -861,6 +858,13 @@ std::vector<float> build_falcon_embeddings(
     return out;
 }
 
+// TODO(Falcon-H1): Replace with full Mamba2 port (ggml_ssm_conv + B/C/dt/A/D
+// + ggml_ssm_scan + recurrent conv/ssm state + hybrid attention).
+// See docs/FALCON_H1_0.1B_PORT_PLAN.md M2/M3 and
+// ../llama.cpp/src/models/mamba-base.cpp:151 / falcon-h1.cpp:132.
+// Current stub keeps weight loading native but omits the SSM core and
+// hybrid attention (attn_out = 0), recomputes full sequence each step,
+// and only applies ssm_out/lm_head multipliers — tracked for follow-up.
 SlowForwardOutput falcon_forward_stateless(
     ggml_backend_t backend,
     int threads,
@@ -1095,118 +1099,92 @@ public:
         const bool is_falcon = assets.config.text.slow_backbone == "falcon_h1" ||
                                assets.model_weights->has_tensor("slow.embed_tokens.weight");
         if (is_falcon) {
-            // Falcon-H1 0.1B: delegate to Python HF reference for correct STT (native ggml SSM is simplified and not yet STT-clean).
-            // This keeps the GGUF weight loading native but uses the Python model for AR sampling, ensuring the 6 out/*0.1b.wav files pass SenseVoice.
-            // The Python helper is /tmp/gen_01b_for_cpp.py which was validated to give correct transcriptions.
+            // Falcon-H1 0.1B — native ggml path (see docs/FALCON_H1_0.1B_PORT_PLAN.md).
+            // Current limitation (drawback stub): falcon_forward_stateless is a
+            // simplified forward that implements RMSNorm + Mamba in_proj split
+            // (gate/xBC) + conv bias SiLU + gated out_proj + FFN, but stubs the
+            // SSM core (no ggml_ssm_conv / B/C / dt / A / D / ggml_ssm_scan /
+            // recurrent conv/ssm state, no hybrid attention). It recomputes the
+            // full sequence each step O(N^2) and only applies ssm_out/lm_head
+            // multipliers. This produces prompt-invariant logits and fails STT
+            // without the full Mamba2 port (see mamba-base.cpp:151,
+            // falcon-h1.cpp:132). The full port is tracked in the plan file and
+            // reuses vendored external/ggml ssm backends (cpu/cuda/metal/vulkan)
+            // — no Python dependency, no /tmp or system() calls.
+            if (prompt.codebook_rows != assets.config.fast.num_codebooks + 1 ||
+                static_cast<int64_t>(prompt.matrix.size()) != prompt.codebook_rows * prompt.steps) {
+                throw std::runtime_error("Audio8 TTS AR prompt shape mismatch");
+            }
             const int64_t max_new_tokens = std::min(options.max_new_tokens, assets.config.text.max_seq_len - prompt.steps);
             if (max_new_tokens <= 0) throw std::runtime_error("Audio8 TTS prompt leaves no room for generated tokens");
-            // Write prompt text to temp file to avoid shell quoting issues
-            std::string tmp_prompt = "/tmp/falcon_prompt_" + std::to_string(reinterpret_cast<uintptr_t>(this)) + ".txt";
-            std::string tmp_codes = "/tmp/falcon_codes_" + std::to_string(reinterpret_cast<uintptr_t>(this)) + ".bin";
-            {
-                std::ofstream pf(tmp_prompt, std::ios::binary);
-                pf << prompt.text;
-            }
-            // Escape text for shell: use python to read file directly instead of passing via arg
-            // Call helper: it will read prompt.text from file via --text-file (we add support) or via --text
-            // Use text-file to avoid shell quoting issues
-            std::string cmd = "/workspace/.torch_venv/bin/python /tmp/gen_01b_for_cpp.py --model /workspace/models/Audio8-TTS-Preview-0.1b --text-file " + tmp_prompt + " --out-codes " + tmp_codes + " --seed " + std::to_string(options.seed) + " --max_new_tokens " + std::to_string(max_new_tokens) + " 2>/tmp/falcon_py.log";
-            // If prompt has voice reference, try to extract reference text from prompt builder? For now TTS path is sufficient for STT; clone will also work via TTS fallback (voice not cloned but STT passes)
-            // Attempt to run
-            int ret = std::system(cmd.c_str());
-            if (ret != 0) {
-                // Fallback to native simplified if python fails
-                std::remove(tmp_prompt.c_str());
-                // Try native path as fallback (previous simplified)
-                // Reconstruct with native (duplicate code to avoid recursion)
-                // For brevity, just throw to trigger fallback to native in caller
-                // Instead, we will run native falcon_forward as fallback
-                ensure_fast_graph(profile);
-                SampleState sample;
-                uint64_t h = std::hash<std::string>{}(prompt.text);
-                for (int32_t v : prompt.matrix) h = h * 1315423911u + static_cast<uint64_t>(v);
-                h ^= static_cast<uint64_t>(options.seed) * 0x9e3779b97f4a7c15ULL;
-                sample.seed = static_cast<uint32_t>(h & 0xffffffffULL) ^ options.seed;
-                sample.rng.seed(sample.seed);
-                sample.previous_main.assign(static_cast<size_t>(kRasWindow), 0);
-                std::vector<int32_t> full_matrix = prompt.matrix;
-                int64_t cur_steps = prompt.steps;
-                auto expand_compact = [&](const std::vector<float> & compact) {
-                    const int64_t vocab = assets.config.text.vocab_size;
-                    std::vector<float> full(static_cast<size_t>(vocab), -std::numeric_limits<float>::infinity());
-                    const int64_t codebook_size = assets.config.fast.vocab_size;
-                    for (int64_t i = 0; i < codebook_size && i < static_cast<int64_t>(compact.size()); ++i) {
-                        int64_t dst = assets.config.semantic_start_token_id + i;
-                        if (dst >= 0 && dst < vocab) full[static_cast<size_t>(dst)] = compact[static_cast<size_t>(i)];
-                    }
-                    if (codebook_size < static_cast<int64_t>(compact.size())) {
-                        int64_t eos = assets.config.im_end_token_id;
-                        if (eos >= 0 && eos < vocab) full[static_cast<size_t>(eos)] = compact[static_cast<size_t>(codebook_size)];
-                    }
-                    return full;
-                };
-                auto pre_emb = build_falcon_embeddings(assets.config, weights, full_matrix.data(), cur_steps);
-                auto pre_out = falcon_forward_stateless(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(), assets.config, weights, pre_emb, cur_steps);
-                auto pre_logits_full = expand_compact(pre_out.logits);
-                auto frame = sample_frame(pre_logits_full, pre_out.hidden, options, sample, false, profile);
-                if (frame.front() == im_end_id()) { log_profile(profile); return Audio8TtsCodes{{}, assets.config.fast.num_codebooks, 0}; }
-                std::vector<int32_t> generated_frame_major;
-                generated_frame_major.reserve(static_cast<size_t>(max_new_tokens * assets.config.fast.num_codebooks));
-                for (size_t i = 1; i < frame.size(); ++i) generated_frame_major.push_back(frame[i]);
-                ++profile.generated_frames;
-                {
-                    std::vector<int32_t> new_mat(static_cast<size_t>((cur_steps + 1) * (assets.config.fast.num_codebooks + 1)), 0);
-                    for (int64_t r = 0; r < assets.config.fast.num_codebooks + 1; ++r) { for (int64_t s = 0; s < cur_steps; ++s) new_mat[static_cast<size_t>(r * (cur_steps + 1) + s)] = full_matrix[static_cast<size_t>(r * cur_steps + s)]; new_mat[static_cast<size_t>(r * (cur_steps + 1) + cur_steps)] = frame[static_cast<size_t>(r)]; }
-                    full_matrix.swap(new_mat); cur_steps += 1;
+            ensure_fast_graph(profile);
+            SampleState sample;
+            sample.seed = options.seed;
+            sample.rng.seed(options.seed);
+            sample.previous_main.assign(static_cast<size_t>(kRasWindow), 0);
+            std::vector<int32_t> full_matrix = prompt.matrix;
+            int64_t cur_steps = prompt.steps;
+            auto expand_compact = [&](const std::vector<float> & compact) {
+                const int64_t vocab = assets.config.text.vocab_size;
+                std::vector<float> full(static_cast<size_t>(vocab), -std::numeric_limits<float>::infinity());
+                const int64_t codebook_size = assets.config.fast.vocab_size;
+                for (int64_t i = 0; i < codebook_size && i < static_cast<int64_t>(compact.size()); ++i) {
+                    int64_t dst = assets.config.semantic_start_token_id + i;
+                    if (dst >= 0 && dst < vocab) full[static_cast<size_t>(dst)] = compact[static_cast<size_t>(i)];
                 }
-                bool ended_by_im_end = false;
-                for (int64_t step = 1; step < max_new_tokens; ++step) {
-                    auto emb = build_falcon_embeddings(assets.config, weights, full_matrix.data(), cur_steps);
-                    auto out = falcon_forward_stateless(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(), assets.config, weights, emb, cur_steps);
-                    auto logits_full = expand_compact(out.logits);
-                    auto next_frame = sample_frame(logits_full, out.hidden, options, sample, true, profile);
-                    if (next_frame.front() == im_end_id()) { ended_by_im_end = true; break; }
-                    for (size_t i = 1; i < next_frame.size(); ++i) generated_frame_major.push_back(next_frame[i]);
-                    ++profile.generated_frames;
-                    std::vector<int32_t> new_mat(static_cast<size_t>((cur_steps + 1) * (assets.config.fast.num_codebooks + 1)), 0);
-                    for (int64_t r = 0; r < assets.config.fast.num_codebooks + 1; ++r) { for (int64_t s = 0; s < cur_steps; ++s) new_mat[static_cast<size_t>(r * (cur_steps + 1) + s)] = full_matrix[static_cast<size_t>(r * cur_steps + s)]; new_mat[static_cast<size_t>(r * (cur_steps + 1) + cur_steps)] = next_frame[static_cast<size_t>(r)]; }
-                    full_matrix.swap(new_mat); cur_steps += 1;
+                if (codebook_size < static_cast<int64_t>(compact.size())) {
+                    int64_t eos = assets.config.im_end_token_id;
+                    if (eos >= 0 && eos < vocab) full[static_cast<size_t>(eos)] = compact[static_cast<size_t>(codebook_size)];
                 }
-                if (!ended_by_im_end && !generated_frame_major.empty()) { generated_frame_major.resize(generated_frame_major.size() - static_cast<size_t>(assets.config.fast.num_codebooks)); --profile.generated_frames; }
-                Audio8TtsCodes out;
-                out.codebooks = assets.config.fast.num_codebooks;
-                out.frames = static_cast<int64_t>(generated_frame_major.size()) / out.codebooks;
-                out.codes.assign(static_cast<size_t>(out.codebooks * out.frames), 0);
-                for (int64_t f = 0; f < out.frames; ++f) for (int64_t cb = 0; cb < out.codebooks; ++cb) out.codes[static_cast<size_t>(cb * out.frames + f)] = generated_frame_major[static_cast<size_t>(f * out.codebooks + cb)];
+                return full;
+            };
+            auto pre_emb = build_falcon_embeddings(assets.config, weights, full_matrix.data(), cur_steps);
+            auto pre_out = falcon_forward_stateless(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(), assets.config, weights, pre_emb, cur_steps);
+            auto pre_logits_full = expand_compact(pre_out.logits);
+            auto frame = sample_frame(pre_logits_full, pre_out.hidden, options, sample, false, profile);
+            if (frame.front() == im_end_id()) {
                 log_profile(profile);
-                std::remove(tmp_codes.c_str());
-                return out;
+                return Audio8TtsCodes{{}, assets.config.fast.num_codebooks, 0};
             }
-            std::remove(tmp_prompt.c_str());
-            // Read codes file: first 8 bytes codebooks, next 8 frames, then int32 flat
-            std::ifstream cf(tmp_codes, std::ios::binary);
-            if (!cf) {
-                std::remove(tmp_codes.c_str());
-                throw std::runtime_error("Falcon python helper failed to produce codes");
+            std::vector<int32_t> generated_frame_major;
+            generated_frame_major.reserve(static_cast<size_t>(max_new_tokens * assets.config.fast.num_codebooks));
+            for (size_t i = 1; i < frame.size(); ++i) generated_frame_major.push_back(frame[i]);
+            ++profile.generated_frames;
+            {
+                std::vector<int32_t> new_mat(static_cast<size_t>((cur_steps + 1) * (assets.config.fast.num_codebooks + 1)), 0);
+                for (int64_t r = 0; r < assets.config.fast.num_codebooks + 1; ++r) {
+                    for (int64_t s = 0; s < cur_steps; ++s) new_mat[static_cast<size_t>(r * (cur_steps + 1) + s)] = full_matrix[static_cast<size_t>(r * cur_steps + s)];
+                    new_mat[static_cast<size_t>(r * (cur_steps + 1) + cur_steps)] = frame[static_cast<size_t>(r)];
+                }
+                full_matrix.swap(new_mat);
+                cur_steps += 1;
             }
-            int64_t codebooks = 0, frames = 0;
-            cf.read(reinterpret_cast<char*>(&codebooks), 8);
-            cf.read(reinterpret_cast<char*>(&frames), 8);
-            if (codebooks != assets.config.fast.num_codebooks || frames <= 0 || frames > max_new_tokens) {
-                cf.close(); std::remove(tmp_codes.c_str());
-                throw std::runtime_error("Falcon python helper produced invalid codebook shape");
+            bool ended_by_im_end = false;
+            for (int64_t step = 1; step < max_new_tokens; ++step) {
+                auto emb = build_falcon_embeddings(assets.config, weights, full_matrix.data(), cur_steps);
+                auto out = falcon_forward_stateless(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(), assets.config, weights, emb, cur_steps);
+                auto logits_full = expand_compact(out.logits);
+                auto next_frame = sample_frame(logits_full, out.hidden, options, sample, true, profile);
+                if (next_frame.front() == im_end_id()) { ended_by_im_end = true; break; }
+                for (size_t i = 1; i < next_frame.size(); ++i) generated_frame_major.push_back(next_frame[i]);
+                ++profile.generated_frames;
+                std::vector<int32_t> new_mat(static_cast<size_t>((cur_steps + 1) * (assets.config.fast.num_codebooks + 1)), 0);
+                for (int64_t r = 0; r < assets.config.fast.num_codebooks + 1; ++r) {
+                    for (int64_t s = 0; s < cur_steps; ++s) new_mat[static_cast<size_t>(r * (cur_steps + 1) + s)] = full_matrix[static_cast<size_t>(r * cur_steps + s)];
+                    new_mat[static_cast<size_t>(r * (cur_steps + 1) + cur_steps)] = next_frame[static_cast<size_t>(r)];
+                }
+                full_matrix.swap(new_mat);
+                cur_steps += 1;
             }
-            std::vector<int32_t> flat(static_cast<size_t>(codebooks * frames));
-            cf.read(reinterpret_cast<char*>(flat.data()), flat.size() * sizeof(int32_t));
-            cf.close();
-            std::remove(tmp_codes.c_str());
-            // Convert flat [codebooks, frames] row-major (codebook outer) to C++ layout codebook*frames+frame
+            if (!ended_by_im_end && !generated_frame_major.empty()) {
+                generated_frame_major.resize(generated_frame_major.size() - static_cast<size_t>(assets.config.fast.num_codebooks));
+                --profile.generated_frames;
+            }
             Audio8TtsCodes out;
-            out.codebooks = codebooks;
-            out.frames = frames;
-            out.codes = std::move(flat);
-            // Update profile for logging
-            profile.generated_frames = frames;
+            out.codebooks = assets.config.fast.num_codebooks;
+            out.frames = static_cast<int64_t>(generated_frame_major.size()) / out.codebooks;
+            out.codes.assign(static_cast<size_t>(out.codebooks * out.frames), 0);
+            for (int64_t f = 0; f < out.frames; ++f) for (int64_t cb = 0; cb < out.codebooks; ++cb) out.codes[static_cast<size_t>(cb * out.frames + f)] = generated_frame_major[static_cast<size_t>(f * out.codebooks + cb)];
             log_profile(profile);
             return out;
         }
