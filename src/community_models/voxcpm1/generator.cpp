@@ -16,7 +16,6 @@
 #include "engine/community_models/voxcpm1/assets.h"
 #include "engine/community_models/voxcpm1/minicpm.h"
 #include "engine/community_models/voxcpm1/tokenizer_text.h"
-#include "engine/community_models/voxcpm1/tokenizer_wrapper.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -1283,10 +1282,7 @@ public:
         weights_(std::make_shared<VoxCPM1WeightsRuntime>(
             assets_, execution_context, config.weight_context_bytes,
             config.weight_storage_type)),
-        tokenizer_(assets_->gguf_tokenizer
-                       ? VoxCPM1TokenizerWrapper(assets_->gguf_tokenizer)
-                       : VoxCPM1TokenizerWrapper(
-                             std::make_shared<VoxCPM1TextTokenizer>(assets_))),
+        tokenizer_(assets_),
         text_embedding_(weights_, config.text_embedding_graph_context_bytes,
                         config.mem_saver),
         prefill_(weights_, config.lm_step_graph_context_bytes,
@@ -1719,7 +1715,7 @@ private:
 
   std::shared_ptr<const VoxCPM1Assets> assets_;
   std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
-  VoxCPM1TokenizerWrapper tokenizer_;
+  VoxCPM1TextTokenizer tokenizer_;
   VoxCPM1TextEmbeddingRuntime text_embedding_;
   VoxCPM1PromptPrefillRuntime prefill_;
   VoxCPM1MiniCPMStepRuntime base_lm_;

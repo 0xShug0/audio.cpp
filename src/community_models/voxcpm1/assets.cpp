@@ -1,6 +1,4 @@
 #include "engine/community_models/voxcpm1/assets.h"
-#include "engine/community_models/voxcpm1/tokenizer_gguf.h"
-#include "engine/community_models/voxcpm1/config_gguf.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/resource_bundle.h"
@@ -10,12 +8,7 @@
 
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <memory>
-#include <algorithm>
-#include <numeric>
-#include <cstring>
-#include <cmath>
 
 namespace engine::community_models::voxcpm1 {
 namespace json = engine::io::json;
@@ -183,237 +176,6 @@ VoxCPM1Config parse_config(const assets::ResourceBundle & resources) {
 
 namespace assets = engine::assets;
 
-namespace {
-core::TensorShape make_tensor_shape(const std::vector<int64_t> & dims) {
-    if (dims.empty() || dims.size() > core::kMaxTensorRank) {
-        throw std::runtime_error("tensor rank must be between 1 and 4");
-    }
-    switch (dims.size()) {
-        case 1:
-            return core::TensorShape::from_dims({dims[0]});
-        case 2:
-            return core::TensorShape::from_dims({dims[0], dims[1]});
-        case 3:
-            return core::TensorShape::from_dims({dims[0], dims[1], dims[2]});
-        case 4:
-            return core::TensorShape::from_dims({dims[0], dims[1], dims[2], dims[3]});
-        default:
-            throw std::runtime_error("unsupported tensor rank");
-    }
-}
-}  // namespace
-
-class VoxCPM1TensorSource final : public assets::TensorSource {
-public:
-    VoxCPM1TensorSource(
-        std::shared_ptr<const assets::TensorSource> source,
-        const VoxCPM1Config & config)
-        : source_(std::move(source)), config_(config) {
-        build_synthesized();
-    }
-
-    const std::filesystem::path & source_path() const noexcept override {
-        return source_->source_path();
-    }
-
-    bool has_tensor(std::string_view name) const noexcept override {
-        if (synthesized_.find(std::string(name)) != synthesized_.end()) {
-            return true;
-        }
-        return source_->has_tensor(name);
-    }
-
-    assets::TensorMetadata require_metadata(std::string_view name) const override {
-        const auto it = synthesized_.find(std::string(name));
-        if (it != synthesized_.end()) {
-            return it->second;
-        }
-        return source_->require_metadata(name);
-    }
-
-    std::vector<assets::TensorMetadata> tensors() const override {
-        std::vector<assets::TensorMetadata> out;
-        out.reserve(synthesized_.size());
-        for (const auto & [name, meta] : synthesized_) {
-            out.push_back(meta);
-        }
-        auto src = source_->tensors();
-        out.insert(out.end(), src.begin(), src.end());
-        std::sort(out.begin(), out.end(),
-            [](const assets::TensorMetadata & lhs, const assets::TensorMetadata & rhs) {
-                return lhs.name < rhs.name;
-            });
-        return out;
-    }
-
-    void release_storage() const override { source_->release_storage(); }
-
-    assets::RawTensorData require_tensor_data(std::string_view name) const override {
-        const auto it = synthesized_.find(std::string(name));
-        if (it != synthesized_.end()) {
-            return generate_synthesized_tensor(name);
-        }
-        return source_->require_tensor_data(name);
-    }
-
-    std::vector<float> require_f32(
-        std::string_view name,
-        const std::optional<std::vector<int64_t>> & expected_shape) const override {
-        const auto it = synthesized_.find(std::string(name));
-        if (it != synthesized_.end()) {
-            return generate_synthesized_f32(name);
-        }
-        if (expected_shape.has_value()) {
-            const auto meta = source_->require_metadata(name);
-            const int64_t expected_elems = element_count("expected", *expected_shape);
-            const int64_t actual_elems = element_count(name, meta.shape);
-            if (expected_elems == actual_elems && meta.shape != *expected_shape) {
-                // GGUF stores this tensor in a different rank (e.g. 1D) but
-                // with the same element count. Return raw data so the caller
-                // can reshape it into the expected logical shape.
-                return source_->require_f32(name, std::nullopt);
-            }
-        }
-        return source_->require_f32(name, expected_shape);
-    }
-
-    std::optional<std::vector<float>> optional_f32(
-        std::string_view name,
-        const std::optional<std::vector<int64_t>> & expected_shape) const override {
-        if (!has_tensor(name)) return std::nullopt;
-        return require_f32(name, expected_shape);
-    }
-
-    void set_backend_tensor(
-        ggml_tensor * tensor,
-        std::string_view name,
-        assets::TensorStorageType storage_type,
-        const std::vector<int64_t> & expected_shape) const override {
-        const auto it = synthesized_.find(std::string(name));
-        if (it != synthesized_.end()) {
-            const auto values = generate_synthesized_f32(name);
-            engine::assets::set_backend_tensor_from_f32_parallel(tensor, name, values,
-                make_tensor_shape(expected_shape),
-                engine::assets::ggml_type_for_tensor_storage(storage_type));
-            return;
-        }
-        {
-            const auto meta = source_->require_metadata(name);
-            const int64_t expected_elems = element_count(name, expected_shape);
-            const int64_t actual_elems = element_count(name, meta.shape);
-            if (expected_elems == actual_elems && meta.shape != expected_shape) {
-                const auto values = source_->require_f32(name, std::nullopt);
-                const ggml_type type = engine::assets::ggml_type_for_tensor_storage(
-                    engine::assets::resolve_tensor_storage_type(*this, name, storage_type));
-                engine::assets::set_backend_tensor_from_f32_parallel(tensor, name, values,
-                    make_tensor_shape(expected_shape), type);
-                return;
-            }
-        }
-        source_->set_backend_tensor(tensor, name, storage_type, expected_shape);
-    }
-
-    void set_backend_f32_tensor(
-        ggml_tensor * tensor,
-        std::string_view name,
-        const std::vector<int64_t> & expected_shape) const override {
-        set_backend_tensor(tensor, name, assets::TensorStorageType::F32, expected_shape);
-    }
-
-    int64_t require_i64_scalar(std::string_view name) const override {
-        return source_->require_i64_scalar(name);
-    }
-
-private:
-    static int64_t element_count(std::string_view name, const std::vector<int64_t> & shape) {
-        int64_t count = 1;
-        for (const int64_t dim : shape) {
-            if (dim <= 0) {
-                throw std::runtime_error("tensor shape contains a non-positive dimension: " + std::string(name));
-            }
-            if (count > std::numeric_limits<int64_t>::max() / dim) {
-                throw std::runtime_error("tensor element count overflow: " + std::string(name));
-            }
-            count *= dim;
-        }
-        return count;
-    }
-
-    void build_synthesized() {
-        // VoxCPM1 GGUFs do not contain SR-conditioning tensors; the shared
-        // decoder loader still requires scale_embed / bias_embed per block.
-        // Register identity-initialized placeholders under the V1 names.
-        const auto & vae = config_.audio_vae;
-        const size_t num_blocks = vae.decoder_rates.size();
-        for (size_t i = 0; i < num_blocks; ++i) {
-            const int64_t input_channels =
-                vae.decoder_dim / (int64_t{1} << static_cast<int>(i));
-            const std::string prefix =
-                "audio_vae.decoder.sr_cond_model." + std::to_string(i + 2) + ".";
-            synthesized_[prefix + "scale_embed.weight"] =
-                assets::TensorMetadata{prefix + "scale_embed.weight", "F32", {1, input_channels}};
-            synthesized_[prefix + "bias_embed.weight"] =
-                assets::TensorMetadata{prefix + "bias_embed.weight", "F32", {1, input_channels}};
-        }
-    }
-
-    std::vector<float> generate_synthesized_f32(std::string_view name) const {
-        const auto it = synthesized_.find(std::string(name));
-        if (it == synthesized_.end()) {
-            throw std::runtime_error("no synthesized tensor: " + std::string(name));
-        }
-        const auto & metadata = it->second;
-        const int64_t num_elements = element_count(name, metadata.shape);
-        constexpr std::string_view kScaleEmbed = "scale_embed.weight";
-        if (name.size() >= kScaleEmbed.size() &&
-            name.substr(name.size() - kScaleEmbed.size()) == kScaleEmbed) {
-            return std::vector<float>(static_cast<size_t>(num_elements), 1.0F);
-        }
-        return std::vector<float>(static_cast<size_t>(num_elements), 0.0F);
-    }
-
-    assets::RawTensorData generate_synthesized_tensor(std::string_view name) const {
-        const auto it = synthesized_.find(std::string(name));
-        if (it == synthesized_.end()) {
-            throw std::runtime_error("no synthesized tensor: " + std::string(name));
-        }
-        const auto & metadata = it->second;
-        const int64_t num_elements = element_count(name, metadata.shape);
-        std::vector<std::byte> bytes(static_cast<size_t>(num_elements) * sizeof(float));
-        const auto values = generate_synthesized_f32(name);
-        std::memcpy(bytes.data(), values.data(), bytes.size());
-        return {metadata, std::move(bytes)};
-    }
-
-    std::shared_ptr<const assets::TensorSource> source_;
-    VoxCPM1Config config_;
-    std::unordered_map<std::string, assets::TensorMetadata> synthesized_;
-};
-
-void require_vae_weight_v_shape(const assets::TensorSource & source,
-                                std::string_view name,
-                                const std::vector<int64_t> & expected_shape,
-                                bool relaxed_rank) {
-    const auto metadata = source.require_metadata(name);
-    if (metadata.shape == expected_shape) {
-        return;
-    }
-    if (!relaxed_rank) {
-        throw std::runtime_error("tensor shape mismatch for " + std::string(name));
-    }
-    int64_t expected_elems = 1;
-    for (const int64_t dim : expected_shape) {
-        expected_elems *= dim;
-    }
-    int64_t actual_elems = 1;
-    for (const int64_t dim : metadata.shape) {
-        actual_elems *= dim;
-    }
-    if (actual_elems != expected_elems) {
-        throw std::runtime_error("tensor element count mismatch for " + std::string(name));
-    }
-}
-
 void validate_weight_anchors(const VoxCPM1Assets & assets) {
     const auto & config = assets.config;
     const auto & weights = *assets.model_weights;
@@ -424,7 +186,7 @@ void validate_weight_anchors(const VoxCPM1Assets & assets) {
         {config.lm.num_key_value_heads * config.lm.kv_channels, config.lm.hidden_size});
     assets::require_tensor_shape(weights, "blk.0.ffn_gate.weight", {config.lm.intermediate_size, config.lm.hidden_size});
     assets::require_tensor_shape(weights, "residual_lm.output_norm.weight", {config.lm.hidden_size});
-    require_vae_weight_v_shape(weights, "locenc.special_token", {1, 1, 1, config.encoder.hidden_dim}, true);
+    assets::require_tensor_shape(weights, "locenc.special_token", {1, 1, 1, config.encoder.hidden_dim});
     assets::require_tensor_shape(weights, "locenc.in_proj.weight", {config.encoder.hidden_dim, config.feat_dim});
     assets::require_tensor_shape(weights, "locenc.output_norm.weight", {config.encoder.hidden_dim});
     assets::require_tensor_shape(weights, "locdit.in_proj.weight", {config.dit.hidden_dim, config.feat_dim});
@@ -444,10 +206,10 @@ void validate_weight_anchors(const VoxCPM1Assets & assets) {
     for (size_t i = 0; i < config.audio_vae.encoder_rates.size(); ++i) {
         encoder_in_channels *= 2;
     }
-    require_vae_weight_v_shape(vae, "audio_vae.encoder.fc_mu.weight", {config.audio_vae.latent_dim, encoder_in_channels, 3}, true);
+    assets::require_tensor_shape(vae, "audio_vae.encoder.fc_mu.weight", {config.audio_vae.latent_dim, encoder_in_channels, 3});
     assets::require_tensor_shape(vae, "audio_vae.encoder.fc_mu.bias", {config.audio_vae.latent_dim});
-    require_vae_weight_v_shape(vae, "audio_vae.decoder.model.0.weight", {config.audio_vae.latent_dim, 1, 7}, true);
-    require_vae_weight_v_shape(vae, "audio_vae.decoder.model.1.weight", {config.audio_vae.decoder_dim, config.audio_vae.latent_dim, 1}, true);
+    assets::require_tensor_shape(vae, "audio_vae.decoder.model.0.weight", {config.audio_vae.latent_dim, 1, 7});
+    assets::require_tensor_shape(vae, "audio_vae.decoder.model.1.weight", {config.audio_vae.decoder_dim, config.audio_vae.latent_dim, 1});
 }
 
 }
@@ -457,27 +219,10 @@ std::shared_ptr<const VoxCPM1Assets> load_voxcpm1_assets(const std::filesystem::
     out->resources = engine::model_spec::load_resource_bundle(
         model_path,
         engine::model_spec::default_spec_path("voxcpm1"));
-
-    {
-        auto raw_model_weights = out->resources.open_tensor_source("weights");
-
-        bool has_tokenizer = VoxCPM1GgufTokenizer::has_tokenizer_metadata(*raw_model_weights);
-        bool has_config = has_voxcpm1_config_metadata(*raw_model_weights);
-
-        if (has_tokenizer && has_config) {
-            out->config = load_voxcpm1_config_from_gguf(*raw_model_weights);
-            out->config.v1 = true;
-            out->gguf_tokenizer = std::make_shared<VoxCPM1GgufTokenizer>(raw_model_weights);
-        } else {
-            out->config = parse_config(out->resources);
-            out->config.v1 = true;
-        }
-    }
-
-    auto raw_model_weights = out->resources.open_tensor_source("weights");
-    auto raw_audiovae_weights = out->resources.open_tensor_source("audiovae_weights");
-    out->model_weights = std::make_shared<VoxCPM1TensorSource>(raw_model_weights, out->config);
-    out->audiovae_weights = std::make_shared<VoxCPM1TensorSource>(raw_audiovae_weights, out->config);
+    out->config = parse_config(out->resources);
+    out->config.v1 = true;
+    out->model_weights = out->resources.open_tensor_source("weights");
+    out->audiovae_weights = out->resources.open_tensor_source("audiovae_weights");
     validate_weight_anchors(*out);
     return out;
 }

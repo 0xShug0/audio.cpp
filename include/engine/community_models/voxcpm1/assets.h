@@ -2,7 +2,6 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/community_models/voxcpm1/tokenizer_gguf.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -94,7 +93,6 @@ struct VoxCPM1Assets {
     VoxCPM1Config config;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> audiovae_weights;
-    std::shared_ptr<const VoxCPM1GgufTokenizer> gguf_tokenizer;
 };
 
 std::shared_ptr<const VoxCPM1Assets> load_voxcpm1_assets(const std::filesystem::path & model_path);

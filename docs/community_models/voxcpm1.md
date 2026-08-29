@@ -1,6 +1,6 @@
 # VoxCPM1
 
-VoxCPM1 is a **tokenizer-free TTS model** from [OpenBMB](https://github.com/OpenBMB/VoxCPM) that generates 16 kHz mono speech. The audio.cpp port is based on [VoxCPM.cpp](https://github.com/bluryar/VoxCPM.cpp) and reuses the existing VoxCPM2 runtime tree with a GGUF tensor-adaptation layer that handles the OpenBMB-specific conventions (folded AudioVAE weights, no `weight_v`/`weight_g` split, no SR-conditioning tensors).
+VoxCPM1 is a **tokenizer-free TTS model** from [OpenBMB](https://github.com/OpenBMB/VoxCPM) that generates 16 kHz mono speech. The audio.cpp package uses a native GGUF layout with audio.cpp tensor names, embedded config/tokenizer sidecars, folded AudioVAE weights, and materialized SR-conditioning tensors.
 
 | Field | Value |
 |---|---|
@@ -121,12 +121,13 @@ Measured on Ubuntu 24.04 with OpenMP optimization (CPU backend):
 - **AudioVAE**: Encoder (128 dim, rates `[2,5,8,8]`) + Decoder (1536 dim, rates `[8,8,5,2]`)
 - **Output**: 16 kHz mono
 
-The port adapts V1 GGUF conventions to the V2 loader:
-- **Folded AudioVAE weights**: `weight_v` receives folded data; `weight_g` synthesized as per-row L2 norms (identity fold)
-- **No SR-conditioning tensors**: Synthesized as identity (scale=1, bias=0)
-- **Embedding transpose**: V1 stores `[hidden, vocab]` → transposed to `[vocab, hidden]` for ggml
-- **Synthesized-weight guard**: `is_synthesized()` distinguishes fabricated tensors (e.g., `fusion_concat_proj`) from loaded ones
-- **Config & tokenizer from GGUF metadata**: Fully self-contained; no external sidecars needed
+The GGUF is produced from the original OpenBMB files with:
+
+```bash
+python3 tools/community_models/convert_voxcpm1.py --overwrite
+```
+
+The converter stages the OpenBMB PyTorch checkpoint as audio.cpp tensor names, folds AudioVAE `weight_v` / `weight_g` pairs through the shared GGUF conversion path, embeds the required sidecars, and writes one native GGUF. The runtime expects that native layout directly; it does not adapt third-party VoxCPM GGUF metadata at load time.
 
 ---
 
@@ -153,10 +154,10 @@ The default package is the standalone GGUF:
 
 The GGUF embeds:
 - Hybrid-quantized model (LLM Q8_0, AudioVAE F16)
-- Full config (`voxcpm.*` metadata keys)
-- BPE tokenizer (`audiocpp.vocab_*` metadata)
+- Full config sidecar (`config.json`)
+- BPE tokenizer sidecars (`tokenizer.json`, `tokenizer_config.json`)
 
-No separate tokenizer.json or config.json files are needed.
+No separate tokenizer or config files are needed at inference time.
 
 ---
 
