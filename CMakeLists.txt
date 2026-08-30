@@ -2032,6 +2032,20 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(qwen_attention_modes_test tests/unittests/test_qwen_attention_modes.cpp)
+
+    add_test(
+        NAME qwen_attention_modes_test
+        COMMAND qwen_attention_modes_test
+    )
+
+    add_engine_unittest(graph_optimizer_identity_fold_test tests/unittests/test_graph_optimizer_identity_fold.cpp)
+
+    add_test(
+        NAME graph_optimizer_identity_fold_test
+        COMMAND graph_optimizer_identity_fold_test
+    )
+
     add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
 
     add_test(

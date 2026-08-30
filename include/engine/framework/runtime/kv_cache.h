@@ -66,6 +66,14 @@ private:
     int64_t step_elems_ = 0;
     int64_t valid_steps_ = 0;
     int64_t current_end_ = 0;
+    // High-water mark, in steps, of everything this cache has ever written to its device
+    // tensors. import_state only has to refresh [0, valid) and clear [valid, dirty_steps_),
+    // instead of zero-filling and uploading the whole capacity every time. -1 means the
+    // device buffers are still in their as-allocated state and must be cleared in full once.
+    int64_t dirty_steps_ = -1;
+    // Monotonically grown block of zeros, shared by every layer, used to clear the stale
+    // tail. Nothing ever writes a non-zero value into it.
+    std::vector<float> zero_scratch_;
     TransformerKVCacheOptions options_;
     std::vector<LayerCache> layers_;
 };

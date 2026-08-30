@@ -7,14 +7,38 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "../module_internal.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
+#include <string>
 
 namespace engine::modules {
 namespace {
 
 using engine::modules::internal::concat_all;
 using engine::modules::internal::validate_sequence_input;
+
+// Escape hatch for the FlashGroupedViewKV static-cache default. Setting
+// ENGINE_QWEN_ATTENTION_CONT_KV to a truthy value restores the historical behaviour of
+// copying the whole permuted K/V cache with ggml_cont before every flash-attention call,
+// so a suspected numerical regression can be bisected without a rebuild. The two lowerings
+// are expected to agree bit for bit; see tests/unittests/test_qwen_attention_modes.cpp.
+bool static_attention_forces_contiguous_kv() {
+    static const bool forced = [] {
+        const char * value = std::getenv("ENGINE_QWEN_ATTENTION_CONT_KV");
+        if (value == nullptr || value[0] == '\0') {
+            return false;
+        }
+        std::string normalized(value);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return normalized != "0" && normalized != "false" && normalized != "off" && normalized != "no";
+    }();
+    return forced;
+}
 
 inline const core::ModulePortSpec kQwenDecoderInputs[] = {
     {"input", core::PortKind::Activation, false},
@@ -750,7 +774,8 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
         k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
         v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);
         context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    } else if (config_.runtime.attention.static_mode == QwenDecoderAttentionMode::FlashGroupedViewKV) {
+    } else if (config_.runtime.attention.static_mode == QwenDecoderAttentionMode::FlashGroupedViewKV &&
+               !static_attention_forces_contiguous_kv()) {
         context = flash_attention_from_grouped_heads_view_kv(
             ctx,
             q_heads,
@@ -910,7 +935,8 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
         k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
         v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);
         context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    } else if (config_.runtime.attention.static_mode == QwenDecoderAttentionMode::FlashGroupedViewKV) {
+    } else if (config_.runtime.attention.static_mode == QwenDecoderAttentionMode::FlashGroupedViewKV &&
+               !static_attention_forces_contiguous_kv()) {
         context = flash_attention_from_grouped_heads_view_kv(
             ctx,
             q_heads,

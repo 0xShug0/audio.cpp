@@ -4,8 +4,10 @@
 #include "engine/framework/debug/trace.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace engine::runtime {
 
@@ -47,6 +49,45 @@ void write_cache_tensor(
     throw std::runtime_error("TransformerKVCache requires f32 cache tensors");
 }
 
+// Uploads `count` f32 elements starting at element 0 and then clears `clear_count` elements
+// immediately after them. Only valid for contiguous f32 cache tensors; the f16/bf16 storage
+// modes have no sliced writer and keep the full-capacity staging path.
+void write_cache_prefix_and_clear_tail(
+    const core::TensorValue & tensor,
+    const float * values,
+    size_t count,
+    size_t clear_count,
+    size_t scratch_slot_offset,
+    bool clear_scratch_slot,
+    size_t scratch_slot_elems,
+    std::vector<float> & zero_scratch) {
+    if (count > 0) {
+        core::write_tensor_f32_slice(tensor, 0, values, count);
+    }
+    const size_t zero_needed = std::max(clear_count, clear_scratch_slot ? scratch_slot_elems : size_t{0});
+    if (zero_needed == 0) {
+        return;
+    }
+    if (zero_scratch.size() < zero_needed) {
+        zero_scratch.resize(zero_needed, 0.0F);
+    }
+    if (clear_count > 0) {
+        core::write_tensor_f32_slice(tensor, count, zero_scratch.data(), clear_count);
+    }
+    if (clear_scratch_slot) {
+        core::write_tensor_f32_slice(tensor, scratch_slot_offset, zero_scratch.data(), scratch_slot_elems);
+    }
+}
+
+// Reads back the first `count` elements only. `read_cache_tensor` pulls the whole capacity
+// and then slices, which on a 4096-step cache is an order of magnitude more traffic than the
+// valid prefix a caller actually asked for.
+void read_cache_prefix(
+    const core::TensorValue & tensor,
+    std::vector<float> & out,
+    size_t count,
+    const TransformerKVCacheOptions & options);
+
 std::vector<float> read_cache_tensor(const core::TensorValue & tensor, const TransformerKVCacheOptions & options) {
     validate_cache_tensor(tensor, options);
     if (tensor.type == GGML_TYPE_F32) {
@@ -59,6 +100,26 @@ std::vector<float> read_cache_tensor(const core::TensorValue & tensor, const Tra
         return core::read_tensor_bf16(tensor.tensor);
     }
     throw std::runtime_error("TransformerKVCache requires f32 cache tensors");
+}
+
+void read_cache_prefix(
+    const core::TensorValue & tensor,
+    std::vector<float> & out,
+    size_t count,
+    const TransformerKVCacheOptions & options) {
+    validate_cache_tensor(tensor, options);
+    if (count > static_cast<size_t>(tensor.shape.num_elements())) {
+        throw std::runtime_error("TransformerKVCache prefix read exceeds cache tensor shape");
+    }
+    if (tensor.type == GGML_TYPE_F32) {
+        out.resize(count);
+        if (count > 0) {
+            ggml_backend_tensor_get(tensor.tensor, out.data(), 0, count * sizeof(float));
+        }
+        return;
+    }
+    const auto values = read_cache_tensor(tensor, options);
+    out.assign(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(count));
 }
 
 }  // namespace
@@ -85,16 +146,18 @@ TransformerKVCache::TransformerKVCache(
     if (keys.size() != values.size()) {
         throw std::runtime_error("TransformerKVCache key/value layer counts must match");
     }
-    const size_t cache_elems = static_cast<size_t>(cache_steps_ * step_elems_);
     layers_.reserve(keys.size());
     for (size_t layer = 0; layer < keys.size(); ++layer) {
         validate_cache_tensor(keys[layer], options_);
         validate_cache_tensor(values[layer], options_);
+        // The staging buffers are only needed by the f16/bf16 storage modes, which have no
+        // sliced writer; import_state allocates them on first use. An f32 cache never pays
+        // for them (2 * cache_steps * step_elems floats per layer of host memory).
         layers_.push_back(LayerCache{
             std::move(keys[layer]),
             std::move(values[layer]),
-            std::vector<float>(cache_elems, 0.0F),
-            std::vector<float>(cache_elems, 0.0F),
+            std::vector<float>(),
+            std::vector<float>(),
         });
     }
 }
@@ -113,6 +176,27 @@ void TransformerKVCache::import_state(const TransformerKVState & state) {
         throw std::runtime_error("TransformerKVCache state valid_steps exceeds cache capacity");
     }
     valid_steps_ = state_steps;
+    // Only the prefix being replaced and the stale tail between the new prefix and this
+    // cache's high-water mark are touched, instead of zero-filling and uploading the whole
+    // capacity on every start_decode_* call.
+    //
+    // The correctness argument does not depend on knowing every slot a decode graph writes.
+    // The first import (dirty_steps_ < 0) still clears the full capacity, so no slot can
+    // afterwards hold as-allocated garbage: every slot is either zero or finite K/V from an
+    // earlier generation. Both attention lowerings give a slot outside the attention mask a
+    // weight of exactly zero -- flash attention skips fully masked blocks and
+    // ggml_soft_max_ext turns the -inf mask entry into exp(-inf) = 0 -- so finite leftovers
+    // in masked slots cannot reach the output.
+    const int64_t stale_end = dirty_steps_ < 0 ? cache_steps_ : dirty_steps_;
+    const int64_t clear_steps = std::max<int64_t>(0, stale_end - state_steps);
+    // QwenDecoderStaticCacheUpdateMode::ScratchTail writes the current token's K/V into the
+    // last slot of the cache on every decode step, so that one slot can hold data from a
+    // previous generation even when it lies past the high-water mark. Clear it as well
+    // unless the main clear region already covers it. It is a single step.
+    const bool clear_scratch_slot = cache_steps_ > 0 && state_steps + clear_steps < cache_steps_;
+    const size_t scratch_slot_offset =
+        cache_steps_ > 0 ? static_cast<size_t>((cache_steps_ - 1) * step_elems_) : 0;
+    const size_t scratch_slot_elems = static_cast<size_t>(step_elems_);
     for (size_t layer = 0; layer < layers_.size(); ++layer) {
         auto & cache = layers_[layer];
         const auto & source = state.layers[layer];
@@ -126,17 +210,49 @@ void TransformerKVCache::import_state(const TransformerKVState & state) {
         if (source.key.size() != keep_elems) {
             throw std::runtime_error("TransformerKVCache source tensors do not match valid_steps * step_elems");
         }
-        if (cache_steps_ > 0) {
-            std::fill(cache.import_key_scratch.begin(), cache.import_key_scratch.end(), 0.0F);
-            std::fill(cache.import_value_scratch.begin(), cache.import_value_scratch.end(), 0.0F);
-            if (keep_elems > 0) {
-                std::copy(source.key.begin(), source.key.end(), cache.import_key_scratch.begin());
-                std::copy(source.value.begin(), source.value.end(), cache.import_value_scratch.begin());
-            }
-            write_cache_tensor(cache.key_tensor, cache.import_key_scratch, options_);
-            write_cache_tensor(cache.value_tensor, cache.import_value_scratch, options_);
+        if (cache_steps_ <= 0) {
+            continue;
         }
+        if (cache.key_tensor.type == GGML_TYPE_F32 && cache.value_tensor.type == GGML_TYPE_F32) {
+            const size_t clear_elems = static_cast<size_t>(clear_steps * step_elems_);
+            write_cache_prefix_and_clear_tail(
+                cache.key_tensor,
+                source.key.data(),
+                keep_elems,
+                clear_elems,
+                scratch_slot_offset,
+                clear_scratch_slot,
+                scratch_slot_elems,
+                zero_scratch_);
+            write_cache_prefix_and_clear_tail(
+                cache.value_tensor,
+                source.value.data(),
+                keep_elems,
+                clear_elems,
+                scratch_slot_offset,
+                clear_scratch_slot,
+                scratch_slot_elems,
+                zero_scratch_);
+            continue;
+        }
+        // f16/bf16 storage has no sliced writer; stage the full capacity as before.
+        const size_t cache_elems = static_cast<size_t>(cache_steps_ * step_elems_);
+        if (cache.import_key_scratch.size() != cache_elems) {
+            cache.import_key_scratch.assign(cache_elems, 0.0F);
+            cache.import_value_scratch.assign(cache_elems, 0.0F);
+        }
+        std::fill(cache.import_key_scratch.begin(), cache.import_key_scratch.end(), 0.0F);
+        std::fill(cache.import_value_scratch.begin(), cache.import_value_scratch.end(), 0.0F);
+        if (keep_elems > 0) {
+            std::copy(source.key.begin(), source.key.end(), cache.import_key_scratch.begin());
+            std::copy(source.value.begin(), source.value.end(), cache.import_value_scratch.begin());
+        }
+        write_cache_tensor(cache.key_tensor, cache.import_key_scratch, options_);
+        write_cache_tensor(cache.value_tensor, cache.import_value_scratch, options_);
     }
+    // Everything from state_steps up is zero again, so the next import only has to clear
+    // what this generation writes past it.
+    dirty_steps_ = state_steps;
 }
 
 TransformerKVState TransformerKVCache::export_state() const {
@@ -150,10 +266,8 @@ TransformerKVState TransformerKVCache::export_state() const {
         if (keep_elems == 0) {
             continue;
         }
-        const auto key_values = read_cache_tensor(layers_[layer].key_tensor, options_);
-        const auto value_values = read_cache_tensor(layers_[layer].value_tensor, options_);
-        out.key.assign(key_values.begin(), key_values.begin() + static_cast<ptrdiff_t>(keep_elems));
-        out.value.assign(value_values.begin(), value_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+        read_cache_prefix(layers_[layer].key_tensor, out.key, keep_elems, options_);
+        read_cache_prefix(layers_[layer].value_tensor, out.value, keep_elems, options_);
     }
     return state;
 }
@@ -167,6 +281,7 @@ void TransformerKVCache::advance_after_direct_append(int64_t steps) {
     }
     valid_steps_ += steps;
     current_end_ += steps;
+    dirty_steps_ = std::max(dirty_steps_, valid_steps_);
 }
 
 void TransformerKVCache::retain_prefix(int64_t prefix_steps) {

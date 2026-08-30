@@ -12,6 +12,21 @@ struct ggml_cgraph;
 
 namespace engine::modules {
 
+// Attention lowerings for the Qwen decoder block.
+//
+//   ManualRepeat                 explicit QK^T -> scale/mask -> softmax -> V, with the
+//                                grouped-query K/V heads materialised at full query width.
+//                                Quadratic working set in sequence length; the numerical
+//                                reference path, and the only one that does not require the
+//                                backend to implement GGML_OP_FLASH_ATTN_EXT for this head size.
+//   FlashGrouped                 ggml_flash_attn_ext, with the permuted K/V cache views
+//                                copied into packed tensors (ggml_cont) beforehand.
+//   FlashGroupedViewKV           the same ggml_flash_attn_ext call on the K/V views directly.
+//                                The flash kernels address K/V through nb[1..3] on both the CPU
+//                                and Metal backends, so this is the same arithmetic in the same
+//                                order on the same values as FlashGrouped -- only the copy is
+//                                gone. See tests/unittests/test_qwen_attention_modes.cpp.
+//   ManualRepeatThenGroupedQuery per-head slice/matmul/softmax loop. No model selects it.
 enum class QwenDecoderAttentionMode {
     ManualRepeat,
     FlashGrouped,
@@ -69,8 +84,20 @@ struct QwenDecoderActivationCastPolicy {
 };
 
 struct QwenDecoderAttentionPolicy {
+    // prefill_mode stays on ManualRepeat deliberately. Switching prefill to flash is not a
+    // pure copy elision the way static_mode is: it replaces a materialised softmax with a
+    // fused one (different floating-point reassociation) *and* it introduces a hard backend
+    // requirement -- ggml_flash_attn_ext supports only a fixed whitelist of head sizes on
+    // Metal, and the decode/prefill graphs run on a single backend with no CPU fallback, so an
+    // unsupported head_dim becomes a hard failure rather than a slowdown. Models whose head
+    // size is known-good opt in; minimax_music3's depth decoder already restricts flash prefill
+    // to CUDA/HIP for exactly this reason (src/community_models/minimax_music3/depth_decoder.cpp).
     QwenDecoderAttentionMode prefill_mode = QwenDecoderAttentionMode::ManualRepeat;
-    QwenDecoderAttentionMode static_mode = QwenDecoderAttentionMode::FlashGrouped;
+    // static_mode defaults to the zero-copy flash lowering. FlashGrouped issues the identical
+    // ggml_flash_attn_ext call but copies the whole K/V cache per layer per token first
+    // (~100 MB/token at 24 layers / 2048 steps / f32). Set ENGINE_QWEN_ATTENTION_CONT_KV=1 to
+    // restore the copy at runtime without a rebuild, or select FlashGrouped explicitly.
+    QwenDecoderAttentionMode static_mode = QwenDecoderAttentionMode::FlashGroupedViewKV;
     QwenDecoderPrefixAttentionMode prefix_mode = QwenDecoderPrefixAttentionMode::Exact;
     int64_t grouped_query_min_steps = 0;
 };
