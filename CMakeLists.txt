@@ -1935,6 +1935,17 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(voxcpm2_warm_bench tests/voxcpm2/voxcpm2_warm_bench.cpp)
 endif()
 
+option(AUDIOCPP_BUILD_ENHANCE_TOOL "Build the audiocpp_enhance audio-utility CLI" OFF)
+if (AUDIOCPP_BUILD_ENHANCE_TOOL)
+    add_executable(audiocpp_enhance
+        tools/audiocpp_enhance/main.cpp
+    )
+    target_link_libraries(audiocpp_enhance PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(audiocpp_enhance PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+endif()
+
 if (ENGINE_BUILD_TESTS)
     enable_testing()
 

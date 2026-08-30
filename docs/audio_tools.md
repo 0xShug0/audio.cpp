@@ -28,6 +28,40 @@ Common CLI shape:
 audiocpp_cli --task <task> --family <family> --model <model-dir> --backend cuda ...
 ```
 
+## audiocpp_enhance
+
+`audiocpp_enhance` is an optional CLI over the `engine::audio` helpers that are
+otherwise library-only: the denoisers, FlashSR super-resolution, and resampling.
+It is useful for preparing reference audio and for post-processing generated
+output without writing a program against the framework.
+
+It is not built by default:
+
+```bash
+cmake -S . -B build -DAUDIOCPP_BUILD_ENHANCE_TOOL=ON
+cmake --build build --target audiocpp_enhance
+```
+
+```bash
+# denoise
+build/bin/audiocpp_enhance --backend metal --denoise zipenhancer \
+    --in noisy.wav --out clean.wav
+
+# super-resolve 16 kHz speech to 48 kHz
+build/bin/audiocpp_enhance --backend metal --flashsr --in narrow.wav --out wide.wav
+
+# resample, preserving channel count
+build/bin/audiocpp_enhance --resample 48000 --in mix_44k.wav --out mix_48k.wav
+```
+
+`--backend` accepts `cpu` (default) or `metal`. Denoise models are `zipenhancer`,
+`deepfilternet2` and `rnnoise`; each needs its package installed.
+
+Resampling handles any channel count, resampling each channel independently and
+re-interleaving. It goes through `resample_mono_soxr_or_sinc`, which uses libsoxr
+when it is loadable and the in-tree windowed sinc otherwise, so it never silently
+degrades to linear interpolation. `--in` and `--out` must be different paths.
+
 ## AudioSR
 
 AudioSR performs audio super-resolution from an input waveform. See
