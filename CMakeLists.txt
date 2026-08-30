@@ -1442,6 +1442,7 @@ audiocpp_add_model(soprano_tts
         src/community_models/soprano_tts/assets.cpp
         src/community_models/soprano_tts/generator.cpp
         src/community_models/soprano_tts/session.cpp
+        src/community_models/soprano_tts/text_normalizer.cpp
         src/community_models/soprano_tts/tokenizer_text.cpp
         src/community_models/soprano_tts/vocoder.cpp
     INCLUDES
@@ -2555,6 +2556,16 @@ if (ENGINE_BUILD_TESTS)
         add_test(
             NAME mms_forced_aligner_session_test
             COMMAND mms_forced_aligner_session_test
+        )
+
+        add_engine_unittest(soprano_text_cleaning_test tests/unittests/test_soprano_text_cleaning.cpp)
+        target_sources(soprano_text_cleaning_test PRIVATE
+            src/community_models/soprano_tts/text_normalizer.cpp
+            src/community_models/soprano_tts/tokenizer_text.cpp)
+        target_include_directories(soprano_text_cleaning_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(
+            NAME soprano_text_cleaning_test
+            COMMAND soprano_text_cleaning_test
         )
 
         add_engine_unittest(fun_asr_nano_assets_test tests/unittests/test_fun_asr_nano_assets.cpp)

@@ -1,5 +1,6 @@
 #include "engine/community_models/soprano_tts/tokenizer_text.h"
 
+#include "engine/community_models/soprano_tts/text_normalizer.h"
 #include "engine/framework/io/json.h"
 
 #include <cctype>
@@ -85,7 +86,7 @@ SopranoTextTokenizer::SopranoTextTokenizer(const std::filesystem::path & path) {
     bos_id_ = eos_id_;
 }
 std::vector<int32_t> SopranoTextTokenizer::encode_text(const std::string & raw) const {
-    const std::string text = scalarclean_soprano_text(raw);
+    const std::string text = clean_soprano_text(raw);
     std::vector<int32_t> tokens;
     const auto pieces = pre_tokenize(text);
     for (const auto & piece : pieces) {
@@ -164,23 +165,6 @@ std::string SopranoTextTokenizer::decode_ids(const std::vector<int32_t> & ids) c
             }
         } else {
             out += token;
-        }
-    }
-    return out;
-}
-
-std::string scalarclean_soprano_text(const std::string & text) {
-    std::string out;
-    bool prev_space = false;
-    for (const char ch : text) {
-        if (std::isspace(static_cast<unsigned char>(ch))) {
-            if (!prev_space && !out.empty()) {
-                out.push_back(' ');
-            }
-            prev_space = true;
-        } else {
-            out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-            prev_space = false;
         }
     }
     return out;
