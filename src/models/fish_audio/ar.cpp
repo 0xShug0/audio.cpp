@@ -72,11 +72,6 @@ struct SampleCandidate {
     float probability = 0.0F;
 };
 
-struct SampleDistribution {
-    size_t source_size = 0;
-    std::vector<SampleCandidate> candidates;
-};
-
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
         if (ctx != nullptr) {
@@ -266,36 +261,46 @@ void copy_tensor_row_to_f32(const assets::TensorData & table, int64_t row, int64
     }
 }
 
-std::vector<float> lookup_row(const assets::TensorData & table, int64_t row, int64_t width) {
-    std::vector<float> out(static_cast<size_t>(width), 0.0F);
-    copy_tensor_row_to_f32(table, row, width, out.data());
-    return out;
-}
-
-void add_row(const assets::TensorData & table, int64_t row, int64_t width, std::vector<float> & out) {
-    std::vector<float> tmp(static_cast<size_t>(width), 0.0F);
-    copy_tensor_row_to_f32(table, row, width, tmp.data());
+void add_row(
+    const assets::TensorData & table,
+    int64_t row,
+    int64_t width,
+    std::vector<float> & out,
+    std::vector<float> & scratch) {
+    scratch.assign(static_cast<size_t>(width), 0.0F);
+    copy_tensor_row_to_f32(table, row, width, scratch.data());
     for (int64_t i = 0; i < width; ++i) {
-        out[static_cast<size_t>(i)] += tmp[static_cast<size_t>(i)];
+        out[static_cast<size_t>(i)] += scratch[static_cast<size_t>(i)];
     }
 }
+
+// Reused across the decode loop so a frame costs no vocabulary- or hidden-sized
+// allocations at all.
+struct SlowEmbeddingScratch {
+    std::vector<float> row;
+    std::vector<float> accumulator;
+};
 
 bool is_semantic_token(const FishAudioConfig & config, int32_t token) {
     return token >= config.semantic_start_token_id && token <= config.semantic_end_token_id;
 }
 
-std::vector<float> build_slow_embeddings(
+void build_slow_embeddings_into(
     const FishAudioConfig & config,
     const FishARWeights & weights,
     const int32_t * matrix,
-    int64_t steps) {
+    int64_t steps,
+    SlowEmbeddingScratch & scratch,
+    std::vector<float> & out) {
     const int64_t rows = config.fast.num_codebooks + 1;
     const int64_t hidden = config.text.dim;
-    std::vector<float> out(static_cast<size_t>(steps * hidden), 0.0F);
+    out.assign(static_cast<size_t>(steps * hidden), 0.0F);
+    auto & row = scratch.row;
     const float semantic_scale = 1.0F / std::sqrt(static_cast<float>(rows));
     for (int64_t step = 0; step < steps; ++step) {
         const int32_t token = matrix[step];
-        auto row = lookup_row(weights.text_embedding_host, token, hidden);
+        row.assign(static_cast<size_t>(hidden), 0.0F);
+        copy_tensor_row_to_f32(weights.text_embedding_host, token, hidden, row.data());
         if (is_semantic_token(config, token)) {
             for (int64_t codebook = 0; codebook < config.fast.num_codebooks; ++codebook) {
                 const int32_t code = matrix[(codebook + 1) * steps + step];
@@ -303,7 +308,8 @@ std::vector<float> build_slow_embeddings(
                     weights.codebook_embedding_host,
                     codebook * config.fast.vocab_size + code,
                     hidden,
-                    row);
+                    row,
+                    scratch.accumulator);
             }
             for (float & value : row) {
                 value *= semantic_scale;
@@ -311,24 +317,38 @@ std::vector<float> build_slow_embeddings(
         }
         std::copy(row.begin(), row.end(), out.begin() + static_cast<std::ptrdiff_t>(step * hidden));
     }
+}
+
+std::vector<float> build_slow_embeddings(
+    const FishAudioConfig & config,
+    const FishARWeights & weights,
+    const int32_t * matrix,
+    int64_t steps) {
+    SlowEmbeddingScratch scratch;
+    std::vector<float> out;
+    build_slow_embeddings_into(config, weights, matrix, steps, scratch, out);
     return out;
 }
 
-std::vector<float> build_slow_embedding_for_frame(
+void build_slow_embedding_for_frame_into(
     const FishAudioConfig & config,
     const FishARWeights & weights,
-    const std::vector<int32_t> & frame) {
+    const std::vector<int32_t> & frame,
+    SlowEmbeddingScratch & scratch,
+    std::vector<float> & out) {
     if (static_cast<int64_t>(frame.size()) != config.fast.num_codebooks + 1) {
         throw std::runtime_error("Fish Audio frame size mismatch");
     }
-    return build_slow_embeddings(config, weights, frame.data(), 1);
+    build_slow_embeddings_into(config, weights, frame.data(), 1, scratch, out);
 }
 
-std::vector<float> build_fast_embedding(
+void build_fast_embedding_into(
     const FishAudioConfig & config,
     const FishARWeights & weights,
-    int32_t code) {
-    return lookup_row(weights.fast_embedding_host, code, config.fast.dim);
+    int32_t code,
+    std::vector<float> & out) {
+    out.assign(static_cast<size_t>(config.fast.dim), 0.0F);
+    copy_tensor_row_to_f32(weights.fast_embedding_host, code, config.fast.dim, out.data());
 }
 
 FishLayerWeights load_layer(
@@ -463,17 +483,31 @@ struct SampleState {
     uint64_t call_index = 0;
     std::mt19937 rng;
     std::vector<int32_t> previous_main;
+    // Vocabulary-sized scratch reused across the whole generation. `sample_from_logits`
+    // runs twice per frame plus once per codebook, and the slow vocabulary is 155 776
+    // entries, so allocating these per call dominated the per-frame host cost.
+    std::vector<float> biased;
+    std::vector<int32_t> order;
+    std::vector<SampleCandidate> kept;
+    std::vector<double> weights;
 };
 
-SampleDistribution logits_to_distribution(
+// Reference parity note: this deliberately evaluates the nucleus on the *raw* logits and
+// applies the temperature afterwards, matching fish-speech's `logits_to_probs` (including
+// its "keep at least one option" rule and its max(temperature, 1e-5) floor). The shared
+// engine::sampling::HfSampler orders these the other way round; do not align them without
+// re-checking Fish Audio reference output. See docs/reviews/06 F6.8.
+void logits_to_distribution(
     const std::vector<float> & logits,
     float temperature,
     float top_p,
-    int top_k) {
+    int top_k,
+    std::vector<int32_t> & order,
+    std::vector<SampleCandidate> & kept) {
     if (logits.empty()) {
         throw std::runtime_error("Fish Audio sampling requires non-empty logits");
     }
-    std::vector<int32_t> order;
+    order.clear();
     order.reserve(logits.size());
     float max_logit = -std::numeric_limits<float>::infinity();
     for (size_t i = 0; i < logits.size(); ++i) {
@@ -502,7 +536,7 @@ SampleDistribution logits_to_distribution(
         std::sort(order.begin(), order.end(), by_logit_desc);
     }
     double cumulative = 0.0;
-    std::vector<SampleCandidate> kept;
+    kept.clear();
     kept.reserve(candidate_count);
     for (size_t i = 0; i < order.size(); ++i) {
         const int32_t index = order[i];
@@ -531,7 +565,6 @@ SampleDistribution logits_to_distribution(
     for (auto & candidate : kept) {
         candidate.probability = static_cast<float>(static_cast<double>(candidate.probability) / filtered_denom);
     }
-    return {logits.size(), std::move(kept)};
 }
 
 int32_t sample_from_logits(
@@ -541,26 +574,26 @@ int32_t sample_from_logits(
     int top_k,
     SampleState & state,
     const sampling::TorchCudaSamplingPolicy & policy) {
-    const auto distribution = logits_to_distribution(logits, temperature, top_p, top_k);
+    logits_to_distribution(logits, temperature, top_p, top_k, state.order, state.kept);
     const uint64_t call_index = state.call_index++;
     if (!policy.cuda_fast_path) {
-        std::vector<double> weights;
-        weights.reserve(distribution.candidates.size());
-        for (const auto & candidate : distribution.candidates) {
-            weights.push_back(static_cast<double>(std::max(candidate.probability, 0.0F)));
+        state.weights.clear();
+        state.weights.reserve(state.kept.size());
+        for (const auto & candidate : state.kept) {
+            state.weights.push_back(static_cast<double>(std::max(candidate.probability, 0.0F)));
         }
-        std::discrete_distribution<size_t> sampler(weights.begin(), weights.end());
-        return distribution.candidates[sampler(state.rng)].index;
+        std::discrete_distribution<size_t> sampler(state.weights.begin(), state.weights.end());
+        return state.kept[sampler(state.rng)].index;
     }
     int32_t best = 0;
     double best_score = -std::numeric_limits<double>::infinity();
-    for (const auto & candidate : distribution.candidates) {
+    for (const auto & candidate : state.kept) {
         if (!(candidate.probability > 0.0F)) {
             continue;
         }
         const float exponential = sampling::torch_cuda_tensor_iterator_exponential_element(
             state.seed,
-            static_cast<uint64_t>(distribution.source_size),
+            static_cast<uint64_t>(logits.size()),
             static_cast<uint64_t>(candidate.index),
             call_index,
             policy.multiprocessor_count,
@@ -577,11 +610,12 @@ int32_t sample_from_logits(
     return best;
 }
 
-std::vector<float> apply_semantic_bias(
+void apply_semantic_bias_into(
     const FishAudioConfig & config,
     int32_t im_end_id,
-    const std::vector<float> & logits) {
-    std::vector<float> out(logits.size(), -std::numeric_limits<float>::infinity());
+    const std::vector<float> & logits,
+    std::vector<float> & out) {
+    out.assign(logits.size(), -std::numeric_limits<float>::infinity());
     const int64_t begin = std::max<int64_t>(0, config.semantic_start_token_id);
     const int64_t end = std::min<int64_t>(static_cast<int64_t>(logits.size()) - 1, config.semantic_end_token_id);
     for (int64_t i = begin; i <= end; ++i) {
@@ -590,7 +624,6 @@ std::vector<float> apply_semantic_bias(
     if (im_end_id >= 0 && static_cast<size_t>(im_end_id) < logits.size()) {
         out[static_cast<size_t>(im_end_id)] = logits[static_cast<size_t>(im_end_id)];
     }
-    return out;
 }
 
 core::TensorValue make_fish_causal_mask(
@@ -862,11 +895,20 @@ public:
         ++profile.generated_frames;
         step_graph_->finish_prefill(prompt.steps);
         bool ended_by_im_end = false;
+        // Hoisted out of the loop: every buffer below is vocabulary- or hidden-sized and
+        // was previously reallocated on every generated frame.
+        std::vector<float> step_input;
+        SlowForwardOutput step_out;
         for (int64_t step = 1; step < max_new_tokens; ++step) {
             timing_start = Clock::now();
-            const auto input = build_slow_embedding_for_frame(assets.config, weights, frame);
+            build_slow_embedding_for_frame_into(
+                assets.config,
+                weights,
+                frame,
+                slow_embedding_scratch_,
+                step_input);
             profile.slow_embedding_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
-            auto step_out = step_graph_->run(input, profile);
+            step_graph_->run_into(step_input, step_out, profile);
             frame = sample_frame(step_out.logits, step_out.hidden, options, sample, true, profile);
             if (frame.front() == im_end_id()) {
                 ended_by_im_end = true;
@@ -1164,6 +1206,15 @@ private:
         }
 
         SlowForwardOutput run(const std::vector<float> & embedding, FishARProfile & profile) {
+            SlowForwardOutput out;
+            run_into(embedding, out, profile);
+            return out;
+        }
+
+        // Hot path: writes into a caller-owned buffer so the 155 776-float logits row and
+        // the hidden row are allocated once per generation instead of once per frame.
+        // Same pattern as HiggsARDecodeGraph::run_step_into.
+        void run_into(const std::vector<float> & embedding, SlowForwardOutput & out, FishARProfile & profile) {
             const auto & config = runtime_->assets().config.text;
             if (static_cast<int64_t>(embedding.size()) != config.dim) {
                 throw std::runtime_error("Fish Audio step embedding size mismatch");
@@ -1197,14 +1248,12 @@ private:
                 throw std::runtime_error("Fish Audio AR step graph compute failed");
             }
             cache_.advance_after_direct_append(1);
-            SlowForwardOutput out;
             out.logits.resize(static_cast<size_t>(config.vocab_size));
             out.hidden.resize(static_cast<size_t>(config.dim));
             timing_start = Clock::now();
             ggml_backend_tensor_get(logits_, out.logits.data(), 0, out.logits.size() * sizeof(float));
             ggml_backend_tensor_get(hidden_, out.hidden.data(), 0, out.hidden.size() * sizeof(float));
             profile.step_output_read_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
-            return out;
         }
 
     private:
@@ -1338,6 +1387,16 @@ private:
         }
 
         std::vector<float> run(const std::vector<float> & input, int64_t position, FishARProfile & profile) {
+            std::vector<float> logits;
+            run_into(input, position, logits, profile);
+            return logits;
+        }
+
+        void run_into(
+            const std::vector<float> & input,
+            int64_t position,
+            std::vector<float> & logits,
+            FishARProfile & profile) {
             const auto & config = runtime_->assets().config.fast;
             if (static_cast<int64_t>(input.size()) != config.dim) {
                 throw std::runtime_error("Fish Audio fast AR input size mismatch");
@@ -1371,11 +1430,10 @@ private:
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("Fish Audio fast AR graph compute failed");
             }
-            std::vector<float> logits(static_cast<size_t>(config.vocab_size), 0.0F);
+            logits.assign(static_cast<size_t>(config.vocab_size), 0.0F);
             timing_start = Clock::now();
             ggml_backend_tensor_get(logits_, logits.data(), 0, logits.size() * sizeof(float));
             profile.fast_output_read_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
-            return logits;
         }
 
     private:
@@ -1441,7 +1499,8 @@ private:
         const auto & config = runtime_->assets().config;
         const auto & weights = runtime_->weights();
         auto timing_start = Clock::now();
-        const auto biased = apply_semantic_bias(config, im_end_id(), slow_logits);
+        apply_semantic_bias_into(config, im_end_id(), slow_logits, sample.biased);
+        const auto & biased = sample.biased;
         profile.sample_bias_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         timing_start = Clock::now();
         int32_t main_token = sample_from_logits(
@@ -1473,7 +1532,8 @@ private:
         if (!is_semantic_token(config, main_token)) {
             return frame;
         }
-        const auto fast0_logits = fast_graph_->run(slow_hidden, 0, profile);
+        // Position 0 only primes the fast decoder's KV cache; its logits are unused.
+        fast_graph_->run_into(slow_hidden, 0, fast_logits_scratch_, profile);
         int32_t code = std::clamp<int32_t>(
             main_token - static_cast<int32_t>(config.semantic_start_token_id),
             0,
@@ -1481,12 +1541,12 @@ private:
         frame[1] = code;
         for (int64_t codebook = 1; codebook < config.fast.num_codebooks; ++codebook) {
             timing_start = Clock::now();
-            const auto embedding = build_fast_embedding(config, weights, code);
+            build_fast_embedding_into(config, weights, code, fast_embedding_scratch_);
             profile.fast_embedding_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
-            const auto logits = fast_graph_->run(embedding, codebook, profile);
+            fast_graph_->run_into(fast_embedding_scratch_, codebook, fast_logits_scratch_, profile);
             timing_start = Clock::now();
             code = sample_from_logits(
-                logits,
+                fast_logits_scratch_,
                 options.temperature,
                 options.top_p,
                 options.top_k,
@@ -1530,6 +1590,9 @@ private:
     std::unique_ptr<PrefillGraph> prefill_graph_;
     std::unique_ptr<StepGraph> step_graph_;
     std::unique_ptr<FastGraph> fast_graph_;
+    SlowEmbeddingScratch slow_embedding_scratch_;
+    std::vector<float> fast_embedding_scratch_;
+    std::vector<float> fast_logits_scratch_;
 };
 
 FishAudioARRuntime::FishAudioARRuntime(

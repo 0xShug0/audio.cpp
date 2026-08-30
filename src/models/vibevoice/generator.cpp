@@ -418,12 +418,29 @@ struct VibeVoiceSamplingCandidate {
     float score = 0.0F;
 };
 
+// The four control tokens are the only vocabulary entries VibeVoice ever reads out of the
+// decoder logits, so the decoder gathers exactly these on-device instead of copying the
+// whole 152 064-entry row to the host on every token.
+std::vector<int32_t> vibevoice_constrained_token_ids(const VibeVoiceTextTokenizer & text_tokenizer) {
+    return {
+        text_tokenizer.speech_start_id(),
+        text_tokenizer.speech_end_id(),
+        text_tokenizer.speech_diffusion_id(),
+        text_tokenizer.eos_id(),
+    };
+}
+
 int32_t select_vibevoice_constrained_token(
     const VibeVoiceDecoderLogits & logits,
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceGenerationOptions & options,
     std::mt19937 & rng) {
-    if (logits.vocab_size <= 0 || static_cast<int64_t>(logits.values.size()) != logits.vocab_size) {
+    if (logits.vocab_size <= 0 || logits.values.empty()) {
+        throw std::runtime_error("VibeVoice constrained token selection received invalid logits");
+    }
+    if (logits.token_ids.empty()
+            ? static_cast<int64_t>(logits.values.size()) != logits.vocab_size
+            : logits.token_ids.size() != logits.values.size()) {
         throw std::runtime_error("VibeVoice constrained token selection received invalid logits");
     }
     const int32_t candidates[] = {
@@ -438,7 +455,7 @@ int32_t select_vibevoice_constrained_token(
         if (token < 0 || token >= logits.vocab_size) {
             throw std::runtime_error("VibeVoice constrained token candidate is outside logits vocabulary");
         }
-        const float score = logits.values[static_cast<size_t>(token)];
+        const float score = vibevoice_logit_for_token(logits, token);
         if (score > best_score) {
             best_score = score;
             best_token = token;
@@ -465,7 +482,7 @@ int32_t select_vibevoice_constrained_token(
     std::vector<VibeVoiceSamplingCandidate> scores;
     scores.reserve(sizeof(candidates) / sizeof(candidates[0]));
     for (const int32_t token : candidates) {
-        scores.push_back({token, logits.values[static_cast<size_t>(token)] / options.temperature});
+        scores.push_back({token, vibevoice_logit_for_token(logits, token) / options.temperature});
     }
     if (options.top_k > 0 && static_cast<size_t>(options.top_k) < scores.size()) {
         const auto top_end = scores.begin() + static_cast<std::ptrdiff_t>(options.top_k);
@@ -532,6 +549,7 @@ VibeVoiceResult generate_vibevoice(
     VibeVoiceDecoderCachedState & positive_cache,
     VibeVoiceDecoderCachedState & negative_cache) {
     const auto & config = decoder.assets().config.decoder;
+    decoder.set_logits_readback_token_ids(vibevoice_constrained_token_ids(text_tokenizer));
     const auto prompt_noise_values = load_noise_file(request.generation.prompt_noise_file, "prompt");
     auto prompt = prepare_vibevoice_prompt(
         request,
@@ -673,6 +691,7 @@ std::vector<VibeVoiceResult> generate_vibevoice_batch(
     }
     std::cerr << "VibeVoice multi-batch generation is experimental; requested batch size "
               << requests.size() << ".\n";
+    decoder.set_logits_readback_token_ids(vibevoice_constrained_token_ids(text_tokenizer));
 
     const auto & first_options = requests.front().generation;
     for (const auto & request : requests) {

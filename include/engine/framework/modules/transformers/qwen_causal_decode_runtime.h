@@ -109,4 +109,20 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// Device-side gather of a fixed token subset out of a full-vocabulary logits row, so the
+// host readback carries only the entries a constrained sampler actually reads instead of
+// the whole vocabulary. `logits` must carry the vocabulary on its last dimension;
+// `token_ids` is a 1-D I32 tensor holding `compact_size` vocabulary indices. The result
+// has the shape of `logits` with its last dimension replaced by `compact_size`, ordered to
+// match `token_ids`, so entry `i` of a readback row is the logit of `token_ids[i]`.
+//
+// This is what `QwenCausalDecodeRuntimeConfig::logits_readback_token_ids` drives; it is
+// exposed so models with their own decode graphs (VibeVoice) can reuse one implementation.
+core::TensorValue build_compact_logits_gather(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & logits,
+    const core::TensorValue & token_ids,
+    int64_t logits_size,
+    int64_t compact_size);
+
 }  // namespace engine::modules

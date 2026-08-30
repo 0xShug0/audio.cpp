@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -64,10 +67,6 @@ public:
         }
     }
 
-    void discard_exponential_draws(uint64_t count) {
-        discard(count * 2ULL);
-    }
-
 private:
     static constexpr int kStateN = 624;
     static constexpr int kStateM = 397;
@@ -109,14 +108,101 @@ float torch_cpu_exponential_float(TorchCpuMt19937 & rng) {
     return static_cast<float>(-std::log1p(-uniform));
 }
 
+struct TorchCpuRngCacheEntry {
+    bool valid = false;
+    uint64_t seed = 0;
+    uint64_t draws_per_call = 0;
+    uint64_t next_call_index = 0;
+    uint64_t last_used = 0;
+    TorchCpuMt19937 rng{0};
+};
+
+// Keeps a small set of Torch-CPU MT19937 generators alive across sampling calls.
+//
+// The stream a call must observe is defined by (seed, call_index, draws_per_call): a
+// generator freshly seeded with `seed` and fast-forwarded by `call_index *
+// draws_per_call` words. Because every call consumes exactly `draws_per_call` words
+// unconditionally, a generator left in place after call `n` is already positioned
+// exactly where call `n + 1` must start. A sequential walk therefore reproduces the
+// identical stream at O(vocab) per token instead of O(call_index * vocab), and a
+// random-access call simply misses the cache and rebuilds by fast-forwarding, which is
+// what the code did unconditionally before. The sampled token is bit-identical either
+// way; this is a cost change only.
+class TorchCpuRngCache {
+public:
+    TorchCpuMt19937 & acquire(uint64_t seed, uint64_t call_index, uint64_t draws_per_call) {
+        ++clock_;
+        for (auto & entry : entries_) {
+            if (entry.valid && entry.seed == seed && entry.draws_per_call == draws_per_call &&
+                entry.next_call_index == call_index) {
+                entry.last_used = clock_;
+                active_ = &entry;
+                return entry.rng;
+            }
+        }
+        TorchCpuRngCacheEntry * victim = &entries_.front();
+        for (auto & entry : entries_) {
+            if (!entry.valid) {
+                victim = &entry;
+                break;
+            }
+            if (entry.last_used < victim->last_used) {
+                victim = &entry;
+            }
+        }
+        victim->rng = TorchCpuMt19937(seed);
+        victim->rng.discard(call_index * draws_per_call);
+        victim->valid = true;
+        victim->seed = seed;
+        victim->draws_per_call = draws_per_call;
+        victim->next_call_index = call_index;
+        victim->last_used = clock_;
+        active_ = victim;
+        return victim->rng;
+    }
+
+    void commit() noexcept {
+        if (active_ != nullptr) {
+            ++active_->next_call_index;
+            active_ = nullptr;
+        }
+    }
+
+private:
+    static constexpr size_t kEntries = 4;
+
+    std::array<TorchCpuRngCacheEntry, kEntries> entries_{};
+    TorchCpuRngCacheEntry * active_ = nullptr;
+    uint64_t clock_ = 0;
+};
+
+bool torch_cpu_rng_cache_enabled_from_env() {
+    const char * value = std::getenv("ENGINE_TORCH_CPU_RNG_CACHE");
+    if (value == nullptr || value[0] == '\0') {
+        return true;
+    }
+    std::string normalized(value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return normalized != "0" && normalized != "false" && normalized != "off" && normalized != "no";
+}
+
+bool torch_cpu_rng_cache_enabled() {
+    static const bool enabled = torch_cpu_rng_cache_enabled_from_env();
+    return enabled;
+}
+
+TorchCpuRngCache & torch_cpu_rng_cache() {
+    thread_local TorchCpuRngCache cache;
+    return cache;
+}
+
 int32_t sample_torch_cpu_multinomial(
     const std::vector<float> & scores,
     uint64_t seed,
     uint64_t call_index,
     std::string_view context) {
-    TorchCpuMt19937 rng(seed);
-    rng.discard_exponential_draws(call_index * static_cast<uint64_t>(scores.size()));
-
     float max_score = -std::numeric_limits<float>::infinity();
     for (const float score : scores) {
         if (std::isfinite(score)) {
@@ -126,6 +212,19 @@ int32_t sample_torch_cpu_multinomial(
     if (!std::isfinite(max_score)) {
         throw std::runtime_error(context_message(context, "sampler has no finite logits"));
     }
+
+    // Every call consumes exactly two MT19937 words per vocabulary entry, whether or not
+    // the entry is finite, so the stream position after a call is fully determined.
+    const uint64_t draws_per_call = static_cast<uint64_t>(scores.size()) * 2ULL;
+    const bool cached = torch_cpu_rng_cache_enabled();
+    TorchCpuRngCache & cache = torch_cpu_rng_cache();
+    std::optional<TorchCpuMt19937> rebuilt;
+    if (!cached) {
+        rebuilt.emplace(seed);
+        rebuilt->discard(call_index * draws_per_call);
+    }
+    TorchCpuMt19937 & rng = cached ? cache.acquire(seed, call_index, draws_per_call) : *rebuilt;
+
     double best_rank = -std::numeric_limits<double>::infinity();
     int32_t best_token = -1;
     for (size_t token = 0; token < scores.size(); ++token) {
@@ -139,6 +238,9 @@ int32_t sample_torch_cpu_multinomial(
             best_rank = rank;
             best_token = static_cast<int32_t>(token);
         }
+    }
+    if (cached) {
+        cache.commit();
     }
     if (best_token < 0) {
         throw std::runtime_error(context_message(context, "CPU Torch sampler failed to select a token"));

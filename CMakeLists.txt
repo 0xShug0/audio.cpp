@@ -2032,6 +2032,27 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(compact_logits_readback_test tests/unittests/test_compact_logits_readback.cpp)
+
+    add_test(
+        NAME compact_logits_readback_test
+        COMMAND compact_logits_readback_test
+    )
+
+    add_engine_unittest(hf_sampler_determinism_test tests/unittests/test_hf_sampler_determinism.cpp)
+
+    add_test(
+        NAME hf_sampler_determinism_test
+        COMMAND hf_sampler_determinism_test
+    )
+
+    add_engine_unittest(hf_sampler_ordering_test tests/unittests/test_hf_sampler_ordering.cpp)
+
+    add_test(
+        NAME hf_sampler_ordering_test
+        COMMAND hf_sampler_ordering_test
+    )
+
     add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
 
     add_test(

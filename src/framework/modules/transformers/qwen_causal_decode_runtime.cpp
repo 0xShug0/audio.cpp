@@ -17,6 +17,48 @@
 #include <utility>
 
 namespace engine::modules {
+
+core::TensorValue build_compact_logits_gather(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & logits,
+    const core::TensorValue & token_ids,
+    int64_t logits_size,
+    int64_t compact_size) {
+    if (logits.shape.last_dim() != logits_size) {
+        throw std::runtime_error("compact logits gather requires the vocabulary on the last dimension");
+    }
+    if (compact_size <= 0) {
+        throw std::runtime_error("compact logits gather requires a non-empty token subset");
+    }
+
+    const int64_t rows = logits.shape.prefix_elements();
+    const auto flat = core::reshape_tensor(
+        ctx,
+        logits,
+        core::TensorShape::from_dims({rows, logits_size}));
+    const auto transposed = core::wrap_tensor(
+        ggml_transpose(ctx.ggml, flat.tensor),
+        core::TensorShape::from_dims({logits_size, rows}),
+        flat.type);
+    const auto source = core::wrap_tensor(
+        ggml_cont(ctx.ggml, transposed.tensor),
+        transposed.shape,
+        transposed.type);
+    const auto selected = core::wrap_tensor(
+        ggml_get_rows(ctx.ggml, source.tensor, token_ids.tensor),
+        core::TensorShape::from_dims({compact_size, rows}),
+        GGML_TYPE_F32);
+    const auto selected_t = core::wrap_tensor(
+        ggml_transpose(ctx.ggml, selected.tensor),
+        core::TensorShape::from_dims({rows, compact_size}),
+        GGML_TYPE_F32);
+    const auto contiguous = core::wrap_tensor(
+        ggml_cont(ctx.ggml, selected_t.tensor),
+        selected_t.shape,
+        selected_t.type);
+    return core::reshape_tensor(ctx, contiguous, logits.shape.with_last_dim(compact_size));
+}
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -252,37 +294,12 @@ core::TensorValue compact_logits_readback(
     const QwenCausalDecodeRuntimeConfig & config,
     const core::TensorValue & logits,
     const core::TensorValue & token_ids) {
-    if (logits.shape.last_dim() != config.decoder.logits_size) {
-        throw std::runtime_error("QwenCausalDecodeRuntime compact logits requires logits on the last dimension");
-    }
-
-    const int64_t rows = logits.shape.prefix_elements();
-    const int64_t compact_size = static_cast<int64_t>(config.logits_readback_token_ids.size());
-    const auto flat = core::reshape_tensor(
+    return build_compact_logits_gather(
         ctx,
         logits,
-        core::TensorShape::from_dims({rows, config.decoder.logits_size}));
-    const auto transposed = core::wrap_tensor(
-        ggml_transpose(ctx.ggml, flat.tensor),
-        core::TensorShape::from_dims({config.decoder.logits_size, rows}),
-        flat.type);
-    const auto source = core::wrap_tensor(
-        ggml_cont(ctx.ggml, transposed.tensor),
-        transposed.shape,
-        transposed.type);
-    const auto selected = core::wrap_tensor(
-        ggml_get_rows(ctx.ggml, source.tensor, token_ids.tensor),
-        core::TensorShape::from_dims({compact_size, rows}),
-        GGML_TYPE_F32);
-    const auto selected_t = core::wrap_tensor(
-        ggml_transpose(ctx.ggml, selected.tensor),
-        core::TensorShape::from_dims({rows, compact_size}),
-        GGML_TYPE_F32);
-    const auto contiguous = core::wrap_tensor(
-        ggml_cont(ctx.ggml, selected_t.tensor),
-        selected_t.shape,
-        selected_t.type);
-    return core::reshape_tensor(ctx, contiguous, logits.shape.with_last_dim(compact_size));
+        token_ids,
+        config.decoder.logits_size,
+        static_cast<int64_t>(config.logits_readback_token_ids.size()));
 }
 
 ggml_tensor * make_logits_readback_token_ids(

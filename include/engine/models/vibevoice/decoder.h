@@ -11,6 +11,7 @@
 #include <ggml-backend.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -50,10 +51,17 @@ private:
     bool graph_has_state_ = false;
 };
 
+// `values` is the full vocabulary row when `token_ids` is empty, indexed by token id.
+// When `token_ids` is populated the decoder gathered only those tokens on-device and
+// `values[i]` is the logit of `token_ids[i]`; `vocab_size` still reports the true
+// vocabulary size. Use vibevoice_logit_for_token() rather than indexing directly.
 struct VibeVoiceDecoderLogits {
     std::vector<float> values;
+    std::vector<int32_t> token_ids;
     int64_t vocab_size = 0;
 };
+
+float vibevoice_logit_for_token(const VibeVoiceDecoderLogits & logits, int32_t token);
 
 struct VibeVoiceTokenEmbeddings {
     std::vector<float> values;
@@ -126,6 +134,13 @@ public:
     ggml_type cache_type() const noexcept;
     int threads() const noexcept;
 
+    // Opt in to a device-side gather of a fixed token subset before the logits readback.
+    // Default (empty) keeps the full-vocabulary readback every existing caller expects.
+    // Changing the set invalidates the cached logits graphs, so call this before the
+    // first decode of a generation, not inside the token loop.
+    void set_logits_readback_token_ids(std::vector<int32_t> token_ids) const;
+    const std::vector<int32_t> & logits_readback_token_ids() const noexcept;
+
     VibeVoiceTokenEmbeddings embed_tokens(const std::vector<int32_t> & input_ids) const;
     VibeVoiceDecoderPrefillOutput prefill_embeddings(const std::vector<float> & embeddings, int64_t steps) const;
     std::vector<VibeVoiceDecoderPrefillOutput> prefill_embeddings_batch(
@@ -153,6 +168,7 @@ private:
     mutable std::unique_ptr<VibeVoiceDecoderEmbeddingGraph> embedding_graph_;
     mutable std::unique_ptr<VibeVoiceDecoderPrefillGraph> prefill_graph_;
     mutable std::vector<std::unique_ptr<VibeVoiceDecoderCachedBatchStepGraph>> cached_batch_graphs_;
+    mutable std::vector<int32_t> logits_readback_token_ids_;
     ggml_backend_t backend_ = nullptr;
     ggml_type cache_type_ = GGML_TYPE_F16;
     int threads_ = 1;

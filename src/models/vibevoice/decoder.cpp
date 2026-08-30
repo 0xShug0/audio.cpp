@@ -10,6 +10,7 @@
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/kv_cache.h"
 
@@ -43,6 +44,42 @@ struct GgmlContextDeleter {
         }
     }
 };
+
+// Rewrites `logits` into a compact device-side gather when `token_ids` is non-empty, so
+// the host readback carries only the control tokens VibeVoice actually reads instead of
+// the whole 152 064-entry vocabulary row. The gather itself is the framework's
+// build_compact_logits_gather(), the same mechanism MiniMax Music 3 drives through
+// QwenCausalDecodeRuntimeConfig::logits_readback_token_ids. The index input tensor is
+// allocated in `ctx` and returned through `ids_tensor`.
+core::TensorValue apply_logits_readback_subset(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & logits,
+    const std::vector<int32_t> & token_ids,
+    int64_t vocab_size,
+    ggml_tensor *& ids_tensor) {
+    ids_tensor = nullptr;
+    if (token_ids.empty()) {
+        return logits;
+    }
+    const int64_t compact_size = static_cast<int64_t>(token_ids.size());
+    ids_tensor = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, compact_size);
+    const auto ids = core::wrap_tensor(
+        ids_tensor,
+        core::TensorShape::from_dims({compact_size}),
+        GGML_TYPE_I32);
+    return modules::build_compact_logits_gather(ctx, logits, ids, vocab_size, compact_size);
+}
+
+void upload_logits_readback_token_ids(ggml_tensor * tensor, const std::vector<int32_t> & token_ids) {
+    if (tensor == nullptr || token_ids.empty()) {
+        return;
+    }
+    ggml_backend_tensor_set(tensor, token_ids.data(), 0, token_ids.size() * sizeof(int32_t));
+}
+
+int64_t logits_row_size(const std::vector<int32_t> & token_ids, int64_t vocab_size) {
+    return token_ids.empty() ? vocab_size : static_cast<int64_t>(token_ids.size());
+}
 
 int64_t require_head_dim(const VibeVoiceDecoderConfig & config) {
     if (config.hidden_size <= 0 || config.intermediate_size <= 0) {
@@ -433,7 +470,8 @@ public:
         : runtime_(&runtime),
           batch_size_(batch_size),
           prompt_steps_(prompt_steps),
-          layerwise_(prompt_steps >= kLayerwisePrefillMinSteps) {
+          layerwise_(prompt_steps >= kLayerwisePrefillMinSteps),
+          readback_token_ids_(runtime.logits_readback_token_ids()) {
         if (batch_size_ <= 0) {
             throw std::runtime_error("VibeVoice decoder prefill graph requires positive batch size");
         }
@@ -491,6 +529,12 @@ public:
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
                           .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
+        logits = apply_logits_readback_subset(
+            ctx,
+            logits,
+            readback_token_ids_,
+            config.vocab_size,
+            readback_ids_tensor_);
         logits_output_ = logits.tensor;
         ggml_set_output(logits_output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
@@ -501,6 +545,7 @@ public:
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate VibeVoice decoder prefill graph");
         }
+        upload_logits_readback_token_ids(readback_ids_tensor_, readback_token_ids_);
 
         const auto positions = build_position_values(prompt_steps_);
         ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
@@ -516,7 +561,8 @@ public:
 
     bool matches(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t batch_size, int64_t prompt_steps) const {
         return runtime_ == &runtime && batch_size_ == batch_size && prompt_steps_ == prompt_steps &&
-            layerwise_ == (prompt_steps >= kLayerwisePrefillMinSteps);
+            layerwise_ == (prompt_steps >= kLayerwisePrefillMinSteps) &&
+            readback_token_ids_ == runtime.logits_readback_token_ids();
     }
 
     VibeVoiceDecoderPrefillOutput run(const std::vector<float> & embeddings) {
@@ -557,7 +603,8 @@ public:
             throw std::runtime_error("VibeVoice decoder prefill graph compute failed");
         }
 
-        const size_t logits_per_sample = static_cast<size_t>(config.vocab_size);
+        const size_t logits_per_sample =
+            static_cast<size_t>(logits_row_size(readback_token_ids_, config.vocab_size));
         const size_t hidden_per_sample = static_cast<size_t>(config.hidden_size);
         std::vector<float> logits(static_cast<size_t>(batch_size_) * logits_per_sample, 0.0F);
         std::vector<float> hidden(static_cast<size_t>(batch_size_) * hidden_per_sample, 0.0F);
@@ -568,6 +615,7 @@ public:
         for (int64_t batch = 0; batch < batch_size_; ++batch) {
             auto & sample = out[static_cast<size_t>(batch)];
             sample.result.logits.vocab_size = config.vocab_size;
+            sample.result.logits.token_ids = readback_token_ids_;
             sample.result.logits.values.assign(
                 logits.begin() + static_cast<std::ptrdiff_t>(batch * static_cast<int64_t>(logits_per_sample)),
                 logits.begin() + static_cast<std::ptrdiff_t>((batch + 1) * static_cast<int64_t>(logits_per_sample)));
@@ -730,6 +778,7 @@ private:
             size_t graph_arena_bytes)
             : runtime_(&runtime),
               batch_size_(batch_size),
+              readback_token_ids_(runtime.logits_readback_token_ids()),
               constants_(
                   runtime.backend(),
                   runtime.threads(),
@@ -754,6 +803,12 @@ private:
             auto logits = modules::LinearModule(
                               binding::linear_config(config.hidden_size, config.vocab_size, false))
                               .build(ctx, x, binding::linear_data(constants_, runtime_->weights().lm_head));
+            logits = apply_logits_readback_subset(
+                ctx,
+                logits,
+                readback_token_ids_,
+                config.vocab_size,
+                readback_ids_tensor_);
             logits_output_ = logits.tensor;
             graph_ = ggml_new_graph_custom(ctx_.get(), 8192, false);
             ggml_set_output(logits_output_);
@@ -764,6 +819,7 @@ private:
             if (buffer_ == nullptr) {
                 throw std::runtime_error("failed to allocate VibeVoice decoder final prefill graph");
             }
+            upload_logits_readback_token_ids(readback_ids_tensor_, readback_token_ids_);
         }
 
         ~FinalGraph() {
@@ -787,7 +843,8 @@ private:
                 throw std::runtime_error("VibeVoice decoder final prefill graph compute failed");
             }
 
-            const size_t logits_per_sample = static_cast<size_t>(config.vocab_size);
+            const size_t logits_per_sample =
+                static_cast<size_t>(logits_row_size(readback_token_ids_, config.vocab_size));
             const size_t hidden_per_sample = static_cast<size_t>(config.hidden_size);
             std::vector<float> logits(static_cast<size_t>(batch_size_) * logits_per_sample, 0.0F);
             std::vector<float> hidden(static_cast<size_t>(batch_size_) * hidden_per_sample, 0.0F);
@@ -798,6 +855,7 @@ private:
             for (int64_t batch = 0; batch < batch_size_; ++batch) {
                 auto & result = results[static_cast<size_t>(batch)];
                 result.logits.vocab_size = config.vocab_size;
+                result.logits.token_ids = readback_token_ids_;
                 result.logits.values.assign(
                     logits.begin() + static_cast<std::ptrdiff_t>(batch * static_cast<int64_t>(logits_per_sample)),
                     logits.begin() + static_cast<std::ptrdiff_t>((batch + 1) * static_cast<int64_t>(logits_per_sample)));
@@ -812,11 +870,13 @@ private:
     private:
         const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
         int64_t batch_size_ = 0;
+        std::vector<int32_t> readback_token_ids_;
         core::ConstantTensorCache constants_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
         ggml_tensor * input_ = nullptr;
         ggml_tensor * hidden_output_ = nullptr;
         ggml_tensor * logits_output_ = nullptr;
+        ggml_tensor * readback_ids_tensor_ = nullptr;
         ggml_cgraph * graph_ = nullptr;
         ggml_backend_buffer_t buffer_ = nullptr;
     };
@@ -882,6 +942,8 @@ private:
     int64_t batch_size_ = 0;
     int64_t prompt_steps_ = 0;
     bool layerwise_ = false;
+    std::vector<int32_t> readback_token_ids_;
+    ggml_tensor * readback_ids_tensor_ = nullptr;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * positions_ = nullptr;
@@ -913,7 +975,8 @@ public:
         int64_t cache_steps,
         size_t graph_arena_bytes)
         : runtime_(&runtime),
-          cache_steps_(cache_steps) {
+          cache_steps_(cache_steps),
+          readback_token_ids_(runtime.logits_readback_token_ids()) {
         if (cache_steps_ <= 0) {
             throw std::runtime_error("VibeVoice decoder cached step graph requires positive cache steps");
         }
@@ -1003,6 +1066,12 @@ public:
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
                           .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
+        logits = apply_logits_readback_subset(
+            ctx,
+            logits,
+            readback_token_ids_,
+            config.vocab_size,
+            readback_ids_tensor_);
         logits_output_ = logits.tensor;
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
@@ -1012,6 +1081,7 @@ public:
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate VibeVoice decoder cached step graph");
         }
+        upload_logits_readback_token_ids(readback_ids_tensor_, readback_token_ids_);
         attention_mask_buffer_.assign(static_cast<size_t>(cache_tensor_steps), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
 
@@ -1023,7 +1093,8 @@ public:
     }
 
     bool can_decode(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t required_capacity) const {
-        return runtime_ == &runtime && cache_steps_ >= required_capacity;
+        return runtime_ == &runtime && cache_steps_ >= required_capacity &&
+            readback_token_ids_ == runtime.logits_readback_token_ids();
     }
 
     int64_t current_end() const noexcept {
@@ -1079,7 +1150,8 @@ public:
 
         VibeVoiceDecoderResult out;
         out.logits.vocab_size = config.vocab_size;
-        out.logits.values.resize(static_cast<size_t>(config.vocab_size));
+        out.logits.token_ids = readback_token_ids_;
+        out.logits.values.resize(static_cast<size_t>(logits_row_size(readback_token_ids_, config.vocab_size)));
         out.last_hidden.dims = config.hidden_size;
         out.last_hidden.values.resize(static_cast<size_t>(config.hidden_size));
         ggml_backend_tensor_get(logits_output_, out.logits.values.data(), 0, out.logits.values.size() * sizeof(float));
@@ -1114,6 +1186,7 @@ private:
 
     const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
     int64_t cache_steps_ = 0;
+    std::vector<int32_t> readback_token_ids_;
     bool scratch_tail_ = false;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
@@ -1122,6 +1195,7 @@ private:
     ggml_tensor * attention_mask_ = nullptr;
     ggml_tensor * hidden_output_ = nullptr;
     ggml_tensor * logits_output_ = nullptr;
+    ggml_tensor * readback_ids_tensor_ = nullptr;
     std::vector<ggml_fp16_t> attention_mask_buffer_;
     runtime::TransformerKVCache cache_;
     std::vector<ggml_tensor *> key_sources_;
@@ -1141,7 +1215,8 @@ public:
         size_t graph_arena_bytes)
         : runtime_(&runtime),
           batch_size_(batch_size),
-          cache_steps_(cache_steps) {
+          cache_steps_(cache_steps),
+          readback_token_ids_(runtime.logits_readback_token_ids()) {
         if (batch_size_ <= 0 || cache_steps_ <= 0) {
             throw std::runtime_error("VibeVoice decoder cached batch graph requires positive dimensions");
         }
@@ -1199,6 +1274,12 @@ public:
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
                           .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
+        logits = apply_logits_readback_subset(
+            ctx,
+            logits,
+            readback_token_ids_,
+            config.vocab_size,
+            readback_ids_tensor_);
         logits_output_ = logits.tensor;
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
@@ -1208,6 +1289,7 @@ public:
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate VibeVoice decoder cached batch graph");
         }
+        upload_logits_readback_token_ids(readback_ids_tensor_, readback_token_ids_);
         attention_mask_buffer_.assign(
             static_cast<size_t>(batch_size_ * cache_steps_),
             ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
@@ -1225,7 +1307,8 @@ public:
         const std::vector<VibeVoiceDecoderCachedState *> & states,
         int64_t required_capacity) const {
         if (runtime_ != &runtime || cache_steps_ < required_capacity ||
-            static_cast<int64_t>(states.size()) != batch_size_ || states.size() != states_.size()) {
+            static_cast<int64_t>(states.size()) != batch_size_ || states.size() != states_.size() ||
+            readback_token_ids_ != runtime.logits_readback_token_ids()) {
             return false;
         }
         for (size_t i = 0; i < states.size(); ++i) {
@@ -1364,7 +1447,8 @@ public:
             throw std::runtime_error("VibeVoice decoder cached batch step graph compute failed");
         }
 
-        const size_t logits_per_sample = static_cast<size_t>(config.vocab_size);
+        const size_t logits_per_sample =
+            static_cast<size_t>(logits_row_size(readback_token_ids_, config.vocab_size));
         const size_t hidden_per_sample = static_cast<size_t>(config.hidden_size);
         std::vector<float> logits(static_cast<size_t>(batch_size_) * logits_per_sample, 0.0F);
         std::vector<float> hidden(static_cast<size_t>(batch_size_) * hidden_per_sample, 0.0F);
@@ -1378,6 +1462,7 @@ public:
         for (int64_t batch = 0; batch < batch_size_; ++batch) {
             auto & result = out[static_cast<size_t>(batch)];
             result.logits.vocab_size = config.vocab_size;
+            result.logits.token_ids = readback_token_ids_;
             result.logits.values.assign(
                 logits.begin() + static_cast<std::ptrdiff_t>(batch * static_cast<int64_t>(logits_per_sample)),
                 logits.begin() + static_cast<std::ptrdiff_t>((batch + 1) * static_cast<int64_t>(logits_per_sample)));
@@ -1440,6 +1525,7 @@ public:
     const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
     int64_t batch_size_ = 0;
     int64_t cache_steps_ = 0;
+    std::vector<int32_t> readback_token_ids_;
     int64_t step_elems_ = 0;
     int64_t valid_steps_ = 0;
     int64_t current_end_ = 0;
@@ -1450,6 +1536,7 @@ public:
     ggml_tensor * attention_mask_ = nullptr;
     ggml_tensor * hidden_output_ = nullptr;
     ggml_tensor * logits_output_ = nullptr;
+    ggml_tensor * readback_ids_tensor_ = nullptr;
     std::vector<ggml_fp16_t> attention_mask_buffer_;
     std::vector<core::TensorValue> cache_keys_;
     std::vector<core::TensorValue> cache_values_;
@@ -1536,6 +1623,48 @@ ggml_type VibeVoiceDecoderWeightsRuntime::cache_type() const noexcept {
 
 int VibeVoiceDecoderWeightsRuntime::threads() const noexcept {
     return threads_;
+}
+
+void VibeVoiceDecoderWeightsRuntime::set_logits_readback_token_ids(std::vector<int32_t> token_ids) const {
+    const int64_t vocab_size = assets_->config.decoder.vocab_size;
+    for (const int32_t token : token_ids) {
+        if (token < 0 || token >= vocab_size) {
+            throw std::runtime_error("VibeVoice compact logits token id is outside the decoder vocabulary");
+        }
+    }
+    if (token_ids == logits_readback_token_ids_) {
+        return;
+    }
+    logits_readback_token_ids_ = std::move(token_ids);
+    // The cached logits graphs were built against the previous subset. Drop the prompt
+    // graphs outright; the step graphs are keyed on the subset through can_decode() and
+    // matches(), so they rebuild (and export their KV state first) on next use.
+    prefill_graph_.reset();
+}
+
+const std::vector<int32_t> & VibeVoiceDecoderWeightsRuntime::logits_readback_token_ids() const noexcept {
+    return logits_readback_token_ids_;
+}
+
+float vibevoice_logit_for_token(const VibeVoiceDecoderLogits & logits, int32_t token) {
+    if (logits.vocab_size <= 0 || token < 0 || token >= logits.vocab_size) {
+        throw std::runtime_error("VibeVoice logit lookup token is outside the decoder vocabulary");
+    }
+    if (logits.token_ids.empty()) {
+        if (static_cast<int64_t>(logits.values.size()) != logits.vocab_size) {
+            throw std::runtime_error("VibeVoice logit lookup received a truncated logits row");
+        }
+        return logits.values[static_cast<size_t>(token)];
+    }
+    if (logits.token_ids.size() != logits.values.size()) {
+        throw std::runtime_error("VibeVoice compact logits row does not match its token id list");
+    }
+    for (size_t index = 0; index < logits.token_ids.size(); ++index) {
+        if (logits.token_ids[index] == token) {
+            return logits.values[index];
+        }
+    }
+    throw std::runtime_error("VibeVoice compact logits row does not contain the requested token");
 }
 
 VibeVoiceTokenEmbeddings VibeVoiceDecoderWeightsRuntime::embed_tokens(
