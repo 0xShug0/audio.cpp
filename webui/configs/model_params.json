@@ -397,6 +397,16 @@
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05}
   ],
 
+  "sopro_tts": [
+    {"name": "language", "type": "choice", "label": "language", "label_en": "Language tag", "default": "", "choices": ["", "en", "pt", "fr", "de"], "info": "Optional <|lang_xx|> tag; helps pronunciation on ambiguous text."},
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 0.9, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 25, "minimum": 0, "step": 1, "precision": 0, "info": "0 disables top-k truncation."},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "label_en": "Acoustic steps", "default": 2, "minimum": 1, "maximum": 32, "step": 1, "precision": 0, "info": "Rectified-flow Euler steps for the acoustic head."},
+    {"name": "max_seconds", "type": "number", "label": "max_seconds", "label_en": "Max seconds per segment", "default": 30.0, "minimum": 1.0, "maximum": 60.0, "step": 0.5, "precision": 1},
+    {"name": "ref_seconds", "type": "number", "label": "ref_seconds", "label_en": "Reference seconds", "default": 10.0, "minimum": 1.0, "maximum": 30.0, "step": 0.5, "precision": 1, "info": "Reference window used for cloning."},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "label_en": "Segment size", "default": 300, "minimum": 20, "maximum": 2000, "step": 10, "precision": 0, "info": "Max codepoints per synthesis segment."}
+  ],
   "supertonic": [
     {"name": "voice", "type": "choice", "label": "voice（预置音色：M 男声 / F 女声）", "label_en": "voice (M = male, F = female presets)", "default": "M1", "choices": ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]},
     {"name": "speaking_rate", "type": "slider", "label": "speaking_rate（语速倍率）", "label_en": "speaking_rate", "default": 1.05, "minimum": 0.5, "maximum": 2.0, "step": 0.05},

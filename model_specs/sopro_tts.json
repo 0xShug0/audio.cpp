@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "family": "sopro_tts",
+  "display_name": "Sopro V2 Turbo",
+  "description": "Community Sopro V2 Turbo (samuel-vitorino/sopro-v2-turbo): a 120M zero-shot voice-cloning TTS. SentencePiece text tokenizer, style-prefix conditioned autoregressive semantic LM over FSQ tokens, rectified-flow acoustic DiT and a Vocos ISTFT vocoder at 24 kHz.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "pt",
+    "fr",
+    "de"
+  ],
+  "runtime": {
+    "tags": [
+      "server"
+    ]
+  },
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Language tag prepended to the prompt (en, pt, fr, de). Optional; helps pronunciation on ambiguous text.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Semantic LM sampling temperature; default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "max": 2.0,
+        "default": 0.8
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus sampling threshold for the semantic LM; default 0.9.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.9
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k truncation for the semantic LM; 0 disables. Default 25.",
+        "required": false,
+        "min": 0,
+        "default": 25
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Acoustic rectified-flow Euler steps; default 2.",
+        "required": false,
+        "min": 1,
+        "max": 32,
+        "default": 2
+      },
+      {
+        "name": "max_seconds",
+        "type": "float",
+        "description": "Cap on generated audio per segment; long text is split into segments so total length is unbounded. Default 30.",
+        "required": false,
+        "min": 1.0,
+        "max": 60.0,
+        "default": 30.0
+      },
+      {
+        "name": "min_seconds",
+        "type": "float",
+        "description": "Minimum audio per segment before the semantic LM may emit EOS; default 0.4.",
+        "required": false,
+        "min": 0.0,
+        "max": 10.0,
+        "default": 0.4
+      },
+      {
+        "name": "ref_seconds",
+        "type": "float",
+        "description": "Reference audio window used for cloning; default 10.",
+        "required": false,
+        "min": 1.0,
+        "max": 30.0,
+        "default": 10.0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum codepoints per synthesis segment; default 300 (config.json generation.max_segment_chars).",
+        "required": false,
+        "min": 20,
+        "max": 2000,
+        "default": 300
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Non-negative seed for semantic sampling and the acoustic noise prior; omit for a random seed.",
+        "required": false,
+        "min": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Default language tag for requests that do not set one.",
+        "required": false,
+        "default": ""
+      }
+    ],
+    "load": [
+      {
+        "name": "matmul_weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "description": "Storage type for the matmul weights of every stage (semantic LM, acoustic DiT, encoders, vocoder head).",
+        "required": false,
+        "default": "f32"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "preset": "weight_type_conv",
+        "description": "Storage type for convolution weights (speaker/semantic encoders and the Vocos backbone).",
+        "required": false,
+        "default": "f32"
+      }
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "unsupported",
+      "reason": "No audio.cpp GGUF build of sopro-v2-turbo is published yet: install the sopro_v2_turbo_safetensors package and run from safetensors, or pack one locally with audiocpp_gguf (one --input namespace per stage: model, semantic_encoder, speaker_encoder, vocoder)."
+    }
+  },
+  "packages": [
+    {
+      "id": "sopro_v2_turbo_f16",
+      "display_name": "Sopro V2 Turbo F16 GGUF",
+      "description": "Locally packed GGUF holding all four stages plus the embedded config and tokenizer sidecars. Produced with audiocpp_gguf --family sopro_tts.",
+      "default": true,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "sopro-v2-turbo-GGUF",
+      "files": [
+        "sopro-v2-turbo-GGUF/sopro-v2-turbo-f16.gguf"
+      ],
+      "strip_prefix": "sopro-v2-turbo-GGUF"
+    },
+    {
+      "id": "sopro_v2_turbo_safetensors",
+      "display_name": "Sopro V2 Turbo (upstream safetensors)",
+      "description": "Upstream checkpoint from samuel-vitorino/sopro-v2-turbo: config.json, tokenizer.model and the four safetensors stages. Runs directly, no conversion needed.",
+      "format": "safetensors",
+      "precision": "orig",
+      "target_directory": "sopro-v2-turbo",
+      "files": [
+        "config.json",
+        "tokenizer.model",
+        "model.safetensors",
+        "semantic_encoder.safetensors",
+        "speaker_encoder.safetensors",
+        "vocoder.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "samuel-vitorino/sopro-v2-turbo",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "sopro_v2_turbo_safetensors",
+    "tags": [
+      "TTS",
+      "Clone"
+    ],
+    "docs": [
+      "docs/community_models/sopro_tts.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer": "model:tokenizer.model"
+      },
+      "tensors": {
+        "model": {
+          "source": "weights:",
+          "prefix": "model"
+        },
+        "semantic_encoder": {
+          "source": "weights:",
+          "prefix": "semantic_encoder"
+        },
+        "speaker_encoder": {
+          "source": "weights:",
+          "prefix": "speaker_encoder"
+        },
+        "vocoder": {
+          "source": "weights:",
+          "prefix": "vocoder"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer": "model:tokenizer.model"
+      },
+      "tensors": {
+        "model": {
+          "source": "model:model.safetensors"
+        },
+        "semantic_encoder": {
+          "source": "model:semantic_encoder.safetensors"
+        },
+        "speaker_encoder": {
+          "source": "model:speaker_encoder.safetensors"
+        },
+        "vocoder": {
+          "source": "model:vocoder.safetensors"
+        }
+      }
+    }
+  ]
+}
