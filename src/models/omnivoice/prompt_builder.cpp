@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <limits>
@@ -632,6 +633,50 @@ int64_t frame_rate(const OmniVoiceAssets & assets) {
         static_cast<double>(assets.config.audio_tokenizer.hop_length)));
 }
 
+// The reference-length clamp drops audio off the end of the clip but cannot
+// touch the caller's transcript, and estimate_target_tokens reads the
+// ref_text-to-ref_frames pair as a speaking-rate proxy. Leaving the full
+// transcript against clamped audio collapses that rate and truncates the
+// output -- measured at 1.75 s for a sentence that should run about 6 s.
+// The clamp keeps the head of the clip, so keep the matching head of the
+// transcript: whole words, proportional to the audio retained.
+std::string trim_reference_text_to_fraction(const std::string & text, double fraction) {
+    if (fraction >= 1.0 || fraction <= 0.0 || text.empty()) {
+        return text;
+    }
+    std::vector<std::string> words;
+    std::string current;
+    for (const char character : text) {
+        if (static_cast<unsigned char>(character) <= 0x20) {
+            if (!current.empty()) {
+                words.push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+        current.push_back(character);
+    }
+    if (!current.empty()) {
+        words.push_back(current);
+    }
+    if (words.size() < 2) {
+        return text;
+    }
+    const auto keep = std::max<size_t>(
+        1, static_cast<size_t>(std::llround(static_cast<double>(words.size()) * fraction)));
+    if (keep >= words.size()) {
+        return text;
+    }
+    std::string trimmed;
+    for (size_t index = 0; index < keep; ++index) {
+        if (index > 0) {
+            trimmed.push_back(' ');
+        }
+        trimmed += words[index];
+    }
+    return trimmed;
+}
+
 int64_t estimate_target_tokens(
     const OmniVoiceAssets & assets,
     const std::string & text,
@@ -787,6 +832,20 @@ OmniVoicePrompt OmniVoicePromptBuilder::build(const OmniVoiceRequest & request) 
         prompt.instruct = resolve_instruct(request.instruct, contains_chinese(prompt.text));
     }
 
+    if (prompt.reference_audio_tokens.has_value() &&
+        prompt.reference_audio_tokens->retained_fraction < 1.0 &&
+        !prompt.reference_text.empty()) {
+        const auto fraction = prompt.reference_audio_tokens->retained_fraction;
+        auto trimmed = trim_reference_text_to_fraction(prompt.reference_text, fraction);
+        if (trimmed != prompt.reference_text) {
+            std::fprintf(
+                stderr,
+                "[omnivoice] reference transcript trimmed to %.0f%% to match the clamped reference audio; "
+                "supply a transcript of the trimmed clip for best cloning quality.\n",
+                fraction * 100.0);
+            prompt.reference_text = std::move(trimmed);
+        }
+    }
     prompt.target_audio_tokens = engine::models::omnivoice::estimate_target_tokens(
         *assets_,
         prompt.text,

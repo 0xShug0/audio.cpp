@@ -11,9 +11,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 
 namespace engine::models::chatterbox {
 
@@ -60,7 +62,7 @@ ChatterboxVoiceCloneConfig make_voice_clone_config(
         .value_or(config.s3gen_cfg_rate);
     config.max_new_tokens = runtime::parse_positive_i64_option(
         options,
-        {"max_tokens"},
+        {"max_tokens", "max_new_tokens"},
         config.max_new_tokens);
     config.seed = runtime::parse_u32_option(options, {"seed"})
         .value_or(runtime::random_u32_seed());
@@ -533,12 +535,28 @@ runtime::TaskResult ChatterboxSession::run_voice_cloning(const runtime::TaskRequ
     const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
     engine::debug::trace_log_scalar("chatterbox.text_chunk_size", text_chunk_size);
     engine::debug::trace_log_scalar("chatterbox.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
+    size_t chunk_index = 0;
     for (const auto & chunk_request : chunk_requests) {
         auto outputs = component_->synthesize_voice_clone_with_conditionals(
             chunk_request.text_input->text,
             *cached_conditionals_,
             *voice_clone_config_);
         outputs.prompt_prep_ms = cached_prompt_prep_ms_;
+        // F6.5/F6.6: the T3 decode loop used to end on the cap with no signal at
+        // all, so a clipped utterance was indistinguishable from a complete one.
+        if (voice_clone_config_->stop_on_eos && !outputs.hit_eos) {
+            std::fprintf(
+                stderr,
+                "[chatterbox] warning: text chunk %zu of %zu hit the %lld-token cap before an end-of-speech "
+                "token; its audio is truncated mid-utterance. Lower --text-chunk-size or raise --max-tokens.\n",
+                chunk_index + 1,
+                chunk_requests.size(),
+                static_cast<long long>(outputs.max_new_tokens));
+        }
+        engine::debug::trace_log_scalar(
+            "chatterbox.chunk." + std::to_string(chunk_index) + ".hit_eos",
+            outputs.hit_eos);
+        ++chunk_index;
         runtime::append_audio_buffer(merged_audio, runtime::AudioBuffer{
             24000,
             1,

@@ -9,6 +9,7 @@
 #include "engine/models/vibevoice/tokenizer_audio.h"
 #include "engine/models/vibevoice/tokenizer_text.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -43,6 +44,10 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const VibeVoiceAssets> assets_;
+    // Reference voice prompt cap in seconds; 0 means the whole reference.
+    // Defaults to 30 on CUDA/HIP and 10 elsewhere, overridable with
+    // `vibevoice.voice_prompt_max_seconds`.
+    int64_t voice_prompt_max_seconds_ = 10;
     VibeVoiceTextTokenizer text_tokenizer_;
     VibeVoiceTokenizerWeightsRuntime audio_tokenizer_;
     VibeVoiceConnectorWeightsRuntime connector_;

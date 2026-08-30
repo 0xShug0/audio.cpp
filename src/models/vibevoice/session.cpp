@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -22,8 +23,17 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr size_t kMaxReferenceVoiceStates = 4;
+// F6.8: these two arrived together in the initial VibeVoice release (95ec6ae)
+// with no comment and no measurement, and the gate is "CUDA/HIP get more"
+// rather than "Metal gets less" -- CPU and Vulkan take the 10 s value too. That
+// is the shape of untested caution, not of a known Metal memory or op limit, so
+// the split is documented and overridable rather than silently backend-specific.
+// Nothing here has been A/B tested; raising it on Metal is unverified.
 constexpr int64_t kCudaVoicePromptMaxSeconds = 30;
 constexpr int64_t kDefaultVoicePromptMaxSeconds = 10;
+// Equal-power-free linear fade applied at a truncation so the reference never
+// ends on a step discontinuity mid-phoneme.
+constexpr int64_t kVoicePromptFadeOutMs = 10;
 
 std::shared_ptr<const VibeVoiceAssets> require_assets(std::shared_ptr<const VibeVoiceAssets> assets) {
     if (assets == nullptr) {
@@ -158,15 +168,31 @@ runtime::AudioBuffer read_voice_sample(const std::string & path) {
     return runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples};
 }
 
-runtime::AudioBuffer cap_voice_sample_duration(
-    runtime::AudioBuffer audio,
-    core::BackendType backend_type,
-    const std::string & path) {
-    const int64_t max_seconds = (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip)
+int64_t default_voice_prompt_max_seconds(core::BackendType backend_type) {
+    return (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip)
         ? kCudaVoicePromptMaxSeconds
         : kDefaultVoicePromptMaxSeconds;
-    const int64_t max_frames = static_cast<int64_t>(audio.sample_rate) * max_seconds;
-    const auto max_samples = static_cast<size_t>(max_frames * static_cast<int64_t>(audio.channels));
+}
+
+int64_t voice_prompt_max_seconds_from_options(const runtime::SessionOptions & options) {
+    const int64_t fallback = default_voice_prompt_max_seconds(options.backend.type);
+    const auto value = runtime::parse_i64_option(
+        options.options,
+        {"vibevoice.voice_prompt_max_seconds", "voice_prompt_max_seconds"});
+    if (!value.has_value()) {
+        return fallback;
+    }
+    if (*value < 0) {
+        throw std::runtime_error("vibevoice.voice_prompt_max_seconds must not be negative");
+    }
+    // 0 means "use the whole reference".
+    return *value;
+}
+
+runtime::AudioBuffer cap_voice_sample_duration(
+    runtime::AudioBuffer audio,
+    int64_t max_seconds,
+    const std::string & path) {
     engine::debug::trace_log_scalar("vibevoice.reference_voice.prompt_path", path);
     engine::debug::trace_log_scalar("vibevoice.reference_voice.prompt_sample_rate", audio.sample_rate);
     engine::debug::trace_log_scalar("vibevoice.reference_voice.prompt_channels", audio.channels);
@@ -174,8 +200,31 @@ runtime::AudioBuffer cap_voice_sample_duration(
         "vibevoice.reference_voice.prompt_input_samples",
         static_cast<int64_t>(audio.samples.size()));
     engine::debug::trace_log_scalar("vibevoice.reference_voice.prompt_max_seconds", max_seconds);
-    if (audio.samples.size() > max_samples) {
-        audio.samples.resize(max_samples);
+    if (max_seconds > 0) {
+        const int64_t max_frames = static_cast<int64_t>(audio.sample_rate) * max_seconds;
+        const auto max_samples = static_cast<size_t>(max_frames * static_cast<int64_t>(audio.channels));
+        if (audio.samples.size() > max_samples) {
+            const double input_seconds = static_cast<double>(audio.samples.size()) /
+                static_cast<double>(std::max(1, audio.sample_rate) * std::max(1, audio.channels));
+            audio.samples.resize(max_samples);
+            // A bare resize can land mid-phoneme; fade the last few milliseconds
+            // so the reference does not end on a discontinuity.
+            const auto fade_samples = static_cast<size_t>(std::min<int64_t>(
+                static_cast<int64_t>(audio.samples.size()),
+                (static_cast<int64_t>(audio.sample_rate) * kVoicePromptFadeOutMs / 1000) *
+                    static_cast<int64_t>(audio.channels)));
+            for (size_t i = 0; i < fade_samples; ++i) {
+                const float weight = static_cast<float>(fade_samples - i) / static_cast<float>(fade_samples);
+                audio.samples[audio.samples.size() - fade_samples + i] *= weight;
+            }
+            std::fprintf(
+                stderr,
+                "[vibevoice] reference voice %s truncated from %.2f s to %lld s "
+                "(vibevoice.voice_prompt_max_seconds); speaker conditioning is reduced accordingly.\n",
+                path.c_str(),
+                input_seconds,
+                static_cast<long long>(max_seconds));
+        }
     }
     engine::debug::trace_log_scalar(
         "vibevoice.reference_voice.prompt_used_samples",
@@ -204,6 +253,7 @@ VibeVoiceSession::VibeVoiceSession(
     : runtime::RuntimeSessionBase(require_supported_backend_options(options)),
       task_(task),
       assets_(apply_vibevoice_finetune_options(require_assets(std::move(assets)), options.options)),
+      voice_prompt_max_seconds_(voice_prompt_max_seconds_from_options(options)),
       text_tokenizer_(assets_),
       audio_tokenizer_(
           assets_,
@@ -373,7 +423,7 @@ std::vector<VibeVoiceSpeakerPrompt> VibeVoiceSession::resolve_voice_sample_promp
     std::vector<runtime::AudioBuffer> audio;
     audio.reserve(sample_paths.size());
     for (const auto & path : sample_paths) {
-        audio.push_back(cap_voice_sample_duration(read_voice_sample(path), options().backend.type, path));
+        audio.push_back(cap_voice_sample_duration(read_voice_sample(path), voice_prompt_max_seconds_, path));
     }
     auto acoustic_means = audio_tokenizer_.encode_acoustic_batch(audio);
     if (acoustic_means.size() != sample_paths.size()) {

@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::models::qwen3_tts {
@@ -32,9 +33,20 @@ struct Qwen3TalkerPrefill {
     bool x_vector_only_mode = false;
 };
 
+// Why the talker decode loop stopped. F6.5/F6.6: without this the caller cannot
+// tell a clean end-of-speech from an utterance clipped at the token cap, which
+// is what made long-form truncation silent.
+enum class Qwen3TalkerStopReason {
+    Eos,
+    MaxTokens,
+};
+
+std::string_view qwen3_talker_stop_reason_name(Qwen3TalkerStopReason reason) noexcept;
+
 struct Qwen3TalkerCodes {
     Qwen3SpeechCodes generated_codes;
     Qwen3SpeechCodes decoder_input_codes;
+    Qwen3TalkerStopReason stop_reason = Qwen3TalkerStopReason::MaxTokens;
 };
 
 void validate_qwen3_talker_voice_clone_prefill(

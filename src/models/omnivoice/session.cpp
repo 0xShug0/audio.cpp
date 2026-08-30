@@ -92,6 +92,17 @@ OmniVoiceGenerationOptions generation_options_from_options(const std::unordered_
     if (const auto value = runtime::find_option(options_map, {"preprocess_prompt"})) {
         options.preprocess_prompt = runtime::parse_bool_option(*value, "preprocess_prompt");
     }
+    options.reference_max_seconds = runtime::parse_float_option(
+        options_map,
+        {"reference_max_seconds", "ref_max_sec"})
+        .value_or(options.reference_max_seconds);
+    options.reference_pad_ms = runtime::parse_i64_option(
+        options_map,
+        {"reference_pad_ms", "ref_pad_ms"})
+        .value_or(options.reference_pad_ms);
+    if (options.reference_pad_ms < 0) {
+        throw std::runtime_error("OmniVoice reference_pad_ms must not be negative");
+    }
     if (const auto value = runtime::find_option(options_map, {"postprocess_output"})) {
         options.postprocess_output = runtime::parse_bool_option(*value, "postprocess_output");
     }
@@ -118,6 +129,14 @@ OmniVoiceGenerationOptions generation_options_from_options(const std::unordered_
     options.text_chunk_size = engine::text::parse_text_chunk_size_override(options_map);
     options.text_chunk_mode = engine::text::parse_text_chunk_mode_override(options_map)
         .value_or(engine::text::TextChunkMode::TagAware);
+    return options;
+}
+
+OmniVoiceReferenceAudioOptions reference_audio_options(const OmniVoiceGenerationOptions & generation) {
+    OmniVoiceReferenceAudioOptions options;
+    options.preprocess_prompt = generation.preprocess_prompt;
+    options.reference_max_seconds = generation.reference_max_seconds;
+    options.reference_pad_ms = generation.reference_pad_ms;
     return options;
 }
 
@@ -291,12 +310,9 @@ void OmniVoiceSession::prepare(const runtime::SessionPreparationRequest & reques
     if (session_defaults_.reference_audio.has_value()) {
         const auto merged_options = session_defaults_.options;
         const auto generation = generation_options_from_options(merged_options);
-        const bool reference_text_provided =
-            session_defaults_.reference_text.has_value() && !session_defaults_.reference_text->empty();
         (void) resolve_reference_audio_tokens(
             *session_defaults_.reference_audio,
-            generation.preprocess_prompt,
-            reference_text_provided);
+            reference_audio_options(generation));
         if (mem_saver_) {
             audio_tokenizer_.release_runtime_graphs();
         }
@@ -321,8 +337,7 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
         const auto encode_start = Clock::now();
         const auto reference_tokens = resolve_reference_audio_tokens(
             *omni_request.reference_audio,
-            omni_request.generation.preprocess_prompt,
-            !omni_request.reference_text.empty());
+            reference_audio_options(omni_request.generation));
         const auto encode_end = Clock::now();
         omni_request.reference_rms = reference_tokens.reference_rms;
         omni_request.reference_audio_tokens = std::move(reference_tokens);
@@ -672,25 +687,22 @@ std::unordered_map<std::string, std::string> OmniVoiceSession::merged_request_op
 
 OmniVoiceAudioTokens OmniVoiceSession::resolve_reference_audio_tokens(
     const runtime::AudioBuffer & audio,
-    bool preprocess_prompt,
-    bool reference_text_provided) {
+    const OmniVoiceReferenceAudioOptions & reference_options) {
     const uint64_t sample_count = static_cast<uint64_t>(audio.samples.size());
     const uint64_t sample_hash = hash_audio_samples(audio);
     const bool cache_hit = reference_prompt_cache_.has_value() &&
-        reference_prompt_cache_->preprocess_prompt == preprocess_prompt &&
-        reference_prompt_cache_->reference_text_provided == reference_text_provided &&
+        reference_prompt_cache_->preprocess_prompt == reference_options.preprocess_prompt &&
+        reference_prompt_cache_->reference_max_seconds == reference_options.reference_max_seconds &&
+        reference_prompt_cache_->reference_pad_ms == reference_options.reference_pad_ms &&
         reference_prompt_cache_->sample_rate == audio.sample_rate &&
         reference_prompt_cache_->channels == audio.channels &&
         reference_prompt_cache_->sample_count == sample_count &&
         reference_prompt_cache_->sample_hash == sample_hash;
     if (!cache_hit) {
-        const OmniVoiceReferenceAudioOptions reference_options = {
-            preprocess_prompt,
-            reference_text_provided,
-        };
         ReferencePromptCacheEntry entry;
-        entry.preprocess_prompt = preprocess_prompt;
-        entry.reference_text_provided = reference_text_provided;
+        entry.preprocess_prompt = reference_options.preprocess_prompt;
+        entry.reference_max_seconds = reference_options.reference_max_seconds;
+        entry.reference_pad_ms = reference_options.reference_pad_ms;
         entry.sample_rate = audio.sample_rate;
         entry.channels = audio.channels;
         entry.sample_count = sample_count;
@@ -749,8 +761,7 @@ void OmniVoiceSession::initialize_streaming_request(const runtime::TaskRequest &
     if (omni_request.reference_audio.has_value()) {
         const auto reference_tokens = resolve_reference_audio_tokens(
             *omni_request.reference_audio,
-            omni_request.generation.preprocess_prompt,
-            !omni_request.reference_text.empty());
+            reference_audio_options(omni_request.generation));
         omni_request.reference_rms = reference_tokens.reference_rms;
         omni_request.reference_audio_tokens = std::move(reference_tokens);
         omni_request.reference_audio.reset();

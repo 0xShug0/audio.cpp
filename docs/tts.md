@@ -95,10 +95,14 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 | `--text-chunk-size` | integer chars | `128` | Long-form chunk size. |
 | `--guidance-scale` | float | `0.5` | CFG strength. |
 | `--temperature` | float | `0.8` | T3 sampling temperature. |
-| `--top-p` | float | `0.8` | T3 nucleus sampling limit. |
-| `--repetition-penalty` | float | `2.0` | T3 repetition penalty. |
-| `--max-tokens` | integer | `1000` | Maximum generated T3 tokens per chunk. |
+| `--top-p` | float | `1.0` | T3 nucleus sampling limit. `1.0` disables nucleus filtering outright; `min_p` is the truncation filter that runs by default. |
+| `--request-option min_p=<float>` | float | `0.05` | T3 minimum-probability filter, applied before top-p. |
+| `--repetition-penalty` | float | `1.2` | T3 repetition penalty. |
+| `--max-tokens` | integer | `1000` | Maximum generated T3 tokens per chunk. At the 25 Hz speech-token rate this is about 40 s of audio; a chunk that reaches it is truncated mid-utterance and a warning is printed. |
 | `--do-sample` | `true`, `false` | `true` | Enable stochastic T3 sampling. |
+| `--request-option exaggeration=<float>` | float | `0.5` | Emotion-advance conditioning strength. |
+| `--request-option s3gen_cfg_rate=<float>` | float | `0.7` | S3Gen flow-matching CFG rate. |
+| `--request-option stop_on_eos=<bool>` | `true`, `false` | `true` | Stop T3 decoding at the speech end token. Set `false` only to inspect raw decode behaviour; the cap-hit warning is suppressed. |
 
 ## Confucius4-TTS
 
@@ -389,6 +393,15 @@ Streaming voice clone:
 ```bash
 audiocpp_cli --task tts --mode streaming --family omnivoice --model models/OmniVoice --backend cuda --text "Hello from OmniVoice." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --text-chunk-size 160 --out stream.wav --out-dir stream_chunks
 ```
+
+Reference clips are clamped to 15 seconds of speech before encoding. OmniVoice conditions on the whole reference at 75 Hz with no KV cache, so a long clip is both the worst quality and the worst latency: a 101 s reference measured at 0.30x realtime with garbled output, against 2.26x and clean output for a 12 s cut of the same voice. The shipped demo voices run 4.7-9.9 s. The clamp cuts at the *start* of a real pause, never mid-word, and re-pads both ends with exact digital silence; if no pause exists inside the limit the whole clip is kept and a warning is printed instead of a word being sliced. Both knobs are request options:
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--request-option reference_max_seconds=<float>` | float, `0` for no limit | `15` | Longest stretch of reference speech used for conditioning. |
+| `--request-option reference_pad_ms=<int>` | integer | `150` | Exact digital silence written onto both ends of a clamped reference. |
+
+The clamp runs as part of the reference preprocessing chain, so `--request-option preprocess_prompt=false` bypasses it along with the silence trimming.
 
 OmniVoice streaming is pseudo streaming: audio.cpp emits audio chunk events from text chunks and returns a merged final WAV. Upstream Python does not expose model-native streaming. For server SSE examples, options, and tag controls, see [OmniVoice](models/omnivoice.md).
 
@@ -783,6 +796,7 @@ audiocpp_cli --task tts --family vibevoice --model models/VibeVoice-1.5B --backe
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--request-option voice_samples=a.wav,b.wav` | comma-separated WAVs | not set | Speaker reference WAVs, ordered by speaker id. |
+| `--session-option vibevoice.voice_prompt_max_seconds=<int>` | integer, `0` for no cap | `30` on CUDA/HIP, `10` elsewhere | Reference voice prompt length cap. |
 | `--guidance-scale` | float | `1.3` | Classifier-free guidance scale. |
 | `--num-inference-steps` | integer | `10` | Diffusion steps per audio chunk. |
 | `--max-tokens` | integer, `0` for unlimited | `0` | Maximum generated decoder tokens. |
@@ -793,6 +807,8 @@ audiocpp_cli --task tts --family vibevoice --model models/VibeVoice-1.5B --backe
 | `--top-p` | float | `1.0` | Decoder nucleus sampling limit. |
 | `--load-option vibevoice.lora=<path>` | fine-tune adapter dir | not set | Overlay a fine-tune at load time: the language-model LoRA is delta-merged into the decoder linears, and the diffusion head and acoustic/semantic connectors (when present in the adapter dir) replace their base tensors. Dims must match the base model size. |
 | `--load-option vibevoice.lora_scale=<float>` | float | `lora_alpha / r` | Override the LoRA merge scale from `adapter_config.json`. |
+
+Reference voice prompts are truncated to `vibevoice.voice_prompt_max_seconds` before the acoustic encoder sees them, with a 10 ms fade at the cut and a message on stderr when it fires. The default differs by backend — 30 s on CUDA and HIP, 10 s on CPU, Metal and Vulkan — so the same command conditions on a third as much reference audio on Metal as it does on CUDA. That split has never been measured; it dates from the initial VibeVoice integration and reads as caution rather than a known limit. Set the option explicitly (`=30`, or `=0` for no cap) if you want the two backends to match, and check for out-of-memory before trusting the result on a large reference.
 
 The adapter follows the PEFT training layout: `adapter_model.safetensors` + `adapter_config.json` for the language-model LoRA, plus optional `diffusion_head/model.safetensors` (or `diffusion_head_full.bin`), `acoustic_connector/pytorch_model.bin`, and `semantic_connector/pytorch_model.bin` for the fully fine-tuned components. Everything is applied at load time, so it composes with the `vibevoice.*_weight_type` quantization options and adds no per-step cost; the overlay is logged with `--log`. Use a 1.5B adapter with `VibeVoice-1.5B` and a 7B adapter with `VibeVoice-7B`; a size mismatch is rejected with a descriptive error. The same option may instead be passed as `--session-option vibevoice.lora` (but not via both at once).
 

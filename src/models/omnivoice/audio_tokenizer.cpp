@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -75,6 +76,7 @@ struct NormalizedReferenceAudio {
     std::vector<float> semantic_samples_16k_padded;
     float reference_rms = 0.0F;
     int64_t frames = 0;
+    double retained_fraction = 1.0;
 };
 
 std::vector<float> to_mono(const runtime::AudioBuffer & audio) {
@@ -371,43 +373,60 @@ std::vector<int16_t> remove_mid_silence_pcm16(
 std::vector<float> preprocess_reference_mono(
     std::vector<float> mono,
     int sample_rate,
-    const OmniVoiceReferenceAudioOptions & options) {
+    const OmniVoiceReferenceAudioOptions & options,
+    double * retained_fraction = nullptr) {
     if (!options.preprocess_prompt) {
         return mono;
     }
     auto mono_pcm16 = engine::audio::float_to_pcm16_clipped(
         mono,
         engine::audio::Pcm16QuantizeMode::TruncateTowardZero);
-    if (!options.has_reference_text) {
-        const double duration = static_cast<double>(mono_pcm16.size()) / static_cast<double>(sample_rate);
-        if (duration > 20.0) {
-            auto nonsilent = detect_nonsilent_ranges_ms(mono_pcm16, sample_rate, 100, -40.0F, 10);
-            if (!nonsilent.empty()) {
-                const int64_t max_ms = 15000;
-                const int64_t min_ms = 3000;
-                int64_t best_split_ms = 0;
-                for (const auto & range : nonsilent) {
-                    if (range.first > best_split_ms && range.first <= max_ms) {
-                        best_split_ms = range.first;
-                    }
-                    if (range.second > max_ms) {
-                        break;
-                    }
-                }
-                if (best_split_ms < min_ms) {
-                    best_split_ms = std::min<int64_t>(max_ms, samples_to_ms(mono_pcm16.size(), sample_rate));
-                }
-                mono_pcm16 = slice_pcm16_ms(mono_pcm16, sample_rate, 0, best_split_ms);
-            }
-        }
-    }
     mono_pcm16 = remove_mid_silence_pcm16(mono_pcm16, sample_rate, 200, 200, kSilenceThresholdDb);
     mono_pcm16 = trim_edges_pcm16(mono_pcm16, sample_rate, 100, 200, kSilenceThresholdDb);
     if (mono_pcm16.empty()) {
         throw std::runtime_error(
             "OmniVoice reference audio is empty after silence removal; try preprocess_prompt=false");
     }
-    return engine::audio::pcm16_to_float_unit_range(mono_pcm16);
+    auto processed = engine::audio::pcm16_to_float_unit_range(mono_pcm16);
+
+    // F6.1: the reference length clamp used to sit behind `!has_reference_text`,
+    // a condition no working voice clone can satisfy -- prompt_builder.cpp
+    // refuses to clone without reference text -- so a 101 s reference was
+    // encoded whole at 75 Hz. It now runs on every reference that reaches the
+    // preprocessing chain, and cuts only at a real pause.
+    OmniVoiceReferenceClipOptions clip_options;
+    clip_options.max_seconds = options.reference_max_seconds;
+    clip_options.pad_ms = options.reference_pad_ms;
+    auto clipped = clip_reference_mono(processed, sample_rate, clip_options);
+    if (clipped.no_pause_found) {
+        std::fprintf(
+            stderr,
+            "[omnivoice] warning: reference audio is %.2f s with no pause inside %.2f s; keeping the whole "
+            "clip rather than cutting mid-word. Cloning quality and speed will suffer -- trim the reference "
+            "by hand or raise reference_max_seconds.\n",
+            clipped.input_seconds,
+            static_cast<double>(clip_options.max_seconds));
+    } else if (clipped.clamped) {
+        std::fprintf(
+            stderr,
+            "[omnivoice] reference audio clamped from %.2f s to %.2f s at a %lld ms pause "
+            "(reference_max_seconds=%.2f); speaker conditioning is reduced accordingly.\n",
+            clipped.input_seconds,
+            clipped.output_seconds,
+            static_cast<long long>(clipped.pause_tier_ms),
+            static_cast<double>(clip_options.max_seconds));
+    }
+    engine::debug::trace_log_scalar("omnivoice.reference.clamped", clipped.clamped);
+    engine::debug::trace_log_scalar("omnivoice.reference.no_pause_found", clipped.no_pause_found);
+    engine::debug::trace_log_scalar("omnivoice.reference.pause_tier_ms", clipped.pause_tier_ms);
+    engine::debug::trace_log_scalar("omnivoice.reference.input_seconds", clipped.input_seconds);
+    engine::debug::trace_log_scalar("omnivoice.reference.output_seconds", clipped.output_seconds);
+    if (retained_fraction != nullptr) {
+        *retained_fraction = clipped.input_seconds > 0.0
+            ? std::min(1.0, clipped.output_seconds / clipped.input_seconds)
+            : 1.0;
+    }
+    return std::move(clipped.samples);
 }
 
 NormalizedReferenceAudio normalize_reference_audio(
@@ -426,7 +445,8 @@ NormalizedReferenceAudio normalize_reference_audio(
             sample *= scale;
         }
     }
-    mono = preprocess_reference_mono(std::move(mono), config.sample_rate, options);
+    mono = preprocess_reference_mono(
+        std::move(mono), config.sample_rate, options, &normalized.retained_fraction);
 
     const int64_t hop_length = checked_positive(config.hop_length, "hop_length");
     const int64_t remainder = static_cast<int64_t>(mono.size()) % hop_length;
@@ -1988,6 +2008,7 @@ struct EncoderGraph {
         tokens.frames = actual_frames;
         tokens.codebooks = static_cast<int64_t>(code_outputs_.size());
         tokens.reference_rms = audio.reference_rms;
+        tokens.retained_fraction = audio.retained_fraction;
         tokens.token_ids.assign(static_cast<size_t>(actual_frames * tokens.codebooks), 0);
         for (size_t codebook = 0; codebook < code_outputs_.size(); ++codebook) {
             std::vector<int32_t> values(static_cast<size_t>(frame_capacity_), 0);
@@ -2236,6 +2257,155 @@ private:
 };
 
 }  // namespace
+
+OmniVoiceReferenceClipResult clip_reference_mono(
+    const std::vector<float> & mono,
+    int sample_rate,
+    const OmniVoiceReferenceClipOptions & options) {
+    // 20 ms analysis windows, and silence-run tiers searched longest first so a
+    // real sentence pause is preferred over a between-words gap.
+    constexpr int64_t kWindowMs = 20;
+    constexpr int64_t kSilenceTiersMs[] = {250, 150, 80};
+
+    if (sample_rate <= 0) {
+        throw std::runtime_error("OmniVoice reference clip requires a positive sample rate");
+    }
+    OmniVoiceReferenceClipResult result;
+    result.samples = mono;
+    const int64_t total = static_cast<int64_t>(mono.size());
+    result.input_seconds = static_cast<double>(total) / static_cast<double>(sample_rate);
+    result.output_seconds = result.input_seconds;
+    result.cut_sample = total;
+    if (total <= 0 || options.max_seconds <= 0.0F) {
+        return result;
+    }
+
+    const int64_t hop = std::max<int64_t>(
+        1,
+        static_cast<int64_t>(static_cast<double>(sample_rate) * static_cast<double>(kWindowMs) / 1000.0));
+    const int64_t window_count = total / hop;
+    if (window_count <= 0) {
+        return result;
+    }
+
+    std::vector<float> levels(static_cast<size_t>(window_count), 0.0F);
+    for (int64_t window = 0; window < window_count; ++window) {
+        const int64_t base = window * hop;
+        double sum_squares = 0.0;
+        for (int64_t offset = 0; offset < hop; ++offset) {
+            const double value = static_cast<double>(mono[static_cast<size_t>(base + offset)]);
+            sum_squares += value * value;
+        }
+        levels[static_cast<size_t>(window)] =
+            static_cast<float>(std::sqrt(sum_squares / static_cast<double>(hop)));
+    }
+
+    // Threshold from this clip's own noise floor, so a quiet studio take and a
+    // noisy phone recording both segment sensibly. The absolute term is one
+    // 16-bit LSB, which keeps exact digital silence below threshold.
+    constexpr float kSilenceFloor = 1.0F / 32768.0F;
+    std::vector<float> ordered = levels;
+    std::sort(ordered.begin(), ordered.end());
+    const float floor_level = ordered[ordered.size() / 10];
+    const float peak_level = ordered.back();
+    float threshold = std::max({floor_level * 3.0F, peak_level * 0.02F, kSilenceFloor});
+    // A clip that is almost entirely speech puts a voiced window at the tenth
+    // percentile, and `floor * 3` then exceeds the peak -- which would classify
+    // the whole clip as silence and disable the clamp. Cap the threshold well
+    // under the peak so that cannot happen. Skipped when the clip has no signal
+    // at all, where every window really is silent.
+    const float peak_cap = peak_level * 0.5F;
+    if (peak_cap > kSilenceFloor) {
+        threshold = std::min(threshold, peak_cap);
+    }
+
+    std::vector<uint8_t> quiet(static_cast<size_t>(window_count), 0);
+    int64_t first_voiced = -1;
+    int64_t last_voiced = -1;
+    for (int64_t window = 0; window < window_count; ++window) {
+        const bool is_quiet = levels[static_cast<size_t>(window)] < threshold;
+        quiet[static_cast<size_t>(window)] = is_quiet ? uint8_t{1} : uint8_t{0};
+        if (!is_quiet) {
+            if (first_voiced < 0) {
+                first_voiced = window;
+            }
+            last_voiced = window;
+        }
+    }
+    if (first_voiced < 0) {
+        // Nothing above the noise floor. Leave the caller's audio alone rather
+        // than guessing at a cut.
+        return result;
+    }
+
+    const int64_t content_start = first_voiced * hop;
+    const int64_t content_end = std::min(total, (last_voiced + 1) * hop);
+    result.content_start_sample = content_start;
+    result.cut_sample = content_end;
+
+    const int64_t limit_samples = static_cast<int64_t>(std::llround(
+        static_cast<double>(options.max_seconds) * static_cast<double>(sample_rate)));
+    if ((content_end - content_start) <= limit_samples) {
+        // Within budget: hand back exactly what the caller gave us.
+        return result;
+    }
+
+    const int64_t budget_end = content_start + limit_samples;
+    int64_t cut = content_end;
+    for (const int64_t tier_ms : kSilenceTiersMs) {
+        const int64_t need_windows = std::max<int64_t>(1, tier_ms / kWindowMs);
+        int64_t chosen = -1;
+        int64_t window = 0;
+        while (window < window_count) {
+            if (quiet[static_cast<size_t>(window)] == 0) {
+                ++window;
+                continue;
+            }
+            const int64_t run_start = window;
+            while (window < window_count && quiet[static_cast<size_t>(window)] != 0) {
+                ++window;
+            }
+            if ((window - run_start) < need_windows) {
+                continue;
+            }
+            const int64_t run_start_sample = run_start * hop;
+            // Cutting at the START of the pause guarantees a whole word.
+            if (run_start_sample > content_start && run_start_sample <= budget_end) {
+                chosen = run_start_sample;
+            }
+        }
+        if (chosen >= 0) {
+            cut = chosen;
+            result.pause_tier_ms = tier_ms;
+            break;
+        }
+    }
+    if (result.pause_tier_ms == 0) {
+        // No pause anywhere inside the budget: keep the whole clip rather than
+        // slicing a word in half, and let the caller say so.
+        result.no_pause_found = true;
+    }
+
+    const int64_t body_end = std::clamp(cut, content_start, content_end);
+    const int64_t pad_samples = std::max<int64_t>(0, static_cast<int64_t>(std::llround(
+        static_cast<double>(options.pad_ms) * static_cast<double>(sample_rate) / 1000.0)));
+
+    std::vector<float> clipped;
+    clipped.reserve(static_cast<size_t>((2 * pad_samples) + (body_end - content_start)));
+    clipped.insert(clipped.end(), static_cast<size_t>(pad_samples), 0.0F);
+    clipped.insert(
+        clipped.end(),
+        mono.begin() + static_cast<std::ptrdiff_t>(content_start),
+        mono.begin() + static_cast<std::ptrdiff_t>(body_end));
+    clipped.insert(clipped.end(), static_cast<size_t>(pad_samples), 0.0F);
+
+    result.samples = std::move(clipped);
+    result.clamped = body_end < content_end;
+    result.cut_sample = body_end;
+    result.output_seconds =
+        static_cast<double>(result.samples.size()) / static_cast<double>(sample_rate);
+    return result;
+}
 
 struct OmniVoiceAudioTokenizerRuntime::Impl {
     std::shared_ptr<const OmniVoiceAssets> assets;

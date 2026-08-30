@@ -29,6 +29,13 @@ struct OmniVoiceGenerationOptions {
     float position_temperature = 5.0F;
     float class_temperature = 0.0F;
     bool preprocess_prompt = true;
+    // Longest stretch of reference speech the model is conditioned on. Past
+    // roughly 15 s cloning quality collapses and generation slows sharply, so
+    // the reference is cut back to the last pause inside this window. Zero
+    // disables the limit.
+    float reference_max_seconds = 15.0F;
+    // Exact digital silence written onto both ends of a clamped reference.
+    int64_t reference_pad_ms = 150;
     float audio_chunk_duration_seconds = 15.0F;
     float audio_chunk_threshold_seconds = 30.0F;
     std::optional<int64_t> text_chunk_size = std::nullopt;
@@ -40,6 +47,14 @@ struct OmniVoiceAudioTokens {
     int64_t frames = 0;
     int64_t codebooks = 0;
     float reference_rms = 0.0F;
+    // Fraction of the caller's reference audio these tokens actually cover, 1.0
+    // when nothing was dropped. The length clamp cuts the audio but cannot cut
+    // the caller's transcript, and estimate_target_tokens derives the output
+    // duration from the ref_text-to-ref_frames ratio -- so a clamped reference
+    // paired with a full transcript collapses the implied speaking rate and
+    // truncates the output. prompt_builder trims the transcript by this
+    // fraction to keep the pair consistent.
+    double retained_fraction = 1.0;
 };
 
 struct OmniVoiceRequest {

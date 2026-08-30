@@ -2032,6 +2032,22 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(qwen3_tts_chunk_budget_test tests/unittests/test_qwen3_tts_chunk_budget.cpp)
+
+    add_test(
+        NAME qwen3_tts_chunk_budget_test
+        COMMAND qwen3_tts_chunk_budget_test
+    )
+
+    if (omnivoice IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(omnivoice_reference_clamp_test tests/unittests/test_omnivoice_reference_clamp.cpp)
+
+        add_test(
+            NAME omnivoice_reference_clamp_test
+            COMMAND omnivoice_reference_clamp_test
+        )
+    endif()
+
     add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
 
     add_test(

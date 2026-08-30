@@ -589,10 +589,20 @@ T3GenerateOutputs T3InferenceComponent::generate_speech_tokens(const T3GenerateR
     outputs.prefill_runner_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - step_started).count();
     last_logits = std::move(prefill_output.logits);
+    // The decode loop indexes speech_position_weight directly at `step + 1`, so
+    // the budget can never exceed the rows the checkpoint ships. Upstream tables
+    // hold ~4100 rows, which is well clear of the 1000-token default, but clamp
+    // rather than trust it.
+    const int64_t position_capacity = weights_->speech_position_vocab > 1
+        ? weights_->speech_position_vocab - 1
+        : request.max_new_tokens;
+    const int64_t max_new_tokens =
+        std::max<int64_t>(1, std::min<int64_t>(request.max_new_tokens, position_capacity));
+    outputs.max_new_tokens = max_new_tokens;
     const int64_t prefill_cache_steps = total_length + 1;
-    const int64_t max_decode_cache_steps = prefill_cache_steps + request.max_new_tokens;
+    const int64_t max_decode_cache_steps = prefill_cache_steps + max_new_tokens;
     const int64_t initial_decode_cache_steps =
-        prefill_cache_steps + std::min<int64_t>(request.max_new_tokens, kDecodeCapacityChunk);
+        prefill_cache_steps + std::min<int64_t>(max_new_tokens, kDecodeCapacityChunk);
     {
         std::lock_guard<std::mutex> lock(state_->mutex);
         runner = state_->get_runner(batch, initial_decode_cache_steps, backend_config, *weights_);
@@ -606,7 +616,7 @@ T3GenerateOutputs T3InferenceComponent::generate_speech_tokens(const T3GenerateR
     std::vector<float> sampling_probs;
     std::vector<size_t> sampling_order;
     std::vector<uint8_t> sampling_mask;
-    for (int64_t step = 0; step < request.max_new_tokens; ++step) {
+    for (int64_t step = 0; step < max_new_tokens; ++step) {
         std::copy_n(last_logits.data(), speech_vocab, logits.data());
         if (use_cfg) {
             for (int64_t i = 0; i < speech_vocab; ++i) {

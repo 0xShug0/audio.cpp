@@ -55,7 +55,8 @@ private:
 
     struct ReferencePromptCacheEntry {
         bool preprocess_prompt = true;
-        bool reference_text_provided = false;
+        float reference_max_seconds = 15.0F;
+        int64_t reference_pad_ms = 150;
         int sample_rate = 0;
         int channels = 0;
         uint64_t sample_count = 0;
@@ -70,8 +71,7 @@ private:
     std::unordered_map<std::string, std::string> merged_request_options(const runtime::TaskRequest & request) const;
     OmniVoiceAudioTokens resolve_reference_audio_tokens(
         const runtime::AudioBuffer & audio,
-        bool preprocess_prompt,
-        bool reference_text_provided);
+        const OmniVoiceReferenceAudioOptions & reference_options);
     std::vector<std::string> plan_text_chunks(const OmniVoiceRequest & request, const OmniVoicePrompt & prompt) const;
     void initialize_streaming_request(const runtime::TaskRequest & request);
     runtime::AudioBuffer synthesize_stream_chunk(size_t chunk_index);

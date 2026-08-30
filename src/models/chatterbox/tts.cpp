@@ -187,6 +187,8 @@ ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone_impl(
     } else if (t3_memory_before.available) {
         outputs.cuda_memory_total_bytes = t3_memory_before.total_bytes;
     }
+    outputs.hit_eos = t3_outputs.hit_eos;
+    outputs.max_new_tokens = t3_outputs.max_new_tokens;
     outputs.t3_prefix_cache_build_ms = t3_outputs.prefix_cache_build_ms;
     outputs.t3_decoder_cache_clone_ms = t3_outputs.decoder_cache_clone_ms;
     outputs.t3_prefill_runner_ms = t3_outputs.prefill_runner_ms;
@@ -204,6 +206,11 @@ ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone_impl(
     engine::debug::timing_log_scalar("chatterbox.voice_clone.t3.logits_ms", outputs.t3_logits_ms);
     engine::debug::timing_log_scalar("chatterbox.voice_clone.t3.sampling_ms", outputs.t3_sampling_ms);
     engine::debug::timing_log_scalar("chatterbox.voice_clone.t3.next_embed_ms", outputs.t3_next_embed_ms);
+    engine::debug::trace_log_scalar("chatterbox.voice_clone.t3.hit_eos", outputs.hit_eos);
+    engine::debug::trace_log_scalar("chatterbox.voice_clone.t3.max_new_tokens", outputs.max_new_tokens);
+    engine::debug::trace_log_scalar(
+        "chatterbox.voice_clone.t3.generated_tokens",
+        static_cast<int64_t>(t3_outputs.predicted_tokens.size()));
     outputs.generated_speech_tokens = t3_outputs.predicted_tokens;
     outputs.cleaned_speech_tokens = clean_generated_speech_tokens_like_python(outputs.generated_speech_tokens);
     if (mem_saver_) {

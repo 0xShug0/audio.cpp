@@ -75,11 +75,14 @@ struct T3GenerateRequest {
     std::vector<float> emotion_adv;
     std::vector<int32_t> text_tokens;
     std::vector<int32_t> initial_speech_tokens;
-    int64_t max_new_tokens = 256;
+    // Every field below is overwritten by ChatterboxTtsComponent before this
+    // request is issued; keep the values in step with ChatterboxVoiceCloneConfig
+    // so reading this header does not suggest a second, different default set.
+    int64_t max_new_tokens = 1000;
     bool stop_on_eos = true;
     bool do_sample = true;
     float temperature = 0.8f;
-    float top_p = 0.95f;
+    float top_p = 1.0f;
     float min_p = 0.05f;
     float repetition_penalty = 1.2f;
     float guidance_scale = 0.5f;
@@ -90,6 +93,9 @@ struct T3GenerateOutputs {
     std::vector<int32_t> predicted_tokens;
     int64_t token_count = 0;
     bool hit_eos = false;
+    // Budget actually used, after clamping the request against the number of
+    // rows in the checkpoint's speech position table.
+    int64_t max_new_tokens = 0;
     double prefix_cache_build_ms = 0.0;
     double decoder_cache_clone_ms = 0.0;
     double prefill_runner_ms = 0.0;

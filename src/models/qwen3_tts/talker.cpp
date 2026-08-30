@@ -1788,9 +1788,11 @@ public:
                 : argmax_index(logits);
             processor_ms += engine::debug::elapsed_ms(processor_start, Clock::now());
             if (first_code == config.codec_eos_token_id) {
+                out.stop_reason = Qwen3TalkerStopReason::Eos;
                 break;
             }
             if (step + 1 >= max_new_tokens) {
+                out.stop_reason = Qwen3TalkerStopReason::MaxTokens;
                 break;
             }
             generated_first_codes.push_back(first_code);
@@ -1854,6 +1856,9 @@ public:
         debug::timing_log_scalar("qwen3_tts.talker.cached_step.output_read_ms", cached_step_timing.output_read_ms);
         debug::timing_log_scalar("qwen3_tts.talker.cached_step.kv_copy_ms", cached_step_timing.kv_copy_ms);
         debug::timing_log_scalar("qwen3_tts.talker.total_ms", engine::debug::elapsed_ms(total_start, Clock::now()));
+        debug::trace_log_scalar(
+            "qwen3_tts.talker.stop_reason",
+            qwen3_talker_stop_reason_name(out.stop_reason));
         return out;
     }
 
@@ -1892,6 +1897,16 @@ private:
     std::optional<PromptEmbeddingState> cached_prompt_state_;
     std::optional<TalkerPrefillGraph::OutputWithCache> cached_prefill_output_;
 };
+
+std::string_view qwen3_talker_stop_reason_name(Qwen3TalkerStopReason reason) noexcept {
+    switch (reason) {
+        case Qwen3TalkerStopReason::Eos:
+            return "eos";
+        case Qwen3TalkerStopReason::MaxTokens:
+            return "max_tokens";
+    }
+    return "unknown";
+}
 
 Qwen3TalkerStepRuntime::Qwen3TalkerStepRuntime(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {
     if (impl_ == nullptr) {

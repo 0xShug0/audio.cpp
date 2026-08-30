@@ -22,9 +22,17 @@ struct ChatterboxVoiceCloneConfig {
     float temperature = 0.8f;
     float repetition_penalty = 1.2f;
     float min_p = 0.05f;
+    // top_p = 1.0 is upstream's own default and is a deliberate no-op: min_p
+    // (0.05) is the truncation filter that actually runs. Matches
+    // tests/chatterbox/chatterbox_python_warm_bench.py, the repo's parity
+    // harness, which passes top_p=1.0 and repetition_penalty=1.2.
     float top_p = 1.0f;
     float s3gen_cfg_rate = 0.7f;
-    int64_t max_new_tokens = 384;
+    // 384 was 15.4 s of audio at the 25 Hz speech-token rate -- below the
+    // 128-codepoint text chunk in the worst case, so long chunks truncated
+    // silently. 1000 is what upstream's generate() passes and what
+    // tests/chatterbox/chatterbox_warm_bench.cpp and docs/tts.md both use.
+    int64_t max_new_tokens = 1000;
     uint32_t seed = 0;
     std::string language = "en";
     bool do_sample = true;
@@ -36,6 +44,12 @@ struct ChatterboxVoiceCloneOutputs {
     std::vector<int32_t> text_tokens;
     std::vector<int32_t> generated_speech_tokens;
     std::vector<int32_t> cleaned_speech_tokens;
+    // F6.5/F6.6: false with stop_on_eos means the T3 decode loop ran out of
+    // budget rather than finishing the utterance, so the audio is clipped.
+    bool hit_eos = false;
+    // Budget actually applied, after clamping to the checkpoint's speech
+    // position table.
+    int64_t max_new_tokens = 0;
     int64_t cuda_memory_total_bytes = 0;
     double prompt_prep_ms = 0.0;
     double prompt_prep_gen_ms = 0.0;

@@ -8,16 +8,52 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace engine::models::qwen3_tts {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-constexpr int64_t kDefaultTextChunkSize = 8192;
+
+// Codec frames the talker may emit before the decode loop gives up, resolved
+// per request so an explicit --max-tokens also resizes the text chunk.
+int64_t effective_max_new_tokens(const runtime::TaskRequest & request, const Qwen3TTSConfig & config) {
+    if (const auto value = runtime::parse_int_option(request.options, {"max_tokens"})) {
+        if (*value > 0) {
+            return static_cast<int64_t>(*value);
+        }
+    }
+    return config.max_new_tokens;
+}
+
+// F6.5/F6.6: exiting the decode loop on the token cap used to be a bare
+// `break`, indistinguishable from a clean end-of-speech, so long-form output
+// truncated mid-sentence in silence. Record it in the trace and say so on
+// stderr, following the OuteTTS pattern.
+void report_talker_stop_reason(
+    const Qwen3TalkerCodes & codes,
+    size_t chunk_index,
+    size_t chunk_count,
+    int64_t max_new_tokens) {
+    debug::trace_log_scalar(
+        "qwen3_tts.chunk." + std::to_string(chunk_index) + ".stop_reason",
+        qwen3_talker_stop_reason_name(codes.stop_reason));
+    if (codes.stop_reason != Qwen3TalkerStopReason::MaxTokens) {
+        return;
+    }
+    std::fprintf(
+        stderr,
+        "[qwen3_tts] warning: text chunk %zu of %zu hit the %lld-token cap before an end-of-speech token; "
+        "its audio is truncated mid-utterance. Lower --text-chunk-size or raise --max-tokens.\n",
+        chunk_index + 1,
+        chunk_count,
+        static_cast<long long>(max_new_tokens));
+}
 
 std::shared_ptr<const Qwen3TTSAssets> require_assets(std::shared_ptr<const Qwen3TTSAssets> assets) {
     if (assets == nullptr) {
@@ -386,9 +422,14 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
     require_prepared("Qwen3 TTS run");
     const auto wall_start = Clock::now();
     TalkerCachedStepReleaseGuard release_talker_cached_step_graph(talker_step_.get(), mem_saver_);
+    const int64_t max_new_tokens = effective_max_new_tokens(request, assets_->config);
     const int64_t text_chunk_size =
-        engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
+        engine::text::parse_text_chunk_size_override(request.options)
+            .value_or(qwen3_tts_default_text_chunk_size(max_new_tokens));
     const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
+    debug::trace_log_scalar("qwen3_tts.max_new_tokens", max_new_tokens);
+    debug::trace_log_scalar("qwen3_tts.text_chunk_size", text_chunk_size);
+    debug::trace_log_scalar("qwen3_tts.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
     if (assets_->config.variant == Qwen3TTSVariant::VoiceDesign) {
         Qwen3TTSVoiceDesignPromptBuilder prompt_builder(
             text_tokenizer_,
@@ -398,6 +439,7 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
         double talker_ms = 0.0;
         double decoder_ms = 0.0;
         runtime::AudioBuffer merged_audio;
+        size_t chunk_index = 0;
         for (const auto & chunk_request : chunk_requests) {
             const Qwen3TTSRequest qwen_request = make_request(chunk_request);
             const auto prefill_start = Clock::now();
@@ -409,6 +451,11 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
                 qwen_request.generation,
                 qwen_request.generation.repetition_penalty);
             talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
+            report_talker_stop_reason(
+                codes,
+                chunk_index++,
+                chunk_requests.size(),
+                qwen_request.generation.max_new_tokens);
             const auto decoder_start = Clock::now();
             runtime::append_audio_buffer(
                 merged_audio,
@@ -433,6 +480,7 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
         double talker_ms = 0.0;
         double decoder_ms = 0.0;
         runtime::AudioBuffer merged_audio;
+        size_t chunk_index = 0;
         for (const auto & chunk_request : chunk_requests) {
             const Qwen3TTSRequest qwen_request = make_request(chunk_request);
             const auto prefill_start = Clock::now();
@@ -444,6 +492,11 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
                 qwen_request.generation,
                 qwen_request.generation.repetition_penalty);
             talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
+            report_talker_stop_reason(
+                codes,
+                chunk_index++,
+                chunk_requests.size(),
+                qwen_request.generation.max_new_tokens);
             const auto decoder_start = Clock::now();
             runtime::append_audio_buffer(
                 merged_audio,
@@ -476,6 +529,7 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
     double talker_ms = 0.0;
     double decoder_ms = 0.0;
     runtime::AudioBuffer merged_audio;
+    size_t chunk_index = 0;
     for (const auto & chunk_request : chunk_requests) {
         const Qwen3TTSRequest qwen_request = make_request(chunk_request);
         const auto prompt_start = Clock::now();
@@ -490,6 +544,11 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
             qwen_request.generation,
             qwen_request.generation.repetition_penalty);
         talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
+        report_talker_stop_reason(
+            codes,
+            chunk_index++,
+            chunk_requests.size(),
+            qwen_request.generation.max_new_tokens);
         const auto decoder_start = Clock::now();
         runtime::AudioBuffer decoded = voice_prompt.reference_codes.has_value()
             ? speech_decoder_->decode_and_trim_reference(
