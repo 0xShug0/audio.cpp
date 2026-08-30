@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <functional>
 #include <map>
+#include <string>
 #include <thread>
 #include <unordered_map>
 
@@ -228,6 +229,16 @@ private:
 
 const LoadedModel & load_model_once(const std::string & path, const F5ComputeDevice & dev);
 
+// Cache key for the per-(path, device) model and weight caches. Two devices of
+// the same backend get separate entries; CPU has no index.
+std::string device_cache_key(const F5ComputeDevice & dev) {
+    const core::BackendType backend = f5_requested_backend(dev);
+    if (backend == core::BackendType::Cpu) {
+        return "cpu";
+    }
+    return std::to_string(static_cast<int>(backend)) + "." + std::to_string(dev.device);
+}
+
 // Open the DiT checkpoint as a stripped-name tensor source. Safetensors
 // checkpoints carry raw torch names ("ema_model.transformer.*"); GGUF
 // packages store the same tensors under the "transformer" namespace, so the
@@ -248,8 +259,7 @@ const F5DiTWeights & load_dit_weights_once(
     const std::string & path, const F5ComputeDevice & dev) {
     struct Entry { F5DiTWeights w; };
     static auto * cache = new std::unordered_map<std::string, Entry>();
-    const std::string key =
-        (dev.use_cuda ? "cuda" + std::to_string(dev.device) : "cpu") + ":" + path;
+    const std::string key = device_cache_key(dev) + ":" + path;
     const auto found = cache->find(key);
     if (found != cache->end()) {
         return found->second.w;
@@ -269,25 +279,33 @@ const LoadedModel & load_model_once(const std::string & path, const F5ComputeDev
     // The backend (and its weight buffer) must outlive the cache entry, so it
     // is owned by a static owner freed after the cache at exit.
     static std::vector<std::unique_ptr<BackendOwner>> owners;
-    const std::string key = (dev.use_cuda ? "cuda" + std::to_string(dev.device) : "cpu") + ":" + path;
+    const std::string key = device_cache_key(dev) + ":" + path;
     if (const auto found = cache->find(key); found != cache->end()) {
         return found->second;
     }
     auto stripped = open_dit_source(path);
     auto owner = std::make_unique<BackendOwner>();
-    const core::BackendType type = dev.use_cuda ? core::BackendType::Cuda : core::BackendType::Cpu;
-    core::BackendConfig cfg{type, dev.use_cuda ? dev.device : 0, dev.use_cuda ? 1 : std::max(1, dev.threads)};
+    const core::BackendType requested = f5_requested_backend(dev);
+    const bool device_backend = requested != core::BackendType::Cpu;
+    core::BackendConfig cfg{
+        requested,
+        device_backend ? dev.device : 0,
+        device_backend ? 1 : std::max(1, dev.threads)};
     owner->value = core::init_backend(cfg);
-    if (!dev.use_cuda) {
+    // BestAvailable resolves only once the backend exists, so read the type
+    // back off the handle rather than trusting the request.
+    const core::BackendType type = core::backend_type(owner->value);
+    if (type == core::BackendType::Cpu) {
         core::set_backend_threads(owner->value, std::max(1, dev.threads));
     }
     LoadedModel model;
     model.arch = F5Architecture{};
     model.backend = owner->value;
     model.backend_type = type;
-    // FP16 linear weights on CUDA only (CPU mul_mat with F16 weights is slow
-    // via the fallback path; CUDA hits tensor cores).
-    model.w = load_weights(*stripped, owner->value, type, dev.use_cuda && dev.fp16_weights);
+    // FP16 linear weights on GPU backends only (CPU mul_mat with F16 weights
+    // is slow via the fallback path). Off by default everywhere.
+    model.w = load_weights(
+        *stripped, owner->value, type, type != core::BackendType::Cpu && dev.fp16_weights);
     owners.push_back(std::move(owner));
     return cache->emplace(key, std::move(model)).first->second;
 }
@@ -315,7 +333,11 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
     const int N = seq_len;
     const int MEL = arch.mel_dim;
     const int NT = static_cast<int>(text_in.size());
-    const bool is_cuda = model.backend_type == core::BackendType::Cuda;
+    // Any non-CPU backend takes the device path: no_alloc context, gallocr
+    // arena, ggml_backend_tensor_set/_get and compute_backend_graph. Only
+    // the CPU backend can use the inline-context ggml_graph_compute_with_ctx
+    // path, so this is a host-vs-device split, not a CUDA-vs-everything one.
+    const bool is_device = model.backend_type != core::BackendType::Cpu;
 
     struct CfgGraph {
         ggml_context * ctx = nullptr;
@@ -337,7 +359,7 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         const size_t ctx_bytes = std::min<size_t>(
             std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (8ULL << 20)),
             12288ULL << 20);
-        gnew->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
+        gnew->ctx = ggml_init({ctx_bytes, nullptr, is_device});
         ggml_context * ctx = gnew->ctx;
         // ---- module-composed batched-CFG graph (B=2) ----
         // Leaves: x/cond [2, N, 100] (same values in both halves), ids
@@ -370,21 +392,21 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         gnew->graph = ggml_new_graph_custom(ctx, 262144, false);
         ggml_build_forward_expand(gnew->graph, output);
         core::validate_backend_graph_supported(model.backend, gnew->graph, "f5_dit_cfg");
-        if (!is_cuda) {
+        if (!is_device) {
             const int threads = dev.threads > 0 ? dev.threads : static_cast<int>(std::thread::hardware_concurrency());
             core::set_backend_threads(model.backend, threads);
         }
-        if (is_cuda) {
+        if (is_device) {
             // gallocr-only flow; constants first get PRIVATE buffers so the
             // arena never aliases them (root cause of the noise regression)
             const_stage_bind(cfg_staged, model.backend);
             gnew->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
             if (gnew->gallocr == nullptr || !ggml_gallocr_reserve(gnew->gallocr, gnew->graph) ||
                 !ggml_gallocr_alloc_graph(gnew->gallocr, gnew->graph)) {
-                throw std::runtime_error("F5 DiT CUDA graph alloc failed");
+                throw std::runtime_error("F5 DiT device graph alloc failed");
             }
             if (cfg_staged != nullptr) {
-                const_stage_upload(cfg_staged, is_cuda ? model.backend : nullptr);
+                const_stage_upload(cfg_staged, is_device ? model.backend : nullptr);
                 const_stage_end(cfg_staged);
             }
             (void)0;
@@ -432,7 +454,7 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
                 th[128 + i] = std::cos(f);
             }
         }
-        if (is_cuda) {
+        if (is_device) {
             ggml_backend_tensor_set(g.x, xb.data(), 0, xb.size() * sizeof(float));
             ggml_backend_tensor_set(g.cond, cb.data(), 0, cb.size() * sizeof(float));
             ggml_backend_tensor_set(g.text_ids, ids.data(), 0, ids.size() * sizeof(int32_t));
@@ -449,11 +471,11 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
 
 
 
-    const auto status = is_cuda
+    const auto status = is_device
         ? core::compute_backend_graph(model.backend, g.graph, nullptr, "f5_dit_cfg")
         : f5_cpu_graph_compute(g.ctx, g.graph,
               dev.threads > 0 ? dev.threads : static_cast<int>(std::thread::hardware_concurrency()));
-    if (is_cuda) ggml_backend_synchronize(model.backend);
+    if (is_device) ggml_backend_synchronize(model.backend);
     if (status != GGML_STATUS_SUCCESS) {
         throw std::runtime_error("F5 DiT CFG graph compute failed");
     }
@@ -462,7 +484,7 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
     const size_t half_floats = ggml_nelements(g.output) / 2;
     out.first.resize(half_floats);
     out.second.resize(half_floats);
-    if (is_cuda) {
+    if (is_device) {
         ggml_backend_tensor_get(g.output, out.first.data(), 0, half_floats * sizeof(float));
         ggml_backend_tensor_get(g.output, out.second.data(), half_floats * sizeof(float), half_floats * sizeof(float));
     } else {
@@ -497,7 +519,11 @@ std::vector<float> f5_dit_forward(
     const int N = seq_len;
     const int MEL = arch.mel_dim;
     const int NT = static_cast<int>(text_in.size());
-    const bool is_cuda = model.backend_type == core::BackendType::Cuda;
+    // Any non-CPU backend takes the device path: no_alloc context, gallocr
+    // arena, ggml_backend_tensor_set/_get and compute_backend_graph. Only
+    // the CPU backend can use the inline-context ggml_graph_compute_with_ctx
+    // path, so this is a host-vs-device split, not a CUDA-vs-everything one.
+    const bool is_device = model.backend_type != core::BackendType::Cpu;
 
     // ---- cached graph per (model, N, NT, with/without taps) ----
     // Taps change the graph (extra roots), so key on their presence. The
@@ -542,7 +568,7 @@ std::vector<float> f5_dit_forward(
         const size_t ctx_bytes = std::min<size_t>(
             std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (6ULL << 20)),
             6144ULL << 20);
-        gnew->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
+        gnew->ctx = ggml_init({ctx_bytes, nullptr, is_device});
         ggml_context * ctx = gnew->ctx;
         // On CUDA the ctx is no_alloc: leaf tensors get device storage after
         // ggml_backend_alloc_ctx_tensors, values uploaded from staging vectors.
@@ -590,21 +616,21 @@ std::vector<float> f5_dit_forward(
             }
         }
         core::validate_backend_graph_supported(model.backend, gnew->graph, "f5_dit");
-        if (!is_cuda) {
+        if (!is_device) {
             const int threads = dev.threads > 0
                 ? dev.threads
                 : static_cast<int>(std::thread::hardware_concurrency());
             core::set_backend_threads(model.backend, threads);
         }
-        if (is_cuda) {
+        if (is_device) {
             const_stage_bind(staged_module_consts, model.backend);
             gnew->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
             if (gnew->gallocr == nullptr || !ggml_gallocr_reserve(gnew->gallocr, gnew->graph) ||
                 !ggml_gallocr_alloc_graph(gnew->gallocr, gnew->graph)) {
-                throw std::runtime_error("F5 DiT CUDA graph alloc failed");
+                throw std::runtime_error("F5 DiT device graph alloc failed");
             }
             if (staged_module_consts != nullptr) {
-                const_stage_upload(staged_module_consts, is_cuda ? model.backend : nullptr);
+                const_stage_upload(staged_module_consts, is_device ? model.backend : nullptr);
                 const_stage_end(staged_module_consts);
                 staged_module_consts = nullptr;
             }
@@ -631,7 +657,7 @@ std::vector<float> f5_dit_forward(
             cond_col.assign(cond_in.size(), 0.0F);
             cond_src = cond_col.data();
         }
-        if (is_cuda) {
+        if (is_device) {
             ggml_backend_tensor_set(g.x, x_in.data(), 0, x_in.size() * sizeof(float));
             ggml_backend_tensor_set(g.cond, cond_src, 0, cond_in.size() * sizeof(float));
         } else {
@@ -642,7 +668,7 @@ std::vector<float> f5_dit_forward(
         for (int i = 0; i < NT; ++i) {
             ids[i] = drop_text ? 0 : (text_in[i] + 1);
         }
-        if (is_cuda) {
+        if (is_device) {
             ggml_backend_tensor_set(g.text_ids, ids.data(), 0, ids.size() * sizeof(int32_t));
         } else {
             std::memcpy(g.text_ids->data, ids.data(), ids.size() * sizeof(int32_t));
@@ -656,7 +682,7 @@ std::vector<float> f5_dit_forward(
                 th[128 + i] = std::cos(f);
             }
         }
-        if (is_cuda) {
+        if (is_device) {
             ggml_backend_tensor_set(g.th_t, th.data(), 0, th.size() * sizeof(float));
         } else {
             std::memcpy(g.th_t->data, th.data(), th.size() * sizeof(float));
@@ -665,19 +691,19 @@ std::vector<float> f5_dit_forward(
 
     // ---- compute ----
     std::vector<float> out;
-    const auto status = is_cuda
+    const auto status = is_device
         ? core::compute_backend_graph(model.backend, g.graph, nullptr, "f5_dit")
         : f5_cpu_graph_compute(g.ctx, g.graph,
               dev.threads > 0 ? dev.threads
                               : static_cast<int>(std::thread::hardware_concurrency()));
-    if (is_cuda) {
+    if (is_device) {
         ggml_backend_synchronize(model.backend);
     }
     if (status != GGML_STATUS_SUCCESS) {
         throw std::runtime_error("F5 DiT graph compute failed");
     }
     out.resize(ggml_nelements(g.output));
-    if (is_cuda) {
+    if (is_device) {
         ggml_backend_tensor_get(g.output, out.data(), 0, out.size() * sizeof(float));
     } else {
         std::memcpy(out.data(), ggml_get_data(g.output), out.size() * sizeof(float));
@@ -686,7 +712,7 @@ std::vector<float> f5_dit_forward(
         const auto read_tap = [&](ggml_tensor * t, std::vector<float> * dst) {
             if (t != nullptr && dst != nullptr) {
                 dst->resize(ggml_nelements(t));
-                if (is_cuda) {
+                if (is_device) {
                     ggml_backend_tensor_get(t, dst->data(), 0, dst->size() * sizeof(float));
                 } else {
                     std::memcpy(dst->data(), ggml_get_data(t), dst->size() * sizeof(float));

@@ -2032,6 +2032,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(backend_path_selection_test tests/unittests/test_backend_path_selection.cpp)
+
+    add_test(
+        NAME backend_path_selection_test
+        COMMAND backend_path_selection_test
+    )
+
     add_engine_unittest(audio_resample_quality_test tests/unittests/test_audio_resample_quality.cpp)
 
     add_test(

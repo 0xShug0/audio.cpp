@@ -25,8 +25,12 @@ struct F5SynthesisRequest {
     // on undiacritized ASR transcripts; diacritized input garbles).
     bool strip_diacritics = true;
     int threads = 0;  // 0 = hardware concurrency
+    // Backend the DiT and the vocoder run on. Cpu keeps the host path; any
+    // GPU backend takes the device path. `use_cuda` is the legacy spelling and
+    // is only consulted when this is left at Cpu.
+    engine::core::BackendType backend = engine::core::BackendType::Cpu;
     bool use_cuda = false;
-    int cuda_device = 0;
+    int cuda_device = 0;  // GPU device index
 };
 
 struct F5SynthesisResult {

@@ -628,6 +628,26 @@ public:
         runtime::AudioBuffer audio;
         audio.sample_rate = static_cast<int>(config_.sample_rate);
         audio.channels = 1;
+        // This call site used to construct the host iSTFT unconditionally,
+        // so a CUDA build ran the whole spectrum tail on the CPU even though
+        // the CUDA kernel was compiled in. Route it through the shared
+        // selector instead; on Metal (and every non-CUDA backend) the answer
+        // is still Host, which is what it already did.
+        if (audio::select_log_magnitude_phase_istft_path(execution_.backend_type()) ==
+            audio::LogMagnitudePhaseISTFTPath::Cuda) {
+            if (cuda_istft_ == nullptr || cuda_istft_frames_ != qwen_frames) {
+                audio::CudaLogMagnitudePhaseISTFTConfig cfg;
+                cfg.frames = qwen_frames;
+                cfg.n_fft = config_.audio_patch_size * 4;
+                cfg.hop_length = config_.audio_patch_size;
+                cfg.out_dim = config_.audio_patch_size * 4 + 2;
+                cfg.device = execution_.config().device;
+                cuda_istft_ = std::make_unique<audio::CudaLogMagnitudePhaseISTFT>(cfg);
+                cuda_istft_frames_ = qwen_frames;
+            }
+            audio.samples = cuda_istft_->compute(spec, istft_window_).audio;
+            return audio;
+        }
         if (host_istft_ == nullptr || host_istft_frames_ != qwen_frames) {
             audio::HostLogMagnitudePhaseISTFTConfig cfg;
             cfg.frames = qwen_frames;
@@ -651,6 +671,8 @@ public:
         decoder_qwen_.release_runtime_graphs();
         host_istft_.reset();
         host_istft_frames_ = 0;
+        cuda_istft_.reset();
+        cuda_istft_frames_ = 0;
     }
 
 private:
@@ -722,6 +744,8 @@ private:
     std::vector<float> istft_window_;
     std::unique_ptr<audio::HostLogMagnitudePhaseISTFT> host_istft_;
     int64_t host_istft_frames_ = 0;
+    std::unique_ptr<audio::CudaLogMagnitudePhaseISTFT> cuda_istft_;
+    int64_t cuda_istft_frames_ = 0;
 };
 
 

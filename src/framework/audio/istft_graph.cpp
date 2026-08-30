@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <cstdlib>
 #include <numeric>
 #include <stdexcept>
 #include <utility>
@@ -82,6 +83,15 @@ void ensure_workspace(
             workspace.envelope[static_cast<size_t>(start + i)] += w * w;
         }
     }
+    // The envelope only depends on the window and the geometry, both of which
+    // are cached here, so validate it once on build rather than once per
+    // output sample. That keeps the normalise loop branch-free and, more
+    // importantly, keeps it free of a throw so it can be an OpenMP loop.
+    for (int64_t i = 0; i < samples; ++i) {
+        if (workspace.envelope[static_cast<size_t>(i + pad)] <= 1.0e-11F) {
+            throw std::runtime_error("ISTFT window envelope underflow");
+        }
+    }
 }
 
 template <typename Timing>
@@ -117,36 +127,85 @@ void finish_istft_from_spectrum(
         threads);
     timing.fft_inverse_ms = elapsed_ms(timing_start, Clock::now());
 
+    // Overlap-add, expressed as a gather over output samples instead of a
+    // scatter over frames. Frames overlap, so the scatter form cannot be an
+    // OpenMP loop without a race; the gather form is embarrassingly parallel
+    // and does exactly the same multiply-adds. Output sample `o` collects the
+    // frames f with f*hop <= o < f*hop + n_fft, visited in increasing f — the
+    // same order in which the scatter form reached them — so the result is
+    // bit-identical, not merely equivalent. It also writes every element of
+    // `folded`, which removes the separate zero-fill pass.
+#ifdef _OPENMP
+    const int omp_threads = static_cast<int>(std::max<size_t>(1, threads));
+#endif
     timing_start = Clock::now();
-    std::fill(workspace.folded.begin(), workspace.folded.end(), 0.0F);
-    timing.fold_clear_ms = elapsed_ms(timing_start, Clock::now());
-
-    timing_start = Clock::now();
-    for (int64_t frame = 0; frame < config.frames; ++frame) {
-        const int64_t start = frame * config.hop_length;
-        const float * src = workspace.framed.data() + static_cast<size_t>(frame * config.n_fft);
-        for (int64_t i = 0; i < config.n_fft; ++i) {
-            const float w = window[static_cast<size_t>(i)];
-            workspace.folded[static_cast<size_t>(start + i)] += src[i] * w;
+    const int64_t output_size = workspace.output_size;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(omp_threads) if (output_size >= 4096)
+#endif
+    for (int64_t out_index = 0; out_index < output_size; ++out_index) {
+        const int64_t last_frame = std::min(config.frames - 1, out_index / config.hop_length);
+        int64_t first_frame = 0;
+        const int64_t first_start = out_index - config.n_fft + 1;
+        if (first_start > 0) {
+            first_frame = (first_start + config.hop_length - 1) / config.hop_length;
         }
+        float acc = 0.0F;
+        for (int64_t frame = first_frame; frame <= last_frame; ++frame) {
+            const int64_t offset = out_index - frame * config.hop_length;
+            acc += workspace.framed[static_cast<size_t>(frame * config.n_fft + offset)] *
+                window[static_cast<size_t>(offset)];
+        }
+        workspace.folded[static_cast<size_t>(out_index)] = acc;
     }
     timing.overlap_add_ms = elapsed_ms(timing_start, Clock::now());
 
     const int64_t pad = (config.n_fft - config.hop_length) / 2;
-    const int64_t samples = workspace.output_size - 2 * pad;
+    const int64_t samples = output_size - 2 * pad;
     timing_start = Clock::now();
+    // ensure_workspace already proved every divisor in [pad, pad + samples)
+    // is above the underflow floor, so this loop neither branches nor throws.
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(omp_threads) if (samples >= 4096)
+#endif
     for (int64_t i = 0; i < samples; ++i) {
         const int64_t src = i + pad;
-        const float denom = workspace.envelope[static_cast<size_t>(src)];
-        if (denom <= 1.0e-11F) {
-            throw std::runtime_error("ISTFT window envelope underflow");
-        }
-        workspace.audio[static_cast<size_t>(i)] = workspace.folded[static_cast<size_t>(src)] / denom;
+        workspace.audio[static_cast<size_t>(i)] =
+            workspace.folded[static_cast<size_t>(src)] /
+            workspace.envelope[static_cast<size_t>(src)];
     }
     timing.normalize_ms = elapsed_ms(timing_start, Clock::now());
 }
 
 }  // namespace
+
+bool cuda_log_magnitude_phase_istft_available() noexcept {
+#ifdef ENGINE_HAS_CUDA_ISTFT
+    return true;
+#else
+    return false;
+#endif
+}
+
+// There is no Metal (or Vulkan) iSTFT. The two implementations in this file
+// are a scalar host tail and a cuFFT/CUDA-kernel tail; the graph builders here
+// express no ggml-op variant that a generic backend could pick up, so widening
+// this predicate to "any GPU" would only make CudaLogMagnitudePhaseISTFT's
+// constructor throw. Writing a Metal iSTFT is a new kernel, not a gate change
+// — see the design note in the lane report.
+LogMagnitudePhaseISTFTPath select_log_magnitude_phase_istft_path(core::BackendType backend) noexcept {
+    if (!cuda_log_magnitude_phase_istft_available()) {
+        return LogMagnitudePhaseISTFTPath::Host;
+    }
+    if (backend != core::BackendType::Cuda) {
+        return LogMagnitudePhaseISTFTPath::Host;
+    }
+    const char * force_host = std::getenv("ENGINE_ISTFT_HOST");
+    if (force_host != nullptr && force_host[0] == '1') {
+        return LogMagnitudePhaseISTFTPath::Host;
+    }
+    return LogMagnitudePhaseISTFTPath::Cuda;
+}
 
 class HostLogMagnitudePhaseISTFT::Impl {
 public:

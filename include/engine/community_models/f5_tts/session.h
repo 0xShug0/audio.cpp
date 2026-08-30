@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/core/module.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -41,7 +42,10 @@ private:
     std::string vocos_path_;
     std::string dialect_ = "UNK";
     int frame_budget_ = 0;  // 0 = default 2048
-    bool use_cuda_ = false;
+    // The session's backend, passed straight through to the DiT and the
+    // vocoder. Previously only BackendType::Cuda reached them, as use_cuda_,
+    // so a Metal session silently ran both on the CPU.
+    engine::core::BackendType backend_ = engine::core::BackendType::Cpu;
     int cuda_device_ = 0;
     int threads_ = 0;
 };

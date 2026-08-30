@@ -136,7 +136,10 @@ F5TTSSession::F5TTSSession(
                 "f5_tts.frame_budget must be within [256, 8192] mel frames");
         }
     }
-    use_cuda_ = options.backend.type == core::BackendType::Cuda;
+    // Pass the session's backend through unchanged. This used to collapse to
+    // `type == Cuda`, which routed Metal and Vulkan sessions onto the CPU DiT
+    // and the scalar host vocoder.
+    backend_ = options.backend.type;
     cuda_device_ = options.backend.device;
     threads_ = options.backend.threads;
 }
@@ -202,7 +205,7 @@ runtime::TaskResult F5TTSSession::run(const runtime::TaskRequest & request) {
     if (const auto v = runtime::find_option(request.options, {"strip_diacritics"})) {
         req.strip_diacritics = runtime::parse_bool_option(*v, "strip_diacritics");
     }
-    req.use_cuda = use_cuda_;
+    req.backend = backend_;
     req.frame_budget = frame_budget_;
     req.cuda_device = cuda_device_;
     req.threads = threads_;
