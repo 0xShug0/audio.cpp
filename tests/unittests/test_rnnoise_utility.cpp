@@ -104,7 +104,13 @@ void run_waveform_case(const engine::audio::RnnoiseModel & model, const std::str
     require(input.shape.rank == 2 && input.shape.dims[0] == 1, "RNNoise waveform input shape mismatch");
     require(expected_output.shape.rank == 2 && expected_output.shape.dims[0] == 1, "RNNoise waveform output shape mismatch");
     require(expected_vad.shape.rank == 2 && expected_vad.shape.dims[0] == 1, "RNNoise waveform vad shape mismatch");
-    const auto actual = model.process_mono_48k(input.values);
+    // The checked-in fixtures were captured from the upstream reference, which
+    // leaves the 20 ms synthesis delay in the output. Ask for that behaviour
+    // explicitly so this stays a parity test; delay compensation is covered by
+    // enhancement_alignment_test.
+    engine::audio::RnnoiseProcessOptions reference_parity;
+    reference_parity.compensate_output_delay = false;
+    const auto actual = model.process_mono_48k(input.values, reference_parity);
     require(actual.sample_rate == 48000, "RNNoise sample rate mismatch");
     require_close(
         actual.samples,

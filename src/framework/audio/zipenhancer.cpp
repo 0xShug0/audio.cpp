@@ -36,6 +36,9 @@ constexpr int64_t kNfft = 400;
 constexpr int64_t kHop = 100;
 constexpr int64_t kWin = 400;
 constexpr int64_t kFreqBins = 201;
+constexpr int64_t kWindowSamples = kSampleRate * 2;             // 32000, 2 s
+constexpr int64_t kStrideSamples = kWindowSamples * 3 / 4;      // 24000, 1.5 s
+constexpr int64_t kSegmentThreshold = kWindowSamples * 3;       // 96000, 6 s
 constexpr int64_t kDense = 64;
 constexpr int64_t kHeads = 4;
 constexpr int64_t kQueryHeadDim = 12;
@@ -1045,9 +1048,81 @@ struct ZipEnhancerModelState {
     mutable std::unique_ptr<ZipEnhancerForwardGraph> forward_graph;
 };
 
+ZipEnhancerChunkPlan zipenhancer_chunk_plan(int64_t input_samples, const ZipEnhancerOptions & options) noexcept {
+    ZipEnhancerChunkPlan plan;
+    plan.window_samples = kWindowSamples;
+    plan.stride_samples = kStrideSamples;
+    if (input_samples <= 0) {
+        return plan;
+    }
+    if (input_samples <= kSegmentThreshold) {
+        plan.padded_samples = std::max<int64_t>(input_samples, kWindowSamples);
+        plan.output_samples = (options.match_input_length || input_samples < kWindowSamples)
+            ? input_samples
+            : (input_samples / kHop) * kHop;
+        return plan;
+    }
+    plan.segmented = true;
+    const int64_t remainder = (input_samples - kWindowSamples) % kStrideSamples;
+    plan.padded_samples = input_samples + (remainder == 0 ? 0 : kStrideSamples - remainder);
+    plan.output_samples = input_samples;
+    return plan;
+}
+
+float zipenhancer_chunk_fade_weight(int64_t position, int64_t overlap_samples, int64_t fade_samples) noexcept {
+    if (overlap_samples <= 0) {
+        return 1.0f;
+    }
+    const int64_t fade = std::clamp<int64_t>(fade_samples, 0, overlap_samples);
+    const int64_t lead = (overlap_samples - fade) / 2;
+    if (position < lead) {
+        return 0.0f;
+    }
+    if (position >= lead + fade) {
+        return 1.0f;
+    }
+    return static_cast<float>(position - lead + 1) / static_cast<float>(fade + 1);
+}
+
+float zipenhancer_segment_weight(
+    int64_t offset_in_segment,
+    int64_t segment_start,
+    const ZipEnhancerChunkPlan & plan,
+    const ZipEnhancerOptions & options) noexcept {
+    const int64_t overlap = plan.window_samples - plan.stride_samples;
+    float weight = 1.0f;
+    if (segment_start > 0 && offset_in_segment < overlap) {
+        weight = zipenhancer_chunk_fade_weight(offset_in_segment, overlap, options.chunk_crossfade_samples);
+    }
+    if (segment_start + plan.window_samples < plan.padded_samples && offset_in_segment >= plan.stride_samples) {
+        weight = zipenhancer_chunk_fade_weight(
+            overlap - 1 - (offset_in_segment - plan.stride_samples),
+            overlap,
+            options.chunk_crossfade_samples);
+    }
+    return weight;
+}
+
+std::vector<float> zipenhancer_chunk_weights(const ZipEnhancerChunkPlan & plan, const ZipEnhancerOptions & options) {
+    if (plan.padded_samples <= 0) {
+        return {};
+    }
+    if (!plan.segmented) {
+        return std::vector<float>(static_cast<size_t>(plan.padded_samples), 1.0f);
+    }
+    std::vector<float> weights(static_cast<size_t>(plan.padded_samples), 0.0f);
+    for (int64_t current = 0; current + plan.window_samples <= plan.padded_samples; current += plan.stride_samples) {
+        for (int64_t i = 0; i < plan.window_samples; ++i) {
+            weights[static_cast<size_t>(current + i)] += zipenhancer_segment_weight(i, current, plan, options);
+        }
+    }
+    return weights;
+}
+
 ZipEnhancerWaveformOutput denoise_mono_16k_whole(
     const ZipEnhancerModelState & state,
-    const std::vector<float> & waveform) {
+    const std::vector<float> & waveform,
+    int64_t requested_samples) {
     if (waveform.empty()) {
         throw std::runtime_error("ZipEnhancer input waveform is empty");
     }
@@ -1107,7 +1182,7 @@ ZipEnhancerWaveformOutput denoise_mono_16k_whole(
             out_complex[idx * 2 + 1] = linear_mag * std::sin(phase);
         }
     }
-    const int64_t output_samples = (frames - 1) * kHop;
+    const int64_t output_samples = requested_samples > 0 ? requested_samples : (frames - 1) * kHop;
     auto wav = ISTFT().compute(
         out_complex,
         window,
@@ -1169,7 +1244,9 @@ ZipEnhancerModel ZipEnhancerModel::load_from_directory(
     return ZipEnhancerModel(std::move(state));
 }
 
-ZipEnhancerWaveformOutput ZipEnhancerModel::denoise_mono_16k(const std::vector<float> & waveform) const {
+ZipEnhancerWaveformOutput ZipEnhancerModel::denoise_mono_16k(
+    const std::vector<float> & waveform,
+    const ZipEnhancerOptions & options) const {
     if (!state_) {
         throw std::runtime_error("ZipEnhancerModel is not loaded");
     }
@@ -1177,50 +1254,43 @@ ZipEnhancerWaveformOutput ZipEnhancerModel::denoise_mono_16k(const std::vector<f
         throw std::runtime_error("ZipEnhancer input waveform is empty");
     }
 
-    constexpr int64_t window_samples = kSampleRate * 2;
-    constexpr int64_t stride_samples = window_samples * 3 / 4;
-    constexpr int64_t segment_threshold = window_samples * 3;
-    constexpr int64_t give_up_samples = (window_samples - stride_samples) / 2;
     const int64_t original_samples = static_cast<int64_t>(waveform.size());
-    if (original_samples < window_samples) {
-        std::vector<float> padded = waveform;
-        padded.resize(static_cast<size_t>(window_samples), 0.0f);
-        auto output = denoise_mono_16k_whole(*state_, padded);
-        output.samples.resize(static_cast<size_t>(original_samples));
-        return output;
-    }
-    if (original_samples <= segment_threshold) {
-        return denoise_mono_16k_whole(*state_, waveform);
+    const auto plan = zipenhancer_chunk_plan(original_samples, options);
+    if (!plan.segmented) {
+        if (original_samples < plan.window_samples) {
+            std::vector<float> padded = waveform;
+            padded.resize(static_cast<size_t>(plan.window_samples), 0.0f);
+            auto output = denoise_mono_16k_whole(*state_, padded, plan.window_samples);
+            output.samples.resize(static_cast<size_t>(plan.output_samples));
+            return output;
+        }
+        return denoise_mono_16k_whole(*state_, waveform, plan.output_samples);
     }
 
     std::vector<float> padded = waveform;
-    const int64_t remainder = (original_samples - window_samples) % stride_samples;
-    if (remainder != 0) {
-        padded.insert(padded.end(), static_cast<size_t>(stride_samples - remainder), 0.0f);
-    }
-    const int64_t padded_samples = static_cast<int64_t>(padded.size());
-    std::vector<float> output(static_cast<size_t>(padded_samples), 0.0f);
-    for (int64_t current = 0; current + window_samples <= padded_samples; current += stride_samples) {
+    padded.resize(static_cast<size_t>(plan.padded_samples), 0.0f);
+    std::vector<float> output(static_cast<size_t>(plan.padded_samples), 0.0f);
+    const auto weights = zipenhancer_chunk_weights(plan, options);
+    for (int64_t current = 0; current + plan.window_samples <= plan.padded_samples; current += plan.stride_samples) {
         std::vector<float> segment(
             padded.begin() + static_cast<std::ptrdiff_t>(current),
-            padded.begin() + static_cast<std::ptrdiff_t>(current + window_samples));
-        auto segment_output = denoise_mono_16k_whole(*state_, segment);
-        if (static_cast<int64_t>(segment_output.samples.size()) < window_samples) {
-            throw std::runtime_error("ZipEnhancer segmented output is shorter than its input window");
+            padded.begin() + static_cast<std::ptrdiff_t>(current + plan.window_samples));
+        const auto segment_output = denoise_mono_16k_whole(*state_, segment, plan.window_samples);
+        if (static_cast<int64_t>(segment_output.samples.size()) != plan.window_samples) {
+            throw std::runtime_error("ZipEnhancer segmented output length mismatch");
         }
-        if (current == 0) {
-            std::copy(
-                segment_output.samples.begin(),
-                segment_output.samples.begin() + static_cast<std::ptrdiff_t>(window_samples - give_up_samples),
-                output.begin());
-        } else {
-            std::copy(
-                segment_output.samples.begin() + static_cast<std::ptrdiff_t>(give_up_samples),
-                segment_output.samples.begin() + static_cast<std::ptrdiff_t>(window_samples - give_up_samples),
-                output.begin() + static_cast<std::ptrdiff_t>(current + give_up_samples));
+        for (int64_t i = 0; i < plan.window_samples; ++i) {
+            const float weight = zipenhancer_segment_weight(i, current, plan, options);
+            output[static_cast<size_t>(current + i)] += segment_output.samples[static_cast<size_t>(i)] * weight;
         }
     }
-    output.resize(static_cast<size_t>(original_samples));
+    output.resize(static_cast<size_t>(plan.output_samples));
+    for (size_t i = 0; i < output.size(); ++i) {
+        if (weights[i] <= 0.0f) {
+            throw std::runtime_error("ZipEnhancer segmented synthesis produced an uncovered sample");
+        }
+        output[i] /= weights[i];
+    }
     return ZipEnhancerWaveformOutput{kSampleRate, std::move(output)};
 }
 

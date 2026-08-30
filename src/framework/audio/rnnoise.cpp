@@ -1402,12 +1402,31 @@ RnnoiseSequenceOutput RnnoiseModel::infer_features(
     return output;
 }
 
-RnnoiseWaveformOutput RnnoiseModel::process_mono_48k(const std::vector<float> & waveform) const {
+RnnoiseAlignmentPlan rnnoise_alignment_plan(int64_t input_samples, const RnnoiseProcessOptions & options) noexcept {
+    static_assert(
+        kRnnoiseOutputDelaySamples == 2 * static_cast<int64_t>(kRnnoiseFrameSize),
+        "RNNoise group delay must stay two analysis frames");
+    RnnoiseAlignmentPlan plan;
+    if (input_samples <= 0) {
+        return plan;
+    }
+    plan.crop_offset = options.compensate_output_delay ? kRnnoiseOutputDelaySamples : 0;
+    plan.output_samples = input_samples;
+    plan.vad_frames = (input_samples + kRnnoiseFrameSize - 1) / kRnnoiseFrameSize;
+    plan.frames = (input_samples + plan.crop_offset + kRnnoiseFrameSize - 1) / kRnnoiseFrameSize;
+    plan.padded_samples = plan.frames * kRnnoiseFrameSize;
+    return plan;
+}
+
+RnnoiseWaveformOutput RnnoiseModel::process_mono_48k(
+    const std::vector<float> & waveform,
+    const RnnoiseProcessOptions & options) const {
     if (waveform.empty()) {
         throw std::runtime_error("RNNoise waveform input is empty");
     }
-    const int64_t frames = (static_cast<int64_t>(waveform.size()) + kRnnoiseFrameSize - 1) / kRnnoiseFrameSize;
-    std::vector<float> padded(static_cast<size_t>(frames * kRnnoiseFrameSize), 0.0f);
+    const auto plan = rnnoise_alignment_plan(static_cast<int64_t>(waveform.size()), options);
+    const int64_t frames = plan.frames;
+    std::vector<float> padded(static_cast<size_t>(plan.padded_samples), 0.0f);
     std::copy(waveform.begin(), waveform.end(), padded.begin());
     std::vector<float> output(padded.size(), 0.0f);
     std::vector<float> vad;
@@ -1448,8 +1467,16 @@ RnnoiseWaveformOutput RnnoiseModel::process_mono_48k(const std::vector<float> & 
         }
         offset += chunk_frames;
     }
-    output.resize(waveform.size());
-    return RnnoiseWaveformOutput{kRnnoiseSampleRate, std::move(output), std::move(vad)};
+    if (static_cast<int64_t>(output.size()) < plan.crop_offset + plan.output_samples) {
+        throw std::runtime_error("RNNoise synthesis output is shorter than the delay-compensated crop");
+    }
+    std::vector<float> aligned(
+        output.begin() + static_cast<std::ptrdiff_t>(plan.crop_offset),
+        output.begin() + static_cast<std::ptrdiff_t>(plan.crop_offset + plan.output_samples));
+    if (static_cast<int64_t>(vad.size()) > plan.vad_frames) {
+        vad.resize(static_cast<size_t>(plan.vad_frames));
+    }
+    return RnnoiseWaveformOutput{kRnnoiseSampleRate, std::move(aligned), std::move(vad)};
 }
 
 RnnoiseStreamingSession::RnnoiseStreamingSession(std::shared_ptr<const RnnoiseWeights> weights)

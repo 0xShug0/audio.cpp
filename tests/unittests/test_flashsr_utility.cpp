@@ -72,7 +72,13 @@ void run_case(int case_index) {
     const auto input = fixture->require_f32_tensor("audio_values");
     const auto expected = fixture->require_f32_tensor("reconstruction");
     require(input.shape.rank == 2 && input.shape.dims[0] == 1, "FlashSR input shape mismatch");
-    const auto output = model.super_resolve_mono_16k(input.values);
+    // The checked-in fixtures were captured from the upstream reference, which
+    // peak-normalises every file to the ceiling. Ask for that behaviour
+    // explicitly so this stays a parity test; input-level preservation is
+    // covered by enhancement_alignment_test.
+    engine::audio::FlashSrOptions reference_parity;
+    reference_parity.preserve_input_level = false;
+    const auto output = model.super_resolve_mono_16k(input.values, reference_parity);
     require(output.sample_rate == 48000, "FlashSR sample rate mismatch");
     require_close(output.samples, expected, 2.0e-4f, 2.0e-5, "case " + std::to_string(case_index));
 }

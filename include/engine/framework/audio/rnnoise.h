@@ -38,6 +38,34 @@ struct RnnoiseWaveformOutput {
     std::vector<float> vad;
 };
 
+// Group delay of the RNNoise analysis/synthesis pipeline, in samples at 48 kHz.
+// The synthesis stage inverse-transforms the *previous* frame's spectrum, so an
+// output sample at index n reconstructs the input sample at index n - 960
+// (20 ms). DeepFilterNet2 crops its own 480-sample delay the same way.
+inline constexpr int64_t kRnnoiseOutputDelaySamples = 960;
+
+struct RnnoiseProcessOptions {
+    // Pad the input tail by kRnnoiseOutputDelaySamples and crop the same amount
+    // off the front of the synthesis output, so that output[n] lines up with
+    // input[n] and the last 20 ms of input still reaches the output. Set false
+    // for bit-exact parity with the upstream reference implementation, which
+    // leaves the delay in — that is what the reference fixtures under
+    // tests/unittests/assets were captured with.
+    bool compensate_output_delay = true;
+};
+
+// Frame, padding and crop arithmetic process_mono_48k uses for a given input
+// length. Exposed so the alignment can be exercised without model weights.
+struct RnnoiseAlignmentPlan {
+    int64_t frames = 0;
+    int64_t padded_samples = 0;
+    int64_t crop_offset = 0;
+    int64_t output_samples = 0;
+    int64_t vad_frames = 0;
+};
+
+RnnoiseAlignmentPlan rnnoise_alignment_plan(int64_t input_samples, const RnnoiseProcessOptions & options) noexcept;
+
 class RnnoiseModel {
 public:
     static RnnoiseModel load_from_safetensors(const std::filesystem::path & checkpoint_path);
@@ -57,7 +85,9 @@ public:
         const std::vector<float> & features,
         int64_t frames,
         int64_t feature_size) const;
-    RnnoiseWaveformOutput process_mono_48k(const std::vector<float> & waveform) const;
+    RnnoiseWaveformOutput process_mono_48k(
+        const std::vector<float> & waveform,
+        const RnnoiseProcessOptions & options = RnnoiseProcessOptions{}) const;
 
     std::unique_ptr<class RnnoiseStreamingSession> create_streaming_session() const;
 

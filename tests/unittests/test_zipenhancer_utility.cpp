@@ -2,6 +2,7 @@
 #include "engine/framework/audio/zipenhancer.h"
 
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <algorithm>
@@ -55,11 +56,16 @@ void require_close(
     double mean_allowed,
     const std::string & label) {
     require(expected.shape.rank == 2 && expected.shape.dims[0] == 1, label + " expected shape mismatch");
-    require(actual.size() == expected.values.size(), label + " size mismatch");
+    // The reference fixtures were captured from the upstream implementation,
+    // which returns floor(n / 100) * 100 samples. denoise_mono_16k now returns
+    // the full input length; the samples the fixture does cover are unchanged,
+    // so compare the overlap and let run_case assert the length separately.
+    require(actual.size() >= expected.values.size(), label + " size mismatch");
+    const size_t compared = expected.values.size();
     float max_diff = 0.0f;
     size_t max_index = 0;
     double mean_diff = 0.0;
-    for (size_t i = 0; i < actual.size(); ++i) {
+    for (size_t i = 0; i < compared; ++i) {
         const float diff = std::fabs(actual[i] - expected.values[i]);
         mean_diff += static_cast<double>(diff);
         if (diff > max_diff) {
@@ -67,7 +73,7 @@ void require_close(
             max_index = i;
         }
     }
-    mean_diff /= static_cast<double>(actual.size());
+    mean_diff /= static_cast<double>(compared);
     if (max_diff > max_allowed || mean_diff > mean_allowed) {
         std::ostringstream oss;
         oss << label << " mismatch: max_diff=" << max_diff
@@ -87,7 +93,19 @@ void run_case(const engine::audio::ZipEnhancerModel & model, int case_index) {
     require(input.shape.rank == 2 && input.shape.dims[0] == 1, "ZipEnhancer input shape mismatch");
     const auto output = model.denoise_mono_16k(input.values);
     require(output.sample_rate == 16000, "ZipEnhancer sample rate mismatch");
+    require(
+        output.samples.size() == input.values.size(),
+        "ZipEnhancer output length must equal its input length in case " + std::to_string(case_index));
     require_close(output.samples, expected, 3.0e-3f, 3.0e-4, "case " + std::to_string(case_index));
+
+    // The legacy length policy must still reproduce the fixture length exactly.
+    engine::audio::ZipEnhancerOptions legacy;
+    legacy.match_input_length = false;
+    legacy.chunk_crossfade_samples = 0;
+    require(
+        engine::audio::zipenhancer_chunk_plan(static_cast<int64_t>(input.values.size()), legacy).output_samples ==
+            static_cast<int64_t>(expected.values.size()),
+        "ZipEnhancer legacy length policy no longer matches the fixture in case " + std::to_string(case_index));
 }
 
 }  // namespace

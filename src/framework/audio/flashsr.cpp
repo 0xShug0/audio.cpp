@@ -29,7 +29,6 @@ constexpr int kFlashSrOutputSampleRate = 48000;
 constexpr int kFlashSrChannels = 32;
 constexpr int kFlashSrActivationKernel = 12;
 constexpr int kFlashSrActivationRatio = 2;
-constexpr float kFlashSrOutputScale = 0.9990000128746033f;
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -302,21 +301,31 @@ core::TensorValue resblock(
     return output;
 }
 
-std::vector<float> normalize_output(const std::vector<float> & input) {
-    float max_abs = 0.0f;
-    for (float value : input) {
-        max_abs = std::max(max_abs, std::fabs(value));
+namespace {
+
+float absolute_peak(const std::vector<float> & values) noexcept {
+    float peak = 0.0f;
+    for (const float value : values) {
+        peak = std::max(peak, std::fabs(value));
     }
-    if (max_abs <= 0.0f) {
-        throw std::runtime_error("FlashSR output normalization has zero peak");
-    }
-    std::vector<float> output(input.size());
-    const float scale = kFlashSrOutputScale / max_abs;
-    for (size_t i = 0; i < input.size(); ++i) {
-        output[i] = input[i] * scale;
+    return peak;
+}
+
+// Level policy for the model output. `source` is the waveform the caller handed
+// in, so the input's own level can be restored instead of being discarded.
+std::vector<float> apply_output_level(
+    const std::vector<float> & source,
+    const std::vector<float> & model_output,
+    const FlashSrOptions & options) {
+    const float gain = flashsr_output_gain(absolute_peak(source), absolute_peak(model_output), options);
+    std::vector<float> output(model_output.size());
+    for (size_t i = 0; i < model_output.size(); ++i) {
+        output[i] = model_output[i] * gain;
     }
     return output;
 }
+
+}  // namespace
 
 class FlashSrGraph {
 public:
@@ -402,6 +411,17 @@ private:
     ggml_backend_graph_plan_t plan_ = nullptr;
 };
 
+float flashsr_output_gain(float input_peak, float output_peak, const FlashSrOptions & options) noexcept {
+    if (!(output_peak > 0.0f)) {
+        return 0.0f;
+    }
+    const float ceiling = options.peak_ceiling > 0.0f ? options.peak_ceiling : kFlashSrPeakCeiling;
+    const float target = options.preserve_input_level
+        ? std::min(std::max(input_peak, 0.0f), ceiling)
+        : ceiling;
+    return target / output_peak;
+}
+
 FlashSrModel::FlashSrModel() = default;
 FlashSrModel::~FlashSrModel() = default;
 FlashSrModel::FlashSrModel(FlashSrModel &&) noexcept = default;
@@ -447,7 +467,9 @@ FlashSrModel FlashSrModel::load_from_directory(
     return FlashSrModel(std::move(weights));
 }
 
-FlashSrOutput FlashSrModel::super_resolve_mono_16k(const std::vector<float> & waveform) const {
+FlashSrOutput FlashSrModel::super_resolve_mono_16k(
+    const std::vector<float> & waveform,
+    const FlashSrOptions & options) const {
     if (!weights_) {
         throw std::runtime_error("FlashSR model is not loaded");
     }
@@ -463,7 +485,9 @@ FlashSrOutput FlashSrModel::super_resolve_mono_16k(const std::vector<float> & wa
         if (!graph_ || !graph_->matches(original_samples)) {
             graph_ = std::make_unique<FlashSrGraph>(*weights_, original_samples);
         }
-        return FlashSrOutput{kFlashSrOutputSampleRate, normalize_output(graph_->run(waveform))};
+        return FlashSrOutput{
+            kFlashSrOutputSampleRate,
+            apply_output_level(waveform, graph_->run(waveform), options)};
     }
 
     std::vector<float> padded = waveform;
@@ -510,7 +534,7 @@ FlashSrOutput FlashSrModel::super_resolve_mono_16k(const std::vector<float> & wa
         }
         output[i] /= weights[i];
     }
-    return FlashSrOutput{kFlashSrOutputSampleRate, normalize_output(output)};
+    return FlashSrOutput{kFlashSrOutputSampleRate, apply_output_level(waveform, output, options)};
 }
 
 }  // namespace engine::audio
