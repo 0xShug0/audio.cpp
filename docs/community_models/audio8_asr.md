@@ -71,6 +71,23 @@ end-to-end — run it manually once weights exist (it is not part of ctest,
 matching the granite5asr golden-test convention); `test_audio8_asr_units`
 covers the token-count formula and bfloat16 rounding and runs under ctest.
 
+## Measured performance
+
+Release build (`-DCMAKE_BUILD_TYPE=Release`), Apple M4, Metal backend,
+Q8_0 GGUF (345 MB weights):
+
+| Audio | Session wall (`session.wall_ms`) | Effective RTF | CLI wall (incl. ~2.2 s process + load) |
+|---|---|---|---|
+| 5.95 s | ~0.75 s | ~8x realtime | 2.2 s |
+| 14.07 s | 757 ms | 18.6x realtime | 3.8 s |
+| 61 s (3 windows) | 3.46 s | 17.6x realtime | 5.8 s |
+
+The audio encoder dominates (~64% of session time; its Metal shaders are
+insensitive to build type, so Debug and Release measure within 3%).
+Peak RSS is ~1.0 GB for a single clip and ~1.3 GB for a three-window
+transcription (Metal buffers + per-window-shape graph pools on top of the
+345 MB of weights; CPU backend measures the same ~1.0 GB).
+
 ## Known limitations
 
 - **Offline only**: no streaming mode, no word timestamps, no language-id
