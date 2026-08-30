@@ -308,6 +308,7 @@ SoproSemanticEncoderRuntime::SoproSemanticEncoderRuntime(
     engine::assets::TensorStorageType matmul_storage_type,
     engine::assets::TensorStorageType conv_storage_type)
     : config_(assets.config.semantic_encoder),
+      source_sample_rate_(assets.config.sample_rate),
       execution_context_(execution_context),
       graph_context_bytes_(graph_context_bytes),
       weights_(load_weights(
@@ -329,11 +330,15 @@ std::vector<int32_t> SoproSemanticEncoderRuntime::encode(const std::vector<float
     const int64_t token_samples = config_.token_samples_24k;
     const int64_t n_tokens = (n24 + token_samples - 1) / token_samples;
 
+    if (source_sample_rate_ <= 0 || config_.sample_rate <= 0) {
+        throw std::runtime_error("Sopro semantic encoder sample rates must be positive");
+    }
     auto audio16 = engine::audio::resample_mono_torchaudio_sinc_hann(
-        audio24, 24000, static_cast<int>(config_.sample_rate));
+        audio24, static_cast<int>(source_sample_rate_), static_cast<int>(config_.sample_rate));
     // SemanticEncoder.encode pins the resampled length so the token grid is
     // exactly reproducible regardless of the resampler's tail behaviour.
-    const int64_t n16 = (n24 * 2 + 2) / 3;
+    const int64_t n16 =
+        (n24 * config_.sample_rate + source_sample_rate_ - 1) / source_sample_rate_;
     audio16.resize(static_cast<size_t>(n16), 0.0F);
 
     dump("sem_wav16.f32", audio16);
@@ -395,6 +400,9 @@ std::vector<int32_t> SoproSemanticEncoderRuntime::encode(const std::vector<float
             "Sopro semantic encoder reference audio exceeds the positional embedding table");
     }
     if (graph_ == nullptr || !graph_->matches(*weights_, mel_frames, steps)) {
+        // Free the previous arena first; otherwise both are resident while the
+        // replacement is allocated, and every segment rebuilds this graph.
+        graph_.reset();
         graph_ = std::make_unique<SoproSemanticEncoderGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),

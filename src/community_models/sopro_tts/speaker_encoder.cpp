@@ -445,6 +445,9 @@ std::vector<float> SoproSpeakerEncoderRuntime::trunk(
     int64_t frames,
     int64_t & out_frames) const {
     if (graph_ == nullptr || !graph_->matches(*weights_, frames)) {
+        // Free the previous arena first; otherwise both are resident while the
+        // replacement is allocated, and every segment rebuilds this graph.
+        graph_.reset();
         graph_ = std::make_unique<SoproSpeakerGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),

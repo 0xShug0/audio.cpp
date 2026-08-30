@@ -334,6 +334,9 @@ int32_t sample_next_token(
     if (vocab <= 0) {
         throw std::runtime_error("Sopro semantic LM produced empty logits");
     }
+    if (bos_id < 0 || bos_id >= vocab || eos_id < 0 || eos_id >= vocab) {
+        throw std::runtime_error("Sopro semantic LM bos/eos id is outside the logit range");
+    }
     logits[static_cast<size_t>(bos_id)] = kMaskedLogit;
     if (!allow_eos) {
         logits[static_cast<size_t>(eos_id)] = kMaskedLogit;

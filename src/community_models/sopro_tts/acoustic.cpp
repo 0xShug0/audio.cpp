@@ -784,6 +784,9 @@ std::vector<float> SoproAcousticRuntime::solve(const SoproAcousticRequest & requ
     const int64_t steps = std::max<int64_t>(1, request.steps);
 
     if (graphs_ == nullptr || !graphs_->matches(*weights_, tokens, frames)) {
+        // Free the previous arena first; otherwise both are resident while the
+        // replacement is allocated, and every segment rebuilds this graph.
+        graphs_.reset();
         graphs_ = std::make_unique<SoproAcousticGraphs>(
             execution_context_.backend(),
             execution_context_.backend_type(),

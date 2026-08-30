@@ -404,6 +404,7 @@
     {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 25, "minimum": 0, "step": 1, "precision": 0, "info": "0 disables top-k truncation."},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "label_en": "Acoustic steps", "default": 2, "minimum": 1, "maximum": 32, "step": 1, "precision": 0, "info": "Rectified-flow Euler steps for the acoustic head."},
     {"name": "max_seconds", "type": "number", "label": "max_seconds", "label_en": "Max seconds per segment", "default": 30.0, "minimum": 1.0, "maximum": 60.0, "step": 0.5, "precision": 1},
+    {"name": "min_seconds", "type": "number", "label": "min_seconds", "label_en": "Min seconds per segment", "default": 0.4, "minimum": 0.0, "maximum": 10.0, "step": 0.1, "precision": 1, "info": "Must not exceed max_seconds."},
     {"name": "ref_seconds", "type": "number", "label": "ref_seconds", "label_en": "Reference seconds", "default": 10.0, "minimum": 1.0, "maximum": 30.0, "step": 0.5, "precision": 1, "info": "Reference window used for cloning."},
     {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "label_en": "Segment size", "default": 300, "minimum": 20, "maximum": 2000, "step": 10, "precision": 0, "info": "Max codepoints per synthesis segment."}
   ],

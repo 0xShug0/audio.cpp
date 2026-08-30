@@ -118,7 +118,8 @@ SoproTTSSession::SoproTTSSession(
          assets::TensorStorageType::F16});
 
     core::ExecutionContext & execution = execution_context();
-    tokenizer_ = std::make_unique<SoproTextTokenizer>(assets_->tokenizer_path);
+    tokenizer_ = std::make_unique<SoproTextTokenizer>(
+        assets_->tokenizer_path, assets_->config.model.max_text_len);
     speaker_encoder_ = std::make_unique<SoproSpeakerEncoderRuntime>(
         *assets_, execution, kWeightContextBytes, kGraphArenaBytes, matmul_storage, conv_storage);
     semantic_encoder_ = std::make_unique<SoproSemanticEncoderRuntime>(
@@ -211,6 +212,14 @@ SoproRequestOptions SoproTTSSession::parse_options(const runtime::TaskRequest & 
     if (out.ref_seconds <= 0.0F) {
         throw std::runtime_error("Sopro ref_seconds must be positive");
     }
+    if (out.min_seconds < 0.0F) {
+        throw std::runtime_error("Sopro min_seconds must not be negative");
+    }
+    // A min above max leaves min_steps > max_steps, which never lets the LM
+    // emit EOS: every segment would run the full budget and be cut mid-word.
+    if (out.min_seconds > out.max_seconds) {
+        throw std::runtime_error("Sopro min_seconds must not exceed max_seconds");
+    }
     // language_tag() rejects anything outside the four supported languages, so
     // fail before any weights are touched.
     (void) language_tag(out.language);
@@ -275,8 +284,11 @@ std::unique_ptr<SoproSynthesisState> SoproTTSSession::begin_synthesis(
                 static_cast<double>(token_samples))));
     };
 
-    const auto style_count = std::min<int64_t>(
-        config.generation.style_tokens, static_cast<int64_t>(state->voice.semantic_tokens.size()));
+    const auto style_count = std::max<int64_t>(
+        0,
+        std::min<int64_t>(
+            config.generation.style_tokens,
+            static_cast<int64_t>(state->voice.semantic_tokens.size())));
     state->style_tokens.assign(
         state->voice.semantic_tokens.begin(),
         state->voice.semantic_tokens.begin() + static_cast<ptrdiff_t>(style_count));
@@ -284,9 +296,13 @@ std::unique_ptr<SoproSynthesisState> SoproTTSSession::begin_synthesis(
         const auto count = std::min<int64_t>(
             config.generation.prompt_tokens,
             static_cast<int64_t>(state->voice.semantic_tokens.size()));
+        // Continue from the *end* of the reference. synthesize_segment places
+        // this segment's tokens after the whole reference, and every later
+        // segment carries the tail of its predecessor, so anchoring the first
+        // one at the head would continue from the wrong point in the clip.
         state->carry.assign(
-            state->voice.semantic_tokens.begin(),
-            state->voice.semantic_tokens.begin() + static_cast<ptrdiff_t>(count));
+            state->voice.semantic_tokens.end() - static_cast<ptrdiff_t>(count),
+            state->voice.semantic_tokens.end());
     }
 
     state->lm_options.max_steps = steps_for(state->options.max_seconds);

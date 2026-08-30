@@ -373,6 +373,9 @@ std::vector<float> SoproVocoderRuntime::decode(
         throw std::runtime_error("Sopro vocoder requires a [n_mels, frames] input");
     }
     if (graph_ == nullptr || !graph_->matches(*weights_, frames)) {
+        // Free the previous arena first; otherwise both are resident while the
+        // replacement is allocated, and every segment rebuilds this graph.
+        graph_.reset();
         graph_ = std::make_unique<SoproVocoderGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),

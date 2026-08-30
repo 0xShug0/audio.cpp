@@ -393,7 +393,10 @@ public:
         }
         ids.push_back(eos_id_);
         if (static_cast<int64_t>(ids.size()) > max_length_) {
-            ids.resize(static_cast<size_t>(max_length_));
+            // Drop overflowing text ids, not the EOS marker the LM keys on.
+            // The constructor guarantees max_length_ >= 2.
+            ids.resize(static_cast<size_t>(max_length_ - 1));
+            ids.push_back(eos_id_);
         }
         if (ids.empty()) {
             ids.push_back(unk_id_);

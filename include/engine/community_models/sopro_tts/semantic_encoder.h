@@ -42,6 +42,9 @@ public:
 
 private:
     const SoproSemanticEncoderConfig & config_;
+    // Rate the caller's reference waveform arrives at (config.json sample_rate),
+    // kept so the resample and its pinned length are not tied to 24 kHz.
+    int64_t source_sample_rate_ = 0;
     engine::core::ExecutionContext & execution_context_;
     size_t graph_context_bytes_ = 0;
     std::shared_ptr<const SoproSemanticEncoderWeights> weights_;
