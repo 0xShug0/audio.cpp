@@ -6,7 +6,7 @@ the first n_vq steps. That addition needs evidence, not an assertion, so this ru
 reference itself over the same text and reports how much audio each take produced against
 what the text should take to read.
 
-    python3 tools/community_models/moss_voicegen_reference_lengths.py \
+    python3 tools/community_models/moss_voicegen/moss_voicegen_reference_lengths.py \
         --model /path/to/MOSS-VoiceGenerator --seeds 3 --max-new-tokens 400
 """
 

@@ -5,7 +5,7 @@ the emitted rows are a deterministic function of the weights. That makes the del
 state machine in audio.cpp checkable row for row: any divergence is a real divergence and
 not an RNG difference.
 
-    python3 tools/community_models/moss_voicegen_reference_generation.py \
+    python3 tools/community_models/moss_voicegen/moss_voicegen_reference_generation.py \
         --model /path/to/MOSS-VoiceGenerator \
         --reference tests/moss_voicegen/reference/ref_prompt_en_radio_voice.json \
         --output tests/moss_voicegen/reference/ref_generation_en_radio_voice.json \

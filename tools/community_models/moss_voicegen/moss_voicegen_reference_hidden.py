@@ -4,7 +4,7 @@ Runs the checkpoint's own MossTTSDelayModel over a prompt produced by its own pr
 and writes the final hidden state, so tests/moss_voicegen/backbone_parity.cpp can check
 the audio.cpp backbone against it.
 
-    python3 tools/community_models/moss_voicegen_reference_hidden.py \
+    python3 tools/community_models/moss_voicegen/moss_voicegen_reference_hidden.py \
         --model /path/to/MOSS-VoiceGenerator \
         --reference tests/moss_voicegen/reference/ref_prompt_en_radio_voice.json \
         --output tests/moss_voicegen/reference/ref_hidden_en_radio_voice.json

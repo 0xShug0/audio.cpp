@@ -439,8 +439,8 @@ def load_model_spec_json(explicit: str | None) -> str:
     if explicit:
         path = Path(explicit)
     else:
-        # tools/community_models/convert_echo_tts.py -> model_specs/echo_tts.json
-        path = Path(__file__).resolve().parents[2] / "model_specs" / f"{ARCH}.json"
+        # tools/community_models/echo_tts/convert_echo_tts.py -> model_specs/echo_tts.json
+        path = Path(__file__).resolve().parents[3] / "model_specs" / f"{ARCH}.json"
     if not path.is_file():
         raise RuntimeError(
             f"model spec not found at {path}; pass --model-spec explicitly")

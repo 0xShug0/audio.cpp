@@ -4,9 +4,9 @@
 // from the upstream PyTorch implementation, so it is driven by hand, the same
 // way dots_tts_vocoder_parity is.
 //
-//   python3 tools/community_models/echo_tts_reference.py --speaker ref.wav
+//   python3 tools/community_models/echo_tts/echo_tts_reference.py --speaker ref.wav
 //       --force-dtype float32 --full-blocks -o echo_ref.npz
-//   python3 tools/community_models/echo_tts_pack_reference.py echo_ref.npz
+//   python3 tools/community_models/echo_tts/echo_tts_pack_reference.py echo_ref.npz
 //       -o echo_ref.bin
 //   ./echo_tts_dit_parity --model /path/to/Echo-TTS-GGUF --reference echo_ref.bin
 //

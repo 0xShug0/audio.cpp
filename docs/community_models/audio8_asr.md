@@ -33,7 +33,7 @@ converted weights only; the converted GGUF must not be redistributed.
 ```bash
 # Convert locally (requires the audiocpp_gguf tool and a self-downloaded
 # checkpoint from the Audio8/Audio8-ASR-0.1B HF repository):
-python tools/community_models/convert_audio8_asr.py \
+python tools/community_models/audio8_asr/convert_audio8_asr.py \
     --checkpoint models/Audio8-ASR-0.1B-hf \
     --converter build/debug/bin/audiocpp_gguf \
     --type q8_0 \
@@ -51,9 +51,9 @@ audiocpp_cli --task asr --family audio8_asr \
 
 ## Parity
 
-`tools/community_models/audio8_asr_reference.py` runs the Hugging Face
+`tools/community_models/audio8_asr/audio8_asr_reference.py` runs the Hugging Face
 `trust_remote_code` reference (torch CPU, fp32) and
-`tools/community_models/audio8_asr_stages.py` captures staged tensors (mel,
+`tools/community_models/audio8_asr/audio8_asr_stages.py` captures staged tensors (mel,
 encoder output, projected audio embeddings) for comparison.
 
 Greedy transcription on the repo test clips matched the fp32 reference

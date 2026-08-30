@@ -10,7 +10,7 @@ yourself from https://huggingface.co/Audio8/Audio8-ASR-0.1B and keep the
 result local. Do not redistribute the converted GGUF.
 
 Examples:
-  python tools/community_models/convert_audio8_asr.py \
+  python tools/community_models/audio8_asr/convert_audio8_asr.py \
       --checkpoint models/Audio8-ASR-0.1B-hf \
       --converter build/debug/bin/audiocpp_gguf \
       --type q8_0 \
@@ -22,7 +22,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SPEC = REPO_ROOT / "model_specs" / "audio8_asr.json"
 
 

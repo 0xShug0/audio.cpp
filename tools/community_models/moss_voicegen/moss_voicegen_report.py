@@ -5,7 +5,7 @@ in ways a diff cannot show. This reports what a caller needs to accept or reject
 duration, how much of it is speech, the longest interior pause, the peak level, and the
 median F0 that stands in for speaker identity.
 
-    python3 tools/community_models/moss_voicegen_report.py <dir-or-wav> [--reference NAME]
+    python3 tools/community_models/moss_voicegen/moss_voicegen_report.py <dir-or-wav> [--reference NAME]
 
 With --reference, every file is also reported in semitones relative to that one, which is
 how two takes are checked for being the same speaker.

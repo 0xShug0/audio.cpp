@@ -197,7 +197,7 @@ modules::QwenCausalDecodeRuntimeWeights make_soprano_decode_weights(
 }
 
 // Hidden-mode weights are intentionally not built: Hidden mode produces
-// NaN/Inf prefill output (see docs/soprano_tts.md §6h), so the LM
+// NaN/Inf prefill output (see docs/community_models/soprano_tts.md §6h), so the LM
 // always runs single-pass Logits+return_hidden=true.
 
 }  // namespace

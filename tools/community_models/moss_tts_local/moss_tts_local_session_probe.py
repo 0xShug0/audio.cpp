@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "audiocpp_cli"))
 
 import run_audiocpp_cli_path_tests as runner

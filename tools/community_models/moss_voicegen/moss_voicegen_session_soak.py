@@ -5,7 +5,7 @@ launches: it is the only way to see whether graphs and caches are reused and whe
 memory grows request over request. This starts audiocpp_server once, fires N requests at
 the same session, and reports per-request latency next to GPU memory sampled from sysfs.
 
-    python3 tools/community_models/moss_voicegen_session_soak.py \
+    python3 tools/community_models/moss_voicegen/moss_voicegen_session_soak.py \
         --server build_hip/bin/audiocpp_server --model /path/to/moss-voicegen.gguf \
         --backend hip --device 0 --card /sys/class/drm/card1/device --requests 12
 """

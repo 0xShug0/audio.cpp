@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CASES = REPO_ROOT / "tools" / "audiocpp_cli" / "audiocpp_cli_path_cases.json"
 DEFAULT_MODEL = REPO_ROOT / "models" / "MOSS-TTS-Local-Transformer-v1.5"
 FAMILY = "moss_tts_local"

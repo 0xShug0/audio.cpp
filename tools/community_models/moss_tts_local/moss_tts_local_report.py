@@ -75,7 +75,7 @@ def main() -> int:
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
 
-    repo = Path(__file__).resolve().parents[2]
+    repo = Path(__file__).resolve().parents[3]
     cases_files = args.cases or [
         repo / "tools" / "audiocpp_cli" / "audiocpp_cli_path_cases.json",
         repo / "tools" / "audiocpp_cli" / "audiocpp_cli_longform_tts_clone_cases.json",

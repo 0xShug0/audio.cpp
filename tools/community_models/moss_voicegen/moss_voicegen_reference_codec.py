@@ -6,7 +6,7 @@ tests/moss_voicegen/codec_decode_parity.cpp compares against. The matrix follows
 formula as the existing v2 test (tests/moss_tts_local/codec_decode_parity.cpp) so the two
 generations are exercised the same way.
 
-    python3 tools/community_models/moss_voicegen_reference_codec.py \
+    python3 tools/community_models/moss_voicegen/moss_voicegen_reference_codec.py \
         --codec /path/to/MOSS-VoiceGenerator/audio_tokenizer \
         --output tests/moss_voicegen/reference/ref_codec_v1.json
 """

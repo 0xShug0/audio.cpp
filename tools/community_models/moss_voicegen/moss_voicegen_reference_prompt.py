@@ -4,7 +4,7 @@ The checkpoint ships its own MossTTSDelayProcessor, so the prompt rows it produc
 the ground truth for the audio.cpp prompt builder. This writes one JSON file per case for
 tests/moss_voicegen/prompt_parity.cpp to compare against.
 
-    python3 tools/community_models/moss_voicegen_reference_prompt.py \
+    python3 tools/community_models/moss_voicegen/moss_voicegen_reference_prompt.py \
         --model /path/to/MOSS-VoiceGenerator --output parity
 
 Needs transformers with `trust_remote_code` (the repo's processor is remote code) and

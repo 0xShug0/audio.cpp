@@ -2,7 +2,7 @@
 """Compare Soprano TTS outputs between Python reference and audio.cpp C++ implementation.
 
 Usage:
-    python3 tools/soprano_tts/compare_parity.py
+    python3 tools/community_models/soprano_tts/compare_parity.py
 
 Requires:
     pip install numpy
@@ -13,7 +13,7 @@ Requires:
 import subprocess, os, sys, json, struct, time
 import numpy as np
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 TEXTS = {
     "short": "Soprano is an extremely lightweight text to speech model.",
