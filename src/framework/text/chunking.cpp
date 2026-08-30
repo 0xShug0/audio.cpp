@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
@@ -61,6 +63,73 @@ bool is_sentence_break(std::string_view token) {
 bool is_clause_break(std::string_view token) {
     return token == "," || token == ";" || token == ":" ||
            token == u8"，" || token == u8"、" || token == u8"；" || token == u8"：";
+}
+
+uint32_t span_codepoint(const Utf8Span & span) noexcept {
+    // split_utf8_spans has already validated width and continuation bytes.
+    const auto lead = static_cast<unsigned char>(span.text.front());
+    if (span.text.size() == 1) {
+        return lead;
+    }
+    uint32_t value = 0;
+    if (span.text.size() == 2) {
+        value = lead & 0x1FU;
+    } else if (span.text.size() == 3) {
+        value = lead & 0x0FU;
+    } else {
+        value = lead & 0x07U;
+    }
+    for (size_t i = 1; i < span.text.size(); ++i) {
+        value = (value << 6U) | (static_cast<unsigned char>(span.text[i]) & 0x3FU);
+    }
+    return value;
+}
+
+// Scripts that are written without ASCII word spaces. Text in these scripts
+// collapses to a single WordRange in split_word_ranges, which is what makes
+// split_text_chunks_default stop chunking altogether (F6.3).
+bool is_space_free_script_codepoint(uint32_t codepoint) noexcept {
+    return (codepoint >= 0x2E80U && codepoint <= 0x2EFFU) ||    // CJK radicals supplement
+           (codepoint >= 0x3000U && codepoint <= 0x303FU) ||    // CJK symbols and punctuation
+           (codepoint >= 0x3040U && codepoint <= 0x30FFU) ||    // hiragana and katakana
+           (codepoint >= 0x3100U && codepoint <= 0x312FU) ||    // bopomofo
+           (codepoint >= 0x3130U && codepoint <= 0x318FU) ||    // hangul compatibility jamo
+           (codepoint >= 0x31C0U && codepoint <= 0x31EFU) ||    // CJK strokes
+           (codepoint >= 0x31F0U && codepoint <= 0x31FFU) ||    // katakana phonetic extensions
+           (codepoint >= 0x3400U && codepoint <= 0x4DBFU) ||    // CJK unified ideographs extension A
+           (codepoint >= 0x4E00U && codepoint <= 0x9FFFU) ||    // CJK unified ideographs
+           (codepoint >= 0xAC00U && codepoint <= 0xD7AFU) ||    // hangul syllables
+           (codepoint >= 0xF900U && codepoint <= 0xFAFFU) ||    // CJK compatibility ideographs
+           (codepoint >= 0xFE30U && codepoint <= 0xFE4FU) ||    // CJK compatibility forms
+           (codepoint >= 0xFF00U && codepoint <= 0xFF60U) ||    // fullwidth forms
+           (codepoint >= 0xFFE0U && codepoint <= 0xFFE6U) ||    // fullwidth signs
+           (codepoint >= 0x20000U && codepoint <= 0x3134AU);    // CJK unified ideographs extensions B-G
+}
+
+// Codepoints that continue the preceding grapheme cluster. A chunk must never
+// start with one of these, or the cluster is torn in half.
+bool is_grapheme_extend_codepoint(uint32_t codepoint) noexcept {
+    return (codepoint >= 0x0300U && codepoint <= 0x036FU) ||    // combining diacritical marks
+           (codepoint >= 0x1AB0U && codepoint <= 0x1AFFU) ||    // combining diacritical marks extended
+           (codepoint >= 0x1DC0U && codepoint <= 0x1DFFU) ||    // combining diacritical marks supplement
+           codepoint == 0x200DU ||                              // zero width joiner
+           (codepoint >= 0x20D0U && codepoint <= 0x20FFU) ||    // combining marks for symbols
+           (codepoint >= 0x3099U && codepoint <= 0x309AU) ||    // combining kana voiced sound marks
+           (codepoint >= 0xFE00U && codepoint <= 0xFE0FU) ||    // variation selectors
+           (codepoint >= 0xFE20U && codepoint <= 0xFE2FU) ||    // combining half marks
+           (codepoint >= 0xE0100U && codepoint <= 0xE01EFU);    // variation selectors supplement
+}
+
+bool span_range_has_space_free_script(
+    const std::vector<Utf8Span> & spans,
+    size_t start,
+    size_t end) {
+    for (size_t i = start; i < end && i < spans.size(); ++i) {
+        if (is_space_free_script_codepoint(span_codepoint(spans[i]))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool is_tag_open(std::string_view token) {
@@ -302,6 +371,65 @@ std::optional<std::pair<std::string, std::string>> split_leading_parenthetical_c
     return std::make_pair(prefix, body);
 }
 
+// Picks the end of a codepoint-budgeted chunk starting at `start`, preferring a
+// sentence break, then a clause break, then the hard budget. `limit` is one past
+// the last span the chunk may use. Never returns a boundary that would tear a
+// grapheme cluster; spans are whole codepoints by construction, so a multi-byte
+// codepoint can never be split either.
+size_t find_codepoint_chunk_end(
+    const std::vector<Utf8Span> & spans,
+    size_t start,
+    size_t limit,
+    int64_t codepoint_budget) {
+    const size_t hard_end = std::min(limit, start + static_cast<size_t>(codepoint_budget));
+    size_t end = hard_end;
+    if (hard_end < limit) {
+        for (size_t i = hard_end; i > start + 1; --i) {
+            if (is_sentence_break(spans[i - 1].text)) {
+                end = i;
+                break;
+            }
+        }
+        if (end == hard_end) {
+            for (size_t i = hard_end; i > start + 1; --i) {
+                if (is_clause_break(spans[i - 1].text)) {
+                    end = i;
+                    break;
+                }
+            }
+        }
+        while (end > start + 1 && end < limit && is_grapheme_extend_codepoint(span_codepoint(spans[end]))) {
+            --end;
+        }
+    }
+    return end;
+}
+
+void append_codepoint_chunks(
+    const std::string & text,
+    const std::vector<Utf8Span> & spans,
+    size_t start,
+    size_t limit,
+    int64_t codepoint_budget,
+    std::vector<std::string> & chunks) {
+    size_t position = start;
+    while (position < limit) {
+        while (position < limit && is_ascii_space(spans[position].text)) {
+            ++position;
+        }
+        if (position >= limit) {
+            break;
+        }
+        const size_t end = find_codepoint_chunk_end(spans, position, limit, codepoint_budget);
+        auto chunk = engine::io::trim_ascii_whitespace(
+            text.substr(spans[position].start, spans[end - 1].end - spans[position].start));
+        if (!chunk.empty()) {
+            chunks.push_back(std::move(chunk));
+        }
+        position = end;
+    }
+}
+
 std::vector<std::string> split_text_chunks_default(
     std::string_view text,
     int64_t codepoint_budget) {
@@ -337,6 +465,26 @@ std::vector<std::string> split_text_chunks_default(
         }
 
         if (hard_end == word_start) {
+            // A single whitespace-delimited word already exceeds the budget. For a
+            // script written without ASCII spaces that word is the whole input, and
+            // emitting it verbatim is what stops chunking entirely (F6.3). Fall back
+            // to a codepoint split inside the word. ASCII-only over-long words (URLs,
+            // base64 blobs) keep the historical whole-word behaviour, so no existing
+            // Latin-script split moves.
+            if (span_range_has_space_free_script(
+                    spans,
+                    words[word_start].span_start,
+                    words[word_start].span_end)) {
+                append_codepoint_chunks(
+                    trimmed,
+                    spans,
+                    words[word_start].span_start,
+                    words[word_start].span_end,
+                    codepoint_budget,
+                    chunks);
+                word_start += 1;
+                continue;
+            }
             hard_end = word_start + 1;
         }
 
@@ -410,43 +558,7 @@ std::vector<std::string> split_text_chunks_japanese(
     }
 
     std::vector<std::string> chunks;
-    size_t start = 0;
-    while (start < spans.size()) {
-        while (start < spans.size() && is_ascii_space(spans[start].text)) {
-            ++start;
-        }
-        if (start >= spans.size()) {
-            break;
-        }
-
-        const size_t hard_end = std::min(
-            spans.size(),
-            start + static_cast<size_t>(codepoint_budget));
-        size_t end = hard_end;
-        if (hard_end < spans.size()) {
-            for (size_t i = hard_end; i > start + 1; --i) {
-                if (is_sentence_break(spans[i - 1].text)) {
-                    end = i;
-                    break;
-                }
-            }
-            if (end == hard_end) {
-                for (size_t i = hard_end; i > start + 1; --i) {
-                    if (is_clause_break(spans[i - 1].text)) {
-                        end = i;
-                        break;
-                    }
-                }
-            }
-        }
-
-        auto chunk = engine::io::trim_ascii_whitespace(
-            trimmed.substr(spans[start].start, spans[end - 1].end - spans[start].start));
-        if (!chunk.empty()) {
-            chunks.push_back(std::move(chunk));
-        }
-        start = end;
-    }
+    append_codepoint_chunks(trimmed, spans, 0, spans.size(), codepoint_budget, chunks);
     return chunks;
 }
 

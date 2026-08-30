@@ -17,6 +17,10 @@ namespace engine::text {
 enum class TextChunkMode;
 }
 
+namespace engine::audio {
+struct AudioChunkJoinSpec;
+}
+
 namespace engine::runtime {
 
 enum class VoiceTaskKind {
@@ -285,7 +289,16 @@ std::vector<TaskRequest> chunk_text_request(
     const TaskRequest & request,
     int64_t codepoint_budget,
     engine::text::TextChunkMode mode);
+// Joins `src` onto the end of `dst`. The two-argument form takes the default join
+// strategy (engine::audio::AudioChunkJoinSpec) — an energy-aware crossfade that is
+// a bit-exact splice whenever the seam step is already inaudible, which is the
+// case for a seam landing in the inter-sentence silence a text-chunk split
+// produces. Pass an explicit spec to force Concat, EqualPower or CosSquared.
 void append_audio_buffer(AudioBuffer & dst, const AudioBuffer & src);
+void append_audio_buffer(
+    AudioBuffer & dst,
+    const AudioBuffer & src,
+    const engine::audio::AudioChunkJoinSpec & join);
 
 class IGraphCapacityAdapter {
 public:

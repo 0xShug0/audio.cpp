@@ -2032,6 +2032,20 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(audio_chunk_join_test tests/unittests/test_audio_chunk_join.cpp)
+
+    add_test(
+        NAME audio_chunk_join_test
+        COMMAND audio_chunk_join_test
+    )
+
+    add_engine_unittest(text_chunking_test tests/unittests/test_text_chunking.cpp)
+
+    add_test(
+        NAME text_chunking_test
+        COMMAND text_chunking_test
+    )
+
     add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
 
     add_test(

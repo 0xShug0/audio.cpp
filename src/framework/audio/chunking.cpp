@@ -127,6 +127,35 @@ void validate_merge_spans(
     }
 }
 
+constexpr float kJoinHalfPi = 1.57079632679489661923F;
+
+float join_fade_position(int64_t frame, int64_t fade_frames) {
+    if (fade_frames <= 1) {
+        return 1.0F;
+    }
+    return static_cast<float>(frame) / static_cast<float>(fade_frames - 1);
+}
+
+void join_fade_gains(
+    AudioChunkJoinMode mode,
+    float position,
+    float & fade_out,
+    float & fade_in) {
+    const float out_gain = std::cos(position * kJoinHalfPi);
+    const float in_gain = std::sin(position * kJoinHalfPi);
+    if (mode == AudioChunkJoinMode::CosSquared) {
+        fade_out = out_gain * out_gain;
+        fade_in = in_gain * in_gain;
+        return;
+    }
+    fade_out = out_gain;
+    fade_in = in_gain;
+}
+
+void splice_audio_samples(runtime::AudioBuffer & dst, const runtime::AudioBuffer & src) {
+    dst.samples.insert(dst.samples.end(), src.samples.begin(), src.samples.end());
+}
+
 }  // namespace
 
 std::vector<AudioChunkSpan> plan_audio_chunks(int64_t input_samples, const AudioChunkSpec & spec) {
@@ -393,6 +422,183 @@ runtime::AudioBuffer slice_audio_buffer(
         audio.samples.begin() + static_cast<std::ptrdiff_t>(begin),
         audio.samples.begin() + static_cast<std::ptrdiff_t>(end));
     return out;
+}
+
+AudioChunkJoinMode parse_audio_chunk_join_mode(const std::string & value) {
+    if (value == "auto") {
+        return AudioChunkJoinMode::Auto;
+    }
+    if (value == "concat" || value == "none") {
+        return AudioChunkJoinMode::Concat;
+    }
+    if (value == "equal_power" || value == "equal-power" || value == "equalpower") {
+        return AudioChunkJoinMode::EqualPower;
+    }
+    if (value == "cos_squared" || value == "cos-squared" || value == "cos2") {
+        return AudioChunkJoinMode::CosSquared;
+    }
+    throw std::runtime_error("audio_chunk_join must be auto, concat, equal_power, or cos_squared");
+}
+
+AudioChunkJoinSpec parse_audio_chunk_join_spec(
+    const std::unordered_map<std::string, std::string> & options) {
+    AudioChunkJoinSpec spec;
+    const auto mode = runtime::find_option(options, {"audio_chunk_join", "chunk_join"});
+    if (mode.has_value()) {
+        spec.mode = parse_audio_chunk_join_mode(*mode);
+    }
+    const auto seconds = runtime::parse_finite_float_option(
+        options,
+        {"cross_fade_duration_sec", "audio_chunk_cross_fade_sec"});
+    if (seconds.has_value()) {
+        if (*seconds < 0.0F) {
+            throw std::runtime_error("cross_fade_duration_sec must be non-negative");
+        }
+        spec.cross_fade_seconds = *seconds;
+    }
+    return spec;
+}
+
+float measure_chunk_seam_step(
+    const runtime::AudioBuffer & previous,
+    const runtime::AudioBuffer & next) {
+    if (previous.channels <= 0 || next.channels != previous.channels) {
+        return 0.0F;
+    }
+    const auto channels = static_cast<size_t>(previous.channels);
+    if (previous.samples.size() < channels || next.samples.size() < channels) {
+        return 0.0F;
+    }
+    const size_t tail = previous.samples.size() - channels;
+    float step = 0.0F;
+    for (size_t channel = 0; channel < channels; ++channel) {
+        step = std::max(step, std::fabs(next.samples[channel] - previous.samples[tail + channel]));
+    }
+    return step;
+}
+
+float measure_chunk_edge_slew(
+    const runtime::AudioBuffer & previous,
+    const runtime::AudioBuffer & next,
+    int64_t window_frames) {
+    if (previous.channels <= 0 || next.channels != previous.channels || window_frames <= 0) {
+        return 0.0F;
+    }
+    const auto channels = static_cast<size_t>(previous.channels);
+    if (previous.samples.size() % channels != 0 || next.samples.size() % channels != 0) {
+        return 0.0F;
+    }
+    const auto previous_frames = static_cast<int64_t>(previous.samples.size() / channels);
+    const auto next_frames = static_cast<int64_t>(next.samples.size() / channels);
+    float slew = 0.0F;
+    const int64_t previous_span = std::min(window_frames, previous_frames - 1);
+    for (int64_t frame = 0; frame < previous_span; ++frame) {
+        const size_t high = previous.samples.size() - static_cast<size_t>(frame) * channels;
+        for (size_t channel = 0; channel < channels; ++channel) {
+            const float later = previous.samples[high - channels + channel];
+            const float earlier = previous.samples[high - 2 * channels + channel];
+            slew = std::max(slew, std::fabs(later - earlier));
+        }
+    }
+    const int64_t next_span = std::min(window_frames, next_frames - 1);
+    for (int64_t frame = 0; frame < next_span; ++frame) {
+        const size_t low = static_cast<size_t>(frame) * channels;
+        for (size_t channel = 0; channel < channels; ++channel) {
+            const float earlier = next.samples[low + channel];
+            const float later = next.samples[low + channels + channel];
+            slew = std::max(slew, std::fabs(later - earlier));
+        }
+    }
+    return slew;
+}
+
+bool chunk_seam_is_discontinuous(
+    const runtime::AudioBuffer & previous,
+    const runtime::AudioBuffer & next,
+    const AudioChunkJoinSpec & spec) {
+    const float step = measure_chunk_seam_step(previous, next);
+    if (step <= std::max(0.0F, spec.silent_seam_step)) {
+        return false;
+    }
+    const float slew = measure_chunk_edge_slew(previous, next, spec.seam_slew_window_frames);
+    return step > std::max(0.0F, spec.seam_slew_ratio) * slew;
+}
+
+int64_t resolve_chunk_cross_fade_frames(
+    int64_t previous_frames,
+    int64_t next_frames,
+    int sample_rate,
+    float cross_fade_seconds) {
+    if (previous_frames <= 0 || next_frames <= 0 || sample_rate <= 0 || !(cross_fade_seconds > 0.0F)) {
+        return 0;
+    }
+    const int64_t requested = static_cast<int64_t>(std::llround(
+        static_cast<double>(cross_fade_seconds) * static_cast<double>(sample_rate)));
+    return std::max<int64_t>(0, std::min(requested, std::min(previous_frames, next_frames)));
+}
+
+void append_audio_chunk(
+    runtime::AudioBuffer & dst,
+    const runtime::AudioBuffer & src,
+    const AudioChunkJoinSpec & spec) {
+    if (src.sample_rate <= 0 || src.channels <= 0) {
+        throw std::runtime_error("audio append requires valid source format");
+    }
+    if (dst.sample_rate == 0) {
+        dst.sample_rate = src.sample_rate;
+        dst.channels = src.channels;
+    } else if (dst.sample_rate != src.sample_rate || dst.channels != src.channels) {
+        throw std::runtime_error("audio append requires matching audio format");
+    }
+    if (spec.mode == AudioChunkJoinMode::Concat || dst.samples.empty() || src.samples.empty()) {
+        splice_audio_samples(dst, src);
+        return;
+    }
+
+    const auto channels = static_cast<size_t>(src.channels);
+    if (dst.samples.size() % channels != 0 || src.samples.size() % channels != 0) {
+        throw std::runtime_error("audio append requires whole frames on both chunks");
+    }
+
+    AudioChunkJoinMode mode = spec.mode;
+    if (mode == AudioChunkJoinMode::Auto) {
+        if (!chunk_seam_is_discontinuous(dst, src, spec)) {
+            splice_audio_samples(dst, src);
+            return;
+        }
+        mode = AudioChunkJoinMode::EqualPower;
+    }
+
+    const auto previous_frames = static_cast<int64_t>(dst.samples.size() / channels);
+    const auto next_frames = static_cast<int64_t>(src.samples.size() / channels);
+    const int64_t fade_frames = resolve_chunk_cross_fade_frames(
+        previous_frames,
+        next_frames,
+        src.sample_rate,
+        spec.cross_fade_seconds);
+    // A one-frame "crossfade" is a sample replacement, not a fade: it would drop a
+    // sample for no benefit. Splice instead.
+    if (fade_frames < 2) {
+        splice_audio_samples(dst, src);
+        return;
+    }
+
+    const size_t blend_base = static_cast<size_t>(previous_frames - fade_frames) * channels;
+    for (int64_t frame = 0; frame < fade_frames; ++frame) {
+        float fade_out = 0.0F;
+        float fade_in = 0.0F;
+        join_fade_gains(mode, join_fade_position(frame, fade_frames), fade_out, fade_in);
+        const size_t dst_base = blend_base + static_cast<size_t>(frame) * channels;
+        const size_t src_base = static_cast<size_t>(frame) * channels;
+        for (size_t channel = 0; channel < channels; ++channel) {
+            dst.samples[dst_base + channel] =
+                dst.samples[dst_base + channel] * fade_out + src.samples[src_base + channel] * fade_in;
+        }
+    }
+    dst.samples.insert(
+        dst.samples.end(),
+        src.samples.begin() + static_cast<std::ptrdiff_t>(static_cast<size_t>(fade_frames) * channels),
+        src.samples.end());
 }
 
 std::vector<float> make_triangular_overlap_window(int64_t chunk_samples) {

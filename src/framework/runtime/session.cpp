@@ -1,4 +1,6 @@
 #include "engine/framework/runtime/session.h"
+
+#include "engine/framework/audio/chunking.h"
 #include "engine/framework/text/chunking.h"
 
 #include <algorithm>
@@ -237,16 +239,14 @@ std::vector<TaskRequest> chunk_text_request(
 }
 
 void append_audio_buffer(AudioBuffer & dst, const AudioBuffer & src) {
-    if (src.sample_rate <= 0 || src.channels <= 0) {
-        throw std::runtime_error("audio append requires valid source format");
-    }
-    if (dst.sample_rate == 0) {
-        dst.sample_rate = src.sample_rate;
-        dst.channels = src.channels;
-    } else if (dst.sample_rate != src.sample_rate || dst.channels != src.channels) {
-        throw std::runtime_error("audio append requires matching audio format");
-    }
-    dst.samples.insert(dst.samples.end(), src.samples.begin(), src.samples.end());
+    append_audio_buffer(dst, src, engine::audio::AudioChunkJoinSpec{});
+}
+
+void append_audio_buffer(
+    AudioBuffer & dst,
+    const AudioBuffer & src,
+    const engine::audio::AudioChunkJoinSpec & join) {
+    engine::audio::append_audio_chunk(dst, src, join);
 }
 
 std::vector<std::byte> bytes_from_string(std::string_view value) {
