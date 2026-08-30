@@ -2,6 +2,7 @@
 
 #include "engine/framework/model_spec/options.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/model_spec/schema.h"
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
@@ -95,6 +96,10 @@ std::vector<runtime::TaskCapability> parse_tasks(const json::Value & tasks_value
 
 json::Value load_spec_for_family(std::string_view family) {
     return engine::model_spec::load_spec(engine::model_spec::default_contract_spec_path(family));
+}
+
+json::Value load_contract_spec_for_family(std::string_view family) {
+    return engine::model_spec::load_contract_spec(engine::model_spec::default_contract_spec_path(family));
 }
 
 std::string ref_candidate_path(const std::string & ref) {
@@ -300,7 +305,9 @@ std::unordered_set<std::string> option_keys(const std::vector<runtime::CliOption
 
 ModelContract contract_from_spec(const json::Value & spec) {
     ModelContract out;
-    out.metadata = metadata_from_spec(spec);
+    out.metadata.family = json::require_string(spec, "family");
+    out.metadata.variant = json::require_string(spec, "display_name");
+    out.metadata.description = json::require_string(spec, "description");
     out.capabilities = capabilities_from_spec(spec);
     out.cli = cli_from_spec(spec);
     out.request_option_keys = option_keys(out.cli.request_options);
@@ -312,9 +319,14 @@ ModelContract contract_from_spec(const json::Value & spec) {
 }  // namespace
 
 std::optional<ModelContract> model_contract(std::string_view family) {
-    const auto spec = load_spec_for_family(family);
-    if (spec.find("schema_version") == nullptr) {
+    const auto spec = load_contract_spec_for_family(family);
+    const auto * version = spec.find("schema_version");
+    if (version == nullptr) {
         return std::nullopt;
+    }
+    if (!version->is_number() || version->as_i64() != kModelSpecSchemaVersion) {
+        throw std::runtime_error(
+            "model spec schema_version: expected " + std::to_string(kModelSpecSchemaVersion));
     }
     return contract_from_spec(spec);
 }

@@ -196,7 +196,7 @@ std::optional<std::filesystem::path> discover_workspace_model_spec(std::string_v
     return std::nullopt;
 }
 
-engine::io::json::Value parse_model_spec(const std::filesystem::path & spec_path) {
+engine::io::json::Value parse_model_spec(const std::filesystem::path & spec_path, bool validate) {
     engine::io::json::Value root;
     if (spec_path.parent_path() == "@gguf") {
         const auto & spec = embedded_model_spec();
@@ -213,7 +213,9 @@ engine::io::json::Value parse_model_spec(const std::filesystem::path & spec_path
     } else {
         root = engine::io::json::parse_file(spec_path);
     }
-    validate_spec(root, model_spec_description(spec_path));
+    if (validate) {
+        validate_spec(root, model_spec_description(spec_path));
+    }
     return root;
 }
 
@@ -419,7 +421,7 @@ SelectedSource require_selected_source(const std::filesystem::path & model_path,
     const auto spec_description = model_spec_description(spec_path);
     engine::io::json::Value spec;
     try {
-        spec = parse_model_spec(spec_path);
+        spec = parse_model_spec(spec_path, true);
     } catch (const std::exception & error) {
         throw std::runtime_error("failed to parse " + spec_description + ": " + error.what());
     }
@@ -578,7 +580,11 @@ assets::ResourceBundle load_resource_bundle_for_family(
 }
 
 engine::io::json::Value load_spec(const std::filesystem::path & spec_path) {
-    return parse_model_spec(spec_path);
+    return parse_model_spec(spec_path, true);
+}
+
+engine::io::json::Value load_contract_spec(const std::filesystem::path & spec_path) {
+    return parse_model_spec(spec_path, false);
 }
 
 std::vector<assets::ResourceFile> discover_resources(
