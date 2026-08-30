@@ -75,6 +75,10 @@ struct SoproAcousticWeights {
 
 namespace {
 
+// MSVC does not define M_PI; use our own constant, as f5_tts does for the
+// same sway-time grid.
+constexpr float kPi = 3.14159265358979323846F;
+
 namespace binding = engine::modules::binding;
 namespace mod = engine::modules;
 
@@ -339,7 +343,7 @@ std::vector<float> build_time_grid(int64_t steps, float sway_coefficient) {
     }
     for (auto & value : times) {
         value += sway_coefficient *
-                 (std::cos(0.5F * static_cast<float>(M_PI) * value) - 1.0F + value);
+                 (std::cos(0.5F * kPi * value) - 1.0F + value);
     }
     return times;
 }
