@@ -10,9 +10,11 @@
 namespace engine::community_models::soprano_tts {
 
 // Byte-level BPE tokenizer for the Soprano text prompt. The LM expects the text
-// wrapped as a single prompt: "[STOP][TEXT]<speech>[START]". Diacritics are
-// removed and text is case-folded (unidecode-style) before encoding, matching
-// the reference `clean_text` behaviour for English.
+// wrapped as a single prompt: "[STOP][TEXT]<speech>[START]". Before encoding,
+// text is normalized with the full reference `clean_text` chain (ekwek1/soprano,
+// see text_normalizer.h): numbers, symbols, and abbreviations are expanded,
+// punctuation is canonicalized, and the text is folded to the training
+// character whitelist so the model only renders pauses for sentence marks.
 class SopranoTextTokenizer {
 public:
     explicit SopranoTextTokenizer(const std::filesystem::path & tokenizer_json_path);
@@ -40,7 +42,5 @@ private:
     int32_t text_id_ = -1;
     int32_t start_id_ = -1;
 };
-
-std::string scalarclean_soprano_text(const std::string & text);
 
 }  // namespace engine::community_models::soprano_tts
