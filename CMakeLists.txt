@@ -419,6 +419,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/host_ops.cpp
     src/framework/runtime/kv_cache.cpp
     src/framework/runtime/bounded_static_kv_decode.cpp
+    src/framework/runtime/greedy_qwen_decoder.cpp
     src/framework/runtime/options.cpp
     src/framework/runtime/session_base.cpp
     src/framework/runtime/workspace.cpp
@@ -500,6 +501,7 @@ add_library(engine_core OBJECT
     src/framework/modules/optimizations/fast_kv_modules.cpp
     src/framework/tokenizers/hf_tokenizer_json.cpp
     src/framework/tokenizers/llama_bpe.cpp
+    src/framework/tokenizers/qwen_bpe_bundle.cpp
     external/llama_tokenizer/bpe-core.cpp
     external/llama_tokenizer/unicode.cpp
     external/llama_tokenizer/unicode-data.cpp

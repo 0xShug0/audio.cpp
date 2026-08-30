@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/tokenizers/qwen_bpe_bundle.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -126,19 +127,6 @@ qwen3_asr::Qwen3ASRAudioEncoderConfig parse_audio_encoder_config(const json::Val
     return config;
 }
 
-int64_t require_added_token_id(const assets::ResourceBundle & resources, std::string_view content) {
-    const auto tokenizer = resources.parse_json("tokenizer_json");
-    for (const auto & item : tokenizer.require("added_tokens").as_array()) {
-        const auto * token_content = item.find("content");
-        const auto * token_id = item.find("id");
-        if (token_content != nullptr && token_content->is_string() &&
-            token_id != nullptr && token_id->is_number() && token_content->as_string() == content) {
-            return token_id->as_i64();
-        }
-    }
-    throw std::runtime_error("Audio8 ASR tokenizer.json is missing token: " + std::string(content));
-}
-
 Audio8ASRConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
 
@@ -199,11 +187,11 @@ Audio8ASRConfig parse_config(const assets::ResourceBundle & resources) {
 
     // Prompt special tokens live in tokenizer.json added_tokens; the audio
     // token id from the config must match the tokenizer entry.
-    config.user_token_id = require_added_token_id(resources, "<|user|>");
-    config.begin_audio_token_id = require_added_token_id(resources, "<|begin_of_audio|>");
-    config.end_audio_token_id = require_added_token_id(resources, "<|end_of_audio|>");
-    config.assistant_token_id = require_added_token_id(resources, "<|assistant|>");
-    config.text_decoder.audio_token_id = require_added_token_id(resources, "<|audio|>");
+    config.user_token_id = engine::tokenizers::require_added_token_id(resources, "<|user|>");
+    config.begin_audio_token_id = engine::tokenizers::require_added_token_id(resources, "<|begin_of_audio|>");
+    config.end_audio_token_id = engine::tokenizers::require_added_token_id(resources, "<|end_of_audio|>");
+    config.assistant_token_id = engine::tokenizers::require_added_token_id(resources, "<|assistant|>");
+    config.text_decoder.audio_token_id = engine::tokenizers::require_added_token_id(resources, "<|audio|>");
 
     config.supported_languages = {
         "Chinese", "English", "Cantonese", "French", "German", "Japanese", "Korean"};
@@ -267,19 +255,7 @@ std::shared_ptr<const Audio8ASRAssets> load_audio8_asr_assets(const std::filesys
     encoder_assets->model_weights = std::move(encoder_source);
     assets->encoder_assets = std::move(encoder_assets);
 
-    engine::tokenizers::LlamaBpeTokenizerSpec tokenizer_spec;
-    tokenizer_spec.tokenizer_config_path = assets->resources.require_file("tokenizer_config");
-    if (const auto * path = assets->resources.find_file("vocab")) {
-        tokenizer_spec.vocab_path = *path;
-    }
-    if (const auto * path = assets->resources.find_file("merges")) {
-        tokenizer_spec.merges_path = *path;
-    }
-    if (const auto * path = assets->resources.find_file("tokenizer_json")) {
-        tokenizer_spec.tokenizer_json_path = *path;
-    }
-    tokenizer_spec.pre_type = engine::tokenizers::LlamaBpePreTokenizer::Qwen2;
-    assets->tokenizer = engine::tokenizers::load_llama_bpe_tokenizer(tokenizer_spec);
+    assets->tokenizer = engine::tokenizers::load_qwen_bpe_tokenizer(assets->resources);
     return assets;
 }
 
