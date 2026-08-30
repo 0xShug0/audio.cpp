@@ -175,8 +175,7 @@
         "condition_encoder.gguf",
         "transformer_q4_0.gguf",
         "vocoder.gguf"
-      ],
-      "strip_prefix": ""
+      ]
     },
     {
       "id": "minimax_music3_q8_0",
@@ -198,8 +197,7 @@
         "condition_encoder.gguf",
         "transformer_q8_0.gguf",
         "vocoder.gguf"
-      ],
-      "strip_prefix": ""
+      ]
     },
     {
       "id": "minimax_music3_bf16",
@@ -221,8 +219,7 @@
         "condition_encoder.gguf",
         "transformer_bf16.gguf",
         "vocoder.gguf"
-      ],
-      "strip_prefix": ""
+      ]
     }
   ],
   "dependencies": [],

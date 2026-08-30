@@ -34,6 +34,7 @@ private:
 [[nodiscard]] std::filesystem::path default_contract_spec_path(std::string_view family);
 
 [[nodiscard]] engine::io::json::Value load_spec(const std::filesystem::path & spec_path);
+[[nodiscard]] engine::io::json::Value load_contract_spec(const std::filesystem::path & spec_path);
 
 [[nodiscard]] assets::ResourceBundle load_resource_bundle(const std::filesystem::path & model_path,
     const std::filesystem::path & spec_path);
