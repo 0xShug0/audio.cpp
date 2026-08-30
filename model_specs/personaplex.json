@@ -163,7 +163,7 @@
     {
       "id": "personaplex_7b_v1_q4_k",
       "display_name": "PersonaPlex 7B v1 Q4_K GGUF",
-      "default": true,
+      "default": false,
       "format": "gguf",
       "precision": "q4_k",
       "target_directory": "PersonaPlex-GGUF",
@@ -175,7 +175,7 @@
     {
       "id": "personaplex_7b_v1_q8_0",
       "display_name": "PersonaPlex 7B v1 Q8_0 GGUF",
-      "default": false,
+      "default": true,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "PersonaPlex-GGUF",
@@ -187,7 +187,7 @@
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "personaplex_7b_v1_q4_k",
+    "recommended_package": "personaplex_7b_v1_q8_0",
     "tags": [
       "TTS",
       "Stream",

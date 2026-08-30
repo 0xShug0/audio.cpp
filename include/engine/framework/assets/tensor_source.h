@@ -178,11 +178,32 @@ struct GgufTensorTypeOverride {
     std::string pattern;
     TensorStorageType storage_type = TensorStorageType::Native;
 };
+// One entry of the audible-tensor exclusion list the GGUF packer applies before it
+// quantizes anything. `pattern` is matched against the whole logical tensor name,
+// lowercased, with `*` standing for any run of characters. `reason` is documentation:
+// it says why this tensor may not be quantized, and it is what the next contributor
+// reads before adding a rule of their own. See docs/gguf.md.
+struct GgufAudibleTensorRule {
+    std::string_view pattern;
+    std::string_view reason;
+};
+// The exclusion list itself, in match order.
+[[nodiscard]] const std::vector<GgufAudibleTensorRule> & gguf_audible_tensor_rules();
+// The reason `tensor_name` is held back from quantization, or an empty view when the
+// packer may quantize it. Matching is case-insensitive over the full logical name.
+// This answers only the name question; the packer still applies its shape and dtype
+// rules on top, and a `--keep-type` override still wins over both.
+[[nodiscard]] std::string_view gguf_audible_tensor_reason(std::string_view tensor_name);
 struct GgufConversionOptions {
     std::optional<TensorStorageType> bnb_nf4_type;
     std::vector<std::string> excluded_tensor_prefixes;
     std::vector<GgufTensorTypeOverride> type_overrides;
     std::vector<std::string> folded_weight_norm_patterns;
+    // Quantize audible tensors anyway, restoring the pre-policy shape-only behaviour.
+    // Prefer a per-tensor `--keep-type <pattern>=<type>` override to this switch: it
+    // says which tensor the packager decided to quantize and at what type, instead of
+    // turning the whole policy off.
+    bool quantize_audible_tensors = false;
 };
 void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & inputs,
                                     const std::filesystem::path & output_path, TensorStorageType weight_type,

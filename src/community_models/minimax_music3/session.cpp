@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -52,26 +53,41 @@ std::filesystem::path resolve_component_gguf_path(
     return path;
 }
 
+// The published packages ship the same component under different quantization
+// tiers, and the model root only ever contains the tier that was installed.
+// Prefer the highest-quality name present so a q8_0 install and a legacy q4_0
+// install both resolve without the caller naming a file explicitly.
+std::string default_component_gguf(
+    const MiniMaxMusic3Assets & assets,
+    std::initializer_list<const char *> candidates) {
+    for (const char * candidate : candidates) {
+        if (engine::io::is_existing_file(assets.model_root / candidate)) {
+            return candidate;
+        }
+    }
+    return *candidates.begin();
+}
+
 std::shared_ptr<const MiniMaxMusic3Assets> select_component_assets(
     std::shared_ptr<const MiniMaxMusic3Assets> base,
     const std::unordered_map<std::string, std::string> & options) {
     auto selected = std::make_shared<MiniMaxMusic3Assets>(*base);
     const std::string language_model_gguf =
-        runtime::find_option(options, {"minimax_music3.language_model_gguf"}).value_or("language_model_q4_0.gguf");
+        runtime::find_option(options, {"minimax_music3.language_model_gguf"}).value_or(default_component_gguf(*base, {"language_model_q8_0.gguf", "language_model_q4_0.gguf"}));
     selected->language_model_weights = assets::open_tensor_source(resolve_component_gguf_path(
         *base,
         "minimax_music3.language_model_gguf",
         language_model_gguf));
 
     const std::string depth_decoder_gguf =
-        runtime::find_option(options, {"minimax_music3.rvq_depth_decoder_gguf"}).value_or("rvq_depth_decoder_q8_0.gguf");
+        runtime::find_option(options, {"minimax_music3.rvq_depth_decoder_gguf"}).value_or(default_component_gguf(*base, {"rvq_depth_decoder_q8_0.gguf", "rvq_depth_decoder_bf16.gguf"}));
     selected->depth_decoder_weights = assets::open_tensor_source(resolve_component_gguf_path(
         *base,
         "minimax_music3.rvq_depth_decoder_gguf",
         depth_decoder_gguf));
 
     const std::string flow_transformer_gguf =
-        runtime::find_option(options, {"minimax_music3.flow_transformer_gguf"}).value_or("transformer_q4_0.gguf");
+        runtime::find_option(options, {"minimax_music3.flow_transformer_gguf"}).value_or(default_component_gguf(*base, {"transformer_q8_0.gguf", "transformer_q4_0.gguf"}));
     selected->transformer_weights = assets::open_tensor_source(resolve_component_gguf_path(
         *base,
         "minimax_music3.flow_transformer_gguf",

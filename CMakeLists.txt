@@ -2032,6 +2032,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(quantization_policy_test tests/unittests/test_quantization_policy.cpp)
+
+    add_test(
+        NAME quantization_policy_test
+        COMMAND quantization_policy_test
+    )
+
     add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
 
     add_test(

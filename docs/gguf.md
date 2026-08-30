@@ -116,6 +116,41 @@ Additional lower-bit checks:
 | `personaplex` | `q4_k` | Pass |
 | `voxtral_realtime` | `q4_k` | Pass (quick CUDA check; transcripts match Q8 except one capitalization-only difference) |
 
+**What the matrix does not cover.** The three tables above test `orig`, 16-bit and
+`q8_0`, plus the three `q4_k` spot checks listed here. That is the whole of the recorded
+validation. In particular:
+
+- `minimax_music3`, `minimax_h3` and `audiosr` appear in **no row of any table**. Nothing
+  about those families has been recorded through this process.
+- There is no 4-bit column in the main table, so no family's 4-bit package is validated
+  against its own 16-bit or `orig` output.
+- Every "Pass" label is a load-and-run judgement plus, for ASR, a transcript comparison.
+  There is no perceptual metric anywhere in the repo — no MOS, PESQ, SI-SDR or
+  mel-cepstral distortion — so "Pass (drift)" is not quantified and cannot be compared
+  between packages. Timbre, prosody and speaker-identity drift, which is what
+  quantization actually costs a TTS or music model, is not measured at all.
+
+`minimax_music3` and `personaplex` shipped a 4-bit package as their default while a
+`q8_0` package sat published and unused. Both now default to `q8_0`; the 4-bit packages
+remain installable by id. `minimax_h3` still defaults to `q4_k` because no
+higher-precision package is published for it.
+
+| Family | Old default | New default | Package size |
+|---|---|---|---|
+| `minimax_music3` | `minimax_music3_q4_0` | `minimax_music3_q8_0` | 8045 MiB -> 12902 MiB (`minimax_music3_bf16` would be 22547 MiB) |
+| `personaplex` | `personaplex_7b_v1_q4_k` | `personaplex_7b_v1_q8_0` | roughly 4 GB -> 7 GB for a 7B model |
+| `minimax_h3` | `minimax_h3_q4_k` | unchanged | only 4-bit packages are published |
+
+The MiniMax Music 3 figures are the sum of the five component GGUFs, computed from the
+installed `q4_0` package's tensor shapes; the `q4_0` total reproduces the installed files
+to within 1 MiB. Re-cutting the `q8_0` package with the tensor policy below would take it
+to 13634 MiB.
+
+`q4_0`, which `minimax_music3` used, is a legacy format: one scale per 32-element block
+and no zero point. `q4_k` carries per-super-block scales and mins at essentially the same
+bitrate and is what every other 4-bit user in the repo is already on. If a 4-bit MiniMax
+Music 3 package is re-cut, cut it as `q4_k`.
+
 Q8 packaging notes:
 
 - `chatterbox` Q8 is intentionally mixed type. Graph-sensitive scalar, norm,
@@ -144,6 +179,94 @@ Q8 packaging notes:
 - `voxtral_realtime` also has a tested `q4_k` package. In a quick CUDA path
   check it was smaller and faster than Q8_0, while transcript output matched
   Q8_0 except for one capitalization-only difference.
+
+## Which Tensors Get Quantized
+
+Two rules decide the storage type of every tensor the converter writes. Both live in
+`convert_tensor_sources_to_gguf` (`src/framework/assets/tensor_source.cpp`).
+
+**1. The shape rule.** A tensor is a candidate for the requested quantized type only when
+it is a float source, its name ends in `.weight`, it is exactly rank 2, and its last
+dimension divides the target's block size (32 for `q8_0`, 256 for the `_k` formats).
+Everything else keeps its source dtype. This is why biases and rank-1 norms come out F32,
+and why conv kernels do: a Conv1d kernel is rank 3 and its row length is the kernel size
+(3, 7, 11, 16), never a multiple of 32.
+
+**2. The audible-tensor rule.** The shape rule is blind to what a tensor *does*. It
+protects conv-stack vocoders by accident of rank and protects nothing at all once a
+vocoder, a codec decoder or a norm is written as a matmul. The converter therefore also
+holds back tensors by name, and stores them at F16 instead — the same fallback embedding
+and codebook tables already use.
+
+A tensor belongs on that list when quantization error in it reaches the waveform with no
+remaining layer to absorb it. That is the whole test. Mid-stack attention and FFN weights
+fail it and stay quantized.
+
+| Group | Patterns | Why |
+|---|---|---|
+| iSTFT and spectrogram heads | `*istft*`, `*stft_head*`, `*spec_head*`, `*spectrogram_head*`, `*mag_head*`, `*phase_head*` | The layer's output *is* the magnitude/phase spectrum, exponentiated on the way into the iSTFT. `redae/decoder.istft_head.out.weight` shipped as `Q8_0 [896,1922]` in FireRedTTS3-Instruct and FireRedAudio. |
+| Waveform vocoders | `*vocoder*`, `*bigvgan*`, `*hifigan*`, `*hifi_gan*`, `hift.*`, `hift/*`, `*.hift.*`, `*/hift.*`, `*waveform_decoder*`, `*wave_decoder*` | Last stage before the WAV. Conv stacks already survived on rank; this makes it deliberate and covers the rank-2 layers inside the same stacks. The HiFT patterns are anchored because `shift` contains `hift`. |
+| Codec and latent-to-audio decoders | `*acoustic_decoder*`, `*audio_decoder*`, `*codec_decoder*`, `*codec.decoder.*`, `*codec/decoder.*`, `*_tokenizer.decoder.*`, `*_tokenizer/decoder.*`, `*mel_decoder*`, `*s2mel*` | VibeVoice-7B shipped 52 Q8_0 FFN matmuls inside `model.acoustic_tokenizer.decoder`; IndexTTS2.5 shipped its whole s2mel flow decoder at Q8_0 while OmniVoice's conv vocoder stayed F32 for free. Encoder-side names are deliberately absent: analysis error is absorbed by the decoder that follows it. |
+| Normalisation projections | `*norm*`, `*adaln*` | Norms survive today only because they are rank 1. Written as a learned rank-2 projection — `*_norm.project_layer.weight`, an adaLN modulation — a norm is quantized like any other matmul, and its error is multiplied across every channel it scales. |
+| Output heads and final projections | `*head.weight`, `*heads.weight`, `*proj_out.weight`, `*final_proj.weight`, `*final_layer.linear.weight` | The head emits the distribution the sampler draws audio tokens from, with no later layer to absorb the error. In every package inspected the head has exactly the shape of the embedding table, which the converter already stores at F16 — so keeping the head at F16 is what makes the two ends of the model agree. |
+
+Matching is case-insensitive over the whole logical tensor name, `*` stands for any run of
+characters, and the first matching rule wins. The list is
+`gguf_audible_tensor_rules()` in `src/framework/assets/tensor_source.cpp`; each entry
+carries the reason it exists. Add to it there, and add a case to
+`tests/unittests/test_quantization_policy.cpp` in the same change.
+
+Note what is deliberately **not** on the list. `decoder` on its own is not a pattern: a
+name like `redae/decoder.qwen2.layers.*` is a 24-layer transformer that still has the
+whole rest of the decoder downstream, and excluding it would move gigabytes to F16 for
+nothing. Only the synthesis-side decoders named above are protected.
+
+### Overriding the policy
+
+`--keep-type <tensor-prefix>*=<type>` still wins over everything, including this list, so
+a packager who knows better can quantize a protected tensor deliberately:
+
+```bash
+# keep the policy, but quantize this one head anyway
+audiocpp_gguf ... --type q8_0 --keep-type 'lm_head.weight=q8_0'
+```
+
+The whole policy can also be turned off from a programmatic caller by setting
+`GgufConversionOptions::quantize_audible_tensors`, which reproduces the pre-policy output
+byte for byte. Prefer the per-tensor override: it records which tensor was quantized and
+at what type, instead of turning the protection off wholesale.
+
+### What this costs
+
+The exclusion list makes packages bigger. Measured against the shipped packages installed
+on the development machine, by re-deciding every tensor with the new policy at the same
+requested type:
+
+| Package | Size | Growth | Tensors moved to F16 |
+|---|---|---|---|
+| `dramabox-q8_0.gguf` | 18027 MiB | +34 MiB (+0.2%) | 2 |
+| `parakeet-tdt-0.6b-v3-q8_0.gguf` | 872 MiB | +5 MiB (+0.5%) | 1 |
+| `omnivoice-q8_0.gguf` | 1277 MiB | +8 MiB (+0.6%) | 1 |
+| `fireredtts3-instruct-q8_0.gguf` | 3943 MiB | +98 MiB (+2.5%) | 15 |
+| `index-tts2_5-q8_0.gguf` | 3324 MiB | +138 MiB (+4.2%) | 106 |
+| `firered-audio-q8_0.gguf` | 13308 MiB | +1006 MiB (+7.6%) | 15 |
+| `vibevoice-7b-q8_0.gguf` | 10080 MiB | +918 MiB (+9.1%) | 59 |
+| `MiniMax-Music3 language_model_q4_0.gguf` | 5729 MiB | +1123 MiB (+19.6%) | 1 |
+
+Almost all of the growth in the last three rows is a single `lm_head.weight`, which is a
+`[248320, 4096]`, `[152064, 3584]` and `[200000, 4096]` matrix respectively. If a package
+needs that back, `--keep-type '<name>=q8_0'` restores the old size exactly.
+
+`orig`, `f16` and `bf16` conversions are unaffected: no quantization happens on those
+paths, so the policy is inert.
+
+### This does not change GGUF files that already exist
+
+The policy runs at conversion time. It has no effect on any GGUF already on disk or
+already published — an installed `index-tts2_5-q8_0.gguf` keeps the Q8_0 s2mel decoder it
+was built with. For a package to benefit, it has to be converted again from the original
+safetensors weights with a converter built from this change, and re-uploaded. Until then
+the only thing that changes for a user is which *package* a spec's default points at.
 
 ## Build The Converter
 

@@ -103,21 +103,21 @@
         "type": "string",
         "description": "Language model component GGUF file relative to the model root.",
         "required": false,
-        "default": "language_model_q4_0.gguf"
+        "default": "language_model_q8_0.gguf"
       },
       {
         "name": "rvq_depth_decoder_gguf",
         "type": "string",
         "description": "RVQ depth decoder component GGUF file relative to the model root.",
         "required": false,
-        "default": "rvq_depth_decoder_bf16.gguf"
+        "default": "rvq_depth_decoder_q8_0.gguf"
       },
       {
         "name": "flow_transformer_gguf",
         "type": "string",
         "description": "Flow transformer component GGUF file relative to the model root.",
         "required": false,
-        "default": "transformer_q4_0.gguf"
+        "default": "transformer_q8_0.gguf"
       },
       {
         "name": "graph_context_mb",
@@ -157,7 +157,6 @@
     {
       "id": "minimax_music3_q4_0",
       "display_name": "MiniMax Music 3 Q4_0 GGUF",
-      "default": true,
       "format": "gguf",
       "precision": "q4_0",
       "target_directory": "MiniMax-Music3-GGUF",
@@ -180,6 +179,7 @@
     {
       "id": "minimax_music3_q8_0",
       "display_name": "MiniMax Music 3 Q8_0 GGUF",
+      "default": true,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "MiniMax-Music3-GGUF",
@@ -224,7 +224,7 @@
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "minimax_music3_q4_0",
+    "recommended_package": "minimax_music3_q8_0",
     "tags": [
       "Music",
       "GGUF"

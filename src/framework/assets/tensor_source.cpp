@@ -50,6 +50,37 @@ std::optional<TensorStorageType> find_tensor_type_override(
     return std::nullopt;
 }
 
+// Wildcard match where `*` stands for any run of characters, anywhere in the pattern.
+// `tensor_type_override_matches` above only understands a trailing `*` because
+// `--keep-type` takes a prefix; the audible-tensor rules need `*` in the middle to
+// name things like `*_tokenizer.decoder.*`.
+bool audible_tensor_pattern_matches(std::string_view name, std::string_view pattern) {
+    size_t name_index = 0;
+    size_t pattern_index = 0;
+    size_t star_index = std::string_view::npos;
+    size_t name_resume = 0;
+    while (name_index < name.size()) {
+        if (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+            star_index = pattern_index;
+            ++pattern_index;
+            name_resume = name_index;
+        } else if (pattern_index < pattern.size() && pattern[pattern_index] == name[name_index]) {
+            ++pattern_index;
+            ++name_index;
+        } else if (star_index != std::string_view::npos) {
+            pattern_index = star_index + 1;
+            ++name_resume;
+            name_index = name_resume;
+        } else {
+            return false;
+        }
+    }
+    while (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+        ++pattern_index;
+    }
+    return pattern_index == pattern.size();
+}
+
 core::TensorShape shape_from_dims(const std::vector<int64_t> & dims) {
     if (dims.empty() || dims.size() > core::kMaxTensorRank) {
         throw std::runtime_error("tensor rank must be between 1 and 4");
@@ -292,6 +323,98 @@ void set_backend_tensor_from_f32(
 }
 
 }  // namespace
+
+// The GGUF packer's audible-tensor policy.
+//
+// Everything else in the packer decides by *shape*: a tensor is quantized when it is a
+// rank-2 `.weight` whose rows divide the block size. That rule protects norms because
+// they happen to be rank 1 and conv-stack vocoders because their kernels happen to be
+// rank 3, and it protects nothing at all once a vocoder, a codec decoder or a norm is
+// written as a matmul. This list is the part that decides by *meaning*.
+//
+// A tensor belongs here when quantization error in it reaches the waveform with no
+// remaining layer to absorb it. That is the whole test. Mid-stack attention and FFN
+// weights fail it — they have the rest of the network downstream — and must stay
+// quantized, or every package the project ships grows for nothing.
+//
+// Matching is over the lowercased full logical name, first rule wins, `*` is any run of
+// characters. A matched tensor is stored at F16 instead of the requested quantized type,
+// exactly as embedding and codebook tables already are. A `--keep-type <pattern>=<type>`
+// override still wins over this list, so a packager who knows better can quantize any
+// one of these deliberately.
+const std::vector<GgufAudibleTensorRule> & gguf_audible_tensor_rules() {
+    static const std::vector<GgufAudibleTensorRule> rules = {
+        // Inverse-STFT and spectrogram heads. This layer's output *is* the magnitude
+        // and phase spectrum, exponentiated on the way into the iSTFT, so its error
+        // lands in the samples. `redae/decoder.istft_head.out.weight` shipped as
+        // Q8_0 [896,1922] in FireRedTTS3-Instruct and FireRedAudio.
+        {"*istft*", "inverse-STFT head: its output is the spectrum fed to the iSTFT"},
+        {"*stft_head*", "STFT head: its output is a spectrum"},
+        {"*spec_head*", "spectrogram head: its output is a spectrum"},
+        {"*spectrogram_head*", "spectrogram head: its output is a spectrum"},
+        {"*mag_head*", "magnitude head: its output is a spectrum magnitude"},
+        {"*phase_head*", "phase head: its output is a spectrum phase"},
+
+        // Waveform vocoders — the last stage before the WAV. Conv-stack vocoders
+        // already survive on rank; these rules make that deliberate and extend it to
+        // the rank-2 layers sitting inside the same stacks.
+        {"*vocoder*", "vocoder: last stage before the waveform"},
+        {"*bigvgan*", "BigVGAN vocoder"},
+        {"*hifigan*", "HiFi-GAN vocoder"},
+        {"*hifi_gan*", "HiFi-GAN vocoder"},
+        // Anchored rather than `*hift*`: that substring also occurs inside `shift`.
+        {"hift.*", "HiFT vocoder"},
+        {"hift/*", "HiFT vocoder"},
+        {"*.hift.*", "HiFT vocoder"},
+        {"*/hift.*", "HiFT vocoder"},
+        {"*waveform_decoder*", "waveform decoder"},
+        {"*wave_decoder*", "waveform decoder"},
+
+        // Codec and latent-to-audio decoder stacks. Encoder-side tensors are
+        // deliberately absent: analysis error is absorbed by the decoder that follows,
+        // synthesis error is not. VibeVoice-7B shipped 52 Q8_0 FFN matmuls inside
+        // `model.acoustic_tokenizer.decoder`, and IndexTTS2.5 shipped its whole s2mel
+        // flow decoder at Q8_0 while OmniVoice's conv vocoder stayed F32 for free.
+        {"*acoustic_decoder*", "acoustic decoder: synthesis side"},
+        {"*audio_decoder*", "audio decoder: synthesis side"},
+        {"*codec_decoder*", "codec decoder: synthesis side"},
+        {"*codec.decoder.*", "codec decoder: synthesis side"},
+        {"*codec/decoder.*", "codec decoder: synthesis side"},
+        {"*_tokenizer.decoder.*", "audio tokenizer decoder: synthesis side"},
+        {"*_tokenizer/decoder.*", "audio tokenizer decoder: synthesis side"},
+        {"*mel_decoder*", "mel decoder: emits the spectrogram the vocoder renders"},
+        {"*s2mel*", "s2mel flow decoder: emits the mel spectrogram"},
+
+        // Normalisation projections. Norms survive today only because they are rank 1.
+        // Written as a learned rank-2 projection — `*_norm.project_layer.weight`, an
+        // adaLN modulation — a norm is quantized like any other matmul, and its error
+        // is multiplied across every channel it scales.
+        {"*norm*", "normalisation projection: scales every channel it gates"},
+        {"*adaln*", "adaLN modulation: scales and shifts every channel it gates"},
+
+        // Output heads and final projections. The head emits the distribution the
+        // sampler draws audio tokens from, with no later layer to absorb the error. In
+        // every package inspected the head has exactly the shape of the embedding
+        // table, which this packer already stores at F16 — so keeping the head at F16
+        // is what makes the two ends of the model agree.
+        {"*head.weight", "output head: emits the distribution the sampler draws from"},
+        {"*heads.weight", "output heads: emit the distribution the sampler draws from"},
+        {"*proj_out.weight", "final projection: feeds the vocoder or codec decoder"},
+        {"*final_proj.weight", "final projection: feeds the vocoder or codec decoder"},
+        {"*final_layer.linear.weight", "DiT final layer: emits the flow-matching output"},
+    };
+    return rules;
+}
+
+std::string_view gguf_audible_tensor_reason(std::string_view tensor_name) {
+    const std::string normalized_name = lower_ascii(tensor_name);
+    for (const auto & rule : gguf_audible_tensor_rules()) {
+        if (audible_tensor_pattern_matches(normalized_name, rule.pattern)) {
+            return rule.reason;
+        }
+    }
+    return {};
+}
 
 void set_backend_tensor_from_f32_parallel(
     ggml_tensor * tensor,
@@ -1994,12 +2117,18 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 item.name.compare(item.name.size() - 7, 7, ".weight") == 0;
             const bool is_lookup_table = normalized_name.find("embed") != std::string::npos ||
                 normalized_name.find("codebook") != std::string::npos;
-            const bool can_quantize = !preserve_source_dtype && source_is_float && name_is_weight && item.shape.size() == 2 &&
-                !is_lookup_table && item.shape.back() % ggml_blck_size(requested_type) == 0;
+            // Shape and dtype say the tensor *could* be quantized; the audible-tensor
+            // policy says whether it should be. Both fall back to F16, the same way
+            // lookup tables already do.
+            const bool quantizable_shape = !preserve_source_dtype && source_is_float && name_is_weight &&
+                item.shape.size() == 2 && item.shape.back() % ggml_blck_size(requested_type) == 0;
+            const bool is_audible_tensor = quantizable_shape && !options.quantize_audible_tensors &&
+                !gguf_audible_tensor_reason(item.name).empty();
+            const bool can_quantize = quantizable_shape && !is_lookup_table && !is_audible_tensor;
             const bool use_requested = !preserve_source_dtype &&
                 (!ggml_is_quantized(requested_type) ? source_is_float && !item.shape.empty() : can_quantize);
             const bool use_f16_lookup = !preserve_source_dtype && ggml_is_quantized(requested_type) &&
-                source_is_float && is_lookup_table;
+                source_is_float && (is_lookup_table || is_audible_tensor);
             const auto type_override = find_tensor_type_override(item.name, options.type_overrides);
             const bool use_override = type_override.has_value() && *type_override != TensorStorageType::Native;
             const ggml_type override_type = use_override ? ggml_type_for_tensor_storage(*type_override) : source_type;
