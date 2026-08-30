@@ -64,6 +64,44 @@ build/bin/audiocpp_cli \
 `--task clon` works the same way. The reference is resampled to 24 kHz, cropped at a pause near
 `ref_seconds`, and level-normalised before the speaker and semantic encoders see it.
 
+## Streaming
+
+`--mode streaming` emits one pull event per text segment instead of one buffer at the end:
+
+```bash
+build/bin/audiocpp_cli \
+    --task tts --family sopro_tts \
+    --model models/sopro-v2-turbo \
+    --backend cpu --threads 8 --mode streaming \
+    --text "$(cat article.txt)" \
+    --voice-ref ref.wav --language en \
+    --text-chunk-size 120 \
+    --out stream.wav --out-dir segments/
+```
+
+Each event carries a `segment_<n>` named audio buffer that is already levelled, trimmed and
+faded, so a consumer can play events back to back; `--out` still writes the whole utterance,
+and it is exactly the concatenation of the events. The reference voice is encoded once in
+`start_stream`, so every event after the first costs only its own LM, solver and vocoder pass.
+
+**Granularity is one text segment, not one frame.** The acoustic DiT and the Vocos vocoder both
+see a whole span at once, and this checkpoint ships no causal vocoder, so a segment is the
+smallest unit that can leave without boundary artefacts. `text_chunk_size` is the latency dial:
+on a 16-core CPU build at 8 threads, 8 solver steps and a 14 s reference, `text_chunk_size=120`
+put the first audio out at ~3.1 s for a 6.7 s segment, against ~9.9 s for the same text offline.
+
+Two things to know before turning it down further:
+
+- Every segment re-solves the *whole* reference mel prompt alongside its own frames, so the
+  per-segment cost has a floor of roughly `ref_seconds` worth of DiT work. Segments shorter
+  than about 1 s take longer to generate than to play, even though the stream as a whole stays
+  ahead of real time (`text_chunk_size=40` measured 0.75 RTF overall, with the shortest
+  segment at 2.1). Lowering `ref_seconds` shrinks that floor at some cost to cloning fidelity.
+- Streaming reproduces the offline waveform for the same `seed`, sample count included, with
+  one deliberate exception: offline level-matches over the finished utterance, which a stream
+  cannot see, so the first segment fixes the gain for the rest. The measured difference is a
+  constant scale factor (1.15x, +1.2 dB, on the clip above) with a −47 dB residual.
+
 ## Options
 
 | Request option | Type | Default | Meaning |
@@ -136,9 +174,10 @@ Two implementation details worth knowing:
 
 ## Known limitations
 
-- **Offline only.** The upstream streaming path (chunked DiT attention plus the causal vocoder,
-  `vocoder_streaming.safetensors`) is not implemented; the spec declares `modes: ["offline"]`.
-  The model card recommends the offline path for quality anyway.
+- **Streaming is segment-level, not frame-level.** The upstream frame-level path (chunked DiT
+  attention plus the causal vocoder, `vocoder_streaming.safetensors`) is not implemented, and
+  that vocoder is not part of the published checkpoint this family loads. What ships is one
+  pull event per text segment; see [Streaming](#streaming) for the latency it actually buys.
 - **Sampling RNG is not torch-bit-exact.** `sample_next_token` reproduces the reference's
   masking, temperature, top-k and top-p arithmetic exactly, but draws from a seeded
   `std::mt19937_64` rather than torch's generator, so a given `seed` will not reproduce the
@@ -167,6 +206,9 @@ against the C++.
 | Acoustic velocity field, every Euler step | vs. numpy | max diff 5.8e-3 |
 | Acoustic self-reconstruction | NMSE vs. the reference's own mel | 0.38 |
 | Fixed `seed` reproducibility | byte-identical WAV across runs | pass |
+| Streaming vs. offline, same `seed` | 22.5 s clip, 4 segments | identical sample count; a constant 1.15x gain, −47 dB residual |
+| Streaming segment sum | segments vs. `--out` | exact |
+| Long-form, 6026 chars | 371.6 s of audio, 48 segments | offline and streaming both complete; peak RSS 1.083 vs 1.086 GB |
 | `matmul_weight_type` f16 / bf16 / q8_0 | runs clean | pass |
 | Single-file GGUF | end to end | pass |
 

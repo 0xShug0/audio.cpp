@@ -217,11 +217,27 @@ SoproRequestOptions SoproTTSSession::parse_options(const runtime::TaskRequest & 
     return out;
 }
 
-runtime::TaskResult SoproTTSSession::run(const runtime::TaskRequest & request) {
-    require_prepared("Sopro run");
-    if (task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Sopro run requires an offline session");
-    }
+// The per-run state that every text segment of one synthesis shares. Offline
+// drains it in a loop; streaming keeps it alive between next_stream_event
+// calls, so both paths draw from the seeded RNG in the same order and a given
+// seed produces the same audio either way.
+struct SoproSynthesisState {
+    SoproRequestOptions options;
+    SoproReference voice;
+    SoproSemanticLMOptions lm_options;
+    std::vector<int32_t> style_tokens;
+    std::vector<int32_t> carry;
+    std::vector<std::string> segments;
+    std::mt19937_64 rng;
+    size_t index = 0;    // next segment to synthesize
+    size_t emitted = 0;  // segments that produced audio so far
+    int sample_rate = 0;
+    float gain = 0.0F;
+    bool gain_ready = false;
+};
+
+std::unique_ptr<SoproSynthesisState> SoproTTSSession::begin_synthesis(
+    const runtime::TaskRequest & request) {
     runtime::validate_spec_backed_request_options(request.options, *contract_, "Sopro");
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("Sopro requires non-empty text input");
@@ -231,124 +247,154 @@ runtime::TaskResult SoproTTSSession::run(const runtime::TaskRequest & request) {
         throw std::runtime_error(
             "Sopro requires reference voice audio (voice preset or voice_ref) for zero-shot cloning");
     }
-    const auto options = parse_options(request);
+
+    auto state = std::make_unique<SoproSynthesisState>();
+    state->options = parse_options(request);
     const auto & config = assets_->config;
-    const auto sample_rate = static_cast<int>(config.sample_rate);
-    const int64_t token_samples = config.semantic_encoder.token_samples_24k;
-    const int64_t hop_ratio = config.hop_ratio();
-    const int64_t n_mels = config.model.acoustic_mel_n_mels;
-    const int64_t vocoder_hop = vocoder_->hop_length();
+    state->sample_rate = static_cast<int>(config.sample_rate);
+    state->rng.seed(state->options.seed);
 
-    std::mt19937_64 rng(options.seed);
-    const auto reference_audio24 = to_mono_24k(*reference, sample_rate);
-
+    const auto reference_audio24 = to_mono_24k(*reference, state->sample_rate);
     const auto reference_start = std::chrono::steady_clock::now();
-    const auto voice = reference_builder_->build(reference_audio24, options.ref_seconds, rng);
+    state->voice = reference_builder_->build(
+        reference_audio24, state->options.ref_seconds, state->rng);
     engine::debug::timing_log_scalar(
         "sopro_tts.reference.prepare_ms",
         engine::debug::elapsed_ms(reference_start, std::chrono::steady_clock::now()));
-    if (voice.semantic_tokens.empty() || voice.mel_frames <= 0) {
+    if (state->voice.semantic_tokens.empty() || state->voice.mel_frames <= 0) {
         throw std::runtime_error("Sopro reference audio produced no semantic tokens");
     }
 
     // _steps(): one semantic token per token_samples output samples.
+    const int64_t token_samples = config.semantic_encoder.token_samples_24k;
     const auto steps_for = [&](float seconds) {
         return std::max<int64_t>(
             1,
             static_cast<int64_t>(std::ceil(
-                static_cast<double>(seconds) * static_cast<double>(sample_rate) /
+                static_cast<double>(seconds) * static_cast<double>(state->sample_rate) /
                 static_cast<double>(token_samples))));
     };
 
     const auto style_count = std::min<int64_t>(
-        config.generation.style_tokens, static_cast<int64_t>(voice.semantic_tokens.size()));
-    const std::vector<int32_t> style_tokens(
-        voice.semantic_tokens.begin(),
-        voice.semantic_tokens.begin() + static_cast<ptrdiff_t>(style_count));
-    const auto prompt_budget = config.generation.prompt_tokens;
-    std::vector<int32_t> carry;
-    if (prompt_budget > 0) {
+        config.generation.style_tokens, static_cast<int64_t>(state->voice.semantic_tokens.size()));
+    state->style_tokens.assign(
+        state->voice.semantic_tokens.begin(),
+        state->voice.semantic_tokens.begin() + static_cast<ptrdiff_t>(style_count));
+    if (config.generation.prompt_tokens > 0) {
         const auto count = std::min<int64_t>(
-            prompt_budget, static_cast<int64_t>(voice.semantic_tokens.size()));
-        carry.assign(
-            voice.semantic_tokens.begin(),
-            voice.semantic_tokens.begin() + static_cast<ptrdiff_t>(count));
+            config.generation.prompt_tokens,
+            static_cast<int64_t>(state->voice.semantic_tokens.size()));
+        state->carry.assign(
+            state->voice.semantic_tokens.begin(),
+            state->voice.semantic_tokens.begin() + static_cast<ptrdiff_t>(count));
     }
 
-    SoproSemanticLMOptions lm_options;
-    lm_options.max_steps = steps_for(options.max_seconds);
-    lm_options.min_steps = steps_for(options.min_seconds);
-    lm_options.temperature = options.temperature;
-    lm_options.top_p = options.top_p;
-    lm_options.top_k = options.top_k;
+    state->lm_options.max_steps = steps_for(state->options.max_seconds);
+    state->lm_options.min_steps = steps_for(state->options.min_seconds);
+    state->lm_options.temperature = state->options.temperature;
+    state->lm_options.top_p = state->options.top_p;
+    state->lm_options.top_k = state->options.top_k;
+
+    state->segments = split_text(request.text_input->text, state->options.max_segment_chars);
+    engine::debug::trace_log_scalar(
+        "sopro_tts.text.segments", static_cast<int64_t>(state->segments.size()));
+    return state;
+}
+
+std::vector<float> SoproTTSSession::synthesize_segment(SoproSynthesisState & state) {
+    if (state.index >= state.segments.size()) {
+        return {};
+    }
+    const std::string & segment = state.segments[state.index++];
+    const auto & config = assets_->config;
+    const int64_t token_samples = config.semantic_encoder.token_samples_24k;
+    const int64_t hop_ratio = config.hop_ratio();
+    const int64_t n_mels = config.model.acoustic_mel_n_mels;
+    const int64_t vocoder_hop = vocoder_->hop_length();
+    const auto prompt_budget = config.generation.prompt_tokens;
+
+    const auto text_ids = tokenizer_->encode(segment, state.options.language);
+    const auto lm_start = std::chrono::steady_clock::now();
+    const auto tokens = semantic_lm_->generate(
+        text_ids, state.style_tokens, state.carry, state.lm_options, state.rng);
+    engine::debug::timing_log_scalar(
+        "sopro_tts.semantic_lm.generate_ms",
+        engine::debug::elapsed_ms(lm_start, std::chrono::steady_clock::now()));
+    engine::debug::trace_log_scalar(
+        "sopro_tts.semantic_lm.tokens", static_cast<int64_t>(tokens.size()));
+    if (tokens.empty()) {
+        return {};
+    }
+    if (prompt_budget > 0) {
+        const auto count = std::min<int64_t>(prompt_budget, static_cast<int64_t>(tokens.size()));
+        state.carry.assign(tokens.end() - static_cast<ptrdiff_t>(count), tokens.end());
+    }
+
+    SoproAcousticRequest acoustic;
+    acoustic.semantic_tokens = state.voice.semantic_tokens;
+    acoustic.semantic_tokens.insert(acoustic.semantic_tokens.end(), tokens.begin(), tokens.end());
+    acoustic.cond_vec = state.voice.cond_vec;
+    acoustic.prompt_mel = state.voice.mel;
+    acoustic.prompt_frames = state.voice.mel_frames;
+    acoustic.total_frames =
+        state.voice.mel_frames + static_cast<int64_t>(tokens.size()) * hop_ratio;
+    acoustic.steps = state.options.steps;
+    acoustic.seed = state.rng();
+    const auto acoustic_start = std::chrono::steady_clock::now();
+    const auto mel = acoustic_->solve(acoustic);
+    engine::debug::timing_log_scalar(
+        "sopro_tts.acoustic.solve_ms",
+        engine::debug::elapsed_ms(acoustic_start, std::chrono::steady_clock::now()));
+
+    // Denormalise and hand the vocoder a short prompt run-up so its
+    // convolution state matches the reference, then drop that run-up.
+    const int64_t context = std::min(kDecodeContextFrames, state.voice.mel_frames);
+    const int64_t begin = state.voice.mel_frames - context;
+    const int64_t decode_frames = acoustic.total_frames - begin;
+    std::vector<float> decode_mel(static_cast<size_t>(n_mels * decode_frames), 0.0F);
+    for (int64_t c = 0; c < n_mels; ++c) {
+        const float mean = config.model.acoustic_mel_mean[static_cast<size_t>(c)];
+        const float scale = config.model.acoustic_mel_std[static_cast<size_t>(c)];
+        const float * source = mel.data() + static_cast<size_t>(c * acoustic.total_frames + begin);
+        float * target = decode_mel.data() + static_cast<size_t>(c * decode_frames);
+        for (int64_t t = 0; t < decode_frames; ++t) {
+            target[t] = source[t] * scale + mean;
+        }
+    }
+    auto wav = vocoder_->decode(decode_mel, decode_frames);
+    const int64_t skip = context * vocoder_hop;
+    const int64_t target_length = static_cast<int64_t>(tokens.size()) * token_samples;
+    if (static_cast<int64_t>(wav.size()) <= skip) {
+        return {};
+    }
+    const int64_t end = std::min<int64_t>(static_cast<int64_t>(wav.size()), skip + target_length);
+    return std::vector<float>(
+        wav.begin() + static_cast<ptrdiff_t>(skip), wav.begin() + static_cast<ptrdiff_t>(end));
+}
+
+runtime::TaskResult SoproTTSSession::run(const runtime::TaskRequest & request) {
+    require_prepared("Sopro run");
+    if (task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("Sopro run requires an offline session");
+    }
+    auto state = begin_synthesis(request);
 
     std::vector<std::vector<float>> parts;
-    for (const auto & segment : split_text(request.text_input->text, options.max_segment_chars)) {
-        const auto text_ids = tokenizer_->encode(segment, options.language);
-        const auto lm_start = std::chrono::steady_clock::now();
-        const auto tokens = semantic_lm_->generate(text_ids, style_tokens, carry, lm_options, rng);
-        engine::debug::timing_log_scalar(
-            "sopro_tts.semantic_lm.generate_ms",
-            engine::debug::elapsed_ms(lm_start, std::chrono::steady_clock::now()));
-        engine::debug::trace_log_scalar(
-            "sopro_tts.semantic_lm.tokens", static_cast<int64_t>(tokens.size()));
-        if (tokens.empty()) {
-            continue;
+    while (state->index < state->segments.size()) {
+        auto part = synthesize_segment(*state);
+        if (!part.empty()) {
+            parts.push_back(std::move(part));
         }
-        if (prompt_budget > 0) {
-            const auto count = std::min<int64_t>(prompt_budget, static_cast<int64_t>(tokens.size()));
-            carry.assign(tokens.end() - static_cast<ptrdiff_t>(count), tokens.end());
-        }
-
-        SoproAcousticRequest acoustic;
-        acoustic.semantic_tokens = voice.semantic_tokens;
-        acoustic.semantic_tokens.insert(
-            acoustic.semantic_tokens.end(), tokens.begin(), tokens.end());
-        acoustic.cond_vec = voice.cond_vec;
-        acoustic.prompt_mel = voice.mel;
-        acoustic.prompt_frames = voice.mel_frames;
-        acoustic.total_frames =
-            voice.mel_frames + static_cast<int64_t>(tokens.size()) * hop_ratio;
-        acoustic.steps = options.steps;
-        acoustic.seed = rng();
-        const auto acoustic_start = std::chrono::steady_clock::now();
-        const auto mel = acoustic_->solve(acoustic);
-        engine::debug::timing_log_scalar(
-            "sopro_tts.acoustic.solve_ms",
-            engine::debug::elapsed_ms(acoustic_start, std::chrono::steady_clock::now()));
-
-        // Denormalise and hand the vocoder a short prompt run-up so its
-        // convolution state matches the reference, then drop that run-up.
-        const int64_t context = std::min(kDecodeContextFrames, voice.mel_frames);
-        const int64_t begin = voice.mel_frames - context;
-        const int64_t decode_frames = acoustic.total_frames - begin;
-        std::vector<float> decode_mel(static_cast<size_t>(n_mels * decode_frames), 0.0F);
-        for (int64_t c = 0; c < n_mels; ++c) {
-            const float mean = config.model.acoustic_mel_mean[static_cast<size_t>(c)];
-            const float scale = config.model.acoustic_mel_std[static_cast<size_t>(c)];
-            const float * source = mel.data() + static_cast<size_t>(c * acoustic.total_frames + begin);
-            float * target = decode_mel.data() + static_cast<size_t>(c * decode_frames);
-            for (int64_t t = 0; t < decode_frames; ++t) {
-                target[t] = source[t] * scale + mean;
-            }
-        }
-        auto wav = vocoder_->decode(decode_mel, decode_frames);
-        const int64_t skip = context * vocoder_hop;
-        const int64_t target_length = static_cast<int64_t>(tokens.size()) * token_samples;
-        if (static_cast<int64_t>(wav.size()) <= skip) {
-            continue;
-        }
-        const int64_t end = std::min<int64_t>(static_cast<int64_t>(wav.size()), skip + target_length);
-        parts.emplace_back(
-            wav.begin() + static_cast<ptrdiff_t>(skip), wav.begin() + static_cast<ptrdiff_t>(end));
     }
 
+    const int sample_rate = state->sample_rate;
     runtime::TaskResult result;
     runtime::AudioBuffer audio;
     audio.sample_rate = sample_rate;
     audio.channels = 1;
     if (parts.empty()) {
-        audio.samples.assign(static_cast<size_t>(token_samples), 0.0F);
+        audio.samples.assign(
+            static_cast<size_t>(assets_->config.semantic_encoder.token_samples_24k), 0.0F);
         result.audio_output = std::move(audio);
         return result;
     }
@@ -379,6 +425,138 @@ runtime::TaskResult SoproTTSSession::run(const runtime::TaskRequest & request) {
     audio.samples = std::move(out);
     result.audio_output = std::move(audio);
     return result;
+}
+
+// --------------------------------------------------------------------------- //
+// Streaming interface
+// --------------------------------------------------------------------------- //
+runtime::StreamingPolicy SoproTTSSession::streaming_policy() const {
+    // The acoustic head and the vocoder both look at a whole span at once, and
+    // this checkpoint ships no causal vocoder, so one text segment is the
+    // smallest unit that can leave without boundary artefacts. text_chunk_size
+    // is what trades first-audio latency against segment length.
+    runtime::StreamingPolicy policy;
+    policy.input = runtime::StreamingInputKind::None;
+    policy.output = runtime::StreamingOutputKind::PullEvents;
+    return policy;
+}
+
+void SoproTTSSession::start_stream(const runtime::TaskRequest & request) {
+    require_prepared("Sopro start_stream");
+    if (task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("Sopro start_stream requires a streaming session");
+    }
+    reset();
+    // The reference voice is encoded once here rather than per event, so every
+    // event after the first costs only its own LM, solver and vocoder passes.
+    stream_state_ = begin_synthesis(request);
+    if (stream_state_->segments.empty()) {
+        throw std::runtime_error("Sopro streaming text chunking produced no segments");
+    }
+}
+
+std::optional<runtime::StreamEvent> SoproTTSSession::next_stream_event() {
+    if (stream_state_ == nullptr) {
+        throw std::runtime_error("Sopro streaming has not been started");
+    }
+    SoproSynthesisState & state = *stream_state_;
+    const auto event_start = std::chrono::steady_clock::now();
+    std::vector<float> part;
+    while (part.empty() && state.index < state.segments.size()) {
+        part = synthesize_segment(state);
+    }
+    if (part.empty()) {
+        return std::nullopt;
+    }
+    engine::debug::timing_log_scalar(
+        "sopro_tts.streaming.event.synthesize_ms",
+        engine::debug::elapsed_ms(event_start, std::chrono::steady_clock::now()));
+
+    // Offline levels the whole utterance at once. A stream cannot see the
+    // segments it has not generated yet, so the first one fixes the gain for
+    // all of them; that keeps their relative loudness instead of pushing every
+    // segment onto the target level on its own.
+    const int sample_rate = state.sample_rate;
+    if (!state.gain_ready) {
+        state.gain = audio_ops::match_gain(part, sample_rate);
+        state.gain_ready = true;
+        engine::debug::trace_log_scalar(
+            "sopro_tts.streaming.gain", static_cast<double>(state.gain));
+    }
+    for (auto & value : part) {
+        value *= state.gain;
+    }
+    part = state.emitted == 0
+        ? audio_ops::trim_lead(part, sample_rate)
+        : audio_ops::trim_lead(
+              part, sample_rate, audio_ops::kSegmentLeadSeconds, audio_ops::kSegmentSkipSeconds);
+    part = audio_ops::trim_trail(part, sample_rate);
+    // Same order as the offline tail: join fade, limiter, then the final fade
+    // on whichever segment turns out to be the last one.
+    const bool has_more = state.index < state.segments.size();
+    audio_ops::fade_edges(part, sample_rate, state.emitted > 0, has_more);
+    audio_ops::soft_limit(part);
+    if (!has_more) {
+        audio_ops::fade_edges(part, sample_rate, false, true, audio_ops::kFinalFadeSeconds);
+    }
+
+    runtime::AudioBuffer audio;
+    audio.sample_rate = sample_rate;
+    audio.channels = 1;
+    audio.samples = std::move(part);
+    const size_t chunk_index = state.emitted++;
+    stream_chunks_.push_back(audio);
+
+    runtime::StreamEvent event;
+    event.named_audio_outputs.push_back({
+        "segment_" + std::to_string(chunk_index),
+        std::move(audio),
+        {},
+    });
+    return event;
+}
+
+void SoproTTSSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
+    // Every driver of a PullEvents session (app/streaming/streaming.cpp, and the
+    // server through it) forwards whatever next_stream_event returns to its own
+    // sink, so pushing here as well would deliver each segment twice.
+    (void) sink;
+}
+
+runtime::TaskResult SoproTTSSession::finish_stream() {
+    if (stream_state_ == nullptr) {
+        throw std::runtime_error("Sopro streaming has not been started");
+    }
+    // Each event is already levelled, trimmed and faded, so the utterance is a
+    // plain concatenation of what the consumer has already heard.
+    runtime::AudioBuffer merged;
+    merged.sample_rate = stream_state_->sample_rate;
+    merged.channels = 1;
+    if (stream_chunks_.empty()) {
+        merged.samples.assign(
+            static_cast<size_t>(assets_->config.semantic_encoder.token_samples_24k), 0.0F);
+    }
+    for (const auto & chunk : stream_chunks_) {
+        runtime::append_audio_buffer(merged, chunk);
+    }
+    runtime::TaskResult result;
+    result.audio_output = std::move(merged);
+    reset();
+    return result;
+}
+
+void SoproTTSSession::reset() {
+    stream_state_.reset();
+    stream_chunks_.clear();
+}
+
+runtime::StreamEvent SoproTTSSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
+    (void) chunk;
+    throw std::runtime_error("Sopro is a TTS model and does not accept streamed audio input");
+}
+
+runtime::TaskResult SoproTTSSession::finalize() {
+    return runtime::TaskResult{};
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_sopro_tts_loader() {
