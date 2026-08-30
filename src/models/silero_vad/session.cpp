@@ -94,7 +94,12 @@ public:
             return false;
         }
         try {
-            (void) resolve_silero_assets(request.model_path);
+            const auto assets = resolve_silero_assets(request.model_path);
+            if (!request.family_hint.has_value() &&
+                engine::io::is_existing_file(request.model_path) &&
+                assets.checkpoint_path.filename() != "silero_vad_16k.safetensors") {
+                return false;
+            }
             return true;
         } catch (...) {
             return false;
