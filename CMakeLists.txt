@@ -1314,6 +1314,20 @@ audiocpp_add_model(granite5asr
         granite_speech5_ctc
 )
 
+audiocpp_add_model(audio8_asr
+    SOURCES
+        src/community_models/audio8_asr/assets.cpp
+        src/community_models/audio8_asr/projector.cpp
+        src/community_models/audio8_asr/thinker.cpp
+        src/community_models/audio8_asr/session.cpp
+    INCLUDES
+        engine/community_models/audio8_asr/session.h
+    LOADERS
+        engine::community_models::audio8_asr::make_audio8_asr_loader
+    DEPENDS
+        qwen3_asr
+)
+
 audiocpp_add_model(vevo2
     SOURCES
         src/models/vevo2/ar.cpp
@@ -2324,6 +2338,34 @@ if (ENGINE_BUILD_TESTS)
         target_include_directories(test_granite5asr_golden_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(test_granite5asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
+        if (audio8_asr IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_audio8_asr_units
+                tests/audio8_asr/test_audio8_asr_units.cpp
+            )
+            target_link_libraries(test_audio8_asr_units PRIVATE engine_runtime ggml)
+            target_include_directories(test_audio8_asr_units PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_audio8_asr_units PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+
+            add_test(
+                NAME test_audio8_asr_units
+                COMMAND test_audio8_asr_units
+            )
+
+            add_executable(test_audio8_asr_golden_transcription
+                tests/audio8_asr/test_audio8_asr_golden_transcription.cpp
+            )
+            target_compile_definitions(test_audio8_asr_golden_transcription PRIVATE
+                ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            )
+            target_link_libraries(test_audio8_asr_golden_transcription PRIVATE engine_runtime ggml)
+            target_include_directories(test_audio8_asr_golden_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_audio8_asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
+            endif()
         endif()
 
         add_executable(torch_bin_parity
