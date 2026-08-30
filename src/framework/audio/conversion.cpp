@@ -149,4 +149,37 @@ std::vector<float> read_wav_f32_as_mono_linear_resampled(
     return convert_wav_to_mono_linear_resampled(read_wav_f32(path), target_sample_rate_hz);
 }
 
+std::vector<float> convert_wav_to_mono_quality_resampled(
+    const WavData & wav,
+    int target_sample_rate_hz) {
+    if (wav.sample_rate <= 0 || target_sample_rate_hz <= 0) {
+        throw std::runtime_error("audio sample rates must be positive");
+    }
+    auto mono = mixdown_interleaved_to_mono_average(wav.samples, wav.channels);
+    if (wav.sample_rate != target_sample_rate_hz) {
+        SoxrResampleOptions options;
+        options.profile = SoxrResampleProfile::QualityOnly;
+        options.warning_context = "audio input conversion";
+        options.fallback_description = "windowed-sinc resampling";
+        mono = resample_mono_soxr_or_sinc(mono, wav.sample_rate, target_sample_rate_hz, options);
+    }
+    return mono;
+}
+
+std::vector<float> convert_interleaved_audio_to_mono_quality_resampled(
+    const std::vector<float> & interleaved_samples,
+    int sample_rate_hz,
+    int channel_count,
+    int target_sample_rate_hz) {
+    return convert_wav_to_mono_quality_resampled(
+        WavData{sample_rate_hz, channel_count, interleaved_samples},
+        target_sample_rate_hz);
+}
+
+std::vector<float> read_wav_f32_as_mono_quality_resampled(
+    const std::filesystem::path & path,
+    int target_sample_rate_hz) {
+    return convert_wav_to_mono_quality_resampled(read_wav_f32(path), target_sample_rate_hz);
+}
+
 }  // namespace engine::audio

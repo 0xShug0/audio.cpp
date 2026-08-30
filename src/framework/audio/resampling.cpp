@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
 #include <mutex>
 #include <numeric>
 #include <stdexcept>
@@ -68,8 +70,28 @@ public:
     using RuntimeSpecFn = SoxrRuntimeSpec (*)(unsigned);
 
     SoxrApi() {
-        handle_ = io::open_dynamic_library(
-            {"libsoxr.so.0", "libsoxr.so", "libsoxr.dylib", "soxr.dll", "libsoxr.dll"});
+        // A bare leaf name only finds the library on dyld's default search
+        // path, which on Apple Silicon does not include the Homebrew prefix, so
+        // a brew-installed libsoxr was silently missed and every resample fell
+        // back to linear interpolation. Try the usual install prefixes too.
+        // AUDIOCPP_SOXR_LIBRARY overrides all of it for unusual layouts.
+        if (const char * override_path = std::getenv("AUDIOCPP_SOXR_LIBRARY")) {
+            if (*override_path != '\0') {
+                handle_ = io::open_dynamic_library(std::string(override_path));
+            }
+        }
+        if (handle_ == nullptr) {
+            handle_ = io::open_dynamic_library({
+                "libsoxr.so.0",
+                "libsoxr.so",
+                "libsoxr.dylib",
+                "/opt/homebrew/lib/libsoxr.dylib",
+                "/usr/local/lib/libsoxr.dylib",
+                "/opt/local/lib/libsoxr.dylib",
+                "soxr.dll",
+                "libsoxr.dll",
+            });
+        }
         if (handle_ == nullptr) {
             return;
         }
@@ -160,6 +182,45 @@ void log_soxr_fallback(const SoxrResampleOptions & options, const std::string & 
         debug::LogLevel::Warning,
         "audio.resample.soxr",
         message);
+    // debug::log_message is a no-op unless logging was explicitly configured,
+    // which it is not in a default CLI or server run, so the warning above has
+    // never been visible to anyone. Quality silently dropping from a 130 dB
+    // resampler to a 41 dB one is exactly the kind of degradation that has to
+    // be announced. Once per process, not once per call: this fires from inside
+    // per-channel and per-chunk loops.
+    static std::once_flag announced;
+    std::call_once(announced, [&reason]() {
+        std::cerr << "audio.cpp: libsoxr is unavailable (" << reason
+                  << "); resampling falls back to the in-tree path. Install libsoxr, or set "
+                     "AUDIOCPP_SOXR_LIBRARY to its absolute path, for the highest-quality "
+                     "conversion.\n";
+    });
+}
+
+void apply_output_length_policy(
+    std::vector<float> & output,
+    size_t input_count,
+    int source_sample_rate_hz,
+    int target_sample_rate_hz,
+    SoxrOutputLengthPolicy policy) {
+    if (policy == SoxrOutputLengthPolicy::ActualOutput) {
+        return;
+    }
+    const size_t expected = expected_resample_output_count(
+        input_count,
+        source_sample_rate_hz,
+        target_sample_rate_hz);
+    if (policy == SoxrOutputLengthPolicy::ClampToExpected) {
+        if (output.size() > expected) {
+            output.resize(expected);
+        }
+        return;
+    }
+    if (output.size() < expected) {
+        output.resize(expected, 0.0F);
+    } else if (output.size() > expected) {
+        output.resize(expected);
+    }
 }
 
 struct TorchaudioSincHannResampleKey {
@@ -381,6 +442,32 @@ std::vector<float> resample_mono_soxr_or_linear(
     return resample_mono_linear(mono_samples, source_sample_rate_hz, target_sample_rate_hz);
 }
 
+std::vector<float> resample_mono_soxr_or_sinc(
+    const std::vector<float> & mono_samples,
+    int source_sample_rate_hz,
+    int target_sample_rate_hz,
+    const SoxrResampleOptions & options) {
+    if (auto output = try_resample_mono_soxr(
+            mono_samples,
+            source_sample_rate_hz,
+            target_sample_rate_hz,
+            options)) {
+        return *output;
+    }
+    auto output = resample_mono_torchaudio_sinc_hann(
+        mono_samples,
+        source_sample_rate_hz,
+        target_sample_rate_hz,
+        torchaudio_sinc_hann_playback_options());
+    apply_output_length_policy(
+        output,
+        mono_samples.size(),
+        source_sample_rate_hz,
+        target_sample_rate_hz,
+        options.output_length_policy);
+    return output;
+}
+
 std::vector<float> resample_mono_linear(
     const std::vector<float> & mono_samples,
     int source_sample_rate_hz,
@@ -402,6 +489,12 @@ std::vector<float> resample_mono_linear(
         output[i] = mono_samples[left] * (1.0F - frac) + mono_samples[right] * frac;
     }
     return output;
+}
+
+TorchaudioSincHannResampleOptions torchaudio_sinc_hann_playback_options() {
+    TorchaudioSincHannResampleOptions options;
+    options.lowpass_filter_width = 64;
+    return options;
 }
 
 TorchaudioSincHannResampleOptions torchaudio_sinc_hann_float32_options() {

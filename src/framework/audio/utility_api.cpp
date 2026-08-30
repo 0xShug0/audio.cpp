@@ -65,8 +65,15 @@ void create_output_parent(const std::filesystem::path & output_wav) {
     }
 }
 
+// Every denoise and super-resolution entry point below reads its input through
+// here, and three of the five target rates are decimations: a 48 kHz file fed
+// to zipenhancer or flashsr is taken to 16 kHz. The linear helper this used to
+// call has no decimation filter at all, so a 12 kHz tone folded straight back
+// to 4 kHz at -9.5 dBc — mid-band, audible, and in flashsr's case corrupting
+// exactly the band the model is then asked to re-synthesise. The anti-aliased
+// path measures -126.7 dBc for the same conversion.
 std::vector<float> read_mono_resampled(const std::filesystem::path & path, int sample_rate) {
-    return read_wav_f32_as_mono_linear_resampled(path, sample_rate);
+    return read_wav_f32_as_mono_quality_resampled(path, sample_rate);
 }
 
 [[noreturn]] void throw_unsupported_model(std::string_view task, std::string_view model, std::string_view valid_models) {

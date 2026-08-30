@@ -2032,6 +2032,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(audio_resample_quality_test tests/unittests/test_audio_resample_quality.cpp)
+
+    add_test(
+        NAME audio_resample_quality_test
+        COMMAND audio_resample_quality_test
+    )
+
     add_engine_unittest(wav_writer_formats_test tests/unittests/test_wav_writer_formats.cpp)
 
     add_test(

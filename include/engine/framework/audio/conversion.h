@@ -50,4 +50,26 @@ std::vector<float> read_wav_f32_as_mono_linear_resampled(
     const std::filesystem::path & path,
     int target_sample_rate_hz);
 
+// Anti-aliased equivalents of the three helpers above. The `_linear_` versions
+// call a two-tap interpolator with no decimation filter, so a 48 -> 16 kHz
+// conversion folds a 12 kHz tone back to 4 kHz at -9.5 dBc; these route through
+// soxr, or the in-tree windowed sinc at playback width, and measure -126.7 dBc
+// for the same job. Use them wherever the audio is destined for a listener or
+// for a model that is expected to see a clean band. The `_linear_` versions are
+// kept unchanged for the call sites that assert parity against a reference
+// implementation.
+std::vector<float> convert_wav_to_mono_quality_resampled(
+    const WavData & wav,
+    int target_sample_rate_hz);
+
+std::vector<float> convert_interleaved_audio_to_mono_quality_resampled(
+    const std::vector<float> & interleaved_samples,
+    int sample_rate_hz,
+    int channel_count,
+    int target_sample_rate_hz);
+
+std::vector<float> read_wav_f32_as_mono_quality_resampled(
+    const std::filesystem::path & path,
+    int target_sample_rate_hz);
+
 }  // namespace engine::audio
