@@ -171,6 +171,21 @@ engine::core::TensorValue build_vocoder_head(
         .build(ctx, hidden, weights.head_out);
 }
 
+}  // namespace
+
+int64_t band_limit_bin(const SoproVocoderConfig & config) {
+    const int64_t freq_bins = config.n_fft / 2 + 1;
+    if (config.band_limit_hz <= 0.0F) {
+        return freq_bins;
+    }
+    const auto cut = static_cast<int64_t>(std::ceil(
+        static_cast<double>(config.band_limit_hz) * static_cast<double>(config.n_fft) /
+        static_cast<double>(config.sample_rate)));
+    return std::clamp<int64_t>(cut, 0, freq_bins);
+}
+
+namespace {
+
 // ISTFTHead.spectrogram + ISTFT.forward. torch.fft.irfft(norm="backward")
 // scales by 1/n_fft; the overlap-add envelope is fold(window^2) and, unlike
 // the streaming path, the offline path divides by it without clamping.
@@ -192,17 +207,11 @@ std::vector<float> istft_from_head(
         throw std::runtime_error("Sopro vocoder requires at least two mel frames");
     }
     const float log_max_magnitude = std::log(config.max_magnitude);
-    // ISTFTHead band limit: everything at or above band_limit_hz is zeroed
-    // before the inverse transform, which kills the vocoder's high-frequency
-    // hiss (sopro/vocoder.py, band_limit_bin). spectrum is value-initialised,
-    // so the loop below simply stops at the cut instead of writing zeros.
-    const int64_t band_limit_bin = config.band_limit_hz > 0.0F
-        ? std::clamp<int64_t>(
-              static_cast<int64_t>(std::ceil(
-                  static_cast<double>(config.band_limit_hz) * static_cast<double>(config.n_fft) /
-                  static_cast<double>(config.sample_rate))),
-              0, freq_bins)
-        : freq_bins;
+    // Everything at or above band_limit_hz is zeroed before the inverse
+    // transform, which kills the vocoder's high-frequency hiss. spectrum is
+    // value-initialised, so the loop below simply stops at the cut instead of
+    // writing zeros over the tail.
+    const int64_t synthesised_bins = band_limit_bin(config);
     std::vector<std::complex<float>> spectrum(static_cast<size_t>(frames * freq_bins));
     const int omp_threads = static_cast<int>(std::max<size_t>(1, threads));
 #ifdef _OPENMP
@@ -210,7 +219,7 @@ std::vector<float> istft_from_head(
 #endif
     for (int64_t frame = 0; frame < frames; ++frame) {
         const float * row = head.data() + static_cast<size_t>(frame * out_dim);
-        for (int64_t freq = 0; freq < band_limit_bin; ++freq) {
+        for (int64_t freq = 0; freq < synthesised_bins; ++freq) {
             const float magnitude = std::exp(std::min(row[freq], log_max_magnitude));
             const float phase = row[freq_bins + freq];
             spectrum[static_cast<size_t>(frame * freq_bins + freq)] = {

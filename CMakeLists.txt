@@ -2638,6 +2638,22 @@ if (ENGINE_BUILD_TESTS)
             )
         endif()
 
+        if (sopro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_sopro_tts_audio_ops
+                tests/sopro_tts/test_sopro_tts_audio_ops.cpp
+            )
+            target_link_libraries(test_sopro_tts_audio_ops PRIVATE engine_runtime ggml)
+            target_include_directories(test_sopro_tts_audio_ops PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_sopro_tts_audio_ops PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+
+            add_test(
+                NAME test_sopro_tts_audio_ops
+                COMMAND test_sopro_tts_audio_ops
+            )
+        endif()
+
         if (audio8_asr IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(test_audio8_asr_units
                 tests/audio8_asr/test_audio8_asr_units.cpp

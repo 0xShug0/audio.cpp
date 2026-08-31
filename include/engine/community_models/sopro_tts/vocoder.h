@@ -19,6 +19,11 @@ namespace engine::community_models::sopro_tts {
 struct SoproVocoderWeights;
 struct SoproVocoderGraph;
 
+// ISTFTHead band limit (sopro/vocoder.py band_limit_bin): the first FFT bin the
+// head zeroes, i.e. how many of the n_fft/2 + 1 bins it actually synthesises.
+// A band_limit_hz of zero or less keeps every bin.
+int64_t band_limit_bin(const SoproVocoderConfig & config);
+
 // sopro/vocoder.py, offline path. A Vocos backbone (Conv1d embed, 14 ConvNeXt
 // blocks with per-channel gamma, final LayerNorm) feeding one ISTFT head:
 // Linear(dim -> n_fft + 2) split into log-magnitude and phase, then a single
