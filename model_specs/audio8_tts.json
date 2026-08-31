@@ -11,7 +11,8 @@
     "clone"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "auto",
@@ -33,7 +34,10 @@
     ]
   },
   "runtime": {
-    "tags": []
+    "tags": [
+      "gguf",
+      "stream"
+    ]
   },
   "options": {
     "request": [

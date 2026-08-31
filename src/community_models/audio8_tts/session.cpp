@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <limits>
@@ -308,6 +309,52 @@ std::vector<Audio8TtsReference> multi_reference_cond_from_options(
     return references;
 }
 
+// omnivoice/session.cpp:155 — crossfade helper for pseudo-streaming merge
+void append_cross_faded_chunk(
+    runtime::AudioBuffer & merged,
+    const runtime::AudioBuffer & chunk,
+    float silence_duration_seconds = 0.3F) {
+    if (chunk.sample_rate <= 0 || chunk.channels != 1) {
+        throw std::runtime_error("Audio8 TTS append_cross_faded_chunk requires mono chunk audio");
+    }
+    if (merged.sample_rate == 0) {
+        merged = chunk;
+        return;
+    }
+    if (merged.sample_rate != chunk.sample_rate || merged.channels != 1) {
+        throw std::runtime_error("Audio8 TTS append_cross_faded_chunk requires matching mono chunk audio");
+    }
+
+    const int sample_rate = chunk.sample_rate;
+    const size_t total_n = static_cast<size_t>(std::max(0.0F, silence_duration_seconds) * static_cast<float>(sample_rate));
+    const size_t fade_n = total_n / 3;
+    const size_t silence_n = fade_n;
+    const auto fade_weight = [](size_t index, size_t count, float start, float end) {
+        if (count <= 1) {
+            return start;
+        }
+        const float t = static_cast<float>(index) / static_cast<float>(count - 1);
+        return start + (end - start) * t;
+    };
+    const size_t fout_n = std::min(fade_n, merged.samples.size());
+    if (fout_n > 0) {
+        for (size_t i = 0; i < fout_n; ++i) {
+            const float w_out = fade_weight(i, fout_n, 1.0F, 0.0F);
+            merged.samples[merged.samples.size() - fout_n + i] *= w_out;
+        }
+    }
+    merged.samples.insert(merged.samples.end(), silence_n, 0.0F);
+    const size_t chunk_start = merged.samples.size();
+    merged.samples.insert(merged.samples.end(), chunk.samples.begin(), chunk.samples.end());
+    const size_t fin_n = std::min(fade_n, chunk.samples.size());
+    if (fin_n > 0) {
+        for (size_t i = 0; i < fin_n; ++i) {
+            const float w_in = fade_weight(i, fin_n, 0.0F, 1.0F);
+            merged.samples[chunk_start + i] *= w_in;
+        }
+    }
+}
+
 }  // namespace
 
 Audio8TtsSession::Audio8TtsSession(
@@ -325,8 +372,8 @@ Audio8TtsSession::Audio8TtsSession(
     // (processing_arktts.py:_prompt_segments).
     if ((task_.task != runtime::VoiceTaskKind::Tts &&
          task_.task != runtime::VoiceTaskKind::VoiceCloning) ||
-        task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Audio8 TTS supports offline TTS and voice cloning sessions only");
+        (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming)) {
+        throw std::runtime_error("Audio8 TTS supports offline and streaming TTS and voice cloning sessions only");
     }
     const auto ar_weight_type =
         option_weight_type(options, "audio8_tts.weight_type", assets::TensorStorageType::Native);
@@ -489,6 +536,9 @@ const Audio8TtsCodes & Audio8TtsSession::resolve_reference_codes(const Audio8Tts
 
 runtime::TaskResult Audio8TtsSession::run(const runtime::TaskRequest & request) {
     require_prepared("Audio8 TTS run()");
+    if (task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("Audio8 TTS run() requires an offline session");
+    }
     const auto wall_start = Clock::now();
     const bool mem_saver = mem_saver_from_options(options());
     const auto request_options = generation_options_from_request(request);
@@ -521,6 +571,202 @@ runtime::TaskResult Audio8TtsSession::run(const runtime::TaskRequest & request) 
     result.audio_output = std::move(merged_audio);
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
     return result;
+}
+
+// IStreamingVoiceTaskSession — omnivoice/session.cpp:533 pattern
+runtime::StreamingPolicy Audio8TtsSession::streaming_policy() const {
+    runtime::StreamingPolicy policy;
+    policy.input = runtime::StreamingInputKind::None;
+    policy.output = runtime::StreamingOutputKind::PullEvents;
+    return policy;
+}
+
+void Audio8TtsSession::start_stream(const runtime::TaskRequest & request) {
+    require_prepared("Audio8 TTS streaming");
+    if (task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("Audio8 TTS start_stream requires a streaming session");
+    }
+    reset();
+    initialize_streaming_request(request);
+    stream_started_ = true;
+}
+
+std::optional<runtime::StreamEvent> Audio8TtsSession::next_stream_event() {
+    if (!stream_started_) {
+        throw std::runtime_error("Audio8 TTS streaming has not been started");
+    }
+    if (stream_chunk_index_ >= stream_text_chunks_.size()) {
+        return std::nullopt;
+    }
+    const size_t chunk_index = stream_chunk_index_++;
+    auto chunk_audio = synthesize_stream_chunk(chunk_index);
+    // omnivoice/session.cpp:559 — 0.3s crossfade (0.1 fade-out + 0.1 silence + 0.1 fade-in)
+    append_cross_faded_chunk(stream_merged_audio_, chunk_audio, 0.3F);
+    runtime::StreamEvent event;
+    event.named_audio_outputs.push_back({
+        "chunk_" + std::to_string(chunk_index),
+        std::move(chunk_audio),
+        {},
+    });
+    return event;
+}
+
+void Audio8TtsSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
+    (void)sink;
+}
+
+runtime::TaskResult Audio8TtsSession::finish_stream() {
+    if (!stream_started_) {
+        throw std::runtime_error("Audio8 TTS streaming has not been started");
+    }
+    while (next_stream_event().has_value()) {
+    }
+    runtime::TaskResult task_result;
+    task_result.audio_output = std::move(stream_merged_audio_);
+    reset();
+    return task_result;
+}
+
+void Audio8TtsSession::reset() {
+    stream_request_.reset();
+    stream_text_chunks_.clear();
+    stream_reference_codes_.clear();
+    stream_previous_turn_.reset();
+    stream_merged_audio_ = runtime::AudioBuffer{};
+    stream_chunk_index_ = 0;
+    stream_started_ = false;
+    stream_has_reference_ = false;
+}
+
+runtime::StreamEvent Audio8TtsSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
+    (void)chunk;
+    throw std::runtime_error("Audio8 TTS streaming does not consume audio chunks");
+}
+
+runtime::TaskResult Audio8TtsSession::finalize() {
+    return finish_stream();
+}
+
+// Helpers — omnivoice/session.cpp:704/744/797 pattern
+
+[[maybe_unused]] std::vector<std::string> Audio8TtsSession::plan_text_chunks(
+    const Audio8TtsRequest & request,
+    const Audio8TtsPrompt & prompt) const {
+    // Mirrors offline run() chunking but returns text strings directly for streaming.
+    // Uses request generation text_chunk_size and request options text_chunk_mode.
+    // Note: Audio8TtsGenerationOptions stores int64 text_chunk_size; mode is parsed from options.
+    // For streaming we synthesize TaskRequest-style chunking via framework split_text_chunks.
+    const int64_t chunk_size = request.generation.text_chunk_size;
+    // Parse mode from stream_request options if available — fallback to Default
+    engine::text::TextChunkMode mode = engine::text::TextChunkMode::Default;
+    if (stream_request_.has_value()) {
+        // Not used; caller passes mode via generation, keep Default unless overridden externally
+        (void)mode;
+    }
+    // Try to resolve mode from pending stream request options when helper is called from
+    // initialize_streaming_request the mode hasn't been stored yet, so we parse from the
+    // original TaskRequest options via the request's associated generation context.
+    // Since Audio8TtsRequest doesn't carry mode, we re-parse from stream_request_ options
+    // if present, otherwise default.
+    // Fallback: use Default; callers that need TagAware/Japanese should pass text_chunk_mode
+    // via TaskRequest options and we will honor it by checking the stored stream_request's
+    // original options map—however stream_request already filtered into generation, so we
+    // also check a global parse from the initial request's options in initialize path.
+    // For simplicity, if stream_request_ has a mode hint, honor it; otherwise Default.
+    // The mode parsing is done in initialize_streaming_request and traced there.
+
+    // Use prompt.text length heuristic: if chunking not needed, single chunk.
+    // Reuse framework split_text_chunks with budget = chunk_size.
+    auto chunks = engine::text::split_text_chunks(prompt.text, chunk_size, mode);
+    if (chunks.empty()) {
+        chunks.push_back(prompt.text);
+    }
+    return chunks;
+}
+
+void Audio8TtsSession::initialize_streaming_request(const runtime::TaskRequest & request) {
+    // omnivoice/session.cpp:744 — make_request, encode reference once, plan chunks, reserve
+    auto arktts_request = make_request(request);
+
+    // Resolve reference codes once — mirror offline run() caching
+    std::vector<Audio8TtsCodes> reference_codes;
+    if (!arktts_request.references.empty()) {
+        reference_codes.reserve(arktts_request.references.size());
+        for (const auto & reference : arktts_request.references) {
+            reference_codes.push_back(resolve_reference_codes(reference));
+        }
+        if (mem_saver_from_options(options())) {
+            // Release encode graph similar to offline reference path; generator already releases via encode_reference
+        }
+    }
+    stream_reference_codes_ = std::move(reference_codes);
+    stream_has_reference_ = !stream_reference_codes_.empty();
+
+    // Build a prompt to estimate chunking (same as offline prepare) — we use generator's prompt_builder
+    // via a temporary prompt built through generator_->generate path is too heavy; instead split directly
+    // using framework chunking. Keep trace logs consistent with offline run().
+    const auto text_chunk_mode =
+        engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
+    const int64_t text_chunk_size = arktts_request.generation.text_chunk_size;
+    engine::debug::trace_log_scalar("audio8_tts.text_chunk_size", text_chunk_size);
+    engine::debug::trace_log_scalar("audio8_tts.text_chunk_mode", engine::text::text_chunk_mode_name(text_chunk_mode));
+
+    // Use framework chunk_text_request for exact parity with offline run()
+    const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
+    engine::debug::trace_log_scalar("audio8_tts.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
+
+    stream_text_chunks_.clear();
+    stream_text_chunks_.reserve(chunk_requests.size());
+    for (const auto & cr : chunk_requests) {
+        if (cr.text_input.has_value()) {
+            stream_text_chunks_.push_back(cr.text_input->text);
+        } else if (!arktts_request.text.empty()) {
+            stream_text_chunks_.push_back(arktts_request.text);
+        }
+    }
+    if (stream_text_chunks_.empty()) {
+        stream_text_chunks_.push_back(arktts_request.text);
+    }
+
+    // Estimate merged audio reservation — use codec frame_length (2048) * hop ratio estimate.
+    // Approximation: 1 frame = 512 hop samples? Actually codec frame_length 2048 but hop 512; generator frames unknown yet.
+    // Reserve based on text length heuristic: ~ 20 frames per chunk * 2048 ~ generous.
+    // Use simple reservation: 44100 * 10 seconds per chunk as upper bound via prompt estimate?
+    // Follow omnivoice reservation: estimated_audio_samples = prompt.target_audio_tokens * hop_length
+    // Here hop_length=512, sample_rate=44100. Estimate tokens roughly as 25 * text chunks * chunk size.
+    // Conservative reserve: 512 * 1024 frames per chunk ~ large. Simpler: reserve per chunk.
+    const int sample_rate = assets_->config.codec.sample_rate > 0 ? assets_->config.codec.sample_rate : 44100;
+    const int64_t hop_length = 512; // hop 512 per modeling_arktts_codec.py:483
+    // Rough estimate: 20 audio tokens per char * hop
+    const size_t estimated = static_cast<size_t>(arktts_request.text.size() * 20 * static_cast<size_t>(hop_length));
+    const size_t gap = stream_text_chunks_.size() > 1
+        ? static_cast<size_t>(std::llround(0.3 * static_cast<double>(sample_rate))) * (stream_text_chunks_.size() - 1)
+        : 0;
+    stream_merged_audio_.samples.reserve(estimated + gap);
+
+    stream_request_ = std::move(arktts_request);
+    stream_previous_turn_.reset();
+    stream_chunk_index_ = 0;
+}
+
+runtime::AudioBuffer Audio8TtsSession::synthesize_stream_chunk(size_t chunk_index) {
+    if (!stream_request_.has_value()) {
+        throw std::runtime_error("Audio8 TTS streaming request is not initialized");
+    }
+    if (chunk_index >= stream_text_chunks_.size()) {
+        throw std::runtime_error("Audio8 TTS streaming chunk index out of range");
+    }
+    Audio8TtsRequest chunk_request = *stream_request_;
+    chunk_request.text = stream_text_chunks_.at(chunk_index);
+    const bool mem_saver = mem_saver_from_options(options());
+
+    // Chain previous_turn when multi-chunk, matching offline run() previous_turn logic
+    // (session.cpp:516). This provides continuity without self-clone injection.
+    auto generated = generator_->generate(chunk_request, stream_reference_codes_, stream_previous_turn_, mem_saver);
+    if (stream_text_chunks_.size() > 1) {
+        stream_previous_turn_ = Audio8TtsConversationTurn{chunk_request.text, generated.codes};
+    }
+    return generated.audio;
 }
 
 // Spec-backed loader entry point; mirrors glm_tts/session.cpp:make_glm_tts_loader.
