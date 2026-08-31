@@ -11,7 +11,7 @@ stages directly on ggml with no Python dependency.
 | Family | `audio8_tts` |
 | Model directory | any directory holding the standalone GGUF (or a safetensors snapshot layout) |
 | Task | `tts`, `clon` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Languages | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es |
 | Voice input | optional reference WAV plus its exact transcript (clone) |
 | Output | mono 44.1 kHz WAV |
@@ -108,7 +108,7 @@ Multiple ordered references can be conditioned through one request option:
 | `--request-option top_p=<f>` | `0.9` | Nucleus threshold. |
 | `--request-option top_k=<n>` | `50` | Top-k limit. |
 | `--request-option seed=<n>` | random | Sampling seed for reproducible output. |
-| `--request-option max_new_tokens=<n>` | `1024` | Maximum semantic steps per chunk. |
+| `--request-option max_tokens=<n>` | `1024` | Maximum semantic steps per chunk. |
 | `--request-option text_chunk_size=<n>` | `200` | Word-budget chunk size in characters. |
 | `--session-option audio8_tts.weight_type=<mode>` | `native` | AR matmul weight storage type. |
 | `--session-option audio8_tts.codec_weight_type=<mode>` | `native` | Codec weight storage type. |
@@ -238,7 +238,7 @@ Current limitations (2026-08-29):
 
 - **0.6B**: validated on CPU via SenseVoice ASR (`The quick brown fox…` 3.02s RMS 0.15, `你好，欢迎使用audio8。` 2.32s, `Artificial intelligence…` 2.97s) with `--family audio8_tts` GGUF `q8_0`/`bf16`; CUDA/Vulkan/Metal SSM backends are built but not yet exercised for this family (ggml kernels already present).
 - **0.1B**: weight-complete and `audiocpp_cli` builds, but slow AR is a documented stub (`ar.cpp:861 TODO(Falcon-H1)`, `attn_out=0`, no `ggml_ssm_scan`/state, full recompute) — STT currently `like.` vs target; no `/tmp` writes or Python dependency. Full hybrid Mamba2 port is planned, not blocked on ggml (see `docs/FALCON_H1_0.1B_PORT_PLAN.md`).
-- Offline mode only — no streaming session path.
+- Streaming is supported for TTS and voice cloning through the standard pull-event session path.
 - Cloning uses the same DualAR loop (reference WAV + `reference_text` → prompt builder) — 0.6B cloning path is structurally identical to TTS but has not yet been ASR-evaluated against real reference voices beyond the TTS evidence above.
 - No conversation-turn continuation (Python supports multi-turn prompting; the C++ v1 path is single-request).
 - ASR round-trip verifies intelligibility, not speaker similarity; formal parity runs against the Python/ONNX reference are still outstanding.
@@ -246,6 +246,5 @@ Current limitations (2026-08-29):
 TODO:
 
 - [ ] Complete 0.1B Falcon-H1 Mamba2 port (`ggml_ssm_conv/B/C/dt/A/D/scan` + recurrent `conv/ssm` ring + hybrid attention `K=1`) — `docs/FALCON_H1_0.1B_PORT_PLAN.md` M2/M3 (3–3.5d), then SenseVoice verification of `out/*0.1b.wav`
-- [ ] Support streaming
 - [ ] Clone-task validation with real reference voices (0.6B first, then 0.1B after Mamba2)
 - [ ] Exercise CUDA/Metal/Vulkan backends for both models (ggml SSM kernels already vendored)
