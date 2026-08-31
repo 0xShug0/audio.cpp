@@ -1,0 +1,21 @@
+{
+  "host": "0.0.0.0",
+  "port": 8007,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "lazy_load": true,
+  "busy_timeout_ms": 0,
+  "models": [
+    {
+      "id": "firered-base",
+      "family": "fireredtts3",
+      "path": "/data/megastore/Projects/DuJing/models/FireRedTTS3-Base-GGUF/fireredtts3-base-q8_0.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "session_options": {
+        "fireredtts3.reference_cache_slots": "8"
+      }
+    }
+  ]
+}
