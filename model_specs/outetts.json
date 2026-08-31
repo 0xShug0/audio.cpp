@@ -107,7 +107,7 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Transcript matching the reference voice audio for voice cloning.",
+        "description": "Transcript matching the reference voice audio for voice cloning. Required whenever reference audio is supplied; the model rejects voice cloning without it.",
         "required": false
       },
       {
@@ -128,10 +128,15 @@
       {
         "name": "text_chunk_mode",
         "type": "enum",
-        "description": "Framework long-form text chunking mode; default word_budget.",
-        "preset": "text_chunk_mode_full",
+        "description": "Framework long-form text chunking mode; default default.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
         "required": false,
-        "default": "word_budget"
+        "default": "default"
       }
     ],
     "session": [

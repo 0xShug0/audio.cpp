@@ -80,6 +80,47 @@
         "required": false,
         "min": 0,
         "default": 0
+      },
+      {
+        "name": "flow_uncond_interval",
+        "type": "int",
+        "description": "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between; 1 keeps the exact reference trajectory.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "flow_uncond_warmup",
+        "type": "int",
+        "description": "Number of initial flow steps that always evaluate both CFG branches when delta reuse is enabled.",
+        "required": false,
+        "min": 0,
+        "default": 2
+      },
+      {
+        "name": "ensemble_takes",
+        "type": "int",
+        "description": "Decode N independent takes of the same prompt in one batched AR pass (seeds seed..seed+N-1); outputs are returned as named audio take_01..take_NN.",
+        "required": false,
+        "min": 1,
+        "max": 16,
+        "default": 1
+      },
+      {
+        "name": "ensemble_prefix_frames",
+        "type": "int",
+        "description": "Intro-lock for ensembles: decode the first N AR frames once as a shared master trajectory (~25 frames per second), then fork the takes; 0 disables.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "flow_chunk_hop_frames",
+        "type": "int",
+        "description": "Flow chunk hop in AR frames (~25/sec); 0 keeps the model config (100, 50% chunk overlap).",
+        "required": false,
+        "min": 0,
+        "default": 0
       }
     ],
     "session": [
@@ -141,6 +182,13 @@
         "description": "Load large generation stages only while they are needed to reduce peak VRAM.",
         "required": false,
         "default": true
+      },
+      {
+        "name": "pipeline_overlap",
+        "type": "bool",
+        "description": "Overlap AR decoding with per-chunk condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; falls back to the sequential pipeline otherwise.",
+        "required": false,
+        "default": false
       }
     ],
     "load": []

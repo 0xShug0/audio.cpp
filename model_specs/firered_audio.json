@@ -183,14 +183,6 @@
         "default": 1024
       },
       {
-        "name": "helper_graph_arena_mb",
-        "type": "int",
-        "description": "Helper graph arena size in MiB; default 256.",
-        "required": false,
-        "min": 1,
-        "default": 256
-      },
-      {
         "name": "weight_context_mb",
         "type": "int",
         "description": "Weight loading context size in MiB; default 1024.",

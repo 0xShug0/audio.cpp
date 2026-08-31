@@ -46,21 +46,21 @@
         "type": "int",
         "description": "Maximum MiniCPM output tokens.",
         "required": false,
-        "default": 1024
+        "default": 4096
       },
       {
         "name": "min_tokens",
         "type": "int",
         "description": "Minimum MiniCPM output tokens before an EOS stop is honored.",
         "required": false,
-        "default": 0
+        "default": 2
       },
       {
         "name": "num_inference_steps",
         "type": "int",
         "description": "CFM diffusion sampling steps.",
         "required": false,
-        "default": 50
+        "default": 10
       },
       {
         "name": "guidance_scale",
@@ -81,7 +81,7 @@
         "type": "int",
         "description": "Maximum bad-case retry count.",
         "required": false,
-        "default": 2
+        "default": 3
       },
       {
         "name": "retry_badcase_ratio_threshold",

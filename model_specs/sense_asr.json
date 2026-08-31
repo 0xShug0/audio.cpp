@@ -69,10 +69,11 @@
       {
         "name": "audio_chunk_mode",
         "type": "enum",
-        "description": "Audio chunking mode: auto, fixed, or none.",
+        "description": "Audio chunking mode: auto, fixed, vad, or none.",
         "values": [
           "auto",
           "fixed",
+          "vad",
           "none"
         ],
         "required": false,

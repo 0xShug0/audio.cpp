@@ -29,7 +29,7 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Reference transcript used with speaker reference audio.",
+        "description": "Reference transcript used with speaker reference audio. Required whenever the request carries inline reference audio; the model rejects the request without it.",
         "required": false
       },
       {
@@ -57,10 +57,15 @@
       {
         "name": "text_chunk_mode",
         "type": "enum",
-        "description": "Framework text chunking mode; default word_budget.",
-        "preset": "text_chunk_mode_full",
+        "description": "Framework text chunking mode; default default.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
         "required": false,
-        "default": "word_budget"
+        "default": "default"
       },
       {
         "name": "top_p",

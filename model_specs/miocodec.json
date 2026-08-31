@@ -26,6 +26,60 @@
       "speaker_reference"
     ]
   },
+  "options": {
+    "request": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Codec weight storage type; default f32.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "f32"
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Codec weight descriptor context size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "constant_context_mb",
+        "type": "int",
+        "description": "Reusable constant context size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "content_graph_arena_mb",
+        "type": "int",
+        "description": "Content encoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "global_graph_arena_mb",
+        "type": "int",
+        "description": "Global encoder graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "wave_graph_arena_mb",
+        "type": "int",
+        "description": "Wave decoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      }
+    ],
+    "load": []
+  },
   "runtime": {
     "tags": [
       "gguf"

@@ -193,6 +193,24 @@
         "default": 0.1
       },
       {
+        "name": "first_block_cache_start_percent",
+        "type": "float",
+        "description": "Start of the denoise window where the first-block cache may be used, as a fraction of the schedule.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.1
+      },
+      {
+        "name": "first_block_cache_end_percent",
+        "type": "float",
+        "description": "End of the denoise window where the first-block cache may be used, as a fraction of the schedule; must be greater than first_block_cache_start_percent.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.95
+      },
+      {
         "name": "first_block_cache_start_sigma",
         "type": "float",
         "description": "Largest video sigma where first-block cache may be used.",

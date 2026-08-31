@@ -61,7 +61,7 @@
       {
         "name": "return_timestamps",
         "type": "bool",
-        "description": "Request word timestamps in the result; set automatically by --words-out.",
+        "description": "Accepted for cross-model compatibility (--words-out sets it) and ignored: the forced aligner always returns word timestamps.",
         "required": false,
         "default": true
       }

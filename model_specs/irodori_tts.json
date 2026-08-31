@@ -74,6 +74,8 @@
         "type": "enum",
         "description": "Text chunking mode; default endline.",
         "values": [
+          "default",
+          "tag_aware",
           "japanese",
           "endline"
         ],

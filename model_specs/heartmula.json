@@ -26,13 +26,13 @@
         "name": "lyrics",
         "type": "string",
         "description": "Lyrics text.",
-        "required": false
+        "required": true
       },
       {
         "name": "tags",
         "type": "string",
         "description": "Comma-separated music tags.",
-        "required": false
+        "required": true
       },
       {
         "name": "duration_sec",
