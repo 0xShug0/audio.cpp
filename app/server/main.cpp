@@ -225,6 +225,21 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("--min-free-memory-mb must be >= 0 (0 disables the memory guard)");
         }
 
+        // Prove the requested backend and device exist before binding a port.
+        // The backend defaults to CUDA, and nothing else checks it until the
+        // first generate, so a machine without CUDA would otherwise serve the
+        // whole UI -- health, model list, downloads -- and only fail once the
+        // user pressed Run. Failing here reports the same message the engine
+        // would have raised, at the point the operator can still act on it.
+        {
+            engine::core::BackendConfig probe;
+            probe.type = config.backend;
+            probe.device = config.device;
+            probe.threads = config.threads;
+            ggml_backend_t backend = engine::core::init_backend(probe);
+            ggml_backend_free(backend);
+        }
+
         const auto ui_resource_anchor = executable_directory(argc > 0 ? argv[0] : nullptr);
         minitts::server::ServerState state(
             config,

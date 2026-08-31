@@ -657,9 +657,72 @@ std::unordered_map<std::string, std::string> timing_headers(
     };
 }
 
+// Transcript detail arrays shared by /v1/tasks/run and /v1/audio/transcriptions.
+// ASR models that produce timestamps populate only these fields, so a route that
+// omits them silently discards work the model already did.
+template <typename FieldFn>
+void write_transcript_detail_fields(
+    std::ostringstream & out,
+    const engine::runtime::TaskResult & result,
+    FieldFn field) {
+    if (!result.speech_segments.empty()) {
+        field("segments");
+        out << "[";
+        for (size_t i = 0; i < result.speech_segments.size(); ++i) {
+            if (i != 0) {
+                out << ",";
+            }
+            const auto & segment = result.speech_segments[i];
+            out << "{\"start_sample\":" << segment.span.start_sample
+                << ",\"end_sample\":" << segment.span.end_sample
+                << ",\"confidence\":" << segment.confidence;
+            if (!segment.text.empty()) {
+                out << ",\"text\":" << json_quote(segment.text);
+            }
+            out << "}";
+        }
+        out << "]";
+    }
+    if (!result.speaker_turns.empty()) {
+        field("speaker_turns");
+        out << "[";
+        for (size_t i = 0; i < result.speaker_turns.size(); ++i) {
+            if (i != 0) {
+                out << ",";
+            }
+            const auto & turn = result.speaker_turns[i];
+            out << "{\"start_sample\":" << turn.span.start_sample
+                << ",\"end_sample\":" << turn.span.end_sample
+                << ",\"speaker_id\":" << json_quote(turn.speaker_id)
+                << ",\"confidence\":" << turn.confidence;
+            if (!turn.text.empty()) {
+                out << ",\"text\":" << json_quote(turn.text);
+            }
+            out << "}";
+        }
+        out << "]";
+    }
+    if (!result.word_timestamps.empty()) {
+        field("words");
+        out << "[";
+        for (size_t i = 0; i < result.word_timestamps.size(); ++i) {
+            if (i != 0) {
+                out << ",";
+            }
+            const auto & word = result.word_timestamps[i];
+            out << "{\"word\":" << json_quote(word.word)
+                << ",\"start_sample\":" << word.span.start_sample
+                << ",\"end_sample\":" << word.span.end_sample
+                << ",\"confidence\":" << word.confidence << "}";
+        }
+        out << "]";
+    }
+}
+
 std::string task_result_json_with_timing(
     const engine::runtime::TaskResult & result,
-    const std::string & timing) {
+    const std::string & timing,
+    std::optional<int> detail_sample_rate = std::nullopt) {
     std::ostringstream out;
     out << "{";
     bool first = true;
@@ -727,57 +790,15 @@ std::string task_result_json_with_timing(
         for (const auto & artifact : result.output_artifacts) write_artifact(artifact);
         out << "]";
     }
-    if (!result.speech_segments.empty()) {
-        field("segments");
-        out << "[";
-        for (size_t i = 0; i < result.speech_segments.size(); ++i) {
-            if (i != 0) {
-                out << ",";
-            }
-            const auto & segment = result.speech_segments[i];
-            out << "{\"start_sample\":" << segment.span.start_sample
-                << ",\"end_sample\":" << segment.span.end_sample
-                << ",\"confidence\":" << segment.confidence;
-            if (!segment.text.empty()) {
-                out << ",\"text\":" << json_quote(segment.text);
-            }
-            out << "}";
-        }
-        out << "]";
-    }
-    if (!result.speaker_turns.empty()) {
-        field("speaker_turns");
-        out << "[";
-        for (size_t i = 0; i < result.speaker_turns.size(); ++i) {
-            if (i != 0) {
-                out << ",";
-            }
-            const auto & turn = result.speaker_turns[i];
-            out << "{\"start_sample\":" << turn.span.start_sample
-                << ",\"end_sample\":" << turn.span.end_sample
-                << ",\"speaker_id\":" << json_quote(turn.speaker_id)
-                << ",\"confidence\":" << turn.confidence;
-            if (!turn.text.empty()) {
-                out << ",\"text\":" << json_quote(turn.text);
-            }
-            out << "}";
-        }
-        out << "]";
-    }
-    if (!result.word_timestamps.empty()) {
-        field("words");
-        out << "[";
-        for (size_t i = 0; i < result.word_timestamps.size(); ++i) {
-            if (i != 0) {
-                out << ",";
-            }
-            const auto & word = result.word_timestamps[i];
-            out << "{\"word\":" << json_quote(word.word)
-                << ",\"start_sample\":" << word.span.start_sample
-                << ",\"end_sample\":" << word.span.end_sample
-                << ",\"confidence\":" << word.confidence << "}";
-        }
-        out << "]";
+    write_transcript_detail_fields(out, result, field);
+    // Detail spans are sample offsets, so the rate they are counted in has to
+    // travel with them for a client to turn them into timestamps. Analysis tasks
+    // return no audio of their own, so it comes from the input.
+    if (detail_sample_rate.has_value() &&
+        (!result.speech_segments.empty() || !result.speaker_turns.empty() ||
+         !result.word_timestamps.empty())) {
+        field("sample_rate");
+        out << *detail_sample_rate;
     }
     field("timing");
     out << timing;
@@ -785,14 +806,19 @@ std::string task_result_json_with_timing(
     return out.str();
 }
 
-std::string task_result_json(const engine::runtime::TaskResult & result, double wall_ms) {
+std::string task_result_json(
+    const engine::runtime::TaskResult & result,
+    double wall_ms,
+    std::optional<int> detail_sample_rate = std::nullopt) {
     if (result.audio_output.has_value()) {
-        return task_result_json_with_timing(result, timing_json(wall_ms, *result.audio_output));
+        return task_result_json_with_timing(
+            result, timing_json(wall_ms, *result.audio_output), detail_sample_rate);
     }
     if (result.named_audio_outputs.size() == 1) {
-        return task_result_json_with_timing(result, timing_json(wall_ms, result.named_audio_outputs.front().audio));
+        return task_result_json_with_timing(
+            result, timing_json(wall_ms, result.named_audio_outputs.front().audio), detail_sample_rate);
     }
-    return task_result_json_with_timing(result, timing_json(wall_ms));
+    return task_result_json_with_timing(result, timing_json(wall_ms), detail_sample_rate);
 }
 
 std::string streaming_task_result_json(
@@ -871,6 +897,7 @@ const engine::runtime::AudioBuffer & select_audio_output(const engine::runtime::
 engine::runtime::TaskRequest build_openai_transcription_request(
     const Value & body,
     const std::filesystem::path & base_dir,
+    bool accepts_language_option,
     const std::string * uploaded_audio_bytes = nullptr) {
     const auto * audio = body.find("audio");
     if (audio == nullptr) {
@@ -893,7 +920,14 @@ engine::runtime::TaskRequest build_openai_transcription_request(
     std::string language;
     if (const auto * value = body.find("language")) {
         language = value->as_string();
-        request.options["language"] = language;
+        // Only forward a language the caller actually chose, and only to a model
+        // whose contract accepts it. Clients send the field unconditionally, so
+        // without both guards a model that validates request options strictly
+        // rejects the whole request over an option the user never set. The
+        // language still reaches the model through text_input either way.
+        if (!language.empty() && accepts_language_option) {
+            request.options["language"] = language;
+        }
     }
     std::string context;
     if (const auto * value = body.find("text")) {
@@ -1196,6 +1230,11 @@ void ServerState::refresh_model_option_flags(LoadedModel & model) {
     model.accepts_reference_text = model_accepts_request_option(
         model.config.family,
         "reference_text",
+        effective_override,
+        model.config.path);
+    model.accepts_language = model_accepts_request_option(
+        model.config.family,
+        "language",
         effective_override,
         model.config.path);
 }
@@ -1827,6 +1866,9 @@ LiveIngestLimits ServerState::live_ingest_limits(const HttpRequest & request) co
     if (model_id.empty()) {
         return config_.live_ingest;
     }
+    // models_ and model_index_ are mutated by /v1/models/load, so both reads
+    // belong under the state lock even though this path only inspects config.
+    std::lock_guard<std::mutex> state_lock(models_mutex_);
     const auto it = model_index_.find(model_id);
     if (it == model_index_.end()) {
         return config_.live_ingest;
@@ -2446,7 +2488,7 @@ HttpResponse ServerState::handle_transcription_json(const std::string & body_tex
     auto & model = require_model(body);
     const auto request = apply_default_request_options(
         model,
-        build_openai_transcription_request(body, request_base_));
+        build_openai_transcription_request(body, request_base_, model.accepts_language));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     if (bool_field(body, "stream", false)) {
         return run_transcription_stream(model, request, busy_timeout_ms);
@@ -2525,7 +2567,7 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
     auto & model = require_model(body);
     const auto request = apply_default_request_options(
         model,
-        build_openai_transcription_request(body, request_base_, &file_part->data));
+        build_openai_transcription_request(body, request_base_, model.accepts_language, &file_part->data));
     if (stream) {
         return run_transcription_stream(model, request, busy_timeout_ms);
     }
@@ -2546,9 +2588,26 @@ HttpResponse ServerState::run_transcription(
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("transcription timing requires audio_input");
     }
-    return json_response(
-        "{\"text\":" + json_quote(result.text_output->text) +
-        ",\"timing\":" + timing_json(timed_result.wall_ms, *request.audio_input) + "}");
+    // Models that align words or separate speakers report them through the same
+    // detail fields /v1/tasks/run serialises. Emitting them here keeps the
+    // OpenAI-compatible shape (text first, timing last) while making timestamps
+    // reachable from this route instead of only from the generic task route.
+    std::ostringstream out;
+    out << "{\"text\":" << json_quote(result.text_output->text);
+    if (!result.text_output->language.empty()) {
+        out << ",\"language\":" << json_quote(result.text_output->language);
+    }
+    write_transcript_detail_fields(out, result, [&](const std::string & name) {
+        out << "," << json_quote(name) << ":";
+    });
+    // Detail spans are sample offsets, so the rate they are counted in has to
+    // travel with them or a client cannot turn them into timestamps.
+    if (!result.speech_segments.empty() || !result.speaker_turns.empty() ||
+        !result.word_timestamps.empty()) {
+        out << ",\"sample_rate\":" << request.audio_input->sample_rate;
+    }
+    out << ",\"timing\":" << timing_json(timed_result.wall_ms, *request.audio_input) << "}";
+    return json_response(out.str());
 }
 
 HttpResponse ServerState::run_transcription_stream(
@@ -2737,31 +2796,64 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
         });
 }
 
+// The task-run request builder folds a top-level `language` field into the
+// option map. Clients send that field for every task that can take one, so a
+// model whose contract omits `language` would reject the request over a value
+// the user may not have chosen deliberately. Drop it in that case only; a
+// `language` the caller placed inside `options` explicitly is left alone and
+// still produces the strict rejection, which is the correct signal there.
+engine::runtime::TaskRequest drop_unsupported_language_option(
+    engine::runtime::TaskRequest request,
+    const Value & request_json,
+    bool accepts_language_option) {
+    if (accepts_language_option) {
+        return request;
+    }
+    const auto * top_level = request_json.find("language");
+    if (top_level == nullptr || !top_level->is_string()) {
+        return request;
+    }
+    const auto it = request.options.find("language");
+    if (it != request.options.end() && it->second == top_level->as_string()) {
+        request.options.erase(it);
+    }
+    return request;
+}
+
 HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto * request_json = body.find("request");
+    const auto & effective_json = request_json != nullptr ? *request_json : body;
     const auto request = apply_default_request_options(
         model,
-        minitts::cli::build_request_from_json(
-            request_json != nullptr ? *request_json : body,
-            request_base_));
+        drop_unsupported_language_option(
+            minitts::cli::build_request_from_json(effective_json, request_base_),
+            effective_json,
+            model.accepts_language));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
         ? run_streaming_model(model, request, {}, busy_timeout_ms)
         : run_model(model, request, busy_timeout_ms);
-    return json_response(task_result_json(timed_result.result, timed_result.wall_ms));
+    return json_response(task_result_json(
+        timed_result.result,
+        timed_result.wall_ms,
+        request.audio_input.has_value()
+            ? std::optional<int>(request.audio_input->sample_rate)
+            : std::nullopt));
 }
 
 HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto * request_json = body.find("request");
+    const auto & effective_json = request_json != nullptr ? *request_json : body;
     const auto request = apply_default_request_options(
         model,
-        minitts::cli::build_request_from_json(
-            request_json != nullptr ? *request_json : body,
-            request_base_));
+        drop_unsupported_language_option(
+            minitts::cli::build_request_from_json(effective_json, request_base_),
+            effective_json,
+            model.accepts_language));
     std::vector<engine::runtime::StreamEvent> events;
     const auto timed_result = run_streaming_model(
         model,
@@ -2994,6 +3086,9 @@ void ServerState::ensure_model_fits_memory(const ServerModelConfig & model) {
 }
 
 HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "dynamic model management is disabled", "forbidden");
+    }
     const auto body = engine::io::json::parse(body_text);
     const auto * ids = body.find("model_ids");
     if (ids == nullptr || !ids->is_array()) {
@@ -3008,17 +3103,27 @@ HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
             return error_response(400, "each element of 'model_ids' must be a string", "invalid_request_error");
         }
         const std::string id = id_val.as_string();
-        const auto it = model_index_.find(id);
-        if (it == model_index_.end()) {
-            not_found.push_back(id);
-            continue;
+        // Resolve under the state lock: a concurrent /v1/models/load may append to
+        // models_ and reallocate it, so the pointer must be taken before releasing.
+        // The unique_ptr keeps the pointee stable once we hold the address.
+        LoadedModel * model = nullptr;
+        {
+            std::lock_guard<std::mutex> state_lock(models_mutex_);
+            const auto it = model_index_.find(id);
+            if (it == model_index_.end()) {
+                not_found.push_back(id);
+                continue;
+            }
+            model = models_.at(it->second).get();
         }
-        LoadedModel & model = *models_.at(it->second);
         // Only unload if the model is currently loaded in memory. Acquire the busy
         // lock for the duration of the unload so no inference starts mid-operation.
-        if (model.session != nullptr) {
-            [[maybe_unused]] BusyGuard::Lock lock = model.busy.acquire(0, model.config.id);
-            model.unload();
+        // acquire_model_run applies the configured timeout: an unbounded wait here
+        // would hang the request thread against exactly the wedged run an operator
+        // calls this route to clear.
+        if (model->session != nullptr) {
+            [[maybe_unused]] BusyGuard::Lock lock = acquire_model_run(*model, std::nullopt);
+            model->unload();
             unloaded.push_back(id);
         }
     }
@@ -3040,11 +3145,25 @@ HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
 }
 
 HttpResponse ServerState::handle_unload_all_models() {
+    if (!config_.ui_management) {
+        return error_response(403, "dynamic model management is disabled", "forbidden");
+    }
     std::vector<std::string> unloaded;
 
-    for (auto & model : models_) {
+    // Snapshot the residents under the state lock rather than iterating models_
+    // directly: a concurrent /v1/models/load appends to that vector, and a
+    // reallocation mid-iteration is undefined behaviour.
+    std::vector<LoadedModel *> resident;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        resident.reserve(models_.size());
+        for (const auto & model : models_) {
+            resident.push_back(model.get());
+        }
+    }
+    for (LoadedModel * model : resident) {
         if (model->session != nullptr) {
-            [[maybe_unused]] BusyGuard::Lock lock = model->busy.acquire(0, model->config.id);
+            [[maybe_unused]] BusyGuard::Lock lock = acquire_model_run(*model, std::nullopt);
             model->unload();
             unloaded.push_back(model->config.id);
         }
