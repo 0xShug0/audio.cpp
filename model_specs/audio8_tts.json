@@ -54,7 +54,7 @@
         "required": false
       },
       {
-        "name": "max_new_tokens",
+        "name": "max_tokens",
         "type": "int",
         "description": "Maximum semantic tokens to generate; default 1024.",
         "required": false,
@@ -188,8 +188,10 @@
   },
   "package_defaults": {
     "download": {
-      "kind": "local_snapshot",
-      "path": "/workspace/models/Audio8-TTS-Preview-0.6b-GGUF"
+      "kind": "huggingface_snapshot",
+      "repo": "js-byte/Audio8-TTS-Preview-0.6b-GGUF",
+      "revision": "main",
+      "gated": false
     }
   },
   "packages": [
@@ -201,9 +203,8 @@
       "precision": "q8_0",
       "target_directory": "Audio8-TTS-Preview-0.6B-GGUF",
       "files": [
-        "Audio8-TTS-Preview-0.6B-GGUF/audio8-tts-preview-0.6b-q8_0.gguf"
-      ],
-      "strip_prefix": "Audio8-TTS-Preview-0.6B-GGUF"
+        "audio8-tts-preview-0.6b-q8_0.gguf"
+      ]
     }
   ],
   "sources": [

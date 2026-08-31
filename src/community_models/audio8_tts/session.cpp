@@ -126,9 +126,9 @@ uint64_t hash_audio_samples(const runtime::AudioBuffer & audio) {
 
 Audio8TtsGenerationOptions generation_options_from_request(const runtime::TaskRequest & request) {
     Audio8TtsGenerationOptions options;
-    if (const auto value = runtime::parse_i64_option(request.options, {"max_new_tokens", "max_tokens"})) {
+    if (const auto value = runtime::parse_i64_option(request.options, {"max_tokens", "max_new_tokens"})) {
         if (*value < 0) {
-            throw std::runtime_error("Audio8 TTS max_new_tokens must be non-negative");
+            throw std::runtime_error("Audio8 TTS max_tokens must be non-negative");
         }
         if (*value > 0) {
             options.max_new_tokens = *value;
@@ -141,7 +141,7 @@ Audio8TtsGenerationOptions generation_options_from_request(const runtime::TaskRe
     options.temperature = runtime::parse_float_option(request.options, {"temperature"}).value_or(options.temperature);
     options.seed = runtime::parse_u32_option(request.options, {"seed"}).value_or(runtime::random_u32_seed());
     if (options.max_new_tokens <= 0) {
-        throw std::runtime_error("Audio8 TTS max_new_tokens must be positive after default resolution");
+        throw std::runtime_error("Audio8 TTS max_tokens must be positive after default resolution");
     }
     if (options.text_chunk_size <= 0) {
         throw std::runtime_error("Audio8 TTS text_chunk_size must be positive");
@@ -451,9 +451,9 @@ void Audio8TtsSession::prepare(const runtime::SessionPreparationRequest & reques
         defaults.text = request.text->text;
         has_defaults = true;
     }
-    if (const auto value = runtime::parse_i64_option(request.options, {"max_new_tokens", "max_tokens"})) {
+    if (const auto value = runtime::parse_i64_option(request.options, {"max_tokens", "max_new_tokens"})) {
         if (*value < 0) {
-            throw std::runtime_error("Audio8 TTS max_new_tokens must be non-negative");
+            throw std::runtime_error("Audio8 TTS max_tokens must be non-negative");
         }
         if (*value > 0) {
             defaults.generation.max_new_tokens = *value;
