@@ -375,6 +375,7 @@ add_library(engine_core OBJECT
     src/framework/io/json.cpp
     src/framework/io/text.cpp
     src/framework/text/chinese_normalization.cpp
+    src/framework/text/chinese_variant.cpp
     src/framework/text/chunking.cpp
     src/framework/text/subtitle.cpp
     src/framework/text/text_normalization.cpp

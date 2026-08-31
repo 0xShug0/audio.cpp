@@ -86,6 +86,7 @@ private:
     std::vector<std::string> stream_text_chunks_;
     std::vector<Audio8TtsCodes> stream_reference_codes_;
     std::optional<Audio8TtsConversationTurn> stream_previous_turn_;
+    std::optional<std::string> stream_language_;
     runtime::AudioBuffer stream_merged_audio_;
     size_t stream_chunk_index_ = 0;
     bool stream_started_ = false;

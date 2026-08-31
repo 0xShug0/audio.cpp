@@ -7,6 +7,7 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/framework/runtime/spec_backed_model.h"
+#include "engine/framework/text/chinese_variant.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/community_models/audio8_tts/ar.h"
 #include "engine/community_models/audio8_tts/codec.h"
@@ -309,6 +310,19 @@ std::vector<Audio8TtsReference> multi_reference_cond_from_options(
     return references;
 }
 
+std::optional<std::string> extract_request_language(const runtime::TaskRequest & request) {
+    if (request.text_input.has_value() && !request.text_input->language.empty()) {
+        return request.text_input->language;
+    }
+    if (request.voice.has_value() && request.voice->style.has_value() && request.voice->style->language.has_value()) {
+        return request.voice->style->language;
+    }
+    if (const auto lang = runtime::find_option(request.options, {"language", "lang"})) {
+        return *lang;
+    }
+    return std::nullopt;
+}
+
 // omnivoice/session.cpp:155 — crossfade helper for pseudo-streaming merge
 void append_cross_faded_chunk(
     runtime::AudioBuffer & merged,
@@ -483,6 +497,14 @@ Audio8TtsRequest Audio8TtsSession::make_request(const runtime::TaskRequest & req
     if (out.text.empty()) {
         throw std::runtime_error("Audio8 TTS request text must not be empty");
     }
+    // Common Traditional -> Simplified conversion if no Cantonese language specified.
+    // Uses shared utility in engine::text::chinese_variant (OpenCC TSCharacters).
+    // Keep Traditional when language is yue/cantonese.
+    const auto language = extract_request_language(request);
+    out.text = engine::text::maybe_convert_traditional_to_simplified_opt(out.text, language);
+    for (auto & ref : out.references) {
+        ref.text = engine::text::maybe_convert_traditional_to_simplified_opt(ref.text, language);
+    }
     return out;
 }
 
@@ -632,6 +654,7 @@ void Audio8TtsSession::reset() {
     stream_text_chunks_.clear();
     stream_reference_codes_.clear();
     stream_previous_turn_.reset();
+    stream_language_.reset();
     stream_merged_audio_ = runtime::AudioBuffer{};
     stream_chunk_index_ = 0;
     stream_started_ = false;
@@ -686,6 +709,7 @@ runtime::TaskResult Audio8TtsSession::finalize() {
 
 void Audio8TtsSession::initialize_streaming_request(const runtime::TaskRequest & request) {
     // omnivoice/session.cpp:744 — make_request, encode reference once, plan chunks, reserve
+    stream_language_ = extract_request_language(request);
     auto arktts_request = make_request(request);
 
     // Resolve reference codes once — mirror offline run() caching
@@ -718,11 +742,16 @@ void Audio8TtsSession::initialize_streaming_request(const runtime::TaskRequest &
     stream_text_chunks_.clear();
     stream_text_chunks_.reserve(chunk_requests.size());
     for (const auto & cr : chunk_requests) {
+        std::string chunk_text;
         if (cr.text_input.has_value()) {
-            stream_text_chunks_.push_back(cr.text_input->text);
+            chunk_text = cr.text_input->text;
         } else if (!arktts_request.text.empty()) {
-            stream_text_chunks_.push_back(arktts_request.text);
+            chunk_text = arktts_request.text;
         }
+        // Apply Traditional->Simplified conversion for streaming chunks as well
+        // (chunk_text_request was built from original request before conversion).
+        chunk_text = engine::text::maybe_convert_traditional_to_simplified_opt(chunk_text, stream_language_);
+        stream_text_chunks_.push_back(std::move(chunk_text));
     }
     if (stream_text_chunks_.empty()) {
         stream_text_chunks_.push_back(arktts_request.text);
