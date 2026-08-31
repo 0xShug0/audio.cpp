@@ -375,6 +375,7 @@ add_library(engine_core OBJECT
     src/framework/io/json.cpp
     src/framework/io/text.cpp
     src/framework/text/chinese_normalization.cpp
+    src/framework/text/chinese_variant.cpp
     src/framework/text/chunking.cpp
     src/framework/text/subtitle.cpp
     src/framework/text/text_normalization.cpp
@@ -942,6 +943,21 @@ audiocpp_add_model(fish_audio
         engine/models/fish_audio/loader.h
     LOADERS
         engine::models::fish_audio::make_fish_audio_loader
+)
+
+audiocpp_add_model(audio8_tts
+    SOURCES
+        src/community_models/audio8_tts/ar.cpp
+        src/community_models/audio8_tts/assets.cpp
+        src/community_models/audio8_tts/codec.cpp
+        src/community_models/audio8_tts/generator.cpp
+        src/community_models/audio8_tts/prompt_builder.cpp
+        src/community_models/audio8_tts/session.cpp
+        src/community_models/audio8_tts/tokenizer_text.cpp
+    INCLUDES
+        engine/community_models/audio8_tts/session.h
+    LOADERS
+        engine::models::audio8_tts::make_audio8_tts_loader
 )
 
 audiocpp_add_model(magpie_tts

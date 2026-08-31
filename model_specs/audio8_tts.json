@@ -1,0 +1,249 @@
+{
+  "schema_version": 1,
+  "family": "audio8_tts",
+  "display_name": "Audio8 TTS Preview 0.6B",
+  "description": "Audio8 TTS Preview 0.6B DualAR text-to-speech model with expressive multilingual speech across yue, zh, nl, en, fr, de, it, ja, ko, pl, and es, automatic language handling, and rapid voice cloning from short reference samples.",
+  "category": "tts",
+  "status": "community",
+  "dependencies": [],
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "auto",
+    "yue",
+    "zh",
+    "nl",
+    "en",
+    "fr",
+    "de",
+    "it",
+    "ja",
+    "ko",
+    "pl",
+    "es"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Reference transcript used with speaker reference audio.",
+        "required": false
+      },
+      {
+        "name": "multi_reference_cond",
+        "type": "string",
+        "description": "Ordered Audio8 TTS reference conditioning pairs as a JSON array: [{\"audio\":\"ref.wav\",\"text\":\"transcript\"}, ...].",
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum semantic tokens to generate; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per generated text chunk; default 200.",
+        "required": false,
+        "min": 1,
+        "default": 200
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "word_budget"
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Top-p sampling value in (0, 1]; default 0.9.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.9
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling value; default 50.",
+        "required": false,
+        "min": 1,
+        "default": 50
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Semantic-token sampling temperature in (0, 2); default 0.7.",
+        "required": false,
+        "min": 0.0,
+        "max": 2.0,
+        "default": 0.7
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed for reproducible output; omitted uses a random seed.",
+        "required": false,
+        "min": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release cached AR runtime graphs after each request; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-audio cache slots; default 1.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "AR matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "codec_weight_type",
+        "type": "enum",
+        "description": "Codec conv/matmul weight storage type; default native.",
+        "preset": "weight_type_codec_q8",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "ar_graph_arena_mb",
+        "type": "int",
+        "description": "AR runtime graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "ar_weight_context_mb",
+        "type": "int",
+        "description": "AR weight context size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "codec_graph_arena_mb",
+        "type": "int",
+        "description": "Codec encode/decode graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "codec_weight_context_mb",
+        "type": "int",
+        "description": "Codec weight context size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      }
+    ],
+    "load": []
+  },
+  "ui": {
+    "recommended_package": "audio8_tts_preview_0_6b_q8_0",
+    "tags": [
+      "TTS",
+      "Clone"
+    ],
+    "docs": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "js-byte/Audio8-TTS-Preview-0.6b-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "audio8_tts_preview_0_6b_q8_0",
+      "display_name": "Audio8 TTS Preview 0.6B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Audio8-TTS-Preview-0.6B-GGUF",
+      "files": [
+        "audio8-tts-preview-0.6b-q8_0.gguf"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "codec_weights": {
+          "source": "weights:",
+          "prefix": "codec_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "codec_weights": "model:codec.safetensors"
+      }
+    }
+  ]
+}

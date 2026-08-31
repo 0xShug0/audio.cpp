@@ -364,5 +364,12 @@
     {"name": "voice", "type": "choice", "label": "voice（预置音色：M 男声 / F 女声）", "label_en": "voice (M = male, F = female presets)", "default": "M1", "choices": ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]},
     {"name": "speaking_rate", "type": "slider", "label": "speaking_rate（语速倍率）", "label_en": "speaking_rate", "default": 1.05, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（流匹配步数）", "label_en": "num_inference_steps", "default": 8, "minimum": 1, "step": 1, "precision": 0}
+  ],
+
+  "audio8_tts": [
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.9, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "max_tokens", "type": "number", "label": "max_tokens", "default": 1024, "minimum": 1, "step": 1, "precision": 0}
   ]
 }
