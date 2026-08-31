@@ -156,7 +156,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary, button.run { color: var(--text-invert); background: linear-gradient(135deg, var(--cyan), #5ac7ff); border: 0; font-weight: 800; }
 .button-row button { flex: 1; }
 .studio-package-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-top: 11px; }
-.studio-package-buttons button, .single-model-toggle { position: relative; min-width: 0; min-height: 38px; padding: 6px 4px; font-size: 9px; line-height: 1.15; }
+.studio-package-buttons button, .single-model-toggle { position: relative; min-width: 0; min-height: 38px; padding: 6px 4px; overflow: hidden; font-size: 9px; line-height: 1.15; overflow-wrap: anywhere; }
 .studio-package-buttons button.selected-package:not(:disabled) { border-color: var(--active-border); color: var(--cyan); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cyan) 10%, transparent); }
 .studio-package-buttons button:disabled { color: var(--control-disabled); background: var(--panel-2); opacity: .48; }
 .studio-package-buttons button.resident, .single-model-toggle.resident { padding-right: 12px; border-color: var(--active-border); color: var(--text-strong); background: var(--active-bg); opacity: 1; }
@@ -215,6 +215,13 @@ kbd { font: 9px ui-monospace, monospace; padding: 2px 4px; border: 1px solid rgb
 .audio-list a { color: var(--cyan); text-decoration: none; }
 audio { width: 100%; height: 38px; }
 .transcript { margin-top: 14px; }
+.timed-rows { margin-top: 14px; }
+.timed-rows-scroll { max-height: 250px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; }
+.timed-rows table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.timed-rows th, .timed-rows td { padding: 6px 9px; text-align: left; border-bottom: 1px solid var(--line); }
+.timed-rows th { position: sticky; top: 0; background: var(--card-bg); color: var(--muted); font-weight: 500; }
+.timed-rows td:first-child, .timed-rows td:nth-child(2) { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-subtle); }
+.timed-rows tr:last-child td { border-bottom: none; }
 pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow: auto; max-height: 250px; color: var(--text-subtle); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .arena-hero { align-items: end; }
@@ -268,16 +275,22 @@ pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 
 .model-actions { display: grid; gap: 6px; width: clamp(280px, 17vw, 324px); min-width: 0; }.model-actions small { text-align: right; }
 .model-actions button { padding: 7px; font-size: 11px; }
 .package-buttons { display: grid; grid-template-columns: repeat(3, minmax(76px, 1fr)); gap: 5px; }
-.package-buttons.wide-package-set { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.package-buttons.wide-package-set .package-size { line-height: 1.15; }
+/* Labels are the build only ('Turbo BF16'), so even a six-package set stays on
+   the three-column grid instead of widening to two half-width columns. */
+.package-buttons.wide-package-set { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .package-buttons:has(> .package-choice:only-child) { grid-template-columns: minmax(0, 1fr); }
 .package-buttons:has(> .package-choice:nth-child(2):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.package-choice { position: relative; height: 48px; min-width: 0; }
-.package-install { display: flex; width: 100%; height: 48px; min-width: 0; min-height: 0; padding-top: 4px; padding-bottom: 4px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; white-space: nowrap; }
-.package-install > span:first-child { line-height: 1.1; }
+.package-choice { position: relative; height: 56px; min-width: 0; }
+.package-install { display: flex; width: 100%; height: 56px; min-width: 0; min-height: 0; padding: 4px 6px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; overflow: hidden; text-align: center; }
+/* Both lines clamp instead of overflowing: the package label falls back to the
+   full model name when the short build name would be ambiguous, and the size
+   line carries a status as well as the byte count. */
+.package-install > span { display: -webkit-box; max-width: 100%; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
+.package-install > span:first-child { line-height: 1.15; }
 .package-install.preferred { border-color: var(--active-border); color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(66,232,213,.1); }
-.package-install.downloaded { padding-right: 23px; border-color: var(--button-hover-border); background: color-mix(in srgb, var(--button-bg) 80%, white 20%); color: var(--blue); white-space: normal; }
-.package-install.downloaded > span:first-child { white-space: nowrap; }
+.package-install.downloaded { padding-right: 23px; border-color: var(--button-hover-border); background: color-mix(in srgb, var(--button-bg) 80%, white 20%); color: var(--blue); }
+/* Keep the label clear of the corner badges that overlay the button. */
+.package-choice:has(.package-update) .package-install { padding-left: 26px; }
 .package-install.downloaded:hover:not(:disabled) { border-color: var(--button-hover-border); background: color-mix(in srgb, var(--button-hover-bg) 76%, white 24%); }
 .package-install.downloaded.preferred { border-color: var(--active-border); color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(66,232,213,.16); }
 .model-actions .package-delete { position: absolute; top: 3px; right: 3px; z-index: 1; display: grid; width: 18px; height: 18px; min-height: 0; padding: 2px; place-items: center; border-color: transparent; background: transparent; color: var(--muted); }
@@ -285,7 +298,10 @@ pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 
 .package-delete svg { width: 12px; height: 12px; fill: currentColor; }
 .model-actions .package-update { position: absolute; top: 3px; left: 3px; z-index: 1; width: auto; min-height: 18px; padding: 2px 4px; border-color: rgba(66,232,213,.3); background: var(--active-bg); color: var(--cyan); font-size: 7px; }
 .shared-package-note { padding: 7px 9px; border: 1px dashed var(--line); border-radius: 7px; color: var(--muted); font-size: 9px; text-align: center; }
-.package-size { color: var(--muted); font-size: 8px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.package-size { color: var(--muted); font-size: 8px; font-weight: 500; line-height: 1.2; letter-spacing: 0; text-transform: none; }
+/* The size line carries a status word as well as the byte count, so it gets a
+   line more than the label above it. */
+.package-install > span.package-size { -webkit-line-clamp: 3; line-clamp: 3; }
 .install-progress { grid-column: 1/-1; width: 100%; min-width: 0; max-width: 100%; }
 .install-progress-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 9px; }
 .install-progress-head strong { color: var(--blue); text-transform: uppercase; }.install-progress.complete .install-progress-head strong, .install-progress.cleaned .install-progress-head strong { color: var(--cyan); }.install-progress.failed .install-progress-head strong, .install-progress.cancelled .install-progress-head strong { color: var(--danger); }

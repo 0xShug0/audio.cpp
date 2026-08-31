@@ -3,10 +3,24 @@ export type StringMap = Record<string, string>;
 export interface InstallPackageChoice {
   id: string;
   label: string;
+  // Button text. `label` names the model as well as the build ("IndexTTS2.5
+  // Original-Dtype GGUF"), which is wider than an install button; the model
+  // name is already printed beside the buttons, so the short form keeps the
+  // build only. It falls back to `label` when that would not be unique.
+  short_label: string;
   path: string;
   format: string;
   precision: string;
   session_options?: StringMap;
+}
+
+// One rendered install button. The catalog decides which packages an entry
+// exposes, so the UI renders every slot it is given rather than re-deriving the
+// set from family names.
+export interface InstallPackageSlot {
+  key: string;
+  label: string;
+  choice: InstallPackageChoice;
 }
 
 export interface CatalogEntry {
@@ -29,6 +43,11 @@ export interface CatalogEntry {
   required_request_options?: string[];
   builtin_voices?: string[];
   default_voice?: string;
+  // Set when a managed entry resolves to no installable package. The entry is
+  // still listed so the gap is visible instead of the model disappearing from
+  // the UI; `unavailable_reason` explains why it cannot be installed.
+  unavailable?: boolean;
+  unavailable_reason?: string;
 }
 
 export interface ParamSpec {

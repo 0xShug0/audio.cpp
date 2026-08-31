@@ -29,7 +29,7 @@
     type ModelPackageSize,
     type DirectoryBrowserResponse
   } from '$lib/api';
-  import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
+  import { catalog, installPackageSlots, parameterCatalog, taskLabels } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
@@ -72,8 +72,12 @@
   let instructions = '';
   let lyrics = '';
   let duration = 30;
-  let seed = 1234;
-      let maxTokens = 1024;
+  // -1 means "let the engine pick", matching the field label. A fixed default
+  // here would silently pin every model whose own default is a random seed.
+  let seed = -1;
+  // Blank means "use the model's own limit". A shared constant here overrode
+  // per-model ceilings ranging from 300 to 4096, halving some and doubling others.
+  let maxTokens: number | '' = '';
       let sourceFile: File | null = null;
       let videoFile: File | null = null;
       let voiceFile: File | null = null;
@@ -91,6 +95,11 @@
   let outputArtifacts: Array<{ id: string; url: string; extension: string }> = [];
   let outputText = '';
   let outputJson = '';
+  // Timed detail rows returned by ASR, diarization, VAD and forced alignment.
+  // Spans arrive as sample offsets alongside the rate they were counted in.
+  type TimedRow = { start: number; end: number; label: string; text: string; confidence: number };
+  let outputRows: TimedRow[] = [];
+  let outputRowKind = '';
   let logs: string[] = [];
   let aborter: AbortController | null = null;
   let longText = true;
@@ -142,14 +151,6 @@
     demo_3_woman: 'demo_3_woman',
     demo_4_woman: 'demo_4_woman'
   };
-  const exposeAllStudioPackageFamilies = new Set([
-    'audiosr',
-    'controlfoley',
-    'firered_audio',
-    'fireredtts3',
-    'meanvc2',
-    'midashenglm_gen'
-  ]);
 
   function chooseUiLanguage(code: string) {
     uiLanguage = resolveUiLanguage([code]);
@@ -402,18 +403,30 @@
   $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task);
+  // Voice design also picks a named voice, and any model shipping built-in
+  // voices should offer them whatever its task.
+  $: allowsQuickStartVoice = ['tts', 'clon', 'vdes'].includes(selected?.task) ||
+    (selected?.builtin_voices || []).length > 0;
   $: referenceVoiceRequired = !(allowsQuickStartVoice && quickStartVoice) && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
   $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
     (Boolean(voiceFile) && isQwenBase);
-  $: quickStartVoices = server && !server.ui_management
-    ? configuredVoices
+  // Voices come from three places: the spec's built-in list, whatever the server
+  // reports for this model, and the bundled demo clips. The demo clips only make
+  // sense for models that take an arbitrary reference.
+  $: demoQuickStartVoices = server && !server.ui_management
+    ? []
     : Object.entries(demoVoiceSources)
       .filter(([, source]) => bundledVoices.includes(source))
       .map(([voice]) => voice);
-  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false
+  $: quickStartVoices = Array.from(new Set([
+    ...(selected?.builtin_voices || []),
+    ...configuredVoices,
+    ...demoQuickStartVoices
+  ]));
+  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false &&
+    demoQuickStartVoices.includes(quickStartVoice)
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
@@ -518,32 +531,7 @@
     return packageIsResident(entry, choice, models) || sizes[choice.id]?.installed === true;
   }
 
-  function studioPackageSlots(entry: CatalogEntry) {
-    const choices = entry.install_packages || [];
-    if (entry.family === 'ace_step' || entry.family === 'minimax_music3' ||
-        exposeAllStudioPackageFamilies.has(entry.family)) {
-      return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
-    }
-    const q8 = choices.find((choice) => choice.format === 'gguf' &&
-      ['q8', 'q8_0'].includes(choice.precision));
-    const fp16 = choices.find((choice) => choice.format === 'gguf' &&
-      ['f16', 'fp16', 'bf16'].includes(choice.precision));
-    if (!q8 && !fp16) {
-      return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
-    }
-    return [
-      {
-        key: 'q8',
-        label: q8?.label || 'GGUF Q8',
-        choice: q8
-      },
-      {
-        key: 'fp16',
-        label: fp16?.label || 'GGUF FP16',
-        choice: fp16
-      },
-    ];
-  }
+  const studioPackageSlots = installPackageSlots;
 
   function resolveRequestSeed(value: number) {
     if (!Number.isInteger(value) || value < -1 || value > 0xffffffff) {
@@ -705,6 +693,62 @@
     return ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(entry.task);
   }
 
+  // Seed has a dedicated input rather than a parameter widget, so the tasks
+  // that never declared it could not be made reproducible at all. Trust the
+  // spec where one exists; fall back to the historical task list otherwise.
+  function timedRowsFromResult(result: Record<string, unknown>): { rows: TimedRow[]; kind: string } {
+    const rate = Number(result.sample_rate) || 0;
+    const toSeconds = (samples: unknown) => (rate > 0 ? Number(samples) / rate : Number.NaN);
+    const read = (value: unknown, label: (entry: Record<string, unknown>) => string) =>
+      (Array.isArray(value) ? value : []).map((entry: Record<string, unknown>) => ({
+        start: toSeconds(entry.start_sample),
+        end: toSeconds(entry.end_sample),
+        label: label(entry),
+        text: typeof entry.text === 'string' ? entry.text : '',
+        confidence: Number(entry.confidence) || 0
+      }));
+    const turns = read(result.speaker_turns, (entry) => String(entry.speaker_id ?? ''));
+    if (turns.length) return { rows: turns, kind: 'speaker_turns' };
+    const words = read(result.words, (entry) => String(entry.word ?? ''));
+    if (words.length) return { rows: words, kind: 'words' };
+    return { rows: read(result.segments, () => ''), kind: 'segments' };
+  }
+
+  function formatTimecode(seconds: number, millisecondSeparator: string) {
+    if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+    const whole = Math.floor(seconds);
+    const milliseconds = Math.round((seconds - whole) * 1000);
+    const pad = (value: number, width = 2) => String(value).padStart(width, '0');
+    return `${pad(Math.floor(whole / 3600))}:${pad(Math.floor(whole / 60) % 60)}:${pad(whole % 60)}` +
+      `${millisecondSeparator}${pad(milliseconds, 3)}`;
+  }
+
+  function subtitleText(rows: TimedRow[], format: 'srt' | 'vtt') {
+    const separator = format === 'srt' ? ',' : '.';
+    const cues = rows.map((row, index) => {
+      const caption = [row.label, row.text].filter(Boolean).join(': ') || `#${index + 1}`;
+      const timing =
+        `${formatTimecode(row.start, separator)} --> ${formatTimecode(row.end, separator)}`;
+      return format === 'srt' ? `${index + 1}\n${timing}\n${caption}\n` : `${timing}\n${caption}\n`;
+    });
+    return (format === 'vtt' ? 'WEBVTT\n\n' : '') + cues.join('\n');
+  }
+
+  function downloadSubtitles(format: 'srt' | 'vtt') {
+    if (!outputRows.length || !selected) return;
+    const blob = new Blob([subtitleText(outputRows, format)], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${selected.id}-transcript.${format}`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function supportsSeed(entry: CatalogEntry) {
+    return entry.request_options?.includes('seed') === true;
+  }
+
   function supportsRequestOption(entry: CatalogEntry, option: string) {
     // Specs that publish request metadata are authoritative. Older specs
     // without that metadata keep the legacy UI behavior until migrated.
@@ -735,10 +779,13 @@
     job: ModelInstallJob | undefined,
     translate = tr
   ) {
-    if (job?.state === 'running') return `${choice.label}…`;
-    if (job?.state === 'queued') return `${choice.label} ${translate('models.queued')}`;
-    if (job?.state === 'cancelling') return `${choice.label} ${translate('models.stopping')}`;
-    return choice.label;
+    // short_label, not label: the model name is already printed beside the
+    // buttons and would not fit inside one. The full name stays on the title
+    // and aria-label.
+    if (job?.state === 'running') return `${choice.short_label}…`;
+    if (job?.state === 'queued') return `${choice.short_label} ${translate('models.queued')}`;
+    if (job?.state === 'cancelling') return `${choice.short_label} ${translate('models.stopping')}`;
+    return choice.short_label;
   }
 
   function packageSizeLabel(
@@ -751,8 +798,10 @@
       ? formatBytes(size.size_bytes)
       : '';
     if (size?.installed) {
-      const version = packageVersionLabel(size, translate);
-      return `${selected ? translate('models.selected') : translate('models.downloaded')}${version ? ` · ${version}` : ''}${bytes ? ` · ${bytes}` : ''}`;
+      // The version state lives on the button title now: an update has its own
+      // corner badge, the other states are not actionable, and the three-part
+      // line did not fit the button.
+      return `${selected ? translate('models.selected') : translate('models.downloaded')}${bytes ? ` · ${bytes}` : ''}`;
     }
     if (bytes) return bytes;
     if (size?.state === 'pending') return translate('models.checkingSize');
@@ -922,7 +971,7 @@
     applyingModelsFolder = true;
     warningStatus = '';
     errorStatus = '';
-    status = useDefault ? 'Restoring the default models folderâ€¦' : 'Changing models folderâ€¦';
+    status = useDefault ? 'Restoring the default models folder…' : 'Changing models folder…';
     try {
       const root = await setModelsRoot(useDefault ? '' : modelsFolderInput.trim());
       acceptModelsRoot(root);
@@ -1297,6 +1346,8 @@
     outputArtifacts = [];
     outputText = '';
     outputJson = '';
+    outputRows = [];
+    outputRowKind = '';
   }
 
   async function ensureLoaded() {
@@ -1405,10 +1456,13 @@
   }
 
   async function refreshConfiguredVoices() {
-    if (!selectedId || server?.ui_management !== false) {
+    if (!selectedId) {
       configuredVoices = [];
       return;
     }
+    // Ask for this model's own voices regardless of management mode. The server
+    // returns its configured presets plus any embeddings shipped beside the
+    // weights, and skipping the call in managed mode made both unreachable.
     try {
       configuredVoices = await availableVoices(selectedId);
       if (quickStartVoice && !configuredVoices.includes(quickStartVoice)) quickStartVoice = '';
@@ -1569,6 +1623,22 @@
       if (lyricsRequired && !lyrics.trim()) {
         throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires lyrics.`);
       }
+      if (selected.task === 'vdes' && !instructions.trim()) {
+        throw new StatusWarning(
+          `${selected.display_name_en || selected.display_name} requires a voice description.`);
+      }
+      if (selected.task === 'align') {
+        // Forced aligners need both halves; the engine throws for either, and a
+        // form message is a better place to learn that than a raw engine error.
+        if (!text.trim()) {
+          throw new StatusWarning(
+            `${selected.display_name_en || selected.display_name} requires the transcript to align.`);
+        }
+        if (!language.trim()) {
+          throw new StatusWarning(
+            `${selected.display_name_en || selected.display_name} requires a transcript language.`);
+        }
+      }
       await ensureLoaded();
         const options = requestOptions();
         if (usesVibeVoiceSpeakerFiles) {
@@ -1601,7 +1671,7 @@
             seed: chunkSeed(resolvedSeed, index),
             options
           };
-          if (supportsMaxTokens(selected)) body.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected) && maxTokens !== '') body.max_tokens = maxTokens;
           if (voiceRef) body.voice_ref = voiceRef;
           else if (quickStartVoice) body.voice = demoVoiceSources[quickStartVoice] || quickStartVoice;
           else if (selected.default_voice) body.voice = selected.default_voice;
@@ -1637,6 +1707,7 @@
           options
         }, aborter.signal);
         outputText = String(result.text || '');
+        ({ rows: outputRows, kind: outputRowKind } = timedRowsFromResult(result));
         outputJson = JSON.stringify(result, null, 2);
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
@@ -1650,10 +1721,15 @@
             else request.duration_seconds = duration;
           }
           request.seed = resolvedSeed;
-          if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected) && maxTokens !== '') request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
           request.seed = resolvedSeed;
-          if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected) && maxTokens !== '') request.max_tokens = maxTokens;
+        } else if (supportsSeed(selected)) {
+          // Voice conversion and the analysis tasks declare a seed but were never
+          // sent one, so their engines fell back to a fresh random value on every
+          // run and identical inputs could not be reproduced.
+          request.seed = resolvedSeed;
         }
         if (audio) request.audio = audio;
         if (voiceRef) request.voice_ref = voiceRef;
@@ -1681,6 +1757,7 @@
             }));
         }
         outputText = typeof result.text === 'string' ? result.text : '';
+        ({ rows: outputRows, kind: outputRowKind } = timedRowsFromResult(result));
         outputJson = JSON.stringify(result, (key, value) =>
           (key === 'audio' || key === 'payload') && typeof value === 'string'
             ? `<base64 data: ${value.length} chars>` : value, 2);
@@ -2134,8 +2211,9 @@
                 disabled={loadingModel || !available}
                 title={resident ? `Unload ${choice?.label}` : available ? `Load ${choice?.label}` :
                   `${choice?.label || slot.label} is not downloaded`}
+                aria-label={choice?.label || slot.label}
                 on:click={() => choice && toggleStudioPackage(choice)}>
-                {choice?.label || slot.label}
+                {choice?.short_label || slot.label}
               </button>
             {/each}
           </div>
@@ -2181,7 +2259,7 @@
           </div>
         {/if}
 
-        {#if selected.task === 'gen'}
+        {#if selected.task === 'gen' && supportsRequestOption(selected, 'lyrics') && !isFireRedAudioEdit}
           <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
           <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
             aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
@@ -2213,7 +2291,7 @@
               <input id="language" bind:value={language} placeholder="auto" />
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task)}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) || supportsSeed(selected)}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
@@ -2225,7 +2303,7 @@
               <input id="tokens" type="number" min="1" bind:value={maxTokens} />
             </div>
           {/if}
-          {#if selected.task === 'gen'}
+          {#if selected.task === 'gen' && !isFireRedAudioEdit}
             <div>
               <label for="duration">{tr('request.duration')}</label>
               <input id="duration" type="number" min={allowsAutoDuration ? -1 : 1} step="0.1" value={duration}
@@ -2483,6 +2561,35 @@
           <div class="empty-output"><div class="wave">∿</div><p>{tr('result.empty')}</p></div>
         {/if}
         {#if outputText}<textarea class="transcript" readonly rows="7" value={outputText}></textarea>{/if}
+        {#if outputRows.length}
+          <div class="timed-rows">
+            <div class="media-actions">
+              <strong>{tr(`result.rows.${outputRowKind}`)}</strong>
+              <button type="button" on:click={() => downloadSubtitles('srt')}>{tr('result.saveSrt')}</button>
+              <button type="button" on:click={() => downloadSubtitles('vtt')}>{tr('result.saveVtt')}</button>
+            </div>
+            <div class="timed-rows-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>{tr('result.start')}</th>
+                  <th>{tr('result.end')}</th>
+                  <th>{outputRowKind === 'speaker_turns' ? tr('result.speaker') : tr('result.content')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each outputRows as row}
+                  <tr>
+                    <td>{formatTimecode(row.start, '.')}</td>
+                    <td>{formatTimecode(row.end, '.')}</td>
+                    <td>{[row.label, row.text].filter(Boolean).join(': ')}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+            </div>
+          </div>
+        {/if}
         {#if outputJson}<pre>{outputJson}</pre>{/if}
       </section>
     </div>
@@ -2570,7 +2677,10 @@
                             aria-pressed={packageIsSelected(entry, choice)}
                             disabled={groupInstallBusy(group, installJobs) ||
                               (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
-                            title={`${choice.format.toUpperCase()} ${choice.precision}: ${resolveCatalogPath(choice.path)}`}
+                            title={`${choice.label} — ${choice.format.toUpperCase()} ${choice.precision}${
+                              packageVersionLabel(packageSizes[choice.id]) ? ` · ${packageVersionLabel(packageSizes[choice.id])}` : ''
+                            }: ${resolveCatalogPath(choice.path)}`}
+                            aria-label={choice.label}
                             on:click={() => useOrInstallPackage(entry, choice)}>
                             <span>{installButtonLabel(choice, installJobs[choice.id], tr)}</span>
                             {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
