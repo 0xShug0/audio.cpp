@@ -255,7 +255,10 @@ runtime::TaskResult MossVoiceGenSession::run(const runtime::TaskRequest & reques
 
     // The voice description arrives either as a request option or as a style tag on the
     // voice condition, matching how qwen3_tts takes its voice-design instruction.
-    std::string instruction = option_string(request.options, {"instruct"}, "");
+    // Accept both spellings: the OpenAI-compatible speech route maps its
+    // `instructions` body field to `instruction`, which is the only name a
+    // WebUI voice-design request can arrive under.
+    std::string instruction = option_string(request.options, {"instruct", "instruction"}, "");
     if (instruction.empty() && request.voice.has_value() && request.voice->style.has_value()) {
         const auto tag = request.voice->style->tags.find("instruct");
         if (tag != request.voice->style->tags.end()) {
