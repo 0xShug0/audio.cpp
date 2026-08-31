@@ -44,37 +44,36 @@ audio::AudioTensor build_htk_mel_filterbank(int64_t sample_rate, int64_t n_fft, 
     const double min_mel = hz_to_htk_mel(f_min);
     const double max_mel = hz_to_htk_mel(f_max);
 
-    std::vector<double> mel_points(static_cast<size_t>(n_mels + 2));
-    for (size_t i = 0; i < mel_points.size(); ++i) {
-        mel_points[i] = min_mel + (max_mel - min_mel) * static_cast<double>(i) / static_cast<double>(n_mels + 1);
-    }
-
-    std::vector<int64_t> fft_bins(static_cast<size_t>(n_mels + 2));
-    for (size_t i = 0; i < fft_bins.size(); ++i) {
-        const double hz = htk_mel_to_hz(mel_points[i]);
-        fft_bins[i] = static_cast<int64_t>(std::floor((static_cast<double>(n_fft) + 1.0) * hz / static_cast<double>(sample_rate)));
-        fft_bins[i] = std::clamp(fft_bins[i], static_cast<int64_t>(0), num_bins - 1);
+    // Triangle edges stay in Hz. Snapping them to integer FFT bins collapses the narrow
+    // low-frequency filters: at 16 kHz / n_fft 512 the bin spacing is 31.25 Hz while the
+    // lowest mel bands are ~20 Hz wide, so several of them land on the same bin (mel[2]
+    // became an all-zero row) and no longer match the torchaudio filterbank the encoder
+    // was trained against.
+    std::vector<double> edges_hz(static_cast<size_t>(n_mels + 2));
+    for (size_t i = 0; i < edges_hz.size(); ++i) {
+        const double mel = min_mel + (max_mel - min_mel) * static_cast<double>(i) / static_cast<double>(n_mels + 1);
+        edges_hz[i] = htk_mel_to_hz(mel);
     }
 
     audio::AudioTensor fb;
     fb.shape = {n_mels, num_bins};
     fb.values.assign(static_cast<size_t>(n_mels * num_bins), 0.0f);
 
-    for (int64_t m = 1; m <= n_mels; ++m) {
-        const int64_t f_left = fft_bins[static_cast<size_t>(m - 1)];
-        const int64_t f_center = fft_bins[static_cast<size_t>(m)];
-        const int64_t f_right = fft_bins[static_cast<size_t>(m + 1)];
+    // Frequency of FFT bin k, matching torch.linspace(0, sample_rate / 2, num_bins).
+    const double bin_hz = f_max / static_cast<double>(num_bins - 1);
 
-        for (int64_t k = f_left; k < f_center; ++k) {
-            if (f_center > f_left) {
-                fb.values[static_cast<size_t>((m - 1) * num_bins + k)] =
-                    static_cast<float>(k - f_left) / static_cast<float>(f_center - f_left);
-            }
-        }
-        for (int64_t k = f_center; k < f_right; ++k) {
-            if (f_right > f_center) {
-                fb.values[static_cast<size_t>((m - 1) * num_bins + k)] =
-                    static_cast<float>(f_right - k) / static_cast<float>(f_right - f_center);
+    for (int64_t m = 1; m <= n_mels; ++m) {
+        const double f_left = edges_hz[static_cast<size_t>(m - 1)];
+        const double f_center = edges_hz[static_cast<size_t>(m)];
+        const double f_right = edges_hz[static_cast<size_t>(m + 1)];
+
+        for (int64_t k = 0; k < num_bins; ++k) {
+            const double hz = bin_hz * static_cast<double>(k);
+            const double rising = f_center > f_left ? (hz - f_left) / (f_center - f_left) : 0.0;
+            const double falling = f_right > f_center ? (f_right - hz) / (f_right - f_center) : 0.0;
+            const double weight = std::min(rising, falling);
+            if (weight > 0.0) {
+                fb.values[static_cast<size_t>((m - 1) * num_bins + k)] = static_cast<float>(weight);
             }
         }
     }
