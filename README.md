@@ -144,6 +144,7 @@ Community model ports live under `community_models` to make the ownership bounda
 
 | Family | Task | Lang | Runtime | Contributor | What They Added |
 |---|---|---|---|---|---|
+| **audio8_asr** | ASR | en, zh, yue, ja, ko, fr, de | GGUF Q8, Safetensors | [@0xShug0](https://github.com/0xShug0) | [Audio8-ASR-0.1B](docs/community_models/audio8_asr.md) compact multilingual autoregressive ASR reusing the Qwen3-ASR encoder with an MLP-tower adapter and an 8-layer Qwen2-style decoder (CC-BY-NC, local conversion only) |
 | **f5_tts** | TTS, Clone | en, ar (Habibi) | GGUF | [@tareko](https://github.com/tareko) | [F5-TTS](docs/community_models/f5_tts.md) flow-matching DiT synthesis and voice cloning, with Habibi Arabic aliases `habibi`/`habibi_tts` |
 | **glm_tts** | TTS, Clone | zh, en | GGUF | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](docs/community_models/glm_tts.md) zero-shot synthesis and voice cloning support |
 | **granite5asr** | ASR | en | GGUF Q8 | [@ampersandru](https://github.com/ampersandru) | [IBM Granite Speech 5.0 470M TurboCTC](docs/community_models/granite5asr.md) ultra-fast Conformer-CTC ASR with Shaw relative positional embeddings and ByteLevel BPE |
@@ -157,6 +158,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **outetts** | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | GGUF | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
 | **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | GGUF F32/16/Q8, Stream | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](docs/community_models/parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support |
 | **sense_asr** | ASR | auto, zh, en, yue, ja, ko, pt, ru, es, it, fr, de, nl, pl, tr, ar, hi, vi, th, id, ms, fa, nospeech | GGUF Q8, Stream | Jason Chen [@jasonchen31](https://github.com/jasonchen31), [@LauraGPT](https://github.com/LauraGPT) / FunASR | [SenseVoice-Small](docs/community_models/sense_asr.md) offline/streaming SAN-M + CTC transcription with event/emotion/language tags and ITN |
+| **soprano_tts** | TTS | en | GGUF Q8, Stream | [@WalkingCat](https://github.com/WalkingCat) | [Soprano-1.1-80M](https://huggingface.co/WalkingCat/Soprano-1.1-80M-GGUF) ultra-lightweight TTS with Qwen3 LM + Vocos decoder |
 | **vietneu_tts** | TTS, Clone | vi, en | GGUF | Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS-v3-Turbo](docs/community_models/vietneu_tts.md) TTS and voice cloning support |
 
 ## Docker
@@ -223,8 +225,17 @@ model notes, and frontend development instructions.
 
 ## Prebuilt Binaries
 
-- **Windows (CUDA / CPU):** official packages on the [Releases page](https://github.com/0xShug0/audio.cpp/releases).
-- **Windows (HIP/ROCm, AMD GPUs):** community-maintained packages with the ROCm runtime bundled — no HIP SDK installation required. Published from [@IIIIIllllIIIIIlllll's fork Releases](https://github.com/IIIIIllllIIIIIlllll/audio.cpp/releases) in two tracks: ROCm 6.4 (full coverage incl. RX 7600 / gfx1102) and ROCm 7.1 (recommended for RDNA4). Version numbers follow the upstream releases; see [docs/build/windows-hip-distribution.md](docs/build/windows-hip-distribution.md) for details.
+Official packages for every release are attached to the [Releases page](https://github.com/0xShug0/audio.cpp/releases):
+
+| Platform | Backends |
+|---|---|
+| Windows x64 | CPU, Vulkan, CUDA (12.4 / 13.3) |
+| Ubuntu x64 | CPU, Vulkan |
+| macOS (arm64 / x64) | Metal |
+
+The Windows CUDA packages ship the CUDA runtime in a separate `cudart` archive. Extract it next to the binaries so the CUDA backend can load `ggml-cuda.dll` and the CUDA runtime DLLs (`cudart`, cuBLAS, cuFFT).
+
+- **Windows (HIP/ROCm, AMD GPUs):** community-maintained packages with the ROCm runtime bundled, so no HIP SDK installation is required. Published from [@IIIIIllllIIIIIlllll's fork Releases](https://github.com/IIIIIllllIIIIIlllll/audio.cpp/releases) in two tracks: ROCm 6.4 (full coverage incl. RX 7600 / gfx1102) and ROCm 7.1 (recommended for RDNA4). Version numbers follow the upstream releases; see [docs/build/windows-hip-distribution.md](docs/build/windows-hip-distribution.md) for details.
 
 ## Build
 

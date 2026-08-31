@@ -396,10 +396,13 @@ void print_inspection(const engine::runtime::ModelInspection & inspection) {
 }
 
 bool has_vad_chunk_option(int argc, char ** argv) {
-    return minitts::cli::optional_path_arg(argc, argv, "--vad-chunks-out").has_value() ||
-        minitts::cli::find_arg(argc, argv, "--vad-chunk-max-seconds").has_value() ||
-        minitts::cli::find_arg(argc, argv, "--vad-chunk-merge-gap-seconds").has_value() ||
-        minitts::cli::find_arg(argc, argv, "--vad-chunk-padding-seconds").has_value();
+    // Every option is looked up before the ors are taken. Short-circuiting would leave the later
+    // ones unread, and an option the CLI never asked for is what require_known_args rejects.
+    const bool chunks_out = minitts::cli::optional_path_arg(argc, argv, "--vad-chunks-out").has_value();
+    const bool max_seconds = minitts::cli::find_arg(argc, argv, "--vad-chunk-max-seconds").has_value();
+    const bool merge_gap = minitts::cli::find_arg(argc, argv, "--vad-chunk-merge-gap-seconds").has_value();
+    const bool padding = minitts::cli::find_arg(argc, argv, "--vad-chunk-padding-seconds").has_value();
+    return chunks_out || max_seconds || merge_gap || padding;
 }
 
 int64_t seconds_to_samples(float seconds, int sample_rate, const std::string & name) {
@@ -501,8 +504,7 @@ std::optional<minitts::app::AudioMetricsInfo> audio_metrics_info(
 // Feeds raw PCM from stdin into the session chunk by chunk, so nothing has to be buffered up
 // front and transcription tracks the input as it arrives.
 engine::runtime::TaskResult run_streaming_from_stdin(
-    int argc,
-    char ** argv,
+    const std::string & input_format,
     engine::runtime::IStreamingVoiceTaskSession & streaming,
     const engine::runtime::TaskRequest & request,
     const minitts::app::StreamEventSink & sink) {
@@ -511,8 +513,7 @@ engine::runtime::TaskResult run_streaming_from_stdin(
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("streaming from stdin requires an audio format contract");
     }
-    const auto sample_format = minitts::app::parse_pcm_sample_format(
-        minitts::cli::find_arg(argc, argv, "--input-format").value_or("s16le"));
+    const auto sample_format = minitts::app::parse_pcm_sample_format(input_format);
     const minitts::app::AudioStreamFormat format{
         request.audio_input->sample_rate,
         request.audio_input->channels,
@@ -531,8 +532,11 @@ void run_streaming(
     char ** argv,
     engine::runtime::IStreamingVoiceTaskSession & streaming,
     engine::runtime::IVoiceTaskSession & session,
-    engine::runtime::TaskRequest & request) {
-    const auto out_dir = minitts::cli::optional_path_arg(argc, argv, "--out-dir");
+    engine::runtime::TaskRequest & request,
+    const minitts::app::FileOutputPolicy & outputs,
+    const std::string & input_format,
+    const std::optional<std::filesystem::path> & text_out) {
+    const auto & out_dir = outputs.output_dir;
     minitts::cli::PartialTextRenderer partial_renderer(stdout_is_terminal());
     const minitts::app::StreamEventSink sink =
         [&](const engine::runtime::StreamEvent & event) {
@@ -573,7 +577,7 @@ void run_streaming(
         };
 
     const auto result = stream_audio_from_stdin(argc, argv)
-        ? run_streaming_from_stdin(argc, argv, streaming, request, sink)
+        ? run_streaming_from_stdin(input_format, streaming, request, sink)
         : minitts::app::run_streaming_task(streaming, request, sink);
     // Close the transcript line so the summary below starts on a fresh row.
     std::cout << partial_renderer.finish();
@@ -582,13 +586,13 @@ void run_streaming(
     std::cout << "mode=" << engine::runtime::to_string(session.run_mode()) << "\n";
     minitts::app::emit_task_result(
         result,
-        minitts::cli::optional_path_arg(argc, argv, "--out"),
+        outputs.audio_out,
         std::nullopt,
-        minitts::cli::optional_path_arg(argc, argv, "--out-dir"),
-        minitts::cli::optional_path_arg(argc, argv, "--segments-out"),
-        minitts::cli::optional_path_arg(argc, argv, "--turns-out"),
-        minitts::cli::optional_path_arg(argc, argv, "--words-out"));
-    if (const auto text_out = minitts::cli::optional_path_arg(argc, argv, "--text-out")) {
+        outputs.output_dir,
+        outputs.segments_base,
+        outputs.turns_base,
+        outputs.words_base);
+    if (text_out.has_value()) {
         write_text_output(result, *text_out, "text_out");
     }
 }
@@ -639,6 +643,11 @@ int audiocpp_cli_main(int argc, char ** argv) {
             registry_config ? std::optional<std::filesystem::path>(std::filesystem::path(*registry_config)) : std::nullopt);
         auto pipeline_registry = minitts::app::make_default_pipeline_registry();
         const bool help_requested = has_arg(argc, argv, "--help");
+        // Read before the command branches below. An option that no lookup ever runs for cannot
+        // be told apart from a misspelling, which is what require_known_args rejects.
+        const bool json_output = has_arg(argc, argv, "--json");
+        const auto task_name = find_arg(argc, argv, "--task");
+        const auto mode_name = find_arg(argc, argv, "--mode").value_or("offline");
         if (has_arg(argc, argv, "--list-pipelines")) {
             const auto ids = pipeline_registry.ids();
             std::cout << "registered_pipelines=" << ids.size() << "\n";
@@ -653,7 +662,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
         }
         if (has_arg(argc, argv, "--list-loaders")) {
             const auto advertisements = registry.advertise_loaders();
-            if (has_arg(argc, argv, "--json")) {
+            if (json_output) {
                 engine::io::json::Value::Object loaders_object;
                 for (const auto & row : advertisements) {
                     engine::io::json::Value::Object tasks_object;
@@ -719,6 +728,11 @@ int audiocpp_cli_main(int argc, char ** argv) {
 
         const auto model_arg = find_arg(argc, argv, "--model");
         const auto pipeline_arg = find_arg(argc, argv, "--pipeline");
+        // Read up front for the same reason as the options above.
+        const auto workflow_inputs = collect_key_value_args(argc, argv, "--workflow-input");
+        const auto audio_converter = find_arg(argc, argv, "--audio-converter").value_or("ffmpeg");
+        const auto batch_merge_audio = find_arg(argc, argv, "--batch-merge-audio").value_or("none");
+        const auto batch_audio_role = find_arg(argc, argv, "--batch-audio-role").value_or("audio");
         if (pipeline_arg.has_value()) {
             const int threads = parse_int_arg(argc, argv, "--threads", 4);
             if (threads <= 0) {
@@ -740,15 +754,15 @@ int audiocpp_cli_main(int argc, char ** argv) {
                     optional_path_arg(argc, argv, "--out"),
                     collect_key_value_args(argc, argv, "--load-option"),
                     collect_key_value_args(argc, argv, "--session-option"),
-                    collect_key_value_args(argc, argv, "--workflow-input"),
+                    workflow_inputs,
                     optional_path_arg(argc, argv, "--model-spec-override"),
-                    find_arg(argc, argv, "--audio-converter").value_or("ffmpeg"),
+                    audio_converter,
                 });
             return 0;
         }
         if (help_requested && !model_arg.has_value()) {
-            if (const auto task = find_arg(argc, argv, "--task")) {
-                print_task_help(registry, *task);
+            if (task_name.has_value()) {
+                print_task_help(registry, *task_name);
             } else {
                 print_task_list_help();
             }
@@ -782,11 +796,9 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
 
-        const auto task_name = find_arg(argc, argv, "--task");
         if (!task_name.has_value()) {
             throw std::runtime_error("missing required --task argument");
         }
-        const auto mode_name = find_arg(argc, argv, "--mode").value_or("offline");
         const engine::runtime::TaskSpec task_spec{
             engine::runtime::parse_voice_task_kind(*task_name),
             engine::runtime::parse_run_mode(mode_name),
@@ -816,6 +828,15 @@ int audiocpp_cli_main(int argc, char ** argv) {
         const auto text_out = optional_path_arg(argc, argv, "--text-out");
         const auto words_out = optional_path_arg(argc, argv, "--words-out");
         const auto vad_chunks_out = optional_path_arg(argc, argv, "--vad-chunks-out");
+        const minitts::app::FileOutputPolicy outputs{
+            optional_path_arg(argc, argv, "--out"),
+            optional_path_arg(argc, argv, "--out-dir"),
+            optional_path_arg(argc, argv, "--segments-out"),
+            optional_path_arg(argc, argv, "--turns-out"),
+            words_out,
+            optional_path_arg(argc, argv, "--batch-manifest-out"),
+        };
+        const auto input_format = find_arg(argc, argv, "--input-format").value_or("s16le");
 
         if (has_batch_input(argc, argv)) {
             if (task_spec.mode != engine::runtime::RunMode::Offline) {
@@ -827,9 +848,8 @@ int audiocpp_cli_main(int argc, char ** argv) {
             if (has_vad_chunk_option(argc, argv)) {
                 throw std::runtime_error("VAD chunk output options are not supported with batch inputs");
             }
-            const auto merge_mode = minitts::app::parse_audio_merge_mode(
-                find_arg(argc, argv, "--batch-merge-audio").value_or("none"));
-            if (optional_path_arg(argc, argv, "--out").has_value() &&
+            const auto merge_mode = minitts::app::parse_audio_merge_mode(batch_merge_audio);
+            if (outputs.audio_out.has_value() &&
                 merge_mode == minitts::app::AudioMergeMode::None) {
                 throw std::runtime_error("batch --out requires --batch-merge-audio concat");
             }
@@ -844,20 +864,13 @@ int audiocpp_cli_main(int argc, char ** argv) {
             if (words_out.has_value()) {
                 base_request.options["return_timestamps"] = "true";
             }
-            auto batch_request = build_batch_request_from_cli(argc, argv, base_request);
+            auto batch_request = build_batch_request_from_cli(argc, argv, base_request, batch_audio_role);
             if (words_out.has_value()) {
                 for (auto & item : batch_request.requests) {
                     item.request.options["return_timestamps"] = "true";
                 }
             }
-            const minitts::app::FileOutputPolicy output_policy{
-                optional_path_arg(argc, argv, "--out"),
-                optional_path_arg(argc, argv, "--out-dir"),
-                optional_path_arg(argc, argv, "--segments-out"),
-                optional_path_arg(argc, argv, "--turns-out"),
-                words_out,
-                optional_path_arg(argc, argv, "--batch-manifest-out"),
-            };
+            require_known_args(argc, argv);
             std::cout << "family=" << session->family() << "\n";
             std::cout << "task=" << engine::runtime::to_string(session->task_kind()) << "\n";
             std::cout << "mode=" << engine::runtime::to_string(session->run_mode()) << "\n";
@@ -867,7 +880,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
                 batch_request,
                 merge_mode,
                 [&](size_t index, const minitts::app::AppRequestResult & item) {
-                    minitts::app::emit_batch_item_result(index, item, output_policy);
+                    minitts::app::emit_batch_item_result(index, item, outputs);
                     if (metrics_requested) {
                         minitts::app::emit_task_metrics(
                             item.result,
@@ -882,7 +895,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
                         write_text_output(item.result, path, "text_out[" + request_id + "]");
                     }
                 });
-            minitts::app::emit_batch_summary(batch_result, output_policy);
+            minitts::app::emit_batch_summary(batch_result, outputs);
             return 0;
         }
 
@@ -911,6 +924,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             }
             request.options["pocket_tts.export_voice_state_path"] = voice_state_out->string();
         }
+        require_known_args(argc, argv);
         const auto session_start = std::chrono::steady_clock::now();
         session->prepare(engine::runtime::build_preparation_request(request));
         if (voice_state_out.has_value()) {
@@ -931,11 +945,11 @@ int audiocpp_cli_main(int argc, char ** argv) {
             std::cout << "mode=" << engine::runtime::to_string(session->run_mode()) << "\n";
             minitts::app::emit_task_result(
                 result,
-                optional_path_arg(argc, argv, "--out"),
-                optional_path_arg(argc, argv, "--out-dir"),
-                optional_path_arg(argc, argv, "--out-dir"),
-                optional_path_arg(argc, argv, "--segments-out"),
-                optional_path_arg(argc, argv, "--turns-out"),
+                outputs.audio_out,
+                outputs.output_dir,
+                outputs.output_dir,
+                outputs.segments_base,
+                outputs.turns_base,
                 words_out);
             if (vad_chunks_out.has_value()) {
                 write_vad_chunks_output(
@@ -957,7 +971,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
         if (streaming == nullptr) {
             throw std::runtime_error("selected task session does not support streaming execution");
         }
-        run_streaming(argc, argv, *streaming, *session, request);
+        run_streaming(argc, argv, *streaming, *session, request, outputs, input_format, text_out);
         return 0;
     } catch (const std::exception & ex) {
         std::cerr << "audiocpp_cli failed: " << ex.what() << "\n";
@@ -975,7 +989,11 @@ int wmain(int argc, wchar_t ** wargv) {
             argv.push_back(arg.data());
         }
         argv.push_back(nullptr);
-        return audiocpp_cli_main(argc, argv.data());
+        const int status = audiocpp_cli_main(argc, argv.data());
+        if (status == 0) {
+            minitts::cli::warn_ignored_args(argc, argv.data());
+        }
+        return status;
     } catch (const std::exception & ex) {
         std::cerr << "audiocpp_cli failed: " << ex.what() << "\n";
         return 1;
@@ -983,6 +1001,10 @@ int wmain(int argc, wchar_t ** wargv) {
 }
 #else
 int main(int argc, char ** argv) {
-    return audiocpp_cli_main(argc, argv);
+    const int status = audiocpp_cli_main(argc, argv);
+    if (status == 0) {
+        minitts::cli::warn_ignored_args(argc, argv);
+    }
+    return status;
 }
 #endif

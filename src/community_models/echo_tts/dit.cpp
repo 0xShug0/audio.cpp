@@ -141,7 +141,7 @@ std::vector<float> timestep_embedding(float t, int64_t embed_size, int64_t lanes
 
 // Parity debugging. Set AUDIOCPP_ECHO_TTS_DEBUG=1 to tap every DiT block output
 // and the two encoder outputs, printing the same mean/std/min/max summary that
-// tools/community_models/echo_tts_reference.py emits, so a C++ run can be
+// tools/community_models/echo_tts/echo_tts_reference.py emits, so a C++ run can be
 // compared block by block against the reference dump.
 bool echo_debug_enabled() {
     static const bool enabled = [] {

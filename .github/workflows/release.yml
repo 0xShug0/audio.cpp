@@ -221,6 +221,55 @@ jobs:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu
           path: build/windows-cpu-release/bin/*
 
+  windows-cpu-portable:
+    name: Windows x64 (CPU portable)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF
+      - name: Bundle VC runtime
+        shell: pwsh
+        working-directory: build/windows-cpu-release/bin
+        # App-local deployment of the MSVC runtime so the prebuilt binaries run
+        # on clean Windows without a separately installed VC++ Redistributable.
+        # Sizes: vcruntime140* + msvcp140* + vcomp140 ~2 MB (well under 1 MB
+        # compressed), negligible against the CPU/Vulkan/CUDA zip sizes.
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending |
+            Select-Object -First 1
+          foreach ($sub in 'x64\Microsoft.VC143.CRT', 'x64\Microsoft.VC143.OPENMP') {
+            $dir = Join-Path $redist.FullName $sub
+            if (Test-Path $dir) {
+              Get-ChildItem "$dir\*.dll" | Where-Object {
+                $_.Name -match '^(vcruntime140|msvcp140|vcomp140)'
+              } | Copy-Item -Destination . -ErrorAction SilentlyContinue
+            }
+          }
+          Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
+      - name: Stage bundle
+        shell: pwsh
+        working-directory: build/windows-cpu-release/bin
+        run: |
+          cp ..\..\..\LICENSE . 2>$null
+          Copy-Item -Recurse ..\..\..\tools .\tools -ErrorAction SilentlyContinue
+          Copy-Item -Recurse ..\..\..\model_specs .\model_specs -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-windows-x64-cpu-portable
+          path: build/windows-cpu-release/bin/*
+
   windows-vulkan:
     name: Windows x64 (Vulkan)
     needs: [check-release, get-version]
@@ -402,6 +451,7 @@ jobs:
       - linux-cpu
       - linux-vulkan
       - windows-cpu
+      - windows-cpu-portable
       - windows-vulkan
       - windows-cuda
     if: ${{ needs.check-release.outputs.should_release == 'true' && (github.ref_type == 'tag' || inputs.publish) }}

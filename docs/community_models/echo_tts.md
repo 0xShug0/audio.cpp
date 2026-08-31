@@ -35,7 +35,7 @@ speaker latent is required.
 ### Numerical parity against PyTorch
 
 Measured on an RTX 3090 (sm_86), CUDA, F16 GGUF, by `tests/echo_tts/echo_tts_dit_parity.cpp`
-against a dump from `tools/community_models/echo_tts_reference.py`. Gates are cosine over the
+against a dump from `tools/community_models/echo_tts/echo_tts_reference.py`. Gates are cosine over the
 flattened tensors **and** max-absolute-error, never equality: cosine alone cannot see a uniform
 scale error, and the host Philox stream matches CUDA to ~2 ULP rather than bit-exactly.
 
@@ -348,7 +348,7 @@ The S1 weights are therefore packaged inside Echo's own GGUF, in the `ae`
 namespace:
 
 ```
-python3 tools/community_models/convert_echo_tts.py \
+python3 tools/community_models/echo_tts/convert_echo_tts.py \
     --model-dir /path/to/echo-tts-base \
     --fish-dir  /path/to/fish-s1-dac-min \
     --outfile   Echo-TTS-GGUF/model.gguf

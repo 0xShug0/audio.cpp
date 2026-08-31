@@ -51,7 +51,7 @@ std::vector<float> parse_speaker_embedding_file(const std::string & filepath) {
 
 runtime::AudioBuffer decode_moss_audio(
     const Qwen3SpeechCodes & codes,
-    const engine::models::moss::MossAudioTokenizerDecoder & decoder) {
+    engine::codecs::MossAudioTokenizerCodecRuntime & decoder) {
     const int64_t frames = codes.frames;
     const int64_t code_groups = codes.code_groups;
     std::vector<std::vector<int32_t>> transposed(static_cast<size_t>(code_groups), std::vector<int32_t>(static_cast<size_t>(frames)));
@@ -60,13 +60,13 @@ runtime::AudioBuffer decode_moss_audio(
             transposed[static_cast<size_t>(g)][static_cast<size_t>(f)] = codes.codes[static_cast<size_t>(f * code_groups + g)];
         }
     }
-    auto stereo = decoder.decode(transposed);
+    auto decoded = decoder.decode(engine::codecs::MossAudioTokenizerCodes{frames, std::move(transposed)});
     runtime::AudioBuffer out;
-    out.sample_rate = 48000;
-    out.channels = 2;
-    if (stereo.size() >= 2) {
-        const auto & left = stereo[0];
-        const auto & right = stereo[1];
+    out.sample_rate = static_cast<int>(decoded.sampling_rate);
+    out.channels = static_cast<int>(decoded.channels.size());
+    if (decoded.channels.size() >= 2) {
+        const auto & left = decoded.channels[0];
+        const auto & right = decoded.channels[1];
         out.samples.resize(left.size() * 2);
         for (size_t i = 0; i < left.size(); ++i) {
             out.samples[i * 2] = left[i];
@@ -307,13 +307,18 @@ VietneuTTSSession::VietneuTTSSession(
         talker_weights_,
         assets_->config.talker.max_position_embeddings,
         assets_->config.max_new_tokens);
-    moss_speech_decoder_ = std::make_unique<engine::models::moss::MossAudioTokenizerDecoder>(
-        *assets_->speech_tokenizer_weights,
+    moss_speech_decoder_ = std::make_unique<engine::codecs::MossAudioTokenizerCodecRuntime>(
+        assets_->speech_tokenizer_weights,
         execution_context(),
         assets_->config.speech_tokenizer.num_quantizers,
-        speech_decoder_constant_context_bytes_,
-        speech_decoder_graph_arena_bytes_,
-        engine::models::moss::moss_audio_tokenizer_nano_config());
+        engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
+            speech_decoder_constant_context_bytes_,
+            speech_decoder_graph_arena_bytes_,
+            speech_decoder_graph_arena_bytes_,
+            false,
+        },
+        engine::codecs::moss_audio_tokenizer_nano_config());
+    moss_speech_decoder_->prepare_decoder();
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Vietneu TTS currently supports offline sessions");
     }

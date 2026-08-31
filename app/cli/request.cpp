@@ -272,15 +272,15 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
     if (const auto text = find_arg(argc, argv, "--text")) {
         request.text_input = engine::runtime::Transcript{*text, language};
     }
+    // Read outside the branch below: only a live stdin source uses them, but an option the CLI
+    // never looks up cannot be told apart from a misspelling.
+    const int input_rate = parse_int_arg(argc, argv, "--input-rate", 16000);
+    const int input_channels = parse_int_arg(argc, argv, "--input-channels", 1);
     if (const auto audio_path = find_arg(argc, argv, "--audio")) {
         if (is_stdin_audio_source(*audio_path)) {
             // Live PCM arrives chunk by chunk, so only the format contract is known up front.
             // The samples stay empty; the streaming driver pulls them from stdin instead.
-            request.audio_input = engine::runtime::AudioBuffer{
-                parse_int_arg(argc, argv, "--input-rate", 16000),
-                parse_int_arg(argc, argv, "--input-channels", 1),
-                {},
-            };
+            request.audio_input = engine::runtime::AudioBuffer{input_rate, input_channels, {}};
         } else {
             request.audio_input = read_audio_buffer(std::filesystem::path(*audio_path));
         }

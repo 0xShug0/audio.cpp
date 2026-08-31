@@ -123,15 +123,15 @@ void MossVoiceGenSession::prepare(const runtime::SessionPreparationRequest &) {
     const auto & config = assets_->config;
     text_processor_ = std::make_unique<MossVoiceGenTextProcessor>(assets_);
 
-    moss::AudioCodebookSpec codebook_spec;
+    engine::modules::MultiCodebookEmbeddingSpec codebook_spec;
     codebook_spec.hidden_size = config.backbone.hidden_size;
     codebook_spec.num_codebooks = config.num_codebooks;
-    codebook_spec.audio_vocab_size = config.audio_vocab_size + 1;
-    codebook_spec.audio_pad_token_id = config.audio_pad_code;
+    codebook_spec.vocab_size = config.audio_vocab_size + 1;
+    codebook_spec.pad_token_id = config.audio_pad_code;
     // The delay family stores its per-codebook input embeddings as emb_ext.<i>, not under
     // the shared default prefix.
     codebook_spec.tensor_prefix = "emb_ext";
-    codebooks_ = std::make_unique<moss::AudioCodebookEmbeddings>(*assets_->model_weights, codebook_spec);
+    codebooks_ = std::make_unique<engine::modules::MultiCodebookEmbedding>(*assets_->model_weights, codebook_spec);
 
     backbone_ = std::make_unique<MossVoiceGenBackboneRuntime>(
         assets_,
@@ -145,13 +145,18 @@ void MossVoiceGenSession::prepare(const runtime::SessionPreparationRequest &) {
         heads_graph_arena_bytes_,
         heads_weight_context_bytes_,
         weight_storage_type_);
-    codec_ = std::make_unique<moss::MossAudioTokenizerDecoder>(
-        *assets_->audio_tokenizer_weights,
+    codec_ = std::make_unique<engine::codecs::MossAudioTokenizerCodecRuntime>(
+        assets_->audio_tokenizer_weights,
         execution_context(),
         config.num_codebooks,
-        codec_weight_context_bytes_,
-        codec_graph_arena_bytes_,
-        moss::moss_audio_tokenizer_v1_config());
+        engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
+            codec_weight_context_bytes_,
+            codec_graph_arena_bytes_,
+            codec_graph_arena_bytes_,
+            false,
+        },
+        engine::codecs::moss_audio_tokenizer_v1_config());
+    codec_->prepare_decoder();
 
     mark_prepared();
 }
@@ -234,11 +239,11 @@ std::vector<float> MossVoiceGenSession::decode_codes(const GeneratedChunk & chun
             chunk.codes.begin() + static_cast<int64_t>(codebook * chunk.frames),
             chunk.codes.begin() + static_cast<int64_t>((codebook + 1) * chunk.frames));
     }
-    auto channels = codec_->decode(codes);
-    if (channels.empty()) {
+    auto audio = codec_->decode(engine::codecs::MossAudioTokenizerCodes{chunk.frames, std::move(codes)});
+    if (audio.channels.empty()) {
         throw std::runtime_error("MOSS-VoiceGenerator codec returned no audio");
     }
-    return std::move(channels.front());
+    return std::move(audio.channels.front());
 }
 
 runtime::TaskResult MossVoiceGenSession::run(const runtime::TaskRequest & request) {
@@ -312,7 +317,7 @@ runtime::TaskResult MossVoiceGenSession::run(const runtime::TaskRequest & reques
 
     debug::trace_log_scalar("moss_voicegen.chunk_count", static_cast<int64_t>(chunk_requests.size()));
     debug::trace_log_scalar("moss_voicegen.silent_chunks", silent_chunks);
-    debug::timing_log_scalar("moss_voicegen.run_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
+    debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
 
     if (merged.samples.empty()) {
         throw std::runtime_error(

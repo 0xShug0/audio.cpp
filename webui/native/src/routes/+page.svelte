@@ -1583,8 +1583,10 @@
 
       if (['tts', 'clon', 'vdes'].includes(selected.task)) {
         if (!text.trim()) throw new StatusWarning('Enter text to generate.');
+        const effectiveChunkBudget = Math.max(40, chunkBudget);
+        if (selected.family === 'voxcpm2') options.text_chunk_size = effectiveChunkBudget;
         const chunks = longText && selected.task !== 'vdes'
-          ? splitTtsChunks(text, Math.max(40, chunkBudget))
+          ? splitTtsChunks(text, effectiveChunkBudget)
           : [text];
         const audioChunks: Blob[] = [];
         const timings: Array<Record<string, unknown>> = [];

@@ -1170,6 +1170,59 @@ void test_schema_v1_metadata_projection() {
     std::filesystem::remove_all(root);
 }
 
+void test_contract_projection_ignores_package_metadata_validation() {
+    const auto root = make_temp_root();
+    std::string spec_text = schema_v1_spec_with_options(R"JSON({
+      "request": [
+        {
+          "name": "reference_text",
+          "type": "string",
+          "required": false,
+          "description": "Reference transcript."
+        }
+      ],
+      "session": [],
+      "load": []
+    })JSON");
+    const std::string marker = "\"default\": true";
+    const auto pos = spec_text.find(marker);
+    engine::test::require(pos != std::string::npos, "test fixture package marker");
+    spec_text.replace(pos, marker.size(), "\"default\": true,\n      \"strip_prefix\": \"\"");
+    const auto spec_path = write_text(root, "toy_model.json", spec_text);
+
+    bool full_validation_rejected = false;
+    try {
+        (void) engine::model_spec::load_spec(spec_path);
+    } catch (const std::runtime_error & error) {
+        full_validation_rejected = std::string(error.what()).find("strip_prefix: expected non-empty string") !=
+            std::string::npos;
+    }
+    engine::test::require(
+        full_validation_rejected,
+        "full package/catalog validation should reject empty strip_prefix");
+
+    const engine::model_spec::ScopedSpecOverride spec_override(root);
+    const auto contract = engine::model_spec::model_contract("toy_model");
+    engine::test::require(contract.has_value(), "contract projection should ignore package metadata validation");
+    engine::test::require(contract->metadata.weight_candidates.empty(), "contract metadata should not read packages");
+    engine::test::require(
+        contract->request_option_keys.find("reference_text") != contract->request_option_keys.end(),
+        "contract should include reference_text");
+
+    std::filesystem::remove_all(root);
+}
+
+void test_legacy_spec_contract_behavior_unchanged() {
+    const auto root = make_temp_root();
+    write_text(root, "toy_model.json", legacy_spec_text("[]"));
+
+    const engine::model_spec::ScopedSpecOverride spec_override(root);
+    const auto contract = engine::model_spec::model_contract("toy_model");
+    engine::test::require(!contract.has_value(), "legacy specs should not expose schema v1 contracts");
+
+    std::filesystem::remove_all(root);
+}
+
 void test_contract_spec_prefers_workspace_over_package_local_spec() {
     const auto root = make_temp_root();
     const auto workspace = root / "workspace";
@@ -1236,6 +1289,8 @@ int main() {
         test_options_schema();
         test_option_name_mapping_from_production_spec();
         test_schema_v1_metadata_projection();
+        test_contract_projection_ignores_package_metadata_validation();
+        test_legacy_spec_contract_behavior_unchanged();
         test_contract_spec_prefers_workspace_over_package_local_spec();
         test_loading_and_resource_bundle();
     } catch (const std::exception & error) {

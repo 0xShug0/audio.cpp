@@ -120,7 +120,7 @@ be to spot without a parity run:
    A permutation here is silent.
 
 Items 2-5 are all caught by the per-block parity dumps from
-`tools/community_models/echo_tts_reference.py`, which is why that script dumps
+`tools/community_models/echo_tts/echo_tts_reference.py`, which is why that script dumps
 per-block activations at a fixed timestep rather than only the final output.
 
 ## Next steps

@@ -395,6 +395,7 @@ add_library(engine_core OBJECT
     src/framework/modules/activation_modules.cpp
     src/framework/modules/norm_modules.cpp
     src/framework/modules/lookup_modules.cpp
+    src/framework/modules/multi_codebook_embedding.cpp
     src/framework/modules/structural_modules.cpp
     src/framework/modules/asr_helpers.cpp
     src/framework/modules/conv_modules.cpp
@@ -473,6 +474,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/fish_dac_codec_runtime.cpp
     src/framework/codecs/mel_latent_vae44k_runtime.cpp
     src/framework/codecs/mimi_codec_runtime.cpp
+    src/framework/codecs/moss_audio_tokenizer_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
     src/framework/codecs/redae_codec_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
@@ -800,12 +802,6 @@ audiocpp_add_model(moss
         src/models/moss/moss_tts_nano/prompt_builder.cpp
         src/models/moss/moss_tts_nano/session.cpp
         src/models/moss/moss_tts_nano/tokenizer_text.cpp
-        src/models/moss/shared/audio_tokenizer_decoder.cpp
-        src/models/moss/shared/audio_tokenizer_encoder.cpp
-        src/models/moss/shared/audio_tokenizer_config.cpp
-        src/models/moss/shared/audio_tokenizer_quantizer.cpp
-        src/models/moss/shared/sampling.cpp
-        src/models/moss/shared/token_rows.cpp
         src/models/moss/moss_tts_local/depth_transformer.cpp
         src/models/moss/moss_tts_local/generator.cpp
         src/models/moss/moss_tts_local/loader.cpp
@@ -1211,8 +1207,6 @@ audiocpp_add_model(vietneu_tts
         engine/community_models/vietneu_tts/loader.h
     LOADERS
         engine::models::vietneu_tts::make_vietneu_tts_loader
-    DEPENDS
-        moss
 )
 
 audiocpp_add_model(qwen3_asr
@@ -1334,6 +1328,20 @@ audiocpp_add_model(granite5asr
         granite_speech5_asr
         granite_speech
         granite_speech5_ctc
+)
+
+audiocpp_add_model(audio8_asr
+    SOURCES
+        src/community_models/audio8_asr/assets.cpp
+        src/community_models/audio8_asr/projector.cpp
+        src/community_models/audio8_asr/thinker.cpp
+        src/community_models/audio8_asr/session.cpp
+    INCLUDES
+        engine/community_models/audio8_asr/session.h
+    LOADERS
+        engine::community_models::audio8_asr::make_audio8_asr_loader
+    DEPENDS
+        qwen3_asr
 )
 
 audiocpp_add_model(vevo2
@@ -1459,6 +1467,20 @@ audiocpp_add_model(ace_step
     LOADERS
         engine::models::ace_step::make_ace_step_loader
 )
+audiocpp_add_model(soprano_tts
+    SOURCES
+        src/community_models/soprano_tts/assets.cpp
+        src/community_models/soprano_tts/generator.cpp
+        src/community_models/soprano_tts/session.cpp
+        src/community_models/soprano_tts/text_normalizer.cpp
+        src/community_models/soprano_tts/tokenizer_text.cpp
+        src/community_models/soprano_tts/vocoder.cpp
+    INCLUDES
+        engine/community_models/soprano_tts/session.h
+    LOADERS
+        engine::community_models::soprano_tts::make_soprano_tts_loader
+)
+
 
 audiocpp_add_model(midashenglm_gen
     SOURCES
@@ -1917,6 +1939,10 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(qwen3_tts_warm_bench tests/qwen3_tts/qwen3_tts_warm_bench.cpp)
     add_engine_warmbench(seed_vc_warm_bench tests/seed_vc/seed_vc_warm_bench.cpp)
     add_engine_warmbench(silero_vad_warm_bench tests/silero_vad/silero_vad_warm_bench.cpp)
+    add_engine_warmbench(soprano_warm_bench tests/soprano_tts/soprano_warm_bench.cpp)
+    target_compile_definitions(soprano_warm_bench PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_engine_warmbench(sortformer_diar_warm_bench tests/sortformer_diar/sortformer_diar_warm_bench.cpp)
     add_engine_warmbench(supertonic_warm_bench tests/supertonic/supertonic_warm_bench.cpp)
     add_engine_warmbench(vevo2_warm_bench tests/vevo2/vevo2_warm_bench.cpp)
@@ -2330,6 +2356,34 @@ if (ENGINE_BUILD_TESTS)
             target_link_libraries(test_granite5asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
         endif()
 
+        if (audio8_asr IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_audio8_asr_units
+                tests/audio8_asr/test_audio8_asr_units.cpp
+            )
+            target_link_libraries(test_audio8_asr_units PRIVATE engine_runtime ggml)
+            target_include_directories(test_audio8_asr_units PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_audio8_asr_units PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+
+            add_test(
+                NAME test_audio8_asr_units
+                COMMAND test_audio8_asr_units
+            )
+
+            add_executable(test_audio8_asr_golden_transcription
+                tests/audio8_asr/test_audio8_asr_golden_transcription.cpp
+            )
+            target_compile_definitions(test_audio8_asr_golden_transcription PRIVATE
+                ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            )
+            target_link_libraries(test_audio8_asr_golden_transcription PRIVATE engine_runtime ggml)
+            target_include_directories(test_audio8_asr_golden_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_audio8_asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+        endif()
+
         add_executable(torch_bin_parity
             tests/vibevoice/torch_bin_parity.cpp
         )
@@ -2560,6 +2614,16 @@ if (ENGINE_BUILD_TESTS)
         add_test(
             NAME mms_forced_aligner_session_test
             COMMAND mms_forced_aligner_session_test
+        )
+
+        add_engine_unittest(soprano_text_cleaning_test tests/unittests/test_soprano_text_cleaning.cpp)
+        target_sources(soprano_text_cleaning_test PRIVATE
+            src/community_models/soprano_tts/text_normalizer.cpp
+            src/community_models/soprano_tts/tokenizer_text.cpp)
+        target_include_directories(soprano_text_cleaning_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(
+            NAME soprano_text_cleaning_test
+            COMMAND soprano_text_cleaning_test
         )
 
         add_engine_unittest(fun_asr_nano_assets_test tests/unittests/test_fun_asr_nano_assets.cpp)
