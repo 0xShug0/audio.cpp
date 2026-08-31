@@ -146,7 +146,16 @@ int main(int argc, char ** argv) {
     std::printf("  crop_on_pause(%.1f s): %zu -> %zu samples (%.3f s)\n",
                 config.generation.ref_seconds, mono.size(), cropped.size(),
                 static_cast<double>(cropped.size()) / sample_rate);
-    auto normalised = sopro::audio_ops::normalize_reference(cropped, sample_rate);
+    const auto crop_level = sopro::audio_ops::speech_level_db(cropped, sample_rate);
+    float crop_peak = 0.0F;
+    for (const float value : cropped) {
+        crop_peak = std::max(crop_peak, std::fabs(value));
+    }
+    auto normalisation = sopro::audio_ops::normalize_reference(cropped, sample_rate);
+    const auto normalised = std::move(normalisation.wav);
+    std::printf("  normalize_reference: level %.2f -> %.2f dB (gain %+.2f dB, crop peak %.3f)\n",
+                crop_level.level_db, normalisation.level_db,
+                normalisation.level_db - crop_level.level_db, crop_peak);
 
     // ---- stage: vocoder round trip ----
     {

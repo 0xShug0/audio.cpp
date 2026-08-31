@@ -143,6 +143,7 @@ SoproVocoderConfig parse_vocoder(const json::Value & root, const std::string & k
     out.intermediate_dim = json::optional_i64(cfg, "intermediate_dim", out.intermediate_dim);
     out.num_layers = json::optional_i64(cfg, "num_layers", out.num_layers);
     out.max_magnitude = json::optional_f32(cfg, "max_magnitude", out.max_magnitude);
+    out.band_limit_hz = json::optional_f32(cfg, "band_limit_hz", out.band_limit_hz);
     out.causal = json::optional_bool(cfg, "causal", out.causal);
     out.lookahead_frames = json::optional_nullable_i64(cfg, "lookahead_frames", out.lookahead_frames);
     out.block_lookaheads = json::optional_i64_array(cfg, "block_lookaheads");

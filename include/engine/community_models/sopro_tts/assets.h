@@ -119,6 +119,10 @@ struct SoproVocoderConfig {
     int64_t intermediate_dim = 1536;
     int64_t num_layers = 14;
     float max_magnitude = 100.0F;
+    // sopro/config.py VocoderConfig.band_limit_hz. Zero (or a negative value)
+    // disables the cut; the published checkpoints do not carry the key, so the
+    // default has to match the reference dataclass.
+    float band_limit_hz = 10900.0F;
     bool causal = false;
     int64_t lookahead_frames = 0;
     std::vector<int64_t> block_lookaheads;

@@ -19,6 +19,7 @@ namespace audio_ops {
 namespace {
 
 constexpr float kRefGainLimitDb = 30.0F;
+constexpr float kRefPeakCeiling = 0.95F;
 constexpr float kPauseMinSeconds = 0.10F;
 constexpr float kPauseKeepSeconds = 0.15F;
 constexpr float kCropForwardSeconds = 5.0F;
@@ -263,26 +264,38 @@ SpeechLevel speech_level_db(const std::vector<float> & wav, int sample_rate) {
     return out;
 }
 
-std::vector<float> normalize_reference(const std::vector<float> & wav, int sample_rate) {
+NormalizedReference normalize_reference(const std::vector<float> & wav, int sample_rate) {
     const auto level = speech_level_db(wav, sample_rate);
-    const float gain_db = std::min(
-        std::max(kPromptLevelDb - level.level_db, -kRefGainLimitDb), kRefGainLimitDb);
+    // Boost only: a reference that is already hotter than the prompt level is
+    // passed through untouched instead of being pulled down.
+    float gain_db = std::min(std::max(kPromptLevelDb - level.level_db, 0.0F), kRefGainLimitDb);
+    float peak = 0.0F;
+    for (const float value : wav) {
+        peak = std::max(peak, std::fabs(value));
+    }
+    if (peak > 0.0F) {
+        // Never let the boost clip: cap it at the headroom left below 0.95.
+        gain_db = std::min(gain_db, std::max(0.0F, 20.0F * std::log10(kRefPeakCeiling / peak)));
+    }
     const float gain = std::pow(10.0F, gain_db / 20.0F);
-    std::vector<float> out(wav);
-    for (auto & value : out) {
+    NormalizedReference out;
+    out.wav = wav;
+    for (auto & value : out.wav) {
         value *= gain;
     }
+    out.level_db = level.level_db + gain_db;
     return out;
 }
 
-float output_gain() {
-    return std::pow(10.0F, (kOutputLevelDb - kPromptLevelDb) / 20.0F);
+float output_gain(float prompt_level_db) {
+    return std::pow(10.0F, (kOutputLevelDb - prompt_level_db) / 20.0F);
 }
 
-float match_gain(const std::vector<float> & wav, int sample_rate, float target_db) {
+float match_gain(
+    const std::vector<float> & wav, int sample_rate, float target_db, float prompt_level_db) {
     const auto level = speech_level_db(wav, sample_rate);
     if (level.active_seconds < kMinActiveSeconds) {
-        return output_gain();
+        return output_gain(prompt_level_db);
     }
     return std::pow(10.0F, (target_db - level.level_db) / 20.0F);
 }
@@ -411,8 +424,10 @@ SoproReference SoproReferenceBuilder::build(
         throw std::runtime_error("Sopro requires non-empty reference audio");
     }
     const auto sample_rate = static_cast<int>(config_.sample_rate);
-    auto wav = audio_ops::crop_on_pause(audio24, ref_seconds, sample_rate, rng);
-    wav = audio_ops::normalize_reference(wav, sample_rate);
+    auto cropped = audio_ops::crop_on_pause(audio24, ref_seconds, sample_rate, rng);
+    auto normalized = audio_ops::normalize_reference(cropped, sample_rate);
+    const float reference_level_db = normalized.level_db;
+    auto wav = std::move(normalized.wav);
 
     const auto speaker_rate = static_cast<int>(config_.speaker_encoder.sample_rate);
     const auto wav16 = engine::audio::resample_mono_torchaudio_sinc_hann(
@@ -468,6 +483,7 @@ SoproReference SoproReferenceBuilder::build(
         }
     }
     out.mel = std::move(mel);
+    out.level_db = reference_level_db;
     return out;
 }
 

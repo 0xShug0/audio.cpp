@@ -31,12 +31,24 @@ struct SpeechLevel {
     float active_seconds = 0.0F;
 };
 
+// normalize_reference returns the boosted waveform together with the speech
+// level it ends up at, so the output gain can be derived from the reference
+// the model actually heard.
+struct NormalizedReference {
+    std::vector<float> wav;
+    float level_db = kPromptLevelDb;
+};
+
 std::vector<float> crop_on_pause(
     const std::vector<float> & wav, float target_seconds, int sample_rate, std::mt19937_64 & rng);
 SpeechLevel speech_level_db(const std::vector<float> & wav, int sample_rate);
-std::vector<float> normalize_reference(const std::vector<float> & wav, int sample_rate);
-float output_gain();
-float match_gain(const std::vector<float> & wav, int sample_rate, float target_db = kOutputLevelDb);
+// Boost-only and peak-guarded: a reference already at or above the prompt level
+// is left alone, and the boost never pushes the peak past 0.95.
+NormalizedReference normalize_reference(const std::vector<float> & wav, int sample_rate);
+float output_gain(float prompt_level_db = kPromptLevelDb);
+float match_gain(
+    const std::vector<float> & wav, int sample_rate, float target_db = kOutputLevelDb,
+    float prompt_level_db = kPromptLevelDb);
 void soft_limit(std::vector<float> & wav, float knee = kLimiterKnee);
 std::optional<int64_t> speech_onset(const std::vector<float> & wav, int sample_rate);
 std::vector<float> trim_lead(
@@ -57,6 +69,9 @@ struct SoproReference {
     std::vector<int32_t> semantic_tokens;  // one id per 1024 reference samples
     std::vector<float> mel;                // [n_mels, mel_frames], normalised
     int64_t mel_frames = 0;
+    // Speech level of the normalised reference, i.e. what the output gain is
+    // derived from (Reference.level_db).
+    float level_db = audio_ops::kPromptLevelDb;
 };
 
 // SoproTTS.prepare_reference: crop on a pause, level-normalise, then run the

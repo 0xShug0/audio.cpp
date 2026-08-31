@@ -62,7 +62,11 @@ build/bin/audiocpp_cli \
 ```
 
 `--task clon` works the same way. The reference is resampled to 24 kHz, cropped at a pause near
-`ref_seconds`, and level-normalised before the speaker and semantic encoders see it.
+`ref_seconds`, and level-normalised before the speaker and semantic encoders see it. That
+normalisation is boost-only and peak-guarded (sopro 2.1): a reference already at or above the
+−19.8 dB prompt level is passed through untouched, and a boost is never large enough to push
+the peak past 0.95. The level the reference ends up at is what the output gain falls back to
+when the generated audio is too short to measure.
 
 ## Streaming
 
@@ -151,8 +155,10 @@ Five stages run per request, mirroring `sopro/` upstream:
 5. **Acoustic head + vocoder** (`acoustic.cpp`, `vocoder.cpp`) — an 8-block adaptive-layer-norm
    DiT solving a rectified flow in two Euler steps on a sway-sampled time grid, with the prompt
    mel re-pinned after every step; then a 14-layer Vocos ConvNeXt backbone and one centred
-   ISTFT. `mu` (the upsampled semantic conditioning) is built in its own graph because it is
-   constant across solver steps.
+   ISTFT. The ISTFT head is band-limited: bins at or above `vocoder.band_limit_hz` (10900 Hz by
+   default, as in sopro 2.1) are zeroed before the inverse transform, which removes the
+   high-frequency hiss the unlimited head produced. `mu` (the upsampled semantic conditioning)
+   is built in its own graph because it is constant across solver steps.
 
 Two implementation details worth knowing:
 
@@ -197,7 +203,7 @@ against the C++.
 |---|---|---|
 | Tensor inventory | 762 names + shapes vs. the four real files | exact match |
 | Vocoder mel front end | vs. numpy STFT + checkpoint filterbank | max diff 1.9e-3 |
-| Vocos backbone + ISTFT head | vs. numpy, all 14 blocks | max diff 1.0e-5 |
+| Vocos backbone + ISTFT head | vs. numpy, all 14 blocks | max diff 1.0e-5 (measured before the band limit; the numpy reference does not zero the bins above 10900 Hz) |
 | Semantic encoder mel | vs. numpy | max diff 1.9e-5 |
 | Semantic encoder transformer | vs. numpy, all 6 layers | max diff 6.0e-5 |
 | FSQ token ids | vs. numpy | 188/188 identical |

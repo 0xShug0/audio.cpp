@@ -421,7 +421,8 @@ runtime::TaskResult SoproTTSSession::run(const runtime::TaskRequest & request) {
     for (const auto & part : parts) {
         concatenated.insert(concatenated.end(), part.begin(), part.end());
     }
-    const float gain = audio_ops::match_gain(concatenated, sample_rate);
+    const float gain = audio_ops::match_gain(
+        concatenated, sample_rate, audio_ops::kOutputLevelDb, state->voice.level_db);
     std::vector<std::vector<float>> trimmed;
     trimmed.reserve(parts.size());
     for (size_t index = 0; index < parts.size(); ++index) {
@@ -494,7 +495,8 @@ std::optional<runtime::StreamEvent> SoproTTSSession::next_stream_event() {
     // segment onto the target level on its own.
     const int sample_rate = state.sample_rate;
     if (!state.gain_ready) {
-        state.gain = audio_ops::match_gain(part, sample_rate);
+        state.gain = audio_ops::match_gain(
+            part, sample_rate, audio_ops::kOutputLevelDb, state.voice.level_db);
         state.gain_ready = true;
         engine::debug::trace_log_scalar(
             "sopro_tts.streaming.gain", static_cast<double>(state.gain));
