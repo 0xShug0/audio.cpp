@@ -86,6 +86,29 @@ audiocpp_cli --task tts --family pocket_tts \
   --metrics
 ```
 
+The JSON may be either an array or an object with a `requests` array. Each item is parsed like one CLI request. Use `id` as the request name; with `--out-dir`, primary audio is written as `<out-dir>/<id>.wav`. There is no per-request `out` field.
+
+```json
+{
+  "requests": [
+    {
+      "id": "speaker1_output",
+      "text": "First text",
+      "voice_ref": "voices/speaker1.wav",
+      "reference_text": "Reference transcript 1",
+      "seed": 1234
+    },
+    {
+      "id": "speaker2_output",
+      "text": "Second text",
+      "voice_ref": "voices/speaker2.wav",
+      "reference_text": "Reference transcript 2",
+      "seed": 1234
+    }
+  ]
+}
+```
+
 For each request id, `--metrics` prints `metrics[<id>].wall_ms`, `audio_duration_ms`, `rtf`, `x_realtime`, `sample_rate`, and `channels`.
 
 ## Model Docs
