@@ -5365,8 +5365,11 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     //return ggml_is_contiguous_rows(op->src[0]);
                     return ggml_is_contiguous(op->src[0]);
                 case GGML_UNARY_OP_ROUND_BF16:
-                    // dst is contiguous by construction; src rows must be contiguous for the strided kernel.
-                    return ggml_is_contiguous(op) && ggml_is_contiguous_rows(op->src[0]);
+                    // f32/f16/bf16 src with contiguous rows, contiguous f32 dst.
+                    return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 ||
+                            op->src[0]->type == GGML_TYPE_BF16) &&
+                           op->type == GGML_TYPE_F32 && ggml_is_contiguous(op) &&
+                           ggml_is_contiguous_rows(op->src[0]);
                 default:
                     return false;
             }

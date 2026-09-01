@@ -2965,7 +2965,19 @@ struct ggml_tensor * ggml_trunc_inplace(
 struct ggml_tensor * ggml_round_bf16(
         struct ggml_context * ctx,
         struct ggml_tensor  * a) {
-    return ggml_unary(ctx, a, GGML_UNARY_OP_ROUND_BF16);
+    GGML_ASSERT(a->type == GGML_TYPE_F32 || a->type == GGML_TYPE_F16 || a->type == GGML_TYPE_BF16);
+    GGML_ASSERT(ggml_is_contiguous_rows(a));
+
+    // Unlike ggml_unary, the result is always f32: bf16/f16 inputs are widened
+    // while rounding, matching an f32 -> bf16 -> f32 cast round trip.
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, a->ne);
+
+    ggml_set_op_params_i32(result, 0, (int32_t) GGML_UNARY_OP_ROUND_BF16);
+
+    result->op     = GGML_OP_UNARY;
+    result->src[0] = a;
+
+    return result;
 }
 
 struct ggml_tensor * ggml_glu(
