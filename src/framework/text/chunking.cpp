@@ -569,7 +569,7 @@ std::optional<TextChunkMode> parse_text_chunk_mode_override(
         return std::nullopt;
     }
     const std::string & value = match->value;
-    if (value == "default") {
+    if (value == "default" || value == "word_budget") {
         return TextChunkMode::Default;
     }
     if (value == "tag_aware" || value == "tag-aware" || value == "tagaware") {
@@ -583,7 +583,7 @@ std::optional<TextChunkMode> parse_text_chunk_mode_override(
     }
     throw std::runtime_error(
         std::string(match->key) +
-        " must be one of default, tag_aware, japanese, endline");
+        " must be one of default (or alias: word_budget), tag_aware, japanese, endline");
 }
 
 }  // namespace engine::text
