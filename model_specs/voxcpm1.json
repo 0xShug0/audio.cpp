@@ -267,14 +267,7 @@
         "model": ".",
         "weights": "$gguf"
       },
-      "files": {
-        "config": "model:config.json",
-        "tokenizer_json": "model:tokenizer.json",
-        "tokenizer_config": "model:tokenizer_config.json"
-      },
-      "optional_files": {
-        "special_tokens_map": "model:special_tokens_map.json"
-      },
+      "files": {},
       "tensors": {
         "weights": {
           "source": "weights:"
