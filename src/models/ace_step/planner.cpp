@@ -1085,15 +1085,9 @@ std::vector<std::string> planner_keyscale_values() {
     return values;
 }
 
-int64_t planner_codes_phase_max_new_tokens(
-    const AceStepRequest & request,
-    int64_t fallback_max_new_tokens) {
-    if (request.generation.duration_seconds > 0.0F) {
-        const float clamped_duration = std::clamp(
-            request.generation.duration_seconds,
-            static_cast<float>(kPlannerDurationMin),
-            static_cast<float>(kPlannerDurationMax));
-        return static_cast<int64_t>(clamped_duration * 5.0F) + kPlannerCodesPhaseExtraBudget;
+int64_t planner_codes_phase_max_new_tokens(int64_t target_codes, int64_t fallback_max_new_tokens) {
+    if (target_codes > 0) {
+        return std::min(target_codes + kPlannerCodesPhaseExtraBudget, fallback_max_new_tokens);
     }
     return fallback_max_new_tokens;
 }
@@ -2889,7 +2883,7 @@ AceStepPlan AceStepPlannerRuntime::generate(const AceStepRequest & request, bool
         if (desired_codes > generation_.max_code_tokens) {
             throw std::runtime_error("ACE-Step planner target audio-code count exceeds configured decode budget");
         }
-        const int64_t max_new_tokens = planner_codes_phase_max_new_tokens(request, generation_.max_code_tokens);
+        const int64_t max_new_tokens = planner_codes_phase_max_new_tokens(desired_codes, generation_.max_code_tokens);
         std::vector<int32_t> generated;
         generated.reserve(static_cast<size_t>(max_new_tokens));
         std::mt19937 rng(request.generation.seed);
