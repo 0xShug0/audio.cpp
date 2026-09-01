@@ -2048,6 +2048,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(wav_writer_formats_test tests/unittests/test_wav_writer_formats.cpp)
+
+    add_test(
+        NAME wav_writer_formats_test
+        COMMAND wav_writer_formats_test
+    )
+
     add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
 
     add_test(
