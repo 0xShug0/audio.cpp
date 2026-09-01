@@ -68,6 +68,14 @@ public:
 
     QwenCausalPrefillResult prefill_tokens(const std::vector<int32_t> & token_ids);
     QwenCausalPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps);
+    // 固定 graph 的 padded prefill：graph 按 padded_steps 建一次并复用（避免因
+    // 不同 steps 重建 prefill graph 破坏 CUDA pool 逆序约束）。embeddings 必须
+    // 是 padded_steps × hidden（padding 零），只有前 valid_steps 参与位置/mask。
+    // 返回 state 只含 valid_steps（截断）。若 padded_steps < 当前已建 steps 则复用。
+    QwenCausalPrefillResult prefill_embeddings_padded(
+        const std::vector<float> & embeddings,
+        int64_t padded_steps,
+        int64_t valid_steps);
 
     QwenCausalBatchedPrefillResult prefill_tokens_batched(
         const std::vector<int32_t> & token_ids,

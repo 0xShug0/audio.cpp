@@ -4,9 +4,11 @@
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/models/fireredtts3/assets.h"
+#include "engine/models/fireredtts3/batch_scheduler.h"
 #include "engine/models/fireredtts3/tokenizer_text.h"
 
 #include <memory>
+#include <mutex>
 
 namespace engine::models::fireredtts3 {
 
@@ -54,6 +56,11 @@ private:
     std::unique_ptr<FireRedTTS3BaseRuntime> runtime_;
     std::unique_ptr<FireRedTTS3InstructRuntime> instruct_runtime_;
     bool mem_saver_ = false;
+    // 共享 batch scheduler（同一 assets 的所有 session 共享）；Base clone 用。
+    std::shared_ptr<FireRedTTS3BatchScheduler> scheduler_;
+    // 当前流式请求在 scheduler 中占用的 slot（-1 = 无）。
+    int64_t scheduler_slot_ = -1;
+    bool scheduler_enabled_ = false;
 
     // 流式状态
     bool stream_started_ = false;
@@ -63,6 +70,9 @@ private:
     engine::runtime::AudioBuffer stream_merged_audio_;
     std::string stream_generated_text_;
     std::unique_ptr<FireRedTTS3StreamSession> stream_session_;
+    // 流式方法互斥（start_stream / next_stream_event / finish_stream）：
+    // 防止同一 session 被并发驱动（防御性，borrow 池应保证独占）。
+    std::mutex stream_mutex_;
 };
 
 }  // namespace engine::models::fireredtts3

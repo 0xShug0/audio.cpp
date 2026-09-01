@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "engine/framework/modules/transformers/qwen_causal_decoder.h"
 
 #include "engine/framework/core/backend.h"
@@ -530,7 +531,12 @@ void write_qwen_batched_cached_step_mask(
         for (int64_t i = 0; i < visible_prefix_steps; ++i) {
             scratch[offset + static_cast<size_t>(i)] = visible;
         }
-        scratch[offset + static_cast<size_t>(current_slot)] = visible;
+        // current_slot 是绝对 cache 位置（batch*cache_steps + pos）。mask 是 batch-major
+        // 布局（每行 offset = batch*row_size），因此当前 step 的相对位置 = current_slot - batch*row_size。
+        const int64_t pos = current_slot - batch * static_cast<int64_t>(row_size);
+        if (pos >= 0 && pos < static_cast<int64_t>(row_size)) {
+            scratch[offset + static_cast<size_t>(pos)] = visible;
+        }
     }
     ggml_backend_tensor_set(tensor, scratch.data(), 0, scratch.size() * sizeof(ggml_fp16_t));
 }

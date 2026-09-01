@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "engine/framework/modules/transformers/qwen_decoder.h"
 
 #include "engine/framework/modules/activation_modules.h"
@@ -865,20 +866,25 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
         // Permute q/k from [batch, heads, 1, dim] to [1, batch, heads, dim] so batch sits
         // on ggml ne[2] (token axis); RoPE takes per-member pos; permute back.
         if (positions.shape.dims[0] > 1 && positions.shape.dims[0] == q.shape.dims[0]) {
+            // q 布局是 [batch, steps, heads, dim]（reshape_qwen_heads 产生），
+            // ggml ne = {dim, heads, steps, batch}。RoPE 沿 token 轴（ne[2]）应用位置，
+            // 而 per-member 的 positions 长度 == batch，因此要把 batch 移到 token 轴：
+            // permute(0,1,3,2) 交换 ne[2](steps) 与 ne[3](batch)，逻辑 shape 变 [1, batch, heads, dim]。
             const int64_t batch = q.shape.dims[0];
-            const int64_t heads = q.shape.dims[1];
             auto perm_batch_to_token = [&](core::TensorValue x) {
                 const auto contiguous = core::ensure_backend_addressable_layout(ctx, x);
+                const int64_t x_heads = x.shape.dims[2];
                 return core::wrap_tensor(
-                    ggml_permute(ctx.ggml, contiguous.tensor, 1, 0, 2, 3),
-                    core::TensorShape::from_dims({1, batch, heads, x.shape.last_dim()}),
+                    ggml_permute(ctx.ggml, contiguous.tensor, 0, 1, 3, 2),
+                    core::TensorShape::from_dims({1, batch, x_heads, x.shape.last_dim()}),
                     x.type);
             };
             auto perm_back = [&](core::TensorValue x) {
                 const auto contiguous = core::ensure_backend_addressable_layout(ctx, x);
+                const int64_t x_heads = x.shape.dims[2];
                 return core::wrap_tensor(
-                    ggml_permute(ctx.ggml, contiguous.tensor, 1, 0, 2, 3),
-                    core::TensorShape::from_dims({batch, heads, 1, x.shape.last_dim()}),
+                    ggml_permute(ctx.ggml, contiguous.tensor, 0, 1, 3, 2),
+                    core::TensorShape::from_dims({batch, 1, x_heads, x.shape.last_dim()}),
                     x.type);
             };
             q = perm_batch_to_token(q);

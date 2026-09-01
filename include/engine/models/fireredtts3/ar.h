@@ -35,6 +35,8 @@ public:
     std::vector<float> text_logits(const std::vector<float> & hidden);
 
     engine::modules::QwenCausalPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps);
+    engine::modules::QwenCausalPrefillResult prefill_embeddings_padded(
+        const std::vector<float> & embeddings, int64_t padded_steps, int64_t valid_steps);
     void start_decode_embeddings(const engine::runtime::TransformerKVState & state, int64_t required_cache_steps);
     engine::modules::QwenCausalDecodeStepResult decode_embedding(const std::vector<float> & embedding);
 

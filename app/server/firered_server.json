@@ -14,6 +14,7 @@
       "model_spec_override": "/data/megastore/Projects/DuJing/code/audio.cpp/model_specs/fireredtts3.json",
       "task": "clon",
       "mode": "streaming",
+      "instance_count": 3,
       "session_options": {
         "fireredtts3.reference_cache_slots": "8",
         "fireredtts3.chunk_sizes": "3,12,12,12,12,12,12,12,12,12,12,12,12,12,12,12"

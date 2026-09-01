@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 
 #include "attention_internal.h"

@@ -223,6 +223,14 @@
         "description": "Streaming chunk sizes in AR latent patches (comma-separated). e.g. 3,12,12 -> first chunk ~0.5s, then ~2s each.",
         "required": false,
         "default": "3,12,12,12,12,12,12,12,12,12,12,12,12,12,12,12"
+      },
+      {
+        "name": "max_batch",
+        "type": "int",
+        "description": "Shared batch-scheduler concurrency slots. Set >1 to enable true batch decode across concurrent requests sharing one GPU model; default 1 (per-session serial).",
+        "required": false,
+        "min": 1,
+        "default": 1
       }
     ],
     "load": []

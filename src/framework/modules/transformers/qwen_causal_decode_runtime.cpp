@@ -477,6 +477,54 @@ public:
         return run_prefill();
     }
 
+    QwenCausalPrefillResult prefill_embeddings_padded(
+        const std::vector<float> & embeddings,
+        int64_t padded_steps,
+        int64_t valid_steps) {
+        if (padded_steps <= 0 || valid_steps <= 0 || valid_steps > padded_steps) {
+            throw std::runtime_error("QwenCausalDecodeRuntime padded prefill requires 0 < valid_steps <= padded_steps");
+        }
+        const size_t expected = static_cast<size_t>(padded_steps * config_.decoder.stack.hidden_size);
+        if (embeddings.size() != expected) {
+            throw std::runtime_error("QwenCausalDecodeRuntime padded prefill embedding size mismatch");
+        }
+        // grow-only graph：padded_steps 建一次，之后复用（不重建）。
+        ensure_prefill_embedding_graph(padded_steps);
+        ggml_backend_tensor_set(
+            prefill_input_,
+            embeddings.data(),
+            0,
+            embeddings.size() * sizeof(float));
+        // 位置：有效部分 0..valid_steps-1，padding 部分 valid_steps 起继续递增。
+        // 注意：padding 行保持标准因果 mask（不设 -inf），softmax 有界（非 NaN），
+        // 避免 NaN 污染 KV cache 与后续 decode 的有效位置 attention。
+        if (prefill_positions_values_.size() != static_cast<size_t>(padded_steps)) {
+            prefill_positions_values_ = qwen_position_ids(padded_steps);
+        }
+        ggml_backend_tensor_set(
+            prefill_positions_,
+            prefill_positions_values_.data(),
+            0,
+            prefill_positions_values_.size() * sizeof(int32_t));
+        // mask：标准因果（padding 行也 attend 前面的 token，softmax 有界）。
+        if (prefill_attention_mask_values_.size() != static_cast<size_t>(padded_steps * padded_steps)) {
+            prefill_attention_mask_values_ = prefill_attention_mask_values(config_, 1, padded_steps);
+        }
+        ggml_backend_tensor_set(
+            prefill_attention_mask_,
+            prefill_attention_mask_values_.data(),
+            0,
+            prefill_attention_mask_values_.size() * sizeof(ggml_fp16_t));
+        if (prefill_logits_readback_token_ids_ != nullptr) {
+            upload_logits_readback_token_ids(prefill_logits_readback_token_ids_, config_);
+        }
+        // 导出时截断到 valid_steps
+        prefill_export_steps_ = valid_steps;
+        auto result = run_prefill();
+        prefill_export_steps_ = -1;
+        return result;
+    }
+
     QwenCausalBatchedPrefillResult prefill_tokens_batched(
         const std::vector<int32_t> & token_ids,
         int64_t batch_size,
@@ -643,7 +691,10 @@ private:
     }
 
     void ensure_prefill_embedding_graph(int64_t steps) {
-        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Embedding && prefill_steps_ == steps) {
+        // grow-only：graph 建为请求过的最大 steps，之后 steps <= 已建则复用
+        // （padded prefill 需要；避免因 steps 变化重建 prefill graph 破坏
+        //   CUDA pool 逆序 free 约束）。
+        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Embedding && prefill_steps_ >= steps) {
             debug::timing_log_scalar(config_.trace_name + ".prefill.graph.build_ms", 0.0);
             debug::trace_log_scalar(config_.trace_name + ".prefill.steps", steps);
             return;
@@ -795,19 +846,27 @@ private:
             ggml_backend_tensor_get(prefill_hidden_, out.hidden.data(), 0, out.hidden.size() * sizeof(float));
             round_readback(out.hidden, config_);
         }
-        out.state.current_end = prefill_steps_;
+        const int64_t export_steps = prefill_export_steps_ >= 0 ? prefill_export_steps_ : prefill_steps_;
+        out.state.current_end = export_steps;
         out.state.layers.resize(prefill_keys_.size());
         const size_t layer_values = static_cast<size_t>(
-            prefill_steps_ * config_.decoder.stack.num_key_value_heads * config_.decoder.stack.head_dim);
+            export_steps * config_.decoder.stack.num_key_value_heads * config_.decoder.stack.head_dim);
         for (size_t layer = 0; layer < prefill_keys_.size(); ++layer) {
             auto & state = out.state.layers[layer];
-            state.valid_steps = prefill_steps_;
+            state.valid_steps = export_steps;
             state.key.resize(layer_values);
             state.value.resize(layer_values);
             ggml_backend_tensor_get(prefill_keys_[layer], state.key.data(), 0, state.key.size() * sizeof(float));
             ggml_backend_tensor_get(prefill_values_[layer], state.value.data(), 0, state.value.size() * sizeof(float));
             round_readback(state.key, config_);
             round_readback(state.value, config_);
+        }
+        // padded prefill：hidden 也截断到 valid_steps 行（scheduler 只取有效部分）
+        if (prefill_export_steps_ >= 0 && !out.hidden.empty()) {
+            const size_t hidden_elems = static_cast<size_t>(export_steps * config_.decoder.stack.hidden_size);
+            if (out.hidden.size() > hidden_elems) {
+                out.hidden.resize(hidden_elems);
+            }
         }
         return out;
     }
@@ -1479,6 +1538,8 @@ private:
     std::vector<int32_t> prefill_positions_values_;
     std::vector<ggml_fp16_t> prefill_attention_mask_values_;
     int64_t prefill_steps_ = 0;
+    // >=0 时表示 padded prefill 的导出 steps（截断 state/hidden 到 valid_steps）；-1 = 正常。
+    int64_t prefill_export_steps_ = -1;
     InputKind prefill_input_kind_ = InputKind::None;
 
     std::unique_ptr<ggml_context, GgmlContextDeleter> batched_prefill_ctx_;
@@ -1549,6 +1610,13 @@ QwenCausalPrefillResult QwenCausalDecodeRuntime::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps) {
     return impl_->prefill_embeddings(embeddings, steps);
+}
+
+QwenCausalPrefillResult QwenCausalDecodeRuntime::prefill_embeddings_padded(
+    const std::vector<float> & embeddings,
+    int64_t padded_steps,
+    int64_t valid_steps) {
+    return impl_->prefill_embeddings_padded(embeddings, padded_steps, valid_steps);
 }
 
 QwenCausalBatchedPrefillResult QwenCausalDecodeRuntime::prefill_tokens_batched(

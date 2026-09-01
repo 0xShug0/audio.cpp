@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "engine/framework/runtime/kv_cache.h"
 
 #include "engine/framework/core/backend.h"

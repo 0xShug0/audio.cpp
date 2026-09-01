@@ -1003,6 +1003,11 @@ public:
         return backbone_->prefill_embeddings(embeddings, steps);
     }
 
+    modules::QwenCausalPrefillResult prefill_embeddings_padded(
+        const std::vector<float> & embeddings, int64_t padded_steps, int64_t valid_steps) {
+        return backbone_->prefill_embeddings_padded(embeddings, padded_steps, valid_steps);
+    }
+
     void start_decode_embeddings(const runtime::TransformerKVState & state, int64_t required_cache_steps) {
         backbone_->start_decode_embeddings(state, required_cache_steps);
     }
@@ -1116,6 +1121,13 @@ engine::modules::QwenCausalPrefillResult FireRedArRuntime::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps) {
     return impl_->prefill_embeddings(embeddings, steps);
+}
+
+engine::modules::QwenCausalPrefillResult FireRedArRuntime::prefill_embeddings_padded(
+    const std::vector<float> & embeddings,
+    int64_t padded_steps,
+    int64_t valid_steps) {
+    return impl_->prefill_embeddings_padded(embeddings, padded_steps, valid_steps);
 }
 
 void FireRedArRuntime::start_decode_embeddings(
