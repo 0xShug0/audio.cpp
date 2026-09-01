@@ -280,6 +280,7 @@ public:
             size_t chunk_index = 0;
             int64_t chunk_target = 0;
             std::vector<float> chunk_latents;
+            FireRedRedAeRuntime::DecodeState redae_state;
 
             StreamSession(FireRedTTS3BaseRuntime::Impl & o,
                           FireRedTTS3BaseRequest r,
@@ -335,7 +336,7 @@ public:
                     ++step;
 
                     if (generated_patches >= chunk_target && chunk_index < chunks.size()) {
-                        auto audio = owner.redae_->decode_incremental(chunk_latents);
+                        auto audio = owner.redae_->decode_incremental(redae_state, chunk_latents);
                         chunk_latents.clear();
                         chunk_index++;
                         chunk_target = (chunk_index < chunks.size())
@@ -346,12 +347,12 @@ public:
                 }
                 // AR 结束：flush 剩余 latents + iSTFT 尾部
                 if (!chunk_latents.empty() && generated_patches > 0) {
-                    auto tail = owner.redae_->decode_incremental(chunk_latents);
+                    auto tail = owner.redae_->decode_incremental(redae_state, chunk_latents);
                     chunk_latents.clear();
                     finished = true;
                     return std::move(tail);
                 }
-                auto flush = owner.redae_->flush_incremental();
+                auto flush = owner.redae_->flush_incremental(redae_state);
                 finished = true;
                 return std::move(flush);
             }
@@ -388,7 +389,7 @@ public:
                 next_input = {};
                 chunk_latents.reserve(static_cast<size_t>(owner.assets_->base.patch_size * owner.assets_->base.redae_dim));
                 chunk_target = chunks[0];
-                owner.redae_->decode_reset();
+                owner.redae_->decode_reset(redae_state);
                 started = true;
             }
         };

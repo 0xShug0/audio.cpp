@@ -1,12 +1,15 @@
 #pragma once
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/runtime/session.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -78,13 +81,21 @@ public:
     runtime::AudioBuffer decode(const std::vector<float> & latents);
 
     // --- 增量解码（流式）---
+    // 每个并发 slot 独立持有解码状态（decoder KV + 增量 iSTFT），
+    // 使得多 slot 交错的增量解码互不干扰。
+    struct DecodeState {
+        std::optional<engine::runtime::TransformerKVState> dec_state;
+        int64_t dec_qwen_frames = 0;
+        std::unique_ptr<audio::HostLogMagnitudePhaseISTFT> inc_istft;
+        int64_t inc_istft_frames = 0;
+    };
     // 重置解码器 KV 状态（每次新请求开始时调用）。
-    void decode_reset();
+    void decode_reset(DecodeState & state);
     // 解码一批 latent（chunk），返回该块对应的音频（float32 24k mono）。
     // 内部用 decoder Qwen 的 KV 缓存跨块保持上下文，并用增量 iSTFT 逐块输出。
-    runtime::AudioBuffer decode_incremental(const std::vector<float> & latents);
+    runtime::AudioBuffer decode_incremental(DecodeState & state, const std::vector<float> & latents);
     // flush 增量 iSTFT 尾部样本（生成结束时调用）。
-    runtime::AudioBuffer flush_incremental();
+    runtime::AudioBuffer flush_incremental(DecodeState & state);
 
     void release_runtime_graphs();
 

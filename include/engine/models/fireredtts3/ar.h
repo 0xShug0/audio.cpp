@@ -38,6 +38,13 @@ public:
     void start_decode_embeddings(const engine::runtime::TransformerKVState & state, int64_t required_cache_steps);
     engine::modules::QwenCausalDecodeStepResult decode_embedding(const std::vector<float> & embedding);
 
+    // --- batch（多 slot 并发推理）passthroughs ---
+    void start_decode_embeddings_batched(
+        const engine::runtime::TransformerBatchedKVState & state, int64_t required_cache_steps);
+    engine::modules::QwenCausalDecodeStepResult decode_embeddings_batched(
+        const std::vector<float> & embeddings, int64_t batch_size);
+    engine::runtime::TransformerBatchedKVState export_batched_decode_state() const;
+
     void release_graphs();
     void release_backbone_graphs();
 
