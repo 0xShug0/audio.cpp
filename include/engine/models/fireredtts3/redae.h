@@ -31,6 +31,12 @@ public:
 
     std::vector<float> encode(const std::vector<float> & audio_24k);
     engine::runtime::AudioBuffer decode(const std::vector<float> & latents);
+
+    // 增量解码（流式）：重置 + 逐块解码 + flush 尾部
+    void decode_reset();
+    engine::runtime::AudioBuffer decode_incremental(const std::vector<float> & latents);
+    engine::runtime::AudioBuffer flush_incremental();
+
     void release_graphs();
 
 private:

@@ -9,6 +9,7 @@
 #include "engine/framework/text/text_normalization.h"
 #include "engine/models/fireredtts3/pipeline.h"
 
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -233,9 +234,7 @@ FireRedTTS3Session::FireRedTTS3Session(
     } else if (task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("FireRedTTS3 Base supports the voice clone task");
     }
-    if (task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("FireRedTTS3 supports offline sessions");
-    }
+    // 双模式：Offline 与 Streaming 都允许（Base clone 支持离线 + 增量流式）
     using T = engine::assets::TensorStorageType;
     const auto storage_type = runtime::parse_tensor_storage_option(
         options.options,
@@ -363,6 +362,113 @@ runtime::TaskResult FireRedTTS3Session::run(const runtime::TaskRequest & request
     }
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
+}
+
+// ------------------------------------------------------------------ //
+// 流式（增量）接口
+// ------------------------------------------------------------------ //
+runtime::StreamingPolicy FireRedTTS3Session::streaming_policy() const {
+    runtime::StreamingPolicy policy;
+    policy.input = runtime::StreamingInputKind::None;
+    policy.output = runtime::StreamingOutputKind::PullEvents;
+    return policy;
+}
+
+void FireRedTTS3Session::initialize_stream_request(const runtime::TaskRequest & request) {
+    if (is_instruct_variant(assets_->variant)) {
+        throw std::runtime_error("FireRedTTS3 Instruct streaming is not implemented yet; use offline mode");
+    }
+    stream_request_ = request;
+    // chunk_patches: 每个块的 patch 数（首块 ~0.5s=3 patch, 后续 ~2s=12 patch）
+    std::string sizes_str = runtime::find_option(request.options, {"fireredtts3.chunk_sizes"}).value_or("3,12,12,12,12,12,12,12,12,12,12,12,12,12,12,12");
+    stream_chunk_patches_.clear();
+    std::stringstream ss(sizes_str);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        if (!item.empty()) {
+            stream_chunk_patches_.push_back(std::stoll(item));
+        }
+    }
+    if (stream_chunk_patches_.empty()) {
+        stream_chunk_patches_.push_back(3);
+    }
+    stream_chunk_index_ = 0;
+    stream_merged_audio_ = runtime::AudioBuffer{};
+    stream_generated_text_.clear();
+    stream_session_.reset();
+}
+
+void FireRedTTS3Session::start_stream(const runtime::TaskRequest & request) {
+    require_prepared("FireRedTTS3 streaming");
+    if (task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("FireRedTTS3 start_stream requires a streaming session");
+    }
+    reset();
+    initialize_stream_request(request);
+    auto base = make_base_request(*tokenizer_, request);
+    stream_session_ = runtime_->begin_streaming(base, stream_chunk_patches_);
+    stream_started_ = true;
+}
+
+std::optional<runtime::StreamEvent> FireRedTTS3Session::next_stream_event() {
+    if (!stream_started_) {
+        throw std::runtime_error("FireRedTTS3 streaming has not been started");
+    }
+    if (!stream_session_) {
+        return std::nullopt;
+    }
+    auto audio = stream_session_->next_chunk();
+    if (audio.samples.empty()) {
+        stream_session_.reset();
+        return std::nullopt;
+    }
+    runtime::append_audio_buffer(stream_merged_audio_, audio);
+    runtime::StreamEvent event;
+    event.named_audio_outputs.push_back({
+        "chunk_" + std::to_string(stream_chunk_index_++),
+        std::move(audio),
+        {},
+    });
+    return event;
+}
+
+void FireRedTTS3Session::set_stream_event_sink(runtime::StreamEventCallback sink) {
+    (void)sink;
+}
+
+runtime::TaskResult FireRedTTS3Session::finish_stream() {
+    if (!stream_started_) {
+        throw std::runtime_error("FireRedTTS3 streaming has not been started");
+    }
+    // 排空剩余块
+    while (next_stream_event().has_value()) {
+    }
+    runtime::TaskResult result;
+    result.audio_output = std::move(stream_merged_audio_);
+    if (!stream_generated_text_.empty()) {
+        result.text_output = runtime::Transcript{std::move(stream_generated_text_), request_language(stream_request_)};
+    }
+    reset();
+    return result;
+}
+
+void FireRedTTS3Session::reset() {
+    stream_request_ = {};
+    stream_chunk_patches_.clear();
+    stream_chunk_index_ = 0;
+    stream_merged_audio_ = runtime::AudioBuffer{};
+    stream_generated_text_.clear();
+    stream_session_.reset();
+    stream_started_ = false;
+}
+
+runtime::StreamEvent FireRedTTS3Session::process_audio_chunk(const runtime::AudioChunk & chunk) {
+    (void)chunk;
+    throw std::runtime_error("FireRedTTS3 streaming does not consume audio chunks");
+}
+
+runtime::TaskResult FireRedTTS3Session::finalize() {
+    return finish_stream();
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_fireredtts3_loader() {

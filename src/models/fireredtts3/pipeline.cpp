@@ -256,6 +256,146 @@ public:
         return decoded;
     }
 
+    // 启动流式会话（增量 AR + 逐块解码）
+    std::unique_ptr<FireRedTTS3StreamSession> begin_streaming(
+        const FireRedTTS3BaseRequest & request,
+        const std::vector<int64_t> & chunk_patches) {
+        struct StreamSession final : public FireRedTTS3StreamSession {
+            FireRedTTS3BaseRuntime::Impl & owner;
+            FireRedTTS3BaseRequest req;
+            std::vector<int64_t> chunks;
+            // AR 循环状态
+            std::vector<float> latents_gen;
+            std::vector<float> backbone_cond;
+            std::vector<float> schedule;
+            std::vector<float> next_input;
+            std::vector<float> prefill_hidden;
+            int64_t prefill_steps = 0;
+            std::vector<float> spk_dit;
+            int64_t prompt_latent_frames = 0;
+            bool started = false;
+            bool finished = false;
+            int64_t step = 0;
+            int64_t generated_patches = 0;
+            size_t chunk_index = 0;
+            int64_t chunk_target = 0;
+            std::vector<float> chunk_latents;
+
+            StreamSession(FireRedTTS3BaseRuntime::Impl & o,
+                          FireRedTTS3BaseRequest r,
+                          std::vector<int64_t> c)
+                : owner(o), req(std::move(r)), chunks(std::move(c)) {}
+
+            runtime::AudioBuffer next_chunk() override {
+                if (finished) {
+                    return {};
+                }
+                if (!started) {
+                    start();
+                }
+                // 逐 patch 生成直到达到当前块边界
+                const int64_t max_steps = 400;
+                while (step < max_steps) {
+                    std::vector<float> hidden;
+                    int64_t hidden_rows = 0;
+                    if (step == 0) {
+                        hidden = prefill_hidden;
+                        hidden_rows = prefill_steps;
+                    } else {
+                        auto decoded = owner.ar_->decode_embedding(next_input);
+                        hidden = decoded.hidden;
+                        hidden_rows = 1;
+                    }
+                    const auto last = last_rows(hidden, hidden_rows, owner.assets_->base.hidden_size, 1);
+                    const float stop = owner.ar_->stop(last);
+                    if (stop >= req.stop_threshold && step >= 6) {
+                        break;
+                    }
+                    std::vector<float> one_backbone;
+                    if (step == 0) {
+                        const int64_t prompt_patches = prompt_latent_frames / owner.assets_->base.patch_size;
+                        one_backbone = last_rows(hidden, hidden_rows, owner.assets_->base.hidden_size, prompt_patches);
+                    } else {
+                        one_backbone = last;
+                    }
+                    backbone_cond.insert(backbone_cond.end(), one_backbone.begin(), one_backbone.end());
+                    const int64_t cond_rows = static_cast<int64_t>(backbone_cond.size()) / owner.assets_->base.hidden_size;
+                    auto cond3 = last_rows(
+                        backbone_cond, cond_rows, owner.assets_->base.hidden_size,
+                        owner.assets_->base.history_patches + 1);
+                    auto dit_cond3 = owner.ar_->dit_head(cond3, owner.assets_->base.history_patches + 1);
+                    const auto next_latent = owner.flow_one_patch(
+                        latents_gen, dit_cond3, spk_dit,
+                        req.guidance_scale, schedule, req.seed,
+                        static_cast<uint64_t>(step));
+                    latents_gen.insert(latents_gen.end(), next_latent.begin(), next_latent.end());
+                    next_input = owner.ar_->patch_encode(next_latent);
+                    chunk_latents.insert(chunk_latents.end(), next_latent.begin(), next_latent.end());
+                    ++generated_patches;
+                    ++step;
+
+                    if (generated_patches >= chunk_target && chunk_index < chunks.size()) {
+                        auto audio = owner.redae_->decode_incremental(chunk_latents);
+                        chunk_latents.clear();
+                        chunk_index++;
+                        chunk_target = (chunk_index < chunks.size())
+                            ? chunk_target + chunks[chunk_index]
+                            : chunk_target;
+                        return std::move(audio);
+                    }
+                }
+                // AR 结束：flush 剩余 latents + iSTFT 尾部
+                if (!chunk_latents.empty() && generated_patches > 0) {
+                    auto tail = owner.redae_->decode_incremental(chunk_latents);
+                    chunk_latents.clear();
+                    finished = true;
+                    return std::move(tail);
+                }
+                auto flush = owner.redae_->flush_incremental();
+                finished = true;
+                return std::move(flush);
+            }
+
+            void start() {
+                if (chunks.empty()) {
+                    throw std::runtime_error("FireRedTTS3 streaming requires at least one chunk");
+                }
+                const auto & reference = owner.prepare_reference_voice(req.prompt_audio);
+                const auto & prompt_latents = reference.prompt_latents;
+                prompt_latent_frames = static_cast<int64_t>(prompt_latents.size()) / owner.assets_->base.redae_dim;
+                auto spk_llm = owner.ar_->speaker_llm(reference.speaker_embedding);
+                spk_dit = owner.ar_->speaker_dit(reference.speaker_embedding);
+                auto text_embeds = owner.ar_->token_embedding(req.token_ids);
+                if (owner.mem_saver_) {
+                    owner.ar_->release_graphs();
+                }
+                auto patch_prompt = owner.ar_->patch_encode(prompt_latents);
+
+                std::vector<float> input_embeddings;
+                input_embeddings.reserve(spk_llm.size() + text_embeds.size() + patch_prompt.size());
+                input_embeddings.insert(input_embeddings.end(), spk_llm.begin(), spk_llm.end());
+                input_embeddings.insert(input_embeddings.end(), text_embeds.begin(), text_embeds.end());
+                input_embeddings.insert(input_embeddings.end(), patch_prompt.begin(), patch_prompt.end());
+                prefill_steps = 1 + static_cast<int64_t>(req.token_ids.size()) + prompt_latent_frames / owner.assets_->base.patch_size;
+                auto prefill = owner.ar_->prefill_embeddings(input_embeddings, prefill_steps);
+                owner.ar_->start_decode_embeddings(prefill.state, prefill_steps + 400 + 1);
+                prefill_hidden = std::move(prefill.hidden);
+
+                latents_gen.assign(static_cast<size_t>(owner.assets_->base.history_patches * owner.assets_->base.patch_size * owner.assets_->base.redae_dim), 0.0F);
+                latents_gen.insert(latents_gen.end(), prompt_latents.begin(), prompt_latents.end());
+                backbone_cond.assign(static_cast<size_t>(owner.assets_->base.history_patches * owner.assets_->base.hidden_size), 0.0F);
+                schedule = firered_cosine_time_schedule(req.num_inference_steps);
+                next_input = {};
+                chunk_latents.reserve(static_cast<size_t>(owner.assets_->base.patch_size * owner.assets_->base.redae_dim));
+                chunk_target = chunks[0];
+                owner.redae_->decode_reset();
+                started = true;
+            }
+        };
+        auto session = std::make_unique<StreamSession>(*this, request, chunk_patches);
+        return session;
+    }
+
     void release_graphs() {
         if (redae_) {
             redae_->release_graphs();
@@ -853,6 +993,12 @@ FireRedTTS3BaseRuntime::~FireRedTTS3BaseRuntime() = default;
 
 engine::runtime::AudioBuffer FireRedTTS3BaseRuntime::generate(const FireRedTTS3BaseRequest & request) {
     return impl_->generate(request);
+}
+
+std::unique_ptr<FireRedTTS3StreamSession> FireRedTTS3BaseRuntime::begin_streaming(
+    const FireRedTTS3BaseRequest & request,
+    const std::vector<int64_t> & chunk_patches) {
+    return impl_->begin_streaming(request, chunk_patches);
 }
 
 void FireRedTTS3BaseRuntime::release_graphs() {

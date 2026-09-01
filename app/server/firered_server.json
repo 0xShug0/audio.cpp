@@ -11,10 +11,12 @@
       "id": "firered-base",
       "family": "fireredtts3",
       "path": "/data/megastore/Projects/DuJing/models/FireRedTTS3-Base-GGUF/fireredtts3-base-q8_0.gguf",
+      "model_spec_override": "/data/megastore/Projects/DuJing/code/audio.cpp/model_specs/fireredtts3.json",
       "task": "clon",
-      "mode": "offline",
+      "mode": "streaming",
       "session_options": {
-        "fireredtts3.reference_cache_slots": "8"
+        "fireredtts3.reference_cache_slots": "8",
+        "fireredtts3.chunk_sizes": "3,12,12,12,12,12,12,12,12,12,12,12,12,12,12,12"
       }
     }
   ]

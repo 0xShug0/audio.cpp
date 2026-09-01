@@ -76,6 +76,16 @@ public:
 
     std::vector<float> encode(const std::vector<float> & audio_24k);
     runtime::AudioBuffer decode(const std::vector<float> & latents);
+
+    // --- 增量解码（流式）---
+    // 重置解码器 KV 状态（每次新请求开始时调用）。
+    void decode_reset();
+    // 解码一批 latent（chunk），返回该块对应的音频（float32 24k mono）。
+    // 内部用 decoder Qwen 的 KV 缓存跨块保持上下文，并用增量 iSTFT 逐块输出。
+    runtime::AudioBuffer decode_incremental(const std::vector<float> & latents);
+    // flush 增量 iSTFT 尾部样本（生成结束时调用）。
+    runtime::AudioBuffer flush_incremental();
+
     void release_runtime_graphs();
 
 private:

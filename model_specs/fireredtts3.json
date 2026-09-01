@@ -11,7 +11,8 @@
     "design"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "Chinese",
@@ -215,6 +216,13 @@
         "description": "Release cached runtime graphs after each request to reduce peak VRAM; default false.",
         "required": false,
         "default": false
+      },
+      {
+        "name": "chunk_sizes",
+        "type": "string",
+        "description": "Streaming chunk sizes in AR latent patches (comma-separated). e.g. 3,12,12 -> first chunk ~0.5s, then ~2s each.",
+        "required": false,
+        "default": "3,12,12,12,12,12,12,12,12,12,12,12,12,12,12,12"
       }
     ],
     "load": []

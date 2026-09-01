@@ -130,6 +130,18 @@ public:
         return runtime_.decode(latents);
     }
 
+    void decode_reset() {
+        runtime_.decode_reset();
+    }
+
+    runtime::AudioBuffer decode_incremental(const std::vector<float> & latents) {
+        return runtime_.decode_incremental(latents);
+    }
+
+    runtime::AudioBuffer flush_incremental() {
+        return runtime_.flush_incremental();
+    }
+
     void release_graphs() {
         runtime_.release_runtime_graphs();
     }
@@ -155,6 +167,18 @@ std::vector<float> FireRedRedAeRuntime::encode(const std::vector<float> & audio_
 
 engine::runtime::AudioBuffer FireRedRedAeRuntime::decode(const std::vector<float> & latents) {
     return impl_->decode(latents);
+}
+
+void FireRedRedAeRuntime::decode_reset() {
+    impl_->decode_reset();
+}
+
+engine::runtime::AudioBuffer FireRedRedAeRuntime::decode_incremental(const std::vector<float> & latents) {
+    return impl_->decode_incremental(latents);
+}
+
+engine::runtime::AudioBuffer FireRedRedAeRuntime::flush_incremental() {
+    return impl_->flush_incremental();
 }
 
 void FireRedRedAeRuntime::release_graphs() {

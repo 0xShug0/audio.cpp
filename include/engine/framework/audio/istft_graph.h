@@ -67,6 +67,16 @@ public:
         const std::vector<float> & log_magnitude_phase,
         const std::vector<float> & window);
 
+    // --- 增量 overlap-add iSTFT（用于流式）---
+    // 按块喂入 log-magnitude+phase 帧，内部累积 overlap-add，
+    // 返回"已能被窗口包络完整覆盖"的音频样本（块间平滑衔接）。
+    // 首次 append 自动初始化；finish 收尾 flush 尾部并复位。
+    std::vector<float> append_incremental(
+        const std::vector<float> & log_magnitude_phase,
+        int64_t frames,
+        const std::vector<float> & window);
+    std::vector<float> finish_incremental();
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
