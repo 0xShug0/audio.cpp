@@ -66,6 +66,8 @@ modules::QwenCausalDecodeRuntimeConfig backbone_config(
     out.decoder.stack.rope_theta = config.rope_theta;
     out.decoder.stack.rope_type = GGML_ROPE_TYPE_NEOX;
     out.decoder.stack.use_qk_norm = true;
+    out.decoder.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.decoder.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
     out.decoder.stack.attention_precision = GGML_PREC_F32;
     out.decoder.stack.projection_precision = GGML_PREC_DEFAULT;
     out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
@@ -106,6 +108,8 @@ modules::QwenCausalDecodeRuntimeConfig depth_config(
     out.decoder.stack.rope_theta = config.depth_rope_theta;
     out.decoder.stack.rope_type = GGML_ROPE_TYPE_NEOX;
     out.decoder.stack.use_qk_norm = false;
+    out.decoder.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.decoder.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
     out.decoder.stack.attention_precision = GGML_PREC_F32;
     out.decoder.stack.projection_precision = GGML_PREC_DEFAULT;
     out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
@@ -160,6 +164,35 @@ std::vector<float> llama3_rope_factors(
     return out;
 }
 
+// Pack [a; b; ...] projection rows into a single tensor, matching the
+// higgs_audio_tts loader: fewer, larger matmuls per layer. Parts may have
+// different row counts (e.g. q vs k/v in GQA models).
+core::TensorValue pack_projection_rows(
+    core::BackendWeightStore & store,
+    const assets::TensorSource & source,
+    const std::vector<std::pair<std::string, int64_t>> & parts,
+    assets::TensorStorageType storage_type,
+    int64_t in_dim) {
+    std::vector<std::byte> packed;
+    int64_t total_out = 0;
+    ggml_type packed_type = GGML_TYPE_COUNT;
+    for (const auto & [name, out_dim] : parts) {
+        const auto part = source.require_tensor(name, storage_type, {out_dim, in_dim});
+        if (packed_type == GGML_TYPE_COUNT) {
+            packed_type = part.type;
+        } else if (part.type != packed_type) {
+            throw std::runtime_error("BreezeTTS packed projection weights require matching storage types");
+        }
+        packed.insert(packed.end(), part.bytes.begin(), part.bytes.end());
+        total_out += out_dim;
+    }
+    return store.make_tensor(
+        core::TensorShape::from_dims({total_out, in_dim}),
+        packed_type,
+        packed.data(),
+        packed.size());
+}
+
 modules::QwenDecoderLayerWeights load_backbone_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
@@ -168,17 +201,33 @@ modules::QwenDecoderLayerWeights load_backbone_layer(
     const std::optional<core::TensorValue> & rope_factors,
     int64_t layer) {
     const std::string prefix = "backbone_model.layers." + std::to_string(layer);
+    const int64_t q_out = config.heads * config.head_dim;
+    const int64_t kv_out = config.kv_heads * config.head_dim;
     modules::QwenDecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.hidden_size);
-    out.self_attention.q_weight = store.load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.heads * config.head_dim, config.hidden_size});
-    out.self_attention.k_weight = store.load_tensor(source, prefix + ".self_attn.k_proj.weight", storage_type, {config.kv_heads * config.head_dim, config.hidden_size});
-    out.self_attention.v_weight = store.load_tensor(source, prefix + ".self_attn.v_proj.weight", storage_type, {config.kv_heads * config.head_dim, config.hidden_size});
+    // Packed layout is [q; k; v] with row counts q_out, kv_out, kv_out.
+    out.self_attention.qkv_weight = pack_projection_rows(
+        store,
+        source,
+        {{prefix + ".self_attn.q_proj.weight", q_out},
+         {prefix + ".self_attn.k_proj.weight", kv_out},
+         {prefix + ".self_attn.v_proj.weight", kv_out}},
+        storage_type,
+        config.hidden_size);
     out.self_attention.out_weight = store.load_tensor(source, prefix + ".self_attn.o_proj.weight", storage_type, {config.hidden_size, config.heads * config.head_dim});
     out.q_norm = binding::norm_weight_from_source(store, source, prefix + ".self_attn.q_norm", config.head_dim);
     out.k_norm = binding::norm_weight_from_source(store, source, prefix + ".self_attn.k_norm", config.head_dim);
     out.post_norm = binding::norm_weight_from_source(store, source, prefix + ".post_attention_layernorm", config.hidden_size);
-    out.mlp.gate_proj = binding::linear_from_source(store, source, prefix + ".mlp.gate_proj", storage_type, config.intermediate_size, config.hidden_size, false);
-    out.mlp.up_proj = binding::linear_from_source(store, source, prefix + ".mlp.up_proj", storage_type, config.intermediate_size, config.hidden_size, false);
+    out.mlp.gate_up_proj = modules::LinearWeights{
+        pack_projection_rows(
+            store,
+            source,
+            {{prefix + ".mlp.gate_proj.weight", config.intermediate_size},
+             {prefix + ".mlp.up_proj.weight", config.intermediate_size}},
+            storage_type,
+            config.hidden_size),
+        std::nullopt,
+    };
     out.mlp.down_proj = binding::linear_from_source(store, source, prefix + ".mlp.down_proj", storage_type, config.hidden_size, config.intermediate_size, false);
     out.rope_frequency_factors = rope_factors;
     return out;
@@ -192,15 +241,31 @@ modules::QwenDecoderLayerWeights load_depth_layer(
     const std::optional<core::TensorValue> & rope_factors,
     int64_t layer) {
     const std::string prefix = "depth_decoder.model.layers." + std::to_string(layer);
+    const int64_t q_out = config.depth_heads * config.depth_head_dim;
+    const int64_t kv_out = config.depth_kv_heads * config.depth_head_dim;
     modules::QwenDecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.depth_hidden_size);
-    out.self_attention.q_weight = store.load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.depth_heads * config.depth_head_dim, config.depth_hidden_size});
-    out.self_attention.k_weight = store.load_tensor(source, prefix + ".self_attn.k_proj.weight", storage_type, {config.depth_kv_heads * config.depth_head_dim, config.depth_hidden_size});
-    out.self_attention.v_weight = store.load_tensor(source, prefix + ".self_attn.v_proj.weight", storage_type, {config.depth_kv_heads * config.depth_head_dim, config.depth_hidden_size});
+    // Packed layout is [q; k; v] with row counts q_out, kv_out, kv_out.
+    out.self_attention.qkv_weight = pack_projection_rows(
+        store,
+        source,
+        {{prefix + ".self_attn.q_proj.weight", q_out},
+         {prefix + ".self_attn.k_proj.weight", kv_out},
+         {prefix + ".self_attn.v_proj.weight", kv_out}},
+        storage_type,
+        config.depth_hidden_size);
     out.self_attention.out_weight = store.load_tensor(source, prefix + ".self_attn.o_proj.weight", storage_type, {config.depth_hidden_size, config.depth_heads * config.depth_head_dim});
     out.post_norm = binding::norm_weight_from_source(store, source, prefix + ".post_attention_layernorm", config.depth_hidden_size);
-    out.mlp.gate_proj = binding::linear_from_source(store, source, prefix + ".mlp.gate_proj", storage_type, config.depth_intermediate_size, config.depth_hidden_size, false);
-    out.mlp.up_proj = binding::linear_from_source(store, source, prefix + ".mlp.up_proj", storage_type, config.depth_intermediate_size, config.depth_hidden_size, false);
+    out.mlp.gate_up_proj = modules::LinearWeights{
+        pack_projection_rows(
+            store,
+            source,
+            {{prefix + ".mlp.gate_proj.weight", config.depth_intermediate_size},
+             {prefix + ".mlp.up_proj.weight", config.depth_intermediate_size}},
+            storage_type,
+            config.depth_hidden_size),
+        std::nullopt,
+    };
     out.mlp.down_proj = binding::linear_from_source(store, source, prefix + ".mlp.down_proj", storage_type, config.depth_hidden_size, config.depth_intermediate_size, false);
     out.rope_frequency_factors = rope_factors;
     return out;
