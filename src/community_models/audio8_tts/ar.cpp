@@ -1631,6 +1631,27 @@ std::vector<float> build_falcon_embedding_step(
 
 }  // namespace
 
+// Copies a backend-resident weight tensor byte-for-byte (same ggml type and
+// dimensions) so it can live on a second backend: the fast AR graph runs on a
+// dedicated CPU backend while the slow path and codec stay on the GPU (the
+// per-step fast AR submit+sync latency dominates on GPU backends, while CPU
+// computes the same graph several times faster). q8_0/f32/f16 all copy
+// losslessly — the point is backend placement, not conversion.
+core::TensorValue schedule_tensor_copy(
+    ggml_context * dst_ctx,
+    const core::TensorValue & src) {
+    ggml_tensor * dst = ggml_new_tensor(
+        dst_ctx, src.tensor->type, ggml_n_dims(src.tensor), src.tensor->ne);
+    return core::wrap_tensor(dst, src.shape, src.type);
+}
+
+void copy_tensor_bytes(const core::TensorValue & src, const core::TensorValue & dst) {
+    const size_t bytes = static_cast<size_t>(ggml_nbytes(src.tensor));
+    std::vector<uint8_t> host(bytes);
+    ggml_backend_tensor_get(src.tensor, host.data(), 0, bytes);
+    ggml_backend_tensor_set(dst.tensor, host.data(), 0, bytes);
+}
+
 class ArkttsARWeightsRuntime {
 public:
     ArkttsARWeightsRuntime(
@@ -1649,15 +1670,29 @@ public:
         backend_config.threads = threads_;
         backend_ = core::init_backend(backend_config);
         backend_type_ = core::backend_type(backend_);
-        weights_ = std::make_shared<ArkttsARWeights>(
-            load_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type));
+        ArkttsARWeights loaded =
+            load_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type);
+        if (backend_type_ != core::BackendType::Cpu) {
+            // Fast AR is submit+sync latency bound on GPU backends (one graph
+            // submission per generated codebook token); the same graph computes
+            // several times faster on CPU. Give it a dedicated CPU backend and
+            // move the fast-layer weights over, leaving slow path + codec on
+            // the GPU backend.
+            core::BackendConfig fast_backend_config;
+            fast_backend_config.type = core::BackendType::Cpu;
+            fast_backend_config.threads = threads_;
+            fast_backend_ = core::init_backend(fast_backend_config);
+            fast_backend_type_ = core::backend_type(fast_backend_);
+            retarget_fast_weights(loaded);
+        }
+        weights_ = std::make_shared<const ArkttsARWeights>(std::move(loaded));
         slow_step_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
             "audio8_tts.ar.step.constants",
             256ull * 1024ull * 1024ull);
         fast_constants_ = std::make_unique<core::ConstantTensorCache>(
-            backend_,
+            fast_backend(),
             threads_,
             "audio8_tts.ar.fast.constants",
             256ull * 1024ull * 1024ull);
@@ -1667,6 +1702,13 @@ public:
         fast_constants_.reset();
         slow_step_constants_.reset();
         weights_.reset();
+        if (fast_weight_buffer_ != nullptr) {
+            ggml_backend_buffer_free(fast_weight_buffer_);
+        }
+        fast_weight_ctx_.reset();
+        if (fast_backend_ != nullptr) {
+            ggml_backend_free(fast_backend_);
+        }
         if (backend_ != nullptr) {
             ggml_backend_free(backend_);
         }
@@ -1699,6 +1741,16 @@ public:
         return backend_type_;
     }
 
+    // Backend hosting the fast AR graph: a dedicated CPU backend when the main
+    // backend is a GPU, otherwise the main backend itself.
+    ggml_backend_t fast_backend() const noexcept {
+        return fast_backend_ != nullptr ? fast_backend_ : backend_;
+    }
+
+    core::BackendType fast_backend_type() const noexcept {
+        return fast_backend_ != nullptr ? fast_backend_type_ : backend_type_;
+    }
+
     core::ConstantTensorCache & slow_step_constants() const noexcept {
         return *slow_step_constants_;
     }
@@ -1708,12 +1760,75 @@ public:
     }
 
 private:
+    // Re-binds the fast AR layer weights (and fast_output) onto the dedicated
+    // CPU fast backend. The projections are byte copies of the tensors the
+    // weight store uploaded to the main backend; norms stay host TensorData
+    // and upload through the (CPU-backed) fast constants cache at graph build.
+    void retarget_fast_weights(ArkttsARWeights & weights) {
+        ggml_init_params params{8ull * 1024ull * 1024ull, nullptr, true};
+        fast_weight_ctx_.reset(ggml_init(params));
+        if (fast_weight_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize Audio8 TTS fast AR CPU weight context");
+        }
+        struct ScheduledCopy {
+            const core::TensorValue * source;
+            core::TensorValue target;
+        };
+        std::vector<ScheduledCopy> copies;
+        copies.reserve(weights.fast_layers.size() * 5 + 1);
+        auto schedule = [&](const core::TensorValue & value) {
+            if (!value.valid()) {
+                throw std::runtime_error("Audio8 TTS fast AR weight tensor is missing");
+            }
+            copies.push_back({&value, schedule_tensor_copy(fast_weight_ctx_.get(), value)});
+        };
+        for (const auto & layer : weights.fast_layers) {
+            schedule(layer.qkv_proj);
+            if (layer.qkv_bias.has_value()) {
+                schedule(*layer.qkv_bias);
+            }
+            schedule(layer.o_proj);
+            schedule(layer.gate_up_proj);
+            schedule(layer.down_proj);
+        }
+        schedule(weights.fast_output);
+        fast_weight_buffer_ = ggml_backend_alloc_ctx_tensors(fast_weight_ctx_.get(), fast_backend_);
+        if (fast_weight_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate Audio8 TTS fast AR CPU weights");
+        }
+        for (auto & copy : copies) {
+            copy_tensor_bytes(*copy.source, copy.target);
+        }
+        size_t index = 0;
+        auto commit = [&](core::TensorValue & value) {
+            if (!value.valid()) {
+                return;
+            }
+            value = std::move(copies[index].target);
+            ++index;
+        };
+        for (auto & layer : weights.fast_layers) {
+            commit(layer.qkv_proj);
+            if (layer.qkv_bias.has_value()) {
+                commit(*layer.qkv_bias);
+            }
+            commit(layer.o_proj);
+            commit(layer.gate_up_proj);
+            commit(layer.down_proj);
+        }
+        commit(weights.fast_output);
+    }
+
     std::shared_ptr<const Audio8TtsAssets> assets_;
     std::shared_ptr<const ArkttsARWeights> weights_;
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
+    ggml_backend_t fast_backend_ = nullptr;
+    core::BackendType fast_backend_type_ = core::BackendType::Cpu;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> fast_weight_ctx_;
+    ggml_backend_buffer_t fast_weight_buffer_ = nullptr;
     std::unique_ptr<core::ConstantTensorCache> slow_step_constants_;
     std::unique_ptr<core::ConstantTensorCache> fast_constants_;
 };
@@ -2297,7 +2412,7 @@ private:
             cache_keys.reserve(weights.fast_layers.size());
             cache_values.reserve(weights.fast_layers.size());
             const ggml_type cache_type =
-                runtime_->backend_type() == core::BackendType::Vulkan ? GGML_TYPE_F32 : GGML_TYPE_BF16;
+                runtime_->fast_backend_type() == core::BackendType::Vulkan ? GGML_TYPE_F32 : GGML_TYPE_BF16;
             for (size_t layer = 0; layer < weights.fast_layers.size(); ++layer) {
                 cache_keys.push_back(core::wrap_tensor(
                     ggml_new_tensor_4d(
@@ -2320,7 +2435,7 @@ private:
                     core::TensorShape::from_dims({1, config.num_codebooks, config.n_local_heads, config.head_dim}),
                     cache_type));
             }
-            state_buffer_ = ggml_backend_alloc_ctx_tensors(state_ctx_.get(), runtime_->backend());
+            state_buffer_ = ggml_backend_alloc_ctx_tensors(state_ctx_.get(), runtime_->fast_backend());
             if (state_buffer_ == nullptr) {
                 throw std::runtime_error("failed to allocate Audio8 TTS fast AR state tensors");
             }
@@ -2333,7 +2448,7 @@ private:
                 ggml_backend_tensor_set(cache.tensor, zeros.data(), 0, zeros.size());
             }
 
-            core::ModuleBuildContext ctx{graph_ctx_.get(), "audio8_tts.ar.fast", runtime_->backend_type()};
+            core::ModuleBuildContext ctx{graph_ctx_.get(), "audio8_tts.ar.fast", runtime_->fast_backend_type()};
             auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.dim}));
             input = core::wrap_tensor(ggml_cpy(ctx.ggml, input_, input.tensor), input.shape, input.type);
             auto position_value = core::wrap_tensor(position_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
@@ -2354,7 +2469,7 @@ private:
                 input,
                 position_value,
                 decoder_weights,
-                make_fast_decoder_config(config, runtime_->backend_type()),
+                make_fast_decoder_config(config, runtime_->fast_backend_type()),
                 config.num_codebooks,
                 mask_value,
                 position_value,
@@ -2366,7 +2481,7 @@ private:
             ggml_build_forward_expand(graph_, logits_);
             constants.finish_graph();
             constants.ensure_uploaded();
-            gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+            gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->fast_backend()));
             if (gallocr_ == nullptr ||
                 !ggml_gallocr_reserve(gallocr_, graph_) ||
                 !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
@@ -2376,7 +2491,7 @@ private:
         }
 
         ~FastGraph() {
-            core::release_backend_graph_resources(runtime_->backend(), graph_);
+            core::release_backend_graph_resources(runtime_->fast_backend(), graph_);
             if (gallocr_ != nullptr) {
                 ggml_gallocr_free(gallocr_);
             }
@@ -2411,10 +2526,10 @@ private:
             timing_start = Clock::now();
             ggml_backend_tensor_set(input_, input.data(), 0, input.size() * sizeof(float));
             profile.fast_input_upload_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
-            core::set_backend_threads(runtime_->backend(), runtime_->threads());
+            core::set_backend_threads(runtime_->fast_backend(), runtime_->threads());
             timing_start = Clock::now();
-            const ggml_status status = core::compute_backend_graph(runtime_->backend(), graph_, nullptr, "audio8_tts.ar.fast");
-            ggml_backend_synchronize(runtime_->backend());
+            const ggml_status status = core::compute_backend_graph(runtime_->fast_backend(), graph_, nullptr, "audio8_tts.ar.fast");
+            ggml_backend_synchronize(runtime_->fast_backend());
             profile.fast_graph_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("Audio8 TTS fast AR graph compute failed");
