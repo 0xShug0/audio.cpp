@@ -1229,9 +1229,10 @@ static const char * GGML_UNARY_OP_NAME[GGML_UNARY_OP_COUNT] = {
     "CEIL",
     "ROUND",
     "TRUNC",
+    "ROUND_BF16",
 };
 
-static_assert(GGML_UNARY_OP_COUNT == 22, "GGML_UNARY_OP_COUNT != 22");
+static_assert(GGML_UNARY_OP_COUNT == 23, "GGML_UNARY_OP_COUNT != 23");
 
 static const char * GGML_GLU_OP_NAME[GGML_GLU_OP_COUNT] = {
     "REGLU",
@@ -2957,6 +2958,14 @@ struct ggml_tensor * ggml_trunc_inplace(
         struct ggml_context * ctx,
         struct ggml_tensor  * a) {
     return ggml_unary_inplace(ctx, a, GGML_UNARY_OP_TRUNC);
+}
+
+//ggml_round_bf16
+
+struct ggml_tensor * ggml_round_bf16(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a) {
+    return ggml_unary(ctx, a, GGML_UNARY_OP_ROUND_BF16);
 }
 
 struct ggml_tensor * ggml_glu(

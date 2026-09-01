@@ -2260,6 +2260,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 case GGML_UNARY_OP_CEIL:
                 case GGML_UNARY_OP_ROUND:
                 case GGML_UNARY_OP_TRUNC:
+                case GGML_UNARY_OP_ROUND_BF16:
                     {
                         n_tasks = 1;
                     } break;
