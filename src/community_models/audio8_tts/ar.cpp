@@ -439,6 +439,12 @@ FalconH1LayerWeights load_falcon_layer(
     {
         auto meta = source.require_metadata(prefix + ".mamba.in_proj.weight");
         w.ssm_in = store.load_tensor(source, prefix + ".mamba.in_proj.weight", storage_type, meta.shape);
+        {
+            auto ip = source.require_f32_tensor(prefix + ".mamba.in_proj.weight");
+            float mx = 0; for (float v : ip.values) mx = std::max(mx, std::fabs(v));
+            FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+            if (f) { fprintf(f, "[INPROJ] %s max=%.4f\n", prefix.c_str(), (double)mx); fclose(f); }
+        }
     }
     {
         // ssm_conv Metal pipeline requires contiguous F32 conv weights.
@@ -449,14 +455,18 @@ FalconH1LayerWeights load_falcon_layer(
             // w[k]*x[t+d_conv-1-k]. Flip the kernel dim once at load time so the
             // per-step graph can feed the flipped weight directly.
             auto raw = source.require_f32_tensor(prefix + ".mamba.conv1d.weight");
-            const int64_t d_conv = raw.shape.dims.size() >= 3 ? raw.shape.dims[2] : (raw.shape.dims.empty() ? 4 : raw.shape.dims[0]);
-            const int64_t conv_dim = raw.shape.dims.size() >= 3 ? raw.shape.dims[0] : (raw.shape.dims.empty() ? 0 : raw.shape.dims[0]);
-            // raw layout [conv_dim, 1, d_conv] col-major: (c, g, k) at c + conv_dim*(g + k)
+            // GGUF layout is [d_conv, 1, conv_dim] (kernel, groups, channels), col-major:
+            // element (k, g, c) at k + d_conv*(g + c). The safetensors source is
+            // [conv_dim, 1, d_conv]; audio.cpp GGUF conversion transposes it to
+            // [d_conv, 1, conv_dim]. Use the GGUF dims, NOT the HF dims.
+            const int64_t d_conv = raw.shape.dims[0];
+            const int64_t conv_dim = raw.shape.dims[2];
             std::vector<float> flipped(static_cast<size_t>(conv_dim * d_conv));
             for (int64_t k = 0; k < d_conv; ++k) {
                 for (int64_t c = 0; c < conv_dim; ++c) {
+                    // ggml ssm_conv: w[k]*x[t+k]; HF causal_conv1d: w[k]*x[t+d_conv-1-k].
                     flipped[static_cast<size_t>(k + d_conv * c)] =
-                        raw.values[static_cast<size_t>(c + conv_dim * (d_conv - 1 - k))];
+                        raw.values[static_cast<size_t>((d_conv - 1 - k) + d_conv * c)];
                 }
             }
             w.conv1d_flipped.shape = core::TensorShape::from_dims({d_conv, conv_dim});
@@ -1024,6 +1034,10 @@ SlowForwardOutput falcon_forward_step(
     std::vector<ggml_tensor*> attn_out_ts;
     std::vector<ggml_tensor*> x_conv_ts;
     std::vector<ggml_tensor*> dt_ts;
+    std::vector<ggml_tensor*> cur_in_ts;
+    std::vector<ggml_tensor*> ffn_down_ts;
+    std::vector<ggml_tensor*> B4_ts;
+    std::vector<ggml_tensor*> x4_ts;
     ln_w_ts.reserve(static_cast<size_t>(n_layer));
     pre_w_ts.reserve(static_cast<size_t>(n_layer));
     conv_st_ts.reserve(static_cast<size_t>(n_layer));
@@ -1043,6 +1057,10 @@ SlowForwardOutput falcon_forward_step(
     attn_out_ts.reserve(static_cast<size_t>(n_layer));
     x_conv_ts.reserve(static_cast<size_t>(n_layer));
     dt_ts.reserve(static_cast<size_t>(n_layer));
+    cur_in_ts.reserve(static_cast<size_t>(n_layer));
+    ffn_down_ts.reserve(static_cast<size_t>(n_layer));
+    B4_ts.reserve(static_cast<size_t>(n_layer));
+    x4_ts.reserve(static_cast<size_t>(n_layer));
 
     // A = -exp(A_log) per layer
     std::vector<ggml_tensor*> A_ts;
@@ -1053,6 +1071,7 @@ SlowForwardOutput falcon_forward_step(
     for (int64_t li = 0; li < n_layer; ++li) {
         const auto & layer = weights.falcon_layers[static_cast<size_t>(li)];
 
+        cur_in_ts.push_back(cur);
         // input_layernorm (RMS)
         ggml_tensor * ln_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
         ggml_set_input(ln_w);
@@ -1099,6 +1118,8 @@ SlowForwardOutput falcon_forward_step(
                                         mamba_head_dim * ggml_element_size(x),
                                         mamba_head_dim * n_mamba_heads * ggml_element_size(x),
                                         mamba_head_dim * n_mamba_heads * ggml_element_size(x), 0);
+        B4_ts.push_back(B);
+        x4_ts.push_back(x);
         ggml_tensor * B4 = ggml_view_4d(ctx.get(), B, d_state, n_groups, 1, 1,
                                         d_state * ggml_element_size(B),
                                         d_state * n_groups * ggml_element_size(B),
@@ -1139,6 +1160,7 @@ SlowForwardOutput falcon_forward_step(
         ids_ts.push_back(ids);
 
         ggml_tensor * scan = ggml_ssm_scan(ctx.get(), ssm_t, x4, dt3, A_t, B4, C4, ids);
+        ggml_set_output(scan);  // keep state tail alive for host read-back
         scan_ts.push_back(scan);
         ggml_tensor * y = ggml_view_1d(ctx.get(), scan, d_inner, 0);
 
@@ -1237,6 +1259,7 @@ SlowForwardOutput falcon_forward_step(
         ggml_tensor * up_ff = ggml_mul_mat(ctx.get(), layer.ffn_up.tensor, h2);
         ggml_tensor * gated = ggml_mul(ctx.get(), ggml_silu(ctx.get(), gate_ff), up_ff);
         ggml_tensor * down = ggml_mul_mat(ctx.get(), layer.ffn_down.tensor, gated);
+        ffn_down_ts.push_back(down);
         cur = ggml_add(ctx.get(), h, down);
     }
 
@@ -1408,6 +1431,64 @@ SlowForwardOutput falcon_forward_step(
     ggml_backend_tensor_get(logits_out, out.logits.data(), 0, static_cast<size_t>(vocab) * sizeof(float));
     ggml_backend_tensor_get(hidden_out, out.hidden.data(), 0, static_cast<size_t>(dim) * sizeof(float));
 
+    // DEBUG: raw scan output state
+    {
+        std::vector<float> sv(static_cast<size_t>(d_inner + d_state * d_inner));
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            for (int64_t li : {0, 1}) {
+                ggml_backend_tensor_get(scan_ts[static_cast<size_t>(li)], sv.data(), 0, sv.size() * sizeof(float));
+                fprintf(f, "[SCANRAW%lld] pos=%lld y0=%.3f y767=%.3f s0=%.3f s1=%.3f s2=%.3f s100=%.3f s_end=%.3f\n",
+                        (long long)li, (long long)position,
+                        (double)sv[0], (double)sv[767], (double)sv[768], (double)sv[769],
+                        (double)sv[770], (double)sv[768+100], (double)sv[sv.size()-1]);
+            }
+            fclose(f);
+        }
+    }
+    // DEBUG: B / x raw values
+    {
+        std::vector<float> bv(static_cast<size_t>(d_state));
+        std::vector<float> xv(static_cast<size_t>(d_inner));
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            for (int64_t li : {0, 1}) {
+                ggml_backend_tensor_get(B4_ts[static_cast<size_t>(li)], bv.data(), 0, bv.size() * sizeof(float));
+                float bmax = 0; for (float v : bv) bmax = std::max(bmax, std::fabs(v));
+                ggml_backend_tensor_get(x4_ts[static_cast<size_t>(li)], xv.data(), 0, xv.size() * sizeof(float));
+                float xmax = 0; for (float v : xv) xmax = std::max(xmax, std::fabs(v));
+                fprintf(f, "[BX%lld] pos=%lld bmax=%.4f xmax=%.4f b0=%.3f,b1=%.3f\n",
+                        (long long)li, (long long)position, (double)bmax, (double)xmax, (double)bv[0], (double)bv[1]);
+            }
+            fclose(f);
+        }
+    }
+    // DEBUG: FFN down output
+    {
+        std::vector<float> dv(static_cast<size_t>(dim));
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            for (int64_t li : {0, 1}) {
+                ggml_backend_tensor_get(ffn_down_ts[static_cast<size_t>(li)], dv.data(), 0, dv.size() * sizeof(float));
+                float dmax = 0; for (float v : dv) dmax = std::max(dmax, std::fabs(v));
+                fprintf(f, "[FFN%lld] pos=%lld downmax=%.4f v0=%.3f\n", (long long)li, (long long)position, (double)dmax, (double)dv[0]);
+            }
+            fclose(f);
+        }
+    }
+    // DEBUG: per-layer cur input norms
+    {
+        std::vector<float> cv(static_cast<size_t>(dim));
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            for (int64_t li : {0, 1, 2}) {
+                ggml_backend_tensor_get(cur_in_ts[static_cast<size_t>(li)], cv.data(), 0, cv.size() * sizeof(float));
+                float cmax = 0; for (float v : cv) cmax = std::max(cmax, std::fabs(v));
+                fprintf(f, "[CIN%lld] pos=%lld curmax=%.4f v0=%.3f\n", (long long)li, (long long)position, (double)cmax, (double)cv[0]);
+            }
+            fclose(f);
+        }
+    }
     // DEBUG: layer 1 x/dt values
     {
         std::vector<float> xv(static_cast<size_t>(d_inner));
@@ -1477,7 +1558,7 @@ SlowForwardOutput falcon_forward_step(
                 smax = std::max(smax, std::fabs(sstate[i]));
                 if (std::isnan(sstate[i])) ++snan;
             }
-            if (ynan > 0 || snan > 0 || ymax > 100.0f || smax > 100.0f) {
+            if (li <= 2 || ynan > 0 || snan > 0 || ymax > 100.0f || smax > 100.0f) {
                 FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
                 if (f) {
                     fprintf(f, "[SCAN%lld] pos=%lld ymax=%.4f ynan=%zu smax=%.4f snan=%zu\n",
