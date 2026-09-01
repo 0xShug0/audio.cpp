@@ -240,9 +240,9 @@ core::TensorValue activation_cast(
     }
     // Fused single-kernel round-to-bf16 (f32 in, f32 out, bf16-rounded values).
     // Numerically identical to the cast round trip below, but avoids the
-    // intermediate bf16 tensor and one kernel launch. Only valid for
-    // contiguous tensors; non-contiguous views keep the round trip.
-    if (policy.fused_round && policy.type == GGML_TYPE_BF16 && ggml_is_contiguous(input.tensor)) {
+    // intermediate bf16 tensor and one kernel launch. Requires contiguous rows;
+    // more exotic views keep the round trip.
+    if (policy.fused_round && policy.type == GGML_TYPE_BF16 && ggml_is_contiguous_rows(input.tensor)) {
         return core::wrap_tensor(ggml_round_bf16(ctx.ggml, input.tensor), input.shape, GGML_TYPE_F32);
     }
     auto rounded = core::wrap_tensor(ggml_cast(ctx.ggml, input.tensor, policy.type), input.shape, policy.type);
