@@ -88,16 +88,15 @@ linear_weights(engine::core::BackendWeightStore &store,
 
 VoxCPM1MiniCPMWeights load_minicpm_weights(
     engine::core::BackendWeightStore &store,
-    const engine::assets::TensorSource &source, const std::string &embed_name,
-    const std::string &layer_prefix, const std::string &norm_name,
+    const engine::assets::TensorSource &source, const std::string &prefix,
     const VoxCPM1MiniCPMConfig &config,
     engine::assets::TensorStorageType storage_type, bool load_token_embedding) {
   const int64_t dim = head_dim(config);
   VoxCPM1MiniCPMWeights weights;
   weights.config = config;
-  if (load_token_embedding && !embed_name.empty()) {
+  if (load_token_embedding) {
     weights.token_embedding =
-        store.load_tensor(source, embed_name, storage_type,
+        store.load_tensor(source, prefix + ".embed_tokens.weight", storage_type,
                           {config.vocab_size, config.hidden_size});
   }
   if (!config.no_rope) {
@@ -112,39 +111,39 @@ VoxCPM1MiniCPMWeights load_minicpm_weights(
   }
   weights.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
   for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
-    const std::string lp =
-        layer_prefix + "." + std::to_string(layer);
+    const std::string layer_prefix =
+        prefix + ".layers." + std::to_string(layer);
     VoxCPM1MiniCPMLayerWeights layer_weights;
     layer_weights.input_norm = weight_binding::norm_weight_from_source(
-        store, source, lp + ".attn_norm", config.hidden_size);
+        store, source, layer_prefix + ".input_layernorm", config.hidden_size);
     layer_weights.q_proj = linear_weights(
-        store, source, lp + ".attn_q", storage_type,
+        store, source, layer_prefix + ".self_attn.q_proj", storage_type,
         config.num_attention_heads * dim, config.hidden_size, false);
     layer_weights.k_proj = linear_weights(
-        store, source, lp + ".attn_k", storage_type,
+        store, source, layer_prefix + ".self_attn.k_proj", storage_type,
         config.num_key_value_heads * dim, config.hidden_size, false);
     layer_weights.v_proj = linear_weights(
-        store, source, lp + ".attn_v", storage_type,
+        store, source, layer_prefix + ".self_attn.v_proj", storage_type,
         config.num_key_value_heads * dim, config.hidden_size, false);
     layer_weights.o_proj = linear_weights(
-        store, source, lp + ".attn_output", storage_type,
+        store, source, layer_prefix + ".self_attn.o_proj", storage_type,
         config.hidden_size, config.num_attention_heads * dim, false);
     layer_weights.post_norm = weight_binding::norm_weight_from_source(
-        store, source, lp + ".ffn_norm",
+        store, source, layer_prefix + ".post_attention_layernorm",
         config.hidden_size);
     layer_weights.gate_proj = linear_weights(
-        store, source, lp + ".ffn_gate", storage_type,
+        store, source, layer_prefix + ".mlp.gate_proj", storage_type,
         config.intermediate_size, config.hidden_size, false);
     layer_weights.up_proj = linear_weights(
-        store, source, lp + ".ffn_up", storage_type,
+        store, source, layer_prefix + ".mlp.up_proj", storage_type,
         config.intermediate_size, config.hidden_size, false);
     layer_weights.down_proj = linear_weights(
-        store, source, lp + ".ffn_down", storage_type,
+        store, source, layer_prefix + ".mlp.down_proj", storage_type,
         config.hidden_size, config.intermediate_size, false);
     weights.layers.push_back(std::move(layer_weights));
   }
   weights.norm = weight_binding::norm_weight_from_source(
-      store, source, norm_name, config.hidden_size);
+      store, source, prefix + ".norm", config.hidden_size);
   return weights;
 }
 
@@ -186,80 +185,78 @@ load_model_weights(const VoxCPM1Assets &assets,
       "voxcpm1.model.weights", weight_context_bytes);
   auto &store = *weights->store;
   const auto &source = *assets.model_weights;
-  weights->base_lm = load_minicpm_weights(store, source, "token_embd.weight",
-                                          "blk", "output_norm",
+  weights->base_lm = load_minicpm_weights(store, source, "base_lm",
                                           assets.config.lm, storage_type, true);
-  weights->residual_lm = load_minicpm_weights(store, source, "",
-                                              "residual_lm.blk",
-                                              "residual_lm.output_norm",
+  weights->residual_lm = load_minicpm_weights(store, source, "residual_lm",
                                               residual_lm_config(assets.config),
                                               storage_type, false);
 
   const auto encoder_config =
       local_transformer_config(assets.config.lm, assets.config.encoder);
   weights->feat_encoder.special_token =
-      store.load_tensor(source, "locenc.special_token", storage_type,
+      store.load_tensor(source, "feat_encoder.special_token", storage_type,
                         {1, 1, 1, assets.config.encoder.hidden_dim});
   weights->feat_encoder.in_proj = linear_weights(
-      store, source, "locenc.in_proj", storage_type,
+      store, source, "feat_encoder.in_proj", storage_type,
       assets.config.encoder.hidden_dim, assets.config.feat_dim, true);
   weights->feat_encoder.encoder =
-      load_minicpm_weights(store, source, "", "locenc.blk",
-                           "locenc.output_norm",
+      load_minicpm_weights(store, source, "feat_encoder.encoder",
                            encoder_config, storage_type, false);
 
   const auto dit_config =
       local_transformer_config(assets.config.lm, assets.config.dit);
   weights->dit.in_proj = linear_weights(
-      store, source, "locdit.in_proj", storage_type,
+      store, source, "feat_decoder.estimator.in_proj", storage_type,
       assets.config.dit.hidden_dim, assets.config.feat_dim, true);
   weights->dit.cond_proj = linear_weights(
-      store, source, "locdit.cond_proj", storage_type,
+      store, source, "feat_decoder.estimator.cond_proj", storage_type,
       assets.config.dit.hidden_dim, assets.config.feat_dim, true);
   weights->dit.out_proj = linear_weights(
-      store, source, "locdit.out_proj", storage_type,
+      store, source, "feat_decoder.estimator.out_proj", storage_type,
       assets.config.feat_dim, assets.config.dit.hidden_dim, true);
   weights->dit.time_mlp_1 = linear_weights(
-      store, source, "locdit.time_mlp.linear_1", storage_type,
+      store, source, "feat_decoder.estimator.time_mlp.linear_1", storage_type,
       assets.config.dit.hidden_dim, assets.config.dit.hidden_dim, true);
   weights->dit.time_mlp_2 = linear_weights(
-      store, source, "locdit.time_mlp.linear_2", storage_type,
+      store, source, "feat_decoder.estimator.time_mlp.linear_2", storage_type,
       assets.config.dit.hidden_dim, assets.config.dit.hidden_dim, true);
   weights->dit.delta_time_mlp_1 = linear_weights(
-      store, source, "locdit.delta_time_mlp.linear_1",
+      store, source, "feat_decoder.estimator.delta_time_mlp.linear_1",
       storage_type, assets.config.dit.hidden_dim, assets.config.dit.hidden_dim,
       true);
   weights->dit.delta_time_mlp_2 = linear_weights(
-      store, source, "locdit.delta_time_mlp.linear_2",
+      store, source, "feat_decoder.estimator.delta_time_mlp.linear_2",
       storage_type, assets.config.dit.hidden_dim, assets.config.dit.hidden_dim,
       true);
   weights->dit.decoder =
-      load_minicpm_weights(store, source, "", "locdit.blk",
-                           "locdit.output_norm",
+      load_minicpm_weights(store, source, "feat_decoder.estimator.decoder",
                            dit_config, storage_type, false);
 
   weights->projections.fsq_in_proj =
-      linear_weights(store, source, "fsq.in_proj", storage_type,
+      linear_weights(store, source, "fsq_layer.in_proj", storage_type,
                      assets.config.scalar_quantization_latent_dim,
                      assets.config.lm.hidden_size, true);
   weights->projections.fsq_out_proj =
-      linear_weights(store, source, "fsq.out_proj", storage_type,
+      linear_weights(store, source, "fsq_layer.out_proj", storage_type,
                      assets.config.lm.hidden_size,
                      assets.config.scalar_quantization_latent_dim, true);
   weights->projections.enc_to_lm_proj = linear_weights(
-      store, source, "proj.enc_to_lm", storage_type,
+      store, source, "enc_to_lm_proj", storage_type,
       assets.config.lm.hidden_size, assets.config.encoder.hidden_dim, true);
   weights->projections.lm_to_dit_proj = linear_weights(
-      store, source, "proj.lm_to_dit", storage_type,
+      store, source, "lm_to_dit_proj", storage_type,
       assets.config.dit.hidden_dim, assets.config.lm.hidden_size, true);
   weights->projections.res_to_dit_proj = linear_weights(
-      store, source, "proj.res_to_dit", storage_type,
+      store, source, "res_to_dit_proj", storage_type,
       assets.config.dit.hidden_dim, assets.config.lm.hidden_size, true);
+  weights->projections.fusion_concat_proj = linear_weights(
+      store, source, "fusion_concat_proj", storage_type,
+      assets.config.lm.hidden_size, assets.config.lm.hidden_size * 2, true);
   weights->projections.stop_proj = linear_weights(
-      store, source, "stop.stop_proj", storage_type, assets.config.lm.hidden_size,
+      store, source, "stop_proj", storage_type, assets.config.lm.hidden_size,
       assets.config.lm.hidden_size, true);
   weights->projections.stop_head =
-      linear_weights(store, source, "stop.stop_head", storage_type, 2,
+      linear_weights(store, source, "stop_head", storage_type, 2,
                      assets.config.lm.hidden_size, false);
   store.upload();
   return weights;
@@ -812,7 +809,15 @@ private:
 
     auto masked_current = mask_sequence(ctx, current_embeddings, audio_mask);
     auto residual_input =
-        engine::modules::AddModule{}.build(ctx, lm_hidden, masked_current);
+        config.v1
+            ? engine::modules::AddModule{}.build(ctx, lm_hidden, masked_current)
+            : engine::modules::LinearModule(
+                  binding::linear_config(config.lm.hidden_size * 2,
+                                         config.lm.hidden_size, true))
+                  .build(ctx,
+                         engine::modules::ConcatModule({2}).build(
+                             ctx, lm_hidden, masked_current),
+                         model_weights.projections.fusion_concat_proj);
 
     auto residual_hidden = residual_input;
     for (const auto &layer : model_weights.residual_lm.layers) {

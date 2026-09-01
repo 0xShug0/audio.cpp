@@ -340,6 +340,40 @@ int sample_rate_bucket(const VoxCPM1AudioVAEConfig &config) {
   return bucket;
 }
 
+std::vector<float> fold_weight_norm(const std::vector<float> &weight_v,
+                                    const std::vector<float> &weight_g,
+                                    int64_t dim0, int64_t dim1,
+                                    int64_t kernel) {
+  if (static_cast<int64_t>(weight_v.size()) != dim0 * dim1 * kernel ||
+      static_cast<int64_t>(weight_g.size()) != dim0) {
+    throw std::runtime_error("VoxCPM1 AudioVAE weight-norm shape mismatch");
+  }
+  std::vector<float> out(weight_v.size(), 0.0F);
+  for (int64_t d0 = 0; d0 < dim0; ++d0) {
+    const size_t base = static_cast<size_t>(d0 * dim1 * kernel);
+    double norm_sq = 0.0;
+    for (int64_t i = 0; i < dim1 * kernel; ++i) {
+      const double value = weight_v[base + static_cast<size_t>(i)];
+      norm_sq += value * value;
+    }
+    const float scale = weight_g[static_cast<size_t>(d0)] /
+                        static_cast<float>(std::sqrt(norm_sq));
+    for (int64_t i = 0; i < dim1 * kernel; ++i) {
+      out[base + static_cast<size_t>(i)] =
+          weight_v[base + static_cast<size_t>(i)] * scale;
+    }
+  }
+  return out;
+}
+
+std::vector<float> squeeze_weight_g(const std::vector<float> &values,
+                                    int64_t channels) {
+  if (static_cast<int64_t>(values.size()) != channels) {
+    throw std::runtime_error("VoxCPM1 AudioVAE weight_g shape mismatch");
+  }
+  return values;
+}
+
 VAEConv1dWeights load_wn_conv1d(core::BackendWeightStore &store,
                                 const assets_ns::TensorSource &source,
                                 const std::string &prefix, int64_t out_channels,
@@ -347,8 +381,13 @@ VAEConv1dWeights load_wn_conv1d(core::BackendWeightStore &store,
                                 bool depthwise,
                                 assets_ns::TensorStorageType storage_type) {
   const int64_t stored_in = depthwise ? 1 : in_channels;
-  const auto folded = source.require_f32(
-      prefix + ".weight", {out_channels, stored_in, kernel_size});
+  const auto weight_v = source.require_f32(
+      prefix + ".weight_v", {out_channels, stored_in, kernel_size});
+  const auto weight_g = squeeze_weight_g(
+      source.require_f32(prefix + ".weight_g", {out_channels, 1, 1}),
+      out_channels);
+  const auto folded = fold_weight_norm(weight_v, weight_g, out_channels,
+                                       stored_in, kernel_size);
   VAEConv1dWeights out;
   out.in_channels = in_channels;
   out.out_channels = out_channels;
@@ -376,15 +415,20 @@ load_wn_conv_transpose1d(core::BackendWeightStore &store,
                          const std::string &prefix, int64_t in_channels,
                          int64_t out_channels, int64_t kernel_size,
                          assets_ns::TensorStorageType storage_type) {
-  const auto folded = source.require_f32(
-      prefix + ".weight", {in_channels, out_channels, kernel_size});
+  const auto weight_v = source.require_f32(
+      prefix + ".weight_v", {in_channels, out_channels, kernel_size});
+  const auto weight_g = squeeze_weight_g(
+      source.require_f32(prefix + ".weight_g", {in_channels, 1, 1}),
+      in_channels);
   VAEConvTranspose1dWeights out;
   out.in_channels = in_channels;
   out.out_channels = out_channels;
   out.kernel_size = kernel_size;
   out.conv.weight = store.make_from_f32(
       core::TensorShape::from_dims({in_channels, out_channels, kernel_size}),
-      storage_type, folded);
+      storage_type,
+      fold_weight_norm(weight_v, weight_g, in_channels, out_channels,
+                       kernel_size));
   out.conv.bias =
       store.load_f32_tensor(source, prefix + ".bias", {out_channels});
   return out;
@@ -486,7 +530,7 @@ VAEWeights load_vae_weights(const VoxCPM1Assets &assets,
       execution_context.backend(), execution_context.backend_type(),
       "voxcpm1.audiovae.weights", weight_context_bytes);
   auto &store = *weights.store;
-  weights.encoder_first = load_wn_conv1d(store, source, "audio_vae.encoder.block.0",
+  weights.encoder_first = load_wn_conv1d(store, source, "encoder.block.0",
                                          config.encoder_dim, 1, 7, false,
                                          storage_type);
   int64_t encoder_in_channels = config.encoder_dim;
@@ -494,20 +538,20 @@ VAEWeights load_vae_weights(const VoxCPM1Assets &assets,
   for (size_t i = 0; i < config.encoder_rates.size(); ++i) {
     const int64_t encoder_out_channels = encoder_in_channels * 2;
     weights.encoder_blocks.push_back(load_encoder_block(
-        store, source, "audio_vae.encoder.block." + std::to_string(i + 1),
+        store, source, "encoder.block." + std::to_string(i + 1),
         encoder_in_channels, encoder_out_channels,
         static_cast<int>(config.encoder_rates[i]), storage_type));
     encoder_in_channels = encoder_out_channels;
   }
   weights.encoder_fc_mu =
-      load_wn_conv1d(store, source, "audio_vae.encoder.fc_mu", config.latent_dim,
+      load_wn_conv1d(store, source, "encoder.fc_mu", config.latent_dim,
                      encoder_in_channels, 3, false, storage_type);
 
   weights.decoder_first_depthwise =
-      load_wn_conv1d(store, source, "audio_vae.decoder.model.0", config.latent_dim,
+      load_wn_conv1d(store, source, "decoder.model.0", config.latent_dim,
                      config.latent_dim, 7, true, storage_type);
   weights.decoder_first_pointwise =
-      load_wn_conv1d(store, source, "audio_vae.decoder.model.1", config.decoder_dim,
+      load_wn_conv1d(store, source, "decoder.model.1", config.decoder_dim,
                      config.latent_dim, 1, false, storage_type);
 
   const int bucket = sample_rate_bucket(config);
@@ -520,13 +564,13 @@ VAEWeights load_vae_weights(const VoxCPM1Assets &assets,
     const int64_t output_channels =
         config.decoder_dim / (int64_t{1} << static_cast<int>(i + 1));
     const int model_index = static_cast<int>(i) + 2;
-    const std::string prefix = "audio_vae.decoder.model." + std::to_string(model_index);
+    const std::string prefix = "decoder.model." + std::to_string(model_index);
     VAEDecoderBlockWeights block;
     block.input_channels = input_channels;
     block.output_channels = output_channels;
     block.stride = static_cast<int>(config.decoder_rates[i]);
     block.sr_cond = load_sr_condition(
-        store, source, "audio_vae.decoder.sr_cond_model." + std::to_string(model_index),
+        store, source, "decoder.sr_cond_model." + std::to_string(model_index),
         input_channels, bucket, buckets);
     block.snake =
         load_snake(store, source, prefix + ".block.0.alpha", input_channels);
@@ -547,12 +591,12 @@ VAEWeights load_vae_weights(const VoxCPM1Assets &assets,
       (int64_t{1} << static_cast<int>(config.decoder_rates.size()));
   weights.decoder_final_snake =
       load_snake(store, source,
-                 "audio_vae.decoder.model." +
+                 "decoder.model." +
                      std::to_string(config.decoder_rates.size() + 2) + ".alpha",
                  decoder_final_channels);
   weights.decoder_final_conv = load_wn_conv1d(
       store, source,
-      "audio_vae.decoder.model." + std::to_string(config.decoder_rates.size() + 3), 1,
+      "decoder.model." + std::to_string(config.decoder_rates.size() + 3), 1,
       decoder_final_channels, 7, false, storage_type);
   store.upload();
   return weights;

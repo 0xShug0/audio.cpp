@@ -1,11 +1,10 @@
-#include "engine/community_models/voxcpm1/tokenizer_text.h"
-#include "engine/community_models/voxcpm1/assets.h"
+#include "engine/community_models/voxcpm1/tokenizer_gguf.h"
 
-#include "engine/framework/io/json.h"
+#include "engine/community_models/voxcpm1/gguf_metadata.h"
+#include "engine/framework/assets/tensor_source.h"
 
 #include <algorithm>
 #include <cstddef>
-#include <filesystem>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -15,82 +14,9 @@
 #include <vector>
 
 namespace engine::community_models::voxcpm1 {
-namespace json = engine::io::json;
 namespace {
 
-int32_t require_token_id(
-    const std::unordered_map<std::string, int32_t> & vocab,
-    const std::string & token) {
-    const auto it = vocab.find(token);
-    if (it == vocab.end()) {
-        throw std::runtime_error("VoxCPM1 tokenizer missing token: " + token);
-    }
-    return it->second;
-}
-
-void load_tokenizer_json(
-    const std::filesystem::path & path,
-    std::unordered_map<std::string, int32_t> & vocab,
-    std::unordered_map<std::string, int32_t> & merge_ranks) {
-    const auto root = json::parse_file(path);
-    const auto & model = root.require("model");
-    if (model.require("type").as_string() != "BPE") {
-        throw std::runtime_error("VoxCPM1 tokenizer expects BPE tokenizer.json");
-    }
-    const auto & vocab_json = model.require("vocab").as_object();
-    for (const auto & [token, id_value] : vocab_json) {
-        const int32_t id = static_cast<int32_t>(id_value.as_i64());
-        vocab.emplace(token, id);
-    }
-    const auto & merges = model.require("merges").as_array();
-    int32_t rank = 0;
-    for (const auto & merge_value : merges) {
-        const std::string merge = merge_value.as_string();
-        const size_t split = merge.find(' ');
-        if (split == std::string::npos) {
-            throw std::runtime_error("invalid VoxCPM1 tokenizer merge: " + merge);
-        }
-        merge_ranks.emplace(
-            merge.substr(0, split) + '\0' + merge.substr(split + 1), rank);
-        ++rank;
-    }
-}
-
-void load_special_tokens(
-    const std::filesystem::path & path,
-    std::unordered_map<std::string, int32_t> & vocab,
-    std::unordered_map<std::string, int32_t> & special_tokens,
-    int32_t & audio_start_token_id,
-    int32_t & audio_end_token_id,
-    int32_t & reference_audio_start_token_id,
-    int32_t & reference_audio_end_token_id,
-    int32_t & bos_token_id,
-    int32_t & eos_token_id,
-    int32_t & unk_token_id) {
-    const auto root = json::parse_file(path);
-    const auto * added = root.find("added_tokens_decoder");
-    if (added == nullptr) {
-        throw std::runtime_error("VoxCPM1 tokenizer_config missing added_tokens_decoder");
-    }
-    for (const auto & [id_text, token_config] : added->as_object()) {
-        const auto * content = token_config.find("content");
-        if (content == nullptr || !content->is_string()) {
-            continue;
-        }
-        const int32_t id = static_cast<int32_t>(std::stoll(id_text));
-        const std::string token = content->as_string();
-        vocab[token] = id;
-        special_tokens[token] = id;
-    }
-    audio_start_token_id = require_token_id(vocab, "<|audio_start|>");
-    audio_end_token_id = require_token_id(vocab, "<|audio_end|>");
-    reference_audio_start_token_id = require_token_id(vocab, "<|audio_prompt_start|>");
-    reference_audio_end_token_id = require_token_id(vocab, "<|audio_prompt_end|>");
-    bos_token_id = require_token_id(vocab, "<s>");
-    eos_token_id = require_token_id(vocab, "</s>");
-    unk_token_id = require_token_id(vocab, "<unk>");
-}
-
+// UTF-8 handling functions
 uint32_t next_utf8_codepoint(std::string_view text, size_t & offset) {
     if (offset >= text.size()) {
         throw std::runtime_error("VoxCPM1 tokenizer UTF-8 offset is out of range");
@@ -241,7 +167,7 @@ void build_cjk_split_map(
 
 }  // namespace
 
-struct VoxCPM1TextTokenizer::Impl {
+struct VoxCPM1GgufTokenizer::Impl {
     std::unordered_map<std::string, int32_t> vocab;
     std::unordered_map<int32_t, std::string> id_to_token;
     std::unordered_map<std::string, int32_t> merge_ranks;
@@ -251,9 +177,9 @@ struct VoxCPM1TextTokenizer::Impl {
     int32_t audio_end_token_id = 102;
     int32_t reference_audio_start_token_id = 103;
     int32_t reference_audio_end_token_id = 104;
-    int32_t bos_token_id = 1;
-    int32_t eos_token_id = 2;
-    int32_t unk_token_id = 3;
+    int32_t bos_token_id_ = 1;
+    int32_t eos_token_id_ = 2;
+    int32_t unk_token_id_ = 3;
 
     std::vector<std::string> bpe(std::string_view normalized_text) const {
         std::vector<std::string> word = bpe_initial_pieces(normalized_text, vocab);
@@ -290,121 +216,160 @@ struct VoxCPM1TextTokenizer::Impl {
         }
         ids.insert(ids.end(), split->second.begin(), split->second.end());
     }
-
-    std::vector<int32_t> encode(const std::string & text) const {
-        std::vector<int32_t> ids;
-        for (size_t i = 0; i < text.size();) {
-            const auto special_it = std::find_if(
-                special_tokens.begin(),
-                special_tokens.end(),
-                [&](const auto & item) { return starts_with_at(text, i, item.first); });
-            if (special_it != special_tokens.end()) {
-                append_expanded_id(ids, special_it->second);
-                i += special_it->first.size();
-                continue;
-            }
-
-            size_t next_special = text.size();
-            for (const auto & [special, _] : special_tokens) {
-                const size_t pos = text.find(special, i);
-                if (pos != std::string::npos) {
-                    next_special = std::min(next_special, pos);
-                }
-            }
-            const std::string normalized = normalize_text(std::string_view(
-                text.data() + static_cast<std::ptrdiff_t>(i),
-                next_special - i));
-            for (const auto & bpe_token : bpe(normalized)) {
-                const auto vocab_it = vocab.find(bpe_token);
-                if (vocab_it == vocab.end()) {
-                    throw std::runtime_error("VoxCPM1 tokenizer produced token not present in vocab: " + bpe_token);
-                }
-                append_expanded_id(ids, vocab_it->second);
-            }
-            i = next_special;
-        }
-        return ids;
-    }
-
-    VoxCPM1TextPrompt build_prompt(const std::string & text) const {
-        if (text.empty()) {
-            throw std::runtime_error("VoxCPM1 requires non-empty text input");
-        }
-        VoxCPM1TextPrompt prompt;
-        prompt.text = text;
-        prompt.input_ids = encode(text);
-        if (prompt.input_ids.empty()) {
-            throw std::runtime_error("VoxCPM1 tokenizer produced no tokens");
-        }
-        return prompt;
-    }
 };
 
-VoxCPM1TextTokenizer::VoxCPM1TextTokenizer(std::shared_ptr<const VoxCPM1Assets> assets) {
-    if (assets == nullptr) {
-        throw std::runtime_error("VoxCPM1 text tokenizer requires assets");
+VoxCPM1GgufTokenizer::VoxCPM1GgufTokenizer(std::shared_ptr<const engine::assets::TensorSource> gguf_source) {
+    if (!gguf_source) {
+        throw std::runtime_error("VoxCPM1 GGUF tokenizer requires a valid GGUF tensor source");
     }
+    const GgufMetadataReader metadata(*gguf_source);
+    if (!metadata.valid()) {
+        throw std::runtime_error("VoxCPM1 GGUF tokenizer requires a GGUF tensor source");
+    }
+
+    const std::string tokenizer_model = metadata.require_string("tokenizer.ggml.model");
+    const std::string tokenizer_pre = metadata.require_string("tokenizer.ggml.pre");
+    const std::vector<std::string> tokens = metadata.require_string_array("tokenizer.ggml.tokens");
+    const std::vector<int32_t> token_types = metadata.require_i32_array("tokenizer.ggml.token_type");
+    const std::vector<std::string> merges = metadata.require_string_array("tokenizer.ggml.merges");
+    const uint32_t bos_id = metadata.require_u32("tokenizer.ggml.bos_token_id");
+    const uint32_t eos_id = metadata.require_u32("tokenizer.ggml.eos_token_id");
+    const uint32_t unk_id = metadata.require_u32("tokenizer.ggml.unknown_token_id");
+
+    if (tokenizer_model != "gpt2" || tokens.empty() || merges.empty() || token_types.size() != tokens.size()) {
+        throw std::runtime_error("Invalid VoxCPM1 GGUF tokenizer metadata");
+    }
+
+    constexpr int32_t kTokenTypeNormal = 1;
+    constexpr int32_t kTokenTypeByte = 6;
 
     auto impl = std::make_shared<Impl>();
 
-    load_tokenizer_json(
-        assets->resources.require_file("tokenizer_json"),
-        impl->vocab,
-        impl->merge_ranks);
-
-    load_special_tokens(
-        assets->resources.require_file("tokenizer_config"),
-        impl->vocab,
-        impl->special_tokens,
-        impl->audio_start_token_id,
-        impl->audio_end_token_id,
-        impl->reference_audio_start_token_id,
-        impl->reference_audio_end_token_id,
-        impl->bos_token_id,
-        impl->eos_token_id,
-        impl->unk_token_id);
-
-    for (const auto & [token, id] : impl->vocab) {
-        impl->id_to_token.emplace(id, token);
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        const int32_t id = static_cast<int32_t>(i);
+        impl->vocab.emplace(tokens[i], id);
+        impl->id_to_token.emplace(id, tokens[i]);
+        if (token_types[i] != kTokenTypeNormal && token_types[i] != kTokenTypeByte) {
+            impl->special_tokens.emplace(tokens[i], id);
+        }
     }
+
+    int32_t rank = 0;
+    for (const std::string & merge_text : merges) {
+        const size_t split = merge_text.find(' ');
+        if (split == std::string::npos) {
+            ++rank;
+            continue;
+        }
+        const std::string left = merge_text.substr(0, split);
+        const std::string right = merge_text.substr(split + 1);
+        const auto left_it = impl->vocab.find(left);
+        const auto right_it = impl->vocab.find(right);
+        const auto merged_it = impl->vocab.find(left + right);
+        if (left_it != impl->vocab.end() && right_it != impl->vocab.end() && merged_it != impl->vocab.end()) {
+            impl->merge_ranks.emplace(left + '\0' + right, rank);
+        }
+        ++rank;
+    }
+
+    if (impl->merge_ranks.empty()) {
+        throw std::runtime_error("VoxCPM1 GGUF tokenizer has no valid merge rules");
+    }
+
+    impl->audio_start_token_id = 101;
+    impl->audio_end_token_id = 102;
+    impl->reference_audio_start_token_id = 103;
+    impl->reference_audio_end_token_id = 104;
+    impl->bos_token_id_ = static_cast<int32_t>(bos_id);
+    impl->eos_token_id_ = static_cast<int32_t>(eos_id);
+    impl->unk_token_id_ = static_cast<int32_t>(unk_id);
+
     build_cjk_split_map(impl->cjk_split_map, impl->id_to_token, impl->vocab);
-    impl_ = std::const_pointer_cast<const Impl>(impl);
+
+    impl_ = std::move(impl);
 }
 
-std::vector<int32_t> VoxCPM1TextTokenizer::encode(const std::string & text) const {
-    return impl_->encode(text);
+std::vector<int32_t> VoxCPM1GgufTokenizer::encode(const std::string & text) const {
+    std::vector<int32_t> ids;
+    for (size_t i = 0; i < text.size();) {
+        const auto special_it = std::find_if(
+            impl_->special_tokens.begin(),
+            impl_->special_tokens.end(),
+            [&](const auto & item) { return starts_with_at(text, i, item.first); });
+        if (special_it != impl_->special_tokens.end()) {
+            impl_->append_expanded_id(ids, special_it->second);
+            i += special_it->first.size();
+            continue;
+        }
+
+        size_t next_special = text.size();
+        for (const auto & [special, _] : impl_->special_tokens) {
+            const size_t pos = text.find(special, i);
+            if (pos != std::string::npos) {
+                next_special = std::min(next_special, pos);
+            }
+        }
+        const std::string normalized = normalize_text(std::string_view(
+            text.data() + static_cast<std::ptrdiff_t>(i),
+            next_special - i));
+        for (const auto & bpe_token : impl_->bpe(normalized)) {
+            const auto vocab_it = impl_->vocab.find(bpe_token);
+            if (vocab_it == impl_->vocab.end()) {
+                throw std::runtime_error("VoxCPM1 tokenizer produced token not present in vocab: " + bpe_token);
+            }
+            impl_->append_expanded_id(ids, vocab_it->second);
+        }
+        i = next_special;
+    }
+    return ids;
 }
 
-VoxCPM1TextPrompt VoxCPM1TextTokenizer::build_prompt(const std::string & text) const {
-    return impl_->build_prompt(text);
+VoxCPM1TextPrompt VoxCPM1GgufTokenizer::build_prompt(const std::string & text) const {
+    if (text.empty()) {
+        throw std::runtime_error("VoxCPM1 requires non-empty text input");
+    }
+    VoxCPM1TextPrompt prompt;
+    prompt.text = text;
+    prompt.input_ids = encode(text);
+    if (prompt.input_ids.empty()) {
+        throw std::runtime_error("VoxCPM1 tokenizer produced no tokens");
+    }
+    return prompt;
 }
 
-int32_t VoxCPM1TextTokenizer::audio_start_token_id() const noexcept {
+int32_t VoxCPM1GgufTokenizer::audio_start_token_id() const noexcept {
     return impl_->audio_start_token_id;
 }
 
-int32_t VoxCPM1TextTokenizer::audio_end_token_id() const noexcept {
+int32_t VoxCPM1GgufTokenizer::audio_end_token_id() const noexcept {
     return impl_->audio_end_token_id;
 }
 
-int32_t VoxCPM1TextTokenizer::reference_audio_start_token_id() const noexcept {
+int32_t VoxCPM1GgufTokenizer::reference_audio_start_token_id() const noexcept {
     return impl_->reference_audio_start_token_id;
 }
 
-int32_t VoxCPM1TextTokenizer::reference_audio_end_token_id() const noexcept {
+int32_t VoxCPM1GgufTokenizer::reference_audio_end_token_id() const noexcept {
     return impl_->reference_audio_end_token_id;
 }
 
-int32_t VoxCPM1TextTokenizer::bos_token_id() const noexcept {
-    return impl_->bos_token_id;
+int32_t VoxCPM1GgufTokenizer::bos_token_id() const noexcept {
+    return impl_->bos_token_id_;
 }
 
-int32_t VoxCPM1TextTokenizer::eos_token_id() const noexcept {
-    return impl_->eos_token_id;
+int32_t VoxCPM1GgufTokenizer::eos_token_id() const noexcept {
+    return impl_->eos_token_id_;
 }
 
-int32_t VoxCPM1TextTokenizer::unk_token_id() const noexcept {
-    return impl_->unk_token_id;
+int32_t VoxCPM1GgufTokenizer::unk_token_id() const noexcept {
+    return impl_->unk_token_id_;
+}
+
+bool VoxCPM1GgufTokenizer::has_tokenizer_metadata(const engine::assets::TensorSource & source) {
+    const GgufMetadataReader metadata(source);
+    return metadata.optional_string("tokenizer.ggml.model").has_value() &&
+           metadata.optional_string_array("tokenizer.ggml.tokens").has_value() &&
+           metadata.optional_string_array("tokenizer.ggml.merges").has_value();
 }
 
 }  // namespace engine::community_models::voxcpm1

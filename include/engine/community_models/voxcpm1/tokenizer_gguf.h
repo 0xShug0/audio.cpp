@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/community_models/voxcpm1/types.h"
+#include "engine/framework/assets/tensor_source.h"
 
 #include <cstdint>
 #include <memory>
@@ -9,12 +10,13 @@
 
 namespace engine::community_models::voxcpm1 {
 
-// Forward declaration
-struct VoxCPM1Assets;
-
-class VoxCPM1TextTokenizer {
+// GGUF-native tokenizer that reads tokenizer metadata directly from GGUF.
+// VoxCPM1 is now GGUF-only — no JSON fallback.
+class VoxCPM1GgufTokenizer {
 public:
-    explicit VoxCPM1TextTokenizer(std::shared_ptr<const VoxCPM1Assets> assets);
+    struct Impl;
+
+    explicit VoxCPM1GgufTokenizer(std::shared_ptr<const engine::assets::TensorSource> gguf_source);
 
     std::vector<int32_t> encode(const std::string & text) const;
     VoxCPM1TextPrompt build_prompt(const std::string & text) const;
@@ -26,8 +28,10 @@ public:
     int32_t eos_token_id() const noexcept;
     int32_t unk_token_id() const noexcept;
 
+    // Check if the GGUF source has tokenizer metadata
+    static bool has_tokenizer_metadata(const engine::assets::TensorSource & source);
+
 private:
-    struct Impl;
     std::shared_ptr<const Impl> impl_;
 };
 
