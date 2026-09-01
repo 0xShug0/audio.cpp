@@ -603,7 +603,22 @@ private:
     void scheduler_loop() {
         std::unique_lock<std::mutex> lock(mu_);
         while (!stop_) {
+            // 记录 tick 前各 slot 的已产出 chunk 数
+            size_t chunks_before = 0;
+            for (int64_t i = 0; i < max_batch_; ++i) {
+                chunks_before += slots_[static_cast<size_t>(i)].chunk_queue.size();
+            }
             tick_locked();
+            // 若本 tick 产出了新 chunk，短暂让出锁：让 next_chunk（cv_.wait）能抢到锁
+            // 取走 chunk，实现真正的增量流式（否则调度线程持锁持续 tick，一次性
+            // 生成完整个 slot，流式退化成离线）。
+            size_t chunks_after = 0;
+            for (int64_t i = 0; i < max_batch_; ++i) {
+                chunks_after += slots_[static_cast<size_t>(i)].chunk_queue.size();
+            }
+            if (chunks_after > chunks_before) {
+                cv_wake_.wait_for(lock, std::chrono::milliseconds(1));
+            }
             // 有工作（Active 未完成 / Dead 待 finish）则继续 tick；否则等新工作。
             bool has_work = false;
             for (int64_t i = 0; i < max_batch_; ++i) {
