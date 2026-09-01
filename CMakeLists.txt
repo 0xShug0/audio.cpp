@@ -2089,6 +2089,17 @@ if (ENGINE_BUILD_TESTS)
         COMMAND safetensors_offsets_test
     )
 
+    add_engine_unittest(audio8_tts_falcon_kv_cache_test tests/unittests/test_audio8_tts_falcon_kv_cache.cpp)
+    target_include_directories(audio8_tts_falcon_kv_cache_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/community_models/audio8_tts
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests
+    )
+
+    add_test(
+        NAME audio8_tts_falcon_kv_cache_test
+        COMMAND audio8_tts_falcon_kv_cache_test
+    )
+
     add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
 
     add_test(

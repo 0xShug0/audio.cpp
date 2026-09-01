@@ -254,8 +254,6 @@ ggml_tensor * conv1d_pertap_gemm_channel_fast(
         } else {
             acc = ggml_add(ctx.ggml, acc, ggml_mul_mat(ctx.ggml, tap_weights, columns));
         }
-        auto * partial = ggml_mul_mat(ctx.ggml, tap_weights, columns);
-        acc = (acc == nullptr) ? partial : ggml_add(ctx.ggml, acc, partial);
     }
     return acc;
 }
