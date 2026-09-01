@@ -4,6 +4,7 @@
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -884,6 +885,7 @@ struct DecodeGraph {
             throw std::runtime_error("failed to initialize Audio8 TTS codec decode graph context");
         }
         core::ModuleBuildContext ctx{ctx_.get(), "audio8_tts.codec.decode", backend_type_};
+        const auto build_start = std::chrono::steady_clock::now();
         constants_.begin_graph();
         for (int64_t codebook = 0; codebook < assets_->config.codec.total_codebooks; ++codebook) {
             auto ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, frame_capacity_}));
@@ -902,6 +904,10 @@ struct DecodeGraph {
         if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
             throw std::runtime_error("failed to allocate Audio8 TTS codec decode graph");
         }
+        engine::debug::timing_log_scalar(
+            "audio8_tts.codec.graph_build_ms",
+            engine::debug::elapsed_ms(build_start, std::chrono::steady_clock::now()));
+        engine::debug::trace_log_scalar("audio8_tts.codec.graph_nodes", static_cast<int64_t>(ggml_graph_n_nodes(graph_)));
     }
 
     ~DecodeGraph() {
@@ -941,8 +947,12 @@ struct DecodeGraph {
             core::write_tensor_i32(code_inputs_[static_cast<size_t>(codebook)], padded);
         }
         core::set_backend_threads(backend_, threads_);
+        const auto compute_start = std::chrono::steady_clock::now();
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
+        engine::debug::timing_log_scalar(
+            "audio8_tts.codec.graph_compute_ms",
+            engine::debug::elapsed_ms(compute_start, std::chrono::steady_clock::now()));
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Audio8 TTS codec decode graph compute failed");
         }
