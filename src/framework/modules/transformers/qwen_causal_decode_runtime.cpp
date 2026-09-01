@@ -203,11 +203,10 @@ void write_batched_cached_step_mask(
     std::vector<ggml_fp16_t> & scratch,
     int64_t batch_size,
     int64_t mask_steps,
-    int64_t visible_prefix_steps,
-    int64_t current_slot,
-    int64_t position) {
+    const std::vector<int64_t> & member_ends,
+    const std::vector<int32_t> & cache_slots) {
     if (config.sliding_window <= 0) {
-        write_qwen_batched_cached_step_mask(tensor, scratch, batch_size, mask_steps, visible_prefix_steps, current_slot);
+        write_qwen_batched_cached_step_mask(tensor, scratch, batch_size, mask_steps, member_ends, cache_slots);
         return;
     }
     if (tensor == nullptr) {
@@ -219,12 +218,6 @@ void write_batched_cached_step_mask(
     if (mask_steps <= 0) {
         throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask requires positive steps");
     }
-    if (visible_prefix_steps < 0 || visible_prefix_steps > mask_steps) {
-        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask visible prefix is out of range");
-    }
-    if (current_slot < 0 || current_slot >= mask_steps) {
-        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask current slot is out of range");
-    }
     const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
     const auto visible = ggml_fp32_to_fp16(0.0F);
     const size_t row_size = static_cast<size_t>(mask_steps);
@@ -232,14 +225,16 @@ void write_batched_cached_step_mask(
     if (scratch.size() != total_size) {
         scratch.resize(total_size);
     }
-    const int64_t begin = std::max<int64_t>(0, position - config.sliding_window + 1);
     for (int64_t batch = 0; batch < batch_size; ++batch) {
+        const int64_t end = member_ends.empty() ? cache_slots[static_cast<size_t>(batch)] : member_ends[static_cast<size_t>(batch)];
+        const int64_t current_slot = cache_slots[static_cast<size_t>(batch)];
+        const int64_t begin = std::max<int64_t>(0, end - config.sliding_window + 1);
         const size_t offset = static_cast<size_t>(batch) * row_size;
         std::fill(
             scratch.begin() + static_cast<std::ptrdiff_t>(offset),
             scratch.begin() + static_cast<std::ptrdiff_t>(offset + row_size),
             masked);
-        for (int64_t i = begin; i < visible_prefix_steps; ++i) {
+        for (int64_t i = begin; i < end; ++i) {
             scratch[offset + static_cast<size_t>(i)] = visible;
         }
         scratch[offset + static_cast<size_t>(current_slot)] = visible;
@@ -1178,11 +1173,12 @@ private:
             batched_decode_input_ = input.tensor;
             x = input;
         }
-        batched_decode_positions_ = ggml_new_tensor_1d(batched_decode_ctx_.get(), GGML_TYPE_I32, 1);
+        batched_decode_positions_ = ggml_new_tensor_1d(batched_decode_ctx_.get(), GGML_TYPE_I32, batch_size);
         auto positions = core::wrap_tensor(
             batched_decode_positions_,
-            core::TensorShape::from_dims({1}),
+            core::TensorShape::from_dims({batch_size}),
             GGML_TYPE_I32);
+        batched_decode_positions_host_.resize(static_cast<size_t>(batch_size), 0);
         auto slot = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({batch_size}));
         batched_decode_cache_slot_ = slot.tensor;
         auto attention = core::make_tensor(
@@ -1303,13 +1299,18 @@ private:
         if (batched_decode_cache_.valid_steps() >= batched_decode_cache_steps_) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode cache exhausted");
         }
-        const int32_t position = static_cast<int32_t>(batched_decode_cache_.current_end());
-        ggml_backend_tensor_set(batched_decode_positions_, &position, 0, sizeof(int32_t));
-        const int32_t cache_slot = static_cast<int32_t>(batched_decode_cache_.valid_steps());
+        // per-member positions + cache slots（不同序列可处于不同位置）
         for (int64_t batch = 0; batch < batched_decode_batch_size_; ++batch) {
+            const int32_t pos = static_cast<int32_t>(batched_decode_cache_.member_end(batch));
+            batched_decode_positions_host_[static_cast<size_t>(batch)] = pos;
             batched_decode_cache_slots_[static_cast<size_t>(batch)] =
-                static_cast<int32_t>(batch * batched_decode_cache_steps_ + cache_slot);
+                static_cast<int32_t>(batch * batched_decode_cache_steps_ + pos);
         }
+        ggml_backend_tensor_set(
+            batched_decode_positions_,
+            batched_decode_positions_host_.data(),
+            0,
+            batched_decode_positions_host_.size() * sizeof(int32_t));
         ggml_backend_tensor_set(
             batched_decode_cache_slot_,
             batched_decode_cache_slots_.data(),
@@ -1321,9 +1322,8 @@ private:
             batched_decode_attention_mask_values_,
             batched_decode_batch_size_,
             batched_decode_cache_steps_,
-            batched_decode_cache_.valid_steps(),
-            cache_slot,
-            position);
+            batched_decode_cache_.member_ends_for_mask(),
+            batched_decode_cache_slots_);
         core::set_backend_threads(backend_, threads_);
         const ggml_status status = core::compute_backend_graph(backend_, batched_decode_graph_);
         ggml_backend_synchronize(backend_);
@@ -1348,7 +1348,10 @@ private:
                 out.hidden.size() * sizeof(float));
             round_readback(out.hidden, config_);
         }
-        batched_decode_cache_.advance_after_direct_append(1);
+        // 每个 member 前进 1 步
+        for (int64_t batch = 0; batch < batched_decode_batch_size_; ++batch) {
+            batched_decode_cache_.advance_member(batch, 1);
+        }
         return out;
     }
 
@@ -1523,6 +1526,7 @@ private:
     ggml_backend_buffer_t batched_decode_buffer_ = nullptr;
     std::vector<ggml_fp16_t> batched_decode_attention_mask_values_;
     std::vector<int32_t> batched_decode_cache_slots_;
+    std::vector<int32_t> batched_decode_positions_host_;
     runtime::TransformerBatchedKVCache batched_decode_cache_;
     int64_t batched_decode_batch_size_ = 0;
     int64_t batched_decode_cache_steps_ = 0;

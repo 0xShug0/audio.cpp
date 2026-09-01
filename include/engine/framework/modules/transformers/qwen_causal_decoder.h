@@ -187,7 +187,7 @@ void write_qwen_batched_cached_step_mask(
     std::vector<ggml_fp16_t> & scratch,
     int64_t batch_size,
     int64_t mask_steps,
-    int64_t visible_prefix_steps,
-    int64_t current_slot);
+    const std::vector<int64_t> & member_ends,
+    const std::vector<int32_t> & cache_slots);
 
 }  // namespace engine::modules

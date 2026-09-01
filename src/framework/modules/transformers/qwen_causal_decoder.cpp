@@ -502,8 +502,8 @@ void write_qwen_batched_cached_step_mask(
     std::vector<ggml_fp16_t> & scratch,
     int64_t batch_size,
     int64_t mask_steps,
-    int64_t visible_prefix_steps,
-    int64_t current_slot) {
+    const std::vector<int64_t> & member_ends,
+    const std::vector<int32_t> & cache_slots) {
     if (tensor == nullptr) {
         throw std::runtime_error("write_qwen_batched_cached_step_mask requires a tensor");
     }
@@ -511,12 +511,6 @@ void write_qwen_batched_cached_step_mask(
         throw std::runtime_error("write_qwen_batched_cached_step_mask requires positive batch size");
     }
     validate_steps(mask_steps, "write_qwen_batched_cached_step_mask");
-    if (visible_prefix_steps < 0 || visible_prefix_steps > mask_steps) {
-        throw std::runtime_error("write_qwen_batched_cached_step_mask visible prefix is out of range");
-    }
-    if (current_slot < 0 || current_slot >= mask_steps) {
-        throw std::runtime_error("write_qwen_batched_cached_step_mask current slot is out of range");
-    }
     const auto masked = ggml_fp32_to_fp16(-INFINITY);
     const auto visible = ggml_fp32_to_fp16(0.0F);
     const size_t row_size = static_cast<size_t>(mask_steps);
@@ -525,6 +519,9 @@ void write_qwen_batched_cached_step_mask(
         scratch.resize(total_size);
     }
     for (int64_t batch = 0; batch < batch_size; ++batch) {
+        const int64_t end = member_ends.empty() ? cache_slots[static_cast<size_t>(batch)] : member_ends[static_cast<size_t>(batch)];
+        const int64_t visible_prefix_steps = end;
+        const int64_t current_slot = cache_slots[static_cast<size_t>(batch)];
         const size_t offset = static_cast<size_t>(batch) * row_size;
         std::fill(
             scratch.begin() + static_cast<std::ptrdiff_t>(offset),

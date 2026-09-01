@@ -79,6 +79,8 @@ struct BatchedKVLayerState {
 struct TransformerBatchedKVState {
     int64_t batch_size = 0;
     int64_t current_end = 0;
+    // 可选的 per-member 结束位置（大小 == batch_size）。空 = 均匀（current_end 生效）。
+    std::vector<int64_t> current_ends;
     std::vector<BatchedKVLayerState> layers;
 };
 
@@ -109,6 +111,13 @@ public:
     int64_t current_end() const noexcept;
     int64_t cache_steps() const noexcept;
 
+    // --- per-member 结束位置（不同序列可处于不同位置）---
+    int64_t member_end(int64_t batch) const noexcept;
+    void set_member_end(int64_t batch, int64_t end) noexcept;
+    void advance_member(int64_t batch, int64_t steps) noexcept;
+    // 返回 per-member ends（空=均匀，调用方回退到 cache_slots）
+    const std::vector<int64_t> & member_ends_for_mask() const noexcept { return member_ends_; }
+
 private:
     struct LayerCache {
         core::TensorValue key_tensor;
@@ -122,6 +131,8 @@ private:
     int64_t row_elems_ = 0;
     int64_t valid_steps_ = 0;
     int64_t current_end_ = 0;
+    // per-member 结束位置；空 = 均匀（用 current_end_）
+    std::vector<int64_t> member_ends_;
     TransformerKVCacheOptions options_;
     std::vector<LayerCache> layers_;
 };

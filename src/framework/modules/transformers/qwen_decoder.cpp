@@ -861,8 +861,36 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
         const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
             ? &*weights.rope_frequency_factors
             : nullptr;
-        q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
-        k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+        // per-member positions: positions len == batch (each sequence its own position).
+        // Permute q/k from [batch, heads, 1, dim] to [1, batch, heads, dim] so batch sits
+        // on ggml ne[2] (token axis); RoPE takes per-member pos; permute back.
+        if (positions.shape.dims[0] > 1 && positions.shape.dims[0] == q.shape.dims[0]) {
+            const int64_t batch = q.shape.dims[0];
+            const int64_t heads = q.shape.dims[1];
+            auto perm_batch_to_token = [&](core::TensorValue x) {
+                const auto contiguous = core::ensure_backend_addressable_layout(ctx, x);
+                return core::wrap_tensor(
+                    ggml_permute(ctx.ggml, contiguous.tensor, 1, 0, 2, 3),
+                    core::TensorShape::from_dims({1, batch, heads, x.shape.last_dim()}),
+                    x.type);
+            };
+            auto perm_back = [&](core::TensorValue x) {
+                const auto contiguous = core::ensure_backend_addressable_layout(ctx, x);
+                return core::wrap_tensor(
+                    ggml_permute(ctx.ggml, contiguous.tensor, 1, 0, 2, 3),
+                    core::TensorShape::from_dims({batch, heads, 1, x.shape.last_dim()}),
+                    x.type);
+            };
+            q = perm_batch_to_token(q);
+            k = perm_batch_to_token(k);
+            q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
+            k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+            q = perm_back(q);
+            k = perm_back(k);
+        } else {
+            q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
+            k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+        }
         if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
             q = activation_cast(ctx, q, config_.activation_cast);
             k = activation_cast(ctx, k, config_.activation_cast);
