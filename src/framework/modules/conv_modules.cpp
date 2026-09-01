@@ -193,6 +193,67 @@ core::TensorValue depthwise_conv2d_weight(
 int64_t conv1d_output_frames(const Conv1dConfig & config, int64_t input_frames) {
     return (input_frames + 2 * config.padding - config.dilation * (config.kernel_size - 1) - 1) / config.stride + 1;
 }
+bool is_conv1d_pertap_fast_path_eligible(
+    const core::ModuleBuildContext & ctx,
+    const Conv1dConfig & config,
+    const core::TensorValue & input) noexcept {
+    return ctx.backend_type == core::BackendType::Metal &&
+           config.padding == 0 &&
+           config.stride == 1 &&
+           input.shape.dims[0] == 1 &&
+           input.type == GGML_TYPE_F32 &&
+           input.tensor->ne[0] == input.shape.dims[2] &&
+           input.tensor->ne[1] == config.in_channels &&
+           ggml_is_contiguous(input.tensor);
+}
+
+// Metal fast path for stride-1 conv1d on the time-fast [frames, channels] layout used by
+// the audio codecs. ggml_conv_1d materializes an im2col matrix whose kernel taps are
+// strided gathers in this layout (~200 ms per conv at [569k, 96] on M4); instead, transpose
+// the input to channel-fast once, run one contiguous GEMM per kernel tap, and transpose
+// the accumulator back (~3-6x faster).
+core::TensorValue build_conv1d_pertap_fast_path(
+    core::ModuleBuildContext & ctx,
+    const Conv1dConfig & config,
+    const core::TensorValue & input,
+    const core::TensorValue & weight_f32,
+    const core::TensorShape & output_shape) {
+    // weight logical [OC, IC, K] -> ggml ne [K, IC, OC]; regroup rows so each tap slice
+    // [IC, OC] is a contiguous view: row index = channel + in_channels * tap.
+    auto * weight_taps = ggml_reshape_2d(
+        ctx.ggml,
+        ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight_f32.tensor, 1, 0, 2, 3)),
+        config.in_channels * config.kernel_size,
+        config.out_channels);
+    // channel-fast copy of the input: [IC, frames]; kernel taps become contiguous columns.
+    auto * input_cf = ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, input.tensor));
+    const int64_t output_frames = output_shape.dims[2];
+    ggml_tensor * acc = nullptr;
+    for (int64_t tap = 0; tap < config.kernel_size; ++tap) {
+        // columns[c, j] = input[tap * dilation + j, c]: contiguous column view of input_cf.
+        auto * columns = ggml_view_2d(
+            ctx.ggml,
+            input_cf,
+            config.in_channels,
+            output_frames,
+            input_cf->nb[1],
+            static_cast<size_t>(tap * config.dilation) * config.in_channels * sizeof(float));
+        auto * tap_weights = ggml_view_2d(
+            ctx.ggml,
+            weight_taps,
+            config.in_channels,
+            config.out_channels,
+            weight_taps->nb[1],
+            static_cast<size_t>(tap) * config.in_channels * sizeof(float));
+        auto * partial = ggml_mul_mat(ctx.ggml, tap_weights, columns);
+        acc = (acc == nullptr) ? partial : ggml_add(ctx.ggml, acc, partial);
+    }
+    // mul_mat yields [OC, frames]; restore the canonical [frames, OC] orientation.
+    return core::wrap_tensor(
+        ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, acc)),
+        output_shape,
+        GGML_TYPE_F32);
+}
 
 int64_t conv2d_output_dim(int64_t input, int kernel, int stride, int padding, int dilation) {
     return (input + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1;
@@ -362,7 +423,9 @@ core::TensorValue Conv1dModule::build(
     const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
     const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "Conv1dModule");
     core::TensorValue output;
-    if (input.shape.dims[0] == 1) {
+    if (is_conv1d_pertap_fast_path_eligible(ctx, config_, input)) {
+        output = build_conv1d_pertap_fast_path(ctx, config_, input_contiguous, weight_contiguous, output_shape);
+    } else if (input.shape.dims[0] == 1) {
         output = core::wrap_tensor(
             ggml_conv_1d(
                 ctx.ggml,
