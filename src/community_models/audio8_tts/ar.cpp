@@ -1479,6 +1479,40 @@ SlowForwardOutput falcon_forward_step(
                                              embedding, state, position, profile);
     }
 
+    // On host backends every loop-invariant input (norm/conv weights, SSM
+    // constants) and every state buffer (conv, ssm, KV cache) is bound to the
+    // per-step graph as an external view of its host vector — gallocr skips
+    // tensors with externally set data (ggml-alloc.c), so the per-step upload
+    // path collapses to nothing and the state write-backs happen in-graph via
+    // ggml_cpy (each cpy depends on the nodes that read the old state, so the
+    // read strictly precedes the write). GPU backends keep the explicit
+    // upload/download path below.
+    const bool zero_copy = core::backend_type(backend) == core::BackendType::Cpu;
+    if (zero_copy && !state.constants_ready) {
+        state.pre_A.resize(static_cast<size_t>(n_layer));
+        state.pre_D.resize(static_cast<size_t>(n_layer));
+        for (int64_t li = 0; li < n_layer; ++li) {
+            const auto & layer = weights.falcon_layers[static_cast<size_t>(li)];
+            auto & a_vals = state.pre_A[static_cast<size_t>(li)];
+            a_vals.resize(static_cast<size_t>(n_mamba_heads));
+            std::vector<float> a_log(static_cast<size_t>(n_mamba_heads));
+            ggml_backend_tensor_get(layer.ssm_A.tensor, a_log.data(), 0, a_log.size() * sizeof(float));
+            for (int64_t h = 0; h < n_mamba_heads; ++h) {
+                a_vals[static_cast<size_t>(h)] = -std::exp(a_log[static_cast<size_t>(h)]);
+            }
+            auto & d_vals = state.pre_D[static_cast<size_t>(li)];
+            d_vals.resize(static_cast<size_t>(d_inner));
+            std::vector<float> d_raw(static_cast<size_t>(n_mamba_heads));
+            ggml_backend_tensor_get(layer.ssm_D.tensor, d_raw.data(), 0, d_raw.size() * sizeof(float));
+            for (int64_t h = 0; h < n_mamba_heads; ++h) {
+                for (int64_t d = 0; d < mamba_head_dim; ++d) {
+                    d_vals[static_cast<size_t>(d + h * mamba_head_dim)] = d_raw[static_cast<size_t>(h)];
+                }
+            }
+        }
+        state.constants_ready = true;
+    }
+
     auto t_init = Clock::now();
     ggml_init_params params{arena_bytes, nullptr, true};
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx(ggml_init(params));
@@ -1587,7 +1621,7 @@ SlowForwardOutput falcon_forward_step(
         cur_in_ts.push_back(cur);
         // input_layernorm (RMS)
         ggml_tensor * ln_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
-        ggml_set_input(ln_w);
+        bind_const(ln_w, layer.input_layernorm.values, state.ones_dim, 1.0F);
         ln_w_ts.push_back(ln_w);
         ggml_tensor * normed = ggml_rms_norm(ctx.get(), cur, norm_eps);
         normed = ggml_mul(ctx.get(), normed, ln_w);
@@ -1601,21 +1635,32 @@ SlowForwardOutput falcon_forward_step(
 
         // conv: state (d_conv-1 rows) + current xBC -> [d_conv, conv_dim, 1]
         ggml_tensor * st_t = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, conv_dim, d_conv - 1);
-        ggml_set_input(st_t);
+        bind_state(st_t, state.conv_states[static_cast<size_t>(li)]);
         conv_st_ts.push_back(st_t);
         ggml_tensor * stT = ggml_cont(ctx.get(), ggml_transpose(ctx.get(), st_t));  // [d_conv-1, conv_dim]
         ggml_tensor * xBC_r = ggml_cont(ctx.get(), ggml_transpose(ctx.get(), ggml_reshape_2d(ctx.get(), xBC, conv_dim, 1)));  // [1, conv_dim]
         ggml_tensor * sx = ggml_concat(ctx.get(), stT, xBC_r, 0);                   // [d_conv, conv_dim]
         sx_ts.push_back(sx);
+        if (zero_copy) {
+            // Next conv state = sx rows 1..d_conv-1, written back into the host
+            // state vector in-graph. The cpy depends on sx (hence on the cont()
+            // that consumed st_t), so the old state is read before it is
+            // overwritten on every backend.
+            ggml_tensor * tail = ggml_view_2d(ctx.get(), sx, d_conv - 1, conv_dim,
+                                              sx->nb[1], ggml_element_size(sx));
+            writebacks.push_back(ggml_cpy(ctx.get(), ggml_transpose(ctx.get(), tail), st_t));
+        } else {
+            ggml_set_output(sx);  // host reads the conv window back — pin the buffer
+        }
         ggml_tensor * sx3 = ggml_reshape_3d(ctx.get(), sx, d_conv, conv_dim, 1);
         // ggml ssm_conv computes y[t] = sum_k w[k]*x[t+k] (unflipped), whereas the HF
         // causal_conv1d reference uses w[k]*x[t+d_conv-1-k]. Kernel flipped at feed time.
         ggml_tensor * conv_w2 = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, d_conv, conv_dim);
-        ggml_set_input(conv_w2);
+        bind_const(conv_w2, layer.conv1d_kernel.values, state.zeros_conv_kernel, 0.0F);
         conv_w2_ts.push_back(conv_w2);
         ggml_tensor * xBC_conv = ggml_ssm_conv(ctx.get(), sx3, conv_w2);  // [conv_dim, 1, 1]
         ggml_tensor * conv_b = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, conv_dim);
-        ggml_set_input(conv_b);
+        bind_const(conv_b, layer.ssm_conv1d_b.values, state.zeros_conv, 0.0F);
         conv_b_ts.push_back(conv_b);
         xBC_conv = ggml_add(ctx.get(), xBC_conv, ggml_reshape_3d(ctx.get(), conv_b, conv_dim, 1, 1));
         xBC_conv = ggml_silu(ctx.get(), xBC_conv);
@@ -1649,48 +1694,54 @@ SlowForwardOutput falcon_forward_step(
                                          n_mamba_heads * ggml_element_size(dt_eff),
                                          n_mamba_heads * ggml_element_size(dt_eff), 0);
 
-        // A = -exp(A_log): [1, n_mamba_heads]
-        std::vector<float> A_vals(static_cast<size_t>(n_mamba_heads));
-        {
-            std::vector<float> a_log(static_cast<size_t>(n_mamba_heads));
-            ggml_backend_tensor_get(layer.ssm_A.tensor, a_log.data(), 0, a_log.size() * sizeof(float));
-            for (int64_t h = 0; h < n_mamba_heads; ++h) {
-                A_vals[static_cast<size_t>(h)] = -std::exp(a_log[static_cast<size_t>(h)]);
-            }
-        }
+        // A = -exp(A_log): [1, n_mamba_heads] — precomputed once per generation
+        // into state.pre_A (zero-copy) or uploaded per step below.
         ggml_tensor * A_t = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, 1, n_mamba_heads);
-        ggml_set_input(A_t);
+        if (zero_copy) {
+            A_t->data = state.pre_A[static_cast<size_t>(li)].data();
+        } else {
+            ggml_set_input(A_t);
+        }
         A_ts.push_back(A_t);
 
         // ssm state: [d_state, mamba_head_dim, n_mamba_heads]
         ggml_tensor * ssm_t = ggml_new_tensor_3d(ctx.get(), GGML_TYPE_F32, d_state, mamba_head_dim, n_mamba_heads);
-        ggml_set_input(ssm_t);
+        bind_state(ssm_t, state.ssm_states[static_cast<size_t>(li)]);
         ssm_st_ts.push_back(ssm_t);
 
         // ids for scan (1 sequence)
         ggml_tensor * ids = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
-        ggml_set_input(ids);
+        if (zero_copy) {
+            ids->data = &state.ids_value;
+        } else {
+            ggml_set_input(ids);
+        }
         ids_ts.push_back(ids);
 
         ggml_tensor * scan = ggml_ssm_scan(ctx.get(), ssm_t, x4, dt3, A_t, B4, C4, ids);
-        ggml_set_output(scan);  // keep state tail alive for host read-back
         scan_ts.push_back(scan);
+        if (zero_copy) {
+            // New ssm state = scan tail (after the d_inner y values), written
+            // back into the host state vector in-graph. The cpy depends on the
+            // scan that read ssm_t, so the old state is fully consumed first.
+            ggml_tensor * next_state = ggml_view_3d(ctx.get(), scan,
+                                                    d_state, mamba_head_dim, n_mamba_heads,
+                                                    d_state * ggml_element_size(scan),
+                                                    d_state * mamba_head_dim * ggml_element_size(scan),
+                                                    d_inner * ggml_element_size(scan));
+            writebacks.push_back(ggml_cpy(ctx.get(), next_state, ssm_t));
+        } else {
+            ggml_set_output(scan);  // keep state tail alive for host read-back
+        }
         ggml_tensor * y = ggml_view_1d(ctx.get(), scan, d_inner, 0);
 
-        // y += x * D
-        std::vector<float> D_vals(static_cast<size_t>(d_inner));
-        {
-            std::vector<float> d_raw(static_cast<size_t>(n_mamba_heads));
-            ggml_backend_tensor_get(layer.ssm_D.tensor, d_raw.data(), 0, d_raw.size() * sizeof(float));
-            for (int64_t h = 0; h < n_mamba_heads; ++h) {
-                const float dv = d_raw[static_cast<size_t>(h)];
-                for (int64_t d = 0; d < mamba_head_dim; ++d) {
-                    D_vals[static_cast<size_t>(d + h * mamba_head_dim)] = dv;
-                }
-            }
-        }
+        // y += x * D  (D precomputed per generation / uploaded per step)
         ggml_tensor * D_t = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, d_inner);
-        ggml_set_input(D_t);
+        if (zero_copy) {
+            D_t->data = state.pre_D[static_cast<size_t>(li)].data();
+        } else {
+            ggml_set_input(D_t);
+        }
         D_ts.push_back(D_t);
         y = ggml_add(ctx.get(), y, ggml_mul(ctx.get(), ggml_view_1d(ctx.get(), x4, d_inner, 0), D_t));
 
@@ -1722,7 +1773,11 @@ SlowForwardOutput falcon_forward_step(
 
         // RoPE (NEOX / HF default half rotation), base 1e11; ne2 = n_tokens = 1.
         ggml_tensor * pos_t = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
-        ggml_set_input(pos_t);
+        if (zero_copy) {
+            pos_t->data = &state.pos_value;
+        } else {
+            ggml_set_input(pos_t);
+        }
         pos_ts.push_back(pos_t);
         ggml_tensor * q_r = ggml_rope_ext(ctx.get(), q4, pos_t, nullptr, head_dim,
                                           GGML_ROPE_TYPE_NEOX, config.text.max_seq_len,
@@ -1747,8 +1802,8 @@ SlowForwardOutput falcon_forward_step(
         // KV cache in flash layout: [head_dim, n_tokens, n_kv, 1]
         ggml_tensor * k_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
         ggml_tensor * v_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
-        ggml_set_input(k_cache_t);
-        ggml_set_input(v_cache_t);
+        bind_state(k_cache_t, state.k_cache[static_cast<size_t>(li)]);
+        bind_state(v_cache_t, state.v_cache[static_cast<size_t>(li)]);
         k_cache_ts.push_back(k_cache_t);
         v_cache_ts.push_back(v_cache_t);
         ggml_tensor * K_all = ggml_concat(ctx.get(), k_cache_t, k_p, 1);  // [head_dim, seq+1, n_kv, 1]
@@ -1804,7 +1859,7 @@ SlowForwardOutput falcon_forward_step(
 
         // ---- FFN ----
         ggml_tensor * pre_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
-        ggml_set_input(pre_w);
+        bind_const(pre_w, layer.pre_ff_layernorm.values, state.ones_dim, 1.0F);
         pre_w_ts.push_back(pre_w);
         ggml_tensor * h2 = ggml_rms_norm(ctx.get(), h, norm_eps);
         h2 = ggml_mul(ctx.get(), h2, pre_w);
@@ -1818,7 +1873,7 @@ SlowForwardOutput falcon_forward_step(
 
     // final norm + semantic head
     ggml_tensor * final_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
-    ggml_set_input(final_w);
+    bind_const(final_w, weights.slow_norm.values, state.ones_dim, 1.0F);
     ggml_tensor * final_norm = ggml_rms_norm(ctx.get(), cur, norm_eps);
     final_norm = ggml_mul(ctx.get(), final_norm, final_w);
     ggml_tensor * logits = ggml_mul_mat(ctx.get(), weights.falcon_lm_head.tensor, final_norm);  // [vocab]
@@ -1837,6 +1892,9 @@ SlowForwardOutput falcon_forward_step(
     }
     ggml_build_forward_expand(gf, logits_out);
     ggml_build_forward_expand(gf, hidden_out);
+    for (ggml_tensor * wb : writebacks) {
+        ggml_build_forward_expand(gf, wb);
+    }
     auto t_graph = Clock::now();
     ggml_gallocr_t gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
     if (!gallocr || !ggml_gallocr_reserve(gallocr, gf) || !ggml_gallocr_alloc_graph(gallocr, gf)) {
@@ -1865,6 +1923,12 @@ SlowForwardOutput falcon_forward_step(
     }
     // ---- feed host constants ----
     dbg_ts(cur, embedding.data(), 0, embedding.size() * sizeof(float));
+    if (zero_copy) {
+        // Everything except the rope position is bound to host memory already;
+        // the graph reads the position straight from the state struct.
+        state.pos_value = static_cast<int32_t>(position);
+    } else {
+    ggml_backend_tensor_set(cur, embedding.data(), 0, embedding.size() * sizeof(float));
     {
         const int32_t ids0 = 0;
         const int32_t posv = static_cast<int32_t>(position);
@@ -1950,6 +2014,7 @@ SlowForwardOutput falcon_forward_step(
     } else {
         std::vector<float> ones(static_cast<size_t>(dim), 1.0F);
         dbg_ts(final_w, ones.data(), 0, ones.size() * sizeof(float));
+    }
     }
 
     core::set_backend_threads(backend, threads);
@@ -2086,6 +2151,9 @@ SlowForwardOutput falcon_forward_step(
             fclose(f);
         }
     }
+    // conv/ssm states: updated in-graph on host backends; on GPU backends the
+    // host reads the new state tails back and shifts them into the vectors.
+    if (!zero_copy) {
     // conv state: last d_conv-1 kernel rows of sx (per layer). sx is col-major
     // [d_conv, conv_dim], element (k, c) at k + d_conv*c.
     {
@@ -2129,6 +2197,7 @@ SlowForwardOutput falcon_forward_step(
                 }
             }
         }
+    }
     }
 
     // KV cache append (fallback path only; the zero-copy path wrote the fresh
