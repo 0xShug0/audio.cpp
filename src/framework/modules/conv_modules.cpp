@@ -319,7 +319,8 @@ bool is_conv_transpose1d_col2im_fast_path_eligible(
     const core::ModuleBuildContext & ctx,
     const ConvTranspose1dConfig & config) noexcept {
     return (core::uses_ggml_cuda_or_hip_backend(ctx.backend_type) ||
-            ctx.backend_type == core::BackendType::Metal) &&
+            ctx.backend_type == core::BackendType::Metal ||
+            ctx.backend_type == core::BackendType::Vulkan) &&
            config.dilation == 1;
 }
 
