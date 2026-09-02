@@ -48,11 +48,20 @@ penalty `1.2`.
 The upstream pipeline decodes at 16 kHz and applies its learned FlashSR
 upsampler. The native runtime executes both stages and returns 48 kHz audio.
 
+MiraTTS also exposes a streaming session. It splits long input at natural text
+boundaries, reuses one encoded speaker identity for the whole request, and emits
+each completed 48 kHz segment immediately. `text_chunk_size` controls the
+maximum segment size (160 codepoints by default), while `text_chunk_mode`
+selects the framework chunker. This is segment-level progressive synthesis;
+the acoustic processor, DAC, and FlashSR still decode each segment as a unit.
+
 ## Validation status
 
 - Official checkpoint conversion: validated.
 - Native CUDA build: validated.
 - Native CUDA smoke synthesis through all converted model components: validated.
+- Segment-level streaming synthesis: validated through the native streaming
+  session and `/v1/audio/speech/live` route.
 - Deterministic upstream comparison with identical speech/context tokens:
   validated (48 kHz waveform correlation 0.99996, SNR 41.1 dB).
 - End-to-end generation comparison: validated through matching tokenization,

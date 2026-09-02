@@ -10,7 +10,8 @@
     "clone"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "en"
@@ -79,6 +80,27 @@
         "required": false,
         "min": 1.0,
         "default": 1.2
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum codepoints per progressively emitted streaming segment; default 160.",
+        "required": false,
+        "min": 1,
+        "default": 160
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode used by streaming synthesis.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
       },
       {
         "name": "seed",

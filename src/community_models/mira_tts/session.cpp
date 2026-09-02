@@ -7,6 +7,7 @@
 #include "engine/community_models/mira_tts/speaker_encoder.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
+#include "engine/framework/text/chunking.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -87,10 +88,12 @@ MiraTTSOfflineSession::MiraTTSOfflineSession(
       contract_(require_contract(std::move(contract))) {
     runtime::validate_spec_backed_session_options(
         options, *contract_, kFamily, "MiraTTS");
-    if (task.mode != runtime::RunMode::Offline ||
+    if ((task.mode != runtime::RunMode::Offline &&
+         task.mode != runtime::RunMode::Streaming) ||
         (task.task != runtime::VoiceTaskKind::Tts &&
          task.task != runtime::VoiceTaskKind::VoiceCloning)) {
-        throw std::runtime_error("MiraTTS supports offline TTS/voice cloning only");
+        throw std::runtime_error(
+            "MiraTTS supports offline and streaming TTS/voice cloning only");
     }
     const auto lm_type = runtime::parse_tensor_storage_option(
         options.options, "backbone_weight_type", assets::TensorStorageType::Native,
@@ -162,19 +165,125 @@ runtime::TaskResult MiraTTSOfflineSession::run(
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("MiraTTS requires non-empty text input");
     }
+    if (task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("MiraTTS run requires an offline session");
+    }
     const auto context_codes = speaker_encoder_->encode(reference_audio(request));
-    const auto prompt_ids = prompt_->build(request.text_input->text, context_codes);
+    runtime::TaskResult result;
+    result.audio_output = synthesize_text(
+        request.text_input->text, context_codes, generation_options(request));
+    return result;
+}
+
+runtime::AudioBuffer MiraTTSOfflineSession::synthesize_text(
+    const std::string & text,
+    const std::vector<int32_t> & context_codes,
+    const MiraGenerationOptions & options) {
+    const auto prompt_ids = prompt_->build(text, context_codes);
     const auto speech_codes = generator_->generate(
-        prompt_ids, generation_options(request));
+        prompt_ids, options);
     if (speech_codes.empty()) {
         throw std::runtime_error("MiraTTS generated no speech tokens");
     }
     const auto latents = processor_->process(speech_codes, context_codes);
-    auto audio = decoder_->decode(
+    return decoder_->decode(
         latents, static_cast<int64_t>(speech_codes.size()));
+}
+
+runtime::StreamingPolicy MiraTTSOfflineSession::streaming_policy() const {
+    runtime::StreamingPolicy policy;
+    policy.input = runtime::StreamingInputKind::None;
+    policy.output = runtime::StreamingOutputKind::PullEvents;
+    return policy;
+}
+
+void MiraTTSOfflineSession::start_stream(
+    const runtime::TaskRequest & request) {
+    require_prepared("MiraTTS streaming");
+    runtime::validate_spec_backed_request_options(
+        request.options, *contract_, "MiraTTS");
+    if (task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("MiraTTS start_stream requires a streaming session");
+    }
+    if (!request.text_input.has_value() || request.text_input->text.empty()) {
+        throw std::runtime_error("MiraTTS streaming requires non-empty text input");
+    }
+    reset();
+    const int64_t chunk_size = engine::text::parse_text_chunk_size_override(
+        request.options).value_or(160);
+    const auto chunk_mode = engine::text::parse_text_chunk_mode_override(
+        request.options).value_or(engine::text::TextChunkMode::Default);
+    streaming_text_chunks_ = engine::text::split_text_chunks(
+        request.text_input->text, chunk_size, chunk_mode);
+    if (streaming_text_chunks_.empty()) {
+        throw std::runtime_error("MiraTTS streaming text chunking produced no segments");
+    }
+    streaming_context_codes_ = speaker_encoder_->encode(reference_audio(request));
+    streaming_generation_ = generation_options(request);
+    streaming_started_ = true;
+}
+
+std::optional<runtime::StreamEvent>
+MiraTTSOfflineSession::next_stream_event() {
+    if (!streaming_started_ || !streaming_generation_.has_value()) {
+        throw std::runtime_error("MiraTTS streaming has not been started");
+    }
+    if (streaming_chunk_index_ >= streaming_text_chunks_.size()) {
+        return std::nullopt;
+    }
+    const size_t index = streaming_chunk_index_++;
+    auto options = *streaming_generation_;
+    options.seed += index;
+    auto audio = synthesize_text(
+        streaming_text_chunks_[index], streaming_context_codes_, options);
+    streaming_audio_chunks_.push_back(audio);
+    runtime::StreamEvent event;
+    event.audio_output = std::move(audio);
+    if (stream_sink_) {
+        stream_sink_(event);
+    }
+    return event;
+}
+
+void MiraTTSOfflineSession::set_stream_event_sink(
+    runtime::StreamEventCallback sink) {
+    stream_sink_ = std::move(sink);
+}
+
+runtime::TaskResult MiraTTSOfflineSession::finish_stream() {
+    if (!streaming_started_) {
+        throw std::runtime_error("MiraTTS streaming has not been started");
+    }
     runtime::TaskResult result;
-    result.audio_output = std::move(audio);
+    runtime::AudioBuffer merged;
+    for (const auto & chunk : streaming_audio_chunks_) {
+        runtime::append_audio_buffer(merged, chunk);
+    }
+    if (merged.sample_rate == 0) {
+        throw std::runtime_error("MiraTTS streaming produced no audio chunks");
+    }
+    result.audio_output = std::move(merged);
+    reset();
     return result;
+}
+
+void MiraTTSOfflineSession::reset() {
+    streaming_context_codes_.clear();
+    streaming_text_chunks_.clear();
+    streaming_audio_chunks_.clear();
+    streaming_generation_.reset();
+    streaming_chunk_index_ = 0;
+    streaming_started_ = false;
+}
+
+runtime::StreamEvent MiraTTSOfflineSession::process_audio_chunk(
+    const runtime::AudioChunk & chunk) {
+    (void)chunk;
+    throw std::runtime_error("MiraTTS streaming does not consume audio chunks");
+}
+
+runtime::TaskResult MiraTTSOfflineSession::finalize() {
+    return finish_stream();
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_mira_tts_loader() {
