@@ -37,18 +37,21 @@ function(audiocpp_configure_server_frontends AUDIOCPP_SERVER_TARGET)
                 list(APPEND AUDIOCPP_SERVER_FRONTEND_INCLUDE_DIRS
                     "${PROJECT_SOURCE_DIR}/external/miniaudio")
             elseif (AUDIOCPP_SERVER_FRONTEND_MODULE STREQUAL "mp3_encode")
+                set(AUDIOCPP_LAME_ROOT ""
+                    CACHE PATH "Optional libmp3lame install prefix for the server mp3_encode frontend")
                 find_path(AUDIOCPP_LAME_INCLUDE_DIR
                     NAMES lame/lame.h
-                    HINTS "$ENV{CONDA_PREFIX}"
-                    PATH_SUFFIXES include)
+                    HINTS "${AUDIOCPP_LAME_ROOT}" "$ENV{CONDA_PREFIX}"
+                    PATH_SUFFIXES include Library/include)
                 find_library(AUDIOCPP_LAME_LIBRARY
                     NAMES mp3lame lame
-                    HINTS "$ENV{CONDA_PREFIX}"
-                    PATH_SUFFIXES lib)
+                    HINTS "${AUDIOCPP_LAME_ROOT}" "$ENV{CONDA_PREFIX}"
+                    PATH_SUFFIXES lib Library/lib)
                 if (NOT AUDIOCPP_LAME_INCLUDE_DIR OR NOT AUDIOCPP_LAME_LIBRARY)
                     message(FATAL_ERROR
                         "AUDIOCPP_SERVER_FRONTEND_MODULES=mp3_encode requires libmp3lame headers and library "
-                        "(install libmp3lame-dev or build from an environment that provides lame/lame.h)")
+                        "(lame/lame.h and libmp3lame). Install libmp3lame with your package manager, "
+                        "use a conda environment that provides lame, or pass -DAUDIOCPP_LAME_ROOT=<prefix>.")
                 endif()
                 string(APPEND AUDIOCPP_SERVER_FRONTEND_DECLARATIONS
                     "void register_mp3_encode_module(ServerFrontendRegistry & registry);\n")
