@@ -5,11 +5,15 @@
 #include "engine/community_models/mira_tts/processor.h"
 #include "engine/community_models/mira_tts/prompt.h"
 #include "engine/community_models/mira_tts/speaker_encoder.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -19,6 +23,9 @@ namespace {
 constexpr const char * kFamily = "mira_tts";
 constexpr size_t kGraphBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kWeightBytes = 256ull * 1024ull * 1024ull;
+constexpr size_t kDefaultReferenceCacheSlots = 1;
+
+using Clock = std::chrono::steady_clock;
 
 std::shared_ptr<const MiraTTSAssets> require_assets(
     std::shared_ptr<const MiraTTSAssets> value) {
@@ -66,6 +73,29 @@ MiraGenerationOptions generation_options(const runtime::TaskRequest & request) {
     return out;
 }
 
+size_t reference_cache_slots(const runtime::SessionOptions & options) {
+    const int64_t slots = runtime::parse_i64_option(
+        options.options,
+        {"mira_tts.reference_cache_slots", "reference_cache_slots"})
+        .value_or(static_cast<int64_t>(kDefaultReferenceCacheSlots));
+    if (slots < 0) {
+        throw std::runtime_error(
+            "mira_tts.reference_cache_slots must be non-negative");
+    }
+    if (static_cast<uint64_t>(slots) >
+        static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+        throw std::runtime_error(
+            "mira_tts.reference_cache_slots is too large");
+    }
+    return static_cast<size_t>(slots);
+}
+
+uint64_t mix_reference_hash(uint64_t hash, uint64_t value) {
+    hash ^= value;
+    hash *= 1099511628211ull;
+    return hash;
+}
+
 std::unique_ptr<runtime::IVoiceTaskSession> create_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options,
@@ -85,7 +115,8 @@ MiraTTSOfflineSession::MiraTTSOfflineSession(
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),
-      contract_(require_contract(std::move(contract))) {
+      contract_(require_contract(std::move(contract))),
+      reference_cache_(reference_cache_slots(this->options())) {
     runtime::validate_spec_backed_session_options(
         options, *contract_, kFamily, "MiraTTS");
     if ((task.mode != runtime::RunMode::Offline &&
@@ -141,8 +172,35 @@ void MiraTTSOfflineSession::prepare(
     if (request.voice.has_value() && request.voice->speaker.has_value() &&
         request.voice->speaker->audio.has_value()) {
         prepared_reference_ = *request.voice->speaker->audio;
+        (void)context_codes(*prepared_reference_);
     }
     mark_prepared();
+}
+
+bool MiraTTSOfflineSession::ReferenceCacheKeyEqual::operator()(
+    const ReferenceCacheKey & lhs,
+    const ReferenceCacheKey & rhs) const noexcept {
+    return lhs.sample_rate == rhs.sample_rate &&
+        lhs.channels == rhs.channels &&
+        lhs.sample_count == rhs.sample_count &&
+        lhs.sample_hash == rhs.sample_hash;
+}
+
+MiraTTSOfflineSession::ReferenceCacheKey
+MiraTTSOfflineSession::make_reference_cache_key(
+    const runtime::AudioBuffer & audio) {
+    uint64_t hash = 1469598103934665603ull;
+    for (const float sample : audio.samples) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &sample, sizeof(bits));
+        hash = mix_reference_hash(hash, static_cast<uint64_t>(bits));
+    }
+    return ReferenceCacheKey{
+        audio.sample_rate,
+        audio.channels,
+        static_cast<uint64_t>(audio.samples.size()),
+        hash,
+    };
 }
 
 const runtime::AudioBuffer & MiraTTSOfflineSession::reference_audio(
@@ -157,6 +215,30 @@ const runtime::AudioBuffer & MiraTTSOfflineSession::reference_audio(
         "MiraTTS requires a reference voice in voice.speaker.audio or audio_input");
 }
 
+const std::vector<int32_t> & MiraTTSOfflineSession::context_codes(
+    const runtime::AudioBuffer & reference) {
+    const auto key_start = Clock::now();
+    auto key = make_reference_cache_key(reference);
+    engine::debug::timing_log_scalar(
+        "mira_tts.reference.hash_ms", engine::debug::elapsed_ms(key_start));
+    if (const auto * cached = reference_cache_.find(key)) {
+        engine::debug::trace_log_scalar("mira_tts.reference.cache_hit", true);
+        return *cached;
+    }
+
+    engine::debug::trace_log_scalar("mira_tts.reference.cache_hit", false);
+    const auto encode_start = Clock::now();
+    auto encoded = speaker_encoder_->encode(reference);
+    engine::debug::timing_log_scalar(
+        "mira_tts.reference.encode_ms", engine::debug::elapsed_ms(encode_start));
+    if (reference_cache_.capacity() == 0) {
+        uncached_context_codes_ = std::move(encoded);
+        return *uncached_context_codes_;
+    }
+    reference_cache_.put(key, std::move(encoded));
+    return *reference_cache_.find(key);
+}
+
 runtime::TaskResult MiraTTSOfflineSession::run(
     const runtime::TaskRequest & request) {
     require_prepared("MiraTTS run");
@@ -168,10 +250,10 @@ runtime::TaskResult MiraTTSOfflineSession::run(
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("MiraTTS run requires an offline session");
     }
-    const auto context_codes = speaker_encoder_->encode(reference_audio(request));
+    const auto & codes = context_codes(reference_audio(request));
     runtime::TaskResult result;
     result.audio_output = synthesize_text(
-        request.text_input->text, context_codes, generation_options(request));
+        request.text_input->text, codes, generation_options(request));
     return result;
 }
 
@@ -179,15 +261,28 @@ runtime::AudioBuffer MiraTTSOfflineSession::synthesize_text(
     const std::string & text,
     const std::vector<int32_t> & context_codes,
     const MiraGenerationOptions & options) {
+    const auto prompt_start = Clock::now();
     const auto prompt_ids = prompt_->build(text, context_codes);
+    engine::debug::timing_log_scalar(
+        "mira_tts.prompt_ms", engine::debug::elapsed_ms(prompt_start));
+    const auto generator_start = Clock::now();
     const auto speech_codes = generator_->generate(
         prompt_ids, options);
+    engine::debug::timing_log_scalar(
+        "mira_tts.generator_ms", engine::debug::elapsed_ms(generator_start));
     if (speech_codes.empty()) {
         throw std::runtime_error("MiraTTS generated no speech tokens");
     }
+    const auto processor_start = Clock::now();
     const auto latents = processor_->process(speech_codes, context_codes);
-    return decoder_->decode(
+    engine::debug::timing_log_scalar(
+        "mira_tts.processor_ms", engine::debug::elapsed_ms(processor_start));
+    const auto decoder_start = Clock::now();
+    auto audio = decoder_->decode(
         latents, static_cast<int64_t>(speech_codes.size()));
+    engine::debug::timing_log_scalar(
+        "mira_tts.decoder_ms", engine::debug::elapsed_ms(decoder_start));
+    return audio;
 }
 
 runtime::StreamingPolicy MiraTTSOfflineSession::streaming_policy() const {
@@ -218,7 +313,7 @@ void MiraTTSOfflineSession::start_stream(
     if (streaming_text_chunks_.empty()) {
         throw std::runtime_error("MiraTTS streaming text chunking produced no segments");
     }
-    streaming_context_codes_ = speaker_encoder_->encode(reference_audio(request));
+    streaming_context_codes_ = context_codes(reference_audio(request));
     streaming_generation_ = generation_options(request);
     streaming_started_ = true;
 }

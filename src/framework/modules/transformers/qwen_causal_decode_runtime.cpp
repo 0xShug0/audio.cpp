@@ -291,10 +291,12 @@ ggml_tensor * make_logits_readback_token_ids(
     if (config.logits_readback_token_ids.empty()) {
         return nullptr;
     }
-    return ggml_new_tensor_1d(
+    auto * tensor = ggml_new_tensor_1d(
         ctx,
         GGML_TYPE_I32,
         static_cast<int64_t>(config.logits_readback_token_ids.size()));
+    ggml_set_input(tensor);
+    return tensor;
 }
 
 core::TensorValue wrap_logits_readback_token_ids(
@@ -638,7 +640,10 @@ private:
     };
 
     void ensure_prefill_token_graph(int64_t steps) {
-        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Token && prefill_steps_ == steps) {
+        if (prefill_graph_ != nullptr &&
+            prefill_input_kind_ == InputKind::Token &&
+            prefill_steps_ == steps &&
+            config_.logits_readback_token_ids.empty()) {
             debug::timing_log_scalar(config_.trace_name + ".prefill.graph.build_ms", 0.0);
             debug::trace_log_scalar(config_.trace_name + ".prefill.steps", steps);
             return;
@@ -648,7 +653,10 @@ private:
     }
 
     void ensure_prefill_embedding_graph(int64_t steps) {
-        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Embedding && prefill_steps_ == steps) {
+        if (prefill_graph_ != nullptr &&
+            prefill_input_kind_ == InputKind::Embedding &&
+            prefill_steps_ == steps &&
+            config_.logits_readback_token_ids.empty()) {
             debug::timing_log_scalar(config_.trace_name + ".prefill.graph.build_ms", 0.0);
             debug::trace_log_scalar(config_.trace_name + ".prefill.steps", steps);
             return;
@@ -819,7 +827,8 @@ private:
 
     void ensure_batched_prefill_token_graph(int64_t batch_size, int64_t steps) {
         if (batched_prefill_graph_ != nullptr && batched_prefill_input_kind_ == InputKind::Token &&
-            batched_prefill_batch_size_ == batch_size && batched_prefill_steps_ == steps) {
+            batched_prefill_batch_size_ == batch_size && batched_prefill_steps_ == steps &&
+            config_.logits_readback_token_ids.empty()) {
             debug::timing_log_scalar(config_.trace_name + ".batched_prefill.graph.build_ms", 0.0);
             return;
         }
@@ -829,7 +838,8 @@ private:
 
     void ensure_batched_prefill_embedding_graph(int64_t batch_size, int64_t steps) {
         if (batched_prefill_graph_ != nullptr && batched_prefill_input_kind_ == InputKind::Embedding &&
-            batched_prefill_batch_size_ == batch_size && batched_prefill_steps_ == steps) {
+            batched_prefill_batch_size_ == batch_size && batched_prefill_steps_ == steps &&
+            config_.logits_readback_token_ids.empty()) {
             debug::timing_log_scalar(config_.trace_name + ".batched_prefill.graph.build_ms", 0.0);
             return;
         }

@@ -3,6 +3,7 @@
 #include "engine/framework/audio/flashsr.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -21,6 +23,8 @@
 
 namespace engine::community_models::mira_tts {
 namespace {
+
+using Clock = std::chrono::steady_clock;
 
 struct ContextDeleter {
     void operator()(ggml_context * context) const noexcept {
@@ -214,14 +218,16 @@ struct MiraDecoder::Impl {
         if (frames <= 0 || latents.size() != static_cast<size_t>(frames * 1024)) {
             throw std::runtime_error("MiraTTS decoder expects [1024, frames] latents");
         }
+        const auto build_start = Clock::now();
         ggml_init_params params{graph_context_bytes, nullptr, true};
-        std::unique_ptr<ggml_context, ContextDeleter> ctx(ggml_init(params));
-        if (!ctx) throw std::runtime_error("failed to create MiraTTS decoder graph context");
-        core::ModuleBuildContext build{ctx.get(), "mira_tts.decoder"};
-        auto * input_tensor = ggml_new_tensor_3d(ctx.get(), GGML_TYPE_F32, frames, 1024, 1);
-        ggml_set_input(input_tensor);
+        std::unique_ptr<ggml_context, ContextDeleter> context(ggml_init(params));
+        if (!context) throw std::runtime_error("failed to create MiraTTS decoder graph context");
+        core::ModuleBuildContext build{
+            context.get(), "mira_tts.decoder", execution.backend_type()};
+        auto * input = ggml_new_tensor_3d(context.get(), GGML_TYPE_F32, frames, 1024, 1);
+        ggml_set_input(input);
         auto x = core::wrap_tensor(
-            input_tensor, core::TensorShape::from_dims({1, 1024, frames}), GGML_TYPE_F32);
+            input, core::TensorShape::from_dims({1, 1024, frames}), GGML_TYPE_F32);
         x = conv(build, x, weights.first, 3);
         for (const auto & block : weights.blocks) {
             x = snake(build, x, block.snake);
@@ -240,30 +246,50 @@ struct MiraDecoder::Impl {
         x = modules::TanhModule{}.build(build, x);
         x = core::ensure_backend_addressable_layout(build, x);
         ggml_set_output(x.tensor);
-        auto * graph = ggml_new_graph_custom(ctx.get(), 65536, false);
+        auto * graph = ggml_new_graph_custom(context.get(), 65536, false);
         ggml_build_forward_expand(graph, x.tensor);
         ggml_gallocr_t allocator = ggml_gallocr_new(
             ggml_backend_get_default_buffer_type(execution.backend()));
-        if (allocator == nullptr || !ggml_gallocr_alloc_graph(allocator, graph)) {
+        if (allocator == nullptr ||
+            !ggml_gallocr_reserve(allocator, graph) ||
+            !ggml_gallocr_alloc_graph(allocator, graph)) {
             if (allocator != nullptr) ggml_gallocr_free(allocator);
             throw std::runtime_error("failed to allocate MiraTTS decoder graph");
         }
+        engine::debug::timing_log_scalar(
+            "mira_tts.decoder.dac.build_allocate_ms",
+            engine::debug::elapsed_ms(build_start, Clock::now()));
+        const auto upload_start = Clock::now();
         ggml_backend_tensor_set(
-            input_tensor, latents.data(), 0, latents.size() * sizeof(float));
+            input, latents.data(), 0, latents.size() * sizeof(float));
+        engine::debug::timing_log_scalar(
+            "mira_tts.decoder.dac.upload_ms",
+            engine::debug::elapsed_ms(upload_start, Clock::now()));
         core::set_backend_threads(execution.backend(), std::max(1, execution.config().threads));
+        const auto compute_start = Clock::now();
         const auto status = core::compute_backend_graph(execution.backend(), graph);
         ggml_backend_synchronize(execution.backend());
+        engine::debug::timing_log_scalar(
+            "mira_tts.decoder.dac.compute_ms",
+            engine::debug::elapsed_ms(compute_start, Clock::now()));
         if (status != GGML_STATUS_SUCCESS) {
             core::release_backend_graph_resources(execution.backend(), graph);
             ggml_gallocr_free(allocator);
             throw std::runtime_error("MiraTTS decoder graph compute failed");
         }
+        const auto readback_start = Clock::now();
         std::vector<float> decoded(static_cast<size_t>(x.shape.dims[2]));
         ggml_backend_tensor_get(x.tensor, decoded.data(), 0, decoded.size() * sizeof(float));
+        engine::debug::timing_log_scalar(
+            "mira_tts.decoder.dac.readback_ms",
+            engine::debug::elapsed_ms(readback_start, Clock::now()));
         core::release_backend_graph_resources(execution.backend(), graph);
         ggml_gallocr_free(allocator);
-
+        const auto upsample_start = Clock::now();
         const auto enhanced = upsampler.super_resolve_mono_16k(decoded);
+        engine::debug::timing_log_scalar(
+            "mira_tts.decoder.flashsr_ms",
+            engine::debug::elapsed_ms(upsample_start, Clock::now()));
         runtime::AudioBuffer audio;
         audio.samples = enhanced.samples;
         audio.sample_rate = enhanced.sample_rate;

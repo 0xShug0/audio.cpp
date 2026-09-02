@@ -55,6 +55,11 @@ maximum segment size (160 codepoints by default), while `text_chunk_mode`
 selects the framework chunker. This is segment-level progressive synthesis;
 the acoustic processor, DAC, and FlashSR still decode each segment as a unit.
 
+The session caches one encoded reference voice by default, so repeated requests
+with the same audio do not rerun the speaker encoder. Increase the bounded cache
+with `--session-option reference_cache_slots=<n>`, or set it to `0` to disable
+reference reuse.
+
 ## Validation status
 
 - Official checkpoint conversion: validated.

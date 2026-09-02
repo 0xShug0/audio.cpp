@@ -110,7 +110,16 @@
         "min": 0
       }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Encoded reference-voice cache slots; default 1. Set to 0 to disable reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
     "load": [
       {
         "name": "backbone_weight_type",

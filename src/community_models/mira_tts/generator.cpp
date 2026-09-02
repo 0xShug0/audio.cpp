@@ -128,6 +128,19 @@ modules::QwenCausalDecoderConfig decoder_config(
     return out;
 }
 
+std::vector<int32_t> generation_token_ids(const MiraTTSConfig & config) {
+    std::vector<int32_t> out;
+    out.reserve(static_cast<size_t>(
+        config.speech_token_end - config.speech_token_start + 2));
+    for (int32_t token = config.speech_token_start;
+         token <= config.speech_token_end;
+         ++token) {
+        out.push_back(token);
+    }
+    out.push_back(config.eos_token_id);
+    return out;
+}
+
 std::shared_ptr<MiraQwenWeights> load_weights(
     const MiraTTSAssets & assets,
     ggml_backend_t backend,
@@ -163,6 +176,14 @@ modules::QwenCausalDecodeRuntimeConfig runtime_config(
     modules::QwenCausalDecodeRuntimeConfig out;
     out.trace_name = "mira_tts.lm";
     out.decoder = decoder_config(config, backend_type);
+    // MiraTTS generation emits one of the 8192 speech-code tokens or EOS.
+    // Keep the tied full-vocabulary projection for exact model semantics, but
+    // read back and sample only its generative alphabet. This avoids copying
+    // and sorting 166k logits on the host for every autoregressive step.
+    out.decoder.logits_size = config.vocab_size;
+    out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.decoder.use_lm_head_bias = false;
+    out.logits_readback_token_ids = generation_token_ids(config);
     out.prefill_graph_arena_bytes = prefill_bytes;
     out.decode_graph_arena_bytes = decode_bytes;
     return out;
@@ -228,11 +249,14 @@ struct MiraGenerator::Impl {
         sampling::HfSamplerScratch scratch;
         scratch.reserve_vocab(static_cast<size_t>(config.vocab_size));
         std::mt19937 rng(static_cast<uint32_t>(options.seed));
-        std::vector<int32_t> history(prompt.begin(), prompt.end());
+        // Logits are compacted to [speech codes..., EOS]. Prompt tokens do not
+        // overlap this alphabet, so only generated compact ids participate in
+        // repetition penalty bookkeeping.
+        std::vector<int32_t> history;
         std::vector<int32_t> codes;
         auto logits = std::move(prefill.logits);
         for (int64_t step = 0; step < max_tokens; ++step) {
-            const int32_t token = sampler.sample(
+            const int32_t compact_token = sampler.sample(
                 logits,
                 history,
                 sampling_options,
@@ -240,10 +264,15 @@ struct MiraGenerator::Impl {
                 rng,
                 nullptr,
                 "MiraTTS LM");
+            const int32_t token = compact_token ==
+                    static_cast<int32_t>(config.speech_token_end -
+                                         config.speech_token_start + 1)
+                ? config.eos_token_id
+                : config.speech_token_start + compact_token;
             if (token == config.eos_token_id) {
                 break;
             }
-            history.push_back(token);
+            history.push_back(compact_token);
             if (token >= config.speech_token_start && token <= config.speech_token_end) {
                 codes.push_back(token - config.speech_token_start);
             }
