@@ -554,6 +554,12 @@ public:
         ggml_backend_synchronize(backend_);
         ggml_backend_tensor_get(graph.output, head_paired_staging_.data(), 0, head_paired_staging_.size() * sizeof(float));
         const size_t vocab = static_cast<size_t>(vocab_);
+        if (guidance_scale == 1.0F) {
+            // CFG is a no-op at scale 1: copy the conditional half directly,
+            // avoiding an inexact uncond + 1 * (cond - uncond) round trip.
+            std::memcpy(out, head_paired_staging_.data(), vocab * sizeof(float));
+            return;
+        }
         for (int64_t token = 0; token < vocab_; ++token) {
             const size_t index = static_cast<size_t>(token);
             out[index] = head_paired_staging_[vocab + index] + guidance_scale * (head_paired_staging_[index] - head_paired_staging_[vocab + index]);
@@ -927,21 +933,30 @@ struct BreezeGeneratorRuntime::Impl {
         std::vector<float> uncond_embeddings;
         int64_t cond_steps = 0;
         int64_t uncond_steps = 0;
+        // guidance_scale == 1 makes CFG a no-op (logits == cond), so skip the
+        // unconditional branch entirely and halve the backbone work.
+        const bool use_cfg = request.guidance_scale != 1.0F;
         const double prompt_ms = engine::debug::measure_ms([&] {
             if (!reference_codes.empty()) {
                 if (request.reference_text.empty()) {
                     throw std::runtime_error("BreezeTTS clone requires reference_text");
                 }
                 cond_branch = tokenizer.build_clone(request.text, request.instruction, request.reference_text, reference_frames);
-                uncond_branch = tokenizer.build_clone_negative(request.text, request.reference_text, reference_frames);
+                if (use_cfg) {
+                    uncond_branch = tokenizer.build_clone_negative(request.text, request.reference_text, reference_frames);
+                }
             } else {
                 cond_branch = tokenizer.build_tts_instruction(request.text, request.instruction);
-                uncond_branch = tokenizer.build_tts_plain(request.text);
+                if (use_cfg) {
+                    uncond_branch = tokenizer.build_tts_plain(request.text);
+                }
             }
             cond_embeddings = merge_prompt(cond_branch, reference_codes);
-            uncond_embeddings = merge_prompt(uncond_branch, reference_codes);
             cond_steps = static_cast<int64_t>(cond_branch.input_ids.size());
-            uncond_steps = static_cast<int64_t>(uncond_branch.input_ids.size());
+            if (use_cfg) {
+                uncond_embeddings = merge_prompt(uncond_branch, reference_codes);
+                uncond_steps = static_cast<int64_t>(uncond_branch.input_ids.size());
+            }
         });
         engine::debug::timing_log_scalar("breeze_tts.generate.prompt_ms", prompt_ms);
         text_encoder.release_runtime_graphs();
@@ -956,12 +971,17 @@ struct BreezeGeneratorRuntime::Impl {
             backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
                 cond = backbone_cond->prefill_embeddings(cond_embeddings, cond_steps);
             });
-            modules::QwenCausalPrefillResult uncond;
-            backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
-                uncond = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
-            });
+            std::optional<modules::QwenCausalPrefillResult> uncond;
+            if (use_cfg) {
+                uncond.emplace();
+                backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
+                    *uncond = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
+                });
+            }
             backbone_cond->start_decode_embeddings(cond.state, cond_steps + request.max_tokens);
-            backbone_uncond->start_decode_embeddings(uncond.state, uncond_steps + request.max_tokens);
+            if (use_cfg) {
+                backbone_uncond->start_decode_embeddings(uncond->state, uncond_steps + request.max_tokens);
+            }
 
             sampling::HfSamplerScratch scratch;
             scratch.reserve_vocab(static_cast<size_t>(config.lm_head_size));
@@ -978,12 +998,17 @@ struct BreezeGeneratorRuntime::Impl {
 
             codes.reserve(static_cast<size_t>(request.max_tokens * config.num_codebooks));
             for (int64_t step = 0; step < request.max_tokens; ++step) {
-                if (cond.logits.size() != uncond.logits.size()) {
+                if (use_cfg && cond.logits.size() != uncond->logits.size()) {
                     throw std::runtime_error("BreezeTTS CFG logits shape mismatch");
                 }
-                std::vector<float> logits(cond.logits.size(), 0.0F);
-                for (size_t i = 0; i < logits.size(); ++i) {
-                    logits[i] = uncond.logits[i] + request.guidance_scale * (cond.logits[i] - uncond.logits[i]);
+                std::vector<float> logits;
+                if (use_cfg) {
+                    logits.resize(cond.logits.size());
+                    for (size_t i = 0; i < logits.size(); ++i) {
+                        logits[i] = uncond->logits[i] + request.guidance_scale * (cond.logits[i] - uncond->logits[i]);
+                    }
+                } else {
+                    logits = cond.logits;
                 }
                 suppress_reserved(logits, kCodecCodebookSize, config.vocab_size);
                 const int32_t first_token = sample_logits(
@@ -1005,7 +1030,7 @@ struct BreezeGeneratorRuntime::Impl {
                 }
                 const auto frame = generate_frame(
                     cond.hidden,
-                    uncond.hidden,
+                    use_cfg ? uncond->hidden : cond.hidden,
                     first_token,
                     request,
                     scratch,
@@ -1024,14 +1049,16 @@ struct BreezeGeneratorRuntime::Impl {
                 backbone_cond_decode_ms += engine::debug::measure_ms([&] {
                     cond_step = backbone_cond->decode_embedding(embedded);
                 });
-                modules::QwenCausalDecodeStepResult uncond_step;
-                backbone_uncond_decode_ms += engine::debug::measure_ms([&] {
-                    uncond_step = backbone_uncond->decode_embedding(embedded);
-                });
                 cond.logits = cond_step.logits;
                 cond.hidden = cond_step.hidden;
-                uncond.logits = uncond_step.logits;
-                uncond.hidden = uncond_step.hidden;
+                if (use_cfg) {
+                    modules::QwenCausalDecodeStepResult uncond_step;
+                    backbone_uncond_decode_ms += engine::debug::measure_ms([&] {
+                        uncond_step = backbone_uncond->decode_embedding(embedded);
+                    });
+                    uncond->logits = uncond_step.logits;
+                    uncond->hidden = uncond_step.hidden;
+                }
             }
         });
         engine::debug::timing_log_scalar("breeze_tts.ar.total_ms", ar_ms);
@@ -1040,7 +1067,9 @@ struct BreezeGeneratorRuntime::Impl {
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_cond_decode_ms", backbone_cond_decode_ms);
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_decode_ms", backbone_uncond_decode_ms);
         backbone_cond->release_runtime_graphs();
-        backbone_uncond->release_runtime_graphs();
+        if (use_cfg) {
+            backbone_uncond->release_runtime_graphs();
+        }
         depth_pair->release_runtime_graphs();
         if (codes.empty()) {
             throw std::runtime_error("BreezeTTS generated no audio codes");
