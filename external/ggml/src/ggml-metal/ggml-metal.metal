@@ -2422,7 +2422,17 @@ kernel void kernel_ssm_scan_f32(
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        const float sumf = simd_sum(shared_sums[sgitg*NW + tiisg]);
+        // Each token's full output is the sum over all simdgroups of that token's
+        // partial sums (shared_sums[t*NW + g] for g in 0..sgptg-1). The previous
+        // simd_sum(shared_sums[sgitg*NW + tiisg]) read garbage columns whenever
+        // sgptg < NW (e.g. d_state=64 -> sgptg=2) with few tokens, corrupting the
+        // SSM state. Compute the token sum redundantly on every thread instead.
+        float sumf = 0.0f;
+        if (i2 + sgitg < n_t) {
+            for (int g = 0; g < sgptg; g++) {
+                sumf += shared_sums[(i2 + sgitg)*NW + g];
+            }
+        }
 
         if (tiisg == 0 && i2 + sgitg < n_t) {
             y[sgitg*nh*nr] = sumf;
