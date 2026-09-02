@@ -7,6 +7,10 @@
 #include <memory>
 #include <vector>
 
+namespace engine::assets {
+class TensorSource;
+}
+
 namespace engine::audio {
 
 struct FlashSrWeights;
@@ -21,6 +25,9 @@ class FlashSrModel {
 public:
     static FlashSrModel load_from_directory(const std::filesystem::path & model_dir);
     static FlashSrModel load_from_directory(const std::filesystem::path & model_dir, const core::BackendConfig & backend_config);
+    static FlashSrModel load_from_tensor_source(
+        std::shared_ptr<const assets::TensorSource> source,
+        const core::BackendConfig & backend_config);
 
     FlashSrModel();
     ~FlashSrModel();

@@ -420,7 +420,17 @@ FlashSrModel FlashSrModel::load_from_directory(const std::filesystem::path & mod
 FlashSrModel FlashSrModel::load_from_directory(
     const std::filesystem::path & model_dir,
     const core::BackendConfig & backend_config) {
-    auto source = engine::assets::open_tensor_source(model_dir / "flashsr.safetensors");
+    return load_from_tensor_source(
+        engine::assets::open_tensor_source(model_dir / "flashsr.safetensors"),
+        backend_config);
+}
+
+FlashSrModel FlashSrModel::load_from_tensor_source(
+    std::shared_ptr<const assets::TensorSource> source,
+    const core::BackendConfig & backend_config) {
+    if (!source) {
+        throw std::runtime_error("FlashSR tensor source is missing");
+    }
     auto weights = std::make_shared<FlashSrWeights>();
     weights->backend.reset(core::init_backend(backend_config));
     weights->backend_type = core::backend_type(weights->backend.get());

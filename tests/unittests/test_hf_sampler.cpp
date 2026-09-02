@@ -283,6 +283,28 @@ void test_matches_python_hf_processor_reference_values() {
     }
 }
 
+void test_min_p_masks_relative_probability_tail() {
+    std::vector<float> scores{4.0F, 2.0F, 1.0F, -1.0F};
+    HfSamplerScratch scratch;
+    engine::sampling::HfLogitsProcessor::apply_min_p(scores, 0.1F, 1, scratch);
+
+    engine::test::require(std::isfinite(scores[0]), "min-p keeps maximum token");
+    engine::test::require(std::isfinite(scores[1]), "min-p keeps token above relative threshold");
+    engine::test::require(
+        std::isinf(scores[2]) && scores[2] < 0.0F,
+        "min-p masks token below relative threshold");
+    engine::test::require(
+        std::isinf(scores[3]) && scores[3] < 0.0F,
+        "min-p masks probability tail");
+
+    std::vector<float> protected_scores{4.0F, 0.0F, -1.0F};
+    engine::sampling::HfLogitsProcessor::apply_min_p(
+        protected_scores, 0.9F, 2, scratch);
+    engine::test::require(
+        std::isfinite(protected_scores[0]) && std::isfinite(protected_scores[1]),
+        "min-p honors min_tokens_to_keep");
+}
+
 void test_matches_python_hf_cuda_multinomial_reference_sequence() {
     TorchCudaSamplingPolicy policy;
     policy.cuda_fast_path = true;
@@ -506,6 +528,7 @@ int main() {
     try {
         test_greedy_fast_path_matches_reference();
         test_matches_python_hf_processor_reference_values();
+        test_min_p_masks_relative_probability_tail();
         test_matches_python_hf_cuda_multinomial_reference_sequence();
         test_matches_python_hf_cpu_multinomial_reference_sequence();
         test_no_processor_sampling_fast_path_matches_reference();

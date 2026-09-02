@@ -1223,6 +1223,43 @@ void test_legacy_spec_contract_behavior_unchanged() {
     std::filesystem::remove_all(root);
 }
 
+void test_experimental_spec_without_installable_package() {
+    const std::string experimental = R"JSON({
+      "schema_version": 1,
+      "family": "local_only_model",
+      "display_name": "Local Only Model",
+      "description": "Requires a local checkpoint conversion.",
+      "category": "tts",
+      "status": "experimental",
+      "tasks": ["tts"],
+      "modes": ["offline"],
+      "languages": ["en"],
+      "runtime": {"tags": ["gguf"]},
+      "capabilities": {},
+      "options": {"request": [], "session": [], "load": []},
+      "packages": [],
+      "dependencies": [],
+      "ui": {"tags": ["TTS"], "docs": ["docs/local.md"]},
+      "sources": [{
+        "format": "safetensors",
+        "roots": {"model": "."},
+        "files": {"config": "model:config.json"},
+        "tensors": {"weights": "model:model.safetensors"}
+      }]
+    })JSON";
+    engine::model_spec::validate_spec(
+        json::parse(experimental), "experimental_local_only");
+
+    auto community = experimental;
+    const auto status = community.find("\"status\": \"experimental\"");
+    engine::test::require(status != std::string::npos, "experimental status fixture");
+    community.replace(status, std::string("\"status\": \"experimental\"").size(),
+                      "\"status\": \"community\"");
+    expect_rejects(
+        "community_requires_package", community,
+        "packages must not be empty unless status is experimental");
+}
+
 void test_contract_spec_prefers_workspace_over_package_local_spec() {
     const auto root = make_temp_root();
     const auto workspace = root / "workspace";
@@ -1291,6 +1328,7 @@ int main() {
         test_schema_v1_metadata_projection();
         test_contract_projection_ignores_package_metadata_validation();
         test_legacy_spec_contract_behavior_unchanged();
+        test_experimental_spec_without_installable_package();
         test_contract_spec_prefers_workspace_over_package_local_spec();
         test_loading_and_resource_bundle();
     } catch (const std::exception & error) {

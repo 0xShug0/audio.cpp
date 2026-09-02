@@ -1481,6 +1481,21 @@ audiocpp_add_model(soprano_tts
         engine::community_models::soprano_tts::make_soprano_tts_loader
 )
 
+audiocpp_add_model(mira_tts
+    SOURCES
+        src/community_models/mira_tts/assets.cpp
+        src/community_models/mira_tts/decoder.cpp
+        src/community_models/mira_tts/generator.cpp
+        src/community_models/mira_tts/processor.cpp
+        src/community_models/mira_tts/prompt.cpp
+        src/community_models/mira_tts/session.cpp
+        src/community_models/mira_tts/speaker_encoder.cpp
+    INCLUDES
+        engine/community_models/mira_tts/session.h
+    LOADERS
+        engine::community_models::mira_tts::make_mira_tts_loader
+)
+
 
 audiocpp_add_model(midashenglm_gen
     SOURCES

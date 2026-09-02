@@ -26,6 +26,7 @@ Practical expectations:
 | **mms_forced_aligner** | Align | nl (nld), en (eng); pre-romanized Latin | Community | [MMS-300M-1130 Forced Aligner](mms_forced_aligner.md) word-timestamp alignment from a wav2vec2 CTC checkpoint (safetensors or local GGUF) |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |
 | **minimax_music3** | Music | auto | [@0xShug0](https://github.com/0xShug0) | [MiniMax Music 3](minimax_music3.md) text-to-music generation with lyrics conditioning |
+| **mira_tts** | TTS, voice cloning | en | Mirek [@mirek190](https://github.com/mirek190) | [MiraTTS](mira_tts.md) experimental native Qwen2 + ECAPA/Perceiver zero-shot cloning; local conversion only (CC-BY-NC-SA-4.0 weights) |
 | **moss_tts_local** | TTS, voice cloning | auto, optional language hint | [@justinjohn0306](https://github.com/justinjohn0306) | [MOSS-TTS-Local Transformer v1.5](../models/moss_tts.md) support in the core model tree |
 | **outetts** | TTS, voice cloning | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | Mirek [@mirek190](https://github.com/mirek190) | [Llama-OuteTTS-1.0-1B](outetts.md) TTS and voice cloning support |
 | **voxcpm1** | TTS, voice cloning | zh, en, ja, ko | Community | [VoxCPM1](voxcpm1.md) tokenizer-free 0.5B TTS with 16 kHz output, streaming, and continuation-mode voice cloning |

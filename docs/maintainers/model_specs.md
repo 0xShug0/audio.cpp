@@ -156,6 +156,11 @@ packages come from the same repo, put the shared source in
 `package_defaults.download` and keep package-level `download` only for
 overrides.
 
+Experimental ports may use an empty `packages` array while conversion and
+runtime validation are still local-only. In that case `ui.recommended_package`
+is omitted, so model managers do not advertise a download that cannot yet be
+loaded. Community and supported families must publish at least one package.
+
 ```json
 {
   "package_defaults": {
