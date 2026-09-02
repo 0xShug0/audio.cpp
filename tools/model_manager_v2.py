@@ -62,6 +62,17 @@ def huggingface_token() -> str | None:
     return None
 
 
+def hf_endpoint() -> str:
+    """Base URL for Hugging Face Hub requests.
+
+    Honors the standard HF_ENDPOINT environment variable (e.g.
+    HF_ENDPOINT=https://hf-mirror.com for the hf-mirror mirror). Falls back to
+    https://huggingface.co. Empty values and trailing slashes are tolerated.
+    """
+    endpoint = os.environ.get("HF_ENDPOINT", "").strip().rstrip("/")
+    return endpoint or "https://huggingface.co"
+
+
 def http_headers() -> dict[str, str]:
     headers = {"User-Agent": "audio.cpp model_manager_v2.py"}
     token = huggingface_token()
@@ -163,7 +174,7 @@ def select_package(records: list[PackageRecord], args: argparse.Namespace) -> Pa
 
 
 def hf_url(repo: str, revision: str, remote_path: str) -> str:
-    return f"https://huggingface.co/{repo}/resolve/{quote(revision, safe='')}/{quote_repo_path(remote_path)}"
+    return f"{hf_endpoint()}/{repo}/resolve/{quote(revision, safe='')}/{quote_repo_path(remote_path)}"
 
 
 def check_remote_file(package: PackageRecord, remote_path: str) -> RemoteFileInfo:

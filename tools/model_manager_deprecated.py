@@ -92,6 +92,17 @@ def huggingface_token() -> str | None:
     return None
 
 
+def hf_endpoint() -> str:
+    """Base URL for Hugging Face Hub requests.
+
+    Honors the standard HF_ENDPOINT environment variable (e.g.
+    HF_ENDPOINT=https://hf-mirror.com for the hf-mirror mirror). Falls back to
+    https://huggingface.co. Empty values and trailing slashes are tolerated.
+    """
+    endpoint = os.environ.get("HF_ENDPOINT", "").strip().rstrip("/")
+    return endpoint or "https://huggingface.co"
+
+
 def http_headers() -> dict[str, str]:
     headers = {"User-Agent": "audio.cpp model_manager.py"}
     token = huggingface_token()
@@ -1700,13 +1711,13 @@ def print_package_table(packages: Iterable[ModelPackage]) -> None:
 def hf_tree_url(source: SnapshotSource) -> str:
     revision = quote(source.revision, safe="")
     repo_id = source.repo_id
-    return f"https://huggingface.co/api/models/{repo_id}/tree/{revision}?recursive=true"
+    return f"{hf_endpoint()}/api/models/{repo_id}/tree/{revision}?recursive=true"
 
 
 def hf_resolve_url(source: SnapshotSource, relative_path: str) -> str:
     revision = quote(source.revision, safe="")
     path = quote(relative_path, safe="/")
-    return f"https://huggingface.co/{source.repo_id}/resolve/{revision}/{path}"
+    return f"{hf_endpoint()}/{source.repo_id}/resolve/{revision}/{path}"
 
 
 def http_json(url: str, timeout: float = 30.0) -> object:
