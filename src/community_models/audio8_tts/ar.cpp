@@ -103,6 +103,7 @@ struct FalconH1LayerWeights {
     assets::TensorDataF32 input_layernorm;          // slow.layers.*.input_layernorm.weight [512]
     core::TensorValue ssm_in;                        // slow.layers.*.mamba.in_proj.weight [1688,512]
     core::TensorValue ssm_conv1d;                    // slow.layers.*.mamba.conv1d.weight [896,1,4] -> [4,896] after convert
+    assets::TensorDataF32 conv1d_flipped;            // host [4,896] kernel-flipped for ggml ssm_conv
     assets::TensorDataF32 ssm_conv1d_b;              // slow.layers.*.mamba.conv1d.bias [896]
     core::TensorValue ssm_dt_b;                      // slow.layers.*.mamba.dt_bias [24]
     core::TensorValue ssm_A;                         // slow.layers.*.mamba.A_log [24] -> [1,24]
@@ -425,27 +426,57 @@ FalconH1LayerWeights load_falcon_layer(
     // Shapes reflect HF safetensors (safetensors) and GGUF (after convert) – use actual metadata shape to stay compatible.
     FalconH1LayerWeights w;
     w.input_layernorm = source.require_f32_tensor(prefix + ".input_layernorm.weight", {text_config.dim});
+    {
+        auto dbg_w = source.require_f32_tensor(prefix + ".input_layernorm.weight");
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            fprintf(f, "[W] prefix=%s ln0=%.4f,%.4f,%.4f\n", prefix.c_str(),
+                    (double)dbg_w.values[0], (double)dbg_w.values[1], (double)dbg_w.values[2]);
+            fclose(f);
+        }
+    }
     // Mamba in_proj: HF [1688,512] (out, in), GGUF may be transposed; load with actual shape
     {
         auto meta = source.require_metadata(prefix + ".mamba.in_proj.weight");
         w.ssm_in = store.load_tensor(source, prefix + ".mamba.in_proj.weight", storage_type, meta.shape);
     }
     {
+        // ssm_conv Metal pipeline requires contiguous F32 conv weights.
         auto meta = source.require_metadata(prefix + ".mamba.conv1d.weight");
-        w.ssm_conv1d = store.load_tensor(source, prefix + ".mamba.conv1d.weight", storage_type, meta.shape);
+        w.ssm_conv1d = store.load_tensor(source, prefix + ".mamba.conv1d.weight", assets::TensorStorageType::F32, meta.shape);
+        {
+            // ggml ssm_conv computes y[t] = sum_k w[k]*x[t+k]; HF causal_conv1d uses
+            // w[k]*x[t+d_conv-1-k]. Flip the kernel dim once at load time so the
+            // per-step graph can feed the flipped weight directly.
+            auto raw = source.require_f32_tensor(prefix + ".mamba.conv1d.weight");
+            const int64_t d_conv = raw.shape.dims.size() >= 3 ? raw.shape.dims[2] : (raw.shape.dims.empty() ? 4 : raw.shape.dims[0]);
+            const int64_t conv_dim = raw.shape.dims.size() >= 3 ? raw.shape.dims[0] : (raw.shape.dims.empty() ? 0 : raw.shape.dims[0]);
+            // raw layout [conv_dim, 1, d_conv] col-major: (c, g, k) at c + conv_dim*(g + k)
+            std::vector<float> flipped(static_cast<size_t>(conv_dim * d_conv));
+            for (int64_t k = 0; k < d_conv; ++k) {
+                for (int64_t c = 0; c < conv_dim; ++c) {
+                    flipped[static_cast<size_t>(k + d_conv * c)] =
+                        raw.values[static_cast<size_t>(c + conv_dim * (d_conv - 1 - k))];
+                }
+            }
+            w.conv1d_flipped.shape = core::TensorShape::from_dims({d_conv, conv_dim});
+            w.conv1d_flipped.values = std::move(flipped);
+        }
     }
     w.ssm_conv1d_b = source.require_f32_tensor(prefix + ".mamba.conv1d.bias");
+    // Per-head Mamba params must stay unquantized (Native): they are consumed as
+    // raw F32 scalars by the SSM path (A = -exp(A_log), D, dt bias).
     {
         auto meta = source.require_metadata(prefix + ".mamba.dt_bias");
-        w.ssm_dt_b = store.load_tensor(source, prefix + ".mamba.dt_bias", storage_type, meta.shape);
+        w.ssm_dt_b = store.load_tensor(source, prefix + ".mamba.dt_bias", assets::TensorStorageType::F32, meta.shape);
     }
     {
         auto meta = source.require_metadata(prefix + ".mamba.A_log");
-        w.ssm_A = store.load_tensor(source, prefix + ".mamba.A_log", storage_type, meta.shape);
+        w.ssm_A = store.load_tensor(source, prefix + ".mamba.A_log", assets::TensorStorageType::F32, meta.shape);
     }
     {
         auto meta = source.require_metadata(prefix + ".mamba.D");
-        w.ssm_D = store.load_tensor(source, prefix + ".mamba.D", storage_type, meta.shape);
+        w.ssm_D = store.load_tensor(source, prefix + ".mamba.D", assets::TensorStorageType::F32, meta.shape);
     }
     {
         auto meta = source.require_metadata(prefix + ".mamba.out_proj.weight");
@@ -846,132 +877,676 @@ std::vector<float> build_falcon_embeddings(
     for (int64_t step = 0; step < steps; ++step) {
         const int32_t token = matrix[step];
         auto row = lookup_row(weights.text_embedding_host, token, hidden);
-        for (auto & v : row) v *= config.text.embedding_multiplier;
         if (is_semantic_token(config, token)) {
             for (int64_t codebook = 0; codebook < config.fast.num_codebooks; ++codebook) {
                 const int32_t code = matrix[(codebook + 1) * steps + step];
                 add_row(weights.codebook_embedding_host, codebook * config.fast.vocab_size + code, hidden, row);
             }
         }
+        for (auto & v : row) v *= config.text.embedding_multiplier;
         std::copy(row.begin(), row.end(), out.begin() + static_cast<std::ptrdiff_t>(step * hidden));
     }
     return out;
 }
 
-// TODO(Falcon-H1): Replace with full Mamba2 port (ggml_ssm_conv + B/C/dt/A/D
-// + ggml_ssm_scan + recurrent conv/ssm state + hybrid attention).
-// See docs/FALCON_H1_0.1B_PORT_PLAN.md M2/M3 and
-// ../llama.cpp/src/models/mamba-base.cpp:151 / falcon-h1.cpp:132.
-// Current stub keeps weight loading native but omits the SSM core and
-// hybrid attention (attn_out = 0), recomputes full sequence each step,
-// and only applies ssm_out/lm_head multipliers — tracked for follow-up.
-SlowForwardOutput falcon_forward_stateless(
+// ============================================================================
+// Falcon-H1 (Mamba2 + hybrid GQA attention) stateful single-token forward.
+// Replaces the documented stub (TODO(Falcon-H1)) with a full Mamba2 port
+// mirroring transformers.models.falcon_h1 FalconH1DecoderLayer and
+// llama.cpp mamba-base.cpp build_mamba2_layer. Verified shapes against
+// Audio8-TTS-Preview-0.1b (dim 512, d_ssm 768, d_state 64, d_conv 4,
+// mamba heads 24 x head 32, GQA 8/2 x 64, RoPE NEOX base 1e11).
+// ============================================================================
+
+struct FalconH1StepState {
+    int64_t n_layer = 0;
+    int64_t d_inner = 0;        // mamba_d_ssm (768)
+    int64_t d_state = 0;        // mamba_d_state (64)
+    int64_t d_conv = 0;         // mamba_d_conv (4)
+    int64_t n_groups = 0;       // mamba_n_groups (1)
+    int64_t n_mamba_heads = 0;  // mamba_n_heads (24)
+    int64_t conv_dim = 0;       // d_inner + 2*ng*d_state (896)
+    int64_t kv_dim = 0;         // n_local_heads * head_dim (128)
+    std::vector<std::vector<float>> conv_states;  // [layer][(d_conv-1)*conv_dim]
+    std::vector<std::vector<float>> ssm_states;   // [layer][d_state*d_inner]
+    std::vector<std::vector<float>> k_cache;      // [layer][seq*kv_dim]
+    std::vector<std::vector<float>> v_cache;      // [layer][seq*kv_dim]
+    int64_t seq_len = 0;
+};
+
+FalconH1StepState init_falcon_step_state(const Audio8TtsConfig & config) {
+    FalconH1StepState st;
+    st.n_layer = config.text.n_layer;
+    st.d_inner = config.text.mamba_d_ssm;
+    st.d_state = config.text.mamba_d_state;
+    st.d_conv = config.text.mamba_d_conv;
+    st.n_groups = config.text.mamba_n_groups;
+    st.n_mamba_heads = config.text.mamba_n_heads;
+    st.conv_dim = st.d_inner + 2 * st.n_groups * st.d_state;
+    st.kv_dim = config.text.n_local_heads * config.text.head_dim;
+    st.conv_states.resize(static_cast<size_t>(st.n_layer));
+    st.ssm_states.resize(static_cast<size_t>(st.n_layer));
+    st.k_cache.resize(static_cast<size_t>(st.n_layer));
+    st.v_cache.resize(static_cast<size_t>(st.n_layer));
+    const size_t conv_sz = static_cast<size_t>((st.d_conv - 1) * st.conv_dim);
+    const size_t ssm_sz = static_cast<size_t>(st.d_state * st.d_inner);
+    for (int64_t i = 0; i < st.n_layer; ++i) {
+        st.conv_states[static_cast<size_t>(i)].assign(conv_sz, 0.0F);
+        st.ssm_states[static_cast<size_t>(i)].assign(ssm_sz, 0.0F);
+    }
+    st.seq_len = 0;
+    return st;
+}
+
+// Temporary diagnostics for tensor-set debugging (removed after fix).
+static int g_dbg_set_count = 0;
+static void dbg_ts(ggml_tensor * t, const void * data, size_t off, size_t sz) {
+    ++g_dbg_set_count;
+    FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+    if (f) {
+        fprintf(f, "[DBG-SET %d] buf=%p data=%p name=%s ne0=%lld ne1=%lld ne2=%lld ne3=%lld\n",
+                g_dbg_set_count, t ? (void *)t->buffer : nullptr, t ? (void *)t->data : nullptr,
+                (t && ggml_get_name(t)) ? ggml_get_name(t) : "?",
+                t ? (long long)t->ne[0] : 0, t ? (long long)t->ne[1] : 0,
+                t ? (long long)t->ne[2] : 0, t ? (long long)t->ne[3] : 0);
+        fclose(f);
+    }
+    if (t && t->buffer == nullptr) std::abort();
+    ggml_backend_tensor_set(t, data, off, sz);
+}
+
+// Single-token Falcon-H1 forward. `embedding` is the pre-multiplied token
+// embedding (text embedding * embedding_multiplier + codebook sum).
+SlowForwardOutput falcon_forward_step(
     ggml_backend_t backend,
     int threads,
     size_t arena_bytes,
     const Audio8TtsConfig & config,
     const ArkttsARWeights & weights,
-    const std::vector<float> & embeddings,
-    int64_t seq_len) {
-    if (seq_len <= 0) throw std::runtime_error("falcon_forward: zero seq");
-    if (weights.falcon_layers.empty()) throw std::runtime_error("falcon_forward: no falcon layers");
+    const std::vector<float> & embedding,  // [dim]
+    FalconH1StepState & state,
+    int64_t position) {
     const int64_t dim = config.text.dim;
-    const float eps = config.text.norm_eps;
+    const int64_t n_layer = config.text.n_layer;
+    const int64_t d_inner = config.text.mamba_d_ssm;
+    const int64_t d_state = config.text.mamba_d_state;
+    const int64_t d_conv = config.text.mamba_d_conv;
+    const int64_t n_groups = config.text.mamba_n_groups;
+    const int64_t n_mamba_heads = config.text.mamba_n_heads;
+    const int64_t mamba_head_dim = config.text.mamba_d_head;
+    const int64_t conv_dim = d_inner + 2 * n_groups * d_state;
+    const int64_t n_head = config.text.n_head;
+    const int64_t n_kv = config.text.n_local_heads;
+    const int64_t head_dim = config.text.head_dim;
+    const float norm_eps = config.text.norm_eps;
     const float lm_mult = config.text.lm_head_multiplier;
+    const float rope_base = config.text.rope_base;
+    const int64_t vocab = config.fast.vocab_size + 1;
+    const int64_t seq = state.seq_len;
+
+    if (embedding.size() != static_cast<size_t>(dim)) {
+        throw std::runtime_error("falcon_forward_step: embedding size mismatch");
+    }
+    {
+        float emax = 0.0f;
+        for (float v : embedding) emax = std::max(emax, std::fabs(v));
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            fprintf(f, "[EMB] pos=%lld max=%.4f\n", (long long)position, (double)emax);
+            fclose(f);
+        }
+    }
+
     ggml_init_params params{arena_bytes, nullptr, true};
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx(ggml_init(params));
-    if (!ctx) throw std::runtime_error("falcon_forward: ggml_init failed");
-    ggml_tensor * cur = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, dim, seq_len);
+    if (!ctx) throw std::runtime_error("falcon_forward_step: ggml_init failed");
+
+    ggml_tensor * cur = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
     ggml_set_name(cur, "falcon_input");
-    std::vector<ggml_tensor*> ln_ws;
-    std::vector<ggml_tensor*> bias_ws;
-    std::vector<ggml_tensor*> pre_ws;
-    ln_ws.reserve(weights.falcon_layers.size());
-    bias_ws.reserve(weights.falcon_layers.size());
-    pre_ws.reserve(weights.falcon_layers.size());
-    for (size_t li = 0; li < weights.falcon_layers.size(); ++li) {
-        const auto & layer = weights.falcon_layers[li];
+    ggml_set_input(cur);
+
+    std::vector<ggml_tensor*> ln_w_ts;
+    std::vector<ggml_tensor*> pre_w_ts;
+    std::vector<ggml_tensor*> conv_st_ts;
+    std::vector<ggml_tensor*> ssm_st_ts;
+    std::vector<ggml_tensor*> k_cur_ts;
+    std::vector<ggml_tensor*> v_cur_ts;
+    std::vector<ggml_tensor*> conv_b_ts;
+    std::vector<ggml_tensor*> conv_w2_ts;
+    std::vector<ggml_tensor*> k_cache_ts;
+    std::vector<ggml_tensor*> v_cache_ts;
+    std::vector<ggml_tensor*> sx_ts;
+    std::vector<ggml_tensor*> scan_ts;
+    std::vector<ggml_tensor*> ids_ts;
+    std::vector<ggml_tensor*> pos_ts;
+    std::vector<ggml_tensor*> cur_ts;
+    std::vector<ggml_tensor*> out_mamba_ts;
+    std::vector<ggml_tensor*> attn_out_ts;
+    std::vector<ggml_tensor*> x_conv_ts;
+    std::vector<ggml_tensor*> dt_ts;
+    ln_w_ts.reserve(static_cast<size_t>(n_layer));
+    pre_w_ts.reserve(static_cast<size_t>(n_layer));
+    conv_st_ts.reserve(static_cast<size_t>(n_layer));
+    ssm_st_ts.reserve(static_cast<size_t>(n_layer));
+    k_cur_ts.reserve(static_cast<size_t>(n_layer));
+    v_cur_ts.reserve(static_cast<size_t>(n_layer));
+    conv_b_ts.reserve(static_cast<size_t>(n_layer));
+    conv_w2_ts.reserve(static_cast<size_t>(n_layer));
+    k_cache_ts.reserve(static_cast<size_t>(n_layer));
+    v_cache_ts.reserve(static_cast<size_t>(n_layer));
+    sx_ts.reserve(static_cast<size_t>(n_layer));
+    scan_ts.reserve(static_cast<size_t>(n_layer));
+    ids_ts.reserve(static_cast<size_t>(n_layer));
+    pos_ts.reserve(static_cast<size_t>(n_layer));
+    cur_ts.reserve(static_cast<size_t>(n_layer));
+    out_mamba_ts.reserve(static_cast<size_t>(n_layer));
+    attn_out_ts.reserve(static_cast<size_t>(n_layer));
+    x_conv_ts.reserve(static_cast<size_t>(n_layer));
+    dt_ts.reserve(static_cast<size_t>(n_layer));
+
+    // A = -exp(A_log) per layer
+    std::vector<ggml_tensor*> A_ts;
+    A_ts.reserve(static_cast<size_t>(n_layer));
+    // D expanded to [d_inner]: D[h] repeated mamba_head_dim times
+    std::vector<ggml_tensor*> D_ts;
+
+    for (int64_t li = 0; li < n_layer; ++li) {
+        const auto & layer = weights.falcon_layers[static_cast<size_t>(li)];
+
+        // input_layernorm (RMS)
         ggml_tensor * ln_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
-        ln_ws.push_back(ln_w);
-        ggml_tensor * normed = ggml_rms_norm(ctx.get(), cur, eps);
+        ggml_set_input(ln_w);
+        ln_w_ts.push_back(ln_w);
+        ggml_tensor * normed = ggml_rms_norm(ctx.get(), cur, norm_eps);
         normed = ggml_mul(ctx.get(), normed, ln_w);
-        ggml_tensor * proj = ggml_mul_mat(ctx.get(), layer.ssm_in.tensor, normed);
-        ggml_tensor * gate = ggml_view_2d(ctx.get(), proj, 768, seq_len, proj->nb[1], 0);
-        ggml_tensor * xBC = ggml_view_2d(ctx.get(), proj, 896, seq_len, proj->nb[1], 768 * sizeof(float));
-        ggml_tensor * bias = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, 896);
-        bias_ws.push_back(bias);
-        ggml_tensor * bias_bcast = ggml_repeat(ctx.get(), bias, xBC);
-        ggml_tensor * xBC_b = ggml_add(ctx.get(), xBC, bias_bcast);
-        ggml_tensor * xBC_silu = ggml_silu(ctx.get(), xBC_b);
-        ggml_tensor * x = ggml_view_2d(ctx.get(), xBC_silu, 768, seq_len, xBC_silu->nb[1], 0);
-        ggml_tensor * gate_silu = ggml_silu(ctx.get(), gate);
-        ggml_tensor * y_gated = ggml_mul(ctx.get(), x, gate_silu);
-        ggml_tensor * out_mamba = ggml_mul_mat(ctx.get(), layer.ssm_out.tensor, y_gated);
-        if (std::abs(config.text.ssm_out_multiplier - 1.0f) > 1e-6) out_mamba = ggml_scale(ctx.get(), out_mamba, config.text.ssm_out_multiplier);
-        ggml_tensor * attn_out = ggml_scale(ctx.get(), cur, 0.0f);
-        ggml_tensor * hybrid = ggml_add(ctx.get(), out_mamba, attn_out);
-        ggml_tensor * cur_res = ggml_add(ctx.get(), cur, hybrid);
+
+        // ---- Mamba2 branch ----
+        // zxBCdt = in_proj(normed) -> [d_inner + conv_dim + n_mamba_heads]
+        ggml_tensor * zxBCdt = ggml_mul_mat(ctx.get(), layer.ssm_in.tensor, normed);
+        ggml_tensor * z = ggml_view_1d(ctx.get(), zxBCdt, d_inner, 0);
+        ggml_tensor * xBC = ggml_view_1d(ctx.get(), zxBCdt, conv_dim, d_inner * ggml_element_size(zxBCdt));
+        ggml_tensor * dt = ggml_view_1d(ctx.get(), zxBCdt, n_mamba_heads, (d_inner + conv_dim) * ggml_element_size(zxBCdt));
+
+        // conv: state (d_conv-1 rows) + current xBC -> [d_conv, conv_dim, 1]
+        ggml_tensor * st_t = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, conv_dim, d_conv - 1);
+        ggml_set_input(st_t);
+        conv_st_ts.push_back(st_t);
+        ggml_tensor * stT = ggml_cont(ctx.get(), ggml_transpose(ctx.get(), st_t));  // [d_conv-1, conv_dim]
+        ggml_tensor * xBC_r = ggml_cont(ctx.get(), ggml_transpose(ctx.get(), ggml_reshape_2d(ctx.get(), xBC, conv_dim, 1)));  // [1, conv_dim]
+        ggml_tensor * sx = ggml_concat(ctx.get(), stT, xBC_r, 0);                   // [d_conv, conv_dim]
+        sx_ts.push_back(sx);
+        ggml_tensor * sx3 = ggml_reshape_3d(ctx.get(), sx, d_conv, conv_dim, 1);
+        // ggml ssm_conv computes y[t] = sum_k w[k]*x[t+k] (unflipped), whereas the HF
+        // causal_conv1d reference uses w[k]*x[t+d_conv-1-k]. Kernel flipped at feed time.
+        ggml_tensor * conv_w2 = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, d_conv, conv_dim);
+        ggml_set_input(conv_w2);
+        conv_w2_ts.push_back(conv_w2);
+        ggml_tensor * xBC_conv = ggml_ssm_conv(ctx.get(), sx3, conv_w2);  // [conv_dim, 1, 1]
+        ggml_tensor * conv_b = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, conv_dim);
+        ggml_set_input(conv_b);
+        conv_b_ts.push_back(conv_b);
+        xBC_conv = ggml_add(ctx.get(), xBC_conv, ggml_reshape_3d(ctx.get(), conv_b, conv_dim, 1, 1));
+        xBC_conv = ggml_silu(ctx.get(), xBC_conv);
+
+        // split x / B / C (conv output is contiguous [conv_dim,1,1])
+        ggml_tensor * x = ggml_view_1d(ctx.get(), xBC_conv, d_inner, 0);
+        x_conv_ts.push_back(x);
+        ggml_tensor * B = ggml_view_1d(ctx.get(), xBC_conv, d_state * n_groups, d_inner * ggml_element_size(xBC_conv));
+        ggml_tensor * C = ggml_view_1d(ctx.get(), xBC_conv, d_state * n_groups, (d_inner + d_state * n_groups) * ggml_element_size(xBC_conv));
+
+        // x -> [head_dim, n_mamba_heads, 1, 1]
+        ggml_tensor * x4 = ggml_view_4d(ctx.get(), x, mamba_head_dim, n_mamba_heads, 1, 1,
+                                        mamba_head_dim * ggml_element_size(x),
+                                        mamba_head_dim * n_mamba_heads * ggml_element_size(x),
+                                        mamba_head_dim * n_mamba_heads * ggml_element_size(x), 0);
+        ggml_tensor * B4 = ggml_view_4d(ctx.get(), B, d_state, n_groups, 1, 1,
+                                        d_state * ggml_element_size(B),
+                                        d_state * n_groups * ggml_element_size(B),
+                                        d_state * n_groups * ggml_element_size(B), 0);
+        ggml_tensor * C4 = ggml_view_4d(ctx.get(), C, d_state, n_groups, 1, 1,
+                                        d_state * ggml_element_size(C),
+                                        d_state * n_groups * ggml_element_size(C),
+                                        d_state * n_groups * ggml_element_size(C), 0);
+
+        // dt = dt + dt_bias -> [n_mamba_heads, 1, 1]
+        ggml_tensor * dt_eff = ggml_add(ctx.get(), dt, layer.ssm_dt_b.tensor);
+        dt_ts.push_back(dt_eff);
+        ggml_tensor * dt3 = ggml_view_3d(ctx.get(), dt_eff, n_mamba_heads, 1, 1,
+                                         n_mamba_heads * ggml_element_size(dt_eff),
+                                         n_mamba_heads * ggml_element_size(dt_eff), 0);
+
+        // A = -exp(A_log): [1, n_mamba_heads]
+        std::vector<float> A_vals(static_cast<size_t>(n_mamba_heads));
+        {
+            std::vector<float> a_log(static_cast<size_t>(n_mamba_heads));
+            ggml_backend_tensor_get(layer.ssm_A.tensor, a_log.data(), 0, a_log.size() * sizeof(float));
+            for (int64_t h = 0; h < n_mamba_heads; ++h) {
+                A_vals[static_cast<size_t>(h)] = -std::exp(a_log[static_cast<size_t>(h)]);
+            }
+        }
+        ggml_tensor * A_t = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, 1, n_mamba_heads);
+        ggml_set_input(A_t);
+        A_ts.push_back(A_t);
+
+        // ssm state: [d_state, mamba_head_dim, n_mamba_heads]
+        ggml_tensor * ssm_t = ggml_new_tensor_3d(ctx.get(), GGML_TYPE_F32, d_state, mamba_head_dim, n_mamba_heads);
+        ggml_set_input(ssm_t);
+        ssm_st_ts.push_back(ssm_t);
+
+        // ids for scan (1 sequence)
+        ggml_tensor * ids = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
+        ggml_set_input(ids);
+        ids_ts.push_back(ids);
+
+        ggml_tensor * scan = ggml_ssm_scan(ctx.get(), ssm_t, x4, dt3, A_t, B4, C4, ids);
+        scan_ts.push_back(scan);
+        ggml_tensor * y = ggml_view_1d(ctx.get(), scan, d_inner, 0);
+
+        // y += x * D
+        std::vector<float> D_vals(static_cast<size_t>(d_inner));
+        {
+            std::vector<float> d_raw(static_cast<size_t>(n_mamba_heads));
+            ggml_backend_tensor_get(layer.ssm_D.tensor, d_raw.data(), 0, d_raw.size() * sizeof(float));
+            for (int64_t h = 0; h < n_mamba_heads; ++h) {
+                const float dv = d_raw[static_cast<size_t>(h)];
+                for (int64_t d = 0; d < mamba_head_dim; ++d) {
+                    D_vals[static_cast<size_t>(d + h * mamba_head_dim)] = dv;
+                }
+            }
+        }
+        ggml_tensor * D_t = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, d_inner);
+        ggml_set_input(D_t);
+        D_ts.push_back(D_t);
+        y = ggml_add(ctx.get(), y, ggml_mul(ctx.get(), ggml_view_1d(ctx.get(), x4, d_inner, 0), D_t));
+
+        // z gate: y *= silu(z)
+        y = ggml_mul(ctx.get(), y, ggml_silu(ctx.get(), z));
+
+        ggml_tensor * out_mamba = ggml_mul_mat(ctx.get(), layer.ssm_out.tensor, y);  // [dim]
+
+        // ---- GQA attention branch ----
+        // ggml_flash_attn_ext layout: [head_dim, n_tokens, n_head, batch].
+        // Project -> [head_dim, n_head, 1, 1] -> RoPE (ne2 = tokens) -> permute(0,2,1,3)
+        // -> [head_dim, 1, n_head, 1]; KV cache kept in the same layout.
+        ggml_tensor * q = ggml_mul_mat(ctx.get(), layer.attn_q_proj.tensor, normed);  // [n_head*head_dim]
+        ggml_tensor * k = ggml_mul_mat(ctx.get(), layer.attn_k_proj.tensor, normed);  // [n_kv*head_dim]
+        ggml_tensor * v = ggml_mul_mat(ctx.get(), layer.attn_v_proj.tensor, normed);  // [n_kv*head_dim]
+
+        ggml_tensor * q4 = ggml_view_4d(ctx.get(), q, head_dim, n_head, 1, 1,
+                                        head_dim * ggml_element_size(q),
+                                        head_dim * n_head * ggml_element_size(q),
+                                        head_dim * n_head * ggml_element_size(q), 0);
+        ggml_tensor * k4 = ggml_view_4d(ctx.get(), k, head_dim, n_kv, 1, 1,
+                                        head_dim * ggml_element_size(k),
+                                        head_dim * n_kv * ggml_element_size(k),
+                                        head_dim * n_kv * ggml_element_size(k), 0);
+        ggml_tensor * v4 = ggml_view_4d(ctx.get(), v, head_dim, n_kv, 1, 1,
+                                        head_dim * ggml_element_size(v),
+                                        head_dim * n_kv * ggml_element_size(v),
+                                        head_dim * n_kv * ggml_element_size(v), 0);
+
+        // RoPE (NEOX / HF default half rotation), base 1e11; ne2 = n_tokens = 1.
+        ggml_tensor * pos_t = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
+        ggml_set_input(pos_t);
+        pos_ts.push_back(pos_t);
+        ggml_tensor * q_r = ggml_rope_ext(ctx.get(), q4, pos_t, nullptr, head_dim,
+                                          GGML_ROPE_TYPE_NEOX, config.text.max_seq_len,
+                                          rope_base, 1.0F, 1.0F, 1.0F, 32.0F, 1.0F);
+        ggml_tensor * k_r = ggml_rope_ext(ctx.get(), k4, pos_t, nullptr, head_dim,
+                                          GGML_ROPE_TYPE_NEOX, config.text.max_seq_len,
+                                          rope_base, 1.0F, 1.0F, 1.0F, 32.0F, 1.0F);
+
+        // [head_dim, n_head, 1, 1] -> permute(0,2,1,3) -> [head_dim, 1, n_head, 1]
+        ggml_tensor * q_p = ggml_permute(ctx.get(), q_r, 0, 2, 1, 3);
+        ggml_tensor * k_p = ggml_permute(ctx.get(), k_r, 0, 2, 1, 3);
+        ggml_tensor * v_p = ggml_permute(ctx.get(), v4, 0, 2, 1, 3);
+        k_cur_ts.push_back(k_p);
+        v_cur_ts.push_back(v_p);
+
+        // KV cache in flash layout: [head_dim, n_tokens, n_kv, 1]
+        ggml_tensor * k_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
+        ggml_tensor * v_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
+        ggml_set_input(k_cache_t);
+        ggml_set_input(v_cache_t);
+        k_cache_ts.push_back(k_cache_t);
+        v_cache_ts.push_back(v_cache_t);
+        ggml_tensor * K_all = ggml_concat(ctx.get(), k_cache_t, k_p, 1);  // [head_dim, seq+1, n_kv, 1]
+        ggml_tensor * V_all = ggml_concat(ctx.get(), v_cache_t, v_p, 1);
+
+        // Single-token causal: current query attends to all cached keys (all visible).
+        ggml_tensor * attn = ggml_flash_attn_ext(ctx.get(), q_p, K_all, V_all, nullptr,
+                                                 1.0F / std::sqrt(static_cast<float>(head_dim)),
+                                                 0.0F, 0.0F);
+        ggml_flash_attn_ext_set_prec(attn, GGML_PREC_F32);
+        ggml_tensor * attn_flat = ggml_cont(ctx.get(), ggml_reshape_1d(ctx.get(), attn, n_head * head_dim));
+        ggml_tensor * attn_out = ggml_mul_mat(ctx.get(), layer.attn_o_proj.tensor, attn_flat);  // [dim]
+        out_mamba_ts.push_back(out_mamba);
+        attn_out_ts.push_back(attn_out);
+
+        // ---- merge + residual ----
+        ggml_tensor * h = ggml_add(ctx.get(), out_mamba, attn_out);
+        h = ggml_add(ctx.get(), cur, h);
+
+        // ---- FFN ----
         ggml_tensor * pre_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
-        pre_ws.push_back(pre_w);
-        ggml_tensor * pre_norm = ggml_rms_norm(ctx.get(), cur_res, eps);
-        pre_norm = ggml_mul(ctx.get(), pre_norm, pre_w);
-        ggml_tensor * gate_ff = ggml_mul_mat(ctx.get(), layer.ffn_gate.tensor, pre_norm);
-        ggml_tensor * up_ff = ggml_mul_mat(ctx.get(), layer.ffn_up.tensor, pre_norm);
-        ggml_tensor * gate_silu2 = ggml_silu(ctx.get(), gate_ff);
-        ggml_tensor * gated = ggml_mul(ctx.get(), gate_silu2, up_ff);
+        ggml_set_input(pre_w);
+        pre_w_ts.push_back(pre_w);
+        ggml_tensor * h2 = ggml_rms_norm(ctx.get(), h, norm_eps);
+        h2 = ggml_mul(ctx.get(), h2, pre_w);
+        ggml_tensor * gate_ff = ggml_mul_mat(ctx.get(), layer.ffn_gate.tensor, h2);
+        ggml_tensor * up_ff = ggml_mul_mat(ctx.get(), layer.ffn_up.tensor, h2);
+        ggml_tensor * gated = ggml_mul(ctx.get(), ggml_silu(ctx.get(), gate_ff), up_ff);
         ggml_tensor * down = ggml_mul_mat(ctx.get(), layer.ffn_down.tensor, gated);
-        cur = ggml_add(ctx.get(), cur_res, down);
+        cur = ggml_add(ctx.get(), h, down);
     }
+
+    // final norm + semantic head
     ggml_tensor * final_w = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
-    ggml_tensor * final_norm = ggml_rms_norm(ctx.get(), cur, eps);
+    ggml_set_input(final_w);
+    ggml_tensor * final_norm = ggml_rms_norm(ctx.get(), cur, norm_eps);
     final_norm = ggml_mul(ctx.get(), final_norm, final_w);
-    ggml_tensor * last_hidden = ggml_view_2d(ctx.get(), final_norm, dim, 1, final_norm->nb[1], (seq_len - 1) * final_norm->nb[1]);
-    ggml_tensor * logits = ggml_mul_mat(ctx.get(), weights.falcon_lm_head.tensor, last_hidden);
-    if (std::abs(lm_mult - 1.0f) > 1e-6) logits = ggml_scale(ctx.get(), logits, lm_mult);
+    ggml_tensor * logits = ggml_mul_mat(ctx.get(), weights.falcon_lm_head.tensor, final_norm);  // [vocab]
+    // NOTE: lm_head_multiplier applies only to FalconH1ForCausalLM's full-vocab head.
+    // ArkttsModel uses the compact semantic_output head and does NOT scale logits.
     ggml_tensor * logits_out = ggml_dup(ctx.get(), logits);
-    ggml_tensor * hidden_out = ggml_dup(ctx.get(), last_hidden);
+    ggml_tensor * hidden_out = ggml_dup(ctx.get(), final_norm);
     ggml_set_name(logits_out, "logits_out");
     ggml_set_name(hidden_out, "hidden_out");
+
     ggml_cgraph * gf = ggml_new_graph_custom(ctx.get(), 8192, false);
     ggml_build_forward_expand(gf, logits_out);
     ggml_build_forward_expand(gf, hidden_out);
     ggml_gallocr_t gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-    if (!gallocr || !ggml_gallocr_reserve(gallocr, gf) || !ggml_gallocr_alloc_graph(gallocr, gf)) throw std::runtime_error("falcon_forward: gallocr failed");
-    for (size_t i = 0; i < ln_ws.size(); ++i) {
-        const auto & vals = weights.falcon_layers[i].input_layernorm.values;
-        if (!vals.empty()) ggml_backend_tensor_set(ln_ws[i], vals.data(), 0, vals.size() * sizeof(float));
-        else { std::vector<float> ones(static_cast<size_t>(dim), 1.0f); ggml_backend_tensor_set(ln_ws[i], ones.data(), 0, ones.size() * sizeof(float)); }
+    if (!gallocr || !ggml_gallocr_reserve(gallocr, gf) || !ggml_gallocr_alloc_graph(gallocr, gf)) {
+        throw std::runtime_error("falcon_forward_step: gallocr failed");
     }
-    for (size_t i = 0; i < bias_ws.size(); ++i) {
-        const auto & vals = weights.falcon_layers[i].ssm_conv1d_b.values;
-        if (!vals.empty()) ggml_backend_tensor_set(bias_ws[i], vals.data(), 0, vals.size() * sizeof(float));
-        else { std::vector<float> zeros(896, 0.0f); ggml_backend_tensor_set(bias_ws[i], zeros.data(), 0, zeros.size() * sizeof(float)); }
+
+    fprintf(stderr, "[DBG] cur op=%d flags=0x%x buf=%p data=%p name=%s\n",
+            (int)cur->op, (unsigned)cur->flags, (void *)cur->buffer, (void *)cur->data,
+            ggml_get_name(cur) ? ggml_get_name(cur) : "none");
+    fflush(stderr);
+    {
+        const auto & l0 = weights.falcon_layers[0];
+        std::vector<float> av(static_cast<size_t>(n_mamba_heads));
+        ggml_backend_tensor_get(l0.ssm_A.tensor, av.data(), 0, av.size() * sizeof(float));
+        std::vector<float> dv(static_cast<size_t>(n_mamba_heads));
+        ggml_backend_tensor_get(l0.ssm_D.tensor, dv.data(), 0, dv.size() * sizeof(float));
+        std::vector<float> bv(static_cast<size_t>(n_mamba_heads));
+        ggml_backend_tensor_get(l0.ssm_dt_b.tensor, bv.data(), 0, bv.size() * sizeof(float));
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            fprintf(f, "[PARAMS] A_log0=%f,%f,%f,%f D0=%f,%f,%f,%f dtb0=%f,%f,%f,%f\n",
+                    av[0], av[1], av[2], av[3], dv[0], dv[1], dv[2], dv[3], bv[0], bv[1], bv[2], bv[3]);
+            fclose(f);
+        }
     }
-    for (size_t i = 0; i < pre_ws.size(); ++i) {
-        const auto & vals = weights.falcon_layers[i].pre_ff_layernorm.values;
-        if (!vals.empty()) ggml_backend_tensor_set(pre_ws[i], vals.data(), 0, vals.size() * sizeof(float));
-        else { std::vector<float> ones(static_cast<size_t>(dim), 1.0f); ggml_backend_tensor_set(pre_ws[i], ones.data(), 0, ones.size() * sizeof(float)); }
+    // ---- feed host constants ----
+    dbg_ts(cur, embedding.data(), 0, embedding.size() * sizeof(float));
+    {
+        const int32_t ids0 = 0;
+        const int32_t posv = static_cast<int32_t>(position);
+        for (int64_t li = 0; li < n_layer; ++li) {
+            dbg_ts(ids_ts[static_cast<size_t>(li)], &ids0, 0, sizeof(int32_t));
+            dbg_ts(pos_ts[static_cast<size_t>(li)], &posv, 0, sizeof(int32_t));
+        }
     }
-    if (!weights.slow_norm.values.empty()) ggml_backend_tensor_set(final_w, weights.slow_norm.values.data(), 0, weights.slow_norm.values.size() * sizeof(float));
-    else { std::vector<float> ones(static_cast<size_t>(dim), 1.0f); ggml_backend_tensor_set(final_w, ones.data(), 0, ones.size() * sizeof(float)); }
-    std::vector<float> cur_data(static_cast<size_t>(dim * seq_len));
-    for (int64_t s = 0; s < seq_len; ++s) for (int64_t d = 0; d < dim; ++d) cur_data[static_cast<size_t>(d + s * dim)] = embeddings[static_cast<size_t>(s * dim + d)];
-    ggml_backend_tensor_set(cur, cur_data.data(), 0, cur_data.size() * sizeof(float));
+    for (int64_t li = 0; li < n_layer; ++li) {
+        const auto & layer = weights.falcon_layers[static_cast<size_t>(li)];
+        if (!layer.input_layernorm.values.empty()) {
+            dbg_ts(ln_w_ts[static_cast<size_t>(li)], layer.input_layernorm.values.data(), 0,
+                                    layer.input_layernorm.values.size() * sizeof(float));
+        } else {
+            std::vector<float> ones(static_cast<size_t>(dim), 1.0F);
+            dbg_ts(ln_w_ts[static_cast<size_t>(li)], ones.data(), 0, ones.size() * sizeof(float));
+        }
+        if (!layer.pre_ff_layernorm.values.empty()) {
+            dbg_ts(pre_w_ts[static_cast<size_t>(li)], layer.pre_ff_layernorm.values.data(), 0,
+                                    layer.pre_ff_layernorm.values.size() * sizeof(float));
+        } else {
+            std::vector<float> ones(static_cast<size_t>(dim), 1.0F);
+            dbg_ts(pre_w_ts[static_cast<size_t>(li)], ones.data(), 0, ones.size() * sizeof(float));
+        }
+        // conv state [d_conv-1, conv_dim] (col-major: element (c,r) at r*conv_dim + c)
+        const auto & cstate = state.conv_states[static_cast<size_t>(li)];
+        dbg_ts(conv_st_ts[static_cast<size_t>(li)], cstate.data(), 0, cstate.size() * sizeof(float));
+        // ssm state [d_state, mamba_head_dim, n_mamba_heads]
+        const auto & sstate = state.ssm_states[static_cast<size_t>(li)];
+        dbg_ts(ssm_st_ts[static_cast<size_t>(li)], sstate.data(), 0, sstate.size() * sizeof(float));
+        // A = -exp(A_log)
+        {
+            std::vector<float> a_log(static_cast<size_t>(n_mamba_heads));
+            ggml_backend_tensor_get(layer.ssm_A.tensor, a_log.data(), 0, a_log.size() * sizeof(float));
+            std::vector<float> av(static_cast<size_t>(n_mamba_heads));
+            for (int64_t h = 0; h < n_mamba_heads; ++h) {
+                av[static_cast<size_t>(h)] = -std::exp(a_log[static_cast<size_t>(h)]);
+            }
+            dbg_ts(A_ts[static_cast<size_t>(li)], av.data(), 0, av.size() * sizeof(float));
+            if (li == 0 || li == 11 || li == 23) {
+                FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+                if (f) {
+                    fprintf(f, "[A%lld] log=%f,%f,%f,%f A=%f,%f,%f,%f\n", (long long)li,
+                            (double)a_log[0], (double)a_log[1], (double)a_log[2], (double)a_log[3],
+                            (double)av[0], (double)av[1], (double)av[2], (double)av[3]);
+                    fclose(f);
+                }
+            }
+        }
+        // D expanded
+        {
+            std::vector<float> d_raw(static_cast<size_t>(n_mamba_heads));
+            ggml_backend_tensor_get(layer.ssm_D.tensor, d_raw.data(), 0, d_raw.size() * sizeof(float));
+            std::vector<float> dv(static_cast<size_t>(d_inner));
+            for (int64_t h = 0; h < n_mamba_heads; ++h) {
+                for (int64_t d = 0; d < mamba_head_dim; ++d) {
+                    dv[static_cast<size_t>(d + h * mamba_head_dim)] = d_raw[static_cast<size_t>(h)];
+                }
+            }
+            dbg_ts(D_ts[static_cast<size_t>(li)], dv.data(), 0, dv.size() * sizeof(float));
+        }
+        // conv bias
+        if (!layer.ssm_conv1d_b.values.empty()) {
+            dbg_ts(conv_b_ts[static_cast<size_t>(li)], layer.ssm_conv1d_b.values.data(), 0,
+                                    layer.ssm_conv1d_b.values.size() * sizeof(float));
+        } else {
+            std::vector<float> zeros(static_cast<size_t>(conv_dim), 0.0F);
+            dbg_ts(conv_b_ts[static_cast<size_t>(li)], zeros.data(), 0, zeros.size() * sizeof(float));
+        }
+        // conv1d weight: host kernel-flipped [d_conv, conv_dim] loaded once
+        {
+            const auto & cw = layer.conv1d_flipped;
+            dbg_ts(conv_w2_ts[static_cast<size_t>(li)], cw.values.data(), 0, cw.values.size() * sizeof(float));
+        }
+        // KV cache
+        const auto & kc = state.k_cache[static_cast<size_t>(li)];
+        const auto & vc = state.v_cache[static_cast<size_t>(li)];
+        if (!kc.empty()) dbg_ts(k_cache_ts[static_cast<size_t>(li)], kc.data(), 0, kc.size() * sizeof(float));
+        if (!vc.empty()) dbg_ts(v_cache_ts[static_cast<size_t>(li)], vc.data(), 0, vc.size() * sizeof(float));
+    }
+    if (!weights.slow_norm.values.empty()) {
+        dbg_ts(final_w, weights.slow_norm.values.data(), 0, weights.slow_norm.values.size() * sizeof(float));
+    } else {
+        std::vector<float> ones(static_cast<size_t>(dim), 1.0F);
+        dbg_ts(final_w, ones.data(), 0, ones.size() * sizeof(float));
+    }
+
     core::set_backend_threads(backend, threads);
-    ggml_status status = core::compute_backend_graph(backend, gf, nullptr, "falcon_forward");
+    ggml_status status = core::compute_backend_graph(backend, gf, nullptr, "falcon_forward_step");
     ggml_backend_synchronize(backend);
-    if (status != GGML_STATUS_SUCCESS) throw std::runtime_error("falcon_forward compute failed");
+    if (status != GGML_STATUS_SUCCESS) {
+        ggml_gallocr_free(gallocr);
+        throw std::runtime_error("falcon_forward_step compute failed");
+    }
+
+    // ---- read outputs + update states ----
+    {
+        std::vector<float> lg(static_cast<size_t>(vocab));
+        ggml_backend_tensor_get(logits_out, lg.data(), 0, static_cast<size_t>(vocab) * sizeof(float));
+        float mn = 1e30f, mx = -1e30f;
+        size_t nan_cnt = 0;
+        for (float x : lg) {
+            if (std::isnan(x)) { ++nan_cnt; continue; }
+            mn = std::min(mn, x); mx = std::max(mx, x);
+        }
+        int argmax = -1;
+        float argmax_v = -1e30f;
+        for (size_t i = 0; i < static_cast<size_t>(config.fast.vocab_size); ++i) {
+            if (lg[i] > argmax_v) { argmax_v = lg[i]; argmax = static_cast<int>(i); }
+        }
+        float eos_v = lg[static_cast<size_t>(config.fast.vocab_size)];
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            fprintf(f, "[LOGITS] pos=%lld argmax=%d argmax_v=%.3f eos_v=%.3f top8=%f,%f,%f,%f,%f,%f,%f,%f\n",
+                    (long long)position, argmax, (double)argmax_v, (double)eos_v,
+                    (double)lg[0], (double)lg[1], (double)lg[2], (double)lg[3],
+                    (double)lg[4], (double)lg[5], (double)lg[6], (double)lg[7]);
+            fclose(f);
+        }
+    }
     SlowForwardOutput out;
-    size_t vocab = static_cast<size_t>(logits_out->ne[0]);
-    if (vocab == 0) vocab = 4097;
-    out.logits.resize(vocab);
+    out.logits.resize(static_cast<size_t>(vocab));
     out.hidden.resize(static_cast<size_t>(dim));
-    ggml_backend_tensor_get(logits_out, out.logits.data(), 0, vocab * sizeof(float));
+    ggml_backend_tensor_get(logits_out, out.logits.data(), 0, static_cast<size_t>(vocab) * sizeof(float));
     ggml_backend_tensor_get(hidden_out, out.hidden.data(), 0, static_cast<size_t>(dim) * sizeof(float));
+
+    // DEBUG: layer 1 x/dt values
+    {
+        std::vector<float> xv(static_cast<size_t>(d_inner));
+        std::vector<float> dtv(static_cast<size_t>(n_mamba_heads));
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            for (int64_t li : {0, 1}) {
+                ggml_backend_tensor_get(x_conv_ts[static_cast<size_t>(li)], xv.data(), 0, xv.size() * sizeof(float));
+                float xmax = 0; for (float v : xv) xmax = std::max(xmax, std::fabs(v));
+                ggml_backend_tensor_get(dt_ts[static_cast<size_t>(li)], dtv.data(), 0, dtv.size() * sizeof(float));
+                float dtmax = 0; for (float v : dtv) dtmax = std::max(dtmax, std::fabs(v));
+                fprintf(f, "[XD%lld] pos=%lld xmax=%.4f dtmax=%.4f dt0=%.3f,%.3f,%.3f\n",
+                        (long long)li, (long long)position, (double)xmax, (double)dtmax,
+                        (double)dtv[0], (double)dtv[1], (double)dtv[2]);
+            }
+            fclose(f);
+        }
+    }
+    // DEBUG: attention vs mamba output norms
+    {
+        std::vector<float> av(static_cast<size_t>(dim));
+        FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+        if (f) {
+            for (int64_t li : {0, 1, 2, 3}) {
+                float amax = 0, mmax = 0;
+                ggml_backend_tensor_get(attn_out_ts[static_cast<size_t>(li)], av.data(), 0, av.size() * sizeof(float));
+                for (float v : av) amax = std::max(amax, std::fabs(v));
+                ggml_backend_tensor_get(out_mamba_ts[static_cast<size_t>(li)], av.data(), 0, av.size() * sizeof(float));
+                for (float v : av) mmax = std::max(mmax, std::fabs(v));
+                fprintf(f, "[AM%lld] pos=%lld attn_max=%.4f mamba_max=%.4f\n",
+                        (long long)li, (long long)position, (double)amax, (double)mmax);
+            }
+            fclose(f);
+        }
+    }
+    // conv state: last d_conv-1 kernel rows of sx (per layer). sx is col-major
+    // [d_conv, conv_dim], element (k, c) at k + d_conv*c.
+    {
+        std::vector<float> sx_vals(static_cast<size_t>(d_conv * conv_dim));
+        for (int64_t li = 0; li < n_layer; ++li) {
+            ggml_backend_tensor_get(sx_ts[static_cast<size_t>(li)], sx_vals.data(), 0, sx_vals.size() * sizeof(float));
+            auto & cstate = state.conv_states[static_cast<size_t>(li)];
+            for (int64_t r = 0; r < d_conv - 1; ++r) {
+                for (int64_t c = 0; c < conv_dim; ++c) {
+                    cstate[r * conv_dim + c] = sx_vals[(r + 1) + d_conv * c];
+                }
+            }
+        }
+    }
+
+    // ssm state: tail of scan output (d_state*d_inner per layer) — per-layer tensors!
+    {
+        const size_t y_sz = static_cast<size_t>(d_inner);
+        const size_t s_sz = static_cast<size_t>(d_state * d_inner);
+        std::vector<float> scan_vals(y_sz + s_sz);
+        for (int64_t li = 0; li < n_layer; ++li) {
+            ggml_backend_tensor_get(scan_ts[static_cast<size_t>(li)], scan_vals.data(), 0, scan_vals.size() * sizeof(float));
+            auto & sstate = state.ssm_states[static_cast<size_t>(li)];
+            float ymax = 0.0f, smax = 0.0f;
+            size_t ynan = 0, snan = 0;
+            for (size_t i = 0; i < y_sz; ++i) {
+                ymax = std::max(ymax, std::fabs(scan_vals[i]));
+                if (std::isnan(scan_vals[i])) ++ynan;
+            }
+            for (size_t i = 0; i < s_sz; ++i) {
+                sstate[i] = scan_vals[y_sz + i];
+                smax = std::max(smax, std::fabs(sstate[i]));
+                if (std::isnan(sstate[i])) ++snan;
+            }
+            if (ynan > 0 || snan > 0 || ymax > 100.0f || smax > 100.0f) {
+                FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+                if (f) {
+                    fprintf(f, "[SCAN%lld] pos=%lld ymax=%.4f ynan=%zu smax=%.4f snan=%zu\n",
+                            (long long)li, (long long)position, (double)ymax, ynan, (double)smax, snan);
+                    fclose(f);
+                }
+            }
+        }
+    }
+
+    // KV cache append in ggml col-major layout [head_dim, seq, n_kv, 1]:
+    // element (d, t, h) at d + head_dim*(t + new_seq_len*h). The freshly
+    // projected/roped k/v read back as [d + head_dim*h] (128 values).
+    {
+        std::vector<float> kv(static_cast<size_t>(n_kv * head_dim));
+        const int64_t new_seq_len = seq + 1;
+        for (int64_t li = 0; li < n_layer; ++li) {
+            ggml_backend_tensor_get(k_cur_ts[static_cast<size_t>(li)], kv.data(), 0, kv.size() * sizeof(float));
+            auto & kc = state.k_cache[static_cast<size_t>(li)];
+            kc.resize(static_cast<size_t>(new_seq_len * n_kv * head_dim));
+            for (int64_t h = 0; h < n_kv; ++h) {
+                for (int64_t d = 0; d < head_dim; ++d) {
+                    kc[static_cast<size_t>(d + head_dim * (seq + new_seq_len * h))] =
+                        kv[static_cast<size_t>(d + head_dim * h)];
+                }
+            }
+            ggml_backend_tensor_get(v_cur_ts[static_cast<size_t>(li)], kv.data(), 0, kv.size() * sizeof(float));
+            auto & vc = state.v_cache[static_cast<size_t>(li)];
+            vc.resize(static_cast<size_t>(new_seq_len * n_kv * head_dim));
+            for (int64_t h = 0; h < n_kv; ++h) {
+                for (int64_t d = 0; d < head_dim; ++d) {
+                    vc[static_cast<size_t>(d + head_dim * (seq + new_seq_len * h))] =
+                        kv[static_cast<size_t>(d + head_dim * h)];
+                }
+            }
+        }
+        state.seq_len = new_seq_len;
+    }
+
     ggml_gallocr_free(gallocr);
     core::release_backend_graph_resources(backend, gf);
     return out;
 }
+
+// Single-token Falcon embedding: text_embedding(semantic) * embedding_multiplier
+// + sum(codebook_embeddings) for semantic tokens. `matrix` is [codebook_rows][steps].
+std::vector<float> build_falcon_embedding_step(
+    const Audio8TtsConfig & config,
+    const ArkttsARWeights & weights,
+    const int32_t * matrix,
+    int64_t steps,
+    int64_t step) {
+    const int64_t hidden = config.text.dim;
+    const int64_t codebook_rows = config.fast.num_codebooks + 1;
+    const int32_t token = matrix[step];
+    std::vector<float> out(static_cast<size_t>(hidden), 0.0F);
+    auto row = lookup_row(weights.text_embedding_host, token, hidden);
+    if (token >= config.semantic_start_token_id && token <= config.semantic_end_token_id) {
+        for (int64_t cb = 0; cb < config.fast.num_codebooks; ++cb) {
+            const int32_t code = matrix[(cb + 1) * steps + step];
+            add_row(weights.codebook_embedding_host, cb * config.fast.vocab_size + code, hidden, row);
+        }
+    }
+    // HF _embed + _slow_backbone: (text_emb + codebook_sum) * embedding_multiplier.
+    for (auto & v : row) v *= config.text.embedding_multiplier;
+    std::copy(row.begin(), row.end(), out.begin());
+    return out;
+}
+
 
 }  // namespace
 
@@ -1099,18 +1674,13 @@ public:
         const bool is_falcon = assets.config.text.slow_backbone == "falcon_h1" ||
                                assets.model_weights->has_tensor("slow.embed_tokens.weight");
         if (is_falcon) {
-            // Falcon-H1 0.1B — native ggml path (see docs/FALCON_H1_0.1B_PORT_PLAN.md).
-            // Current limitation (drawback stub): falcon_forward_stateless is a
-            // simplified forward that implements RMSNorm + Mamba in_proj split
-            // (gate/xBC) + conv bias SiLU + gated out_proj + FFN, but stubs the
-            // SSM core (no ggml_ssm_conv / B/C / dt / A / D / ggml_ssm_scan /
-            // recurrent conv/ssm state, no hybrid attention). It recomputes the
-            // full sequence each step O(N^2) and only applies ssm_out/lm_head
-            // multipliers. This produces prompt-invariant logits and fails STT
-            // without the full Mamba2 port (see mamba-base.cpp:151,
-            // falcon-h1.cpp:132). The full port is tracked in the plan file and
-            // reuses vendored external/ggml ssm backends (cpu/cuda/metal/vulkan)
-            // — no Python dependency, no /tmp or system() calls.
+            // Falcon-H1 0.1B — native ggml path. Stateful Mamba2 + hybrid GQA
+            // attention single-token forward (falcon_forward_step), mirroring
+            // transformers.models.falcon_h1 FalconH1DecoderLayer and llama.cpp
+            // mamba-base.cpp build_mamba2_layer. Prefill runs each prompt token
+            // through the step graph to populate conv/ssm states and the KV
+            // cache; generation continues token by token (O(N) per step instead
+            // of the former O(N^2) stateless recompute).
             if (prompt.codebook_rows != assets.config.fast.num_codebooks + 1 ||
                 static_cast<int64_t>(prompt.matrix.size()) != prompt.codebook_rows * prompt.steps) {
                 throw std::runtime_error("Audio8 TTS AR prompt shape mismatch");
@@ -1138,10 +1708,40 @@ public:
                 }
                 return full;
             };
-            auto pre_emb = build_falcon_embeddings(assets.config, weights, full_matrix.data(), cur_steps);
-            auto pre_out = falcon_forward_stateless(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(), assets.config, weights, pre_emb, cur_steps);
+            FalconH1StepState fstate = init_falcon_step_state(assets.config);
+            {
+                FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+                if (f) {
+                    fprintf(f, "[PROMPT] steps=%lld rows=%lld first8=", (long long)cur_steps, (long long)(assets.config.fast.num_codebooks + 1));
+                    for (int64_t i = 0; i < 8 && i < cur_steps; ++i) fprintf(f, "%d,", full_matrix[static_cast<size_t>(i)]);
+                    fprintf(f, " last2=%d,%d\n", (int)full_matrix[static_cast<size_t>(cur_steps-1)], (int)full_matrix[static_cast<size_t>(cur_steps-2)]);
+                    fclose(f);
+                }
+            }
+            SlowForwardOutput pre_out;
+            for (int64_t p = 0; p < cur_steps; ++p) {
+                {
+                    FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+                    if (f) {
+                        fprintf(f, "[TOKEN] prefill p=%lld tok=%d sem=%d\n", (long long)p,
+                                (int)full_matrix[static_cast<size_t>(p)],
+                                full_matrix[static_cast<size_t>(p)] >= (int)assets.config.semantic_start_token_id ? 1 : 0);
+                        fclose(f);
+                    }
+                }
+                auto p_emb = build_falcon_embedding_step(assets.config, weights, full_matrix.data(), cur_steps, p);
+                pre_out = falcon_forward_step(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(),
+                                              assets.config, weights, p_emb, fstate, p);
+            }
             auto pre_logits_full = expand_compact(pre_out.logits);
             auto frame = sample_frame(pre_logits_full, pre_out.hidden, options, sample, false, profile);
+            {
+                FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+                if (f) {
+                    fprintf(f, "[FRAME] prefill_first sem=%d (EOS=%d)\n", (int)frame[0], (int)im_end_id());
+                    fclose(f);
+                }
+            }
             if (frame.front() == im_end_id()) {
                 log_profile(profile);
                 return Audio8TtsCodes{{}, assets.config.fast.num_codebooks, 0};
@@ -1161,10 +1761,19 @@ public:
             }
             bool ended_by_im_end = false;
             for (int64_t step = 1; step < max_new_tokens; ++step) {
-                auto emb = build_falcon_embeddings(assets.config, weights, full_matrix.data(), cur_steps);
-                auto out = falcon_forward_stateless(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(), assets.config, weights, emb, cur_steps);
+                const int64_t pos = cur_steps - 1;
+                auto emb = build_falcon_embedding_step(assets.config, weights, full_matrix.data(), cur_steps, pos);
+                auto out = falcon_forward_step(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(),
+                                               assets.config, weights, emb, fstate, pos);
                 auto logits_full = expand_compact(out.logits);
                 auto next_frame = sample_frame(logits_full, out.hidden, options, sample, true, profile);
+                {
+                    FILE * f = fopen("/tmp/falcon_dbg.txt", "a");
+                    if (f) {
+                        fprintf(f, "[FRAME] step=%lld sem=%d\n", (long long)step, (int)next_frame[0]);
+                        fclose(f);
+                    }
+                }
                 if (next_frame.front() == im_end_id()) { ended_by_im_end = true; break; }
                 for (size_t i = 1; i < next_frame.size(); ++i) generated_frame_major.push_back(next_frame[i]);
                 ++profile.generated_frames;
