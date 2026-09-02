@@ -88,7 +88,7 @@ An additional `<output-dir>` should be mounted for tasks that write files.
 docker run --rm --gpus all -v "<models-dir>:/models:ro" ghcr.io/0xshug0/audio.cpp:full-cuda12 <cli|server> --model /models/<model> <...>
 ```
 
-### WebUI
+### Native WebUI
 
 For the native WebUI with model downloads and dynamic model management, mount a
 writable model directory and expose the server port:
@@ -111,23 +111,6 @@ already exist in the configured path.
 ```bash
 docker run --rm -v "<models-dir>:/models:ro" ghcr.io/0xshug0/audio.cpp:full-cpu <cli|server> --model /models/<model> <...>
 ```
-
-### Native WebUI
-
-Use `--ui-management` when you want the browser UI to browse, download, remove,
-or switch models. Mount a writable models directory to keep downloads across
-container runs:
-
-```bash
-docker run --rm --gpus all \
-  -p 8080:8080 \
-  -v "<models-dir>:/app/models" \
-  ghcr.io/0xshug0/audio.cpp:full-cuda12 \
-  server --ui --ui-management --host 0.0.0.0 --port 8080 --backend cuda
-```
-
-Then open `http://127.0.0.1:8080`. Omit `--ui-management` for a read-only UI
-serving only the models declared by your server configuration.
 
 See the fully working [examples](#examples) below.
 
