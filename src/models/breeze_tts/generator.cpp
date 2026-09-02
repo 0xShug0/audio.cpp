@@ -48,6 +48,37 @@ struct GgmlContextDeleter {
     }
 };
 
+// The official Breeze-TTS 2 inference runs the backbone and depth decoder with
+// bf16 activations and a bf16 KV cache. Pure fp32 activations measurably drift
+// into degenerate trajectories on some prompts (mispronunciations, repetition
+// collapse), so match the reference bf16 behavior on GPU backends.
+modules::QwenDecoderActivationCastPolicy breeze_bf16_activation_policy(core::BackendType backend_type) {
+    modules::QwenDecoderActivationCastPolicy policy;
+    if (backend_type != core::BackendType::Cuda && backend_type != core::BackendType::Hip &&
+        backend_type != core::BackendType::Vulkan) {
+        return policy;
+    }
+    policy.enabled = true;
+    policy.type = GGML_TYPE_BF16;
+    // CUDA/HIP implement the fused round-to-bf16 unary op; Vulkan does not and
+    // keeps the cast round trip.
+    policy.fused_round = backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip;
+    policy.after_input_norm = true;
+    policy.after_qkv_projection = true;
+    policy.after_qk_norm = true;
+    policy.after_rope = true;
+    policy.after_static_cache_update = true;
+    policy.after_attention = true;
+    policy.after_attention_output = true;
+    policy.after_residual = true;
+    policy.after_ffn_norm = true;
+    policy.after_mlp_projection = true;
+    policy.after_mlp_silu = true;
+    policy.after_mlp_mul = true;
+    policy.after_output = true;
+    return policy;
+}
+
 modules::QwenCausalDecodeRuntimeConfig backbone_config(
     const BreezeTTSConfig & config,
     core::BackendType backend_type,
@@ -76,7 +107,12 @@ modules::QwenCausalDecodeRuntimeConfig backbone_config(
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
         backend_type == core::BackendType::Vulkan) {
-        out.decoder.static_cache_type = GGML_TYPE_F16;
+        // BF16 KV cache matches the reference implementation, but flash
+        // attention only accelerates bf16 cache with native bf16 MMA
+        // (sm_80+); on older parts it is ~3x slower, so only HIP uses it.
+        out.decoder.static_cache_type =
+            backend_type == core::BackendType::Hip ? GGML_TYPE_BF16 : GGML_TYPE_F16;
+        out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
     }
     out.decoder.logits_size = config.lm_head_size;
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
@@ -118,7 +154,11 @@ modules::QwenCausalDecodeRuntimeConfig depth_config(
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
         backend_type == core::BackendType::Vulkan) {
-        out.decoder.static_cache_type = GGML_TYPE_F16;
+        // See backbone_config: only HIP uses a bf16 KV cache; CUDA and Vulkan
+        // keep F16.
+        out.decoder.static_cache_type =
+            backend_type == core::BackendType::Hip ? GGML_TYPE_BF16 : GGML_TYPE_F16;
+        out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
     }
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.output_mode = modules::QwenCausalDecodeOutputMode::Hidden;
