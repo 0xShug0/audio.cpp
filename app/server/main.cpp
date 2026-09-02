@@ -66,6 +66,7 @@ void print_help() {
         << "                [--device <id>] [--list-devices] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
         << "                [--model-spec-override <json-or-directory>] [--voice-dir <directory>]\n"
+        << "                [--https-cert-file <pem> --https-key-file <pem>]\n"
         << "                [--log] [--log-file <path>]\n"
         << "                [--cors-origins <origins>]\n"
         << "  --version                        print build version, commit, compiler, platform, and enabled backends\n"
@@ -89,6 +90,9 @@ void print_help() {
         << "                                   least this many MiB free after the load; default 0\n"
         << "                                   (guard disabled)\n"
         << "  --voice-dir <directory>          override the shared reference voice library directory\n"
+        << "  --https-cert-file <pem>          serve HTTPS through the optional frontend transport;\n"
+        << "                                   requires --https-key-file and a frontend HTTPS build\n"
+        << "  --https-key-file <pem>           private key for --https-cert-file\n"
         << "  --cors-origins \"*\"              experimental; disabled by default. Allows browser\n"
         << "                                   requests from any origin for trusted local demos only\n"
         << "\n"
@@ -217,6 +221,17 @@ int main(int argc, char ** argv) {
         if (const auto voice_dir = arg_value(argc, argv, "--voice-dir")) {
             config.voice_dir = std::filesystem::path(*voice_dir);
         }
+        const auto https_cert_file = arg_value(argc, argv, "--https-cert-file");
+        const auto https_key_file = arg_value(argc, argv, "--https-key-file");
+        if (https_cert_file.has_value() || https_key_file.has_value()) {
+            if (!https_cert_file.has_value() || !https_key_file.has_value()) {
+                throw std::runtime_error("--https-cert-file and --https-key-file must be set together");
+            }
+            config.https = minitts::server::ServerFrontendHttpsConfig{
+                std::filesystem::path(*https_cert_file),
+                std::filesystem::path(*https_key_file),
+            };
+        }
         if (!(config.cors_origins == "*" || config.cors_origins == "")) {
             throw std::runtime_error("--cors-origins must be '*' (allow all origins) or '' (disabled)");
         }
@@ -241,7 +256,22 @@ int main(int argc, char ** argv) {
             config,
             std::filesystem::current_path(),
             ui_resource_anchor);
-        minitts::server::serve_http(config.host, config.port, state, shutdown_requested, config.max_request_body_bytes);
+        if (config.https.has_value()) {
+            minitts::server::serve_frontend_https(
+                config.host,
+                config.port,
+                state,
+                shutdown_requested,
+                config.max_request_body_bytes,
+                *config.https);
+        } else {
+            minitts::server::serve_http(
+                config.host,
+                config.port,
+                state,
+                shutdown_requested,
+                config.max_request_body_bytes);
+        }
         return 0;
     } catch (const std::exception & ex) {
         std::cerr << "audiocpp_server failed: " << ex.what() << "\n";

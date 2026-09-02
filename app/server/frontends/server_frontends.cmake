@@ -9,6 +9,14 @@ if (NOT AUDIOCPP_BUILD_SERVER_FRONTENDS AND AUDIOCPP_SERVER_FRONTEND_MODULES)
 endif()
 
 set(AUDIOCPP_SERVER_FRONTENDS_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(AUDIOCPP_SERVER_FRONTEND_HTTPS_ENABLED OFF)
+if (AUDIOCPP_BUILD_SERVER_FRONTENDS)
+    foreach(AUDIOCPP_SERVER_FRONTEND_MODULE IN LISTS AUDIOCPP_SERVER_FRONTEND_MODULES)
+        if (AUDIOCPP_SERVER_FRONTEND_MODULE STREQUAL "https")
+            set(AUDIOCPP_SERVER_FRONTEND_HTTPS_ENABLED ON)
+        endif()
+    endforeach()
+endif()
 
 function(audiocpp_configure_server_frontends AUDIOCPP_SERVER_TARGET)
     set(AUDIOCPP_SERVER_FRONTEND_DECLARATIONS "")
@@ -52,6 +60,13 @@ function(audiocpp_configure_server_frontends AUDIOCPP_SERVER_TARGET)
                     "${AUDIOCPP_LAME_INCLUDE_DIR}")
                 list(APPEND AUDIOCPP_SERVER_FRONTEND_LIBRARIES
                     "${AUDIOCPP_LAME_LIBRARY}")
+            elseif (AUDIOCPP_SERVER_FRONTEND_MODULE STREQUAL "https")
+                list(APPEND AUDIOCPP_SERVER_FRONTEND_SOURCES
+                    "${AUDIOCPP_SERVER_FRONTENDS_SOURCE_DIR}/https.cpp")
+                list(APPEND AUDIOCPP_SERVER_FRONTEND_LIBRARIES
+                    audiocpp_cpp_httplib)
+                target_compile_definitions(${AUDIOCPP_SERVER_TARGET} PRIVATE
+                    AUDIOCPP_SERVER_FRONTEND_HAS_HTTPS=1)
             else()
                 message(FATAL_ERROR
                     "Unknown AUDIOCPP_SERVER_FRONTEND_MODULES entry: ${AUDIOCPP_SERVER_FRONTEND_MODULE}")
@@ -67,7 +82,8 @@ function(audiocpp_configure_server_frontends AUDIOCPP_SERVER_TARGET)
             target_include_directories(audiocpp_server_frontends PRIVATE
                 ${AUDIOCPP_SERVER_FRONTEND_INCLUDE_DIRS}
             )
-            target_link_libraries(audiocpp_server_frontends PUBLIC engine_runtime)
+            target_link_libraries(audiocpp_server_frontends PUBLIC engine_runtime PRIVATE
+                ${AUDIOCPP_SERVER_FRONTEND_LIBRARIES})
             target_sources(${AUDIOCPP_SERVER_TARGET} PRIVATE $<TARGET_OBJECTS:audiocpp_server_frontends>)
             target_link_libraries(${AUDIOCPP_SERVER_TARGET} PRIVATE
                 audiocpp_server_frontends

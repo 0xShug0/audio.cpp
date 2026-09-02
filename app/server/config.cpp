@@ -249,6 +249,23 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         }
         config.voice_dir = resolve_path(base, value->as_string());
     }
+    const auto * https_cert_file = root.find("https_cert_file");
+    const auto * https_key_file = root.find("https_key_file");
+    if (https_cert_file != nullptr || https_key_file != nullptr) {
+        if (https_cert_file == nullptr || https_key_file == nullptr) {
+            throw std::runtime_error("server https_cert_file and https_key_file must be set together");
+        }
+        if (!https_cert_file->is_string()) {
+            throw std::runtime_error("server https_cert_file must be a string");
+        }
+        if (!https_key_file->is_string()) {
+            throw std::runtime_error("server https_key_file must be a string");
+        }
+        config.https = ServerFrontendHttpsConfig{
+            resolve_path(base, https_cert_file->as_string()),
+            resolve_path(base, https_key_file->as_string()),
+        };
+    }
     if (config.port <= 0 || config.port > 65535) {
         throw std::runtime_error("server port must be in 1..65535");
     }

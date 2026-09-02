@@ -129,7 +129,28 @@ HttpResponse ServerFrontendRegistry::handle(ServerFrontendContext & context, con
 }
 
 void register_static_server_frontends(ServerFrontendRegistry & registry) {
+    (void) registry;
 #include "server_frontend_module_registrations.inc"
 }
+
+#if !defined(AUDIOCPP_SERVER_FRONTEND_HAS_HTTPS)
+void serve_frontend_https(
+    const std::string & host,
+    int port,
+    IHttpHandler & handler,
+    ShutdownRequested shutdown_requested,
+    uint64_t max_request_body_bytes,
+    const ServerFrontendHttpsConfig & config) {
+    (void) host;
+    (void) port;
+    (void) handler;
+    (void) shutdown_requested;
+    (void) max_request_body_bytes;
+    (void) config;
+    throw std::runtime_error(
+        "HTTPS frontend support is not available in this build; configure with "
+        "-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTEND_MODULES=https");
+}
+#endif
 
 } // namespace minitts::server
