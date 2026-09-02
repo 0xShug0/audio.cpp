@@ -915,6 +915,31 @@ std::vector<float> build_falcon_embeddings(
 // mamba heads 24 x head 32, GQA 8/2 x 64, RoPE NEOX base 1e11).
 // ============================================================================
 
+// One baked Falcon-H1 step graph (zero-copy path), valid for a fixed KV
+// capacity bucket. All weights and recurrent state are bound as external views
+// of host memory owned by the weights/state structs, so a plan can be reused
+// for every step whose sequence fits the bucket.
+struct FalconStepPlan {
+    int64_t cap = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
+    ggml_cgraph * gf = nullptr;  // owned by ctx
+    ggml_gallocr_t gallocr = nullptr;
+    ggml_tensor * logits_out = nullptr;
+    ggml_tensor * hidden_out = nullptr;
+    ggml_backend_t backend = nullptr;  // borrowed; the runtime outlives any generation
+    ~FalconStepPlan() {
+        if (backend != nullptr && gf != nullptr) {
+            core::release_backend_graph_resources(backend, gf);
+        }
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+        }
+    }
+    FalconStepPlan() = default;
+    FalconStepPlan(const FalconStepPlan &) = delete;
+    FalconStepPlan & operator=(const FalconStepPlan &) = delete;
+};
+
 struct FalconH1StepState {
     int64_t n_layer = 0;
     int64_t d_inner = 0;        // mamba_d_ssm (768)
@@ -949,6 +974,14 @@ struct FalconH1StepState {
     int32_t ids_value = 0;
     int32_t pos_value = 0;
     bool constants_ready = false;
+    // Bucketed plan reuse (zero-copy path): staging buffer for the per-step
+    // embedding (the graph input tensor is baked to its address), the flash
+    // mask scratch (slot seq is the last visible position), the dynamic
+    // set_rows slot index, and the baked graph itself.
+    std::vector<float> emb_stage;          // [dim]
+    std::vector<ggml_fp16_t> kv_mask;      // [kv_cap]
+    int32_t kv_slot = 0;
+    std::unique_ptr<FalconStepPlan> plan;
 };
 
 FalconH1StepState init_falcon_step_state(const Audio8TtsConfig & config) {
@@ -977,7 +1010,6 @@ FalconH1StepState init_falcon_step_state(const Audio8TtsConfig & config) {
     return st;
 }
 
-<<<<<<< HEAD
 // Temporary diagnostics for tensor-set debugging (removed after fix).
 static int g_dbg_set_count = 0;
 static void dbg_ts(ggml_tensor * t, const void * data, size_t off, size_t sz) {
@@ -993,14 +1025,16 @@ static void dbg_ts(ggml_tensor * t, const void * data, size_t off, size_t sz) {
     }
     if (t && t->buffer == nullptr) std::abort();
     ggml_backend_tensor_set(t, data, off, sz);
-=======
 // Grow the zero-copy padded KV caches. The head stride changes with capacity,
 // so live slots are re-laid-out per head; called between steps, and per-step
 // graphs re-bind their views from scratch afterwards.
 void grow_falcon_kv_pad(FalconH1StepState & state, int64_t head_dim, int64_t n_kv, int64_t need) {
     if (need <= state.kv_cap) return;
-    int64_t new_cap = 64;
-    while (new_cap < need) new_cap *= 2;
+    // 128-slot buckets: fine-grained enough to keep padded flash cheap, and
+    // they keep nek1 below the CPU flash kernel's split-KV threshold (512) for
+    // as long as possible so the masked padded reduction stays bitwise equal
+    // to the exact-prefix one.
+    int64_t new_cap = std::max<int64_t>(64, ((need + 127) / 128) * 128);
     const size_t live = static_cast<size_t>(head_dim * state.seq_len);  // valid floats per head
     for (auto * caches : {&state.k_pad, &state.v_pad}) {
         for (auto & cache : *caches) {
@@ -1018,7 +1052,378 @@ void grow_falcon_kv_pad(FalconH1StepState & state, int64_t head_dim, int64_t n_k
         }
     }
     state.kv_cap = new_cap;
->>>>>>> 569d6ea (perf(audio8_tts): keep Falcon KV cache in padded host buffers, write slots in-graph)
+}
+
+// Loop-invariant SSM constants, resolved once per generation: A = -exp(A_log)
+// per mamba head, D expanded per channel.
+void precompute_falcon_constants(
+    const Audio8TtsConfig & config,
+    const ArkttsARWeights & weights,
+    FalconH1StepState & state) {
+    if (state.constants_ready) return;
+    const int64_t n_layer = config.text.n_layer;
+    const int64_t d_inner = config.text.mamba_d_ssm;
+    const int64_t n_mamba_heads = config.text.mamba_n_heads;
+    const int64_t mamba_head_dim = config.text.mamba_d_head;
+    state.pre_A.resize(static_cast<size_t>(n_layer));
+    state.pre_D.resize(static_cast<size_t>(n_layer));
+    for (int64_t li = 0; li < n_layer; ++li) {
+        const auto & layer = weights.falcon_layers[static_cast<size_t>(li)];
+        auto & a_vals = state.pre_A[static_cast<size_t>(li)];
+        a_vals.resize(static_cast<size_t>(n_mamba_heads));
+        std::vector<float> a_log(static_cast<size_t>(n_mamba_heads));
+        ggml_backend_tensor_get(layer.ssm_A.tensor, a_log.data(), 0, a_log.size() * sizeof(float));
+        for (int64_t h = 0; h < n_mamba_heads; ++h) {
+            a_vals[static_cast<size_t>(h)] = -std::exp(a_log[static_cast<size_t>(h)]);
+        }
+        auto & d_vals = state.pre_D[static_cast<size_t>(li)];
+        d_vals.resize(static_cast<size_t>(d_inner));
+        std::vector<float> d_raw(static_cast<size_t>(n_mamba_heads));
+        ggml_backend_tensor_get(layer.ssm_D.tensor, d_raw.data(), 0, d_raw.size() * sizeof(float));
+        for (int64_t h = 0; h < n_mamba_heads; ++h) {
+            for (int64_t d = 0; d < mamba_head_dim; ++d) {
+                d_vals[static_cast<size_t>(d + h * mamba_head_dim)] = d_raw[static_cast<size_t>(h)];
+            }
+        }
+    }
+    state.constants_ready = true;
+}
+
+// Builds the reusable per-bucket Falcon step graph for the zero-copy path.
+// Every weight and recurrent-state tensor is bound as an external view of host
+// memory owned by `weights`/`state` (gallocr skips tensors whose data is set
+// externally), conv/ssm state write-backs and the KV slot writes run in-graph
+// (ggml_cpy / ggml_set_rows), and flash attention reads the full padded cache
+// under a mask so the graph topology does not depend on the sequence length.
+std::unique_ptr<FalconStepPlan> build_falcon_step_plan(
+    ggml_backend_t backend,
+    size_t arena_bytes,
+    const Audio8TtsConfig & config,
+    const ArkttsARWeights & weights,
+    FalconH1StepState & state,
+    ArkttsARProfile * profile) {
+    const int64_t dim = config.text.dim;
+    const int64_t n_layer = config.text.n_layer;
+    const int64_t d_inner = config.text.mamba_d_ssm;
+    const int64_t d_state = config.text.mamba_d_state;
+    const int64_t d_conv = config.text.mamba_d_conv;
+    const int64_t n_groups = config.text.mamba_n_groups;
+    const int64_t n_mamba_heads = config.text.mamba_n_heads;
+    const int64_t mamba_head_dim = config.text.mamba_d_head;
+    const int64_t conv_dim = d_inner + 2 * n_groups * d_state;
+    const int64_t n_head = config.text.n_head;
+    const int64_t n_kv = config.text.n_local_heads;
+    const int64_t head_dim = config.text.head_dim;
+    const float norm_eps = config.text.norm_eps;
+    const float rope_base = config.text.rope_base;
+    const int64_t cap = state.kv_cap;
+
+    auto plan = std::make_unique<FalconStepPlan>();
+    plan->cap = cap;
+    plan->backend = backend;
+
+    auto t_init = Clock::now();
+    ggml_init_params params{arena_bytes, nullptr, true};
+    plan->ctx.reset(ggml_init(params));
+    if (!plan->ctx) throw std::runtime_error("build_falcon_step_plan: ggml_init failed");
+    ggml_context * ctx = plan->ctx.get();
+    auto t_build = Clock::now();
+
+    // Mask scratch: slots [0, seq_len] visible, the rest -inf; the runner
+    // reveals one more slot per step.
+    state.kv_mask.assign(static_cast<size_t>(cap), ggml_fp32_to_fp16(-INFINITY));
+    for (int64_t i = 0; i <= state.seq_len && i < cap; ++i) {
+        state.kv_mask[static_cast<size_t>(i)] = ggml_fp32_to_fp16(0.0F);
+    }
+    ggml_tensor * mask_t = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, cap, 1, 1, 1);
+    mask_t->data = state.kv_mask.data();
+
+    auto bind_const = [&](ggml_tensor * t, const std::vector<float> & values,
+                          std::vector<float> & fallback, float fallback_fill) {
+        if (!values.empty()) {
+            t->data = const_cast<float *>(values.data());
+            return;
+        }
+        if (fallback.empty()) {
+            fallback.assign(static_cast<size_t>(ggml_nelements(t)), fallback_fill);
+        }
+        t->data = fallback.data();
+    };
+
+    ggml_tensor * cur = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, dim);
+    ggml_set_name(cur, "falcon_input");
+    cur->data = state.emb_stage.data();
+
+    std::vector<ggml_tensor*> writebacks;     // conv/ssm state tails (dependency-ordered)
+    std::vector<ggml_tensor*> kv_writebacks;  // KV slot writes alias the flash reads: expanded first
+    writebacks.reserve(static_cast<size_t>(n_layer) * 2);
+    kv_writebacks.reserve(static_cast<size_t>(n_layer) * 2);
+
+    for (int64_t li = 0; li < n_layer; ++li) {
+        const auto & layer = weights.falcon_layers[static_cast<size_t>(li)];
+
+        // input_layernorm (RMS)
+        ggml_tensor * ln_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, dim);
+        bind_const(ln_w, layer.input_layernorm.values, state.ones_dim, 1.0F);
+        ggml_tensor * normed = ggml_rms_norm(ctx, cur, norm_eps);
+        normed = ggml_mul(ctx, normed, ln_w);
+
+        // ---- Mamba2 branch ----
+        // zxBCdt = in_proj(normed) -> [d_inner + conv_dim + n_mamba_heads]
+        ggml_tensor * zxBCdt = ggml_mul_mat(ctx, layer.ssm_in.tensor, normed);
+        ggml_tensor * z = ggml_view_1d(ctx, zxBCdt, d_inner, 0);
+        ggml_tensor * xBC = ggml_view_1d(ctx, zxBCdt, conv_dim, d_inner * ggml_element_size(zxBCdt));
+        ggml_tensor * dt = ggml_view_1d(ctx, zxBCdt, n_mamba_heads, (d_inner + conv_dim) * ggml_element_size(zxBCdt));
+
+        // conv: state (d_conv-1 rows) + current xBC -> [d_conv, conv_dim, 1]
+        ggml_tensor * st_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, conv_dim, d_conv - 1);
+        st_t->data = state.conv_states[static_cast<size_t>(li)].data();
+        ggml_tensor * stT = ggml_cont(ctx, ggml_transpose(ctx, st_t));  // [d_conv-1, conv_dim]
+        ggml_tensor * xBC_r = ggml_cont(ctx, ggml_transpose(ctx, ggml_reshape_2d(ctx, xBC, conv_dim, 1)));  // [1, conv_dim]
+        ggml_tensor * sx = ggml_concat(ctx, stT, xBC_r, 0);             // [d_conv, conv_dim]
+        // Next conv state = sx rows 1..d_conv-1, written back into the host
+        // state vector in-graph (the cpy depends on sx, hence on the cont()
+        // that consumed st_t, so the old state is read before it is
+        // overwritten).
+        ggml_tensor * tail = ggml_view_2d(ctx, sx, d_conv - 1, conv_dim,
+                                          sx->nb[1], ggml_element_size(sx));
+        writebacks.push_back(ggml_cpy(ctx, ggml_transpose(ctx, tail), st_t));
+        ggml_tensor * sx3 = ggml_reshape_3d(ctx, sx, d_conv, conv_dim, 1);
+        // ggml ssm_conv computes y[c] = sum_k w[k,c]*sx[k,c] with sx row 0 the
+        // oldest frame — the same orientation as the HF conv1d/cached decode.
+        ggml_tensor * conv_w2 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_conv, conv_dim);
+        bind_const(conv_w2, layer.conv1d_kernel.values, state.zeros_conv_kernel, 0.0F);
+        ggml_tensor * xBC_conv = ggml_ssm_conv(ctx, sx3, conv_w2);  // [conv_dim, 1, 1]
+        ggml_tensor * conv_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, conv_dim);
+        bind_const(conv_b, layer.ssm_conv1d_b.values, state.zeros_conv, 0.0F);
+        xBC_conv = ggml_add(ctx, xBC_conv, ggml_reshape_3d(ctx, conv_b, conv_dim, 1, 1));
+        xBC_conv = ggml_silu(ctx, xBC_conv);
+
+        // split x / B / C (conv output is contiguous [conv_dim,1,1])
+        ggml_tensor * x = ggml_view_1d(ctx, xBC_conv, d_inner, 0);
+        ggml_tensor * B = ggml_view_1d(ctx, xBC_conv, d_state * n_groups, d_inner * ggml_element_size(xBC_conv));
+        ggml_tensor * C = ggml_view_1d(ctx, xBC_conv, d_state * n_groups, (d_inner + d_state * n_groups) * ggml_element_size(xBC_conv));
+
+        // x -> [head_dim, n_mamba_heads, 1, 1]
+        ggml_tensor * x4 = ggml_view_4d(ctx, x, mamba_head_dim, n_mamba_heads, 1, 1,
+                                        mamba_head_dim * ggml_element_size(x),
+                                        mamba_head_dim * n_mamba_heads * ggml_element_size(x),
+                                        mamba_head_dim * n_mamba_heads * ggml_element_size(x), 0);
+        ggml_tensor * B4 = ggml_view_4d(ctx, B, d_state, n_groups, 1, 1,
+                                        d_state * ggml_element_size(B),
+                                        d_state * n_groups * ggml_element_size(B),
+                                        d_state * n_groups * ggml_element_size(B), 0);
+        ggml_tensor * C4 = ggml_view_4d(ctx, C, d_state, n_groups, 1, 1,
+                                        d_state * ggml_element_size(C),
+                                        d_state * n_groups * ggml_element_size(C),
+                                        d_state * n_groups * ggml_element_size(C), 0);
+
+        // dt = dt + dt_bias -> [n_mamba_heads, 1, 1]
+        ggml_tensor * dt_eff = ggml_add(ctx, dt, layer.ssm_dt_b.tensor);
+        ggml_tensor * dt3 = ggml_view_3d(ctx, dt_eff, n_mamba_heads, 1, 1,
+                                         n_mamba_heads * ggml_element_size(dt_eff),
+                                         n_mamba_heads * ggml_element_size(dt_eff), 0);
+
+        // A = -exp(A_log), precomputed: [1, n_mamba_heads]
+        ggml_tensor * A_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, n_mamba_heads);
+        A_t->data = state.pre_A[static_cast<size_t>(li)].data();
+
+        // ssm state: [d_state, mamba_head_dim, n_mamba_heads]
+        ggml_tensor * ssm_t = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_state, mamba_head_dim, n_mamba_heads);
+        ssm_t->data = state.ssm_states[static_cast<size_t>(li)].data();
+
+        // ids for scan (1 sequence)
+        ggml_tensor * ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
+        ids->data = &state.ids_value;
+
+        ggml_tensor * scan = ggml_ssm_scan(ctx, ssm_t, x4, dt3, A_t, B4, C4, ids);
+        // New ssm state = scan tail (after the d_inner y values), written back
+        // into the host state vector in-graph (ordered after the scan read).
+        ggml_tensor * next_state = ggml_view_3d(ctx, scan,
+                                                d_state, mamba_head_dim, n_mamba_heads,
+                                                d_state * ggml_element_size(scan),
+                                                d_state * mamba_head_dim * ggml_element_size(scan),
+                                                d_inner * ggml_element_size(scan));
+        writebacks.push_back(ggml_cpy(ctx, next_state, ssm_t));
+        ggml_tensor * y = ggml_view_1d(ctx, scan, d_inner, 0);
+
+        // y += x * D  (D precomputed)
+        ggml_tensor * D_t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_inner);
+        D_t->data = state.pre_D[static_cast<size_t>(li)].data();
+        y = ggml_add(ctx, y, ggml_mul(ctx, ggml_view_1d(ctx, x4, d_inner, 0), D_t));
+
+        // z gate: y *= silu(z)
+        y = ggml_mul(ctx, y, ggml_silu(ctx, z));
+
+        ggml_tensor * out_mamba = ggml_mul_mat(ctx, layer.ssm_out.tensor, y);  // [dim]
+
+        // ---- GQA attention branch ----
+        // ggml_flash_attn_ext layout: [head_dim, n_tokens, n_head, batch].
+        ggml_tensor * q = ggml_mul_mat(ctx, layer.attn_q_proj.tensor, normed);  // [n_head*head_dim]
+        ggml_tensor * k = ggml_mul_mat(ctx, layer.attn_k_proj.tensor, normed);  // [n_kv*head_dim]
+        ggml_tensor * v = ggml_mul_mat(ctx, layer.attn_v_proj.tensor, normed);  // [n_kv*head_dim]
+
+        ggml_tensor * q4 = ggml_view_4d(ctx, q, head_dim, n_head, 1, 1,
+                                        head_dim * ggml_element_size(q),
+                                        head_dim * n_head * ggml_element_size(q),
+                                        head_dim * n_head * ggml_element_size(q), 0);
+        ggml_tensor * k4 = ggml_view_4d(ctx, k, head_dim, n_kv, 1, 1,
+                                        head_dim * ggml_element_size(k),
+                                        head_dim * n_kv * ggml_element_size(k),
+                                        head_dim * n_kv * ggml_element_size(k), 0);
+        ggml_tensor * v4 = ggml_view_4d(ctx, v, head_dim, n_kv, 1, 1,
+                                        head_dim * ggml_element_size(v),
+                                        head_dim * n_kv * ggml_element_size(v),
+                                        head_dim * n_kv * ggml_element_size(v), 0);
+
+        // RoPE (NEOX / HF default half rotation), base 1e11; ne2 = n_tokens = 1.
+        ggml_tensor * pos_t = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
+        pos_t->data = &state.pos_value;
+        ggml_tensor * q_r = ggml_rope_ext(ctx, q4, pos_t, nullptr, head_dim,
+                                          GGML_ROPE_TYPE_NEOX, config.text.max_seq_len,
+                                          rope_base, 1.0F, 1.0F, 1.0F, 32.0F, 1.0F);
+        ggml_tensor * k_r = ggml_rope_ext(ctx, k4, pos_t, nullptr, head_dim,
+                                          GGML_ROPE_TYPE_NEOX, config.text.max_seq_len,
+                                          rope_base, 1.0F, 1.0F, 1.0F, 32.0F, 1.0F);
+
+        // [head_dim, n_head, 1, 1] -> permute(0,2,1,3) -> [head_dim, 1, n_head, 1]
+        ggml_tensor * q_p = ggml_permute(ctx, q_r, 0, 2, 1, 3);
+        ggml_tensor * k_p = ggml_permute(ctx, k_r, 0, 2, 1, 3);
+        ggml_tensor * v_p = ggml_permute(ctx, v4, 0, 2, 1, 3);
+
+        // Padded caches as external leaves [head_dim, cap, n_kv, 1]; the fresh
+        // k/v land in slot `kv_slot` via in-graph set_rows, and flash attends
+        // the whole padded cache under the mask (slots > seq are -inf, which
+        // contributes exactly zero to the softmax).
+        ggml_tensor * k_pad_t = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, head_dim, cap, n_kv, 1);
+        ggml_tensor * v_pad_t = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, head_dim, cap, n_kv, 1);
+        k_pad_t->data = state.k_pad[static_cast<size_t>(li)].data();
+        v_pad_t->data = state.v_pad[static_cast<size_t>(li)].data();
+        ggml_tensor * slot_t = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
+        slot_t->data = &state.kv_slot;
+        kv_writebacks.push_back(ggml_set_rows(ctx, k_pad_t, k_p, slot_t));
+        kv_writebacks.push_back(ggml_set_rows(ctx, v_pad_t, v_p, slot_t));
+
+        // Single-token causal: all unmasked cache slots are visible.
+        ggml_tensor * attn = ggml_flash_attn_ext(ctx, q_p, k_pad_t, v_pad_t, mask_t,
+                                                 1.0F / std::sqrt(static_cast<float>(head_dim)),
+                                                 0.0F, 0.0F);
+        ggml_flash_attn_ext_set_prec(attn, GGML_PREC_F32);
+        ggml_tensor * attn_flat = ggml_cont(ctx, ggml_reshape_1d(ctx, attn, n_head * head_dim));
+        ggml_tensor * attn_out = ggml_mul_mat(ctx, layer.attn_o_proj.tensor, attn_flat);  // [dim]
+
+        // ---- merge + residual ----
+        ggml_tensor * h = ggml_add(ctx, out_mamba, attn_out);
+        h = ggml_add(ctx, cur, h);
+
+        // ---- FFN ----
+        ggml_tensor * pre_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, dim);
+        bind_const(pre_w, layer.pre_ff_layernorm.values, state.ones_dim, 1.0F);
+        ggml_tensor * h2 = ggml_rms_norm(ctx, h, norm_eps);
+        h2 = ggml_mul(ctx, h2, pre_w);
+        ggml_tensor * gate_ff = ggml_mul_mat(ctx, layer.ffn_gate.tensor, h2);
+        ggml_tensor * up_ff = ggml_mul_mat(ctx, layer.ffn_up.tensor, h2);
+        ggml_tensor * gated = ggml_mul(ctx, ggml_silu(ctx, gate_ff), up_ff);
+        ggml_tensor * down = ggml_mul_mat(ctx, layer.ffn_down.tensor, gated);
+        cur = ggml_add(ctx, h, down);
+    }
+
+    // final norm + semantic head
+    ggml_tensor * final_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, dim);
+    bind_const(final_w, weights.slow_norm.values, state.ones_dim, 1.0F);
+    ggml_tensor * final_norm = ggml_rms_norm(ctx, cur, norm_eps);
+    final_norm = ggml_mul(ctx, final_norm, final_w);
+    ggml_tensor * logits = ggml_mul_mat(ctx, weights.falcon_lm_head.tensor, final_norm);  // [vocab]
+    // NOTE: lm_head_multiplier applies only to FalconH1ForCausalLM's full-vocab head.
+    // ArkttsModel uses the compact semantic_output head and does NOT scale logits.
+    plan->logits_out = ggml_dup(ctx, logits);
+    plan->hidden_out = ggml_dup(ctx, final_norm);
+    ggml_set_name(plan->logits_out, "logits_out");
+    ggml_set_name(plan->hidden_out, "hidden_out");
+    // Pin the outputs: the writeback nodes expanded after them allocate no
+    // memory of their own, but the flag keeps gallocr from ever reusing the
+    // output buffers while the plan is reused across steps.
+    ggml_set_output(plan->logits_out);
+    ggml_set_output(plan->hidden_out);
+
+    ggml_cgraph * gf = ggml_new_graph_custom(ctx, 8192, false);
+    // KV slot writes first: they alias the cache the attention reads, so they
+    // must precede those nodes in graph order (backends execute sequentially).
+    for (ggml_tensor * wb : kv_writebacks) {
+        ggml_build_forward_expand(gf, wb);
+    }
+    ggml_build_forward_expand(gf, plan->logits_out);
+    ggml_build_forward_expand(gf, plan->hidden_out);
+    for (ggml_tensor * wb : writebacks) {
+        ggml_build_forward_expand(gf, wb);
+    }
+    plan->gf = gf;
+    auto t_graph = Clock::now();
+    plan->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+    if (!plan->gallocr || !ggml_gallocr_reserve(plan->gallocr, gf) || !ggml_gallocr_alloc_graph(plan->gallocr, gf)) {
+        throw std::runtime_error("build_falcon_step_plan: gallocr failed");
+    }
+    auto t_alloc = Clock::now();
+    if (profile != nullptr) {
+        profile->falcon_step_init_ms += engine::debug::elapsed_ms(t_init, t_build);
+        profile->falcon_step_build_ms += engine::debug::elapsed_ms(t_build, t_graph);
+        profile->falcon_step_gallocr_ms += engine::debug::elapsed_ms(t_graph, t_alloc);
+    }
+    return plan;
+}
+
+// Zero-copy runner: feed the staged inputs, run the baked bucket graph, read
+// logits/hidden. No per-step graph construction, allocation, or state I/O.
+SlowForwardOutput falcon_forward_step_zero_copy(
+    ggml_backend_t backend,
+    int threads,
+    size_t arena_bytes,
+    const Audio8TtsConfig & config,
+    const ArkttsARWeights & weights,
+    const std::vector<float> & embedding,
+    FalconH1StepState & state,
+    int64_t position,
+    ArkttsARProfile * profile) {
+    const int64_t dim = config.text.dim;
+    const int64_t head_dim = config.text.head_dim;
+    const int64_t n_kv = config.text.n_local_heads;
+    const int64_t vocab = config.fast.vocab_size + 1;
+    const int64_t seq = state.seq_len;
+
+    precompute_falcon_constants(config, weights, state);
+    grow_falcon_kv_pad(state, head_dim, n_kv, seq + 1);
+    if (state.emb_stage.empty()) {
+        state.emb_stage.assign(static_cast<size_t>(dim), 0.0F);
+    }
+    if (!state.plan || state.plan->cap != state.kv_cap) {
+        state.plan = build_falcon_step_plan(backend, arena_bytes, config, weights, state, profile);
+    }
+    auto t_feed = Clock::now();
+    std::memcpy(state.emb_stage.data(), embedding.data(), embedding.size() * sizeof(float));
+    state.pos_value = static_cast<int32_t>(position);
+    state.kv_slot = static_cast<int32_t>(seq);
+    state.kv_mask[static_cast<size_t>(seq)] = ggml_fp32_to_fp16(0.0F);
+    auto t_compute = Clock::now();
+    core::set_backend_threads(backend, threads);
+    const ggml_status status = core::compute_backend_graph(backend, state.plan->gf, nullptr, "falcon_forward_step");
+    ggml_backend_synchronize(backend);
+    auto t_read = Clock::now();
+    if (status != GGML_STATUS_SUCCESS) {
+        throw std::runtime_error("falcon_forward_step compute failed");
+    }
+    SlowForwardOutput out;
+    out.logits.resize(static_cast<size_t>(vocab));
+    out.hidden.resize(static_cast<size_t>(dim));
+    ggml_backend_tensor_get(state.plan->logits_out, out.logits.data(), 0, out.logits.size() * sizeof(float));
+    ggml_backend_tensor_get(state.plan->hidden_out, out.hidden.data(), 0, out.hidden.size() * sizeof(float));
+    state.seq_len = seq + 1;
+    if (profile != nullptr) {
+        profile->falcon_step_upload_ms += engine::debug::elapsed_ms(t_feed, t_compute);
+        profile->falcon_step_compute_ms += engine::debug::elapsed_ms(t_compute, t_read);
+        profile->falcon_step_download_ms += engine::debug::elapsed_ms(t_read, Clock::now());
+        profile->falcon_step_runs += 1;
+    }
+    return out;
 }
 
 // Single-token Falcon-H1 forward. `embedding` is the pre-multiplied token
@@ -1063,8 +1468,15 @@ SlowForwardOutput falcon_forward_step(
             fclose(f);
         }
     }
+
+    // Host backends run the reusable zero-copy plan graph (one baked graph per
+    // KV capacity bucket; weights/state bound as external host views, state
+    // write-backs in-graph). Other backends keep the per-call explicit
+    // upload/download path below.
+    const bool zero_copy = core::backend_type(backend) == core::BackendType::Cpu;
     if (zero_copy) {
-        grow_falcon_kv_pad(state, head_dim, n_kv, seq + 1);
+        return falcon_forward_step_zero_copy(backend, threads, arena_bytes, config, weights,
+                                             embedding, state, position, profile);
     }
 
     auto t_init = Clock::now();
@@ -1075,9 +1487,7 @@ SlowForwardOutput falcon_forward_step(
 
     ggml_tensor * cur = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
     ggml_set_name(cur, "falcon_input");
-<<<<<<< HEAD
     ggml_set_input(cur);
-=======
     if (zero_copy) {
         cur->data = const_cast<float *>(embedding.data());
     } else {
@@ -1117,7 +1527,6 @@ SlowForwardOutput falcon_forward_step(
     // FIRST below — backends execute nodes sequentially in graph order.
     std::vector<ggml_tensor*> kv_writebacks;
     kv_writebacks.reserve(static_cast<size_t>(n_layer) * 2);
->>>>>>> 569d6ea (perf(audio8_tts): keep Falcon KV cache in padded host buffers, write slots in-graph)
 
     std::vector<ggml_tensor*> ln_w_ts;
     std::vector<ggml_tensor*> pre_w_ts;
@@ -1336,7 +1745,6 @@ SlowForwardOutput falcon_forward_step(
         v_cur_ts.push_back(v_p);
 
         // KV cache in flash layout: [head_dim, n_tokens, n_kv, 1]
-<<<<<<< HEAD
         ggml_tensor * k_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
         ggml_tensor * v_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
         ggml_set_input(k_cache_t);
@@ -1345,7 +1753,6 @@ SlowForwardOutput falcon_forward_step(
         v_cache_ts.push_back(v_cache_t);
         ggml_tensor * K_all = ggml_concat(ctx.get(), k_cache_t, k_p, 1);  // [head_dim, seq+1, n_kv, 1]
         ggml_tensor * V_all = ggml_concat(ctx.get(), v_cache_t, v_p, 1);
-=======
         ggml_tensor * K_all = nullptr;
         ggml_tensor * V_all = nullptr;
         if (zero_copy) {
@@ -1380,7 +1787,6 @@ SlowForwardOutput falcon_forward_step(
             K_all = ggml_concat(ctx.get(), k_cache_t, k_p, 1);  // [head_dim, seq+1, n_kv, 1]
             V_all = ggml_concat(ctx.get(), v_cache_t, v_p, 1);
         }
->>>>>>> 569d6ea (perf(audio8_tts): keep Falcon KV cache in padded host buffers, write slots in-graph)
 
         // Single-token causal: current query attends to all cached keys (all visible).
         ggml_tensor * attn = ggml_flash_attn_ext(ctx.get(), q_p, K_all, V_all, nullptr,
@@ -1753,10 +2159,7 @@ SlowForwardOutput falcon_forward_step(
                 }
             }
         }
-<<<<<<< HEAD
         state.seq_len = new_seq_len;
-=======
->>>>>>> 569d6ea (perf(audio8_tts): keep Falcon KV cache in padded host buffers, write slots in-graph)
     }
     state.seq_len = seq + 1;
 
