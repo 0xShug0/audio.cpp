@@ -341,14 +341,37 @@ int sample_rate_bucket(const VoxCPM1AudioVAEConfig &config) {
 }
 
 VAEConv1dWeights load_wn_conv1d(core::BackendWeightStore &store,
-                                const assets_ns::TensorSource &source,
-                                const std::string &prefix, int64_t out_channels,
-                                int64_t in_channels, int64_t kernel_size,
-                                bool depthwise,
-                                assets_ns::TensorStorageType storage_type) {
+                                 const assets_ns::TensorSource &source,
+                                 const std::string &prefix, int64_t out_channels,
+                                 int64_t in_channels, int64_t kernel_size,
+                                 bool depthwise,
+                                 assets_ns::TensorStorageType storage_type) {
   const int64_t stored_in = depthwise ? 1 : in_channels;
-  const auto folded = source.require_f32(
-      prefix + ".weight", {out_channels, stored_in, kernel_size});
+  std::vector<float> folded;
+  try {
+      folded = source.require_f32(prefix + ".weight", {out_channels, stored_in, kernel_size});
+  } catch (const std::exception &) {
+      // Fallback for GGUFs that omit the leading 1 dimension (e.g. final conv [96,7] vs [1,96,7])
+      try {
+          // Try as 2D [out_channels, kernel_size] when stored_in==1
+          if (stored_in == 1) {
+              folded = source.require_f32(prefix + ".weight", {out_channels, kernel_size});
+          } else {
+              throw;
+          }
+      } catch (const std::exception &) {
+          // Last resort: load with actual stored shape regardless
+          const auto meta = source.require_metadata(prefix + ".weight");
+          // Check element count matches expected
+          int64_t expected_elems = out_channels * stored_in * kernel_size;
+          int64_t actual_elems = 1;
+          for (auto d : meta.shape) actual_elems *= d;
+          if (actual_elems != expected_elems) {
+              throw;
+          }
+          folded = source.require_f32(prefix + ".weight", meta.shape);
+      }
+  }
   VAEConv1dWeights out;
   out.in_channels = in_channels;
   out.out_channels = out_channels;
@@ -394,19 +417,43 @@ VAESnakeWeights load_snake(core::BackendWeightStore &store,
                            const assets_ns::TensorSource &source,
                            const std::string &name, int64_t channels) {
   VAESnakeWeights out;
+  std::vector<float> data;
+  try {
+      data = source.require_f32(name, {1, channels, 1});
+  } catch (const std::exception &) {
+      try {
+          data = source.require_f32(name, {channels, 1});
+      } catch (const std::exception &) {
+          data = source.require_f32(name, {channels});
+      }
+  }
   out.alpha = store.make_from_f32(core::TensorShape::from_dims({channels}),
-                                  assets_ns::TensorStorageType::F32,
-                                  source.require_f32(name, {1, channels, 1}));
+                                   assets_ns::TensorStorageType::F32,
+                                   std::move(data));
   return out;
 }
 
 VAESampleRateConditionWeights load_sr_condition(
     core::BackendWeightStore &store, const assets_ns::TensorSource &source,
     const std::string &prefix, int64_t channels, int bucket, int buckets) {
-  const auto scale =
-      source.require_f32(prefix + ".scale_embed.weight", {buckets, channels});
-  const auto bias =
-      source.require_f32(prefix + ".bias_embed.weight", {buckets, channels});
+  std::vector<float> scale;
+  std::vector<float> bias;
+  bool has_scale = false;
+  bool has_bias = false;
+  try {
+      scale = source.require_f32(prefix + ".scale_embed.weight", {buckets, channels});
+      has_scale = true;
+  } catch (...) {}
+  try {
+      bias = source.require_f32(prefix + ".bias_embed.weight", {buckets, channels});
+      has_bias = true;
+  } catch (...) {}
+  if (!has_scale) {
+      scale.assign(static_cast<size_t>(buckets * channels), 1.0F);
+  }
+  if (!has_bias) {
+      bias.assign(static_cast<size_t>(buckets * channels), 0.0F);
+  }
   const auto offset = static_cast<std::ptrdiff_t>(bucket * channels);
   VAESampleRateConditionWeights out;
   out.scale = store.make_from_f32(

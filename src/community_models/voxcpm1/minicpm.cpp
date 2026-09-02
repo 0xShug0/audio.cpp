@@ -197,9 +197,24 @@ load_model_weights(const VoxCPM1Assets &assets,
 
   const auto encoder_config =
       local_transformer_config(assets.config.lm, assets.config.encoder);
-  weights->feat_encoder.special_token =
-      store.load_tensor(source, "locenc.special_token", storage_type,
-                        {1, 1, 1, assets.config.encoder.hidden_dim});
+  {
+      const auto meta = source.require_metadata("locenc.special_token");
+      std::vector<int64_t> expected_4d = {1, 1, 1, assets.config.encoder.hidden_dim};
+      std::vector<int64_t> expected_1d = {assets.config.encoder.hidden_dim};
+      if (meta.shape == expected_1d) {
+          weights->feat_encoder.special_token =
+              store.load_tensor(source, "locenc.special_token", storage_type, expected_1d);
+      } else {
+          // Default to 4D shape; if that fails, try 1D as fallback
+          try {
+              weights->feat_encoder.special_token =
+                  store.load_tensor(source, "locenc.special_token", storage_type, expected_4d);
+          } catch (const std::exception &) {
+              weights->feat_encoder.special_token =
+                  store.load_tensor(source, "locenc.special_token", storage_type, expected_1d);
+          }
+      }
+  }
   weights->feat_encoder.in_proj = linear_weights(
       store, source, "locenc.in_proj", storage_type,
       assets.config.encoder.hidden_dim, assets.config.feat_dim, true);

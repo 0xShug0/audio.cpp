@@ -1,12 +1,17 @@
 #include "engine/community_models/voxcpm1/tokenizer_text.h"
 #include "engine/community_models/voxcpm1/assets.h"
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/json.h"
+
+#include <ggml.h>
+#include <gguf.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -89,6 +94,96 @@ void load_special_tokens(
     bos_token_id = require_token_id(vocab, "<s>");
     eos_token_id = require_token_id(vocab, "</s>");
     unk_token_id = require_token_id(vocab, "<unk>");
+}
+
+std::optional<std::filesystem::path> locate_gguf_for_tokenizer(const assets::ResourceBundle & resources) {
+    try {
+        auto source = resources.open_tensor_source("weights");
+        if (source) return source->source_path();
+    } catch (...) {}
+    try {
+        auto source = resources.open_tensor_source("audiovae_weights");
+        if (source) return source->source_path();
+    } catch (...) {}
+    const auto root = resources.model_root();
+    if (auto found = engine::assets::find_directory_gguf(root)) {
+        return *found;
+    }
+    auto files = engine::assets::directory_gguf_files(root);
+    if (!files.empty()) return files.front();
+    return std::nullopt;
+}
+
+void load_tokenizer_from_gguf(
+    const std::filesystem::path & gguf_path,
+    std::unordered_map<std::string, int32_t> & vocab,
+    std::unordered_map<std::string, int32_t> & merge_ranks,
+    std::unordered_map<std::string, int32_t> & special_tokens,
+    int32_t & audio_start_token_id,
+    int32_t & audio_end_token_id,
+    int32_t & reference_audio_start_token_id,
+    int32_t & reference_audio_end_token_id,
+    int32_t & bos_token_id,
+    int32_t & eos_token_id,
+    int32_t & unk_token_id) {
+    ggml_context * ctx = nullptr;
+    gguf_context * gguf = gguf_init_from_file(gguf_path.string().c_str(), gguf_init_params{true, &ctx});
+    if (gguf == nullptr) {
+        if (ctx) ggml_free(ctx);
+        throw std::runtime_error("failed to read GGUF tokenizer: " + gguf_path.string());
+    }
+    try {
+        const int64_t tokens_key = gguf_find_key(gguf, "tokenizer.ggml.tokens");
+        const int64_t merges_key = gguf_find_key(gguf, "tokenizer.ggml.merges");
+        const int64_t token_type_key = gguf_find_key(gguf, "tokenizer.ggml.token_type");
+        if (tokens_key < 0) {
+            throw std::runtime_error("GGUF missing tokenizer.ggml.tokens");
+        }
+        const size_t n_tokens = gguf_get_arr_n(gguf, tokens_key);
+        vocab.reserve(n_tokens);
+        for (size_t i = 0; i < n_tokens; ++i) {
+            std::string token = gguf_get_arr_str(gguf, tokens_key, i);
+            vocab.emplace(token, static_cast<int32_t>(i));
+            // token_type: 3 == control/special, treat as special
+            if (token_type_key >= 0) {
+                const auto * types = static_cast<const int32_t *>(gguf_get_arr_data(gguf, token_type_key));
+                if (types[i] == 3) {
+                    special_tokens.emplace(token, static_cast<int32_t>(i));
+                }
+            }
+        }
+        // Fallback: ensure known special tokens are marked even if token_type missing
+        for (const auto & tok : {"<|audio_start|>", "<|audio_end|>", "<|audio_prompt_start|>", "<|audio_prompt_end|>", "<s>", "</s>", "<unk>"}) {
+            auto it = vocab.find(tok);
+            if (it != vocab.end()) special_tokens.emplace(it->first, it->second);
+        }
+        if (merges_key >= 0) {
+            const size_t n_merges = gguf_get_arr_n(gguf, merges_key);
+            for (size_t rank = 0; rank < n_merges; ++rank) {
+                std::string merge = gguf_get_arr_str(gguf, merges_key, rank);
+                const size_t split = merge.find(' ');
+                if (split == std::string::npos) {
+                    // GGUF merges may contain tab or other? Skip invalid
+                    continue;
+                }
+                std::string key = merge.substr(0, split) + '\0' + merge.substr(split + 1);
+                merge_ranks.emplace(std::move(key), static_cast<int32_t>(rank));
+            }
+        }
+        audio_start_token_id = require_token_id(vocab, "<|audio_start|>");
+        audio_end_token_id = require_token_id(vocab, "<|audio_end|>");
+        reference_audio_start_token_id = require_token_id(vocab, "<|audio_prompt_start|>");
+        reference_audio_end_token_id = require_token_id(vocab, "<|audio_prompt_end|>");
+        bos_token_id = require_token_id(vocab, "<s>");
+        eos_token_id = require_token_id(vocab, "</s>");
+        unk_token_id = require_token_id(vocab, "<unk>");
+        gguf_free(gguf);
+        if (ctx) ggml_free(ctx);
+    } catch (...) {
+        gguf_free(gguf);
+        if (ctx) ggml_free(ctx);
+        throw;
+    }
 }
 
 uint32_t next_utf8_codepoint(std::string_view text, size_t & offset) {
@@ -347,22 +442,43 @@ VoxCPM1TextTokenizer::VoxCPM1TextTokenizer(std::shared_ptr<const VoxCPM1Assets> 
 
     auto impl = std::make_shared<Impl>();
 
-    load_tokenizer_json(
-        assets->resources.require_file("tokenizer_json"),
-        impl->vocab,
-        impl->merge_ranks);
+    const bool has_tokenizer_json = assets->resources.has_file("tokenizer_json");
+    const bool has_tokenizer_config = assets->resources.has_file("tokenizer_config");
+    if (has_tokenizer_json && has_tokenizer_config) {
+        load_tokenizer_json(
+            assets->resources.require_file("tokenizer_json"),
+            impl->vocab,
+            impl->merge_ranks);
 
-    load_special_tokens(
-        assets->resources.require_file("tokenizer_config"),
-        impl->vocab,
-        impl->special_tokens,
-        impl->audio_start_token_id,
-        impl->audio_end_token_id,
-        impl->reference_audio_start_token_id,
-        impl->reference_audio_end_token_id,
-        impl->bos_token_id,
-        impl->eos_token_id,
-        impl->unk_token_id);
+        load_special_tokens(
+            assets->resources.require_file("tokenizer_config"),
+            impl->vocab,
+            impl->special_tokens,
+            impl->audio_start_token_id,
+            impl->audio_end_token_id,
+            impl->reference_audio_start_token_id,
+            impl->reference_audio_end_token_id,
+            impl->bos_token_id,
+            impl->eos_token_id,
+            impl->unk_token_id);
+    } else {
+        auto gguf_path = locate_gguf_for_tokenizer(assets->resources);
+        if (!gguf_path) {
+            throw std::runtime_error("VoxCPM1 tokenizer requires either tokenizer_json+tokenizer_config or a GGUF with embedded tokenizer");
+        }
+        load_tokenizer_from_gguf(
+            *gguf_path,
+            impl->vocab,
+            impl->merge_ranks,
+            impl->special_tokens,
+            impl->audio_start_token_id,
+            impl->audio_end_token_id,
+            impl->reference_audio_start_token_id,
+            impl->reference_audio_end_token_id,
+            impl->bos_token_id,
+            impl->eos_token_id,
+            impl->unk_token_id);
+    }
 
     for (const auto & [token, id] : impl->vocab) {
         impl->id_to_token.emplace(id, token);
