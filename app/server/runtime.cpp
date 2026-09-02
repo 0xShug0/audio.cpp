@@ -918,6 +918,7 @@ const engine::runtime::AudioBuffer & select_audio_output(const engine::runtime::
 engine::runtime::TaskRequest build_openai_transcription_request(
     const Value & body,
     const std::filesystem::path & base_dir,
+    bool accepts_language_option,
     const std::string * uploaded_audio_bytes = nullptr) {
     const auto * audio = body.find("audio");
     if (audio == nullptr) {
@@ -940,7 +941,14 @@ engine::runtime::TaskRequest build_openai_transcription_request(
     std::string language;
     if (const auto * value = body.find("language")) {
         language = value->as_string();
-        request.options["language"] = language;
+        // Only forward a language the caller actually chose, and only to a model
+        // whose contract accepts it. Clients send the field unconditionally, so
+        // without both guards a model that validates request options strictly
+        // rejects the whole request over an option the user never set. The
+        // language still reaches the model through text_input either way.
+        if (!language.empty() && accepts_language_option) {
+            request.options["language"] = language;
+        }
     }
     std::string context;
     if (const auto * value = body.find("text")) {
@@ -1246,6 +1254,11 @@ void ServerState::refresh_model_option_flags(LoadedModel & model) {
     model.accepts_reference_text = model_accepts_request_option(
         model.config.family,
         "reference_text",
+        effective_override,
+        model.config.path);
+    model.accepts_language = model_accepts_request_option(
+        model.config.family,
+        "language",
         effective_override,
         model.config.path);
 }
@@ -2496,7 +2509,7 @@ HttpResponse ServerState::handle_transcription_json(const std::string & body_tex
     auto & model = require_model(body);
     const auto request = apply_default_request_options(
         model,
-        build_openai_transcription_request(body, request_base_));
+        build_openai_transcription_request(body, request_base_, model.accepts_language));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     if (bool_field(body, "stream", false)) {
         return run_transcription_stream(model, request, busy_timeout_ms);
@@ -2575,7 +2588,8 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
     auto & model = require_model(body);
     const auto request = apply_default_request_options(
         model,
-        build_openai_transcription_request(body, request_base_, &file_part->data));
+        build_openai_transcription_request(
+            body, request_base_, model.accepts_language, &file_part->data));
     if (stream) {
         return run_transcription_stream(model, request, busy_timeout_ms);
     }
@@ -2911,15 +2925,40 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
         });
 }
 
+// /v1/tasks/run folds a top-level `language` into the option map, so the same
+// unset-field problem reaches models through this route as well. Remove only the
+// option this route synthesised, never one the caller wrote inside `options`:
+// an explicit option is a deliberate choice, and the strict rejection is the
+// right answer to it.
+engine::runtime::TaskRequest drop_unsupported_language_option(
+    engine::runtime::TaskRequest request,
+    const Value & request_json,
+    bool accepts_language_option) {
+    if (accepts_language_option) {
+        return request;
+    }
+    const auto * top_level = request_json.find("language");
+    if (top_level == nullptr || !top_level->is_string()) {
+        return request;
+    }
+    const auto it = request.options.find("language");
+    if (it != request.options.end() && it->second == top_level->as_string()) {
+        request.options.erase(it);
+    }
+    return request;
+}
+
 HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto * request_json = body.find("request");
+    const auto & effective_json = request_json != nullptr ? *request_json : body;
     const auto request = apply_default_request_options(
         model,
-        minitts::cli::build_request_from_json(
-            request_json != nullptr ? *request_json : body,
-            request_base_));
+        drop_unsupported_language_option(
+            minitts::cli::build_request_from_json(effective_json, request_base_),
+            effective_json,
+            model.accepts_language));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
         ? run_streaming_model(model, request, {}, busy_timeout_ms)
@@ -2931,11 +2970,13 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto * request_json = body.find("request");
+    const auto & effective_json = request_json != nullptr ? *request_json : body;
     const auto request = apply_default_request_options(
         model,
-        minitts::cli::build_request_from_json(
-            request_json != nullptr ? *request_json : body,
-            request_base_));
+        drop_unsupported_language_option(
+            minitts::cli::build_request_from_json(effective_json, request_base_),
+            effective_json,
+            model.accepts_language));
     std::vector<engine::runtime::StreamEvent> events;
     const auto timed_result = run_streaming_model(
         model,
