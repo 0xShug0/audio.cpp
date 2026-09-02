@@ -1084,9 +1084,11 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
 
     "GLU",
     "CONVROT_LINEAR",
+
+    "MUL_MAT_ACC",
 };
 
-static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
+static_assert(GGML_OP_COUNT == 103, "GGML_OP_COUNT != 103");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1200,9 +1202,11 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
 
     "glu(x)",
     "convrot_linear(weight_i8, input, weight_scale, bias)",
+
+    "mul_mat_acc(a, b, acc)",
 };
 
-static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
+static_assert(GGML_OP_COUNT == 103, "GGML_OP_COUNT != 103");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -3262,6 +3266,29 @@ struct ggml_tensor * ggml_mul_mat(
     result->op     = GGML_OP_MUL_MAT;
     result->src[0] = a;
     result->src[1] = b;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_mul_mat_acc(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * acc) {
+    GGML_ASSERT(ggml_can_mul_mat(a, b));
+    GGML_ASSERT(!ggml_is_transposed(a));
+    GGML_ASSERT(acc->type == GGML_TYPE_F32);
+    // acc must have the shape of the a * b product
+    GGML_ASSERT(acc->ne[0] == a->ne[1] && acc->ne[1] == b->ne[1] &&
+                acc->ne[2] == b->ne[2] && acc->ne[3] == b->ne[3]);
+
+    // result is a view of acc: the accumulation is written in-place into acc's memory
+    struct ggml_tensor * result = ggml_view_tensor(ctx, acc);
+
+    result->op     = GGML_OP_MUL_MAT_ACC;
+    result->src[0] = a;
+    result->src[1] = b;
+    result->src[2] = acc;
 
     return result;
 }
