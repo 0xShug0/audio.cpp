@@ -1252,6 +1252,17 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
             return has_simdgroup_reduction && op->src[0]->type != GGML_TYPE_NVFP4;
+        case GGML_OP_MUL_MAT_ACC:
+            // accumulate-in-place matmul: mirrors the has_simdgroup_mm branch of mul_mat
+            // (the encode always takes the mm kernel), contiguous F32 x F32 -> F32
+            return has_simdgroup_mm &&
+                   op->src[0]->type == GGML_TYPE_F32 &&
+                   op->src[1]->type == GGML_TYPE_F32 &&
+                   op->type         == GGML_TYPE_F32 &&
+                   op->src[0]->ne[0] >= 64 &&
+                   op->src[1]->ne[1] >  8 &&
+                   !ggml_is_transposed(op->src[0]) &&
+                   !ggml_is_transposed(op->src[1]);
         case GGML_OP_SET:
         case GGML_OP_CPY:
         case GGML_OP_DUP:

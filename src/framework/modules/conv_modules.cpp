@@ -207,6 +207,57 @@ bool is_conv1d_pertap_fast_path_eligible(
            ggml_is_contiguous(input.tensor);
 }
 
+// Per-tap GEMM accumulation on a channel-fast [in_channels, frames] F32 input: one
+// contiguous GEMM per kernel tap over shifted column views, accumulated into
+// [out_channels, output_frames]. No layout conversion here -- callers at region edges
+// transpose; chained callers keep everything channel-fast.
+ggml_tensor * conv1d_pertap_gemm_channel_fast(
+    core::ModuleBuildContext & ctx,
+    ggml_tensor * input_cf,
+    ggml_tensor * weight_f32,
+    int64_t in_channels,
+    int64_t out_channels,
+    int64_t kernel_size,
+    int64_t dilation,
+    int64_t output_frames) {
+    // weight logical [OC, IC, K] -> ggml ne [K, IC, OC]; regroup rows so each tap slice
+    // [IC, OC] is a contiguous view: row index = channel + in_channels * tap.
+    auto * weight_taps = ggml_reshape_2d(
+        ctx.ggml,
+        ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight_f32, 1, 0, 2, 3)),
+        in_channels * kernel_size,
+        out_channels);
+    // accumulate-in-place GEMM only where the tensor-core mm kernel applies
+    // (mirrors the Metal supports gate); otherwise keep the mul_mat + add chain
+    const bool use_acc = in_channels >= 64 && output_frames > 8;
+    ggml_tensor * acc = nullptr;
+    for (int64_t tap = 0; tap < kernel_size; ++tap) {
+        // columns[c, j] = input[tap * dilation + j, c]: contiguous column view of input_cf.
+        auto * columns = ggml_view_2d(
+            ctx.ggml,
+            input_cf,
+            in_channels,
+            output_frames,
+            input_cf->nb[1],
+            static_cast<size_t>(tap * dilation) * in_channels * sizeof(float));
+        auto * tap_weights = ggml_view_2d(
+            ctx.ggml,
+            weight_taps,
+            in_channels,
+            out_channels,
+            weight_taps->nb[1],
+            static_cast<size_t>(tap) * in_channels * sizeof(float));
+        if (acc == nullptr) {
+            acc = ggml_mul_mat(ctx.ggml, tap_weights, columns);
+        } else if (use_acc) {
+            acc = ggml_mul_mat_acc(ctx.ggml, tap_weights, columns, acc);
+        } else {
+            acc = ggml_add(ctx.ggml, acc, ggml_mul_mat(ctx.ggml, tap_weights, columns));
+        }
+    }
+    return acc;
+}
+
 // Metal fast path for stride-1 conv1d on the time-fast [frames, channels] layout used by
 // the audio codecs. ggml_conv_1d materializes an im2col matrix whose kernel taps are
 // strided gathers in this layout (~200 ms per conv at [569k, 96] on M4); instead, transpose
