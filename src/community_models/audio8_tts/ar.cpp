@@ -929,6 +929,26 @@ struct FalconH1StepState {
     std::vector<std::vector<float>> k_cache;      // [layer][seq*kv_dim]
     std::vector<std::vector<float>> v_cache;      // [layer][seq*kv_dim]
     int64_t seq_len = 0;
+    // Padded KV caches for the zero-copy path: flat [head_dim, kv_cap, n_kv]
+    // (head stride = head_dim*kv_cap), grown geometrically so each step's graph
+    // can write the new token's k/v in-place and flash-attend over a strided
+    // prefix view — no per-step host upload, read-back, or concat copy. The
+    // exact-size k_cache/v_cache vectors above are only used on the fallback
+    // (non-host backend) path.
+    std::vector<std::vector<float>> k_pad;
+    std::vector<std::vector<float>> v_pad;
+    int64_t kv_cap = 0;
+    // Zero-copy constant cache (filled once per generation on host backends):
+    // A = -exp(A_log) per mamba head, D expanded per channel, plus fallback
+    // buffers for absent norm/bias weights and the scalar graph inputs.
+    std::vector<std::vector<float>> pre_A;        // [layer][n_mamba_heads]
+    std::vector<std::vector<float>> pre_D;        // [layer][d_inner]
+    std::vector<float> ones_dim;                  // [dim]
+    std::vector<float> zeros_conv;                // [conv_dim]
+    std::vector<float> zeros_conv_kernel;         // [d_conv*conv_dim]
+    int32_t ids_value = 0;
+    int32_t pos_value = 0;
+    bool constants_ready = false;
 };
 
 FalconH1StepState init_falcon_step_state(const Audio8TtsConfig & config) {
@@ -945,6 +965,8 @@ FalconH1StepState init_falcon_step_state(const Audio8TtsConfig & config) {
     st.ssm_states.resize(static_cast<size_t>(st.n_layer));
     st.k_cache.resize(static_cast<size_t>(st.n_layer));
     st.v_cache.resize(static_cast<size_t>(st.n_layer));
+    st.k_pad.resize(static_cast<size_t>(st.n_layer));
+    st.v_pad.resize(static_cast<size_t>(st.n_layer));
     const size_t conv_sz = static_cast<size_t>((st.d_conv - 1) * st.conv_dim);
     const size_t ssm_sz = static_cast<size_t>(st.d_state * st.d_inner);
     for (int64_t i = 0; i < st.n_layer; ++i) {
@@ -955,6 +977,7 @@ FalconH1StepState init_falcon_step_state(const Audio8TtsConfig & config) {
     return st;
 }
 
+<<<<<<< HEAD
 // Temporary diagnostics for tensor-set debugging (removed after fix).
 static int g_dbg_set_count = 0;
 static void dbg_ts(ggml_tensor * t, const void * data, size_t off, size_t sz) {
@@ -970,6 +993,32 @@ static void dbg_ts(ggml_tensor * t, const void * data, size_t off, size_t sz) {
     }
     if (t && t->buffer == nullptr) std::abort();
     ggml_backend_tensor_set(t, data, off, sz);
+=======
+// Grow the zero-copy padded KV caches. The head stride changes with capacity,
+// so live slots are re-laid-out per head; called between steps, and per-step
+// graphs re-bind their views from scratch afterwards.
+void grow_falcon_kv_pad(FalconH1StepState & state, int64_t head_dim, int64_t n_kv, int64_t need) {
+    if (need <= state.kv_cap) return;
+    int64_t new_cap = 64;
+    while (new_cap < need) new_cap *= 2;
+    const size_t live = static_cast<size_t>(head_dim * state.seq_len);  // valid floats per head
+    for (auto * caches : {&state.k_pad, &state.v_pad}) {
+        for (auto & cache : *caches) {
+            std::vector<float> next(static_cast<size_t>(head_dim * new_cap * n_kv), 0.0F);
+            if (!cache.empty() && live > 0) {
+                const size_t old_stride = static_cast<size_t>(head_dim * state.kv_cap);
+                const size_t new_stride = static_cast<size_t>(head_dim * new_cap);
+                for (int64_t h = 0; h < n_kv; ++h) {
+                    std::memcpy(next.data() + h * new_stride,
+                                cache.data() + h * old_stride,
+                                live * sizeof(float));
+                }
+            }
+            cache.swap(next);
+        }
+    }
+    state.kv_cap = new_cap;
+>>>>>>> 569d6ea (perf(audio8_tts): keep Falcon KV cache in padded host buffers, write slots in-graph)
 }
 
 // Single-token Falcon-H1 forward. `embedding` is the pre-multiplied token
@@ -1014,6 +1063,9 @@ SlowForwardOutput falcon_forward_step(
             fclose(f);
         }
     }
+    if (zero_copy) {
+        grow_falcon_kv_pad(state, head_dim, n_kv, seq + 1);
+    }
 
     auto t_init = Clock::now();
     ggml_init_params params{arena_bytes, nullptr, true};
@@ -1023,7 +1075,49 @@ SlowForwardOutput falcon_forward_step(
 
     ggml_tensor * cur = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
     ggml_set_name(cur, "falcon_input");
+<<<<<<< HEAD
     ggml_set_input(cur);
+=======
+    if (zero_copy) {
+        cur->data = const_cast<float *>(embedding.data());
+    } else {
+        ggml_set_input(cur);
+    }
+
+    // Bind a loop-invariant F32 tensor to its host values with zero copies when
+    // the backend reads host memory directly; otherwise mark it for the upload
+    // pass below. `fallback` (filled once with `fallback_fill`) covers weights
+    // that are absent from the checkpoint.
+    auto bind_const = [&](ggml_tensor * t, const std::vector<float> & values,
+                          std::vector<float> & fallback, float fallback_fill) {
+        if (!zero_copy) {
+            ggml_set_input(t);
+            return;
+        }
+        if (!values.empty()) {
+            t->data = const_cast<float *>(values.data());
+            return;
+        }
+        if (fallback.empty()) {
+            fallback.assign(static_cast<size_t>(ggml_nelements(t)), fallback_fill);
+        }
+        t->data = fallback.data();
+    };
+    auto bind_state = [&](ggml_tensor * t, const std::vector<float> & values) {
+        if (!zero_copy) {
+            ggml_set_input(t);
+            return;
+        }
+        t->data = const_cast<float *>(values.data());
+    };
+    std::vector<ggml_tensor*> writebacks;
+    writebacks.reserve(static_cast<size_t>(n_layer) * 2);
+    // KV slot writes have no data dependency protecting them from the
+    // attention read of the same cache, so they are expanded into the graph
+    // FIRST below — backends execute nodes sequentially in graph order.
+    std::vector<ggml_tensor*> kv_writebacks;
+    kv_writebacks.reserve(static_cast<size_t>(n_layer) * 2);
+>>>>>>> 569d6ea (perf(audio8_tts): keep Falcon KV cache in padded host buffers, write slots in-graph)
 
     std::vector<ggml_tensor*> ln_w_ts;
     std::vector<ggml_tensor*> pre_w_ts;
@@ -1227,6 +1321,12 @@ SlowForwardOutput falcon_forward_step(
         ggml_tensor * k_r = ggml_rope_ext(ctx.get(), k4, pos_t, nullptr, head_dim,
                                           GGML_ROPE_TYPE_NEOX, config.text.max_seq_len,
                                           rope_base, 1.0F, 1.0F, 1.0F, 32.0F, 1.0F);
+        // k_p/v_p (and their k_r/v bases) are read back on the host for the KV
+        // cache on the fallback path — pin the underlying buffers there.
+        if (!zero_copy) {
+            ggml_set_output(k_r);
+            ggml_set_output(v);
+        }
 
         // [head_dim, n_head, 1, 1] -> permute(0,2,1,3) -> [head_dim, 1, n_head, 1]
         ggml_tensor * q_p = ggml_permute(ctx.get(), q_r, 0, 2, 1, 3);
@@ -1236,6 +1336,7 @@ SlowForwardOutput falcon_forward_step(
         v_cur_ts.push_back(v_p);
 
         // KV cache in flash layout: [head_dim, n_tokens, n_kv, 1]
+<<<<<<< HEAD
         ggml_tensor * k_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
         ggml_tensor * v_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
         ggml_set_input(k_cache_t);
@@ -1244,6 +1345,42 @@ SlowForwardOutput falcon_forward_step(
         v_cache_ts.push_back(v_cache_t);
         ggml_tensor * K_all = ggml_concat(ctx.get(), k_cache_t, k_p, 1);  // [head_dim, seq+1, n_kv, 1]
         ggml_tensor * V_all = ggml_concat(ctx.get(), v_cache_t, v_p, 1);
+=======
+        ggml_tensor * K_all = nullptr;
+        ggml_tensor * V_all = nullptr;
+        if (zero_copy) {
+            // Padded caches bound as external leaves; the fresh k/v are written
+            // into slot `seq` in-graph (kv_writebacks are expanded before the
+            // attention nodes, ordering the writes first), and flash attends
+            // over a strided prefix view of slots [0, seq+1). CPU
+            // flash_attn_ext only requires contiguous rows (nb0), so the
+            // padded head stride is fine.
+            ggml_tensor * k_pad_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, state.kv_cap, n_kv, 1);
+            ggml_tensor * v_pad_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, state.kv_cap, n_kv, 1);
+            k_pad_t->data = state.k_pad[static_cast<size_t>(li)].data();
+            v_pad_t->data = state.v_pad[static_cast<size_t>(li)].data();
+            const size_t slot_off = static_cast<size_t>(seq * head_dim) * ggml_element_size(k_pad_t);
+            kv_writebacks.push_back(ggml_cpy(ctx.get(), k_p,
+                ggml_view_4d(ctx.get(), k_pad_t, head_dim, 1, n_kv, 1,
+                             k_pad_t->nb[1], k_pad_t->nb[2], k_pad_t->nb[3], slot_off)));
+            kv_writebacks.push_back(ggml_cpy(ctx.get(), v_p,
+                ggml_view_4d(ctx.get(), v_pad_t, head_dim, 1, n_kv, 1,
+                             v_pad_t->nb[1], v_pad_t->nb[2], v_pad_t->nb[3], slot_off)));
+            K_all = ggml_view_4d(ctx.get(), k_pad_t, head_dim, seq + 1, n_kv, 1,
+                                 k_pad_t->nb[1], k_pad_t->nb[2], k_pad_t->nb[3], 0);
+            V_all = ggml_view_4d(ctx.get(), v_pad_t, head_dim, seq + 1, n_kv, 1,
+                                 v_pad_t->nb[1], v_pad_t->nb[2], v_pad_t->nb[3], 0);
+        } else {
+            ggml_tensor * k_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
+            ggml_tensor * v_cache_t = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, head_dim, seq, n_kv, 1);
+            ggml_set_input(k_cache_t);
+            ggml_set_input(v_cache_t);
+            k_cache_ts.push_back(k_cache_t);
+            v_cache_ts.push_back(v_cache_t);
+            K_all = ggml_concat(ctx.get(), k_cache_t, k_p, 1);  // [head_dim, seq+1, n_kv, 1]
+            V_all = ggml_concat(ctx.get(), v_cache_t, v_p, 1);
+        }
+>>>>>>> 569d6ea (perf(audio8_tts): keep Falcon KV cache in padded host buffers, write slots in-graph)
 
         // Single-token causal: current query attends to all cached keys (all visible).
         ggml_tensor * attn = ggml_flash_attn_ext(ctx.get(), q_p, K_all, V_all, nullptr,
@@ -1287,6 +1424,11 @@ SlowForwardOutput falcon_forward_step(
     ggml_set_name(hidden_out, "hidden_out");
 
     ggml_cgraph * gf = ggml_new_graph_custom(ctx.get(), 8192, false);
+    // KV slot writes first: they alias the cache views the attention reads, so
+    // they must precede those nodes in graph order.
+    for (ggml_tensor * wb : kv_writebacks) {
+        ggml_build_forward_expand(gf, wb);
+    }
     ggml_build_forward_expand(gf, logits_out);
     ggml_build_forward_expand(gf, hidden_out);
     auto t_graph = Clock::now();
@@ -1583,10 +1725,12 @@ SlowForwardOutput falcon_forward_step(
         }
     }
 
-    // KV cache append in ggml col-major layout [head_dim, seq, n_kv, 1]:
-    // element (d, t, h) at d + head_dim*(t + new_seq_len*h). The freshly
-    // projected/roped k/v read back as [d + head_dim*h] (128 values).
-    {
+    // KV cache append (fallback path only; the zero-copy path wrote the fresh
+    // k/v into the padded caches in-graph). ggml col-major layout
+    // [head_dim, seq, n_kv, 1]: element (d, t, h) at
+    // d + head_dim*(t + new_seq_len*h). The freshly projected/roped k/v read
+    // back as [d + head_dim*h] (128 values).
+    if (!zero_copy) {
         std::vector<float> kv(static_cast<size_t>(n_kv * head_dim));
         const int64_t new_seq_len = seq + 1;
         for (int64_t li = 0; li < n_layer; ++li) {
@@ -1609,8 +1753,12 @@ SlowForwardOutput falcon_forward_step(
                 }
             }
         }
+<<<<<<< HEAD
         state.seq_len = new_seq_len;
+=======
+>>>>>>> 569d6ea (perf(audio8_tts): keep Falcon KV cache in padded host buffers, write slots in-graph)
     }
+    state.seq_len = seq + 1;
 
     if (profile != nullptr) {
         profile->falcon_step_init_ms += engine::debug::elapsed_ms(t_init, t_build);
