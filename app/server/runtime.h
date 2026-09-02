@@ -178,6 +178,12 @@ private:
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         std::optional<int> busy_timeout_ms = std::nullopt);
+    HttpResponse handle_alignment(const HttpRequest & request);
+    HttpResponse handle_alignment_multipart(const std::string & body_text, const std::string & boundary);
+    HttpResponse run_alignment(
+        LoadedModel & model,
+        const engine::runtime::TaskRequest & request,
+        std::optional<int> busy_timeout_ms = std::nullopt);
     HttpResponse handle_transcription_live(const HttpRequest & request);
     HttpResponse handle_generic_run(const std::string & body_text);
     HttpResponse handle_generic_stream(const std::string & body_text);

@@ -380,6 +380,20 @@ The stream emits `transcript.text.delta` events, one final `transcript.text.done
 
 Note that `stream=true` streams the *output* of an already-uploaded file: the whole recording is sent first, and the deltas describe decoding it. It shortens time-to-first-token on long audio, but nothing can appear while the speaker is still talking. For that, use the live endpoint below.
 
+### `POST /v1/audio/alignments`
+
+Multipart forced-alignment request using uploaded audio bytes and a known transcript. Use this when the server cannot see the client's local audio path, for example when the server is remote or running in Docker.
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/alignments \
+  -F model=qwen3-align \
+  -F language=en \
+  -F text='The task has completed successfully.' \
+  -F file=@/path/to/input.wav
+```
+
+`file`, `model`, and `text` are required; `language` is optional. The selected model must be configured with `task: "align"` and `mode: "offline"`. Uploaded WAV bytes are decoded in memory and are not written to a temporary file. The response includes word timestamps in seconds plus sample offsets.
+
 ### `POST /v1/audio/transcriptions/live`
 
 Streams raw PCM **as it is captured** and returns transcript deltas on the same connection, so partial text can appear while the user is still speaking.
