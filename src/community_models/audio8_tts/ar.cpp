@@ -61,6 +61,13 @@ struct ArkttsARProfile {
     double sample_main_ms = 0.0;
     double sample_high_ms = 0.0;
     double sample_fast_ms = 0.0;
+    double falcon_step_init_ms = 0.0;
+    double falcon_step_build_ms = 0.0;
+    double falcon_step_gallocr_ms = 0.0;
+    double falcon_step_upload_ms = 0.0;
+    double falcon_step_compute_ms = 0.0;
+    double falcon_step_download_ms = 0.0;
+    int64_t falcon_step_runs = 0;
     int64_t prefill_runs = 0;
     int64_t step_runs = 0;
     int64_t fast_runs = 0;
@@ -975,7 +982,8 @@ SlowForwardOutput falcon_forward_step(
     const ArkttsARWeights & weights,
     const std::vector<float> & embedding,  // [dim]
     FalconH1StepState & state,
-    int64_t position) {
+    int64_t position,
+    ArkttsARProfile * profile = nullptr) {
     const int64_t dim = config.text.dim;
     const int64_t n_layer = config.text.n_layer;
     const int64_t d_inner = config.text.mamba_d_ssm;
@@ -1007,9 +1015,11 @@ SlowForwardOutput falcon_forward_step(
         }
     }
 
+    auto t_init = Clock::now();
     ggml_init_params params{arena_bytes, nullptr, true};
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx(ggml_init(params));
     if (!ctx) throw std::runtime_error("falcon_forward_step: ggml_init failed");
+    auto t_build = Clock::now();
 
     ggml_tensor * cur = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, dim);
     ggml_set_name(cur, "falcon_input");
@@ -1279,10 +1289,12 @@ SlowForwardOutput falcon_forward_step(
     ggml_cgraph * gf = ggml_new_graph_custom(ctx.get(), 8192, false);
     ggml_build_forward_expand(gf, logits_out);
     ggml_build_forward_expand(gf, hidden_out);
+    auto t_graph = Clock::now();
     ggml_gallocr_t gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
     if (!gallocr || !ggml_gallocr_reserve(gallocr, gf) || !ggml_gallocr_alloc_graph(gallocr, gf)) {
         throw std::runtime_error("falcon_forward_step: gallocr failed");
     }
+    auto t_alloc = Clock::now();
 
     fprintf(stderr, "[DBG] cur op=%d flags=0x%x buf=%p data=%p name=%s\n",
             (int)cur->op, (unsigned)cur->flags, (void *)cur->buffer, (void *)cur->data,
@@ -1393,8 +1405,10 @@ SlowForwardOutput falcon_forward_step(
     }
 
     core::set_backend_threads(backend, threads);
+    auto t_upload = Clock::now();
     ggml_status status = core::compute_backend_graph(backend, gf, nullptr, "falcon_forward_step");
     ggml_backend_synchronize(backend);
+    auto t_compute = Clock::now();
     if (status != GGML_STATUS_SUCCESS) {
         ggml_gallocr_free(gallocr);
         throw std::runtime_error("falcon_forward_step compute failed");
@@ -1598,6 +1612,16 @@ SlowForwardOutput falcon_forward_step(
         state.seq_len = new_seq_len;
     }
 
+    if (profile != nullptr) {
+        profile->falcon_step_init_ms += engine::debug::elapsed_ms(t_init, t_build);
+        profile->falcon_step_build_ms += engine::debug::elapsed_ms(t_build, t_graph);
+        profile->falcon_step_gallocr_ms += engine::debug::elapsed_ms(t_graph, t_alloc);
+        profile->falcon_step_upload_ms += engine::debug::elapsed_ms(t_alloc, t_upload);
+        profile->falcon_step_compute_ms += engine::debug::elapsed_ms(t_upload, t_compute);
+        profile->falcon_step_download_ms += engine::debug::elapsed_ms(t_compute, Clock::now());
+        profile->falcon_step_runs += 1;
+    }
+
     ggml_gallocr_free(gallocr);
     core::release_backend_graph_resources(backend, gf);
     return out;
@@ -1684,6 +1708,12 @@ public:
             fast_backend_ = core::init_backend(fast_backend_config);
             fast_backend_type_ = core::backend_type(fast_backend_);
             retarget_fast_weights(loaded);
+            if (!loaded.falcon_layers.empty()) {
+                // The Falcon-H1 per-token step graph is ~600 tiny nodes; on Metal it
+                // is dispatch-latency bound (measured 5.9 ms/step vs 2.0 ms on CPU,
+                // same weights). Run it on the same dedicated CPU backend.
+                retarget_falcon_weights(loaded);
+            }
         }
         weights_ = std::make_shared<const ArkttsARWeights>(std::move(loaded));
         slow_step_constants_ = std::make_unique<core::ConstantTensorCache>(
@@ -1702,6 +1732,10 @@ public:
         fast_constants_.reset();
         slow_step_constants_.reset();
         weights_.reset();
+        if (falcon_weight_buffer_ != nullptr) {
+            ggml_backend_buffer_free(falcon_weight_buffer_);
+        }
+        falcon_weight_ctx_.reset();
         if (fast_weight_buffer_ != nullptr) {
             ggml_backend_buffer_free(fast_weight_buffer_);
         }
@@ -1744,6 +1778,13 @@ public:
     // Backend hosting the fast AR graph: a dedicated CPU backend when the main
     // backend is a GPU, otherwise the main backend itself.
     ggml_backend_t fast_backend() const noexcept {
+        return fast_backend_ != nullptr ? fast_backend_ : backend_;
+    }
+
+    // Falcon-H1 per-token steps run on the dedicated CPU backend when the main
+    // backend is a GPU one (dispatch-latency bound there); identical tensors
+    // otherwise, so this is always the right backend for falcon_forward_step.
+    ggml_backend_t falcon_step_backend() const noexcept {
         return fast_backend_ != nullptr ? fast_backend_ : backend_;
     }
 
@@ -1819,6 +1860,72 @@ private:
         commit(weights.fast_output);
     }
 
+    // Re-binds the Falcon-H1 layer weights (and the semantic head) onto the
+    // dedicated CPU backend, mirroring retarget_fast_weights. ssm_A / ssm_D are
+    // included so the per-step A=-exp(A_log) / D-expansion reads become plain
+    // CPU memcpys instead of GPU->host syncs.
+    void retarget_falcon_weights(ArkttsARWeights & weights) {
+        ggml_init_params params{8ull * 1024ull * 1024ull, nullptr, true};
+        falcon_weight_ctx_.reset(ggml_init(params));
+        if (falcon_weight_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize Audio8 TTS Falcon step CPU weight context");
+        }
+        struct ScheduledCopy {
+            const core::TensorValue * source;
+            core::TensorValue target;
+        };
+        std::vector<ScheduledCopy> copies;
+        copies.reserve(weights.falcon_layers.size() * 12 + 1);
+        auto schedule = [&](const core::TensorValue & value) {
+            if (!value.valid()) {
+                throw std::runtime_error("Audio8 TTS Falcon step weight tensor is missing");
+            }
+            copies.push_back({&value, schedule_tensor_copy(falcon_weight_ctx_.get(), value)});
+        };
+        for (const auto & layer : weights.falcon_layers) {
+            schedule(layer.ssm_in);
+            schedule(layer.ssm_dt_b);
+            schedule(layer.ssm_A);
+            schedule(layer.ssm_D);
+            schedule(layer.ssm_out);
+            schedule(layer.attn_q_proj);
+            schedule(layer.attn_k_proj);
+            schedule(layer.attn_v_proj);
+            schedule(layer.attn_o_proj);
+            schedule(layer.ffn_gate);
+            schedule(layer.ffn_up);
+            schedule(layer.ffn_down);
+        }
+        schedule(weights.falcon_lm_head);
+        falcon_weight_buffer_ = ggml_backend_alloc_ctx_tensors(falcon_weight_ctx_.get(), fast_backend_);
+        if (falcon_weight_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate Audio8 TTS Falcon step CPU weights");
+        }
+        for (auto & copy : copies) {
+            copy_tensor_bytes(*copy.source, copy.target);
+        }
+        size_t index = 0;
+        auto commit = [&](core::TensorValue & value) {
+            value = std::move(copies[index].target);
+            ++index;
+        };
+        for (auto & layer : weights.falcon_layers) {
+            commit(layer.ssm_in);
+            commit(layer.ssm_dt_b);
+            commit(layer.ssm_A);
+            commit(layer.ssm_D);
+            commit(layer.ssm_out);
+            commit(layer.attn_q_proj);
+            commit(layer.attn_k_proj);
+            commit(layer.attn_v_proj);
+            commit(layer.attn_o_proj);
+            commit(layer.ffn_gate);
+            commit(layer.ffn_up);
+            commit(layer.ffn_down);
+        }
+        commit(weights.falcon_lm_head);
+    }
+
     std::shared_ptr<const Audio8TtsAssets> assets_;
     std::shared_ptr<const ArkttsARWeights> weights_;
     int threads_ = 1;
@@ -1829,6 +1936,8 @@ private:
     core::BackendType fast_backend_type_ = core::BackendType::Cpu;
     std::unique_ptr<ggml_context, GgmlContextDeleter> fast_weight_ctx_;
     ggml_backend_buffer_t fast_weight_buffer_ = nullptr;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> falcon_weight_ctx_;
+    ggml_backend_buffer_t falcon_weight_buffer_ = nullptr;
     std::unique_ptr<core::ConstantTensorCache> slow_step_constants_;
     std::unique_ptr<core::ConstantTensorCache> fast_constants_;
 };
@@ -1926,8 +2035,8 @@ public:
                     }
                 }
                 auto p_emb = build_falcon_embedding_step(assets.config, weights, full_matrix.data(), cur_steps, p);
-                pre_out = falcon_forward_step(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(),
-                                              assets.config, weights, p_emb, fstate, p);
+                pre_out = falcon_forward_step(runtime_->falcon_step_backend(), runtime_->threads(), runtime_->graph_arena_bytes(),
+                                              assets.config, weights, p_emb, fstate, p, &profile);
             }
             auto pre_logits_full = expand_compact(pre_out.logits);
             auto frame = sample_frame(pre_logits_full, pre_out.hidden, options, sample, false, profile);
@@ -1959,8 +2068,8 @@ public:
             for (int64_t step = 1; step < max_new_tokens; ++step) {
                 const int64_t pos = cur_steps - 1;
                 auto emb = build_falcon_embedding_step(assets.config, weights, full_matrix.data(), cur_steps, pos);
-                auto out = falcon_forward_step(runtime_->backend(), runtime_->threads(), runtime_->graph_arena_bytes(),
-                                               assets.config, weights, emb, fstate, pos);
+                auto out = falcon_forward_step(runtime_->falcon_step_backend(), runtime_->threads(), runtime_->graph_arena_bytes(),
+                                               assets.config, weights, emb, fstate, pos, &profile);
                 auto logits_full = expand_compact(out.logits);
                 auto next_frame = sample_frame(logits_full, out.hidden, options, sample, true, profile);
                 {
@@ -2686,6 +2795,13 @@ private:
         engine::debug::timing_log_scalar("audio8_tts.ar.profile.sample_main_ms", profile.sample_main_ms);
         engine::debug::timing_log_scalar("audio8_tts.ar.profile.sample_high_ms", profile.sample_high_ms);
         engine::debug::timing_log_scalar("audio8_tts.ar.profile.sample_fast_ms", profile.sample_fast_ms);
+        engine::debug::timing_log_scalar("audio8_tts.ar.profile.falcon_step_init_ms", profile.falcon_step_init_ms);
+        engine::debug::timing_log_scalar("audio8_tts.ar.profile.falcon_step_build_ms", profile.falcon_step_build_ms);
+        engine::debug::timing_log_scalar("audio8_tts.ar.profile.falcon_step_gallocr_ms", profile.falcon_step_gallocr_ms);
+        engine::debug::timing_log_scalar("audio8_tts.ar.profile.falcon_step_upload_ms", profile.falcon_step_upload_ms);
+        engine::debug::timing_log_scalar("audio8_tts.ar.profile.falcon_step_compute_ms", profile.falcon_step_compute_ms);
+        engine::debug::timing_log_scalar("audio8_tts.ar.profile.falcon_step_download_ms", profile.falcon_step_download_ms);
+        engine::debug::timing_log_scalar("audio8_tts.ar.profile.falcon_step_runs", profile.falcon_step_runs);
         engine::debug::trace_log_scalar("audio8_tts.ar.profile.prefill_runs", profile.prefill_runs);
         engine::debug::trace_log_scalar("audio8_tts.ar.profile.step_runs", profile.step_runs);
         engine::debug::trace_log_scalar("audio8_tts.ar.profile.fast_runs", profile.fast_runs);
