@@ -46,6 +46,9 @@ public:
     engine::modules::QwenCausalDecodeStepResult decode_embeddings_batched(
         const std::vector<float> & embeddings, int64_t batch_size);
     engine::runtime::TransformerBatchedKVState export_batched_decode_state() const;
+    // 冻结/重置某 batch 行的解码位置：非活跃行应保持 end=0（mask 全 -inf，不参与 attention），
+    // 避免 run_batched_decode_step 对空行 advance_member 导致其位置递增、mask 污染活跃行。
+    void set_batched_member_end(int64_t batch, int64_t end);
 
     void release_graphs();
     void release_backbone_graphs();

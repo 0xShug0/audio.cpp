@@ -180,6 +180,8 @@ public:
         slot.chunks = chunk_patches.empty() ? std::vector<int64_t>{400} : chunk_patches;
         slot.chunk_target = slot.chunks[0];
         pending_.push_back(slot_id);
+        fprintf(stderr, "[LAUNCH] slot=%ld tokens=%zu\n", slot_id, request.token_ids.size());
+        fflush(stderr);
         cv_wake_.notify_all();
         return slot_id;
     }
@@ -397,6 +399,14 @@ private:
                           embeddings.begin() + static_cast<std::ptrdiff_t>(i * hidden));
             }
         }
+        // 5.5 冻结非活跃行的解码位置（end=0，mask 全 -inf），避免空行被
+        // advance_member 推高位置后 mask 污染活跃行（导致 stop 判定错乱/内容重复）。
+        for (int64_t i = 0; i < max_batch_; ++i) {
+            auto & slot = slots_[static_cast<size_t>(i)];
+            if (slot.state != Slot::State::Active || !slot.prefill_done || slot.step < 1) {
+                ar_->set_batched_member_end(i, 0);
+            }
+        }
         // 6. 一次 batched decode（每成员独立 pos/cache-slot/mask）
         auto out = ar_->decode_embeddings_batched(embeddings, max_batch_);
         // 7. 分发 hidden 到各 step>=1 活跃 slot
@@ -566,20 +576,25 @@ private:
     // 只处理 Dead（Done 已处理过并归还）；Done 状态由 launch 复用前的 reset 清除。
     void finish_slot_locked(int64_t slot_id) {
         auto & slot = slots_[static_cast<size_t>(slot_id)];
+        fprintf(stderr, "[FINISH] slot=%ld tokens=%zu gen_patches=%ld\n",
+                slot_id, slot.request.token_ids.size(), slot.generated_patches);
+        fflush(stderr);
         if (slot.state != Slot::State::Dead) {
             return;
         }
-        // 还有未解完的 chunk_latents → flush
+        // 有剩余 chunk_latents → decode_incremental 输出 tail（含 istft 尾部）；
+        // 无剩余 → flush_incremental 输出尾部。二选一，避免 decode + flush 双输出导致重复。
         if (!slot.chunk_latents.empty() && slot.generated_patches > 0) {
             auto audio = redae_->decode_incremental(slot.redae_state, slot.chunk_latents);
             slot.chunk_latents.clear();
             if (!audio.samples.empty()) {
                 slot.chunk_queue.push_back(std::move(audio));
             }
-        }
-        auto flush = redae_->flush_incremental(slot.redae_state);
-        if (!flush.samples.empty()) {
-            slot.chunk_queue.push_back(std::move(flush));
+        } else {
+            auto flush = redae_->flush_incremental(slot.redae_state);
+            if (!flush.samples.empty()) {
+                slot.chunk_queue.push_back(std::move(flush));
+            }
         }
         slot.state = Slot::State::Idle;
         slot.finished = true;
@@ -691,6 +706,26 @@ private:
                     state.current_ends[static_cast<size_t>(i)] = gpu_end_for(gpu, i);
                 }
             }
+            static int rebuild_dbg = 0;
+            if (rebuild_dbg++ < 10) {
+                std::string ends;
+                for (int64_t i = 0; i < max_batch_; ++i) {
+                    ends += std::to_string(state.current_ends[static_cast<size_t>(i)]) + ",";
+                }
+                std::string gpu_ends;
+                if (!gpu.current_ends.empty()) {
+                    for (size_t i = 0; i < gpu.current_ends.size(); ++i) {
+                        gpu_ends += std::to_string(gpu.current_ends[i]) + ",";
+                    }
+                }
+                fprintf(stderr, "[REBUILD] batch=%ld state_ends=[%s] gpu_ends=[%s] running=[",
+                        (long)max_batch_, ends.c_str(), gpu_ends.c_str());
+                for (size_t i = 0; i < running_active_.size(); ++i) {
+                    fprintf(stderr, "%ld,", (long)running_active_[i]);
+                }
+                fprintf(stderr, "]\n");
+                fflush(stderr);
+            }
             int64_t max_steps = 0;
             for (int64_t i = 0; i < max_batch_; ++i) {
                 max_steps = std::max(max_steps, state.current_ends[static_cast<size_t>(i)]);
@@ -715,6 +750,13 @@ private:
                     : gpu_end_for(gpu, b);
                 if (end <= 0) {
                     continue;
+                }
+                static int splice_dbg = 0;
+                if (splice_dbg++ < 20) {
+                    fprintf(stderr, "[SPLICE] row=%ld src=%s tokens=%zu end=%ld\n", b,
+                            imported_slots_.count(b) > 0 ? "new-prefill" : "gpu-running",
+                            slots_[static_cast<size_t>(b)].request.token_ids.size(), end);
+                    fflush(stderr);
                 }
                 const int64_t current_end = end;
                 for (size_t layer = 0; layer < state.layers.size(); ++layer) {

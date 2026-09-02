@@ -1908,6 +1908,7 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
     add_option_from_json(request.options, body, "repetition_penalty", "repetition_penalty");
     add_option_from_json(request.options, body, "guidance_scale", "guidance_scale");
     add_option_from_json(request.options, body, "num_inference_steps", "num_inference_steps");
+    add_option_from_json(request.options, body, "reference_text", "reference_text");
     if (const auto * value = body.find("instructions")) {
         request.options["instruction"] = value->as_string();
     }
@@ -2157,6 +2158,11 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
         throw std::runtime_error("configured model does not provide streaming execution: " + model.config.id);
     }
     const auto started = Clock::now();
+    if (request.text_input.has_value()) {
+        const std::string txt = request.text_input->text.substr(0, 12);
+        fprintf(stderr, "[REQ] session_idx=%zu text=%s\n", pool.index, txt.c_str());
+        fflush(stderr);
+    }
     session->prepare(engine::runtime::build_preparation_request(request));
     TimedTaskResult timed_result;
     const auto sink = [&](const engine::runtime::StreamEvent & event) {

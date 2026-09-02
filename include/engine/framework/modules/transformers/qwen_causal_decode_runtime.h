@@ -101,6 +101,8 @@ public:
     QwenCausalDecodeStepResult decode_embeddings_batched(
         const std::vector<float> & embeddings,
         int64_t batch_size);
+    // 冻结/重置某 batch 行的解码位置（非活跃行 end=0，mask 全 -inf）。
+    void set_batched_member_end(int64_t batch, int64_t end);
 
     // Snapshot of the batched decode KV cache (host vectors), suitable for
     // replication and re-import via start_decode_*_batched with a different

@@ -615,6 +615,10 @@ public:
         return batched_decode_cache_.export_state();
     }
 
+    void set_batched_member_end(int64_t batch, int64_t end) {
+        batched_decode_cache_.set_member_end(batch, end);
+    }
+
     void start_decode_embeddings_batched(
         const runtime::TransformerBatchedKVState & state,
         int64_t required_cache_steps) {
@@ -1663,6 +1667,10 @@ void QwenCausalDecodeRuntime::start_decode_embeddings_batched(
     const runtime::TransformerBatchedKVState & state,
     int64_t required_cache_steps) {
     impl_->start_decode_embeddings_batched(state, required_cache_steps);
+}
+
+void QwenCausalDecodeRuntime::set_batched_member_end(int64_t batch, int64_t end) {
+    impl_->set_batched_member_end(batch, end);
 }
 
 QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_tokens_batched(const std::vector<int32_t> & tokens) {

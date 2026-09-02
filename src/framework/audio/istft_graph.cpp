@@ -292,11 +292,21 @@ public:
         if (!inc_initialized_) {
             return {};
         }
-        // flush 剩余全部样本（含尾部）
-        std::vector<float> out(inc_folded_.size());
-        for (size_t i = 0; i < inc_folded_.size(); ++i) {
-            const float denom = inc_envelope_[i];
-            out[i] = denom <= 1.0e-11F ? 0.0F : inc_folded_[i] / denom;
+        // append_incremental 已输出 [pad, total_samples-pad) 的完整内部覆盖区，
+        // 与离线 compute() 的裁剪语义（输出 = output_size - 2*pad）一致。
+        // 这里只输出"尚未输出"的尾部（若有），避免把整段折叠缓冲区重复倒出
+        // （此前从索引 0 全量重放会导致流式输出 2 倍时长）。
+        const int64_t start = inc_emitted_samples_;
+        const int64_t end = static_cast<int64_t>(inc_folded_.size());
+        std::vector<float> out;
+        if (end > start) {
+            out.resize(static_cast<size_t>(end - start));
+            for (int64_t i = start; i < end; ++i) {
+                const float denom = inc_envelope_[static_cast<size_t>(i)];
+                out[static_cast<size_t>(i - start)] =
+                    denom <= 1.0e-11F ? 0.0F
+                                      : inc_folded_[static_cast<size_t>(i)] / denom;
+            }
         }
         inc_folded_.clear();
         inc_envelope_.clear();

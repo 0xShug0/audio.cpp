@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "engine/framework/codecs/redae_codec_runtime.h"
 
 #include "engine/framework/audio/istft_graph.h"
@@ -264,7 +265,7 @@ std::shared_ptr<RedAeWeights> load_redae_weights(
         options.graph_arena_bytes,
         options.graph_arena_bytes,
         execution.backend_type(),
-        true,
+        false,
         c.enc_sliding_window);
     auto encoder_load_config = encoder_config;
     encoder_load_config.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
@@ -284,7 +285,7 @@ std::shared_ptr<RedAeWeights> load_redae_weights(
         options.graph_arena_bytes,
         options.graph_arena_bytes,
         execution.backend_type(),
-        true,
+        false,
         0);
     auto downsample_load_config = downsample_config;
     downsample_load_config.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
