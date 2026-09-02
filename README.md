@@ -70,6 +70,7 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
 | **chatterbox** | TTS, Clone, VC| ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | Chatterbox with 0.5B backbone | GGUF 16/Q8 |
+| **chatterbox_turbo** | TTS, Clone (testing) | en | Chatterbox Turbo, distilled 350M GPT2 T3 backbone + 2-step meanflow S3Gen decoder; built-in voice only for now, see [docs/tts.md](docs/tts.md) | GGUF 16/Q8 |
 | **confucius4_tts** | Clone | zh, en, ja, ko, de, fr, es, id, it, th, pt, ru, ms, vi | Confucius4-TTS multilingual voice cloning | GGUF F32, Stream |
 | **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | DotTTS SOAR, MeanFlow, and Edit | GGUF 16/Q8, Stream |
 | **dramabox** | TTS, Clone | en | DramaBox expressive TTS and voice cloning | GGUF Q8 |
