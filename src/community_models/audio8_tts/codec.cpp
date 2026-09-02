@@ -1,3 +1,5 @@
+#include <cstdlib>
+
 #include "engine/community_models/audio8_tts/codec.h"
 
 #include "engine/framework/audio/conversion.h"
@@ -657,14 +659,29 @@ core::TensorValue build_decoder(
     auto x = causal_conv1d(ctx, input, weights.decoder_first, kCodecDim, 1536, 7, 1, 1, true);
     int64_t channels = 1536;
     const int strides[] = {8, 8, 4, 2};
-    for (size_t index = 0; index < weights.decoder_blocks.size(); ++index) {
-        const auto & block = weights.decoder_blocks[index];
-        x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
-        x = causal_conv_transpose1d(ctx, x, block.conv, channels, channels / 2, 2 * strides[index], strides[index], true);
-        channels /= 2;
-        x = build_residual_unit(ctx, x, block.residual1, channels, 1);
-        x = build_residual_unit(ctx, x, block.residual3, channels, 3);
-        x = build_residual_unit(ctx, x, block.residual9, channels, 9);
+    if (ctx.backend_type == core::BackendType::Metal && codec_channel_fast_decoder_enabled()) {
+        ggml_tensor * x_cf = channel_fast_in(ctx, x);
+        for (size_t index = 0; index < weights.decoder_blocks.size(); ++index) {
+            const auto & block = weights.decoder_blocks[index];
+            x_cf = snake1d_channel_fast(ctx, x_cf, block.snake.alpha);
+            x_cf = causal_conv_transpose1d_channel_fast(
+                ctx, x_cf, block.conv, channels, channels / 2, 2 * strides[index], strides[index]);
+            channels /= 2;
+            x_cf = residual_unit_channel_fast(ctx, x_cf, block.residual1, channels, 1);
+            x_cf = residual_unit_channel_fast(ctx, x_cf, block.residual3, channels, 3);
+            x_cf = residual_unit_channel_fast(ctx, x_cf, block.residual9, channels, 9);
+        }
+        x = channel_fast_out(ctx, x_cf, channels);
+    } else {
+        for (size_t index = 0; index < weights.decoder_blocks.size(); ++index) {
+            const auto & block = weights.decoder_blocks[index];
+            x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
+            x = causal_conv_transpose1d(ctx, x, block.conv, channels, channels / 2, 2 * strides[index], strides[index], true);
+            channels /= 2;
+            x = build_residual_unit(ctx, x, block.residual1, channels, 1);
+            x = build_residual_unit(ctx, x, block.residual3, channels, 3);
+            x = build_residual_unit(ctx, x, block.residual9, channels, 9);
+        }
     }
     x = modules::Snake1dModule({channels}).build(ctx, x, weights.decoder_final_snake);
     x = causal_conv1d(ctx, x, weights.decoder_final, channels, 1, 7, 1, 1, true);
