@@ -166,29 +166,42 @@ public:
         }
     }
 
-    int64_t launch(const FireRedTTS3BaseRequest & request, const std::vector<int64_t> & chunk_patches) {
+    SlotHandle launch(const FireRedTTS3BaseRequest & request, const std::vector<int64_t> & chunk_patches) {
         std::lock_guard<std::mutex> lock(mu_);
         if (free_slots_.empty()) {
-            return -1;
+            return SlotHandle{};
         }
         const int64_t slot_id = free_slots_.front();
         free_slots_.pop_front();
         auto & slot = slots_[static_cast<size_t>(slot_id)];
+        // epoch 先取后回写：slot = Slot{} 会把 epoch 清零，故先 +1 再重置、回写单调代次。
+        const uint64_t epoch = slot.epoch + 1;
         slot = Slot{};
+        slot.epoch = epoch;
         slot.state = Slot::State::Active;
         slot.request = request;
         slot.chunks = chunk_patches.empty() ? std::vector<int64_t>{400} : chunk_patches;
         slot.chunk_target = slot.chunks[0];
         pending_.push_back(slot_id);
-        fprintf(stderr, "[LAUNCH] slot=%ld tokens=%zu\n", slot_id, request.token_ids.size());
+        fprintf(stderr, "[LAUNCH] slot=%ld epoch=%llu tokens=%zu\n",
+                slot_id, (unsigned long long)epoch, request.token_ids.size());
         fflush(stderr);
         cv_wake_.notify_all();
-        return slot_id;
+        return SlotHandle{slot_id, epoch};
     }
 
-    engine::runtime::AudioBuffer next_chunk(int64_t slot_id) {
+    engine::runtime::AudioBuffer next_chunk(const SlotHandle & handle) {
         std::unique_lock<std::mutex> lock(mu_);
-        auto & slot = slots_[static_cast<size_t>(slot_id)];
+        // 首行所有权校验（在读 slot.error/queue/finished 之前）：
+        // 句柄无效 / 越界 / 代次不匹配（stale，slot 已被 release 或复用）→ 立即返回空 = 流结束，
+        // 绝不读新请求的 slot 状态（防串音），也避免旧 owner 在已复用 slot 上继续 move/析构。
+        if (!handle.valid() || handle.id >= max_batch_) {
+            return {};
+        }
+        auto & slot = slots_[static_cast<size_t>(handle.id)];
+        if (slot.epoch != handle.epoch) {
+            return {};
+        }
         if (slot.error) {
             std::rethrow_exception(slot.error);
         }
@@ -219,20 +232,34 @@ public:
     }
 
     engine::runtime::AudioBuffer generate(const FireRedTTS3BaseRequest & request) {
-        const int64_t slot_id = launch(request, {});
-        if (slot_id < 0) {
+        const SlotHandle handle = launch(request, {});
+        if (!handle.valid()) {
             throw std::runtime_error("FireRedTTS3BatchScheduler slot pool exhausted");
         }
         engine::runtime::AudioBuffer merged;
         merged.sample_rate = static_cast<int>(assets_->redae.sample_rate);
         merged.channels = 1;
-        while (true) {
-            auto chunk = next_chunk(slot_id);
-            if (chunk.samples.empty()) {
-                break;
+        try {
+            while (true) {
+                auto chunk = next_chunk(handle);
+                if (chunk.samples.empty()) {
+                    break;
+                }
+                runtime::append_audio_buffer(merged, chunk);
             }
-            runtime::append_audio_buffer(merged, chunk);
+        } catch (...) {
+            // 异常：快速终结仍 Active 的 slot，排空到 finished，归还，再抛。
+            abort(handle);
+            try {
+                while (!next_chunk(handle).samples.empty()) {
+                }
+            } catch (...) {
+            }
+            release_slot(handle);
+            throw;
         }
+        // drain 结束（slot 必已 finished）：显式归还，slot 才可被复用。
+        release_slot(handle);
         return merged;
     }
 
@@ -253,6 +280,58 @@ public:
             flow_->release_graph();
         }
         campplus_.release_runtime_graph();
+    }
+
+    // owner 在排空结束（next_chunk 见空 / reset / generate drain 完）时显式归还 slot。
+    // 只回收 terminal（finished 且非 Active/Dead）的 slot；过早调用 no-op。
+    // 幂等：epoch 不匹配（已 release/复用）直接返回。
+    void release_slot(const SlotHandle & handle) {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!handle.valid() || handle.id >= max_batch_) {
+            return;
+        }
+        auto & slot = slots_[static_cast<size_t>(handle.id)];
+        if (slot.epoch != handle.epoch) {
+            return;  // 已 release 或复用 → 幂等
+        }
+        if (slot.state == Slot::State::Active || slot.state == Slot::State::Dead) {
+            return;  // 过早：调用方应先 abort+drain，不回收活 slot
+        }
+        if (!slot.finished) {
+            return;
+        }
+        slot.epoch++;  // 残留句柄立即失效
+        if (std::find(free_slots_.begin(), free_slots_.end(), handle.id) == free_slots_.end()) {
+            free_slots_.push_back(handle.id);
+        }
+        fprintf(stderr, "[RELEASED] slot=%ld epoch=%llu\n",
+                handle.id, (unsigned long long)slot.epoch);
+        fflush(stderr);
+        cv_.notify_all();
+    }
+
+    // 快速终止仍 Active 的 slot（reset/异常清理用）：
+    // Active → Dead（若尚未被 form_wave 领走则从 pending 摘除），调度线程下一轮 finish 收尾。
+    void abort(const SlotHandle & handle) {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!handle.valid() || handle.id >= max_batch_) {
+            return;
+        }
+        auto & slot = slots_[static_cast<size_t>(handle.id)];
+        if (slot.epoch != handle.epoch) {
+            return;
+        }
+        if (slot.state != Slot::State::Active) {
+            return;  // 已 Dead/Idle/Failed，无需干预
+        }
+        if (!slot.prefill_done) {
+            // 尚未被 form_wave 领走：直接从 pending 摘除，避免 Dead slot 被 prefill。
+            pending_.erase(
+                std::remove(pending_.begin(), pending_.end(), handle.id),
+                pending_.end());
+        }
+        slot.state = Slot::State::Dead;
+        cv_wake_.notify_all();  // 唤醒可能休眠的调度线程收尾
     }
 
 private:
@@ -598,11 +677,12 @@ private:
         }
         slot.state = Slot::State::Idle;
         slot.finished = true;
-        // 防重复归还：仅当 slot 不在 free_slots_ 时才 push（避免并发下重复导致
-        // 同一 slot 被多个 session launch）。
-        if (std::find(free_slots_.begin(), free_slots_.end(), slot_id) == free_slots_.end()) {
-            free_slots_.push_back(slot_id);
-        }
+        // 不再 push free_slots_：slot 暂归 owner 所有（保留态），等 owner 在
+        // next_chunk 排空见空后显式 release_slot 归还，杜绝"未 drain 完的 slot 被复用"
+        // （旧 owner 串读新请求 chunk / Slot{} 析构与 drain 交错 double-free）。
+        fprintf(stderr, "[DONE_WAIT_RELEASE] slot=%ld gen_patches=%ld\n",
+                slot_id, slot.generated_patches);
+        fflush(stderr);
         // 该行不再参与 decode：从 running 集合移除（下次 join 时重建）。
         running_active_.erase(
             std::remove(running_active_.begin(), running_active_.end(), slot_id),
@@ -668,9 +748,8 @@ private:
                 slot.error = std::current_exception();
                 slot.state = Slot::State::Failed;
                 slot.finished = true;
-                if (std::find(free_slots_.begin(), free_slots_.end(), slot_id) == free_slots_.end()) {
-                    free_slots_.push_back(slot_id);
-                }
+                // 不 push free_slots_：失败 slot 留待 owner next_chunk 抛错 → reset/异常路径
+                // 显式 release_slot 回收，避免失败槽在 owner 处理错误前被复用。
             }
         }
     }
@@ -930,12 +1009,22 @@ FireRedTTS3BatchScheduler::FireRedTTS3BatchScheduler(
 
 FireRedTTS3BatchScheduler::~FireRedTTS3BatchScheduler() = default;
 
-int64_t FireRedTTS3BatchScheduler::launch(const FireRedTTS3BaseRequest & request, const std::vector<int64_t> & chunk_patches) {
+FireRedTTS3BatchScheduler::SlotHandle FireRedTTS3BatchScheduler::launch(
+    const FireRedTTS3BaseRequest & request,
+    const std::vector<int64_t> & chunk_patches) {
     return impl_->launch(request, chunk_patches);
 }
 
-engine::runtime::AudioBuffer FireRedTTS3BatchScheduler::next_chunk(int64_t slot_id) {
-    return impl_->next_chunk(slot_id);
+engine::runtime::AudioBuffer FireRedTTS3BatchScheduler::next_chunk(const SlotHandle & handle) {
+    return impl_->next_chunk(handle);
+}
+
+void FireRedTTS3BatchScheduler::release_slot(const SlotHandle & handle) {
+    impl_->release_slot(handle);
+}
+
+void FireRedTTS3BatchScheduler::abort(const SlotHandle & handle) {
+    impl_->abort(handle);
 }
 
 engine::runtime::AudioBuffer FireRedTTS3BatchScheduler::generate(const FireRedTTS3BaseRequest & request) {

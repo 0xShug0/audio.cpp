@@ -138,6 +138,9 @@ engine::runtime::TaskResult run_stream(
         return result;
     } catch (...) {
         session.set_stream_event_sink(nullptr);
+        // 中断/异常请求：reset() 清掉可能遗留的流式状态（含 scheduler 中仍 Active 的 slot），
+        // 避免该 session 带活 slot 归还池中、被下一请求复用而串音/崩溃。
+        session.reset();
         throw;
     }
 }

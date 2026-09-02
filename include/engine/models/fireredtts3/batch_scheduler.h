@@ -51,6 +51,16 @@ public:
         std::deque<engine::runtime::AudioBuffer> chunk_queue;
         bool finished = false;
         std::exception_ptr error;
+        // 代次：launch 时 +1（重置后回写），release_slot 时再 +1。句柄失效/幂等判定用。
+        uint64_t epoch = 0;
+    };
+
+    // 句柄：{slot id, 代次}。持有句柄才能读块/归还/终止。
+    // slot 被释放并复用时 epoch +1，旧句柄立即失效（stale 访问视作流结束，不读新请求状态）。
+    struct SlotHandle {
+        int64_t id = -1;
+        uint64_t epoch = 0;
+        bool valid() const noexcept { return id >= 0; }
     };
 
     FireRedTTS3BatchScheduler(
@@ -68,11 +78,16 @@ public:
     FireRedTTS3BatchScheduler(const FireRedTTS3BatchScheduler &) = delete;
     FireRedTTS3BatchScheduler & operator=(const FireRedTTS3BatchScheduler &) = delete;
 
-    // 启动一个请求（分配 slot），返回 slot id。返回 -1 表示槽池耗尽。
-    int64_t launch(const FireRedTTS3BaseRequest & request, const std::vector<int64_t> & chunk_patches);
-    // 取下一个音频块（驱动调度轮次直到该 slot 产出块或结束）。
-    engine::runtime::AudioBuffer next_chunk(int64_t slot_id);
-    // 离线整句：launch + drain + 拼接（trim prompt）。
+    // 启动一个请求（分配 slot），返回句柄。槽池耗尽返回无效句柄（id == -1）。
+    SlotHandle launch(const FireRedTTS3BaseRequest & request, const std::vector<int64_t> & chunk_patches);
+    // 取下一音频块（驱动调度轮次直到该 slot 产出块或结束）。
+    // 句柄失效（stale / 已 release）→ 立即返回空块，不读新请求状态（防串音）。
+    engine::runtime::AudioBuffer next_chunk(const SlotHandle & handle);
+    // 归还已完成并排空的 slot 到空闲池（owner 在确认结束时显式调用；幂等）。
+    void release_slot(const SlotHandle & handle);
+    // 快速终止仍 Active 的 slot（供 reset/异常清理），终止后需排空 + release_slot。
+    void abort(const SlotHandle & handle);
+    // 离线整句：launch + drain + 内部 release + 拼接（trim prompt）。
     engine::runtime::AudioBuffer generate(const FireRedTTS3BaseRequest & request);
     void release_graphs();
 

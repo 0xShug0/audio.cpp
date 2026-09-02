@@ -58,8 +58,8 @@ private:
     bool mem_saver_ = false;
     // 共享 batch scheduler（同一 assets 的所有 session 共享）；Base clone 用。
     std::shared_ptr<FireRedTTS3BatchScheduler> scheduler_;
-    // 当前流式请求在 scheduler 中占用的 slot（-1 = 无）。
-    int64_t scheduler_slot_ = -1;
+    // 当前流式请求在 scheduler 中占用的 slot 句柄（无效 = 无）。
+    FireRedTTS3BatchScheduler::SlotHandle scheduler_slot_;
     bool scheduler_enabled_ = false;
 
     // 流式状态

@@ -484,7 +484,7 @@ void FireRedTTS3Session::start_stream(const runtime::TaskRequest & request) {
     if (scheduler_enabled_ && scheduler_) {
         // 共享 scheduler：launch 一个 slot（并发请求共享 GPU batch decode）
         scheduler_slot_ = scheduler_->launch(base, stream_chunk_patches_);
-        if (scheduler_slot_ < 0) {
+        if (!scheduler_slot_.valid()) {
             throw std::runtime_error("FireRedTTS3 scheduler slot pool exhausted");
         }
     } else {
@@ -500,12 +500,15 @@ std::optional<runtime::StreamEvent> FireRedTTS3Session::next_stream_event() {
     }
     runtime::AudioBuffer audio;
     if (scheduler_enabled_ && scheduler_) {
-        if (scheduler_slot_ < 0) {
+        if (!scheduler_slot_.valid()) {
             return std::nullopt;
         }
         audio = scheduler_->next_chunk(scheduler_slot_);
         if (audio.samples.empty()) {
-            scheduler_slot_ = -1;
+            // 流结束：显式归还 slot（此后该 id 才可能被复用），并失效本句柄，
+            // 杜绝"本 session 尚未完全 drain / 仍在持句柄时 slot 被其他请求复用"。
+            scheduler_->release_slot(scheduler_slot_);
+            scheduler_slot_ = FireRedTTS3BatchScheduler::SlotHandle{};
             return std::nullopt;
         }
     } else {
@@ -554,11 +557,18 @@ void FireRedTTS3Session::reset() {
     stream_chunk_index_ = 0;
     stream_merged_audio_ = runtime::AudioBuffer{};
     stream_generated_text_.clear();
-    if (scheduler_enabled_ && scheduler_ && scheduler_slot_ >= 0) {
-        // 排空剩余块，确保 slot 正常结束并归还（finish_slot 内部释放槽位）。
-        while (scheduler_->next_chunk(scheduler_slot_).samples.empty() == false) {
+    if (scheduler_enabled_ && scheduler_ && scheduler_slot_.valid()) {
+        // 若上一次流式请求因异常/中断遗留仍 Active 的 slot：先 abort 快速收尾，
+        // 再排空（next_chunk 等待至 finished），最后显式 release_slot 归还。
+        scheduler_->abort(scheduler_slot_);
+        try {
+            while (!scheduler_->next_chunk(scheduler_slot_).samples.empty()) {
+            }
+        } catch (...) {
+            // 旧请求的 prefill/decode 错误只在此吞掉清理，不得泄漏到下一个请求。
         }
-        scheduler_slot_ = -1;
+        scheduler_->release_slot(scheduler_slot_);
+        scheduler_slot_ = FireRedTTS3BatchScheduler::SlotHandle{};
     }
     stream_session_.reset();
     stream_started_ = false;
