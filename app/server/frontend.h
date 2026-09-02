@@ -68,6 +68,11 @@ public:
 
 using ServerFrontendModuleFactory = std::unique_ptr<ServerFrontendModule> (*)();
 
+struct ServerFrontendHttpsConfig {
+    std::filesystem::path cert_file;
+    std::filesystem::path key_file;
+};
+
 class ServerFrontendRegistry {
 public:
     void add(ServerFrontendModuleFactory factory);
@@ -79,5 +84,12 @@ private:
 };
 
 void register_static_server_frontends(ServerFrontendRegistry & registry);
+void serve_frontend_https(
+    const std::string & host,
+    int port,
+    IHttpHandler & handler,
+    ShutdownRequested shutdown_requested,
+    uint64_t max_request_body_bytes,
+    const ServerFrontendHttpsConfig & config);
 
 } // namespace minitts::server

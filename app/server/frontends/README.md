@@ -170,3 +170,28 @@ cmake -S . -B build/debug \
 
 Keep module-specific dependencies in that CMake branch. Do not add them to the
 default server target.
+
+## HTTPS Capability
+
+`https` is a frontend capability, not a pre/post-processing module. It replaces
+the listening transport with an in-process HTTPS listener and forwards requests
+to the same core handler. Build it explicitly:
+
+```bash
+cmake -S . -B build/debug \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON \
+  -DAUDIOCPP_SERVER_FRONTEND_MODULES=https
+```
+
+Run with a certificate/key pair:
+
+```bash
+build/debug/bin/audiocpp_server \
+  --config server.json \
+  --https-cert-file cert.pem \
+  --https-key-file key.pem
+```
+
+The same fields can be set in `server.json` as `https_cert_file` and
+`https_key_file`. TLS dependencies stay out of the default server build.
