@@ -922,7 +922,7 @@
     applyingModelsFolder = true;
     warningStatus = '';
     errorStatus = '';
-    status = useDefault ? 'Restoring the default models folderâ€¦' : 'Changing models folderâ€¦';
+    status = useDefault ? 'Restoring the default models folder…' : 'Changing models folder…';
     try {
       const root = await setModelsRoot(useDefault ? '' : modelsFolderInput.trim());
       acceptModelsRoot(root);

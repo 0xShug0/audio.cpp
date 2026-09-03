@@ -122,6 +122,11 @@ const english: Record<string, string> = {
   'studio.subtitle.music': 'Create music and sound from a prompt, lyrics, or reference audio when supported.',
   'studio.subtitle.vc': 'Transform a recording into another voice while preserving the spoken or sung performance.',
   'studio.subtitle.sep': 'Split a recording into vocals, instruments, or other available audio stems.',
+  // The workflow tabs are keyed 'conversion' and 'separation' while the task
+  // labels above use 'vc' and 'sep'. Both spellings resolve so the hero subtitle
+  // renders text rather than the lookup key itself.
+  'studio.subtitle.conversion': 'Transform a recording into another voice while preserving the spoken or sung performance.',
+  'studio.subtitle.separation': 'Split a recording into vocals, instruments, or other available audio stems.',
   'studio.subtitle.analysis': 'Analyze audio for speech activity, speakers, timing, and alignment.',
   'studio.subtitle.design': 'Create or refine a voice from a written description and supported reference controls.',
   'studio.model': 'Model',
