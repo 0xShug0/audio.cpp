@@ -6,6 +6,10 @@
 
 Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
 
+Huggingface main repo: https://huggingface.co/audio-cpp/audio.cpp-gguf
+
+ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gguf
+
 > [!IMPORTANT]
 >
 > **2026-08-28 - Dev testing:** Fun-CozyVoice3 and BreezeTTS 2 are available for testing on the `dev` branch.
