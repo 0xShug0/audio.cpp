@@ -1023,118 +1023,15 @@ struct BreezeGeneratorRuntime::Impl {
             }
         });
         engine::debug::timing_log_scalar("breeze_tts.generate.prompt_ms", prompt_ms);
-        text_encoder.release_runtime_graphs();
-        double backbone_cond_decode_ms = 0.0;
-        double backbone_uncond_decode_ms = 0.0;
-        std::vector<int32_t> first_codebook_history;
-        std::vector<int32_t> codes;
-        double backbone_cond_prefill_ms = 0.0;
-        double backbone_uncond_prefill_ms = 0.0;
-        const double ar_ms = engine::debug::measure_ms([&] {
-            modules::QwenCausalPrefillResult cond;
-            backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
-                cond = backbone_cond->prefill_embeddings(cond_embeddings, cond_steps);
-            });
-            std::optional<modules::QwenCausalPrefillResult> uncond;
-            if (use_cfg) {
-                uncond.emplace();
-                backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
-                    *uncond = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
-                });
-            }
-            backbone_cond->start_decode_embeddings(cond.state, cond_steps + request.max_tokens);
-            if (use_cfg) {
-                backbone_uncond->start_decode_embeddings(uncond->state, uncond_steps + request.max_tokens);
-            }
-
-            sampling::HfSamplerScratch scratch;
-            scratch.reserve_vocab(static_cast<size_t>(config.lm_head_size));
-            std::mt19937 fallback_rng(static_cast<uint32_t>(request.seed));
-            uint64_t sample_call_index = 0;
-            uint64_t offset_blocks = 0;
-            sampling::HfSamplingOptions first_options;
-            first_options.do_sample = true;
-            first_options.temperature = request.temperature;
-            first_options.top_k = request.top_k;
-            first_options.top_p = request.top_p;
-            first_options.repetition_penalty = kRepetitionPenalty;
-            first_options.min_tokens_to_keep = 1;
-
-            codes.reserve(static_cast<size_t>(request.max_tokens * config.num_codebooks));
-            for (int64_t step = 0; step < request.max_tokens; ++step) {
-                if (use_cfg && cond.logits.size() != uncond->logits.size()) {
-                    throw std::runtime_error("BreezeTTS CFG logits shape mismatch");
-                }
-                std::vector<float> logits;
-                if (use_cfg) {
-                    logits.resize(cond.logits.size());
-                    for (size_t i = 0; i < logits.size(); ++i) {
-                        logits[i] = uncond->logits[i] + request.guidance_scale * (cond.logits[i] - uncond->logits[i]);
-                    }
-                } else {
-                    logits = cond.logits;
-                }
-                suppress_reserved(logits, kCodecCodebookSize, config.vocab_size);
-                const int32_t first_token = sample_logits(
-                    std::move(logits),
-                    first_codebook_history,
-                    first_options,
-                    scratch,
-                    fallback_rng,
-                    sampling_policy.cuda_fast_path ? &sampling_policy : nullptr,
-                    request.seed,
-                    sample_call_index,
-                    offset_blocks,
-                    "BreezeTTS semantic sampler");
-                if (first_token == config.vocab_size) {
-                    break;
-                }
-                if (first_token == config.codebook_pad_token_id) {
-                    continue;
-                }
-                const auto frame = generate_frame(
-                    cond.hidden,
-                    use_cfg ? uncond->hidden : cond.hidden,
-                    first_token,
-                    request,
-                    scratch,
-                    fallback_rng,
-                    sample_call_index,
-                    offset_blocks);
-                first_codebook_history.push_back(first_token);
-                codes.insert(codes.end(), frame.begin(), frame.end());
-                const auto embedded = frame_embedding(
-                    weights->audio_embedding,
-                    config.num_codebooks * config.vocab_size,
-                    config.hidden_size,
-                    config.vocab_size,
-                    frame);
-                modules::QwenCausalDecodeStepResult cond_step;
-                backbone_cond_decode_ms += engine::debug::measure_ms([&] {
-                    cond_step = backbone_cond->decode_embedding(embedded);
-                });
-                cond.logits = cond_step.logits;
-                cond.hidden = cond_step.hidden;
-                if (use_cfg) {
-                    modules::QwenCausalDecodeStepResult uncond_step;
-                    backbone_uncond_decode_ms += engine::debug::measure_ms([&] {
-                        uncond_step = backbone_uncond->decode_embedding(embedded);
-                    });
-                    uncond->logits = uncond_step.logits;
-                    uncond->hidden = uncond_step.hidden;
-                }
-            }
-        });
-        engine::debug::timing_log_scalar("breeze_tts.ar.total_ms", ar_ms);
-        engine::debug::timing_log_scalar("breeze_tts.ar.backbone_cond_prefill_ms", backbone_cond_prefill_ms);
-        engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_prefill_ms", backbone_uncond_prefill_ms);
-        engine::debug::timing_log_scalar("breeze_tts.ar.backbone_cond_decode_ms", backbone_cond_decode_ms);
-        engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_decode_ms", backbone_uncond_decode_ms);
-        backbone_cond->release_runtime_graphs();
-        if (use_cfg) {
-            backbone_uncond->release_runtime_graphs();
+text_encoder.release_runtime_graphs();
+        begin_stream_from_prompt(
+            request, std::move(cond_embeddings), std::move(uncond_embeddings), cond_steps, uncond_steps);
+        BreezeStreamStep final;
+        while (!final.done) {
+            final = step_stream(static_cast<size_t>(request.max_tokens));
         }
-        depth_pair->release_runtime_graphs();
+        end_stream();
+        const auto & codes = stream_codes_cache_;
         if (codes.empty()) {
             throw std::runtime_error("BreezeTTS generated no audio codes");
         }
@@ -1151,6 +1048,257 @@ struct BreezeGeneratorRuntime::Impl {
             sample = std::clamp(sample, -1.0F, 1.0F);
         }
         return audio;
+    }
+
+    struct StreamState {
+        BreezeGenerationRequest request;
+        modules::QwenCausalPrefillResult cond;
+        modules::QwenCausalPrefillResult uncond;
+        sampling::HfSamplerScratch scratch;
+        std::mt19937 fallback_rng;
+        uint64_t sample_call_index = 0;
+        uint64_t offset_blocks = 0;
+        sampling::HfSamplingOptions first_options;
+        std::vector<int32_t> first_codebook_history;
+        std::vector<int32_t> codes;
+        int64_t steps_taken = 0;
+        bool done = false;
+        bool use_cfg = false;
+        double backbone_cond_prefill_ms = 0.0;
+        double backbone_uncond_prefill_ms = 0.0;
+        double backbone_cond_decode_ms = 0.0;
+        double backbone_uncond_decode_ms = 0.0;
+    };
+    std::unique_ptr<StreamState> stream_;
+    std::vector<int32_t> stream_codes_cache_;
+
+    void begin_stream_from_prompt(
+        const BreezeGenerationRequest & request,
+        std::vector<float> cond_embeddings,
+        std::vector<float> uncond_embeddings,
+        int64_t cond_steps,
+        int64_t uncond_steps) {
+        if (stream_ != nullptr) {
+            throw std::runtime_error("BreezeTTS stream already active");
+        }
+        const auto & config = assets->config;
+        const bool use_cfg = request.guidance_scale != 1.0F;
+        auto state = std::make_unique<StreamState>();
+        state->request = request;
+        state->use_cfg = use_cfg;
+        state->codes.reserve(static_cast<size_t>(request.max_tokens * config.num_codebooks));
+        state->backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
+            state->cond = backbone_cond->prefill_embeddings(cond_embeddings, cond_steps);
+        });
+        if (use_cfg) {
+            state->backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
+                state->uncond = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
+            });
+        }
+        backbone_cond->start_decode_embeddings(state->cond.state, cond_steps + request.max_tokens);
+        if (use_cfg) {
+            backbone_uncond->start_decode_embeddings(state->uncond.state, uncond_steps + request.max_tokens);
+        }
+        state->scratch.reserve_vocab(static_cast<size_t>(config.lm_head_size));
+        state->fallback_rng = std::mt19937(static_cast<uint32_t>(request.seed));
+        state->first_options.do_sample = true;
+        state->first_options.temperature = request.temperature;
+        state->first_options.top_k = request.top_k;
+        state->first_options.top_p = request.top_p;
+        state->first_options.repetition_penalty = kRepetitionPenalty;
+        state->first_options.min_tokens_to_keep = 1;
+        stream_ = std::move(state);
+    }
+
+    void begin_stream(const BreezeGenerationRequest & request) {
+        if (request.text.empty()) {
+            throw std::runtime_error("BreezeTTS requires text");
+        }
+        const auto & config = assets->config;
+        BreezeSpeechCodes reference;
+        if (request.reference_codes.has_value()) {
+            reference = *request.reference_codes;
+        } else if (request.reference_audio.has_value()) {
+            reference = speech_encoder->encode(*request.reference_audio);
+            speech_encoder->release_runtime_graphs();
+        }
+        std::vector<int32_t> reference_codes;
+        int64_t reference_frames = 0;
+        if (!reference.codes.empty()) {
+            if (reference.frames < 0 || reference.code_groups <= 0) {
+                throw std::runtime_error("BreezeTTS speech codes have invalid shape");
+            }
+            if (static_cast<int64_t>(reference.codes.size()) != reference.frames * reference.code_groups) {
+                throw std::runtime_error("BreezeTTS speech code count does not match shape");
+            }
+            reference_codes = reference.codes;
+            reference_frames = static_cast<int64_t>(reference_codes.size()) / config.num_codebooks;
+        }
+        BreezePromptBranch cond_branch;
+        BreezePromptBranch uncond_branch;
+        std::vector<float> cond_embeddings;
+        std::vector<float> uncond_embeddings;
+        int64_t cond_steps = 0;
+        int64_t uncond_steps = 0;
+        const bool use_cfg = request.guidance_scale != 1.0F;
+        const double prompt_ms = engine::debug::measure_ms([&] {
+            if (!reference_codes.empty()) {
+                if (request.reference_text.empty()) {
+                    throw std::runtime_error("BreezeTTS clone requires reference_text");
+                }
+                cond_branch = tokenizer.build_clone(request.text, request.instruction, request.reference_text, reference_frames);
+                if (use_cfg) {
+                    uncond_branch = tokenizer.build_clone_negative(request.text, request.reference_text, reference_frames);
+                }
+            } else {
+                cond_branch = tokenizer.build_tts_instruction(request.text, request.instruction);
+                if (use_cfg) {
+                    uncond_branch = tokenizer.build_tts_plain(request.text);
+                }
+            }
+            cond_embeddings = merge_prompt(cond_branch, reference_codes);
+            cond_steps = static_cast<int64_t>(cond_branch.input_ids.size());
+            if (use_cfg) {
+                uncond_embeddings = merge_prompt(uncond_branch, reference_codes);
+                uncond_steps = static_cast<int64_t>(uncond_branch.input_ids.size());
+            }
+        });
+        engine::debug::timing_log_scalar("breeze_tts.generate.prompt_ms", prompt_ms);
+        text_encoder.release_runtime_graphs();
+        begin_stream_from_prompt(
+            request, std::move(cond_embeddings), std::move(uncond_embeddings), cond_steps, uncond_steps);
+    }
+
+    // Runs one AR step. Returns 0 = frame emitted, 1 = pad skipped, 2 = EOS/budget end.
+    int step_frame_once() {
+        const auto & config = assets->config;
+        StreamState & state = *stream_;
+        const BreezeGenerationRequest & request = state.request;
+        if (state.done || state.steps_taken >= request.max_tokens) {
+            state.done = true;
+            return 2;
+        }
+        ++state.steps_taken;
+        if (state.use_cfg && state.cond.logits.size() != state.uncond.logits.size()) {
+            throw std::runtime_error("BreezeTTS CFG logits shape mismatch");
+        }
+        std::vector<float> logits;
+        if (state.use_cfg) {
+            logits.resize(state.cond.logits.size());
+            for (size_t i = 0; i < logits.size(); ++i) {
+                logits[i] = state.uncond.logits[i] + request.guidance_scale * (state.cond.logits[i] - state.uncond.logits[i]);
+            }
+        } else {
+            logits = state.cond.logits;
+        }
+        suppress_reserved(logits, kCodecCodebookSize, config.vocab_size);
+        const int32_t first_token = sample_logits(
+            std::move(logits),
+            state.first_codebook_history,
+            state.first_options,
+            state.scratch,
+            state.fallback_rng,
+            sampling_policy.cuda_fast_path ? &sampling_policy : nullptr,
+            request.seed,
+            state.sample_call_index,
+            state.offset_blocks,
+            "BreezeTTS semantic sampler");
+        if (first_token == config.vocab_size) {
+            state.done = true;
+            return 2;
+        }
+        if (first_token == config.codebook_pad_token_id) {
+            return 1;
+        }
+        const auto frame = generate_frame(
+            state.cond.hidden,
+            state.use_cfg ? state.uncond.hidden : state.cond.hidden,
+            first_token,
+            request,
+            state.scratch,
+            state.fallback_rng,
+            state.sample_call_index,
+            state.offset_blocks);
+        state.first_codebook_history.push_back(first_token);
+        state.codes.insert(state.codes.end(), frame.begin(), frame.end());
+        const auto embedded = frame_embedding(
+            weights->audio_embedding,
+            config.num_codebooks * config.vocab_size,
+            config.hidden_size,
+            config.vocab_size,
+            frame);
+        modules::QwenCausalDecodeStepResult cond_step;
+        state.backbone_cond_decode_ms += engine::debug::measure_ms([&] {
+            cond_step = backbone_cond->decode_embedding(embedded);
+        });
+        state.cond.logits = cond_step.logits;
+        state.cond.hidden = cond_step.hidden;
+        if (state.use_cfg) {
+            modules::QwenCausalDecodeStepResult uncond_step;
+            state.backbone_uncond_decode_ms += engine::debug::measure_ms([&] {
+                uncond_step = backbone_uncond->decode_embedding(embedded);
+            });
+            state.uncond.logits = uncond_step.logits;
+            state.uncond.hidden = uncond_step.hidden;
+        }
+        return 0;
+    }
+
+    BreezeStreamStep step_stream(size_t max_new_frames) {
+        if (stream_ == nullptr) {
+            throw std::runtime_error("BreezeTTS stream not started");
+        }
+        BreezeStreamStep out;
+        const size_t base = stream_->codes.size();
+        while (out.new_frames < static_cast<int64_t>(max_new_frames)) {
+            const int status = step_frame_once();
+            if (status == 0) {
+                ++out.new_frames;
+            } else if (status == 2) {
+                out.done = true;
+                break;
+            }
+        }
+        if (stream_->done) {
+            out.done = true;
+        }
+        const auto & config = assets->config;
+        out.new_codes.assign(
+            stream_->codes.begin() + static_cast<std::ptrdiff_t>(base), stream_->codes.end());
+        (void) config;
+        return out;
+    }
+
+    void end_stream() {
+        if (stream_ == nullptr) {
+            return;
+        }
+        engine::debug::timing_log_scalar("breeze_tts.ar.backbone_cond_prefill_ms", stream_->backbone_cond_prefill_ms);
+        engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_prefill_ms", stream_->backbone_uncond_prefill_ms);
+        engine::debug::timing_log_scalar("breeze_tts.ar.backbone_cond_decode_ms", stream_->backbone_cond_decode_ms);
+        engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_decode_ms", stream_->backbone_uncond_decode_ms);
+        stream_codes_cache_ = std::move(stream_->codes);
+        stream_.reset();
+        backbone_cond->release_runtime_graphs();
+        backbone_uncond->release_runtime_graphs();
+        depth_pair->release_runtime_graphs();
+    }
+
+    runtime::AudioBuffer decode_prefix_codes(const std::vector<int32_t> & codes, int64_t frames) {
+        const auto & config = assets->config;
+        BreezeSpeechCodes speech_codes;
+        speech_codes.codes = codes;
+        speech_codes.code_groups = config.num_codebooks;
+        speech_codes.frames = frames;
+        runtime::AudioBuffer audio = speech_decoder->decode(speech_codes);
+        for (float & sample : audio.samples) {
+            sample = std::clamp(sample, -1.0F, 1.0F);
+        }
+        return audio;
+    }
+
+    void release_decoder_graphs() {
+        speech_decoder->release_runtime_graphs();
     }
 
     std::shared_ptr<const BreezeTTSAssets> assets;
@@ -1198,6 +1346,24 @@ engine::runtime::AudioBuffer BreezeGeneratorRuntime::generate(const BreezeGenera
 
 BreezeSpeechCodes BreezeGeneratorRuntime::encode_reference(const engine::runtime::AudioBuffer & audio) const {
     return impl_->speech_encoder->encode(audio);
+}
+
+void BreezeGeneratorRuntime::begin_stream(const BreezeGenerationRequest & request) {
+    impl_->begin_stream(request);
+}
+
+BreezeStreamStep BreezeGeneratorRuntime::step_stream(size_t max_new_frames) {
+    return impl_->step_stream(max_new_frames);
+}
+
+void BreezeGeneratorRuntime::end_stream() {
+    impl_->end_stream();
+    impl_->release_decoder_graphs();
+}
+
+engine::runtime::AudioBuffer BreezeGeneratorRuntime::decode_codes(
+    const std::vector<int32_t> & codes, int64_t frames) {
+    return impl_->decode_prefix_codes(codes, frames);
 }
 
 }  // namespace engine::models::breeze_tts

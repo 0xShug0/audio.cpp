@@ -8,6 +8,7 @@
 #include "engine/models/breeze_tts/generator.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -287,6 +288,22 @@ void BreezeTTSSession::start_stream(const runtime::TaskRequest & request) {
         request.voice->speaker->audio.has_value()) {
         stream_reference_codes_ = resolve_reference_codes(*request.voice->speaker->audio);
     }
+    const auto subchunk_opt = runtime::find_option(request.options, {"stream_subchunk"});
+    stream_subchunk_ = subchunk_opt.has_value()
+        ? runtime::parse_bool_option(*subchunk_opt, "stream_subchunk")
+        : false;
+    const auto frames_opt = runtime::parse_i64_option(request.options, {"stream_frames_per_event"});
+    if (frames_opt.has_value() && *frames_opt > 0) {
+        stream_frames_per_event_ = static_cast<size_t>(*frames_opt);
+    }
+    const auto margin_opt = runtime::parse_i64_option(request.options, {"stream_lookahead_margin"});
+    if (margin_opt.has_value() && *margin_opt >= 0) {
+        stream_lookahead_margin_ = *margin_opt;
+    }
+    engine::debug::trace_log_scalar("breeze_tts.streaming.subchunk", stream_subchunk_ ? 1 : 0);
+    engine::debug::trace_log_scalar(
+        "breeze_tts.streaming.frames_per_event", static_cast<int64_t>(stream_frames_per_event_));
+    engine::debug::trace_log_scalar("breeze_tts.streaming.lookahead_margin", stream_lookahead_margin_);
     stream_started_ = true;
 }
 
@@ -296,6 +313,9 @@ std::optional<runtime::StreamEvent> BreezeTTSSession::next_stream_event() {
     }
     if (stream_chunk_index_ >= stream_chunk_requests_.size()) {
         return std::nullopt;
+    }
+    if (stream_subchunk_) {
+        return next_subchunk_event();
     }
     const size_t chunk_index = stream_chunk_index_++;
     auto chunk_audio = generator_->generate(
@@ -308,6 +328,90 @@ std::optional<runtime::StreamEvent> BreezeTTSSession::next_stream_event() {
         {},
     });
     return event;
+}
+
+std::optional<runtime::StreamEvent> BreezeTTSSession::next_subchunk_event() {
+    size_t guard = 0;
+    while (true) {
+        if (++guard > 256) {
+            throw std::runtime_error("BreezeTTS sub-chunk streaming stalled");
+        }
+        if (stream_chunk_index_ >= stream_chunk_requests_.size()) {
+            return std::nullopt;
+        }
+        const size_t chunk_index = stream_chunk_index_;
+        if (!stream_chunk_active_) {
+            generator_->begin_stream(build_generation_request(
+                stream_chunk_requests_[chunk_index], stream_reference_codes_, chunk_index));
+            stream_chunk_active_ = true;
+            stream_codes_.clear();
+            stream_total_frames_ = 0;
+            stream_emitted_samples_ = 0;
+        }
+        BreezeStreamStep step = generator_->step_stream(stream_frames_per_event_);
+        stream_codes_.insert(stream_codes_.end(), step.new_codes.begin(), step.new_codes.end());
+        stream_total_frames_ += step.new_frames;
+        if (stream_total_frames_ <= 0) {
+            // EOS before any frame: close the chunk and move on.
+            generator_->end_stream();
+            stream_chunk_active_ = false;
+            ++stream_chunk_index_;
+            continue;
+        }
+        runtime::AudioBuffer decoded = generator_->decode_codes(stream_codes_, stream_total_frames_);
+        if (decoded.samples.empty()) {
+            if (step.done) {
+                generator_->end_stream();
+                stream_chunk_active_ = false;
+                ++stream_chunk_index_;
+                continue;
+            }
+            continue;
+        }
+        const double samples_per_frame =
+            static_cast<double>(decoded.samples.size()) / static_cast<double>(stream_total_frames_);
+        size_t emit_end = 0;
+        if (step.done) {
+            emit_end = decoded.samples.size();
+        } else {
+            if (stream_total_frames_ <= stream_lookahead_margin_) {
+                continue;
+            }
+            emit_end = static_cast<size_t>(
+                std::floor((stream_total_frames_ - stream_lookahead_margin_) * samples_per_frame));
+            if (emit_end > decoded.samples.size()) {
+                emit_end = decoded.samples.size();
+            }
+            if (emit_end <= stream_emitted_samples_) {
+                continue;
+            }
+        }
+        runtime::AudioBuffer out;
+        out.sample_rate = decoded.sample_rate;
+        out.channels = decoded.channels;
+        out.samples.assign(
+            decoded.samples.begin() + static_cast<std::ptrdiff_t>(stream_emitted_samples_),
+            decoded.samples.begin() + static_cast<std::ptrdiff_t>(emit_end));
+        stream_emitted_samples_ = emit_end;
+        runtime::append_audio_buffer(stream_merged_audio_, out);
+        runtime::StreamEvent event;
+        const size_t seq = stream_event_seq_++;
+        event.named_audio_outputs.push_back({
+            "chunk_" + std::to_string(chunk_index) + "_part_" + std::to_string(seq),
+            std::move(out),
+            {},
+        });
+        if (step.done) {
+            generator_->end_stream();
+            stream_chunk_active_ = false;
+            ++stream_chunk_index_;
+        }
+        engine::debug::trace_log_scalar(
+            "breeze_tts.streaming.chunk_frames", static_cast<int64_t>(stream_total_frames_));
+        engine::debug::trace_log_scalar(
+            "breeze_tts.streaming.emitted_samples", static_cast<int64_t>(stream_emitted_samples_));
+        return event;
+    }
 }
 
 void BreezeTTSSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
@@ -327,11 +431,20 @@ runtime::TaskResult BreezeTTSSession::finish_stream() {
 }
 
 void BreezeTTSSession::reset() {
+    if (stream_chunk_active_) {
+        generator_->end_stream();
+        stream_chunk_active_ = false;
+    }
     stream_chunk_requests_.clear();
     stream_reference_codes_.reset();
     stream_merged_audio_ = runtime::AudioBuffer{};
     stream_chunk_index_ = 0;
     stream_started_ = false;
+    stream_subchunk_ = false;
+    stream_codes_.clear();
+    stream_total_frames_ = 0;
+    stream_emitted_samples_ = 0;
+    stream_event_seq_ = 0;
 }
 
 runtime::StreamEvent BreezeTTSSession::process_audio_chunk(const runtime::AudioChunk & chunk) {

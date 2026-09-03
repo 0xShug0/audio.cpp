@@ -127,6 +127,29 @@
         "required": false,
         "min": 0,
         "default": 0
+      },
+      {
+        "name": "stream_subchunk",
+        "type": "bool",
+        "description": "Emit sub-chunk streaming events (multiple audio deltas per text chunk) instead of one event per chunk.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Acoustic frames generated per sub-chunk streaming event.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "stream_lookahead_margin",
+        "type": "int",
+        "description": "Trailing codec frames withheld from emission to absorb convolutional boundary artifacts.",
+        "required": false,
+        "min": 0,
+        "default": 12
       }
     ],
     "session": [
@@ -167,7 +190,11 @@
         "type": "enum",
         "description": "Attention lowering; auto probes the backend and falls back to eager on GPUs without a flash kernel (e.g. sm70); default auto.",
         "required": false,
-        "values": ["auto", "flash", "eager"],
+        "values": [
+          "auto",
+          "flash",
+          "eager"
+        ],
         "default": "auto"
       }
     ],
