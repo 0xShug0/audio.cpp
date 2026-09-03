@@ -8,7 +8,7 @@
     {"name": "reference_duration_sec", "type": "slider", "label": "reference_duration_sec", "label_en": "Reference trim (s)", "default": 15.0, "minimum": 1.0, "maximum": 60.0, "step": 1.0, "info": "Trim the speaker reference before encoding. Around 10 s usually clones best."},
     {"name": "seed", "type": "number", "label": "seed", "label_en": "Seed", "default": 0, "minimum": 0, "step": 1, "precision": 0}
   ],
-  "_comment": "WebUI TTS 高级参数控件配置：按模型 family 动态生成控件（gr.render）。每项字段：name=选项键(随请求 options 透传给模型)；type=slider|number|bool|text|choice；label/info=显示文案；default=默认值(应等于模型默认，已按 src/models/<family>/*.cpp 校对)；minimum/maximum/step=数值范围；precision=0 表示整数；choices=下拉候选。规则：只有被用户改动过的控件值才会随请求发送；seed/max_tokens 已有专用输入框，勿在此重复；参考文本用『参考文本』框(reference_text)；文件路径/parity 类参数(如 *_noise_file)未纳入，可用『其它参数(JSON)』兜底框传。",
+  "_comment": "WebUI 模型参数控件配置：按 catalog 条目 id 或 family 生成控件。每项字段：name=选项键(随请求 options 透传给模型)；type=slider|number|bool|text|choice；label/label_en、info/info_en、placeholder/placeholder_en=显示文案；default=默认值；minimum/maximum/step=数值范围；precision=0 表示整数；choices=下拉候选。 BEHAVIOUR: the native UI seeds every control from its `default` and sends the whole set with every request (webui/native/src/routes/+page.svelte resetParams/requestOptions), so a `default` here is an UNCONDITIONAL OVERRIDE of the model's own default, never a fallback. Every default must therefore be read from the C++ (src/models/<family>/, src/community_models/<family>/) or from the packaged config the C++ derives it from. To let the model or its checkpoint decide, OMIT `default`: the control then sends \"\", and runtime::find_option_match (src/framework/runtime/options.cpp:151) ignores empty values, so the option counts as unset. Use type=number/text for those so the widget renders blank. `minimum` must not sit below the C++ guard - a slider that can reach an illegal value produces a 500. KEYS: ~27 families call runtime::validate_spec_backed_request_options (include/engine/framework/runtime/spec_backed_model.h:59) and hard-reject any key absent from model_specs/<family>.json options.request - the KEY is checked even when the value is empty. Spec min/max are documentation only and are never enforced. L10N: catalog.ts discards any label/info/placeholder containing Han characters, so every entry needs the _en variant or it renders as raw snake_case. 勿在此重复：seed/max_tokens 已有专用输入框(服务端用顶层 seed 覆盖 options[\"seed\"]，app/server/runtime.cpp:1876)；参考文本用『参考文本』框(reference_text)；语种用顶层 language 框。文件路径/说话人向量/parity 类参数(如 *_noise_file、speaker_embedding、multi_reference_cond)未纳入，可用『其它参数(JSON)』兜底框传。",
 
   "qwen3_tts": [
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
@@ -16,33 +16,33 @@
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.05, "minimum": 1.0, "maximum": 2.0, "step": 0.01},
     {"name": "do_sample", "type": "bool", "label": "do_sample", "default": true},
-    {"name": "instruct", "type": "text", "label": "instruct（仅 VoiceDesign/CustomVoice）", "default": "", "placeholder": "风格/音色指令，Base 版忽略"},
-    {"name": "speaker", "type": "text", "label": "speaker（仅 CustomVoice）", "default": "", "placeholder": "内置音色名，其它版忽略"}
+    {"name": "instruct", "type": "text", "label": "instruct（仅 VoiceDesign/CustomVoice）", "label_en": "instruct (VoiceDesign / CustomVoice only)", "default": "", "placeholder": "风格/音色指令，Base 版忽略", "placeholder_en": "Style or timbre instruction; ignored by Base models"},
+    {"name": "speaker", "type": "text", "label": "speaker（仅 CustomVoice）", "label_en": "speaker (CustomVoice only)", "default": "", "placeholder": "内置音色名，其它版忽略", "placeholder_en": "Built-in voice name; ignored by other variants"}
   ],
 
   "vibevoice": [
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0, "info": "扩散步数（官方默认 10），越大越慢越稳"},
-    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.3, "minimum": 0.0, "maximum": 5.0, "step": 0.1, "info": "CFG 引导强度"},
-    {"name": "max_length_times", "type": "number", "label": "max_length_times", "default": 2.0, "minimum": 0.1, "step": 0.1, "info": "最大输出长度倍数"},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.3, "minimum": 0.0, "maximum": 5.0, "step": 0.1, "info": "CFG 引导强度", "info_en": "Classifier-free guidance strength."},
+    {"name": "max_length_times", "type": "number", "label": "max_length_times", "default": 2.0, "minimum": 0.1, "step": 0.1, "info": "最大输出长度倍数", "info_en": "Cap on output length as a multiple of the estimated token count."},
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.05, "maximum": 2.0, "step": 0.05},
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 1.0, "minimum": 0.05, "maximum": 1.0, "step": 0.01},
     {"name": "do_sample", "type": "bool", "label": "do_sample", "default": false},
-    {"name": "voice_samples", "type": "text", "label": "voice_samples（多说话人，逗号分隔 wav，≤4）", "default": "", "placeholder": "D:/a.wav,D:/b.wav — 用此项时勿再上传参考音色"}
+    {"name": "voice_samples", "type": "text", "label": "voice_samples（多说话人，逗号分隔 wav，≤4）", "label_en": "voice_samples (multi-speaker: comma-separated WAVs, max 4)", "default": "", "placeholder": "D:/a.wav,D:/b.wav — 用此项时勿再上传参考音色", "placeholder_en": "/a.wav,/b.wav - do not also upload a reference voice when using this"}
   ],
 
   "voxcpm2": [
-    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0, "info": "CFM/DiT 步数"},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0, "info": "CFM/DiT 步数", "info_en": "CFM/DiT sampling steps."},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "tag_aware", "choices": ["default", "tag_aware", "japanese", "endline"]},
     {"name": "min_tokens", "type": "number", "label": "min_tokens", "default": 2, "minimum": 0, "step": 1, "precision": 0},
-    {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "default": true}
+    {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "label_en": "retry_badcase (auto-retry bad generations)", "default": true}
   ],
 
   "voxcpm1": [
-    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0, "info": "CFM/DiT 步数"},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0, "info": "CFM/DiT 步数", "info_en": "CFM/DiT sampling steps."},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "min_tokens", "type": "number", "label": "min_tokens", "default": 2, "minimum": 0, "step": 1, "precision": 0},
-    {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "default": true}
+    {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "label_en": "retry_badcase (auto-retry bad generations)", "default": true}
   ],
 
   "miotts": [
@@ -54,8 +54,8 @@
   ],
 
   "chatterbox": [
-    {"name": "exaggeration", "type": "slider", "label": "exaggeration", "default": 0.5, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info": "改动后需重新『加载模型』才生效"},
-    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "改动后需重新『加载模型』才生效"},
+    {"name": "exaggeration", "type": "slider", "label": "exaggeration", "default": 0.5, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Applied at model load; reload the model after changing it."},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info_en": "Applied at model load; reload the model after changing it."},
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.2, "minimum": 1.0, "maximum": 2.0, "step": 0.01}
   ],
@@ -69,18 +69,18 @@
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "speed", "type": "slider", "label": "speed", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
-    {"name": "instruct", "type": "text", "label": "instruct（风格/音色指令）", "default": "", "placeholder": "如：以轻快的语气朗读"}
+    {"name": "instruct", "type": "text", "label": "instruct（风格/音色指令）", "label_en": "instruct (style / voice instruction)", "default": "", "placeholder": "如：以轻快的语气朗读", "placeholder_en": "e.g. read this in a bright, upbeat tone"}
   ],
 
   "sense_asr": [
     {"name": "enable_itn", "type": "bool", "label": "enable_itn（逆文本规范化）", "label_en": "enable_itn", "default": true},
     {"name": "keep_tags", "type": "bool", "label": "keep_tags（保留语言/情绪/事件标签）", "label_en": "keep_tags", "default": false},
     {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "default": "auto", "choices": ["auto", "fixed", "none"]},
-    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "default": 30, "minimum": 0.001, "step": 1}
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "label_en": "Audio chunk length (s)", "default": 30, "minimum": 0.001, "step": 1}
   ],
 
   "pocket_tts": [
-    {"name": "frames_after_eos", "type": "number", "label": "frames_after_eos（-1=自动）", "default": -1, "minimum": -1, "step": 1, "precision": 0}
+    {"name": "frames_after_eos", "type": "number", "label": "frames_after_eos（-1=自动）", "label_en": "frames_after_eos (-1 = automatic)", "default": -1, "minimum": -1, "step": 1, "precision": 0}
   ],
 
   "neutts": [
@@ -112,7 +112,7 @@
     {"name": "spatio_temporal_guidance_scale", "type": "slider", "label": "spatio_temporal_guidance_scale", "default": 1.5, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "duration_scale", "type": "slider", "label": "duration_scale（自动估时倍率）", "label_en": "duration_scale", "default": 1.1, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
     {"name": "reference_duration_sec", "type": "number", "label": "reference_duration_sec（参考音频裁剪/重复秒数）", "label_en": "reference_duration_sec", "default": 10.0, "minimum": 0.0, "step": 0.5},
-    {"name": "guidance_rescale", "type": "text", "label": "guidance_rescale", "default": "auto", "placeholder": "auto 或数值"},
+    {"name": "guidance_rescale", "type": "text", "label": "guidance_rescale", "default": "auto", "placeholder": "auto 或数值", "placeholder_en": "auto, or a number"},
     {"name": "audio_chunk_threshold_sec", "type": "number", "label": "audio_chunk_threshold_sec（长文本阈值）", "label_en": "audio_chunk_threshold_sec", "default": 45.0, "minimum": 0.0, "step": 1.0},
     {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec（长文本分段目标时长）", "label_en": "audio_chunk_duration_sec", "default": 37.0, "minimum": 0.0, "step": 1.0},
     {"name": "cross_fade_duration_sec", "type": "number", "label": "cross_fade_duration_sec（分段交叉淡化）", "label_en": "cross_fade_duration_sec", "default": 0.05, "minimum": 0.0, "step": 0.01}
@@ -135,19 +135,19 @@
 
   "ace_step": [
     {"name": "route", "type": "choice", "label": "route（操作类型）", "default": "text2music", "choices": ["text2music", "complete", "lego", "extract", "cover", "cover-nofsq", "repaint", "remix"], "info": "cover/remix=换词翻唱，非 text2music 需上传源音频；详见 webui/README.md"},
-    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 8, "minimum": 1, "maximum": 20, "step": 1, "precision": 0, "info": "扩散步数（turbo 上限 20）；remix 路由不填时默认 16，其他路由默认 8"},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 8, "minimum": 1, "maximum": 20, "step": 1, "precision": 0, "info": "扩散步数；turbo 权重会被静默限制为 8", "info_en": "Diffusion steps. Turbo checkpoints are silently clamped to 8; only base checkpoints use more."},
     {"name": "shift", "type": "slider", "label": "shift（时间步弯曲）", "default": 3.0, "minimum": 1.0, "maximum": 5.0, "step": 0.5, "info": "原版 turbo 默认 3.0；1.0 会明显劣化 remix 换词咬字"},
-    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
-    {"name": "audio_cover_strength", "type": "slider", "label": "【cover】audio_cover_strength", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "1=贴近原曲，0=自由发挥；建议 0.5"},
-    {"name": "cover_noise_strength", "type": "slider", "label": "【cover】cover_noise_strength", "default": 0.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "保旋律强度；推荐 0.1~0.25"},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "label_en": "Guidance scale", "default": 1.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
+    {"name": "audio_cover_strength", "type": "slider", "label": "【cover】audio_cover_strength", "label_en": "audio_cover_strength (cover routes)", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "1=贴近原曲，0=自由发挥；建议 0.5", "info_en": "1 hugs the source track, 0 improvises. Around 0.5 works well."},
+    {"name": "cover_noise_strength", "type": "slider", "label": "【cover】cover_noise_strength", "label_en": "cover_noise_strength (cover routes)", "default": 0.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "保旋律强度；推荐 0.1~0.25", "info_en": "Melody retention. 0.1 to 0.25 is the usual range."},
     {"name": "source_caption", "type": "text", "label": "【remix】source_caption", "default": "", "placeholder": "源歌曲描述；『🔍 分析』自动填"},
     {"name": "source_lyrics", "type": "text", "lines": 4, "label": "【remix】source_lyrics", "default": "", "placeholder": "源歌曲原歌词；『🔍 分析』自动填"},
     {"name": "flow_edit_n_min", "type": "slider", "label": "【remix】flow_edit_n_min", "default": 0.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "调大更保源曲、换词更弱"},
     {"name": "flow_edit_n_max", "type": "slider", "label": "【remix】flow_edit_n_max", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "唱不出新歌词时降到 0.7~0.9"},
     {"name": "flow_edit_n_avg", "type": "number", "label": "【remix】flow_edit_n_avg", "default": 2, "minimum": 1, "maximum": 4, "step": 1, "precision": 0, "info": "每步多次采样取平均（remix 默认 2）；1=最快"},
-    {"name": "bpm", "type": "number", "label": "【曲谱】BPM", "default": 0, "minimum": 0, "step": 1, "precision": 0, "info": "0=不指定"},
-    {"name": "keyscale", "type": "text", "label": "【曲谱】keyscale", "default": "", "placeholder": "如 F major"},
-    {"name": "timesignature", "type": "text", "label": "【曲谱】timesignature", "default": "", "placeholder": "如 4"}
+    {"name": "bpm", "type": "number", "label": "【曲谱】BPM", "label_en": "BPM", "default": 0, "minimum": 0, "step": 1, "precision": 0, "info": "0=不指定", "info_en": "0 leaves the tempo unspecified."},
+    {"name": "keyscale", "type": "text", "label": "【曲谱】keyscale", "label_en": "Key / scale", "default": "", "placeholder": "如 F major", "placeholder_en": "e.g. F major"},
+    {"name": "timesignature", "type": "text", "label": "【曲谱】timesignature", "label_en": "Time signature", "default": "", "placeholder": "如 4", "placeholder_en": "e.g. 4"}
   ],
 
   "minimax_music3": [
@@ -167,16 +167,16 @@
   ],
 
   "stable_audio": [
-    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 8, "minimum": 1, "step": 1, "precision": 0, "info": "RF 扩散步数"},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 8, "minimum": 1, "step": 1, "precision": 0, "info": "RF 扩散步数", "info_en": "Rectified-flow sampling steps."},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
-    {"name": "audio_input_kind", "type": "choice", "label": "audio_input_kind（仅上传源音频时生效）", "default": "init_audio", "choices": ["init_audio", "inpaint_audio"]},
-    {"name": "init_noise_level", "type": "slider", "label": "init_noise_level（init_audio 强度）", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
+    {"name": "audio_input_kind", "type": "choice", "label": "audio_input_kind（仅上传源音频时生效）", "label_en": "audio_input_kind (only used when a source audio file is uploaded)", "default": "init_audio", "choices": ["init_audio", "inpaint_audio"]},
+    {"name": "init_noise_level", "type": "slider", "label": "init_noise_level（init_audio 强度）", "label_en": "init_noise_level (init_audio strength)", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
   ],
 
   "seed_vc": [
-    {"name": "route", "type": "choice", "label": "route（转换路径）", "default": "", "choices": ["", "v2_vc", "v1_whisper_bigvgan_vc", "v1_xlsr_hift_vc", "v1_svc"], "info": "留空=按任务默认"},
-    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 30, "minimum": 1, "step": 1, "precision": 0, "info": "CFM 扩散步数"},
-    {"name": "length_adjust", "type": "slider", "label": "length_adjust（时长伸缩）", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
+    {"name": "route", "type": "choice", "label": "route（转换路径）", "label_en": "route (conversion path)", "default": "", "choices": ["", "v2_vc", "v1_whisper_bigvgan_vc", "v1_xlsr_hift_vc", "v1_svc"], "info": "留空=按任务默认", "info_en": "Blank = pick the default path for the selected task."},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 30, "minimum": 1, "step": 1, "precision": 0, "info": "CFM 扩散步数", "info_en": "CFM diffusion steps."},
+    {"name": "length_adjust", "type": "slider", "label": "length_adjust（时长伸缩）", "label_en": "length_adjust (duration stretch)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
     {"name": "intelligibility_cfg_rate", "type": "slider", "label": "intelligibility_cfg_rate（仅 v2_vc）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
     {"name": "similarity_cfg_rate", "type": "slider", "label": "similarity_cfg_rate（仅 v2_vc）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
     {"name": "inference_cfg_rate", "type": "slider", "label": "inference_cfg_rate（仅 v1 路径）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
@@ -184,8 +184,8 @@
 
   "rvc": [
     {"name": "voice_id", "type": "choice", "label": "voice_id（打包音色）", "label_en": "voice_id", "default": "default", "choices": ["default", "manthos", "chocola", "fraise"]},
-    {"name": "voice_model_path", "type": "text", "label": "voice_model_path（自定义 RVC .pth/.pt）", "label_en": "voice_model_path", "default": "", "placeholder": "留空=使用打包音色"},
-    {"name": "retrieval_index_path", "type": "text", "label": "retrieval_index_path（FAISS index）", "label_en": "retrieval_index_path", "default": "", "placeholder": "可选 .index 路径"},
+    {"name": "voice_model_path", "type": "text", "label": "voice_model_path（自定义 RVC .pth/.pt）", "label_en": "voice_model_path", "default": "", "placeholder": "留空=使用打包音色", "placeholder_en": "Blank = use the packaged voice"},
+    {"name": "retrieval_index_path", "type": "text", "label": "retrieval_index_path（FAISS index）", "label_en": "retrieval_index_path", "default": "", "placeholder": "可选 .index 路径", "placeholder_en": "Optional .index path"},
     {"name": "retrieval_blend", "type": "slider", "label": "retrieval_blend", "default": 0.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
     {"name": "semitone_shift", "type": "number", "label": "semitone_shift（半音变调）", "label_en": "semitone_shift", "default": 0, "step": 1, "precision": 0},
     {"name": "pitch_filter_radius", "type": "number", "label": "pitch_filter_radius", "default": 3, "minimum": 0, "step": 1, "precision": 0},
@@ -214,21 +214,21 @@
   ],
 
   "vevo2": [
-    {"name": "route", "type": "choice", "label": "route（任务路线）", "default": "", "choices": ["", "style_preserved_vc", "style_converted_vc", "style_preserved_svc", "style_converted_svc", "singing_style_conversion", "editing"], "info": "留空=按任务默认；详见 webui/README.md"},
-    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0, "info": "流匹配步数"},
-    {"name": "use_pitch_shift", "type": "choice", "label": "use_pitch_shift（自动音高对齐）", "default": "", "choices": ["", "true", "false"], "info": "留空=按路线默认"},
+    {"name": "route", "type": "choice", "label": "route（任务路线）", "label_en": "route (task path)", "default": "", "choices": ["", "style_preserved_vc", "style_converted_vc", "style_preserved_svc", "style_converted_svc", "singing_style_conversion", "editing"], "info": "留空=按任务默认；详见 webui/README.md", "info_en": "Blank = pick the default path for the selected task; see webui/README.md."},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0, "info": "流匹配步数", "info_en": "Flow-matching steps."},
+    {"name": "use_pitch_shift", "type": "choice", "label": "use_pitch_shift（自动音高对齐）", "label_en": "use_pitch_shift (automatic pitch alignment)", "default": "", "choices": ["", "true", "false"], "info": "留空=按路线默认", "info_en": "Blank = use the path's own default."},
     {"name": "temperature", "type": "slider", "label": "temperature（AR 路线用）", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info": "默认取自模型 generation_config.json"},
     {"name": "top_k", "type": "number", "label": "top_k（AR 路线用）", "default": 20, "minimum": 0, "step": 1, "precision": 0, "info": "默认取自模型 generation_config.json"},
     {"name": "top_p", "type": "slider", "label": "top_p（AR 路线用）", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01}
   ],
 
   "heartmula": [
-    {"name": "tags", "type": "text", "label": "tags（必填，逗号分隔）", "default": "", "placeholder": "pop,bright,drums,female vocals", "info": "风格/情绪/乐器/人声标签，模型必需"},
+    {"name": "tags", "type": "text", "label": "tags（必填，逗号分隔）", "label_en": "tags (required, comma-separated)", "default": "", "info": "风格/情绪/乐器/人声标签，模型必需", "info_en": "Required. Style, mood, instrument and vocal tags; HeartMuLa throws on an empty value.", "placeholder": "pop,bright,drums,female vocals"},
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
-    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale（MuLa CFG）", "default": 1.5, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
-    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（codec 步数）", "default": 10, "minimum": 1, "step": 1, "precision": 0},
-    {"name": "infinite_mode", "type": "bool", "label": "infinite_mode（长输出分段生成）", "default": false},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale（MuLa CFG）", "label_en": "guidance_scale (MuLa CFG)", "default": 1.5, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（codec 步数）", "label_en": "num_inference_steps (codec steps)", "default": 10, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "infinite_mode", "type": "bool", "label": "infinite_mode（长输出分段生成）", "label_en": "infinite_mode (chunked long-form generation)", "default": false},
     {"name": "codec_guidance_scale", "type": "slider", "label": "codec_guidance_scale", "default": 1.25, "minimum": 0.0, "maximum": 5.0, "step": 0.05}
   ],
 
@@ -334,7 +334,7 @@
   "firered-audio-semantic-edit": [
     {"name": "template_name", "type": "choice", "label": "template_name", "default": "semantic_edit", "choices": ["semantic_edit"]},
     {"name": "language", "type": "choice", "label": "language", "default": "zh", "choices": ["zh", "en"]},
-    {"name": "instruction", "type": "text", "label": "instruction", "default": "", "placeholder": "delete '比普通的茶叶要'"},
+    {"name": "instruction", "type": "text", "label": "instruction", "default": "", "placeholder": "delete '比普通的茶叶要'", "placeholder_en": "delete 'the phrase to remove'"},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
     {"name": "max_new_audio_steps", "type": "number", "label": "max_new_audio_steps", "default": 750, "minimum": 1, "step": 1, "precision": 0},
@@ -353,11 +353,11 @@
   "firered-audio-asr": [
     {"name": "template_name", "type": "choice", "label": "template_name", "default": "asr", "choices": ["asr", "understand"]},
     {"name": "language", "type": "choice", "label": "language", "default": "zh", "choices": ["zh", "en"]},
-    {"name": "enable_thinking", "type": "bool", "label": "enable_thinking", "default": false},
+    {"name": "enable_thinking", "type": "bool", "label": "enable_thinking", "default": false, "info_en": "Rejected by the asr template; use template_name=understand."},
     {"name": "max_new_tokens", "type": "number", "label": "max_new_tokens", "default": 512, "minimum": 1, "step": 1, "precision": 0},
-    {"name": "top_k", "type": "number", "label": "top_k", "default": 20, "minimum": 0, "step": 1, "precision": 0},
-    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
-    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05}
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 20, "minimum": 0, "step": 1, "precision": 0, "info_en": "Sampling options apply to template_name=understand only; asr decodes greedily."},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01, "info_en": "Sampling options apply to template_name=understand only; asr decodes greedily."},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Sampling options apply to template_name=understand only; asr decodes greedily."}
   ],
 
   "supertonic": [
