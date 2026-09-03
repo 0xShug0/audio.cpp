@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/session.h"
@@ -36,7 +37,8 @@ public:
         size_t graph_arena_bytes,
         size_t constant_context_bytes,
         engine::assets::TensorStorageType linear_weight_storage_type,
-        engine::assets::TensorStorageType conv_weight_storage_type);
+        engine::assets::TensorStorageType conv_weight_storage_type,
+        core::AttentionPreference attention_preference = core::AttentionPreference::Auto);
     ~BreezeSpeechDecoderRuntime();
 
     runtime::AudioBuffer decode(const BreezeSpeechCodes & codec_codes) const;
@@ -50,6 +52,7 @@ private:
     core::ExecutionContext * execution_context_ = nullptr;
     std::shared_ptr<const BreezeSpeechDecoderWeights> weights_;
     size_t graph_arena_bytes_ = 0;
+    bool allow_flash_attention_ = true;
     std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<BreezeSpeechDecoderGraph> graph_;
     // Always present to keep this public class layout identical when the private

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/transformers/qwen_decoder.h"
@@ -44,7 +45,8 @@ public:
         std::shared_ptr<const HiggsAssets> assets,
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
-        assets::TensorStorageType weight_storage_type);
+        assets::TensorStorageType weight_storage_type,
+        core::AttentionPreference attention_preference = core::AttentionPreference::Auto);
 
     const HiggsAssets & assets() const noexcept;
     const HiggsARWeights & weights() const noexcept;
@@ -52,6 +54,7 @@ public:
     core::BackendType backend_type() const noexcept;
     int device() const noexcept;
     int threads() const noexcept;
+    bool allow_flash_attention() const noexcept;
 
 private:
     std::shared_ptr<const HiggsAssets> assets_;
@@ -59,6 +62,7 @@ private:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int device_ = 0;
     int threads_ = 1;
+    bool allow_flash_attention_ = true;
     std::shared_ptr<const HiggsARWeights> weights_;
 };
 

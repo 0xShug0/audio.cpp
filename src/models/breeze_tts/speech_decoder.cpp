@@ -651,7 +651,8 @@ core::TensorValue attention(
     ggml_tensor * positions,
     const core::TensorValue & attention_mask,
     const modules::AttentionWeights & weights,
-    const DecoderConfig & config) {
+    const DecoderConfig & config,
+    modules::ScaledDotProductAttentionLowering lowering = modules::ScaledDotProductAttentionLowering::Flash) {
     const int64_t kv_repeat = config.num_heads / config.num_kv_heads;
     auto q_value = modules::LinearModule(binding::linear_config(config.hidden_size, config.num_heads * config.head_dim, false))
                        .build(build_ctx, input, {weights.q_weight, weights.q_bias});
@@ -717,7 +718,7 @@ core::TensorValue attention(
     }
     auto context = modules::ScaledDotProductAttentionModule({
         config.head_dim,
-        modules::ScaledDotProductAttentionLowering::Flash,
+        lowering,
         GGML_PREC_F32,
         modules::AttentionCausality::NonCausal,
     }).build(
@@ -804,10 +805,12 @@ public:
         int64_t code_frames,
         core::ExecutionContext & execution_context,
         core::ConstantTensorCache & constants,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        bool allow_flash_attention = true)
         : weights_(std::move(weights)),
           code_frames_(code_frames),
           backend_(execution_context.backend()),
+          allow_flash_attention_(allow_flash_attention),
           compute_threads_(std::max(1, execution_context.config().threads)) {
         if (weights_ == nullptr) {
             throw std::runtime_error("Breeze speech decoder graph requires weights");
@@ -863,7 +866,16 @@ public:
                 mask_,
                 core::TensorShape::from_dims({1, 1, code_frames_, code_frames_}),
                 GGML_TYPE_F16);
-            auto attn_out = attention(ctx_.get(), build_ctx, attn_in, positions_, attention_mask, layer.attention, config);
+            auto attn_out = attention(
+                ctx_.get(),
+                build_ctx,
+                attn_in,
+                positions_,
+                attention_mask,
+                layer.attention,
+                config,
+                allow_flash_attention_ ? modules::ScaledDotProductAttentionLowering::Flash
+                                       : modules::ScaledDotProductAttentionLowering::Explicit);
             attn_out = modules::LayerScaleModule{}.build(
                 build_ctx,
                 attn_out,
@@ -1022,6 +1034,7 @@ private:
     int64_t code_frames_ = 0;
     int64_t waveform_frames_ = 0;
     ggml_backend_t backend_ = nullptr;
+    bool allow_flash_attention_ = true;
     int compute_threads_ = 1;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * codes_ = nullptr;
@@ -1040,7 +1053,8 @@ BreezeSpeechDecoderRuntime::BreezeSpeechDecoderRuntime(
     size_t graph_arena_bytes,
     size_t constant_context_bytes,
     assets::TensorStorageType linear_weight_storage_type,
-    assets::TensorStorageType conv_weight_storage_type)
+    assets::TensorStorageType conv_weight_storage_type,
+    core::AttentionPreference attention_preference)
     : assets_(std::move(assets)),
       execution_context_(&execution_context),
       graph_arena_bytes_(graph_arena_bytes) {
@@ -1053,6 +1067,9 @@ BreezeSpeechDecoderRuntime::BreezeSpeechDecoderRuntime(
         execution_context_->backend_type(),
         linear_weight_storage_type,
         conv_weight_storage_type);
+    allow_flash_attention_ = core::resolve_flash_attention(
+        execution_context_->backend(), weights_->config.head_dim, attention_preference);
+    engine::debug::trace_log_scalar("breeze_tts.attention.allow_decoder_flash", allow_flash_attention_);
     constants_ = std::make_unique<core::ConstantTensorCache>(
         execution_context_->backend(),
         std::max(1, execution_context_->config().threads),
@@ -1107,7 +1124,8 @@ runtime::AudioBuffer BreezeSpeechDecoderRuntime::decode(const BreezeSpeechCodes 
                 chunk_frames,
                 *execution_context_,
                 *constants_,
-                graph_arena_bytes_);
+                graph_arena_bytes_,
+                allow_flash_attention_);
             graph = std::move(replacement);
         }
         auto decoded = graph->run(chunk.data(), chunk.size());

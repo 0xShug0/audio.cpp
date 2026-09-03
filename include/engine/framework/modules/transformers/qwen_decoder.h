@@ -77,6 +77,9 @@ struct QwenDecoderAttentionPolicy {
     QwenDecoderAttentionMode static_mode = QwenDecoderAttentionMode::FlashGrouped;
     QwenDecoderPrefixAttentionMode prefix_mode = QwenDecoderPrefixAttentionMode::Exact;
     int64_t grouped_query_min_steps = 0;
+    // False routes flash branches through repeat-KV + matmul/softmax for GPUs
+    // without a flash kernel (e.g. CUDA sm70). True preserves historical behavior.
+    bool allow_flash_attention = true;
 };
 
 struct QwenDecoderStaticCachePolicy {

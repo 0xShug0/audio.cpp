@@ -56,6 +56,7 @@ runtime::ModelCliInterface cli(const HiggsAssets &) {
         {"higgs_audio_tts.codec_decode_graph_arena_mb", "n", "Codec decode graph arena size."},
         {"higgs_audio_tts.codec_encode_graph_arena_mb", "n", "Codec encode graph arena size."},
         {"higgs_audio_tts.reference_cache_slots", "n", "Encoded reference-audio cache slots; default 1."},
+        {"higgs_audio_tts.attention", "auto|flash|eager", "Attention lowering; auto probes the backend and falls back to eager on GPUs without a flash kernel (e.g. sm70); default auto."},
     };
     return out;
 }

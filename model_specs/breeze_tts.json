@@ -161,6 +161,14 @@
         "required": false,
         "min": 0,
         "default": 1
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "description": "Attention lowering; auto probes the backend and falls back to eager on GPUs without a flash kernel (e.g. sm70); default auto.",
+        "required": false,
+        "values": ["auto", "flash", "eager"],
+        "default": "auto"
       }
     ],
     "load": []

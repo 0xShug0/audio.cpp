@@ -255,6 +255,10 @@ struct QKVProjections {
     core::TensorValue v;
 };
 
+bool flash_branches_allowed(const QwenDecoderLayerConfig & config) {
+    return config.runtime.attention.allow_flash_attention;
+}
+
 QKVProjections build_qkv_projections(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -544,13 +548,18 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
     v = core::ensure_backend_addressable_layout(ctx, v);
 
     auto q_heads = TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
+    const bool allow_flash = flash_branches_allowed(config_);
     const bool use_prefix_flash =
+        allow_flash &&
         prefix_key.has_value() &&
         config_.runtime.attention.prefix_mode == QwenDecoderPrefixAttentionMode::FlashWithPrefix &&
         config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGroupedViewKV;
     core::TensorValue all_k = k;
     core::TensorValue all_v = v;
-    if (use_prefix_flash) {
+    // Cached prefix KV may be stored in a different dtype than the current
+    // K/V (e.g. Higgs reference state); cast before concat on every path.
+    // (The eager branch previously skipped this and died in ggml_concat.)
+    if (prefix_key.has_value()) {
         auto attention_prefix_key = prefix_key;
         auto attention_prefix_value = prefix_value;
         if (attention_prefix_key->type != k.type) {
@@ -567,12 +576,9 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
         }
         all_k = ConcatModule({1}).build(ctx, *attention_prefix_key, k);
         all_v = ConcatModule({1}).build(ctx, *attention_prefix_value, v);
-    } else if (prefix_key.has_value()) {
-        all_k = ConcatModule({1}).build(ctx, *prefix_key, k);
-        all_v = ConcatModule({1}).build(ctx, *prefix_value, v);
     }
     core::TensorValue context;
-    if (!prefix_key.has_value() && attention_mask.has_value() &&
+    if (allow_flash && !prefix_key.has_value() && attention_mask.has_value() &&
         config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGroupedViewKV) {
         q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
         auto k_heads = TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k);
@@ -585,10 +591,10 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
             dim,
             *attention_mask,
             config_.attention_precision);
-    } else if (attention_mask.has_value() &&
-               ((!prefix_key.has_value() &&
-                 config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGrouped) ||
-                use_prefix_flash)) {
+    } else if (allow_flash && attention_mask.has_value() &&
+                ((!prefix_key.has_value() &&
+                  config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGrouped) ||
+                 use_prefix_flash)) {
         q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
         auto k_heads = TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k);
         auto v_heads = TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v);
@@ -738,6 +744,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     auto k_heads = TransposeModule({{0, 2, 1, 3}, attention_key_cache.shape.rank}).build(ctx, attention_key_cache);
     auto v_heads = TransposeModule({{0, 2, 1, 3}, attention_value_cache.shape.rank}).build(ctx, attention_value_cache);
     core::TensorValue context;
+    const bool allow_flash = flash_branches_allowed(config_);
     const bool use_grouped_query =
         config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeatThenGroupedQuery &&
         config_.runtime.attention.grouped_query_min_steps > 0 &&
@@ -755,7 +762,8 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
             config_.num_attention_heads,
             config_.num_key_value_heads,
             attention_mask);
-    } else if (config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeat ||
+    } else if (!allow_flash ||
+               config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeat ||
                config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeatThenGroupedQuery) {
         k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
         v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);
@@ -898,6 +906,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
     auto k_heads = TransposeModule({{0, 2, 1, 3}, attention_key_cache.shape.rank}).build(ctx, attention_key_cache);
     auto v_heads = TransposeModule({{0, 2, 1, 3}, attention_value_cache.shape.rank}).build(ctx, attention_value_cache);
     core::TensorValue context;
+    const bool allow_flash = flash_branches_allowed(config_);
     const bool use_grouped_query =
         config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeatThenGroupedQuery &&
         config_.runtime.attention.grouped_query_min_steps > 0 &&
@@ -915,7 +924,8 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
             config_.num_attention_heads,
             config_.num_key_value_heads,
             attention_mask);
-    } else if (config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeat ||
+    } else if (!allow_flash ||
+               config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeat ||
                config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeatThenGroupedQuery) {
         k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
         v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);

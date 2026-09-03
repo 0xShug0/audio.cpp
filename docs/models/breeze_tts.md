@@ -67,6 +67,7 @@ audiocpp_cli \
 | `--request-option top_p=<f>` | `0..1` | `1.0` | Top-p sampling limit. |
 | `--request-option seed=<n>` | integer >= 0 | `0` | Generation seed. |
 | `--session-option breeze_tts.reference_cache_slots=<n>` | integer >= 0 | `1` | Prepared reference-audio cache slots. |
+| `--session-option breeze_tts.attention=<mode>` | `auto`, `flash`, `eager` | `auto` | Attention kernel. `auto` uses flash except on Volta/Turing GPUs (e.g. V100), where it falls back to eager to avoid missing MMA kernels. |
 | `--session-option weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Weight storage type; quantized types convert at load time from the BF16 package. |
 
 Quantized weight storage is the largest measured speedup and applies to CUDA
@@ -76,4 +77,3 @@ and HIP alike: `q8_0` cut the fixed 100-token regression case from RTF ~1.5 to
 voice-design regression cases. Counter to intuition, fp32 is the one
 configuration known to be *worse* for this model (mispronunciations and
 runaway repetition), because the model is trained and tuned in bf16.
-

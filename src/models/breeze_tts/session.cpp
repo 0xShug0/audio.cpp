@@ -1,5 +1,6 @@
 #include "engine/models/breeze_tts/session.h"
 
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -11,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace engine::models::breeze_tts {
@@ -45,6 +47,23 @@ std::vector<runtime::TaskRequest> split_request(const runtime::TaskRequest & req
     const auto text_chunk_mode =
         engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
     return runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
+}
+
+core::AttentionPreference attention_preference_from_options(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"breeze_tts.attention"})) {
+        return core::parse_attention_preference(*value, "breeze_tts.attention");
+    }
+    return core::AttentionPreference::Auto;
+}
+
+void trace_attention_preference(core::AttentionPreference preference) {
+    const char * name = "auto";
+    if (preference == core::AttentionPreference::Flash) {
+        name = "flash";
+    } else if (preference == core::AttentionPreference::Eager) {
+        name = "eager";
+    }
+    engine::debug::trace_log_scalar("breeze_tts.attention.preference", std::string_view(name));
 }
 
 std::size_t reference_cache_slots_from_options(const runtime::SessionOptions & options) {
@@ -124,12 +143,15 @@ BreezeTTSSession::BreezeTTSSession(
         options.options,
         {"weight_context_mb"},
         2048ull * 1024ull * 1024ull);
+    const auto attention_preference = attention_preference_from_options(options);
+    trace_attention_preference(attention_preference);
     generator_ = std::make_unique<BreezeGeneratorRuntime>(
         assets_,
         execution_context(),
         graph_arena_bytes,
         weight_context_bytes,
-        storage_type);
+        storage_type,
+        attention_preference);
 }
 
 BreezeTTSSession::~BreezeTTSSession() = default;
