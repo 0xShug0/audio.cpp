@@ -1,13 +1,13 @@
-#include "engine/models/chatterbox_turbo/loader.h"
+#include "engine/community_models/chatterbox_turbo/loader.h"
 
-#include "engine/models/chatterbox_turbo/session.h"
+#include "engine/community_models/chatterbox_turbo/session.h"
 
 #include "engine/framework/model_spec/package.h"
 
 #include <memory>
 #include <stdexcept>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 namespace {
 
@@ -125,4 +125,4 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_chatterbox_turbo_loader() {
     return std::make_shared<ChatterboxTurboLoader>();
 }
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

@@ -1,11 +1,11 @@
-#include "engine/models/chatterbox_turbo/tts.h"
+#include "engine/community_models/chatterbox_turbo/tts.h"
 
-#include "engine/models/chatterbox_turbo/text_tokenizer_turbo.h"
+#include "engine/community_models/chatterbox_turbo/text_tokenizer_turbo.h"
 
 #include <cstring>
 #include <stdexcept>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 namespace {
 
@@ -34,16 +34,17 @@ std::vector<int32_t> require_i32_array(
 
 ChatterboxTurboTtsComponent::ChatterboxTurboTtsComponent(
     std::shared_ptr<const ChatterboxTurboAssets> assets,
-    const engine::core::ExecutionContext & execution_context,
-    const std::filesystem::path & scratch_dir)
+    const engine::core::ExecutionContext & execution_context)
     : assets_(std::move(assets)) {
-    tokenizer_ = load_chatterbox_turbo_tokenizer(assets_->t3_gguf_path, scratch_dir);
+    tokenizer_ = load_chatterbox_turbo_tokenizer(
+        assets_->resources.require_file("tokenizer_vocab"),
+        assets_->resources.require_file("tokenizer_merges"),
+        assets_->resources.require_file("tokenizer_special_tokens"));
 
     auto t3_weights = load_t3_turbo_inference_weights(*assets_->t3_turbo_weights, execution_context);
     t3_ = std::make_unique<T3TurboInferenceComponent>(t3_weights, execution_context);
 
-    const auto s3gen_path = derive_turbo_s3gen_gguf_path(assets_->t3_gguf_path);
-    s3gen_ = ChatterboxTurboS3Gen::load(s3gen_path, execution_context);
+    s3gen_ = ChatterboxTurboS3Gen::load(assets_->s3gen_weights, execution_context);
 
     const auto & conds = *assets_->builtin_conditionals_turbo;
     builtin_speaker_embedding_ = conds.require_f32("t3.speaker_emb", {t3_weights->speaker_embed_size});
@@ -93,4 +94,4 @@ engine::models::chatterbox::S3GenInferenceOutputs ChatterboxTurboTtsComponent::g
     return s3gen_->synthesize(builtin_ref_dict_, speech_tokens, config.seed, config.seed);
 }
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

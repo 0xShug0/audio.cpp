@@ -1,13 +1,13 @@
 #pragma once
 
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/chatterbox_turbo/assets.h"
-#include "engine/models/chatterbox_turbo/tts.h"
+#include "engine/community_models/chatterbox_turbo/assets.h"
+#include "engine/community_models/chatterbox_turbo/tts.h"
 
 #include <memory>
 #include <string>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 class ChatterboxTurboSession final
     : public runtime::RuntimeSessionBase
@@ -31,4 +31,4 @@ private:
     std::unique_ptr<ChatterboxTurboTtsComponent> component_;
 };
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

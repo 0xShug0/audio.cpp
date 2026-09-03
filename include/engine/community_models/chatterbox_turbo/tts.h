@@ -3,16 +3,16 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 #include "engine/models/chatterbox/s3gen_inference.h"
-#include "engine/models/chatterbox_turbo/assets.h"
-#include "engine/models/chatterbox_turbo/s3gen_turbo.h"
-#include "engine/models/chatterbox_turbo/t3_turbo_component.h"
+#include "engine/community_models/chatterbox_turbo/assets.h"
+#include "engine/community_models/chatterbox_turbo/s3gen_turbo.h"
+#include "engine/community_models/chatterbox_turbo/t3_turbo_component.h"
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 struct ChatterboxTurboGenerateConfig {
     float temperature = 0.8f;
@@ -33,8 +33,7 @@ class ChatterboxTurboTtsComponent {
 public:
     ChatterboxTurboTtsComponent(
         std::shared_ptr<const ChatterboxTurboAssets> assets,
-        const engine::core::ExecutionContext & execution_context,
-        const std::filesystem::path & scratch_dir);
+        const engine::core::ExecutionContext & execution_context);
 
     engine::models::chatterbox::S3GenInferenceOutputs generate(
         const std::string & text,
@@ -50,4 +49,4 @@ private:
     engine::models::chatterbox::EmbedReferenceOutputs builtin_ref_dict_;
 };
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

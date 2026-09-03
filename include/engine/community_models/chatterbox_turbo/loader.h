@@ -1,12 +1,12 @@
 #pragma once
 
 #include "engine/framework/runtime/model.h"
-#include "engine/models/chatterbox_turbo/assets.h"
+#include "engine/community_models/chatterbox_turbo/assets.h"
 
 #include <filesystem>
 #include <memory>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 class ChatterboxTurboLoadedModel final : public runtime::ILoadedVoiceModel {
 public:
@@ -30,4 +30,4 @@ private:
 std::unique_ptr<ChatterboxTurboLoadedModel> load_chatterbox_turbo_model(const std::filesystem::path & model_root);
 std::shared_ptr<runtime::IVoiceModelLoader> make_chatterbox_turbo_loader();
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

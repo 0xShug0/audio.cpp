@@ -3,11 +3,11 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/chatterbox_turbo/t3_turbo_types.h"
+#include "engine/community_models/chatterbox_turbo/t3_turbo_types.h"
 
 #include <memory>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 std::shared_ptr<const T3TurboInferenceWeights> load_t3_turbo_inference_weights(
     const engine::assets::TensorSource & source,
@@ -33,4 +33,4 @@ private:
     std::shared_ptr<State> state_;
 };
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

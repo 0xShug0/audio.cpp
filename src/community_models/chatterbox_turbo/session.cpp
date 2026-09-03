@@ -1,11 +1,11 @@
-#include "engine/models/chatterbox_turbo/session.h"
+#include "engine/community_models/chatterbox_turbo/session.h"
 
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 
 #include <stdexcept>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 namespace {
 
@@ -83,8 +83,7 @@ void ChatterboxTurboSession::prepare(const runtime::SessionPreparationRequest & 
             "-- omit the speaker reference audio to use the built-in voice");
     }
     if (!component_) {
-        component_ = std::make_unique<ChatterboxTurboTtsComponent>(
-            assets_, execution_context(), assets_->resources.model_root() / ".chatterbox_turbo_tokenizer_cache");
+        component_ = std::make_unique<ChatterboxTurboTtsComponent>(assets_, execution_context());
     }
     mark_prepared();
 }
@@ -110,4 +109,4 @@ runtime::TaskResult ChatterboxTurboSession::run(const runtime::TaskRequest & req
     return result;
 }
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

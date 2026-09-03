@@ -39,7 +39,7 @@
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "cstr/chatterbox-turbo-GGUF",
+      "repo": "audio-cpp/audio.cpp-gguf",
       "revision": "main",
       "gated": false
     }
@@ -53,10 +53,9 @@
       "precision": "q8_0",
       "target_directory": "Chatterbox-Turbo-GGUF",
       "files": [
-        "chatterbox-turbo-t3-q8_0.gguf",
-        "chatterbox-turbo-s3gen-q8_0.gguf"
+        "Chatterbox-Turbo-GGUF/chatterbox-turbo-q8_0.gguf"
       ],
-      "description": "Third-party GGUF conversion of ResembleAI/chatterbox-turbo, published by 'cstr' for the CrispASR project (MIT-relicensed); not published by ResembleAI or audio.cpp. Two loose GGUF files (T3 + S3Gen) live side by side in this package's directory, so point --model at the T3 file directly (chatterbox-turbo-t3-q8_0.gguf), not the containing folder, to avoid the ambiguous-directory-GGUF check."
+      "strip_prefix": "Chatterbox-Turbo-GGUF"
     },
     {
       "id": "chatterbox_turbo_f16",
@@ -65,10 +64,9 @@
       "precision": "f16",
       "target_directory": "Chatterbox-Turbo-GGUF",
       "files": [
-        "chatterbox-turbo-t3-f16.gguf",
-        "chatterbox-turbo-s3gen-f16.gguf"
+        "Chatterbox-Turbo-GGUF/chatterbox-turbo-f16.gguf"
       ],
-      "description": "Third-party GGUF conversion of ResembleAI/chatterbox-turbo, published by 'cstr' for the CrispASR project (MIT-relicensed); not published by ResembleAI or audio.cpp. Two loose GGUF files (T3 + S3Gen) live side by side in this package's directory, so point --model at the T3 file directly (chatterbox-turbo-f16.gguf), not the containing folder, to avoid the ambiguous-directory-GGUF check."
+      "strip_prefix": "Chatterbox-Turbo-GGUF"
     }
   ],
   "sources": [
@@ -76,10 +74,26 @@
       "format": "gguf",
       "roots": {
         "model": ".",
-        "t3_weights": "$gguf"
+        "weights": "$gguf"
       },
       "files": {
-        "t3_gguf_path": "t3_weights:"
+        "tokenizer_vocab": "model:chatterbox_turbo_vocab.json",
+        "tokenizer_merges": "model:chatterbox_turbo_merges.txt",
+        "tokenizer_special_tokens": "model:chatterbox_turbo_special_tokens.json"
+      },
+      "tensors": {
+        "t3_turbo_weights": {
+          "source": "weights:",
+          "prefix": "t3"
+        },
+        "builtin_conditionals_turbo": {
+          "source": "weights:",
+          "prefix": "conds"
+        },
+        "s3gen_weights": {
+          "source": "weights:",
+          "prefix": "s3gen"
+        }
       }
     }
   ]

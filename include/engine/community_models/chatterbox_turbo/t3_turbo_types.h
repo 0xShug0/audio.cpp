@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 struct T3TurboGraphWeight {
     std::vector<float> values;
@@ -94,4 +94,4 @@ struct T3TurboGenerateOutputs {
     double decode_runner_ms = 0.0;
 };
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

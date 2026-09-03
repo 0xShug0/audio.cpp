@@ -1,8 +1,8 @@
-#include "engine/models/chatterbox_turbo/t3_turbo_component.h"
+#include "engine/community_models/chatterbox_turbo/t3_turbo_component.h"
 
 #include <stdexcept>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 namespace {
 
@@ -179,4 +179,4 @@ std::shared_ptr<const T3TurboInferenceWeights> load_t3_turbo_inference_weights(
     return weights;
 }
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/models/chatterbox_turbo/t3_turbo_component.h"
+#include "engine/community_models/chatterbox_turbo/t3_turbo_component.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
@@ -20,7 +20,7 @@
 #include <optional>
 #include <stdexcept>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 namespace {
 
 constexpr int32_t kTurboStartSpeechToken = 6561;
@@ -808,4 +808,4 @@ private:
 };
 
 }  // namespace
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo

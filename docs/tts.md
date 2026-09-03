@@ -102,26 +102,39 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 
 ## Chatterbox Turbo
 
-Chatterbox Turbo is Resemble AI's distilled 350M-parameter sibling of Chatterbox: a GPT2-style T3 backbone (vs. the base model's 0.5B Llama-style backbone), a GPT2 BPE tokenizer with 19 built-in emotion/style tags (`[laugh]`, `[sigh]`, ...), and a 2-step meanflow-distilled S3Gen decoder (vs. the base model's 10-step CFG decoder) for substantially faster generation. It is English-only.
+Chatterbox Turbo is a [community model](community_models/chatterbox_turbo.md): Resemble AI's
+distilled 350M-parameter sibling of Chatterbox, with a GPT2-style T3 backbone (vs. the base
+model's 0.5B Llama-style backbone), a GPT2 BPE tokenizer with 19 built-in emotion/style tags
+(`[laugh]`, `[sigh]`, ...), and a 2-step meanflow-distilled S3Gen decoder (vs. the base model's
+10-step CFG decoder) for substantially faster generation. It is English-only.
 
-`chatterbox_turbo` is a separate model family from `chatterbox` (not a variant selectable within it) because Turbo's model-loader resolution can only pick one GGUF source per family, and pointing this loader at a directory of loose GGUF files needs different handling than the base model's single-file packages — see the package notes below.
+`chatterbox_turbo` is a separate model family from `chatterbox` (not a variant selectable within
+it): its T3 backbone and tokenizer differ from the base model's, and it reuses base Chatterbox's
+own S3Gen/HiFT-vocoder loader code for the flow decoder and vocoder half.
 
-The GGUF weights (`cstr/chatterbox-turbo-GGUF`) are a **third-party conversion**, published by `cstr` for their own `CrispASR` project (MIT-relicensed) — not published by ResembleAI or audio.cpp. The package ships as two loose GGUF files (T3 and S3Gen) in one directory; because this framework's model-directory resolution expects exactly one GGUF file per directory, point `--model` at the **T3 GGUF file directly**, not the containing folder (the loader finds the sibling S3Gen file itself by filename convention).
+The package is one self-contained, audio.cpp-native GGUF produced by repacking Resemble AI's
+weights (via the third-party `cstr/chatterbox-turbo-GGUF` conversion published for the CrispASR
+project, MIT-relicensed) with
+[`tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py`](../tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py)
+— see that model's community doc for details.
 
-**Current limitations:** only the built-in default voice baked into the T3 GGUF is supported — custom voice cloning (a caller-supplied reference clip) is not implemented yet, since it depends on the turbo GGUF's speaker-encoder and S3-tokenizer sections, whose exact tensor layout hasn't been validated. `--voice-ref` is rejected with an explicit error rather than silently ignored.
+**Current limitations:** only the built-in default voice baked into the package is supported —
+custom voice cloning (a caller-supplied reference clip) is not implemented yet, since it depends
+on the checkpoint's speaker-encoder and S3-tokenizer sections, whose exact tensor layout hasn't
+been validated. `--voice-ref` is rejected with an explicit error rather than silently ignored.
 
 | Field | Value |
 |---|---|
 | Family | `chatterbox_turbo` |
-| Model directory | Point `--model` at `Chatterbox-Turbo-GGUF/chatterbox-turbo-t3-{q8_0,f16}.gguf` directly |
+| Model directory | `Chatterbox-Turbo-GGUF/chatterbox-turbo-{q8_0,f16}.gguf` (single self-contained file) |
 | Tasks | `clon` (built-in voice only) |
 | Modes | `offline` |
 | Languages | `en` |
 | Voice input | Not yet supported — omit `--voice-ref` to use the built-in voice |
-| Built-in voices | One, embedded in the T3 GGUF |
+| Built-in voices | One, embedded in the package |
 
 ```bash
-audiocpp_cli --task clon --family chatterbox_turbo --model models/Chatterbox-Turbo-GGUF/chatterbox-turbo-t3-q8_0.gguf --backend cuda --text "Hello from Chatterbox Turbo." --out out.wav
+audiocpp_cli --task clon --family chatterbox_turbo --model models/Chatterbox-Turbo-GGUF/chatterbox-turbo-q8_0.gguf --backend cuda --text "Hello from Chatterbox Turbo." --out out.wav
 ```
 
 | Option | Values | Default | Meaning |

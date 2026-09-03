@@ -3,7 +3,7 @@
 #include <chrono>
 #include <mutex>
 
-namespace engine::models::chatterbox_turbo {
+namespace engine::community_models::chatterbox_turbo {
 
 struct T3TurboInferenceComponent::State {
     void release_runtime_graphs() {
@@ -292,4 +292,4 @@ void T3TurboInferenceComponent::release_runtime_cache() const {
     state_->release_runtime_cache();
 }
 
-}  // namespace engine::models::chatterbox_turbo
+}  // namespace engine::community_models::chatterbox_turbo
