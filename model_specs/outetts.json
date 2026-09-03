@@ -107,7 +107,7 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Transcript matching the reference voice audio for voice cloning.",
+        "description": "Transcript matching the reference voice audio for voice cloning. Required whenever reference audio is supplied; the model rejects voice cloning without it.",
         "required": false
       },
       {

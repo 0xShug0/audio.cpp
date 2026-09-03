@@ -29,7 +29,7 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Reference transcript used with speaker reference audio.",
+        "description": "Reference transcript used with speaker reference audio. Required whenever the request carries inline reference audio; the model rejects the request without it.",
         "required": false
       },
       {
