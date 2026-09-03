@@ -21,7 +21,7 @@
   ],
 
   "vibevoice": [
-    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0, "info": "扩散步数（官方默认 10），越大越慢越稳"},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "minimum": 1, "step": 1, "precision": 0, "info": "留空=用模型自带的 ddpm_num_inference_steps（随包，7B 为 20）", "info_en": "Blank uses the packaged model's own ddpm_num_inference_steps (20 in the shipped 7B). Setting a value overrides it for every request."},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.3, "minimum": 0.0, "maximum": 5.0, "step": 0.1, "info": "CFG 引导强度"},
     {"name": "max_length_times", "type": "number", "label": "max_length_times", "default": 2.0, "minimum": 0.1, "step": 0.1, "info": "最大输出长度倍数"},
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.05, "maximum": 2.0, "step": 0.05},
@@ -136,7 +136,7 @@
   "ace_step": [
     {"name": "route", "type": "choice", "label": "route（操作类型）", "default": "text2music", "choices": ["text2music", "complete", "lego", "extract", "cover", "cover-nofsq", "repaint", "remix"], "info": "cover/remix=换词翻唱，非 text2music 需上传源音频；详见 webui/README.md"},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 8, "minimum": 1, "maximum": 20, "step": 1, "precision": 0, "info": "扩散步数（turbo 上限 20）；remix 路由不填时默认 16，其他路由默认 8"},
-    {"name": "shift", "type": "slider", "label": "shift（时间步弯曲）", "default": 3.0, "minimum": 1.0, "maximum": 5.0, "step": 0.5, "info": "原版 turbo 默认 3.0；1.0 会明显劣化 remix 换词咬字"},
+    {"name": "shift", "type": "slider", "label": "shift（时间步弯曲）", "label_en": "shift (timestep curve)", "default": 1.0, "minimum": 1.0, "maximum": 5.0, "step": 0.5, "info": "官方默认 1.0；extract 路由由模型自动改用 3.0", "info_en": "Model default is 1.0. The extract route sets 3.0 itself, so leaving this at 1.0 no longer overrides it."},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "audio_cover_strength", "type": "slider", "label": "【cover】audio_cover_strength", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "1=贴近原曲，0=自由发挥；建议 0.5"},
     {"name": "cover_noise_strength", "type": "slider", "label": "【cover】cover_noise_strength", "default": 0.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "保旋律强度；推荐 0.1~0.25"},
@@ -209,7 +209,7 @@
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "text_temperature", "type": "slider", "label": "text_temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 250, "minimum": 0, "step": 1, "precision": 0},
-    {"name": "text_top_k", "type": "number", "label": "text_top_k", "default": 250, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "text_top_k", "type": "number", "label": "text_top_k", "label_en": "text_top_k (blank follows top_k)", "minimum": 0, "step": 1, "precision": 0, "info_en": "Blank makes the text head follow top_k."},
     {"name": "do_sample", "type": "bool", "label": "do_sample", "default": true}
   ],
 
@@ -218,7 +218,7 @@
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0, "info": "流匹配步数"},
     {"name": "use_pitch_shift", "type": "choice", "label": "use_pitch_shift（自动音高对齐）", "default": "", "choices": ["", "true", "false"], "info": "留空=按路线默认"},
     {"name": "temperature", "type": "slider", "label": "temperature（AR 路线用）", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info": "默认取自模型 generation_config.json"},
-    {"name": "top_k", "type": "number", "label": "top_k（AR 路线用）", "default": 20, "minimum": 0, "step": 1, "precision": 0, "info": "默认取自模型 generation_config.json"},
+    {"name": "top_k", "type": "number", "label": "top_k（AR 路线用）", "label_en": "top_k (AR paths)", "minimum": 0, "step": 1, "precision": 0, "info": "留空=取自模型 generation_config.json（回退 25）", "info_en": "Blank uses the checkpoint's generation_config.json (C++ fallback 25)."},
     {"name": "top_p", "type": "slider", "label": "top_p（AR 路线用）", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01}
   ],
 
@@ -308,7 +308,7 @@
     {"name": "template_name", "type": "choice", "label": "template_name", "default": "voice_design", "choices": ["voice_design"]},
     {"name": "language", "type": "choice", "label": "language", "default": "Chinese", "choices": ["Chinese", "English", "Cantonese", "Japanese", "Korean", "Spanish", "French", "Russian", "Arabic", "Turkish", "Indonesian", "Portuguese", "Italian", "Dutch", "Vietnamese", "German", "Ukrainian", "Thai", "Polish", "Romanian", "Greek", "Czech", "Finnish", "Hindi", "ZH_Anhui", "ZH_Fujian", "ZH_Gansu", "ZH_Guizhou", "ZH_Hebei", "ZH_Henan", "ZH_Hubei", "ZH_Hunan", "ZH_Jiangxi", "ZH_Liaoning", "ZH_Minnan", "ZH_Ningxia", "ZH_Shaanxi", "ZH_Shandong", "ZH_Shanghai", "ZH_Shanxi", "ZH_Tianjin", "ZH_Wenzhou", "ZH_Wu", "ZH_Yunnan"]},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
-    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.2, "minimum": 0.0, "maximum": 10.0, "step": 0.1, "info_en": "FireRedTTS3 voice design is tuned for 1.2; 2.0 is the instruct_tts value."},
     {"name": "stop_threshold", "type": "slider", "label": "stop_threshold", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
   ],
 
@@ -354,7 +354,7 @@
     {"name": "template_name", "type": "choice", "label": "template_name", "default": "asr", "choices": ["asr", "understand"]},
     {"name": "language", "type": "choice", "label": "language", "default": "zh", "choices": ["zh", "en"]},
     {"name": "enable_thinking", "type": "bool", "label": "enable_thinking", "default": false},
-    {"name": "max_new_tokens", "type": "number", "label": "max_new_tokens", "default": 512, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "max_new_tokens", "type": "number", "label": "max_new_tokens", "label_en": "max_new_tokens", "minimum": 1, "step": 1, "precision": 0, "info_en": "Blank uses 300, or 1024 when enable_thinking is on. Setting a value here defeats the automatic thinking-mode bump."},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 20, "minimum": 0, "step": 1, "precision": 0},
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05}
