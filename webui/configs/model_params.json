@@ -5,8 +5,7 @@
     {"name": "speaker_guidance_scale", "type": "slider", "label": "speaker_guidance_scale", "label_en": "Speaker guidance", "default": 8.0, "minimum": 0.0, "maximum": 15.0, "step": 0.1},
     {"name": "truncation_factor", "type": "slider", "label": "truncation_factor", "label_en": "Noise truncation", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
     {"name": "guidance_interval", "type": "slider", "label": "guidance_interval", "label_en": "Guidance interval", "default": 1, "minimum": 1, "maximum": 3, "step": 1, "precision": 0, "info": "Refresh the unconditional CFG lanes every Nth guided step. Higher is faster and works best with more steps; 1 is highest fidelity."},
-    {"name": "reference_duration_sec", "type": "slider", "label": "reference_duration_sec", "label_en": "Reference trim (s)", "default": 15.0, "minimum": 1.0, "maximum": 60.0, "step": 1.0, "info": "Trim the speaker reference before encoding. Around 10 s usually clones best."},
-    {"name": "seed", "type": "number", "label": "seed", "label_en": "Seed", "default": 0, "minimum": 0, "step": 1, "precision": 0}
+    {"name": "reference_duration_sec", "type": "slider", "label": "reference_duration_sec", "label_en": "Reference trim (s)", "default": 15.0, "minimum": 1.0, "maximum": 60.0, "step": 1.0, "info": "Trim the speaker reference before encoding. Around 10 s usually clones best."}
   ],
   "_comment": "WebUI TTS 高级参数控件配置：按模型 family 动态生成控件（gr.render）。每项字段：name=选项键(随请求 options 透传给模型)；type=slider|number|bool|text|choice；label/info=显示文案；default=默认值(应等于模型默认，已按 src/models/<family>/*.cpp 校对)；minimum/maximum/step=数值范围；precision=0 表示整数；choices=下拉候选。规则：只有被用户改动过的控件值才会随请求发送；seed/max_tokens 已有专用输入框，勿在此重复；参考文本用『参考文本』框(reference_text)；文件路径/parity 类参数(如 *_noise_file)未纳入，可用『其它参数(JSON)』兜底框传。",
 
@@ -50,7 +49,7 @@
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.0, "minimum": 1.0, "maximum": 1.5, "step": 0.01},
-    {"name": "best_of_n", "type": "number", "label": "best_of_n（候选数，>1 自动开启）", "default": 1, "minimum": 1, "maximum": 8, "step": 1, "precision": 0}
+    {"name": "miotts.best_of_n", "type": "number", "label": "miotts.best_of_n（候选数，>1 自动开启）", "label_en": "best_of_n (candidate count; >1 enables best-of-N selection)", "default": 1, "minimum": 1, "maximum": 8, "step": 1, "precision": 0}
   ],
 
   "chatterbox": [
@@ -134,17 +133,12 @@
   ],
 
   "ace_step": [
-    {"name": "route", "type": "choice", "label": "route（操作类型）", "default": "text2music", "choices": ["text2music", "complete", "lego", "extract", "cover", "cover-nofsq", "repaint", "remix"], "info": "cover/remix=换词翻唱，非 text2music 需上传源音频；详见 webui/README.md"},
+    {"name": "route", "type": "choice", "label": "route（操作类型）", "label_en": "route (task)", "default": "text2music", "choices": ["text2music", "complete", "lego", "extract", "cover", "cover-nofsq", "repaint"], "info": "cover/cover-nofsq=换词翻唱；非 text2music 需上传源音频；详见 webui/README.md", "info_en": "cover and cover-nofsq re-sing new lyrics. Every route except text2music needs a source audio upload; see webui/README.md."},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 8, "minimum": 1, "maximum": 20, "step": 1, "precision": 0, "info": "扩散步数（turbo 上限 20）；remix 路由不填时默认 16，其他路由默认 8"},
     {"name": "shift", "type": "slider", "label": "shift（时间步弯曲）", "default": 3.0, "minimum": 1.0, "maximum": 5.0, "step": 0.5, "info": "原版 turbo 默认 3.0；1.0 会明显劣化 remix 换词咬字"},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "audio_cover_strength", "type": "slider", "label": "【cover】audio_cover_strength", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "1=贴近原曲，0=自由发挥；建议 0.5"},
     {"name": "cover_noise_strength", "type": "slider", "label": "【cover】cover_noise_strength", "default": 0.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "保旋律强度；推荐 0.1~0.25"},
-    {"name": "source_caption", "type": "text", "label": "【remix】source_caption", "default": "", "placeholder": "源歌曲描述；『🔍 分析』自动填"},
-    {"name": "source_lyrics", "type": "text", "lines": 4, "label": "【remix】source_lyrics", "default": "", "placeholder": "源歌曲原歌词；『🔍 分析』自动填"},
-    {"name": "flow_edit_n_min", "type": "slider", "label": "【remix】flow_edit_n_min", "default": 0.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "调大更保源曲、换词更弱"},
-    {"name": "flow_edit_n_max", "type": "slider", "label": "【remix】flow_edit_n_max", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "唱不出新歌词时降到 0.7~0.9"},
-    {"name": "flow_edit_n_avg", "type": "number", "label": "【remix】flow_edit_n_avg", "default": 2, "minimum": 1, "maximum": 4, "step": 1, "precision": 0, "info": "每步多次采样取平均（remix 默认 2）；1=最快"},
     {"name": "bpm", "type": "number", "label": "【曲谱】BPM", "default": 0, "minimum": 0, "step": 1, "precision": 0, "info": "0=不指定"},
     {"name": "keyscale", "type": "text", "label": "【曲谱】keyscale", "default": "", "placeholder": "如 F major"},
     {"name": "timesignature", "type": "text", "label": "【曲谱】timesignature", "default": "", "placeholder": "如 4"}
@@ -177,9 +171,9 @@
     {"name": "route", "type": "choice", "label": "route（转换路径）", "default": "", "choices": ["", "v2_vc", "v1_whisper_bigvgan_vc", "v1_xlsr_hift_vc", "v1_svc"], "info": "留空=按任务默认"},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 30, "minimum": 1, "step": 1, "precision": 0, "info": "CFM 扩散步数"},
     {"name": "length_adjust", "type": "slider", "label": "length_adjust（时长伸缩）", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
-    {"name": "intelligibility_cfg_rate", "type": "slider", "label": "intelligibility_cfg_rate（仅 v2_vc）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
-    {"name": "similarity_cfg_rate", "type": "slider", "label": "similarity_cfg_rate（仅 v2_vc）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
-    {"name": "inference_cfg_rate", "type": "slider", "label": "inference_cfg_rate（仅 v1 路径）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
+    {"name": "intelligibility_guidance_scale", "type": "slider", "label": "intelligibility_guidance_scale（仅 v2_vc）", "label_en": "Intelligibility guidance (v2_vc only)", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
+    {"name": "similarity_guidance_scale", "type": "slider", "label": "similarity_guidance_scale（仅 v2_vc）", "label_en": "Similarity guidance (v2_vc only)", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
+    {"name": "inference_guidance_scale", "type": "slider", "label": "inference_guidance_scale（仅 v1 路径）", "label_en": "Inference guidance (v1 paths only)", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
   ],
 
   "rvc": [
@@ -233,13 +227,13 @@
   ],
 
   "index_tts2": [
-    {"name": "lang", "type": "choice", "label": "lang（语种提示, 仅 IndexTTS2.5 模型）", "label_en": "lang (language hint, IndexTTS2.5 models only)", "default": "auto", "choices": ["auto", "zh", "en", "ja", "es", "ar"], "info": "仅对 IndexTTS2.5（多语种）模型生效：auto 含汉字按中文，否则按英文；日/西/阿建议显式选择", "info_en": "Only applies to IndexTTS2.5 (multilingual) models: auto picks zh when the text contains Han characters, otherwise en; set ja/es/ar explicitly"},
     {"name": "emotion_text", "type": "text", "label": "emotion_text（情绪参考文本）", "label_en": "emotion_text (emotion reference text)", "default": "", "placeholder": "例：你吓死我了！你是鬼吗？", "placeholder_en": "e.g. You scared me to death!", "info": "填写后自动开启情感条件（use_emotion_text）", "info_en": "Setting this enables emotion conditioning."},
     {"name": "emotion_alpha", "type": "slider", "label": "emotion_alpha（情感强度）", "label_en": "emotion_alpha", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
     {"name": "use_emotion_text", "type": "bool", "label": "use_emotion_text（从朗读文本推断情感）", "label_en": "use_emotion_text (infer from text)", "default": false},
     {"name": "use_random_emotion", "type": "bool", "label": "use_random_emotion（随机情感）", "label_en": "use_random_emotion", "default": false},
     {"name": "interval_silence_ms", "type": "number", "label": "interval_silence_ms（分段间静音）", "label_en": "interval_silence_ms", "default": 200, "minimum": 0, "step": 50, "precision": 0},
-    {"name": "duration_factor", "type": "slider", "label": "duration_factor（语速/时长倍率，>1 更慢，<1 更快）", "label_en": "duration_factor (duration multiplier; >1 slower, <1 faster)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05, "info": "对齐官方 IndexTTS2.5 的 duration_factor：缩放输出时长，不改变音色/内容", "info_en": "Matches official IndexTTS2.5 duration_factor: scales output duration without changing timbre or content"}
+    {"name": "duration_factor", "type": "slider", "label": "duration_factor（语速/时长倍率，>1 更慢，<1 更快）", "label_en": "duration_factor (duration multiplier; >1 slower, <1 faster)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05, "info": "对齐官方 IndexTTS2.5 的 duration_factor：缩放输出时长，不改变音色/内容", "info_en": "Matches official IndexTTS2.5 duration_factor: scales output duration without changing timbre or content"},
+    {"name": "language", "type": "choice", "label": "language（语种提示, 仅 IndexTTS2.5 模型）", "label_en": "language (language hint, IndexTTS2.5 models only)", "default": "auto", "choices": ["auto", "zh", "en", "ja", "es", "ar"], "info": "仅对 IndexTTS2.5（多语种）模型生效：auto 含汉字按中文，否则按英文；日/西/阿建议显式选择", "info_en": "Only applies to IndexTTS2.5 (multilingual) models: auto picks zh when the text contains Han characters, otherwise en; set ja/es/ar explicitly"}
   ],
 
   "irodori_tts": [
@@ -317,10 +311,7 @@
     {"name": "language", "type": "choice", "label": "language", "default": "zh", "choices": ["zh", "en"]},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
-    {"name": "max_new_audio_steps", "type": "number", "label": "max_new_audio_steps", "default": 750, "minimum": 1, "step": 1, "precision": 0},
-    {"name": "top_k", "type": "number", "label": "top_k", "default": 20, "minimum": 0, "step": 1, "precision": 0},
-    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
-    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05}
+    {"name": "max_new_audio_steps", "type": "number", "label": "max_new_audio_steps", "default": 750, "minimum": 1, "step": 1, "precision": 0}
   ],
 
   "firered-audio-vdesign": [
