@@ -1890,6 +1890,9 @@ LiveIngestLimits ServerState::live_ingest_limits(const HttpRequest & request) co
     if (model_id.empty()) {
         return config_.live_ingest;
     }
+    // models_ and model_index_ are mutated by /v1/models/load, so both reads
+    // belong under the state lock even though this path only inspects config.
+    std::lock_guard<std::mutex> state_lock(models_mutex_);
     const auto it = model_index_.find(model_id);
     if (it == model_index_.end()) {
         return config_.live_ingest;
@@ -3223,17 +3226,27 @@ HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
             return error_response(400, "each element of 'model_ids' must be a string", "invalid_request_error");
         }
         const std::string id = id_val.as_string();
-        const auto it = model_index_.find(id);
-        if (it == model_index_.end()) {
-            not_found.push_back(id);
-            continue;
+        // Resolve under the state lock: a concurrent /v1/models/load may append to
+        // models_ and reallocate it, so the pointer must be taken before releasing.
+        // The unique_ptr keeps the pointee stable once we hold the address.
+        LoadedModel * model = nullptr;
+        {
+            std::lock_guard<std::mutex> state_lock(models_mutex_);
+            const auto it = model_index_.find(id);
+            if (it == model_index_.end()) {
+                not_found.push_back(id);
+                continue;
+            }
+            model = models_.at(it->second).get();
         }
-        LoadedModel & model = *models_.at(it->second);
         // Only unload if the model is currently loaded in memory. Acquire the busy
         // lock for the duration of the unload so no inference starts mid-operation.
-        if (model.session != nullptr) {
-            [[maybe_unused]] BusyGuard::Lock lock = model.busy.acquire(0, model.config.id);
-            model.unload();
+        // acquire_model_run applies the configured timeout: an unbounded wait here
+        // would hang the request thread against exactly the wedged run an operator
+        // calls this route to clear.
+        if (model->session != nullptr) {
+            [[maybe_unused]] BusyGuard::Lock lock = acquire_model_run(*model, std::nullopt);
+            model->unload();
             unloaded.push_back(id);
         }
     }
@@ -3257,9 +3270,20 @@ HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
 HttpResponse ServerState::handle_unload_all_models() {
     std::vector<std::string> unloaded;
 
-    for (auto & model : models_) {
+    // Snapshot the residents under the state lock rather than iterating models_
+    // directly: a concurrent /v1/models/load appends to that vector, and a
+    // reallocation mid-iteration is undefined behaviour.
+    std::vector<LoadedModel *> resident;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        resident.reserve(models_.size());
+        for (const auto & model : models_) {
+            resident.push_back(model.get());
+        }
+    }
+    for (LoadedModel * model : resident) {
         if (model->session != nullptr) {
-            [[maybe_unused]] BusyGuard::Lock lock = model->busy.acquire(0, model->config.id);
+            [[maybe_unused]] BusyGuard::Lock lock = acquire_model_run(*model, std::nullopt);
             model->unload();
             unloaded.push_back(model->config.id);
         }
