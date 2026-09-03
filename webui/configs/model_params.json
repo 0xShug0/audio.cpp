@@ -371,5 +371,90 @@
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.9, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
     {"name": "max_tokens", "type": "number", "label": "max_tokens", "default": 1024, "minimum": 1, "step": 1, "precision": 0}
+  ],
+  "fun_asr_nano": [
+    {"name": "enable_itn", "type": "bool", "label": "enable_itn", "label_en": "Inverse text normalization", "default": true},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "label_en": "Audio chunk mode", "default": "auto", "choices": ["auto", "fixed", "none"]},
+    {"name": "audio_chunk_seconds", "type": "number", "label": "audio_chunk_seconds", "label_en": "Audio chunk length (s)", "default": 30.0, "minimum": 0.001, "step": 1.0, "info_en": "Fun-ASR-Nano accepts only audio_chunk_seconds; the canonical audio_chunk_duration_sec is rejected."}
+  ],
+  "granite5asr": [
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "label_en": "Audio chunk mode", "default": "auto", "choices": ["auto", "fixed", "vad", "none"]},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "label_en": "Audio chunk length (s)", "default": 30.0, "minimum": 0.001, "step": 1.0}
+  ],
+  "higgs_audio_stt": [
+    {"name": "enable_thinking", "type": "bool", "label": "enable_thinking", "label_en": "Thinking mode", "default": true},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "label_en": "Audio chunk mode", "default": "auto", "choices": ["auto", "fixed", "none"]},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "label_en": "Audio chunk length (s)", "default": 4.0, "minimum": 0.001, "step": 1.0}
+  ],
+  "hviske_asr": [
+    {"name": "punctuation", "type": "bool", "label": "punctuation", "label_en": "Punctuation", "default": true},
+    {"name": "num_beams", "type": "number", "label": "num_beams", "label_en": "Beam count", "default": 1, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "length_penalty", "type": "slider", "label": "length_penalty", "label_en": "Length penalty", "default": 1.0, "minimum": 0.05, "maximum": 3.0, "step": 0.05, "info_en": "Must be above 0."},
+    {"name": "do_sample", "type": "bool", "label": "do_sample", "label_en": "Sample", "default": false},
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 1.0, "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Must be above 0."},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 50, "minimum": 0, "step": 1, "precision": 0, "info_en": "0 disables top-k filtering."},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 1.0, "minimum": 0.01, "maximum": 1.0, "step": 0.01},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "label_en": "Audio chunk mode", "default": "auto", "choices": ["auto", "fixed", "quiet_energy", "none"]},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "label_en": "Audio chunk length (s)", "minimum": 0.001, "step": 1.0, "info_en": "Blank uses the packaged model's max_audio_clip_s."}
+  ],
+  "kroko_asr": [
+    {"name": "decoding_method", "type": "choice", "label": "decoding_method", "label_en": "Decoding method", "default": "greedy_search", "choices": ["greedy_search", "modified_beam_search"]},
+    {"name": "num_beams", "type": "number", "label": "num_beams", "label_en": "Beam count", "default": 4, "minimum": 1, "maximum": 64, "step": 1, "precision": 0, "info_en": "Only used by modified_beam_search."},
+    {"name": "blank_penalty", "type": "slider", "label": "blank_penalty", "label_en": "Blank penalty", "default": 0.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
+    {"name": "hotwords", "type": "text", "label": "hotwords", "label_en": "Hotwords", "default": "", "placeholder_en": "Phrases separated by / or newline; needs modified_beam_search"},
+    {"name": "hotwords_score", "type": "slider", "label": "hotwords_score", "label_en": "Hotword boost", "default": 1.5, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "enable_endpoint", "type": "bool", "label": "enable_endpoint", "label_en": "Endpoint detection", "default": false},
+    {"name": "rule1_min_trailing_silence_sec", "type": "number", "label": "rule1_min_trailing_silence_sec", "label_en": "Endpoint rule 1: trailing silence (s)", "default": 2.4, "minimum": 0.0, "step": 0.1},
+    {"name": "rule2_min_trailing_silence_sec", "type": "number", "label": "rule2_min_trailing_silence_sec", "label_en": "Endpoint rule 2: trailing silence (s)", "default": 1.2, "minimum": 0.0, "step": 0.1},
+    {"name": "rule3_min_utterance_length_sec", "type": "number", "label": "rule3_min_utterance_length_sec", "label_en": "Endpoint rule 3: utterance length (s)", "default": 20.0, "minimum": 0.0, "step": 1.0}
+  ],
+  "marblenet_vad": [
+    {"name": "threshold", "type": "slider", "label": "threshold", "label_en": "Speech probability threshold", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.01}
+  ],
+  "nemotron_asr": [
+    {"name": "keep_language_tags", "type": "bool", "label": "keep_language_tags", "label_en": "Keep language tags", "default": false}
+  ],
+  "parakeet_tdt": [
+    {"name": "keep_language_tags", "type": "bool", "label": "keep_language_tags", "label_en": "Keep language tags", "default": false},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "label_en": "Audio chunk mode", "default": "auto", "choices": ["auto", "fixed", "vad", "none"]},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "label_en": "Audio chunk length (s)", "minimum": 0.001, "step": 0.5, "info_en": "Blank uses the session's centre-window length (2.0 s by default)."}
+  ],
+  "qwen3_asr": [
+    {"name": "return_timestamps", "type": "bool", "label": "return_timestamps", "label_en": "Return timestamps", "default": false, "info_en": "Also shortens the automatic chunk length from 30 s to 15 s."},
+    {"name": "clamp_timestamps_to_audio", "type": "bool", "label": "clamp_timestamps_to_audio", "label_en": "Clamp timestamps to audio length", "default": false},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "label_en": "Audio chunk mode", "default": "auto", "choices": ["auto", "fixed", "vad", "none"]},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "label_en": "Audio chunk length (s)", "minimum": 0.001, "step": 1.0, "info_en": "Blank uses 30 s, or 15 s when timestamps or VAD chunking are on."}
+  ],
+  "qwen3_forced_aligner": [
+    {"name": "clamp_timestamps_to_audio", "type": "bool", "label": "clamp_timestamps_to_audio", "label_en": "Clamp timestamps to audio length", "default": false}
+  ],
+  "silero_vad": [
+    {"name": "threshold", "type": "slider", "label": "threshold", "label_en": "Speech probability threshold", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.01, "info_en": "These options apply to offline runs. Streaming VAD uses the session configuration and ignores per-request values."},
+    {"name": "min_speech_duration_ms", "type": "number", "label": "min_speech_duration_ms", "label_en": "Min speech duration (ms)", "default": 250, "minimum": 0, "step": 10, "precision": 0},
+    {"name": "min_silence_duration_ms", "type": "number", "label": "min_silence_duration_ms", "label_en": "Min silence duration (ms)", "default": 100, "minimum": 0, "step": 10, "precision": 0},
+    {"name": "speech_pad_ms", "type": "number", "label": "speech_pad_ms", "label_en": "Speech padding (ms)", "default": 30, "minimum": 0, "step": 10, "precision": 0},
+    {"name": "min_silence_at_max_speech_ms", "type": "number", "label": "min_silence_at_max_speech_ms", "label_en": "Min silence at max speech (ms)", "default": 98, "minimum": 0, "step": 10, "precision": 0},
+    {"name": "use_max_poss_sil_at_max_speech", "type": "bool", "label": "use_max_poss_sil_at_max_speech", "label_en": "Split at the longest silence when max speech is reached", "default": true}
+  ],
+  "sortformer_diar": [
+    {"name": "speaker_threshold", "type": "slider", "label": "speaker_threshold", "label_en": "Speaker probability threshold", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "speaker_min_frames", "type": "number", "label": "speaker_min_frames", "label_en": "Min speaker frames", "default": 0, "minimum": 0, "step": 1, "precision": 0, "info_en": "0 disables the minimum-length filter."},
+    {"name": "speaker_pad_frames", "type": "number", "label": "speaker_pad_frames", "label_en": "Speaker pad frames", "default": 0, "minimum": 0, "step": 1, "precision": 0}
+  ],
+  "vibevoice_asr": [
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 0.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "0 decodes deterministically."},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 1.0, "minimum": 0.01, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "label_en": "Repetition penalty", "default": 1.0, "minimum": 0.05, "maximum": 2.0, "step": 0.01, "info_en": "Must be above 0."},
+    {"name": "num_beams", "type": "number", "label": "num_beams", "label_en": "Beam count", "default": 1, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "label_en": "Audio chunk mode", "default": "auto", "choices": ["auto", "fixed", "vad", "none"]},
+    {"name": "audio_chunk_seconds", "type": "number", "label": "audio_chunk_seconds", "label_en": "Audio chunk length (s)", "default": 1200.0, "minimum": 0.001, "step": 10.0}
+  ],
+  "voxtral_realtime": [
+    {"name": "do_sample", "type": "bool", "label": "do_sample", "label_en": "Sample", "default": false},
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 1.0, "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Must be above 0."},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 1.0, "minimum": 0.01, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "max_new_tokens", "type": "number", "label": "max_new_tokens", "label_en": "Max new tokens", "minimum": 1, "step": 1, "precision": 0, "info_en": "Blank lets the model use the remaining audio-token budget. Voxtral-Realtime reads max_new_tokens, not max_tokens."}
   ]
 }
