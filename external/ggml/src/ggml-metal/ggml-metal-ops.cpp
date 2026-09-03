@@ -390,6 +390,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
             {
                 n_fuse = ggml_metal_op_unary(ctx, idx);
             } break;
+        case GGML_OP_SNAKE_1D:
+            {
+                n_fuse = ggml_metal_op_snake_1d(ctx, idx);
+            } break;
         case GGML_OP_GLU:
             {
                 n_fuse = ggml_metal_op_glu(ctx, idx);
@@ -945,6 +949,51 @@ int ggml_metal_op_unary(ggml_metal_op_t ctx, int idx) {
 
     return 1;
 }
+
+int ggml_metal_op_snake_1d(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
+    GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
+
+    GGML_ASSERT(ggml_is_contiguous(op->src[0]));
+    GGML_ASSERT(op->src[1]->ne[1] == 1);
+
+    ggml_metal_kargs_snake_1d args = {
+        /*.ne00 =*/ ne00,
+        /*.ne01 =*/ ne01,
+        /*.nb00 =*/ nb00,
+        /*.nb01 =*/ nb01,
+        /*.ne0  =*/ ne0,
+        /*.ne1  =*/ ne1,
+        /*.nb0  =*/ nb0,
+        /*.nb1  =*/ nb1,
+    };
+
+    auto pipeline = ggml_metal_library_get_pipeline_snake_1d(lib, op);
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 3);
+
+    const int64_t n = int64_t(ne00)*ne01;
+
+    const int nth = MIN(1024, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
+
+    const int nk0 = int((n + nth - 1)/nth);
+
+    ggml_metal_encoder_dispatch_threadgroups(enc, nk0, 1, 1, nth, 1, 1);
+
+    return 1;
+}
+
 
 int ggml_metal_op_glu(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
