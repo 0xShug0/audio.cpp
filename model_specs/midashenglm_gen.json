@@ -67,9 +67,9 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Generation seed; -1 selects a random seed.",
+        "description": "Generation seed; parsed as an unsigned 32-bit value, so negative seeds are rejected.",
         "required": false,
-        "min": -1,
+        "min": 0,
         "max": 2147483647,
         "default": 0
       }

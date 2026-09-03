@@ -23,13 +23,6 @@
   "options": {
     "request": [
       {
-        "name": "language",
-        "type": "string",
-        "description": "Recognition language (currently English).",
-        "required": false,
-        "default": "en"
-      },
-      {
         "name": "audio_chunk_mode",
         "type": "enum",
         "description": "Audio chunking mode: auto, fixed, or none.",
