@@ -52,8 +52,14 @@ jobs:
           cmake -S . -B "$BUILD_DIR" \
             -DCMAKE_BUILD_TYPE=Debug \
             -DENGINE_ENABLE_CUDA=OFF \
-            -DENGINE_ENABLE_VULKAN=${{ matrix.enable_vulkan }}
+            -DENGINE_ENABLE_VULKAN=${{ matrix.enable_vulkan }} \
+            -DENGINE_BUILD_TESTS=ON
 
       - name: Build
         run: |
           cmake --build "$BUILD_DIR" --parallel "$(nproc)" --target audiocpp_cli audiocpp_server audiocpp_gguf
+
+      - name: Build and run unit tests
+        run: |
+          cmake --build "$BUILD_DIR" --parallel "$(nproc)"
+          ctest --test-dir "$BUILD_DIR" --output-on-failure --parallel 4

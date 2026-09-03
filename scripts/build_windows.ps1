@@ -4,6 +4,7 @@ param(
     [string]$Target = "audiocpp_cli",
     [int]$Jobs = 0,
     [switch]$ConfigureOnly,
+    [switch]$RunTests,
     [switch]$Clean,
     [string]$CudaArchitectures = "auto",
     [ValidateSet("", "native", "avx2", "baseline")]
@@ -459,6 +460,9 @@ function Find-VulkanRoot {
 }
 
 $settings = Get-PresetSettings $Preset
+if ($RunTests) {
+    $settings.BuildTests = "ON"
+}
 $cpuArchSettings = Get-CpuArchSettings $CpuArch
 if ($null -ne $cpuArchSettings.Native) {
     $settings.Native = $cpuArchSettings.Native
@@ -629,3 +633,11 @@ if ($Target -ne "") {
 
 Write-Host "Build jobs: $effectiveJobs"
 Invoke-Checked $cmake $buildArgs
+
+if ($RunTests) {
+    # Unit tests live under ENGINE_BUILD_TESTS; flip ON above, build everything
+    # that the -Target build skipped, then run the registered ctest suite.
+    Invoke-Checked $cmake @("--build", $buildDir, "-j", $effectiveJobs.ToString())
+    $ctest = Join-Path (Split-Path $cmake -Parent) "ctest.exe"
+    Invoke-Checked $ctest @("--test-dir", $buildDir, "--output-on-failure", "-j", $effectiveJobs.ToString())
+}
