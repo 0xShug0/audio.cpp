@@ -91,6 +91,11 @@
   let outputArtifacts: Array<{ id: string; url: string; extension: string }> = [];
   let outputText = '';
   let outputJson = '';
+  // Timed detail rows returned by ASR, diarization, VAD and forced alignment.
+  // Spans arrive as sample offsets alongside the rate they were counted in.
+  type TimedRow = { start: number; end: number; label: string; text: string; confidence: number };
+  let outputRows: TimedRow[] = [];
+  let outputRowKind = '';
   let logs: string[] = [];
   let aborter: AbortController | null = null;
   let longText = true;
@@ -705,6 +710,58 @@
     return ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(entry.task);
   }
 
+  function timedRowsFromResult(result: Record<string, unknown>): { rows: TimedRow[]; kind: string } {
+    // Spans are sample offsets, so without the rate they were counted in there
+    // is no timestamp to show. Render nothing rather than a row of zeros.
+    const rate = Number(result.sample_rate) || 0;
+    if (rate <= 0) return { rows: [], kind: '' };
+    const toSeconds = (samples: unknown) => Number(samples) / rate;
+    const read = (value: unknown, label: (entry: Record<string, unknown>) => string) =>
+      (Array.isArray(value) ? value : []).map((entry: Record<string, unknown>) => ({
+        start: toSeconds(entry.start_sample),
+        end: toSeconds(entry.end_sample),
+        label: label(entry),
+        text: typeof entry.text === 'string' ? entry.text : '',
+        confidence: Number(entry.confidence) || 0
+      }));
+    const turns = read(result.speaker_turns, (entry) => String(entry.speaker_id ?? ''));
+    if (turns.length) return { rows: turns, kind: 'speaker_turns' };
+    const words = read(result.words, (entry) => String(entry.word ?? ''));
+    if (words.length) return { rows: words, kind: 'words' };
+    return { rows: read(result.segments, () => ''), kind: 'segments' };
+  }
+
+  function formatTimecode(seconds: number, millisecondSeparator: string) {
+    if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+    const whole = Math.floor(seconds);
+    const milliseconds = Math.round((seconds - whole) * 1000);
+    const pad = (value: number, width = 2) => String(value).padStart(width, '0');
+    return `${pad(Math.floor(whole / 3600))}:${pad(Math.floor(whole / 60) % 60)}:${pad(whole % 60)}` +
+      `${millisecondSeparator}${pad(milliseconds, 3)}`;
+  }
+
+  function subtitleText(rows: TimedRow[], format: 'srt' | 'vtt') {
+    const separator = format === 'srt' ? ',' : '.';
+    const cues = rows.map((row, index) => {
+      const caption = [row.label, row.text].filter(Boolean).join(': ') || `#${index + 1}`;
+      const timing =
+        `${formatTimecode(row.start, separator)} --> ${formatTimecode(row.end, separator)}`;
+      return format === 'srt' ? `${index + 1}\n${timing}\n${caption}\n` : `${timing}\n${caption}\n`;
+    });
+    return (format === 'vtt' ? 'WEBVTT\n\n' : '') + cues.join('\n');
+  }
+
+  function downloadSubtitles(format: 'srt' | 'vtt') {
+    if (!outputRows.length || !selected) return;
+    const blob = new Blob([subtitleText(outputRows, format)], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${selected.id}-transcript.${format}`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   function supportsRequestOption(entry: CatalogEntry, option: string) {
     // Specs that publish request metadata are authoritative. Older specs
     // without that metadata keep the legacy UI behavior until migrated.
@@ -1297,6 +1354,8 @@
     outputArtifacts = [];
     outputText = '';
     outputJson = '';
+    outputRows = [];
+    outputRowKind = '';
   }
 
   async function ensureLoaded() {
@@ -1637,6 +1696,7 @@
           options
         }, aborter.signal);
         outputText = String(result.text || '');
+        ({ rows: outputRows, kind: outputRowKind } = timedRowsFromResult(result));
         outputJson = JSON.stringify(result, null, 2);
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
@@ -1681,6 +1741,7 @@
             }));
         }
         outputText = typeof result.text === 'string' ? result.text : '';
+        ({ rows: outputRows, kind: outputRowKind } = timedRowsFromResult(result));
         outputJson = JSON.stringify(result, (key, value) =>
           (key === 'audio' || key === 'payload') && typeof value === 'string'
             ? `<base64 data: ${value.length} chars>` : value, 2);
@@ -2483,6 +2544,35 @@
           <div class="empty-output"><div class="wave">∿</div><p>{tr('result.empty')}</p></div>
         {/if}
         {#if outputText}<textarea class="transcript" readonly rows="7" value={outputText}></textarea>{/if}
+        {#if outputRows.length}
+          <div class="timed-rows">
+            <div class="media-actions">
+              <strong>{tr(`result.rows.${outputRowKind}`)}</strong>
+              <button type="button" on:click={() => downloadSubtitles('srt')}>{tr('result.saveSrt')}</button>
+              <button type="button" on:click={() => downloadSubtitles('vtt')}>{tr('result.saveVtt')}</button>
+            </div>
+            <div class="timed-rows-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>{tr('result.start')}</th>
+                  <th>{tr('result.end')}</th>
+                  <th>{outputRowKind === 'speaker_turns' ? tr('result.speaker') : tr('result.content')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each outputRows as row}
+                  <tr>
+                    <td>{formatTimecode(row.start, '.')}</td>
+                    <td>{formatTimecode(row.end, '.')}</td>
+                    <td>{[row.label, row.text].filter(Boolean).join(': ')}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+            </div>
+          </div>
+        {/if}
         {#if outputJson}<pre>{outputJson}</pre>{/if}
       </section>
     </div>

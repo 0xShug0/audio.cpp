@@ -215,6 +215,13 @@ kbd { font: 9px ui-monospace, monospace; padding: 2px 4px; border: 1px solid rgb
 .audio-list a { color: var(--cyan); text-decoration: none; }
 audio { width: 100%; height: 38px; }
 .transcript { margin-top: 14px; }
+.timed-rows { margin-top: 14px; }
+.timed-rows-scroll { max-height: 250px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; }
+.timed-rows table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.timed-rows th, .timed-rows td { padding: 6px 9px; text-align: left; border-bottom: 1px solid var(--line); }
+.timed-rows th { position: sticky; top: 0; background: var(--card-bg); color: var(--muted); font-weight: 500; }
+.timed-rows td:first-child, .timed-rows td:nth-child(2) { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-subtle); }
+.timed-rows tr:last-child td { border-bottom: none; }
 pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow: auto; max-height: 250px; color: var(--text-subtle); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .arena-hero { align-items: end; }
