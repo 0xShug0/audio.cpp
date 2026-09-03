@@ -315,7 +315,10 @@ BreezeGenerationRequest BreezeTTSSession::build_generation_request(
     generation.text = request.text_input->text;
     generation.instruction = runtime::find_option(request.options, {"instruction"}).value_or("");
     generation.reference_text = runtime::find_option(request.options, {"reference_text"}).value_or("");
-    generation.guidance_scale = runtime::parse_positive_finite_float_option(request.options, {"guidance_scale"}).value_or(generation.guidance_scale);
+    generation.guidance_scale = runtime::parse_finite_float_option(request.options, {"guidance_scale"}).value_or(generation.guidance_scale);
+    if (generation.guidance_scale < 0.0F) {
+        throw std::runtime_error("BreezeTTS guidance_scale must be non-negative");
+    }
     generation.temperature = runtime::parse_positive_finite_float_option(request.options, {"temperature"}).value_or(generation.temperature);
     generation.depth_temperature = runtime::parse_positive_finite_float_option(request.options, {"depth_temperature"}).value_or(generation.depth_temperature);
     generation.top_k = runtime::parse_i64_option(request.options, {"top_k"}).value_or(generation.top_k);

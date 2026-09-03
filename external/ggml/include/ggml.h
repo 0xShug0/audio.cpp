@@ -615,6 +615,7 @@ extern "C" {
         GGML_UNARY_OP_CEIL,
         GGML_UNARY_OP_ROUND,
         GGML_UNARY_OP_TRUNC,
+        GGML_UNARY_OP_ROUND_BF16,
 
         GGML_UNARY_OP_COUNT,
     };
@@ -1255,6 +1256,12 @@ extern "C" {
             struct ggml_tensor  * a);
 
     GGML_API struct ggml_tensor * ggml_trunc_inplace(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a);
+
+    // Rounds each element to bf16 precision, stored as f32. Equivalent to a
+    // cast f32 -> bf16 -> f32 round trip, but fused into a single op.
+    GGML_API struct ggml_tensor * ggml_round_bf16(
             struct ggml_context * ctx,
             struct ggml_tensor  * a);
 
