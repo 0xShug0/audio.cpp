@@ -1756,19 +1756,16 @@ void ServerState::evict_for_model_limit(const LoadedModel & loading) {
 void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
     last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
     model.last_used_ms.store(steady_now_ms(), std::memory_order_relaxed);
-    if (!model.sessions.empty()) {
+    if (model.loaded.load(std::memory_order_acquire)) {
         return;
     }
-    // Serialize the whole "evict -> memory check -> load" sequence only when a guard
-    // actually needs it: eviction (max_loaded_models > 0) or the memory pre-check
-    // (min_free_memory_mb > 0). With both off there is nothing for concurrent loads
-    // to race over, so unrelated first-load requests keep their original concurrency.
-    const bool serialize_load =
-        config_.max_loaded_models > 0 || config_.min_free_memory_mb > 0;
-    std::unique_lock<std::mutex> load_lock(model_load_mutex_, std::defer_lock);
-    if (serialize_load) {
-        load_lock.lock();
-    }
+    // 无条件串行化整个 "check -> evict -> load -> create session pool" 序列。
+    // 若不持锁（旧逻辑只在 max_loaded_models / min_free_memory_mb 配置时才 serialize），
+    // 多个并发首请求会在 model.sessions 仍空时同时进入，各自 clear()+push 同一份
+    // LoadedModel.sessions / free_sessions（数据竞争），导致池被重复填充、
+    // free_sessions 出现重复索引 —— 并发请求全部借到同一 session 下标，共享一个
+    // session 的 scheduler slot 与 chunk 队列，造成跨请求串音/截断。
+    std::unique_lock<std::mutex> load_lock(model_load_mutex_);
     if (config_.max_loaded_models > 0) {
         evict_for_model_limit(model);
         // Note: if ensure_model_fits_memory() below then refuses the load, the
@@ -1843,6 +1840,9 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
         model.sessions.push_back(std::move(session));
         model.free_sessions.push_back(static_cast<size_t>(i));
     }
+    fprintf(stderr, "[DIAG] model '%s' created %d sessions, free=%zu\n",
+            model.config.id.c_str(), instance_count, model.free_sessions.size());
+    fflush(stderr);
     model.model = std::move(loaded_model);
     model.offline = offline;
     model.streaming = streaming;

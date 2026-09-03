@@ -9,6 +9,7 @@
 #include "engine/framework/runtime/session.h"
 #include "engine/framework/runtime/workspace.h"
 
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -18,6 +19,13 @@ namespace engine::runtime {
 class RuntimeSessionBase {
 public:
     explicit RuntimeSessionBase(const SessionOptions & options);
+    // 共享 backend 模式（llama.cpp 单 context 多 slot）：`external_context` 非空时
+    // 本 session 不自建 ExecutionContext/backend，而是借用外部持有的那个（所有权在
+    // 调用方，通常是 model/scheduler 级，生命周期须长于本 session 及其 runtime）。
+    // nullptr = 原行为（每个 session 自建自己的 context）。
+    RuntimeSessionBase(
+        const SessionOptions & options,
+        std::shared_ptr<engine::core::ExecutionContext> external_context);
     virtual ~RuntimeSessionBase() = default;
 
 protected:
@@ -39,7 +47,9 @@ protected:
 
 private:
     SessionOptions options_;
-    engine::core::ExecutionContext execution_context_;
+    // 本 session 的 backend context。默认自建（shared_ptr 持有）；共享模式外部传入。
+    // 借用的外部 context 同样以 shared_ptr 持有，保证它在本 session 存活期间不析构。
+    std::shared_ptr<engine::core::ExecutionContext> context_;
     ArtifactStore artifacts_;
     RuntimeCache cache_;
     RuntimeWorkspace workspace_;

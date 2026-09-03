@@ -26,19 +26,52 @@ constexpr const char * kInstructName = "FireRedTTS3 Instruct";
 constexpr int64_t kDefaultTextChunkSize = 600;
 constexpr size_t kDefaultReferenceCacheSlots = 4;
 
-// ---- 共享 batch scheduler 注册表（assets-keyed）----
-// 同一 assets 的所有 session（server session 池）共享一个 scheduler：
-// 并发请求经各 session 进入 scheduler 的不同 slot，实现共享 GPU batch decode。
-// model unload（全部 session 析构）时 scheduler 随最后一个 weak_ptr 消亡。
+// ---- 共享 batch scheduler + 共享 ExecutionContext 注册表（assets-keyed）----
+// 同一 assets 的所有 session（server session 池）共享一个 scheduler（llama.cpp
+// update_slots 的模拟）和一个 ExecutionContext/backend（llama.cpp 的单 context）。
+//
+// 为什么 context 也必须共享：旧实现每个 session 在 RuntimeSessionBase 自建一个
+// ExecutionContext（自建 CUDA backend），instance_count=3 → 3 个 device-0 context，
+// 而 scheduler 只借用第一个 session 的（引用绑定其成员，session 析构即悬垂）。
+// 冷并发首请求多 context 并存 → "CUDA error: invalid device context"。
+// 对齐 llama.cpp：一个 context 随 model 建一次、所有 session 借它。
+//
+// 所有权/生命周期：context 与 scheduler 都由每个 session 强持有（session 基类持
+// context 的 shared_ptr，session 持 scheduler 的 shared_ptr）。注册表只存 weak_ptr，
+// 不延长存活——最后一个 session 析构时 context+scheduler 随之释放。析构顺序安全：
+// FireRedTTS3Session 的派生成员（含 scheduler_）先于基类析构，故 scheduler（内部持
+// context 引用）先于基类持有的 context 释放。
 struct SchedulerRegistry {
     std::mutex mu;
     std::unordered_map<
         const FireRedTTS3Assets *,
-        std::weak_ptr<FireRedTTS3BatchScheduler>> by_assets;
+        std::weak_ptr<engine::core::ExecutionContext>> context_by_assets;
+    std::unordered_map<
+        const FireRedTTS3Assets *,
+        std::weak_ptr<FireRedTTS3BatchScheduler>> scheduler_by_assets;
 
+    // 取 assets 对应的共享 backend context（首次创建）。返回强副本，由调用方
+    // （session 基类）持有，保证该 context 在本 session 存活期不析构。
+    std::shared_ptr<engine::core::ExecutionContext> get_or_create_context(
+        const std::shared_ptr<const FireRedTTS3Assets> & assets,
+        const engine::core::BackendConfig & backend_config) {
+        std::lock_guard<std::mutex> lock(mu);
+        auto it = context_by_assets.find(assets.get());
+        if (it != context_by_assets.end()) {
+            if (auto existing = it->second.lock()) {
+                return existing;
+            }
+            context_by_assets.erase(it);
+        }
+        auto context = std::make_shared<engine::core::ExecutionContext>(backend_config);
+        context_by_assets.emplace(assets.get(), context);
+        return context;
+    }
+
+    // 取 assets 对应的共享 scheduler（首次创建时用共享 context 构造）。返回强副本。
     std::shared_ptr<FireRedTTS3BatchScheduler> get_or_create(
         std::shared_ptr<const FireRedTTS3Assets> assets,
-        engine::core::ExecutionContext & execution,
+        std::shared_ptr<engine::core::ExecutionContext> context,
         size_t graph_arena_bytes,
         size_t helper_graph_arena_bytes,
         size_t weight_context_bytes,
@@ -47,18 +80,18 @@ struct SchedulerRegistry {
         bool mem_saver,
         int64_t max_batch) {
         std::lock_guard<std::mutex> lock(mu);
-        auto it = by_assets.find(assets.get());
-        if (it != by_assets.end()) {
+        auto it = scheduler_by_assets.find(assets.get());
+        if (it != scheduler_by_assets.end()) {
             if (auto existing = it->second.lock()) {
                 return existing;
             }
-            by_assets.erase(it);
+            scheduler_by_assets.erase(it);
         }
         const FireRedTTS3Assets * key = assets.get();
         auto scheduler = std::make_shared<FireRedTTS3BatchScheduler>(
-            std::move(assets), execution, graph_arena_bytes, helper_graph_arena_bytes,
+            std::move(assets), *context, graph_arena_bytes, helper_graph_arena_bytes,
             weight_context_bytes, storage_type, reference_cache_slots, mem_saver, max_batch);
-        by_assets.emplace(key, scheduler);
+        scheduler_by_assets.emplace(key, scheduler);
         return scheduler;
     }
 };
@@ -89,6 +122,28 @@ std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
         throw std::runtime_error("FireRedTTS3 session requires a model contract");
     }
     return contract;
+}
+
+// scheduler-mode（Base clone + fireredtts3.max_batch>1）时，返回 assets 对应的
+// 共享 ExecutionContext（注册表持有，所有 session 借用 → llama.cpp 单 context）。
+// 其它情况（Instruct、非 scheduler 的单 Base）返回 nullptr → session 自建 context：
+// 这些路径不集中到单调度线程，每个 session 独立并发跑自己的 graph，共享 backend
+// 会撞 ggml 后端线程安全，故必须各持一个。
+std::shared_ptr<engine::core::ExecutionContext> firered_scheduler_shared_context(
+    const runtime::SessionOptions & options,
+    const std::shared_ptr<const FireRedTTS3Assets> & assets) {
+    if (assets == nullptr) {
+        return nullptr;  // require_assets 会给出明确报错；此处不提前解引用
+    }
+    if (is_instruct_variant(assets->variant)) {
+        return nullptr;
+    }
+    const int64_t max_batch = runtime::parse_i64_option(
+        options.options, {"fireredtts3.max_batch"}).value_or(1);
+    if (max_batch <= 1) {
+        return nullptr;
+    }
+    return scheduler_registry().get_or_create_context(assets, options.backend);
 }
 
 std::string request_language(const runtime::TaskRequest & request) {
@@ -263,9 +318,9 @@ FireRedTTS3Session::FireRedTTS3Session(
     runtime::SessionOptions options,
     std::shared_ptr<const FireRedTTS3Assets> assets,
     std::shared_ptr<const engine::model_spec::ModelContract> contract)
-    : runtime::RuntimeSessionBase(options),
+    : runtime::RuntimeSessionBase(options, firered_scheduler_shared_context(options, assets)),
       task_(task),
-      assets_(require_assets(std::move(assets))),
+      assets_(require_assets(assets)),
       contract_(require_contract(std::move(contract))),
       tokenizer_(std::make_unique<FireRedTTS3TextTokenizer>(assets_)) {
     const bool is_instruct = is_instruct_variant(assets_->variant);
@@ -326,9 +381,10 @@ FireRedTTS3Session::FireRedTTS3Session(
         {"fireredtts3.max_batch"})
         .value_or(1);
     if (max_batch > 1) {
+        // scheduler 用共享 context 构造（与基类 borrow 的是同一个）。
         scheduler_ = scheduler_registry().get_or_create(
             assets_,
-            execution_context(),
+            scheduler_registry().get_or_create_context(assets_, options.backend),
             graph_arena_bytes,
             helper_graph_arena_bytes,
             weight_context_bytes,
