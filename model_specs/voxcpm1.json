@@ -226,7 +226,7 @@
     ]
   },
   "ui": {
-    "recommended_package": "voxcpm1_0.5b_q8_0",
+    "recommended_package": "voxcpm1_0_5b_q8_0",
     "tags": [
       "TTS",
       "Clone",
@@ -248,7 +248,7 @@
   },
   "packages": [
     {
-      "id": "voxcpm1_0.5b_q8_0",
+      "id": "voxcpm1_0_5b_q8_0",
       "display_name": "VoxCPM 0.5B Q8_0 GGUF",
       "default": true,
       "format": "gguf",
