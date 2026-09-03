@@ -17,7 +17,12 @@
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.05, "minimum": 1.0, "maximum": 2.0, "step": 0.01},
     {"name": "do_sample", "type": "bool", "label": "do_sample", "default": true},
     {"name": "instruct", "type": "text", "label": "instruct（仅 VoiceDesign/CustomVoice）", "default": "", "placeholder": "风格/音色指令，Base 版忽略"},
-    {"name": "speaker", "type": "text", "label": "speaker（仅 CustomVoice）", "default": "", "placeholder": "内置音色名，其它版忽略"}
+    {"name": "speaker", "type": "text", "label": "speaker（仅 CustomVoice）", "default": "", "placeholder": "内置音色名，其它版忽略"},
+    {"name": "subtalker_do_sample", "type": "bool", "label": "subtalker_do_sample", "label_en": "Sub-talker: sample", "default": true},
+    {"name": "subtalker_temperature", "type": "slider", "label": "subtalker_temperature", "label_en": "Sub-talker: temperature", "default": 0.9, "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Must be above 0 while subtalker_do_sample is on."},
+    {"name": "subtalker_top_k", "type": "number", "label": "subtalker_top_k", "label_en": "Sub-talker: top-k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "subtalker_top_p", "type": "slider", "label": "subtalker_top_p", "label_en": "Sub-talker: top-p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "x_vector_only_mode", "type": "bool", "label": "x_vector_only_mode（仅 VoiceClone）", "label_en": "x_vector_only_mode (VoiceClone only)", "default": false, "info_en": "Condition on the speaker embedding alone instead of in-context reference audio. Ignored by other variants."}
   ],
 
   "vibevoice": [
@@ -27,7 +32,8 @@
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.05, "maximum": 2.0, "step": 0.05},
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 1.0, "minimum": 0.05, "maximum": 1.0, "step": 0.01},
     {"name": "do_sample", "type": "bool", "label": "do_sample", "default": false},
-    {"name": "voice_samples", "type": "text", "label": "voice_samples（多说话人，逗号分隔 wav，≤4）", "default": "", "placeholder": "D:/a.wav,D:/b.wav — 用此项时勿再上传参考音色"}
+    {"name": "voice_samples", "type": "text", "label": "voice_samples（多说话人，逗号分隔 wav，≤4）", "default": "", "placeholder": "D:/a.wav,D:/b.wav — 用此项时勿再上传参考音色"},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 50, "minimum": 0, "step": 1, "precision": 0, "info_en": "Must be non-negative; 0 disables top-k."}
   ],
 
   "voxcpm2": [
@@ -35,14 +41,19 @@
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "tag_aware", "choices": ["default", "tag_aware", "japanese", "endline"]},
     {"name": "min_tokens", "type": "number", "label": "min_tokens", "default": 2, "minimum": 0, "step": 1, "precision": 0},
-    {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "default": true}
+    {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "default": true},
+    {"name": "retry_badcase_max_times", "type": "number", "label": "retry_badcase_max_times（最大重试次数）", "label_en": "Retry attempts", "default": 3, "minimum": 1, "step": 1, "precision": 0, "info_en": "Must be positive."},
+    {"name": "retry_badcase_ratio_threshold", "type": "number", "label": "retry_badcase_ratio_threshold（时长/字数比阈值）", "label_en": "Retry length-ratio threshold", "default": 6.0, "minimum": 0.1, "step": 0.5, "info_en": "Audio-seconds-per-character ratio above which a take is treated as a bad case. Must be positive."}
   ],
 
   "voxcpm1": [
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0, "info": "CFM/DiT 步数"},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "min_tokens", "type": "number", "label": "min_tokens", "default": 2, "minimum": 0, "step": 1, "precision": 0},
-    {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "default": true}
+    {"name": "retry_badcase", "type": "bool", "label": "retry_badcase（自动重试异常输出）", "default": true},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "label_en": "Text chunk mode", "default": "tag_aware", "choices": ["default", "tag_aware", "japanese", "endline"]},
+    {"name": "retry_badcase_max_times", "type": "number", "label": "retry_badcase_max_times（最大重试次数）", "label_en": "Retry attempts", "default": 3, "minimum": 1, "step": 1, "precision": 0, "info_en": "Must be positive."},
+    {"name": "retry_badcase_ratio_threshold", "type": "number", "label": "retry_badcase_ratio_threshold（时长/字数比阈值）", "label_en": "Retry length-ratio threshold", "default": 6.0, "minimum": 0.1, "step": 0.5, "info_en": "Audio-seconds-per-character ratio above which a take is treated as a bad case. Must be positive."}
   ],
 
   "miotts": [
@@ -57,7 +68,10 @@
     {"name": "exaggeration", "type": "slider", "label": "exaggeration", "default": 0.5, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info": "改动后需重新『加载模型』才生效"},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info": "改动后需重新『加载模型』才生效"},
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
-    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.2, "minimum": 1.0, "maximum": 2.0, "step": 0.01}
+    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.2, "minimum": 1.0, "maximum": 2.0, "step": 0.01},
+    {"name": "min_p", "type": "slider", "label": "min_p", "label_en": "Min-p", "default": 0.05, "minimum": 0.0, "maximum": 1.0, "step": 0.01, "info_en": "Chatterbox's real truncation filter: tokens below max_prob * min_p are masked. top_p defaults to 1.0 and is a deliberate no-op."},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01, "info_en": "Inert at 1.0 by design; lower it only if you also raise min_p out of the way."},
+    {"name": "s3gen_cfg_rate", "type": "slider", "label": "s3gen_cfg_rate", "label_en": "S3Gen guidance", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05}
   ],
 
   "chatterbox-vc": [
@@ -69,13 +83,23 @@
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "speed", "type": "slider", "label": "speed", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
-    {"name": "instruct", "type": "text", "label": "instruct（风格/音色指令）", "default": "", "placeholder": "如：以轻快的语气朗读"}
+    {"name": "instruct", "type": "text", "label": "instruct（风格/音色指令）", "default": "", "placeholder": "如：以轻快的语气朗读"},
+    {"name": "t_shift", "type": "slider", "label": "t_shift", "label_en": "Timestep shift", "default": 0.1, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "class_temperature", "type": "slider", "label": "class_temperature", "label_en": "Class temperature", "default": 0.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "0 picks the argmax token; above 0 samples the codebook class."},
+    {"name": "position_temperature", "type": "slider", "label": "position_temperature", "label_en": "Position temperature", "default": 5.0, "minimum": 0.0, "maximum": 20.0, "step": 0.5, "info_en": "0 disables Gumbel sampling of the unmasking order."},
+    {"name": "layer_penalty_factor", "type": "slider", "label": "layer_penalty_factor", "label_en": "Layer penalty", "default": 5.0, "minimum": 0.0, "maximum": 20.0, "step": 0.5, "info_en": "Score penalty per codebook layer when choosing which position to unmask next."},
+    {"name": "denoise", "type": "bool", "label": "denoise", "label_en": "Denoise reference", "default": true},
+    {"name": "preprocess_prompt", "type": "bool", "label": "preprocess_prompt", "label_en": "Preprocess reference", "default": true},
+    {"name": "postprocess_output", "type": "bool", "label": "postprocess_output", "label_en": "Postprocess output", "default": true},
+    {"name": "audio_chunk_threshold", "type": "number", "label": "audio_chunk_threshold", "label_en": "Long-form chunk threshold (s)", "default": 30.0, "minimum": 0.0, "step": 1.0},
+    {"name": "audio_chunk_duration", "type": "number", "label": "audio_chunk_duration", "label_en": "Long-form chunk length (s)", "default": 15.0, "minimum": 0.0, "step": 1.0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "label_en": "Text chunk mode", "default": "tag_aware", "choices": ["default", "tag_aware", "japanese", "endline"]}
   ],
 
   "sense_asr": [
     {"name": "enable_itn", "type": "bool", "label": "enable_itn（逆文本规范化）", "label_en": "enable_itn", "default": true},
     {"name": "keep_tags", "type": "bool", "label": "keep_tags（保留语言/情绪/事件标签）", "label_en": "keep_tags", "default": false},
-    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "default": "auto", "choices": ["auto", "fixed", "none"]},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "label_en": "Audio chunk mode", "default": "auto", "choices": ["auto", "fixed", "vad", "none"], "info_en": "vad segments on detected speech; auto and vad share the same code path."},
     {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "default": 30, "minimum": 0.001, "step": 1}
   ],
 
@@ -85,7 +109,10 @@
 
   "neutts": [
     {"name": "voice_id", "type": "choice", "label": "voice_id（内置音色）", "label_en": "voice_id (built-in voice)", "default": "emily", "choices": ["dave", "emily", "greta", "jo", "juliette", "mateo", "paul", "sophie", "steven"]},
-    {"name": "emotion", "type": "choice", "label": "emotion（情绪）", "label_en": "emotion", "default": "neutral", "choices": ["angry", "disgusted", "sad", "happy", "fearful", "neutral", "surprised"]}
+    {"name": "emotion", "type": "choice", "label": "emotion（情绪）", "label_en": "emotion", "default": "neutral", "choices": ["angry", "disgusted", "sad", "happy", "fearful", "neutral", "surprised"]},
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 1.0, "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Must be positive."},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 50, "minimum": 1, "step": 1, "precision": 0, "info_en": "Must be positive."},
+    {"name": "min_tokens", "type": "number", "label": "min_tokens", "label_en": "Min speech tokens", "default": 50, "minimum": 0, "step": 1, "precision": 0, "info_en": "Minimum tokens generated before an end-of-speech token may stop decoding."}
   ],
 
   "magpie_tts": [
@@ -147,14 +174,20 @@
     {"name": "flow_edit_n_avg", "type": "number", "label": "【remix】flow_edit_n_avg", "default": 2, "minimum": 1, "maximum": 4, "step": 1, "precision": 0, "info": "每步多次采样取平均（remix 默认 2）；1=最快"},
     {"name": "bpm", "type": "number", "label": "【曲谱】BPM", "default": 0, "minimum": 0, "step": 1, "precision": 0, "info": "0=不指定"},
     {"name": "keyscale", "type": "text", "label": "【曲谱】keyscale", "default": "", "placeholder": "如 F major"},
-    {"name": "timesignature", "type": "text", "label": "【曲谱】timesignature", "default": "", "placeholder": "如 4"}
+    {"name": "timesignature", "type": "text", "label": "【曲谱】timesignature", "default": "", "placeholder": "如 4"},
+    {"name": "negative_prompt", "type": "text", "label": "negative_prompt", "label_en": "Negative prompt", "default": "", "placeholder_en": "Blank uses the model's \"NO USER INPUT\" placeholder"}
   ],
 
   "minimax_music3": [
     {"name": "num_inference_steps", "type": "number", "label": "Flow steps per window", "default": 30, "minimum": 1, "maximum": 200, "step": 1, "precision": 0, "info": "Flow-matching Euler steps per 200-frame denoising window."},
     {"name": "guidance_scale", "type": "slider", "label": "Flow guidance scale", "default": 1.7, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
     {"name": "ar_guidance_scale", "type": "slider", "label": "AR guidance scale", "default": 1.5, "minimum": 0.0, "maximum": 10.0, "step": 0.1, "info": "Classifier-free guidance of the semantic and residual code sampling."},
-    {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 1, "maximum": 1024, "step": 1, "precision": 0}
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 1, "maximum": 1024, "step": 1, "precision": 0},
+    {"name": "ensemble_takes", "type": "number", "label": "ensemble_takes", "label_en": "Ensemble takes", "default": 1, "minimum": 1, "maximum": 16, "step": 1, "precision": 0, "info_en": "Decode N independent takes in one batched pass (seeds seed, seed+1, ...). Extra takes are returned as take_01...take_NN."},
+    {"name": "ensemble_prefix_frames", "type": "number", "label": "ensemble_prefix_frames", "label_en": "Ensemble intro lock (frames)", "default": 0, "minimum": 0, "step": 10, "precision": 0, "info_en": "Decode the first N frames once and share them across takes before they diverge. 0 disables the fork."},
+    {"name": "flow_uncond_interval", "type": "number", "label": "flow_uncond_interval", "label_en": "Flow CFG reuse interval", "default": 1, "minimum": 1, "step": 1, "precision": 0, "info_en": "Above 1 reuses the cached guidance delta on intermediate steps: faster, slightly off the exact reference trajectory. 1 is exact."},
+    {"name": "flow_uncond_warmup", "type": "number", "label": "flow_uncond_warmup", "label_en": "Flow CFG warmup steps", "default": 2, "minimum": 0, "step": 1, "precision": 0, "info_en": "Leading steps that always evaluate the unconditional branch when reuse is on."},
+    {"name": "flow_chunk_hop_frames", "type": "number", "label": "flow_chunk_hop_frames", "label_en": "Flow chunk hop (frames)", "default": 0, "minimum": 0, "step": 10, "precision": 0, "info_en": "0 uses the model config's hop of 100. A larger hop means fewer chunks and less double-denoising."}
   ],
 
   "minimax_h3": [
@@ -163,14 +196,17 @@
     {"name": "guidance_scale", "type": "slider", "label": "Guidance scale", "default": 1.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "sampler", "type": "choice", "label": "Sampler", "default": "euler", "choices": ["euler", "res_multistep", "dpmpp_2m", "unipc"]},
     {"name": "dit_acceleration", "type": "choice", "label": "DiT acceleration", "default": "none", "choices": ["none", "spectrum", "first_block_cache"], "info": "None uses the quality-first full-DiT path. Acceleration modes are experimental and may distort some outputs."},
-    {"name": "return_video", "type": "bool", "label": "Decode video", "default": false, "info": "Disabled by default to reduce memory use and return audio only."}
+    {"name": "return_video", "type": "bool", "label": "Decode video", "default": false, "info": "Disabled by default to reduce memory use and return audio only."},
+    {"name": "negative_prompt", "type": "text", "label": "negative_prompt", "label_en": "Negative prompt", "default": "", "placeholder_en": "Blank uses the model default"}
   ],
 
   "stable_audio": [
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 8, "minimum": 1, "step": 1, "precision": 0, "info": "RF 扩散步数"},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "audio_input_kind", "type": "choice", "label": "audio_input_kind（仅上传源音频时生效）", "default": "init_audio", "choices": ["init_audio", "inpaint_audio"]},
-    {"name": "init_noise_level", "type": "slider", "label": "init_noise_level（init_audio 强度）", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
+    {"name": "init_noise_level", "type": "slider", "label": "init_noise_level（init_audio 强度）", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
+    {"name": "negative_prompt", "type": "text", "label": "negative_prompt", "label_en": "Negative prompt", "default": "", "placeholder_en": "Blank applies no negative conditioning"},
+    {"name": "sampler", "type": "choice", "label": "sampler", "label_en": "Sampler", "default": "pingpong", "choices": ["pingpong", "euler"], "info_en": "Only pingpong and euler are accepted; the dpmpp entries in the CLI help text are rejected by the parser."}
   ],
 
   "seed_vc": [
@@ -179,7 +215,10 @@
     {"name": "length_adjust", "type": "slider", "label": "length_adjust（时长伸缩）", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
     {"name": "intelligibility_cfg_rate", "type": "slider", "label": "intelligibility_cfg_rate（仅 v2_vc）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
     {"name": "similarity_cfg_rate", "type": "slider", "label": "similarity_cfg_rate（仅 v2_vc）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
-    {"name": "inference_cfg_rate", "type": "slider", "label": "inference_cfg_rate（仅 v1 路径）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05}
+    {"name": "inference_cfg_rate", "type": "slider", "label": "inference_cfg_rate（仅 v1 路径）", "default": 0.7, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
+    {"name": "f0_condition", "type": "bool", "label": "f0_condition（仅 v1 路径）", "label_en": "f0_condition (v1 routes only)", "default": false, "info_en": "Enable F0 conditioning. Required for singing voice conversion on the v1_svc route."},
+    {"name": "auto_f0_adjust", "type": "bool", "label": "auto_f0_adjust（仅 v1 路径）", "label_en": "auto_f0_adjust (v1 routes only)", "default": false, "info_en": "Shift the source pitch toward the target speaker's pitch level."},
+    {"name": "semitone_shift", "type": "number", "label": "semitone_shift（仅 v1 路径）", "label_en": "semitone_shift (v1 routes only)", "default": 0, "minimum": -24, "maximum": 24, "step": 1, "precision": 0}
   ],
 
   "rvc": [
@@ -229,7 +268,9 @@
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale（MuLa CFG）", "default": 1.5, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（codec 步数）", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "infinite_mode", "type": "bool", "label": "infinite_mode（长输出分段生成）", "default": false},
-    {"name": "codec_guidance_scale", "type": "slider", "label": "codec_guidance_scale", "default": 1.25, "minimum": 0.0, "maximum": 5.0, "step": 0.05}
+    {"name": "codec_guidance_scale", "type": "slider", "label": "codec_guidance_scale", "default": 1.25, "minimum": 0.0, "maximum": 5.0, "step": 0.05},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "label_en": "Text chunk size (infinite mode)", "default": 4096, "minimum": 1, "step": 64, "precision": 0},
+    {"name": "infinite_chunk_audio_duration_ms", "type": "number", "label": "infinite_chunk_audio_duration_ms", "label_en": "Infinite-mode chunk audio (ms)", "default": 240000, "minimum": 1, "step": 10000, "precision": 0, "info_en": "Maximum audio generated per infinite-mode chunk. Must be positive."}
   ],
 
   "index_tts2": [
@@ -239,13 +280,32 @@
     {"name": "use_emotion_text", "type": "bool", "label": "use_emotion_text（从朗读文本推断情感）", "label_en": "use_emotion_text (infer from text)", "default": false},
     {"name": "use_random_emotion", "type": "bool", "label": "use_random_emotion（随机情感）", "label_en": "use_random_emotion", "default": false},
     {"name": "interval_silence_ms", "type": "number", "label": "interval_silence_ms（分段间静音）", "label_en": "interval_silence_ms", "default": 200, "minimum": 0, "step": 50, "precision": 0},
-    {"name": "duration_factor", "type": "slider", "label": "duration_factor（语速/时长倍率，>1 更慢，<1 更快）", "label_en": "duration_factor (duration multiplier; >1 slower, <1 faster)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05, "info": "对齐官方 IndexTTS2.5 的 duration_factor：缩放输出时长，不改变音色/内容", "info_en": "Matches official IndexTTS2.5 duration_factor: scales output duration without changing timbre or content"}
+    {"name": "duration_factor", "type": "slider", "label": "duration_factor（语速/时长倍率，>1 更慢，<1 更快）", "label_en": "duration_factor (duration multiplier; >1 slower, <1 faster)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05, "info": "对齐官方 IndexTTS2.5 的 duration_factor：缩放输出时长，不改变音色/内容", "info_en": "Matches official IndexTTS2.5 duration_factor: scales output duration without changing timbre or content"},
+    {"name": "do_sample", "type": "bool", "label": "do_sample", "label_en": "Sample", "default": true},
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 0.8, "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Must be positive."},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 0.8, "minimum": 0.01, "maximum": 1.0, "step": 0.01, "info_en": "Must be within (0, 1]."},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 30, "minimum": 1, "step": 1, "precision": 0, "info_en": "Must be positive."},
+    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "label_en": "Repetition penalty", "default": 10.0, "minimum": 0.0, "maximum": 20.0, "step": 0.1},
+    {"name": "num_beams", "type": "number", "label": "num_beams", "label_en": "Beam count", "default": 3, "minimum": 1, "step": 1, "precision": 0, "info_en": "Must be positive."},
+    {"name": "length_penalty", "type": "slider", "label": "length_penalty", "label_en": "Length penalty", "default": 0.0, "minimum": -2.0, "maximum": 2.0, "step": 0.1}
   ],
 
   "irodori_tts": [
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（RF 扩散步数）", "label_en": "num_inference_steps", "default": 40, "minimum": 1, "step": 1, "precision": 0},
     {"name": "duration_sec", "type": "number", "label": "duration_sec（0=模型自动预测时长）", "label_en": "duration_sec (0 = auto)", "default": 0, "minimum": 0, "step": 0.5},
-    {"name": "duration_scale", "type": "slider", "label": "duration_scale（语速倒数，越大越慢）", "label_en": "duration_scale", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05}
+    {"name": "duration_scale", "type": "slider", "label": "duration_scale（语速倒数，越大越慢）", "label_en": "duration_scale", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
+    {"name": "text_guidance_scale", "type": "slider", "label": "text_guidance_scale", "label_en": "Text guidance", "default": 3.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "speaker_guidance_scale", "type": "slider", "label": "speaker_guidance_scale", "label_en": "Speaker guidance", "default": 5.0, "minimum": 0.0, "maximum": 15.0, "step": 0.1},
+    {"name": "caption_guidance_scale", "type": "slider", "label": "caption_guidance_scale", "label_en": "Caption guidance", "default": 3.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "guidance_mode", "type": "choice", "label": "guidance_mode", "label_en": "Guidance mode", "default": "independent", "choices": ["independent", "joint", "alternating"]},
+    {"name": "guidance_min_t", "type": "slider", "label": "guidance_min_t", "label_en": "Guidance start timestep", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "info_en": "Must not exceed the guidance end timestep."},
+    {"name": "guidance_max_t", "type": "slider", "label": "guidance_max_t", "label_en": "Guidance end timestep", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
+    {"name": "min_duration_sec", "type": "number", "label": "min_duration_sec", "label_en": "Min duration (s)", "default": 0.5, "minimum": 0.05, "step": 0.5, "info_en": "Must be positive and no greater than the maximum."},
+    {"name": "max_duration_sec", "type": "number", "label": "max_duration_sec", "label_en": "Max duration (s)", "default": 30.0, "minimum": 0.05, "step": 0.5},
+    {"name": "no_ref", "type": "bool", "label": "no_ref", "label_en": "No-reference generation", "default": true, "info_en": "Forced off automatically whenever a speaker reference is supplied."},
+    {"name": "trim_tail", "type": "bool", "label": "trim_tail", "label_en": "Trim trailing silence", "default": true},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "label_en": "Text chunk mode", "default": "endline", "choices": ["japanese", "endline"]},
+    {"name": "instruction", "type": "text", "label": "instruction", "label_en": "instruction (caption-conditioned checkpoints)", "default": "", "placeholder_en": "Voice or style description; ignored by checkpoints without caption conditioning"}
   ],
 
   "moss_tts_local": [
@@ -320,7 +380,8 @@
     {"name": "max_new_audio_steps", "type": "number", "label": "max_new_audio_steps", "default": 750, "minimum": 1, "step": 1, "precision": 0},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 20, "minimum": 0, "step": 1, "precision": 0},
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
-    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05}
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "min_new_audio_steps", "type": "number", "label": "min_new_audio_steps", "label_en": "Min audio steps", "default": 6, "minimum": 0, "step": 1, "precision": 0, "info_en": "Floor on generated audio steps; suppresses truncated outputs. Must be non-negative."}
   ],
 
   "firered-audio-vdesign": [
@@ -328,7 +389,8 @@
     {"name": "language", "type": "choice", "label": "language", "default": "zh", "choices": ["zh", "en"]},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
-    {"name": "max_new_audio_steps", "type": "number", "label": "max_new_audio_steps", "default": 750, "minimum": 1, "step": 1, "precision": 0}
+    {"name": "max_new_audio_steps", "type": "number", "label": "max_new_audio_steps", "default": 750, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "min_new_audio_steps", "type": "number", "label": "min_new_audio_steps", "label_en": "Min audio steps", "default": 6, "minimum": 0, "step": 1, "precision": 0, "info_en": "Floor on generated audio steps; suppresses truncated outputs. Must be non-negative."}
   ],
 
   "firered-audio-semantic-edit": [
@@ -338,7 +400,8 @@
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
     {"name": "max_new_audio_steps", "type": "number", "label": "max_new_audio_steps", "default": 750, "minimum": 1, "step": 1, "precision": 0},
-    {"name": "max_new_text_tokens", "type": "number", "label": "max_new_text_tokens", "default": 512, "minimum": 1, "step": 1, "precision": 0}
+    {"name": "max_new_text_tokens", "type": "number", "label": "max_new_text_tokens", "default": 512, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "min_new_audio_steps", "type": "number", "label": "min_new_audio_steps", "label_en": "Min audio steps", "default": 6, "minimum": 0, "step": 1, "precision": 0, "info_en": "Floor on generated audio steps; suppresses truncated outputs. Must be non-negative."}
   ],
 
   "firered-audio-acoustic-edit": [
@@ -347,7 +410,8 @@
     {"name": "instruction", "type": "text", "label": "instruction", "default": "shift the pitch by 3 steps", "placeholder": "shift the pitch by 3 steps"},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
-    {"name": "max_new_audio_steps", "type": "number", "label": "max_new_audio_steps", "default": 750, "minimum": 1, "step": 1, "precision": 0}
+    {"name": "max_new_audio_steps", "type": "number", "label": "max_new_audio_steps", "default": 750, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "min_new_audio_steps", "type": "number", "label": "min_new_audio_steps", "label_en": "Min audio steps", "default": 6, "minimum": 0, "step": 1, "precision": 0, "info_en": "Floor on generated audio steps; suppresses truncated outputs. Must be non-negative."}
   ],
 
   "firered-audio-asr": [
