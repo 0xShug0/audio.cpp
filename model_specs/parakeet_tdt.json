@@ -55,6 +55,12 @@
   "options": {
     "request": [
       {
+        "name": "language",
+        "type": "string",
+        "description": "Transcription language from the OpenAI-compatible request field. Accepted for API compatibility; Parakeet TDT detects the language itself and does not use this value (see keep_language_tags).",
+        "required": false
+      },
+      {
         "name": "max_tokens",
         "type": "int",
         "description": "Maximum TDT generated tokens; 0 or omitted uses the model-derived limit.",
