@@ -795,6 +795,53 @@ std::string task_result_json(const engine::runtime::TaskResult & result, double 
     return task_result_json_with_timing(result, timing_json(wall_ms));
 }
 
+std::string alignment_result_json(
+    const engine::runtime::TaskResult & result,
+    const engine::runtime::AudioBuffer & audio,
+    double wall_ms) {
+    if (audio.sample_rate <= 0) {
+        throw std::runtime_error("alignment timing requires a positive input sample rate");
+    }
+
+    std::ostringstream out;
+    out << "{";
+    bool first = true;
+    auto field = [&](const std::string & name) {
+        if (!first) {
+            out << ",";
+        }
+        first = false;
+        out << json_quote(name) << ":";
+    };
+    if (result.text_output.has_value()) {
+        field("text");
+        out << json_quote(result.text_output->text);
+        if (!result.text_output->language.empty()) {
+            field("language");
+            out << json_quote(result.text_output->language);
+        }
+    }
+    field("words");
+    out << "[";
+    for (size_t i = 0; i < result.word_timestamps.size(); ++i) {
+        if (i != 0) {
+            out << ",";
+        }
+        const auto & word = result.word_timestamps[i];
+        out << "{\"word\":" << json_quote(word.word)
+            << ",\"start\":" << (static_cast<double>(word.span.start_sample) / audio.sample_rate)
+            << ",\"end\":" << (static_cast<double>(word.span.end_sample) / audio.sample_rate)
+            << ",\"start_sample\":" << word.span.start_sample
+            << ",\"end_sample\":" << word.span.end_sample
+            << ",\"confidence\":" << word.confidence << "}";
+    }
+    out << "]";
+    field("timing");
+    out << timing_json(wall_ms, audio);
+    out << "}";
+    return out.str();
+}
+
 std::string streaming_task_result_json(
     const engine::runtime::TaskResult & result,
     const std::optional<double> & ttft_ms) {
@@ -871,6 +918,7 @@ const engine::runtime::AudioBuffer & select_audio_output(const engine::runtime::
 engine::runtime::TaskRequest build_openai_transcription_request(
     const Value & body,
     const std::filesystem::path & base_dir,
+    bool accepts_language_option,
     const std::string * uploaded_audio_bytes = nullptr) {
     const auto * audio = body.find("audio");
     if (audio == nullptr) {
@@ -893,7 +941,14 @@ engine::runtime::TaskRequest build_openai_transcription_request(
     std::string language;
     if (const auto * value = body.find("language")) {
         language = value->as_string();
-        request.options["language"] = language;
+        // Only forward a language the caller actually chose, and only to a model
+        // whose contract accepts it. Clients send the field unconditionally, so
+        // without both guards a model that validates request options strictly
+        // rejects the whole request over an option the user never set. The
+        // language still reaches the model through text_input either way.
+        if (!language.empty() && accepts_language_option) {
+            request.options["language"] = language;
+        }
     }
     std::string context;
     if (const auto * value = body.find("text")) {
@@ -1107,6 +1162,9 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     else if (request.method == "POST" && request.path == "/v1/audio/transcriptions") {
         response = handle_transcription(request);
     }
+    else if (request.method == "POST" && request.path == "/v1/audio/alignments") {
+        response = handle_alignment(request);
+    }
     // Separate path rather than a flag on the endpoint above: the input transport
     // differs (raw chunked PCM vs a complete upload), so keeping it distinct leaves
     // every existing transcription client untouched.
@@ -1196,6 +1254,11 @@ void ServerState::refresh_model_option_flags(LoadedModel & model) {
     model.accepts_reference_text = model_accepts_request_option(
         model.config.family,
         "reference_text",
+        effective_override,
+        model.config.path);
+    model.accepts_language = model_accepts_request_option(
+        model.config.family,
+        "language",
         effective_override,
         model.config.path);
 }
@@ -2446,7 +2509,7 @@ HttpResponse ServerState::handle_transcription_json(const std::string & body_tex
     auto & model = require_model(body);
     const auto request = apply_default_request_options(
         model,
-        build_openai_transcription_request(body, request_base_));
+        build_openai_transcription_request(body, request_base_, model.accepts_language));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     if (bool_field(body, "stream", false)) {
         return run_transcription_stream(model, request, busy_timeout_ms);
@@ -2525,7 +2588,8 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
     auto & model = require_model(body);
     const auto request = apply_default_request_options(
         model,
-        build_openai_transcription_request(body, request_base_, &file_part->data));
+        build_openai_transcription_request(
+            body, request_base_, model.accepts_language, &file_part->data));
     if (stream) {
         return run_transcription_stream(model, request, busy_timeout_ms);
     }
@@ -2586,6 +2650,130 @@ HttpResponse ServerState::run_transcription_stream(
                 "}");
         write_sse_done(writer);
     });
+}
+
+HttpResponse ServerState::handle_alignment(const HttpRequest & request) {
+    std::string content_type;
+    if (const auto it = request.headers.find("content-type"); it != request.headers.end()) {
+        content_type = it->second;
+    }
+    if (const auto boundary = extract_multipart_boundary(content_type)) {
+        return handle_alignment_multipart(request.body, *boundary);
+    }
+    return error_response(
+        400,
+        "audio alignment requests must use multipart/form-data",
+        "invalid_request_error");
+}
+
+HttpResponse ServerState::handle_alignment_multipart(const std::string & body_text, const std::string & boundary) {
+    const auto parts = parse_multipart_body(body_text, boundary);
+    log_multipart_request_summary_if_enabled(config_, parts);
+
+    const MultipartPart * file_part = nullptr;
+    std::string model_id;
+    std::string text;
+    std::string language;
+    std::optional<int> busy_timeout_ms;
+    for (const auto & part : parts) {
+        if (part.name == "file") {
+            file_part = &part;
+        } else if (part.name == "model") {
+            model_id = part.data;
+        } else if (part.name == "text") {
+            text = part.data;
+        } else if (part.name == "language") {
+            language = part.data;
+        } else if (part.name == "busy_timeout_ms") {
+            try {
+                busy_timeout_ms = std::stoi(part.data);
+            } catch (const std::exception &) {
+                return error_response(
+                    400,
+                    "multipart busy_timeout_ms field must be an integer",
+                    "invalid_request_error");
+            }
+            if (*busy_timeout_ms < 0) {
+                return error_response(
+                    400,
+                    "busy_timeout_ms must be >= 0 (0 means no client-side bound)",
+                    "invalid_request_error");
+            }
+        }
+    }
+    if (file_part == nullptr || file_part->data.empty()) {
+        return error_response(
+            400,
+            "multipart alignment request requires a non-empty 'file' field",
+            "invalid_request_error");
+    }
+    if (model_id.empty()) {
+        return error_response(
+            400,
+            "multipart alignment request requires a 'model' field",
+            "invalid_request_error");
+    }
+    if (text.empty()) {
+        return error_response(
+            400,
+            "multipart alignment request requires a non-empty 'text' field",
+            "invalid_request_error");
+    }
+    if (!is_wav_upload_filename(file_part->filename)) {
+        return error_response(
+            400,
+            "only WAV audio uploads are currently supported for alignment",
+            "invalid_request_error");
+    }
+
+    LoadedModel * model_ptr = nullptr;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        const auto it = model_index_.find(model_id);
+        if (it == model_index_.end()) {
+            return error_response(
+                400,
+                "unknown model id: " + model_id,
+                "invalid_request_error");
+        }
+        model_ptr = models_.at(it->second).get();
+    }
+    auto & model = *model_ptr;
+    if (model.task.task != engine::runtime::VoiceTaskKind::Alignment) {
+        return error_response(
+            400,
+            "audio alignment requires a model configured with task=align",
+            "invalid_request_error");
+    }
+    if (model.task.mode != engine::runtime::RunMode::Offline) {
+        return error_response(
+            400,
+            "audio alignment requires a model configured with mode=offline",
+            "invalid_request_error");
+    }
+
+    engine::runtime::TaskRequest task_request;
+    task_request.audio_input = minitts::cli::read_audio_buffer(std::string_view(file_part->data));
+    task_request.text_input = engine::runtime::Transcript{std::move(text), std::move(language)};
+    task_request = apply_default_request_options(model, std::move(task_request));
+    return run_alignment(model, task_request, busy_timeout_ms);
+}
+
+HttpResponse ServerState::run_alignment(
+    LoadedModel & model,
+    const engine::runtime::TaskRequest & request,
+    std::optional<int> busy_timeout_ms) {
+    if (model_run_mode(model) != engine::runtime::RunMode::Offline) {
+        throw std::runtime_error("audio alignment requires a model configured with mode=offline");
+    }
+    const auto timed_result = run_model(model, request, busy_timeout_ms);
+    if (timed_result.result.word_timestamps.empty()) {
+        throw std::runtime_error("alignment model produced no word timestamps");
+    }
+    if (!request.audio_input.has_value()) {
+        throw std::runtime_error("alignment timing requires audio_input");
+    }
+    return json_response(alignment_result_json(timed_result.result, *request.audio_input, timed_result.wall_ms));
 }
 
 // Live PCM ingest. The client streams raw interleaved samples in a chunked request
@@ -2737,15 +2925,40 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
         });
 }
 
+// /v1/tasks/run folds a top-level `language` into the option map, so the same
+// unset-field problem reaches models through this route as well. Remove only the
+// option this route synthesised, never one the caller wrote inside `options`:
+// an explicit option is a deliberate choice, and the strict rejection is the
+// right answer to it.
+engine::runtime::TaskRequest drop_unsupported_language_option(
+    engine::runtime::TaskRequest request,
+    const Value & request_json,
+    bool accepts_language_option) {
+    if (accepts_language_option) {
+        return request;
+    }
+    const auto * top_level = request_json.find("language");
+    if (top_level == nullptr || !top_level->is_string()) {
+        return request;
+    }
+    const auto it = request.options.find("language");
+    if (it != request.options.end() && it->second == top_level->as_string()) {
+        request.options.erase(it);
+    }
+    return request;
+}
+
 HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto * request_json = body.find("request");
+    const auto & effective_json = request_json != nullptr ? *request_json : body;
     const auto request = apply_default_request_options(
         model,
-        minitts::cli::build_request_from_json(
-            request_json != nullptr ? *request_json : body,
-            request_base_));
+        drop_unsupported_language_option(
+            minitts::cli::build_request_from_json(effective_json, request_base_),
+            effective_json,
+            model.accepts_language));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
         ? run_streaming_model(model, request, {}, busy_timeout_ms)
@@ -2757,11 +2970,13 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto * request_json = body.find("request");
+    const auto & effective_json = request_json != nullptr ? *request_json : body;
     const auto request = apply_default_request_options(
         model,
-        minitts::cli::build_request_from_json(
-            request_json != nullptr ? *request_json : body,
-            request_base_));
+        drop_unsupported_language_option(
+            minitts::cli::build_request_from_json(effective_json, request_base_),
+            effective_json,
+            model.accepts_language));
     std::vector<engine::runtime::StreamEvent> events;
     const auto timed_result = run_streaming_model(
         model,

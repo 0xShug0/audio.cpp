@@ -71,6 +71,11 @@ private:
         // the request thread, which costs ~0.9 s per request for large GGUFs.
         // `true` mirrors model_accepts_request_option's no-contract behavior.
         bool accepts_reference_text = true;
+        // Same treatment for `language`. Clients send the field on every
+        // transcription whether or not the user chose one, so a model whose
+        // contract omits it would reject the whole request over an option
+        // nobody set. Resolved once at registration for the same cost reason.
+        bool accepts_language = true;
         // Serializes runs on this model and bounds how long a caller waits for its
         // turn; see BusyGuard.
         BusyGuard busy;
@@ -175,6 +180,12 @@ private:
         const engine::runtime::TaskRequest & request,
         std::optional<int> busy_timeout_ms = std::nullopt);
     HttpResponse run_transcription_stream(
+        LoadedModel & model,
+        const engine::runtime::TaskRequest & request,
+        std::optional<int> busy_timeout_ms = std::nullopt);
+    HttpResponse handle_alignment(const HttpRequest & request);
+    HttpResponse handle_alignment_multipart(const std::string & body_text, const std::string & boundary);
+    HttpResponse run_alignment(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         std::optional<int> busy_timeout_ms = std::nullopt);
