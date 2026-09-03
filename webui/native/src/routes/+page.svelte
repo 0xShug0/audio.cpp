@@ -72,8 +72,12 @@
   let instructions = '';
   let lyrics = '';
   let duration = 30;
-  let seed = 1234;
-      let maxTokens = 1024;
+  // -1 means "let the engine pick", matching the field label. A fixed default
+  // here would silently pin every model whose own default is a random seed.
+  let seed = -1;
+  // Blank means "use the model's own limit". A shared constant here overrode
+  // per-model ceilings ranging from 300 to 4096, halving some and doubling others.
+  let maxTokens: number | '' = '';
       let sourceFile: File | null = null;
       let videoFile: File | null = null;
       let voiceFile: File | null = null;
@@ -402,18 +406,30 @@
   $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task);
+  // Voice design also picks a named voice, and any model shipping built-in
+  // voices should offer them whatever its task.
+  $: allowsQuickStartVoice = ['tts', 'clon', 'vdes'].includes(selected?.task) ||
+    (selected?.builtin_voices || []).length > 0;
   $: referenceVoiceRequired = !(allowsQuickStartVoice && quickStartVoice) && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
   $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
     (Boolean(voiceFile) && isQwenBase);
-  $: quickStartVoices = server && !server.ui_management
-    ? configuredVoices
+  // Voices come from three places: the spec's built-in list, whatever the server
+  // reports for this model, and the bundled demo clips. The demo clips only make
+  // sense for models that take an arbitrary reference.
+  $: demoQuickStartVoices = server && !server.ui_management
+    ? []
     : Object.entries(demoVoiceSources)
       .filter(([, source]) => bundledVoices.includes(source))
       .map(([voice]) => voice);
-  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false
+  $: quickStartVoices = Array.from(new Set([
+    ...(selected?.builtin_voices || []),
+    ...configuredVoices,
+    ...demoQuickStartVoices
+  ]));
+  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false &&
+    demoQuickStartVoices.includes(quickStartVoice)
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
@@ -703,6 +719,13 @@
   function supportsMaxTokens(entry: CatalogEntry) {
     if (entry.request_options !== undefined) return entry.request_options.includes('max_tokens');
     return ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(entry.task);
+  }
+
+  // Seed has a dedicated input rather than a parameter widget, so tasks that
+  // never declared one could not be made reproducible at all. Trust the spec
+  // where it publishes request metadata.
+  function supportsSeed(entry: CatalogEntry) {
+    return entry.request_options?.includes('seed') === true;
   }
 
   function supportsRequestOption(entry: CatalogEntry, option: string) {
@@ -1405,10 +1428,13 @@
   }
 
   async function refreshConfiguredVoices() {
-    if (!selectedId || server?.ui_management !== false) {
+    if (!selectedId) {
       configuredVoices = [];
       return;
     }
+    // Ask for this model's own voices regardless of management mode. The server
+    // returns its configured presets plus any embeddings shipped beside the
+    // weights, and skipping the call in managed mode made both unreachable.
     try {
       configuredVoices = await availableVoices(selectedId);
       if (quickStartVoice && !configuredVoices.includes(quickStartVoice)) quickStartVoice = '';
@@ -1569,6 +1595,22 @@
       if (lyricsRequired && !lyrics.trim()) {
         throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires lyrics.`);
       }
+      if (selected.task === 'vdes' && !instructions.trim()) {
+        throw new StatusWarning(
+          `${selected.display_name_en || selected.display_name} requires a voice description.`);
+      }
+      if (selected.task === 'align') {
+        // Forced aligners need both halves; the engine throws for either, and a
+        // form message is a better place to learn that than a raw engine error.
+        if (!text.trim()) {
+          throw new StatusWarning(
+            `${selected.display_name_en || selected.display_name} requires the transcript to align.`);
+        }
+        if (!language.trim()) {
+          throw new StatusWarning(
+            `${selected.display_name_en || selected.display_name} requires a transcript language.`);
+        }
+      }
       await ensureLoaded();
         const options = requestOptions();
         if (usesVibeVoiceSpeakerFiles) {
@@ -1601,7 +1643,7 @@
             seed: chunkSeed(resolvedSeed, index),
             options
           };
-          if (supportsMaxTokens(selected)) body.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected) && maxTokens !== '') body.max_tokens = maxTokens;
           if (voiceRef) body.voice_ref = voiceRef;
           else if (quickStartVoice) body.voice = demoVoiceSources[quickStartVoice] || quickStartVoice;
           else if (selected.default_voice) body.voice = selected.default_voice;
@@ -1650,10 +1692,15 @@
             else request.duration_seconds = duration;
           }
           request.seed = resolvedSeed;
-          if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected) && maxTokens !== '') request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
           request.seed = resolvedSeed;
-          if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected) && maxTokens !== '') request.max_tokens = maxTokens;
+        } else if (supportsSeed(selected)) {
+          // Voice conversion and the analysis tasks declare a seed but were never
+          // sent one, so their engines fell back to a fresh random value on every
+          // run and identical inputs could not be reproduced.
+          request.seed = resolvedSeed;
         }
         if (audio) request.audio = audio;
         if (voiceRef) request.voice_ref = voiceRef;
@@ -2181,7 +2228,7 @@
           </div>
         {/if}
 
-        {#if selected.task === 'gen'}
+        {#if selected.task === 'gen' && supportsRequestOption(selected, 'lyrics') && !isFireRedAudioEdit}
           <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
           <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
             aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
@@ -2213,7 +2260,7 @@
               <input id="language" bind:value={language} placeholder="auto" />
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task)}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) || supportsSeed(selected)}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
@@ -2225,7 +2272,7 @@
               <input id="tokens" type="number" min="1" bind:value={maxTokens} />
             </div>
           {/if}
-          {#if selected.task === 'gen'}
+          {#if selected.task === 'gen' && !isFireRedAudioEdit}
             <div>
               <label for="duration">{tr('request.duration')}</label>
               <input id="duration" type="number" min={allowsAutoDuration ? -1 : 1} step="0.1" value={duration}

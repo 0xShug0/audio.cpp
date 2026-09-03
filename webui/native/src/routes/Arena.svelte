@@ -20,7 +20,7 @@
   export let loadedModels: LoadedModel[] = [];
   export let server: ServerHealth | null = null;
   export let modelsFolder = '';
-  export let maxTokens = 1024;
+  export let maxTokens: number | '' = '';
   export let entrySelectable: (entry: CatalogEntry) => boolean = () => true;
   export let studioPackageSlots: (entry: CatalogEntry) =>
     Array<{ key: string; label: string; choice?: InstallPackageChoice }> = () => [];
@@ -483,7 +483,7 @@
           seed: resolveRequestSeed(arenaSeed),
           options
         };
-        if (supportsMaxTokens(entry)) body.max_tokens = maxTokens;
+        if (supportsMaxTokens(entry) && maxTokens !== '') body.max_tokens = maxTokens;
         if (voiceRef) body.voice_ref = voiceRef;
         else if (builtinVoice) body.voice = builtinVoice;
         else if (entry.default_voice) body.voice = entry.default_voice;
