@@ -85,6 +85,10 @@ constexpr int64_t kChunkCapacity = kChunkSamples + kChunkOverlapSamples;
 static_assert(kChunkSamples % kTransformerStride == 0);
 static_assert(kChunkOverlapSamples % kTransformerStride == 0);
 constexpr int64_t kChunkFrames = kChunkCapacity / kTransformerStride;
+// The transformer graph is built at frame capacities rounded up to this
+// bucket, so reference lengths within a bucket share one graph instead of
+// rebuilding per exact length.
+constexpr int64_t kTransformerFrameBucket = kChunkSamples / kTransformerStride;
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -731,6 +735,8 @@ BreezeSpeechCodes BreezeSpeechEncoderRuntime::encode(const runtime::AudioBuffer 
     const int64_t valid_samples = static_cast<int64_t>(waveform.size());
     const int64_t frames = std::max<int64_t>(1, (valid_samples + kDownsampleRate - 1) / kDownsampleRate);
     const int64_t transformer_frames = (valid_samples + kTransformerStride - 1) / kTransformerStride;
+    const int64_t graph_frames =
+        (transformer_frames + kTransformerFrameBucket - 1) / kTransformerFrameBucket * kTransformerFrameBucket;
     const int threads = std::max(1, execution_context_->config().threads);
     if (conv_graph_ == nullptr || !conv_graph_->matches(*weights_, execution_context_->backend(), threads)) {
         conv_graph_.reset();
@@ -741,17 +747,17 @@ BreezeSpeechCodes BreezeSpeechEncoderRuntime::encode(const runtime::AudioBuffer 
             graph_arena_bytes_);
     }
     if (transformer_graph_ == nullptr ||
-        !transformer_graph_->matches(*weights_, transformer_frames, execution_context_->backend(), threads)) {
+        !transformer_graph_->matches(*weights_, graph_frames, execution_context_->backend(), threads)) {
         transformer_graph_.reset();
         transformer_graph_ = std::make_unique<BreezeSpeechEncoderTransformerGraph>(
             weights_,
-            transformer_frames,
+            graph_frames,
             *execution_context_,
             *constants_,
             graph_arena_bytes_);
     }
 
-    std::vector<float> features(static_cast<size_t>(kHiddenSize * transformer_frames));
+    std::vector<float> features(static_cast<size_t>(kHiddenSize * graph_frames));
     std::vector<float> chunk_input(static_cast<size_t>(kChunkCapacity));
     int64_t dst_frame = 0;
     for (int64_t pos = 0; pos < valid_samples; pos += kChunkSamples) {
@@ -771,8 +777,35 @@ BreezeSpeechCodes BreezeSpeechEncoderRuntime::encode(const runtime::AudioBuffer 
             features.begin() + dst_frame * kHiddenSize);
         dst_frame += keep_frames;
     }
+    // Pad unused bucket frames with the last real frame (not zeros): causal
+    // attention keeps padding invisible to real frames, and the downsample
+    // conv's Replicate right pad then sees the same value as an exact-length
+    // graph would produce.
+    for (int64_t f = transformer_frames; f < graph_frames; ++f) {
+        std::copy_n(
+            features.begin() + (transformer_frames - 1) * kHiddenSize,
+            kHiddenSize,
+            features.begin() + f * kHiddenSize);
+    }
 
     auto out = transformer_graph_->run(features);
+    const int64_t produced_frames = transformer_graph_->output_frames();
+    if (produced_frames != frames) {
+        // Projected outputs are channel-major with stride produced_frames;
+        // drop the padding frames before quantization.
+        auto slice_frames = [frames, produced_frames](std::vector<float> & projected) {
+            std::vector<float> sliced(static_cast<size_t>(kQuantizerDim * frames));
+            for (int64_t dim = 0; dim < kQuantizerDim; ++dim) {
+                std::copy_n(
+                    projected.begin() + dim * produced_frames,
+                    frames,
+                    sliced.begin() + dim * frames);
+            }
+            projected = std::move(sliced);
+        };
+        slice_frames(out.semantic_projected);
+        slice_frames(out.acoustic_projected);
+    }
     out.codes.frames = frames;
     out.codes.code_groups = kValidQuantizers;
     out.codes.codes = quantize_projected(out.semantic_projected, out.acoustic_projected, frames, *weights_);
