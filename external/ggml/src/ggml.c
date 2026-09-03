@@ -1086,9 +1086,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "CONVROT_LINEAR",
 
     "MUL_MAT_ACC",
+    "SNAKE_1D",
 };
 
-static_assert(GGML_OP_COUNT == 103, "GGML_OP_COUNT != 103");
+static_assert(GGML_OP_COUNT == 104, "GGML_OP_COUNT != 104");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1204,9 +1205,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "convrot_linear(weight_i8, input, weight_scale, bias)",
 
     "mul_mat_acc(a, b, acc)",
+    "snake_1d(a, alpha)",
 };
 
-static_assert(GGML_OP_COUNT == 103, "GGML_OP_COUNT != 103");
+static_assert(GGML_OP_COUNT == 104, "GGML_OP_COUNT != 104");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -3289,6 +3291,28 @@ struct ggml_tensor * ggml_mul_mat_acc(
     result->src[0] = a;
     result->src[1] = b;
     result->src[2] = acc;
+
+    return result;
+}
+
+// ggml_snake_1d
+
+struct ggml_tensor * ggml_snake_1d(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * alpha) {
+    GGML_ASSERT(a->type == GGML_TYPE_F32);
+    GGML_ASSERT(alpha->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(a));
+    GGML_ASSERT(ggml_is_contiguous(alpha));
+    GGML_ASSERT(alpha->ne[0] == a->ne[0]);
+    GGML_ASSERT(alpha->ne[1] == 1 && alpha->ne[2] == 1 && alpha->ne[3] == 1);
+
+    struct ggml_tensor * result = ggml_dup_tensor(ctx, a);
+
+    result->op     = GGML_OP_SNAKE_1D;
+    result->src[0] = a;
+    result->src[1] = alpha;
 
     return result;
 }

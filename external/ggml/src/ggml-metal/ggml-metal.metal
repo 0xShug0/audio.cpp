@@ -1192,6 +1192,42 @@ kernel void kernel_unary_impl(
 #undef FC_CNT
 }
 
+// fused snake activation: y = x + sin(x * alpha[c])^2 / alpha[c], with c = i0 the
+// channel (fast axis). One elementwise pass replacing the mul -> sin -> mul -> div
+// -> add chain; the per-element op sequence matches the chain bit-for-bit (f32 ops,
+// precise sin), so outputs are identical.
+kernel void kernel_snake_1d_f32(
+        constant ggml_metal_kargs_snake_1d & args,
+        device  const char * src0,
+        device  const char * src1,
+        device        char * dst,
+        uint3   tgpig[[threadgroup_position_in_grid]],
+        ushort3 tpitg[[thread_position_in_threadgroup]],
+        ushort3   ntg[[threads_per_threadgroup]]) {
+    const int n = args.ne00*args.ne01;
+
+    const int ith = tgpig.x*ntg.x + tpitg.x;
+
+    if (ith >= n) {
+        return;
+    }
+
+    const int i0 = ith % args.ne00;
+    const int i1 = ith / args.ne00;
+
+    device const float * x = (device const float *)(src0 + i0*args.nb00 + i1*args.nb01);
+    device const float * a = (device const float *)(src1 + i0*4); // alpha [C,1] contiguous f32
+    device       float * y = (device       float *)(dst  + i0*args.nb0  + i1*args.nb1);
+
+    const float xv = x[0];
+    const float av = a[0];
+    const float ax = xv * av;
+    const float s  = sin(ax);
+    const float s2 = s * s;
+
+    y[0] = xv + s2/av;
+}
+
 typedef decltype(kernel_unary_impl<float, float, float>) kernel_unary_t;
 
 template [[host_name("kernel_unary_f32_f32")]]   kernel kernel_unary_t kernel_unary_impl<float,  float,  float>;

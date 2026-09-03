@@ -47,6 +47,7 @@ int ggml_metal_op_concat            (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_repeat            (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_acc               (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_unary             (ggml_metal_op_t ctx, int idx);
+int ggml_metal_op_snake_1d          (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_glu               (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_sum               (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_sum_rows          (ggml_metal_op_t ctx, int idx);
