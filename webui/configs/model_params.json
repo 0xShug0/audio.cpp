@@ -1,6 +1,6 @@
 {
   "echo_tts": [
-    {"name": "num_inference_steps", "type": "slider", "label": "num_inference_steps", "label_en": "Sampling steps", "default": 40, "minimum": 8, "maximum": 40, "step": 1, "precision": 0, "info": "Euler sampler steps."},
+    {"name": "num_inference_steps", "type": "slider", "label": "num_inference_steps", "label_en": "Sampling steps", "default": 40, "minimum": 8, "maximum": 120, "step": 1, "precision": 0, "info": "Euler sampler steps.", "info_en": "Euler sampler steps. No upper bound in the model; higher is slower and steadier."},
     {"name": "text_guidance_scale", "type": "slider", "label": "text_guidance_scale", "label_en": "Text guidance", "default": 3.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
     {"name": "speaker_guidance_scale", "type": "slider", "label": "speaker_guidance_scale", "label_en": "Speaker guidance", "default": 8.0, "minimum": 0.0, "maximum": 15.0, "step": 0.1},
     {"name": "truncation_factor", "type": "slider", "label": "truncation_factor", "label_en": "Noise truncation", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
@@ -11,7 +11,7 @@
   "_comment": "WebUI TTS 高级参数控件配置：按模型 family 动态生成控件（gr.render）。每项字段：name=选项键(随请求 options 透传给模型)；type=slider|number|bool|text|choice；label/info=显示文案；default=默认值(应等于模型默认，已按 src/models/<family>/*.cpp 校对)；minimum/maximum/step=数值范围；precision=0 表示整数；choices=下拉候选。规则：只有被用户改动过的控件值才会随请求发送；seed/max_tokens 已有专用输入框，勿在此重复；参考文本用『参考文本』框(reference_text)；文件路径/parity 类参数(如 *_noise_file)未纳入，可用『其它参数(JSON)』兜底框传。",
 
   "qwen3_tts": [
-    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.9, "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Must be above 0 while do_sample is on."},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.05, "minimum": 1.0, "maximum": 2.0, "step": 0.01},
@@ -111,16 +111,16 @@
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.5, "minimum": 0.0, "maximum": 8.0, "step": 0.1},
     {"name": "spatio_temporal_guidance_scale", "type": "slider", "label": "spatio_temporal_guidance_scale", "default": 1.5, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
     {"name": "duration_scale", "type": "slider", "label": "duration_scale（自动估时倍率）", "label_en": "duration_scale", "default": 1.1, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
-    {"name": "reference_duration_sec", "type": "number", "label": "reference_duration_sec（参考音频裁剪/重复秒数）", "label_en": "reference_duration_sec", "default": 10.0, "minimum": 0.0, "step": 0.5},
+    {"name": "reference_duration_sec", "type": "number", "label": "reference_duration_sec（参考音频裁剪/重复秒数）", "label_en": "reference_duration_sec", "default": 10.0, "minimum": 0.5, "step": 0.5, "info_en": "Must be positive."},
     {"name": "guidance_rescale", "type": "text", "label": "guidance_rescale", "default": "auto", "placeholder": "auto 或数值"},
-    {"name": "audio_chunk_threshold_sec", "type": "number", "label": "audio_chunk_threshold_sec（长文本阈值）", "label_en": "audio_chunk_threshold_sec", "default": 45.0, "minimum": 0.0, "step": 1.0},
-    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec（长文本分段目标时长）", "label_en": "audio_chunk_duration_sec", "default": 37.0, "minimum": 0.0, "step": 1.0},
+    {"name": "audio_chunk_threshold_sec", "type": "number", "label": "audio_chunk_threshold_sec（长文本阈值）", "label_en": "audio_chunk_threshold_sec", "default": 45.0, "minimum": 1.0, "step": 1.0, "info_en": "Must be positive."},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec（长文本分段目标时长）", "label_en": "audio_chunk_duration_sec", "default": 37.0, "minimum": 1.0, "step": 1.0, "info_en": "Must be positive."},
     {"name": "cross_fade_duration_sec", "type": "number", "label": "cross_fade_duration_sec（分段交叉淡化）", "label_en": "cross_fade_duration_sec", "default": 0.05, "minimum": 0.0, "step": 0.01}
   ],
 
   "confucius4_tts": [
-    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
-    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.8, "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Must be positive."},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.01, "maximum": 1.0, "step": 0.01, "info_en": "Must be within (0, 1]."},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 30, "minimum": 1, "step": 1, "precision": 0},
     {"name": "num_beams", "type": "number", "label": "num_beams", "default": 3, "minimum": 1, "step": 1, "precision": 0},
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 10.0, "minimum": 0.0, "maximum": 20.0, "step": 0.1},
@@ -206,8 +206,8 @@
   "personaplex": [
     {"name": "voice_id", "type": "choice", "label": "voice_id（打包音色）", "label_en": "voice_id (packaged voice)", "default": "NATF2", "choices": ["NATF0", "NATF1", "NATF2", "NATF3", "NATM0", "NATM1", "NATM2", "NATM3", "VARF0", "VARF1", "VARF2", "VARF3", "VARF4", "VARM0", "VARM1", "VARM2", "VARM3", "VARM4"]},
     {"name": "system_prompt", "type": "text", "label": "system_prompt", "default": "", "placeholder": "Leave blank to use the text box as the system prompt."},
-    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
-    {"name": "text_temperature", "type": "slider", "label": "text_temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.8, "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Must be above 0 while do_sample is on."},
+    {"name": "text_temperature", "type": "number", "label": "text_temperature", "label_en": "text_temperature (blank follows temperature)", "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Blank makes the text head follow temperature. Must be above 0 while do_sample is on."},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 250, "minimum": 0, "step": 1, "precision": 0},
     {"name": "text_top_k", "type": "number", "label": "text_top_k", "default": 250, "minimum": 0, "step": 1, "precision": 0},
     {"name": "do_sample", "type": "bool", "label": "do_sample", "default": true}
@@ -217,9 +217,9 @@
     {"name": "route", "type": "choice", "label": "route（任务路线）", "default": "", "choices": ["", "style_preserved_vc", "style_converted_vc", "style_preserved_svc", "style_converted_svc", "singing_style_conversion", "editing"], "info": "留空=按任务默认；详见 webui/README.md"},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0, "info": "流匹配步数"},
     {"name": "use_pitch_shift", "type": "choice", "label": "use_pitch_shift（自动音高对齐）", "default": "", "choices": ["", "true", "false"], "info": "留空=按路线默认"},
-    {"name": "temperature", "type": "slider", "label": "temperature（AR 路线用）", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info": "默认取自模型 generation_config.json"},
+    {"name": "temperature", "type": "number", "label": "temperature（AR 路线用）", "label_en": "temperature (AR paths)", "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info": "留空=取自模型 generation_config.json（回退 1.0）", "info_en": "Blank uses the checkpoint's generation_config.json (C++ fallback 1.0). Must be above 0."},
     {"name": "top_k", "type": "number", "label": "top_k（AR 路线用）", "default": 20, "minimum": 0, "step": 1, "precision": 0, "info": "默认取自模型 generation_config.json"},
-    {"name": "top_p", "type": "slider", "label": "top_p（AR 路线用）", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01}
+    {"name": "top_p", "type": "number", "label": "top_p（AR 路线用）", "label_en": "top_p (AR paths)", "minimum": 0.0, "maximum": 1.0, "step": 0.01, "info": "留空=取自模型 generation_config.json（回退 0.8）", "info_en": "Blank uses the checkpoint's generation_config.json (C++ fallback 0.8)."}
   ],
 
   "heartmula": [
@@ -273,9 +273,9 @@
   ],
 
   "controlfoley": [
-    {"name": "duration_sec", "type": "number", "label": "duration_sec", "default": 8.0, "minimum": 0.1, "step": 0.5},
+    {"name": "duration_sec", "type": "number", "label": "duration_sec", "default": 8.0, "minimum": 0.64, "maximum": 60.0, "step": 0.1, "info_en": "Shorter than 0.64 s produces an empty sync sequence and fails."},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 25, "minimum": 1, "step": 1, "precision": 0},
-    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 4.5, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 4.5, "minimum": 0.1, "maximum": 10.0, "step": 0.1, "info_en": "Must be positive."},
     {"name": "negative_prompt", "type": "text", "label": "negative_prompt", "default": "", "placeholder": "optional negative prompt"},
     {"name": "mask_away_clip", "type": "bool", "label": "mask_away_clip", "default": false}
   ],
@@ -284,7 +284,7 @@
     {"name": "duration_sec", "type": "number", "label": "duration_sec", "default": 20.0, "minimum": 0.1, "step": 0.5},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
     {"name": "stop_threshold", "type": "slider", "label": "stop_threshold", "default": 0.5, "minimum": 0.0, "maximum": 1.0, "step": 0.05},
-    {"name": "min_stop_step", "type": "number", "label": "min_stop_step", "default": 5, "minimum": 0, "step": 1, "precision": 0}
+    {"name": "min_stop_step", "type": "number", "label": "min_stop_step", "default": 5, "minimum": 1, "step": 1, "precision": 0, "info_en": "Must be positive."}
   ],
 
   "fireredtts3-base": [
