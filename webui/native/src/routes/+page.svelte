@@ -29,7 +29,7 @@
     type ModelPackageSize,
     type DirectoryBrowserResponse
   } from '$lib/api';
-  import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
+  import { catalog, installPackageSlots, parameterCatalog, taskLabels } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
@@ -142,14 +142,6 @@
     demo_3_woman: 'demo_3_woman',
     demo_4_woman: 'demo_4_woman'
   };
-  const exposeAllStudioPackageFamilies = new Set([
-    'audiosr',
-    'controlfoley',
-    'firered_audio',
-    'fireredtts3',
-    'meanvc2',
-    'midashenglm_gen'
-  ]);
 
   function chooseUiLanguage(code: string) {
     uiLanguage = resolveUiLanguage([code]);
@@ -518,32 +510,7 @@
     return packageIsResident(entry, choice, models) || sizes[choice.id]?.installed === true;
   }
 
-  function studioPackageSlots(entry: CatalogEntry) {
-    const choices = entry.install_packages || [];
-    if (entry.family === 'ace_step' || entry.family === 'minimax_music3' ||
-        exposeAllStudioPackageFamilies.has(entry.family)) {
-      return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
-    }
-    const q8 = choices.find((choice) => choice.format === 'gguf' &&
-      ['q8', 'q8_0'].includes(choice.precision));
-    const fp16 = choices.find((choice) => choice.format === 'gguf' &&
-      ['f16', 'fp16', 'bf16'].includes(choice.precision));
-    if (!q8 && !fp16) {
-      return choices.map((choice) => ({ key: choice.id, label: choice.label, choice }));
-    }
-    return [
-      {
-        key: 'q8',
-        label: q8?.label || 'GGUF Q8',
-        choice: q8
-      },
-      {
-        key: 'fp16',
-        label: fp16?.label || 'GGUF FP16',
-        choice: fp16
-      },
-    ];
-  }
+  const studioPackageSlots = installPackageSlots;
 
   function resolveRequestSeed(value: number) {
     if (!Number.isInteger(value) || value < -1 || value > 0xffffffff) {
@@ -735,10 +702,13 @@
     job: ModelInstallJob | undefined,
     translate = tr
   ) {
-    if (job?.state === 'running') return `${choice.label}…`;
-    if (job?.state === 'queued') return `${choice.label} ${translate('models.queued')}`;
-    if (job?.state === 'cancelling') return `${choice.label} ${translate('models.stopping')}`;
-    return choice.label;
+    // short_label, not label: the model name is already printed beside the
+    // buttons and would not fit inside one. The full name stays on the title
+    // and aria-label.
+    if (job?.state === 'running') return `${choice.short_label}…`;
+    if (job?.state === 'queued') return `${choice.short_label} ${translate('models.queued')}`;
+    if (job?.state === 'cancelling') return `${choice.short_label} ${translate('models.stopping')}`;
+    return choice.short_label;
   }
 
   function packageSizeLabel(
@@ -751,8 +721,10 @@
       ? formatBytes(size.size_bytes)
       : '';
     if (size?.installed) {
-      const version = packageVersionLabel(size, translate);
-      return `${selected ? translate('models.selected') : translate('models.downloaded')}${version ? ` · ${version}` : ''}${bytes ? ` · ${bytes}` : ''}`;
+      // The version state lives on the button title now: an update has its own
+      // corner badge, the other states are not actionable, and the three-part
+      // line did not fit the button.
+      return `${selected ? translate('models.selected') : translate('models.downloaded')}${bytes ? ` · ${bytes}` : ''}`;
     }
     if (bytes) return bytes;
     if (size?.state === 'pending') return translate('models.checkingSize');
@@ -2134,8 +2106,9 @@
                 disabled={loadingModel || !available}
                 title={resident ? `Unload ${choice?.label}` : available ? `Load ${choice?.label}` :
                   `${choice?.label || slot.label} is not downloaded`}
+                aria-label={choice?.label || slot.label}
                 on:click={() => choice && toggleStudioPackage(choice)}>
-                {choice?.label || slot.label}
+                {choice?.short_label || slot.label}
               </button>
             {/each}
           </div>
@@ -2570,7 +2543,10 @@
                             aria-pressed={packageIsSelected(entry, choice)}
                             disabled={groupInstallBusy(group, installJobs) ||
                               (packageSizeState === 'running' && Object.keys(packageSizes).length === 0)}
-                            title={`${choice.format.toUpperCase()} ${choice.precision}: ${resolveCatalogPath(choice.path)}`}
+                            title={`${choice.label} — ${choice.format.toUpperCase()} ${choice.precision}${
+                              packageVersionLabel(packageSizes[choice.id]) ? ` · ${packageVersionLabel(packageSizes[choice.id])}` : ''
+                            }: ${resolveCatalogPath(choice.path)}`}
+                            aria-label={choice.label}
                             on:click={() => useOrInstallPackage(entry, choice)}>
                             <span>{installButtonLabel(choice, installJobs[choice.id], tr)}</span>
                             {#if packageSizeLabel(packageSizes[choice.id], packageSizeState,
