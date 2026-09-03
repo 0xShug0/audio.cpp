@@ -48,6 +48,37 @@ struct GgmlContextDeleter {
     }
 };
 
+// The official Breeze-TTS 2 inference runs the backbone and depth decoder with
+// bf16 activations and a bf16 KV cache. Pure fp32 activations measurably drift
+// into degenerate trajectories on some prompts (mispronunciations, repetition
+// collapse), so match the reference bf16 behavior on GPU backends.
+modules::QwenDecoderActivationCastPolicy breeze_bf16_activation_policy(core::BackendType backend_type) {
+    modules::QwenDecoderActivationCastPolicy policy;
+    if (backend_type != core::BackendType::Cuda && backend_type != core::BackendType::Hip &&
+        backend_type != core::BackendType::Vulkan) {
+        return policy;
+    }
+    policy.enabled = true;
+    policy.type = GGML_TYPE_BF16;
+    // CUDA/HIP implement the fused round-to-bf16 unary op; Vulkan does not and
+    // keeps the cast round trip.
+    policy.fused_round = backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip;
+    policy.after_input_norm = true;
+    policy.after_qkv_projection = true;
+    policy.after_qk_norm = true;
+    policy.after_rope = true;
+    policy.after_static_cache_update = true;
+    policy.after_attention = true;
+    policy.after_attention_output = true;
+    policy.after_residual = true;
+    policy.after_ffn_norm = true;
+    policy.after_mlp_projection = true;
+    policy.after_mlp_silu = true;
+    policy.after_mlp_mul = true;
+    policy.after_output = true;
+    return policy;
+}
+
 modules::QwenCausalDecodeRuntimeConfig backbone_config(
     const BreezeTTSConfig & config,
     core::BackendType backend_type,
@@ -66,6 +97,8 @@ modules::QwenCausalDecodeRuntimeConfig backbone_config(
     out.decoder.stack.rope_theta = config.rope_theta;
     out.decoder.stack.rope_type = GGML_ROPE_TYPE_NEOX;
     out.decoder.stack.use_qk_norm = true;
+    out.decoder.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.decoder.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
     out.decoder.stack.attention_precision = GGML_PREC_F32;
     out.decoder.stack.projection_precision = GGML_PREC_DEFAULT;
     out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
@@ -74,7 +107,12 @@ modules::QwenCausalDecodeRuntimeConfig backbone_config(
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
         backend_type == core::BackendType::Vulkan) {
-        out.decoder.static_cache_type = GGML_TYPE_F16;
+        // BF16 KV cache matches the reference implementation, but flash
+        // attention only accelerates bf16 cache with native bf16 MMA
+        // (sm_80+); on older parts it is ~3x slower, so only HIP uses it.
+        out.decoder.static_cache_type =
+            backend_type == core::BackendType::Hip ? GGML_TYPE_BF16 : GGML_TYPE_F16;
+        out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
     }
     out.decoder.logits_size = config.lm_head_size;
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
@@ -106,6 +144,8 @@ modules::QwenCausalDecodeRuntimeConfig depth_config(
     out.decoder.stack.rope_theta = config.depth_rope_theta;
     out.decoder.stack.rope_type = GGML_ROPE_TYPE_NEOX;
     out.decoder.stack.use_qk_norm = false;
+    out.decoder.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.decoder.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
     out.decoder.stack.attention_precision = GGML_PREC_F32;
     out.decoder.stack.projection_precision = GGML_PREC_DEFAULT;
     out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
@@ -114,7 +154,11 @@ modules::QwenCausalDecodeRuntimeConfig depth_config(
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
         backend_type == core::BackendType::Vulkan) {
-        out.decoder.static_cache_type = GGML_TYPE_F16;
+        // See backbone_config: only HIP uses a bf16 KV cache; CUDA and Vulkan
+        // keep F16.
+        out.decoder.static_cache_type =
+            backend_type == core::BackendType::Hip ? GGML_TYPE_BF16 : GGML_TYPE_F16;
+        out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
     }
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.output_mode = modules::QwenCausalDecodeOutputMode::Hidden;
@@ -160,6 +204,35 @@ std::vector<float> llama3_rope_factors(
     return out;
 }
 
+// Pack [a; b; ...] projection rows into a single tensor, matching the
+// higgs_audio_tts loader: fewer, larger matmuls per layer. Parts may have
+// different row counts (e.g. q vs k/v in GQA models).
+core::TensorValue pack_projection_rows(
+    core::BackendWeightStore & store,
+    const assets::TensorSource & source,
+    const std::vector<std::pair<std::string, int64_t>> & parts,
+    assets::TensorStorageType storage_type,
+    int64_t in_dim) {
+    std::vector<std::byte> packed;
+    int64_t total_out = 0;
+    ggml_type packed_type = GGML_TYPE_COUNT;
+    for (const auto & [name, out_dim] : parts) {
+        const auto part = source.require_tensor(name, storage_type, {out_dim, in_dim});
+        if (packed_type == GGML_TYPE_COUNT) {
+            packed_type = part.type;
+        } else if (part.type != packed_type) {
+            throw std::runtime_error("BreezeTTS packed projection weights require matching storage types");
+        }
+        packed.insert(packed.end(), part.bytes.begin(), part.bytes.end());
+        total_out += out_dim;
+    }
+    return store.make_tensor(
+        core::TensorShape::from_dims({total_out, in_dim}),
+        packed_type,
+        packed.data(),
+        packed.size());
+}
+
 modules::QwenDecoderLayerWeights load_backbone_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
@@ -168,17 +241,33 @@ modules::QwenDecoderLayerWeights load_backbone_layer(
     const std::optional<core::TensorValue> & rope_factors,
     int64_t layer) {
     const std::string prefix = "backbone_model.layers." + std::to_string(layer);
+    const int64_t q_out = config.heads * config.head_dim;
+    const int64_t kv_out = config.kv_heads * config.head_dim;
     modules::QwenDecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.hidden_size);
-    out.self_attention.q_weight = store.load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.heads * config.head_dim, config.hidden_size});
-    out.self_attention.k_weight = store.load_tensor(source, prefix + ".self_attn.k_proj.weight", storage_type, {config.kv_heads * config.head_dim, config.hidden_size});
-    out.self_attention.v_weight = store.load_tensor(source, prefix + ".self_attn.v_proj.weight", storage_type, {config.kv_heads * config.head_dim, config.hidden_size});
+    // Packed layout is [q; k; v] with row counts q_out, kv_out, kv_out.
+    out.self_attention.qkv_weight = pack_projection_rows(
+        store,
+        source,
+        {{prefix + ".self_attn.q_proj.weight", q_out},
+         {prefix + ".self_attn.k_proj.weight", kv_out},
+         {prefix + ".self_attn.v_proj.weight", kv_out}},
+        storage_type,
+        config.hidden_size);
     out.self_attention.out_weight = store.load_tensor(source, prefix + ".self_attn.o_proj.weight", storage_type, {config.hidden_size, config.heads * config.head_dim});
     out.q_norm = binding::norm_weight_from_source(store, source, prefix + ".self_attn.q_norm", config.head_dim);
     out.k_norm = binding::norm_weight_from_source(store, source, prefix + ".self_attn.k_norm", config.head_dim);
     out.post_norm = binding::norm_weight_from_source(store, source, prefix + ".post_attention_layernorm", config.hidden_size);
-    out.mlp.gate_proj = binding::linear_from_source(store, source, prefix + ".mlp.gate_proj", storage_type, config.intermediate_size, config.hidden_size, false);
-    out.mlp.up_proj = binding::linear_from_source(store, source, prefix + ".mlp.up_proj", storage_type, config.intermediate_size, config.hidden_size, false);
+    out.mlp.gate_up_proj = modules::LinearWeights{
+        pack_projection_rows(
+            store,
+            source,
+            {{prefix + ".mlp.gate_proj.weight", config.intermediate_size},
+             {prefix + ".mlp.up_proj.weight", config.intermediate_size}},
+            storage_type,
+            config.hidden_size),
+        std::nullopt,
+    };
     out.mlp.down_proj = binding::linear_from_source(store, source, prefix + ".mlp.down_proj", storage_type, config.hidden_size, config.intermediate_size, false);
     out.rope_frequency_factors = rope_factors;
     return out;
@@ -192,15 +281,31 @@ modules::QwenDecoderLayerWeights load_depth_layer(
     const std::optional<core::TensorValue> & rope_factors,
     int64_t layer) {
     const std::string prefix = "depth_decoder.model.layers." + std::to_string(layer);
+    const int64_t q_out = config.depth_heads * config.depth_head_dim;
+    const int64_t kv_out = config.depth_kv_heads * config.depth_head_dim;
     modules::QwenDecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.depth_hidden_size);
-    out.self_attention.q_weight = store.load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.depth_heads * config.depth_head_dim, config.depth_hidden_size});
-    out.self_attention.k_weight = store.load_tensor(source, prefix + ".self_attn.k_proj.weight", storage_type, {config.depth_kv_heads * config.depth_head_dim, config.depth_hidden_size});
-    out.self_attention.v_weight = store.load_tensor(source, prefix + ".self_attn.v_proj.weight", storage_type, {config.depth_kv_heads * config.depth_head_dim, config.depth_hidden_size});
+    // Packed layout is [q; k; v] with row counts q_out, kv_out, kv_out.
+    out.self_attention.qkv_weight = pack_projection_rows(
+        store,
+        source,
+        {{prefix + ".self_attn.q_proj.weight", q_out},
+         {prefix + ".self_attn.k_proj.weight", kv_out},
+         {prefix + ".self_attn.v_proj.weight", kv_out}},
+        storage_type,
+        config.depth_hidden_size);
     out.self_attention.out_weight = store.load_tensor(source, prefix + ".self_attn.o_proj.weight", storage_type, {config.depth_hidden_size, config.depth_heads * config.depth_head_dim});
     out.post_norm = binding::norm_weight_from_source(store, source, prefix + ".post_attention_layernorm", config.depth_hidden_size);
-    out.mlp.gate_proj = binding::linear_from_source(store, source, prefix + ".mlp.gate_proj", storage_type, config.depth_intermediate_size, config.depth_hidden_size, false);
-    out.mlp.up_proj = binding::linear_from_source(store, source, prefix + ".mlp.up_proj", storage_type, config.depth_intermediate_size, config.depth_hidden_size, false);
+    out.mlp.gate_up_proj = modules::LinearWeights{
+        pack_projection_rows(
+            store,
+            source,
+            {{prefix + ".mlp.gate_proj.weight", config.depth_intermediate_size},
+             {prefix + ".mlp.up_proj.weight", config.depth_intermediate_size}},
+            storage_type,
+            config.depth_hidden_size),
+        std::nullopt,
+    };
     out.mlp.down_proj = binding::linear_from_source(store, source, prefix + ".mlp.down_proj", storage_type, config.depth_hidden_size, config.depth_intermediate_size, false);
     out.rope_frequency_factors = rope_factors;
     return out;
@@ -489,6 +594,12 @@ public:
         ggml_backend_synchronize(backend_);
         ggml_backend_tensor_get(graph.output, head_paired_staging_.data(), 0, head_paired_staging_.size() * sizeof(float));
         const size_t vocab = static_cast<size_t>(vocab_);
+        if (guidance_scale == 1.0F) {
+            // CFG is a no-op at scale 1: copy the conditional half directly,
+            // avoiding an inexact uncond + 1 * (cond - uncond) round trip.
+            std::memcpy(out, head_paired_staging_.data(), vocab * sizeof(float));
+            return;
+        }
         for (int64_t token = 0; token < vocab_; ++token) {
             const size_t index = static_cast<size_t>(token);
             out[index] = head_paired_staging_[vocab + index] + guidance_scale * (head_paired_staging_[index] - head_paired_staging_[vocab + index]);
@@ -862,21 +973,30 @@ struct BreezeGeneratorRuntime::Impl {
         std::vector<float> uncond_embeddings;
         int64_t cond_steps = 0;
         int64_t uncond_steps = 0;
+        // guidance_scale == 1 makes CFG a no-op (logits == cond), so skip the
+        // unconditional branch entirely and halve the backbone work.
+        const bool use_cfg = request.guidance_scale != 1.0F;
         const double prompt_ms = engine::debug::measure_ms([&] {
             if (!reference_codes.empty()) {
                 if (request.reference_text.empty()) {
                     throw std::runtime_error("BreezeTTS clone requires reference_text");
                 }
                 cond_branch = tokenizer.build_clone(request.text, request.instruction, request.reference_text, reference_frames);
-                uncond_branch = tokenizer.build_clone_negative(request.text, request.reference_text, reference_frames);
+                if (use_cfg) {
+                    uncond_branch = tokenizer.build_clone_negative(request.text, request.reference_text, reference_frames);
+                }
             } else {
                 cond_branch = tokenizer.build_tts_instruction(request.text, request.instruction);
-                uncond_branch = tokenizer.build_tts_plain(request.text);
+                if (use_cfg) {
+                    uncond_branch = tokenizer.build_tts_plain(request.text);
+                }
             }
             cond_embeddings = merge_prompt(cond_branch, reference_codes);
-            uncond_embeddings = merge_prompt(uncond_branch, reference_codes);
             cond_steps = static_cast<int64_t>(cond_branch.input_ids.size());
-            uncond_steps = static_cast<int64_t>(uncond_branch.input_ids.size());
+            if (use_cfg) {
+                uncond_embeddings = merge_prompt(uncond_branch, reference_codes);
+                uncond_steps = static_cast<int64_t>(uncond_branch.input_ids.size());
+            }
         });
         engine::debug::timing_log_scalar("breeze_tts.generate.prompt_ms", prompt_ms);
         text_encoder.release_runtime_graphs();
@@ -891,12 +1011,17 @@ struct BreezeGeneratorRuntime::Impl {
             backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
                 cond = backbone_cond->prefill_embeddings(cond_embeddings, cond_steps);
             });
-            modules::QwenCausalPrefillResult uncond;
-            backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
-                uncond = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
-            });
+            std::optional<modules::QwenCausalPrefillResult> uncond;
+            if (use_cfg) {
+                uncond.emplace();
+                backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
+                    *uncond = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
+                });
+            }
             backbone_cond->start_decode_embeddings(cond.state, cond_steps + request.max_tokens);
-            backbone_uncond->start_decode_embeddings(uncond.state, uncond_steps + request.max_tokens);
+            if (use_cfg) {
+                backbone_uncond->start_decode_embeddings(uncond->state, uncond_steps + request.max_tokens);
+            }
 
             sampling::HfSamplerScratch scratch;
             scratch.reserve_vocab(static_cast<size_t>(config.lm_head_size));
@@ -913,12 +1038,17 @@ struct BreezeGeneratorRuntime::Impl {
 
             codes.reserve(static_cast<size_t>(request.max_tokens * config.num_codebooks));
             for (int64_t step = 0; step < request.max_tokens; ++step) {
-                if (cond.logits.size() != uncond.logits.size()) {
+                if (use_cfg && cond.logits.size() != uncond->logits.size()) {
                     throw std::runtime_error("BreezeTTS CFG logits shape mismatch");
                 }
-                std::vector<float> logits(cond.logits.size(), 0.0F);
-                for (size_t i = 0; i < logits.size(); ++i) {
-                    logits[i] = uncond.logits[i] + request.guidance_scale * (cond.logits[i] - uncond.logits[i]);
+                std::vector<float> logits;
+                if (use_cfg) {
+                    logits.resize(cond.logits.size());
+                    for (size_t i = 0; i < logits.size(); ++i) {
+                        logits[i] = uncond->logits[i] + request.guidance_scale * (cond.logits[i] - uncond->logits[i]);
+                    }
+                } else {
+                    logits = cond.logits;
                 }
                 suppress_reserved(logits, kCodecCodebookSize, config.vocab_size);
                 const int32_t first_token = sample_logits(
@@ -940,7 +1070,7 @@ struct BreezeGeneratorRuntime::Impl {
                 }
                 const auto frame = generate_frame(
                     cond.hidden,
-                    uncond.hidden,
+                    use_cfg ? uncond->hidden : cond.hidden,
                     first_token,
                     request,
                     scratch,
@@ -959,14 +1089,16 @@ struct BreezeGeneratorRuntime::Impl {
                 backbone_cond_decode_ms += engine::debug::measure_ms([&] {
                     cond_step = backbone_cond->decode_embedding(embedded);
                 });
-                modules::QwenCausalDecodeStepResult uncond_step;
-                backbone_uncond_decode_ms += engine::debug::measure_ms([&] {
-                    uncond_step = backbone_uncond->decode_embedding(embedded);
-                });
                 cond.logits = cond_step.logits;
                 cond.hidden = cond_step.hidden;
-                uncond.logits = uncond_step.logits;
-                uncond.hidden = uncond_step.hidden;
+                if (use_cfg) {
+                    modules::QwenCausalDecodeStepResult uncond_step;
+                    backbone_uncond_decode_ms += engine::debug::measure_ms([&] {
+                        uncond_step = backbone_uncond->decode_embedding(embedded);
+                    });
+                    uncond->logits = uncond_step.logits;
+                    uncond->hidden = uncond_step.hidden;
+                }
             }
         });
         engine::debug::timing_log_scalar("breeze_tts.ar.total_ms", ar_ms);
@@ -975,7 +1107,9 @@ struct BreezeGeneratorRuntime::Impl {
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_cond_decode_ms", backbone_cond_decode_ms);
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_decode_ms", backbone_uncond_decode_ms);
         backbone_cond->release_runtime_graphs();
-        backbone_uncond->release_runtime_graphs();
+        if (use_cfg) {
+            backbone_uncond->release_runtime_graphs();
+        }
         depth_pair->release_runtime_graphs();
         if (codes.empty()) {
             throw std::runtime_error("BreezeTTS generated no audio codes");

@@ -3065,6 +3065,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
                 case GGML_UNARY_OP_TRUNC:
                     ggml_cuda_op_trunc(ctx, dst);
                     break;
+                case GGML_UNARY_OP_ROUND_BF16:
+                    ggml_cuda_op_round_bf16(ctx, dst);
+                    break;
                 case GGML_UNARY_OP_EXPM1:
                     ggml_cuda_op_expm1(ctx, dst);
                     break;
@@ -4670,7 +4673,12 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
     ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
 
     if (graph->graph == nullptr) {
-        if (ggml_cuda_info().devices[cuda_ctx->device].cc < GGML_CUDA_CC_AMPERE) {
+        // CUDA graphs are disabled by default on pre-Ampere GPUs (matching
+        // upstream, where they regressed on some parts), but can be force
+        // enabled; decode loops made of many tiny kernels benefit even on
+        // Turing.
+        static const bool allow_pre_ampere = getenv("GGML_CUDA_GRAPHS_PRE_AMPERE") != nullptr;
+        if (!allow_pre_ampere && ggml_cuda_info().devices[cuda_ctx->device].cc < GGML_CUDA_CC_AMPERE) {
             if (!graph->disable_due_to_gpu_arch) {
                 GGML_LOG_DEBUG("%s: disabling CUDA graphs due to GPU architecture\n", __func__);
             }
@@ -5356,6 +5364,12 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     // TODO: should become:
                     //return ggml_is_contiguous_rows(op->src[0]);
                     return ggml_is_contiguous(op->src[0]);
+                case GGML_UNARY_OP_ROUND_BF16:
+                    // f32/f16/bf16 src with contiguous rows, contiguous f32 dst.
+                    return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 ||
+                            op->src[0]->type == GGML_TYPE_BF16) &&
+                           op->type == GGML_TYPE_F32 && ggml_is_contiguous(op) &&
+                           ggml_is_contiguous_rows(op->src[0]);
                 default:
                     return false;
             }
