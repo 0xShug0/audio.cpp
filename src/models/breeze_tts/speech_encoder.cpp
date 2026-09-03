@@ -73,6 +73,19 @@ constexpr modules::Conv1dConfig kDownsampleConvConfig{512, 512, 4, 2, 0, 1, fals
 constexpr modules::Conv1dConfig kSemanticProjectionConfig{512, 256, 1, 1, 0, 1, false};
 constexpr modules::Conv1dConfig kAcousticProjectionConfig{512, 256, 1, 1, 0, 1, false};
 
+// The conv stack downsamples 960x before the transformer (strides 4*5*6*8).
+constexpr int64_t kTransformerStride = 960;
+// Conv chunks are kChunkSamples of new audio preceded by kChunkOverlapSamples of
+// left context. The exact left context the stack needs is the sum of each
+// layer's left pad scaled by the cumulative stride:
+// 6+2 + 4+2*4 + 5*4+2*20 + 6*20+2*120 + 8*120+2*960 + 2*960 = 5240 samples.
+constexpr int64_t kChunkSamples = 120000;  // 5 s at 24 kHz, 125 transformer frames
+constexpr int64_t kChunkOverlapSamples = 9600;  // 10 transformer frames > 5240
+constexpr int64_t kChunkCapacity = kChunkSamples + kChunkOverlapSamples;
+static_assert(kChunkSamples % kTransformerStride == 0);
+static_assert(kChunkOverlapSamples % kTransformerStride == 0);
+constexpr int64_t kChunkFrames = kChunkCapacity / kTransformerStride;
+
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
         if (ctx != nullptr) {
@@ -415,24 +428,23 @@ std::shared_ptr<const BreezeSpeechEncoderWeights> load_weights(
     return weights;
 }
 
-class BreezeSpeechEncoderGraph {
+// Conv stack runs on fixed-size chunks (plus left overlap), so its graph
+// memory is constant regardless of reference length. Chunk outputs stitch
+// exactly: chunk lengths are multiples of kTransformerStride, so no per-stage
+// right padding occurs, and discarded overlap frames absorb the zero left
+// pads that represent audio start in the first chunk.
+class BreezeSpeechEncoderConvGraph {
 public:
-    BreezeSpeechEncoderGraph(
+    BreezeSpeechEncoderConvGraph(
         std::shared_ptr<const BreezeSpeechEncoderWeights> weights,
-        int64_t sample_capacity,
         core::ExecutionContext & execution_context,
         core::ConstantTensorCache & constants,
         size_t graph_arena_bytes)
         : weights_(std::move(weights)),
-          sample_capacity_(sample_capacity),
-          frames_((sample_capacity + kDownsampleRate - 1) / kDownsampleRate),
           backend_(execution_context.backend()),
           compute_threads_(std::max(1, execution_context.config().threads)) {
         if (weights_ == nullptr) {
-            throw std::runtime_error("Breeze speech encoder graph requires weights");
-        }
-        if (sample_capacity_ <= 0) {
-            throw std::runtime_error("Breeze speech encoder graph requires positive sample capacity");
+            throw std::runtime_error("Breeze speech encoder conv graph requires weights");
         }
         if (backend_ == nullptr) {
             throw std::runtime_error("Breeze speech encoder backend is not initialized");
@@ -445,15 +457,15 @@ public:
         };
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize Breeze speech encoder ggml context");
+            throw std::runtime_error("failed to initialize Breeze speech encoder conv ggml context");
         }
 
         core::ModuleBuildContext build_ctx{
             ctx_.get(),
-            "breeze_tts.speech_encoder",
+            "breeze_tts.speech_encoder.conv",
             execution_context.backend_type(),
         };
-        auto x = core::make_tensor(build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, sample_capacity_}));
+        auto x = core::make_tensor(build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, kChunkCapacity}));
         input_ = x.tensor;
 
         constants.begin_graph();
@@ -465,25 +477,123 @@ public:
         }
         x = modules::EluModule{}.build(build_ctx, x);
         x = speech_conv(build_ctx, x, weights_->encoder_convs.back(), kEncoderConvConfigs.back(), kEncoderConvPadModes.back());
-
         auto seq = modules::TransposeModule({{0, 2, 1, 3}, x.shape.rank}).build(build_ctx, x);
         seq = core::ensure_backend_addressable_layout(build_ctx, seq);
-        transformer_frames_ = seq.shape.dims[1];
-        positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, transformer_frames_);
-        auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({transformer_frames_}), GGML_TYPE_I32);
-        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, transformer_frames_, transformer_frames_, 1, 1);
+        output_ = seq.tensor;
+        ggml_set_output(output_);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
+        ggml_build_forward_expand(graph_, output_);
+        constants.finish_graph();
+        constants.ensure_uploaded();
+
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            throw std::runtime_error("failed to allocate Breeze speech encoder conv graph");
+        }
+    }
+
+    ~BreezeSpeechEncoderConvGraph() {
+        engine::core::release_backend_graph_resources(backend_, graph_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+        }
+    }
+
+    bool matches(const BreezeSpeechEncoderWeights & weights, ggml_backend_t backend, int threads) const {
+        return weights_.get() == &weights && backend_ == backend && compute_threads_ == std::max(1, threads);
+    }
+
+    std::vector<float> run(const std::vector<float> & chunk_input) {
+        if (static_cast<int64_t>(chunk_input.size()) != kChunkCapacity) {
+            throw std::runtime_error("Breeze speech encoder conv chunk size mismatch");
+        }
+        ggml_backend_tensor_set(input_, chunk_input.data(), 0, chunk_input.size() * sizeof(float));
+        core::set_backend_threads(backend_, compute_threads_);
+        const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+        ggml_backend_synchronize(backend_);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("Breeze speech encoder conv graph compute failed");
+        }
+        std::vector<float> features(static_cast<size_t>(kHiddenSize * kChunkFrames));
+        ggml_backend_tensor_get(output_, features.data(), 0, features.size() * sizeof(float));
+        return features;
+    }
+
+private:
+    std::shared_ptr<const BreezeSpeechEncoderWeights> weights_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    ggml_tensor * input_ = nullptr;
+    ggml_tensor * output_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+    ggml_backend_t backend_ = nullptr;
+    int compute_threads_ = 1;
+    ggml_gallocr_t gallocr_ = nullptr;
+};
+
+// Transformer + downsample + projections run once over the full frame
+// sequence; at frame scale (960x downsampled) this graph is a few tens of MiB
+// even for minute-long references. Attention is causal, so frames computed
+// from right-padded tail regions never affect earlier frames.
+class BreezeSpeechEncoderTransformerGraph {
+public:
+    BreezeSpeechEncoderTransformerGraph(
+        std::shared_ptr<const BreezeSpeechEncoderWeights> weights,
+        int64_t frames,
+        core::ExecutionContext & execution_context,
+        core::ConstantTensorCache & constants,
+        size_t graph_arena_bytes)
+        : weights_(std::move(weights)),
+          frames_(frames),
+          backend_(execution_context.backend()),
+          compute_threads_(std::max(1, execution_context.config().threads)) {
+        if (weights_ == nullptr) {
+            throw std::runtime_error("Breeze speech encoder transformer graph requires weights");
+        }
+        if (frames_ <= 0) {
+            throw std::runtime_error("Breeze speech encoder transformer graph requires positive frame count");
+        }
+        if (backend_ == nullptr) {
+            throw std::runtime_error("Breeze speech encoder backend is not initialized");
+        }
+
+        ggml_init_params params{
+            /*.mem_size   =*/ graph_arena_bytes,
+            /*.mem_buffer =*/ nullptr,
+            /*.no_alloc   =*/ true,
+        };
+        ctx_.reset(ggml_init(params));
+        if (ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize Breeze speech encoder transformer ggml context");
+        }
+
+        core::ModuleBuildContext build_ctx{
+            ctx_.get(),
+            "breeze_tts.speech_encoder.transformer",
+            execution_context.backend_type(),
+        };
+        auto seq = core::make_tensor(
+            build_ctx,
+            GGML_TYPE_F32,
+            core::TensorShape::from_dims({1, frames_, kHiddenSize}));
+        input_ = seq.tensor;
+
+        constants.begin_graph();
+        positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, frames_);
+        auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({frames_}), GGML_TYPE_I32);
+        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, frames_, frames_, 1, 1);
         const auto attention_mask = core::wrap_tensor(
             attention_mask_,
-            core::TensorShape::from_dims({1, 1, transformer_frames_, transformer_frames_}),
+            core::TensorShape::from_dims({1, 1, frames_, frames_}),
             GGML_TYPE_F16);
         for (const auto & layer : weights_->transformer_layers) {
             seq = transformer_block(build_ctx, seq, positions_value, layer, attention_mask);
         }
-        x = modules::TransposeModule({{0, 2, 1, 3}, seq.shape.rank}).build(build_ctx, seq);
+        auto x = modules::TransposeModule({{0, 2, 1, 3}, seq.shape.rank}).build(build_ctx, seq);
         x = core::ensure_backend_addressable_layout(build_ctx, x);
         x = speech_conv(build_ctx, x, weights_->downsample, kDownsampleConvConfig, modules::StreamingPadMode::Replicate);
         auto semantic = speech_conv(build_ctx, x, weights_->semantic_projection, kSemanticProjectionConfig, modules::StreamingPadMode::Constant);
         auto acoustic = speech_conv(build_ctx, x, weights_->acoustic_projection, kAcousticProjectionConfig, modules::StreamingPadMode::Constant);
+        output_frames_ = semantic.shape.dims[2];
         semantic_output_ = semantic.tensor;
         acoustic_output_ = acoustic.tensor;
         ggml_set_output(semantic_output_);
@@ -496,55 +606,53 @@ public:
 
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-            throw std::runtime_error("failed to allocate Breeze speech encoder graph");
+            throw std::runtime_error("failed to allocate Breeze speech encoder transformer graph");
         }
-        positions_data_.resize(static_cast<size_t>(transformer_frames_));
-        for (int64_t i = 0; i < transformer_frames_; ++i) {
+        positions_data_.resize(static_cast<size_t>(frames_));
+        for (int64_t i = 0; i < frames_; ++i) {
             positions_data_[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         }
         if (attention_mask_ != nullptr) {
-            auto mask = modules::qwen_causal_prefill_mask_values(1, transformer_frames_);
+            auto mask = modules::qwen_causal_prefill_mask_values(1, frames_);
             attention_mask_data_ = std::move(mask);
         }
         upload_static_inputs();
     }
 
-    ~BreezeSpeechEncoderGraph() {
+    ~BreezeSpeechEncoderTransformerGraph() {
         engine::core::release_backend_graph_resources(backend_, graph_);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
     }
 
-    bool matches(const BreezeSpeechEncoderWeights & weights, int64_t samples, ggml_backend_t backend, int threads) const {
-        return weights_.get() == &weights && sample_capacity_ == samples && backend_ == backend &&
+    bool matches(const BreezeSpeechEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads) const {
+        return weights_.get() == &weights && frames_ == frames && backend_ == backend &&
             compute_threads_ == std::max(1, threads);
     }
 
-    BreezeSpeechEncoderOutput run(const std::vector<float> & waveform) {
-        if (static_cast<int64_t>(waveform.size()) > sample_capacity_) {
-            throw std::runtime_error("Breeze speech encoder waveform exceeds graph capacity");
+    BreezeSpeechEncoderOutput run(const std::vector<float> & features) {
+        if (static_cast<int64_t>(features.size()) != kHiddenSize * frames_) {
+            throw std::runtime_error("Breeze speech encoder transformer input size mismatch");
         }
         upload_static_inputs();
-        std::vector<float> padded(static_cast<size_t>(sample_capacity_), 0.0F);
-        std::copy(waveform.begin(), waveform.end(), padded.begin());
-        ggml_backend_tensor_set(input_, padded.data(), 0, padded.size() * sizeof(float));
+        ggml_backend_tensor_set(input_, features.data(), 0, features.size() * sizeof(float));
         core::set_backend_threads(backend_, compute_threads_);
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Breeze speech encoder graph compute failed");
+            throw std::runtime_error("Breeze speech encoder transformer graph compute failed");
         }
         BreezeSpeechEncoderOutput out;
-        out.semantic_projected.resize(static_cast<size_t>(kQuantizerDim * frames_));
-        out.acoustic_projected.resize(static_cast<size_t>(kQuantizerDim * frames_));
+        out.semantic_projected.resize(static_cast<size_t>(kQuantizerDim * output_frames_));
+        out.acoustic_projected.resize(static_cast<size_t>(kQuantizerDim * output_frames_));
         ggml_backend_tensor_get(semantic_output_, out.semantic_projected.data(), 0, out.semantic_projected.size() * sizeof(float));
         ggml_backend_tensor_get(acoustic_output_, out.acoustic_projected.data(), 0, out.acoustic_projected.size() * sizeof(float));
         return out;
     }
 
-    int64_t frames() const noexcept {
-        return frames_;
+    int64_t output_frames() const noexcept {
+        return output_frames_;
     }
 
 private:
@@ -564,9 +672,8 @@ private:
     }
 
     std::shared_ptr<const BreezeSpeechEncoderWeights> weights_;
-    int64_t sample_capacity_ = 0;
     int64_t frames_ = 0;
-    int64_t transformer_frames_ = 0;
+    int64_t output_frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * positions_ = nullptr;
@@ -623,18 +730,49 @@ BreezeSpeechCodes BreezeSpeechEncoderRuntime::encode(const runtime::AudioBuffer 
         static_cast<int>(kSampleRate));
     const int64_t valid_samples = static_cast<int64_t>(waveform.size());
     const int64_t frames = std::max<int64_t>(1, (valid_samples + kDownsampleRate - 1) / kDownsampleRate);
-    const int64_t sample_capacity = valid_samples;
+    const int64_t transformer_frames = (valid_samples + kTransformerStride - 1) / kTransformerStride;
     const int threads = std::max(1, execution_context_->config().threads);
-    if (graph_ == nullptr || !graph_->matches(*weights_, sample_capacity, execution_context_->backend(), threads)) {
-        graph_.reset();
-        graph_ = std::make_unique<BreezeSpeechEncoderGraph>(
+    if (conv_graph_ == nullptr || !conv_graph_->matches(*weights_, execution_context_->backend(), threads)) {
+        conv_graph_.reset();
+        conv_graph_ = std::make_unique<BreezeSpeechEncoderConvGraph>(
             weights_,
-            sample_capacity,
             *execution_context_,
             *constants_,
             graph_arena_bytes_);
     }
-    auto out = graph_->run(waveform);
+    if (transformer_graph_ == nullptr ||
+        !transformer_graph_->matches(*weights_, transformer_frames, execution_context_->backend(), threads)) {
+        transformer_graph_.reset();
+        transformer_graph_ = std::make_unique<BreezeSpeechEncoderTransformerGraph>(
+            weights_,
+            transformer_frames,
+            *execution_context_,
+            *constants_,
+            graph_arena_bytes_);
+    }
+
+    std::vector<float> features(static_cast<size_t>(kHiddenSize * transformer_frames));
+    std::vector<float> chunk_input(static_cast<size_t>(kChunkCapacity));
+    int64_t dst_frame = 0;
+    for (int64_t pos = 0; pos < valid_samples; pos += kChunkSamples) {
+        const int64_t overlap = pos > 0 ? kChunkOverlapSamples : 0;
+        const int64_t fresh = std::min(kChunkSamples, valid_samples - pos);
+        std::fill(chunk_input.begin(), chunk_input.end(), 0.0F);
+        std::copy(
+            waveform.begin() + (pos - overlap),
+            waveform.begin() + (pos + fresh),
+            chunk_input.begin());
+        const auto chunk_features = conv_graph_->run(chunk_input);
+        const int64_t skip_frames = overlap / kTransformerStride;
+        const int64_t keep_frames = (fresh + kTransformerStride - 1) / kTransformerStride;
+        std::copy_n(
+            chunk_features.begin() + skip_frames * kHiddenSize,
+            keep_frames * kHiddenSize,
+            features.begin() + dst_frame * kHiddenSize);
+        dst_frame += keep_frames;
+    }
+
+    auto out = transformer_graph_->run(features);
     out.codes.frames = frames;
     out.codes.code_groups = kValidQuantizers;
     out.codes.codes = quantize_projected(out.semantic_projected, out.acoustic_projected, frames, *weights_);
@@ -643,7 +781,8 @@ BreezeSpeechCodes BreezeSpeechEncoderRuntime::encode(const runtime::AudioBuffer 
 }
 
 void BreezeSpeechEncoderRuntime::release_runtime_graphs() const {
-    graph_.reset();
+    conv_graph_.reset();
+    transformer_graph_.reset();
 }
 
 }  // namespace engine::models::breeze_tts
