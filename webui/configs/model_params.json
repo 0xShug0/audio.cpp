@@ -371,5 +371,82 @@
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.9, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
     {"name": "max_tokens", "type": "number", "label": "max_tokens", "default": 1024, "minimum": 1, "step": 1, "precision": 0}
+  ],
+  "dots_tts": [
+    {"name": "template_name", "type": "choice", "label": "template_name", "label_en": "Template", "default": "tts", "choices": ["tts", "instruction_tts", "text_to_audio", "tts_interleave", "edit"], "info_en": "Generation template. instruction_tts and edit need an instruction; edit also needs source audio plus source_text and target_text."},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "label_en": "Sampling steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "label_en": "Guidance scale", "default": 1.2, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
+    {"name": "speaker_scale", "type": "slider", "label": "speaker_scale", "label_en": "Speaker scale", "default": 1.5, "minimum": 0.0, "maximum": 5.0, "step": 0.1, "info_en": "Classifier-free guidance weight on the speaker reference."},
+    {"name": "sampler_mode", "type": "choice", "label": "sampler_mode", "label_en": "ODE sampler", "default": "euler", "choices": ["euler", "midpoint", "rk4"]},
+    {"name": "vocoder_merge_steps", "type": "number", "label": "vocoder_merge_steps", "label_en": "Vocoder merge steps", "default": 4, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "use_xvector", "type": "choice", "label": "use_xvector", "label_en": "Speaker x-vector", "default": "auto", "choices": ["auto", "on", "off"]},
+    {"name": "reference_duration_sec", "type": "number", "label": "reference_duration_sec", "label_en": "Reference trim (s)", "minimum": 0.0, "step": 0.5, "info_en": "Blank uses the whole reference clip."},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "label_en": "Text chunk size", "default": 320, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "label_en": "Text chunk mode", "default": "tag_aware", "choices": ["default", "tag_aware", "japanese", "endline"]},
+    {"name": "instruction", "type": "text", "label": "instruction", "label_en": "instruction (instruction_tts / edit)", "default": "", "placeholder_en": "Style or edit instruction"},
+    {"name": "source_text", "type": "text", "label": "source_text", "label_en": "source_text (edit template)", "default": "", "placeholder_en": "Transcript of the source audio"},
+    {"name": "target_text", "type": "text", "label": "target_text", "label_en": "target_text (edit template)", "default": "", "placeholder_en": "Transcript the edit should produce"}
+  ],
+  "fish_audio": [
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 0.8, "minimum": 0.05, "maximum": 1.95, "step": 0.05, "info_en": "Must stay strictly between 0 and 2."},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 0.8, "minimum": 0.01, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 30, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "label_en": "Text chunk size", "default": 200, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "label_en": "Text chunk mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
+  ],
+  "glm_tts": [
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 1.0, "minimum": 0.05, "maximum": 2.0, "step": 0.05},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 25, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "label_en": "Flow steps", "minimum": 1, "step": 1, "precision": 0, "info_en": "Blank uses the packaged checkpoint's value (C++ fallback 10)."},
+    {"name": "flow_guidance_scale", "type": "number", "label": "flow_guidance_scale", "label_en": "Flow guidance scale", "minimum": 0.0, "step": 0.05, "info_en": "Blank uses the packaged checkpoint's value (C++ fallback 0.7)."}
+  ],
+  "higgs_audio_tts": [
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 0.8, "minimum": 0.05, "maximum": 2.0, "step": 0.05},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 0.8, "minimum": 0.01, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 30, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "label_en": "Text chunk size", "default": 1024, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "label_en": "Text chunk mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
+  ],
+  "muscriptor": [
+    {"name": "output_format", "type": "choice", "label": "output_format", "label_en": "Output format", "default": "midi", "choices": ["midi", "json"]},
+    {"name": "instruments", "type": "text", "label": "instruments", "label_en": "Instruments", "default": "", "placeholder_en": "Comma-separated instrument names; blank transcribes all"},
+    {"name": "do_sample", "type": "bool", "label": "do_sample", "label_en": "Sample", "default": false},
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "label_en": "Guidance scale", "default": 1.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1, "info_en": "Exactly 1.0 disables classifier-free guidance; other values double the conditioning batch."},
+    {"name": "num_beams", "type": "number", "label": "num_beams", "label_en": "Beam count", "default": 1, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "batch_size", "type": "number", "label": "batch_size", "label_en": "Batch size", "default": 1, "minimum": 1, "step": 1, "precision": 0, "info_en": "Values above 1 require prelude_forcing to be off."},
+    {"name": "prelude_forcing", "type": "bool", "label": "prelude_forcing", "label_en": "Prelude forcing", "default": true}
+  ],
+  "outetts": [
+    {"name": "temperature", "type": "number", "label": "temperature", "label_en": "Temperature", "minimum": 0.0, "step": 0.05, "info_en": "Blank uses the packaged checkpoint's value (C++ fallback 0.4)."},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "minimum": 0, "step": 1, "precision": 0, "info_en": "Blank uses the packaged checkpoint's value (C++ fallback 40)."},
+    {"name": "top_p", "type": "number", "label": "top_p", "label_en": "Top-p", "minimum": 0.01, "maximum": 1.0, "step": 0.01, "info_en": "Blank uses the packaged checkpoint's value (C++ fallback 0.9). Must be above 0."},
+    {"name": "min_p", "type": "number", "label": "min_p", "label_en": "Min-p", "minimum": 0.0, "maximum": 1.0, "step": 0.01, "info_en": "Blank uses the packaged checkpoint's value (C++ fallback 0.05)."},
+    {"name": "repetition_penalty", "type": "number", "label": "repetition_penalty", "label_en": "Repetition penalty", "minimum": 0.01, "step": 0.01, "info_en": "Blank uses the packaged checkpoint's value (C++ fallback 1.1). Must be above 0."},
+    {"name": "repetition_window", "type": "number", "label": "repetition_window", "label_en": "Repetition window", "default": 64, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "reference_language", "type": "text", "label": "reference_language", "label_en": "Reference language", "default": "", "placeholder_en": "Blank follows the request language, else en"},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "label_en": "Text chunk size", "default": 256, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "label_en": "Text chunk mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
+  ],
+  "soprano_tts": [
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 0.3, "minimum": 0.05, "maximum": 2.0, "step": 0.05, "info_en": "Must be above 0."},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 0.95, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "label_en": "Repetition penalty", "default": 1.2, "minimum": 1.0, "maximum": 2.0, "step": 0.01},
+    {"name": "eos_bias", "type": "slider", "label": "eos_bias", "label_en": "End-of-speech bias", "default": 0.0, "minimum": -5.0, "maximum": 5.0, "step": 0.1, "info_en": "Positive values stop generation sooner."}
+  ],
+  "vietneu_tts": [
+    {"name": "do_sample", "type": "bool", "label": "do_sample", "label_en": "Sample", "default": true},
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "label_en": "Repetition penalty", "default": 1.05, "minimum": 1.0, "maximum": 2.0, "step": 0.01},
+    {"name": "subtalker_do_sample", "type": "bool", "label": "subtalker_do_sample", "label_en": "Sub-talker: sample", "default": true},
+    {"name": "subtalker_temperature", "type": "slider", "label": "subtalker_temperature", "label_en": "Sub-talker: temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "subtalker_top_k", "type": "number", "label": "subtalker_top_k", "label_en": "Sub-talker: top-k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "subtalker_top_p", "type": "slider", "label": "subtalker_top_p", "label_en": "Sub-talker: top-p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "x_vector_only_mode", "type": "bool", "label": "x_vector_only_mode", "label_en": "Speaker-embedding-only mode", "default": false, "info_en": "Condition on the speaker embedding alone instead of in-context reference audio."},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "label_en": "Text chunk size", "default": 200, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "label_en": "Text chunk mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
   ]
 }
