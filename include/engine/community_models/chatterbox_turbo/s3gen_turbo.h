@@ -20,10 +20,9 @@ namespace engine::community_models::chatterbox_turbo {
 // tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py) stores S3Gen tensors
 // under the same names those loaders already expect, so no name translation is needed here.
 //
-// MVP scope: only the built-in default voice baked into the T3 GGUF's `conds.gen.*` tensors is
-// supported (no custom voice cloning yet) -- that path needs the turbo checkpoint's `s3.se`
-// (ResNet-style speaker encoder, not CAMPPlus) and `s3.tok` (S3 speech tokenizer) sections, which
-// are unverified and out of scope for this pass. See ChatterboxTurboAssets.
+// Only the built-in default voice baked into the T3 GGUF's `conds.gen.*` tensors is supported.
+// The turbo checkpoint's `s3.se` speaker encoder and `s3.tok` speech tokenizer sections are not
+// used by this family.
 class ChatterboxTurboS3Gen {
 public:
     static std::shared_ptr<ChatterboxTurboS3Gen> load(

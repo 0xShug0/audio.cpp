@@ -51,8 +51,8 @@ ChatterboxTurboSession::ChatterboxTurboSession(
     if (!assets_) {
         throw std::runtime_error("Chatterbox Turbo session requires assets");
     }
-    if (task_.task != runtime::VoiceTaskKind::VoiceCloning) {
-        throw std::runtime_error("Chatterbox Turbo session supports --task clone only");
+    if (task_.task != runtime::VoiceTaskKind::Tts) {
+        throw std::runtime_error("Chatterbox Turbo session supports --task tts only");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Chatterbox Turbo session only supports offline mode");
@@ -79,7 +79,7 @@ void ChatterboxTurboSession::prepare(const runtime::SessionPreparationRequest & 
     }
     if (request.voice.has_value() && request.voice->speaker.has_value() && request.voice->speaker->audio.has_value()) {
         throw std::runtime_error(
-            "Chatterbox Turbo does not yet support custom voice cloning (only the built-in default voice) "
+            "Chatterbox Turbo does not support custom voice cloning (only the built-in default voice) "
             "-- omit the speaker reference audio to use the built-in voice");
     }
     if (!component_) {

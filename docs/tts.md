@@ -106,7 +106,7 @@ Chatterbox Turbo is a [community model](community_models/chatterbox_turbo.md): R
 distilled 350M-parameter sibling of Chatterbox, with a GPT2-style T3 backbone (vs. the base
 model's 0.5B Llama-style backbone), a GPT2 BPE tokenizer with 19 built-in emotion/style tags
 (`[laugh]`, `[sigh]`, ...), and a 2-step meanflow-distilled S3Gen decoder (vs. the base model's
-10-step CFG decoder) for substantially faster generation. It is English-only.
+10-step CFG decoder) for substantially faster built-in-voice TTS. It is English-only.
 
 `chatterbox_turbo` is a separate model family from `chatterbox` (not a variant selectable within
 it): its T3 backbone and tokenizer differ from the base model's, and it reuses base Chatterbox's
@@ -118,23 +118,22 @@ project, MIT-relicensed) with
 [`tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py`](../tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py)
 — see that model's community doc for details.
 
-**Current limitations:** only the built-in default voice baked into the package is supported —
-custom voice cloning (a caller-supplied reference clip) is not implemented yet, since it depends
-on the checkpoint's speaker-encoder and S3-tokenizer sections, whose exact tensor layout hasn't
-been validated. `--voice-ref` is rejected with an explicit error rather than silently ignored.
+**Current limitations:** only the built-in default voice baked into the package is supported.
+Custom voice cloning is not supported; `--voice-ref` is rejected with an explicit error rather
+than silently ignored.
 
 | Field | Value |
 |---|---|
 | Family | `chatterbox_turbo` |
 | Model directory | `Chatterbox-Turbo-GGUF/chatterbox-turbo-{q8_0,f16}.gguf` (single self-contained file) |
-| Tasks | `clon` (built-in voice only) |
+| Tasks | `tts` |
 | Modes | `offline` |
 | Languages | `en` |
-| Voice input | Not yet supported — omit `--voice-ref` to use the built-in voice |
+| Voice input | Not supported — omit `--voice-ref` to use the built-in voice |
 | Built-in voices | One, embedded in the package |
 
 ```bash
-audiocpp_cli --task clon --family chatterbox_turbo --model models/Chatterbox-Turbo-GGUF/chatterbox-turbo-q8_0.gguf --backend cuda --text "Hello from Chatterbox Turbo." --out out.wav
+audiocpp_cli --task tts --family chatterbox_turbo --model models/Chatterbox-Turbo-GGUF/chatterbox-turbo-q8_0.gguf --backend cuda --text "Hello from Chatterbox Turbo." --out out.wav
 ```
 
 | Option | Values | Default | Meaning |

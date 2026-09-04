@@ -4,12 +4,10 @@
 distilled 350M-parameter sibling of Chatterbox (see [the Chatterbox section in docs/tts.md](../tts.md#chatterbox)): a GPT2-style T3
 backbone (vs. the base model's 0.5B Llama-style backbone), a GPT2 BPE tokenizer with 19 built-in
 emotion/style tags (`[laugh]`, `[sigh]`, ...), and a 2-step meanflow-distilled S3Gen decoder (vs.
-the base model's 10-step CFG decoder) for substantially faster generation. English-only.
+the base model's 10-step CFG decoder) for substantially faster built-in-voice TTS. English-only.
 
 **Status: testing.** The T3 backbone and the built-in default voice both load and generate
-audio end to end. Custom voice cloning (a caller-supplied reference clip) is not implemented
-yet — it depends on the checkpoint's speaker-encoder and S3-tokenizer sections, whose tensor
-layout has not been validated. This family lives under `community_models` rather than the core
+audio end to end. Custom voice cloning is not supported. This family lives under `community_models` rather than the core
 model tree because it does not yet have the CUDA/Vulkan/Metal runtime test coverage core models
 carry.
 
@@ -51,7 +49,7 @@ this codebase reads them yet (see Current limitations above).
 cmake --build build/debug --parallel --target audiocpp_gguf
 
 # 2. Get the upstream third-party GGUF pair (~1 GB for Q8_0)
-huggingface-cli download cstr/chatterbox-turbo-GGUF \
+hf download cstr/chatterbox-turbo-GGUF \
     chatterbox-turbo-t3-q8_0.gguf chatterbox-turbo-s3gen-q8_0.gguf \
     --local-dir /tmp/chatterbox-turbo-src
 
@@ -69,7 +67,7 @@ Verify with `build/debug/bin/audiocpp_gguf --inspect models/Chatterbox-Turbo-GGU
 ## Usage
 
 ```bash
-audiocpp_cli --task clon --family chatterbox_turbo \
+audiocpp_cli --task tts --family chatterbox_turbo \
     --model models/Chatterbox-Turbo-GGUF/chatterbox-turbo-q8_0.gguf \
     --backend cuda --text "Hello from Chatterbox Turbo." --out out.wav
 ```

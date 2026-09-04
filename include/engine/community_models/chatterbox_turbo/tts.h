@@ -27,8 +27,7 @@ struct ChatterboxTurboGenerateConfig {
 };
 
 // Orchestrates the full Turbo TTS pipeline (T3 GPT2 backbone -> S3Gen meanflow decoder -> HiFT
-// vocoder) using only the built-in default voice baked into the T3 GGUF's `conds.*` tensors —
-// custom voice cloning is not implemented yet (see s3gen_turbo.h).
+// vocoder) using only the built-in default voice baked into the T3 GGUF's `conds.*` tensors.
 class ChatterboxTurboTtsComponent {
 public:
     ChatterboxTurboTtsComponent(

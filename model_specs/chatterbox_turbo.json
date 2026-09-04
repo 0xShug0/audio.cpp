@@ -1,12 +1,11 @@
 {
   "family": "chatterbox_turbo",
   "display_name": "Chatterbox Turbo",
-  "description": "Resemble AI's distilled 350M Chatterbox Turbo: GPT2 T3 backbone, GPT2 BPE tokenizer, and a 2-step meanflow S3Gen decoder for fast English TTS and zero-shot voice cloning.",
+  "description": "Resemble AI's distilled 350M Chatterbox Turbo: GPT2 T3 backbone, GPT2 BPE tokenizer, and a 2-step meanflow S3Gen decoder for fast English TTS with a built-in voice.",
   "category": "tts",
   "status": "testing",
   "tasks": [
-    "tts",
-    "clone"
+    "tts"
   ],
   "modes": [
     "offline"
@@ -14,11 +13,7 @@
   "languages": [
     "en"
   ],
-  "capabilities": {
-    "clone": [
-      "speaker_reference"
-    ]
-  },
+  "capabilities": {},
   "runtime": {
     "tags": [
       "gguf"
@@ -28,7 +23,6 @@
     "recommended_package": "chatterbox_turbo_q8_0",
     "tags": [
       "TTS",
-      "Clone",
       "GGUF"
     ],
     "docs": [

@@ -13,11 +13,8 @@ namespace {
 
 runtime::CapabilitySet capabilities(const ChatterboxTurboAssets &) {
     runtime::CapabilitySet out;
-    out.supported_tasks.push_back({runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}});
+    out.supported_tasks.push_back({runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}});
     out.languages = {"en"};
-    // Custom voice cloning (a caller-supplied speaker reference) is not implemented yet -- only
-    // the built-in default voice baked into the GGUF's `conds.*` tensors is supported. Advertise
-    // this honestly rather than claiming speaker-reference support the loader would reject.
     out.supports_speaker_reference = false;
     out.supports_style_condition = false;
     return out;
@@ -29,7 +26,7 @@ runtime::ModelMetadata metadata(const ChatterboxTurboAssets & assets) {
     out.variant = assets.resources.model_root().filename().string();
     out.description =
         "Chatterbox Turbo (distilled GPT2 T3 backbone + meanflow S3Gen decoder) loaded from local assets. "
-        "Built-in default voice only; custom voice cloning is not yet implemented.";
+        "Built-in default voice only.";
     return out;
 }
 
@@ -41,7 +38,7 @@ public:
 
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
-        out.supported_tasks.push_back({runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}});
+        out.supported_tasks.push_back({runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}});
         out.languages = {"en"};
         out.supports_speaker_reference = false;
         out.supports_style_condition = false;
@@ -107,8 +104,8 @@ const runtime::CapabilitySet & ChatterboxTurboLoadedModel::capabilities() const 
 std::unique_ptr<runtime::IVoiceTaskSession> ChatterboxTurboLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.task != runtime::VoiceTaskKind::VoiceCloning) {
-        throw std::runtime_error("Chatterbox Turbo supports VoiceCloning only");
+    if (task.task != runtime::VoiceTaskKind::Tts) {
+        throw std::runtime_error("Chatterbox Turbo supports TTS only");
     }
     if (task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Chatterbox Turbo only supports offline mode");
