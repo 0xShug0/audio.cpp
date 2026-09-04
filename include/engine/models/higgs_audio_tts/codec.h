@@ -117,6 +117,11 @@ public:
     void release_runtime_graphs();
 
 private:
+    HiggsCodecDecodeOutput decode_codes_impl(
+        const std::vector<int32_t> & codes,
+        int64_t frames,
+        int64_t codebooks) const;
+
     std::shared_ptr<const HiggsAssets> assets_;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
