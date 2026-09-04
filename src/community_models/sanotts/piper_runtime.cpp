@@ -2,9 +2,7 @@
 
 #include "graph_common.h"
 
-#include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/conv_modules.h"
-#include "engine/framework/runtime/cache_slots.h"
 
 #include <algorithm>
 #include <chrono>
@@ -45,7 +43,7 @@ constexpr int64_t kUpPaddings[3] = {4, 4, 2};
  *  vocab-size mismatch (e.g. duration vocab 127 vs table ids to 156). */
 constexpr int32_t kSchwaFallbackId = 59;
 
-size_t expected_piper_tensor_count(const SanoTtsPiperConfig & config) {
+size_t expected_tensor_count(const SanoTtsPiperConfig & config) {
     const auto duration = 5 + 5 * config.duration_depth;
     const auto acoustic =
         7 + 5 * (config.acoustic_token_depth + config.acoustic_depth);
@@ -280,165 +278,6 @@ core::TensorValue post_filter(
         GGML_TYPE_F32);
 }
 
-// ---- graphs --------------------------------------------------------------
-
-struct DurationGraph : GraphResources {
-    int64_t token_count = 0;
-    ggml_tensor * tokens = nullptr;
-    ggml_tensor * feats = nullptr;
-    ggml_tensor * log_duration = nullptr;
-};
-
-std::unique_ptr<DurationGraph> build_duration_graph(
-    const SanoTtsBackendWeights & weights,
-    const SanoTtsPiperConfig & config,
-    ggml_backend_t backend,
-    core::BackendType backend_type,
-    int64_t token_count) {
-    auto out = std::make_unique<DurationGraph>();
-    out->backend = backend;
-    out->token_count = token_count;
-    out->io_context.reset(ggml_init({kIoArenaBytes, nullptr, true}));
-    out->graph_context.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
-    if (out->io_context == nullptr || out->graph_context == nullptr) {
-        throw std::runtime_error("sanoTTS failed to create duration graph contexts");
-    }
-    core::ModuleBuildContext io_ctx{
-        out->io_context.get(),
-        "sanotts.piper.duration.io",
-        backend_type,
-    };
-    core::ModuleBuildContext ctx{
-        out->graph_context.get(),
-        "sanotts.piper.duration",
-        backend_type,
-    };
-    auto tokens = core::make_tensor(
-        io_ctx,
-        GGML_TYPE_I32,
-        core::TensorShape::from_dims({1, token_count}));
-    auto feats = core::make_tensor(
-        io_ctx,
-        GGML_TYPE_F32,
-        core::TensorShape::from_dims({1, 3, token_count}));
-    ggml_set_input(tokens.tensor);
-    ggml_set_input(feats.tensor);
-
-    auto hidden = embed_tokens(
-        ctx,
-        weights,
-        tokens,
-        "duration.embedding.weight",
-        config.duration_vocab,
-        config.duration_hidden);
-    hidden = modules::ConcatModule({1}).build(ctx, hidden, feats);
-    hidden = conv1d(
-        ctx,
-        weights,
-        hidden,
-        "duration.input_proj",
-        config.duration_hidden,
-        1,
-        0);
-    for (int64_t block = 0; block < config.duration_depth; ++block) {
-        hidden = residual_block(
-            ctx,
-            weights,
-            hidden,
-            "duration.blocks." + std::to_string(block),
-            config.duration_hidden,
-            config.duration_kernel);
-    }
-    auto log_duration = conv1d(ctx, weights, hidden, "duration.output", 1, 1, 0);
-    log_duration = contiguous(ctx, log_duration);
-    out->tokens = tokens.tensor;
-    out->feats = feats.tensor;
-    out->log_duration = log_duration.tensor;
-    ggml_set_output(out->log_duration);
-    out->graph = ggml_new_graph_custom(ctx.ggml, 16384, false);
-    ggml_build_forward_expand(out->graph, out->log_duration);
-    allocate_graph(*out);
-    return out;
-}
-
-struct TokenGraph : GraphResources {
-    int64_t token_count = 0;
-    ggml_tensor * tokens = nullptr;
-    ggml_tensor * feats = nullptr;
-    ggml_tensor * context = nullptr;
-};
-
-std::unique_ptr<TokenGraph> build_token_graph(
-    const SanoTtsBackendWeights & weights,
-    const SanoTtsPiperConfig & config,
-    ggml_backend_t backend,
-    core::BackendType backend_type,
-    int64_t token_count) {
-    auto out = std::make_unique<TokenGraph>();
-    out->backend = backend;
-    out->token_count = token_count;
-    out->io_context.reset(ggml_init({kIoArenaBytes, nullptr, true}));
-    out->graph_context.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
-    if (out->io_context == nullptr || out->graph_context == nullptr) {
-        throw std::runtime_error("sanoTTS failed to create token graph contexts");
-    }
-    core::ModuleBuildContext io_ctx{
-        out->io_context.get(),
-        "sanotts.piper.token.io",
-        backend_type,
-    };
-    core::ModuleBuildContext ctx{
-        out->graph_context.get(),
-        "sanotts.piper.token",
-        backend_type,
-    };
-    auto tokens = core::make_tensor(
-        io_ctx,
-        GGML_TYPE_I32,
-        core::TensorShape::from_dims({1, token_count}));
-    auto feats = core::make_tensor(
-        io_ctx,
-        GGML_TYPE_F32,
-        core::TensorShape::from_dims({1, 2, token_count}));
-    ggml_set_input(tokens.tensor);
-    ggml_set_input(feats.tensor);
-
-    auto hidden = embed_tokens(
-        ctx,
-        weights,
-        tokens,
-        "acoustic.embedding.weight",
-        config.acoustic_vocab,
-        config.acoustic_hidden);
-    hidden = modules::ConcatModule({1}).build(ctx, hidden, feats);
-    hidden = conv1d(
-        ctx,
-        weights,
-        hidden,
-        "acoustic.token_input_proj",
-        config.acoustic_hidden,
-        1,
-        0);
-    for (int64_t block = 0; block < config.acoustic_token_depth; ++block) {
-        hidden = residual_block(
-            ctx,
-            weights,
-            hidden,
-            "acoustic.token_blocks." + std::to_string(block),
-            config.acoustic_hidden,
-            config.acoustic_kernel);
-    }
-    hidden = contiguous(ctx, hidden);
-    out->tokens = tokens.tensor;
-    out->feats = feats.tensor;
-    out->context = hidden.tensor;
-    ggml_set_output(out->context);
-    out->graph = ggml_new_graph_custom(ctx.ggml, 16384, false);
-    ggml_build_forward_expand(out->graph, out->context);
-    allocate_graph(*out);
-    return out;
-}
-
 struct DecoderGraph : GraphResources {
     int64_t frames = 0;
     ggml_tensor * context = nullptr;
@@ -484,32 +323,15 @@ std::unique_ptr<DecoderGraph> build_decoder_graph(
     ggml_set_input(context.tensor);
     ggml_set_input(feats.tensor);
 
-    auto hidden = modules::ConcatModule({1}).build(ctx, context, feats);
-    hidden = conv1d(
+    auto latent = acoustic_frame_stage(
         ctx,
         weights,
-        hidden,
-        "acoustic.frame_input_proj",
+        context,
+        feats,
         config.acoustic_hidden,
-        1,
-        0);
-    for (int64_t block = 0; block < config.acoustic_depth; ++block) {
-        hidden = residual_block(
-            ctx,
-            weights,
-            hidden,
-            "acoustic.frame_blocks." + std::to_string(block),
-            config.acoustic_hidden,
-            config.acoustic_kernel);
-    }
-    auto latent = conv1d(
-        ctx,
-        weights,
-        hidden,
-        "acoustic.output",
-        config.acoustic_out_channels,
-        1,
-        0);
+        config.acoustic_depth,
+        config.acoustic_kernel,
+        config.acoustic_out_channels);
 
     auto value = conv1d_same(
         ctx,
@@ -568,132 +390,17 @@ std::unique_ptr<DecoderGraph> build_decoder_graph(
 
 }  // namespace
 
-struct SanoTtsPiperRuntime::State {
-    struct BackendOwner {
-        ggml_backend_t value = nullptr;
-        ~BackendOwner() {
-            if (value != nullptr) {
-                ggml_backend_free(value);
-            }
-        }
-    };
+struct SanoTtsPiperRuntime::State : BackendState {
+    State(const std::shared_ptr<const SanoTtsAssets> & assets_in,
+          core::BackendConfig backend_config)
+        : BackendState(
+              assets_in,
+              backend_config,
+              assets_in == nullptr ? 0 : expected_tensor_count(assets_in->piper),
+              kWeightArenaBytes) {}
 
-    State(
-        std::shared_ptr<const SanoTtsAssets> assets_in,
-        core::BackendConfig backend_config)
-        : assets(std::move(assets_in)),
-          threads(std::max(1, backend_config.threads)) {
-        if (assets == nullptr) {
-            throw std::runtime_error("sanoTTS piper runtime requires assets");
-        }
-        backend_config.threads = threads;
-        backend.value = core::init_backend(backend_config);
-        backend_type = core::backend_type(backend.value);
-        core::set_backend_threads(backend.value, threads);
-        weights = load_weights(
-            assets,
-            backend.value,
-            backend_type,
-            expected_piper_tensor_count(assets->piper),
-            kWeightArenaBytes);
-        if (backend_type == core::BackendType::Cuda) {
-            // Durations round to integers and gate the whole frame layout;
-            // keep the tiny duration model on the host, as the nano runtime
-            // and inflect_v2 do.
-            core::BackendConfig duration_config{
-                core::BackendType::Cpu,
-                0,
-                threads,
-            };
-            duration_backend.value = core::init_backend(duration_config);
-            core::set_backend_threads(duration_backend.value, threads);
-            duration_weights = load_weights(
-                assets,
-                duration_backend.value,
-                core::BackendType::Cpu,
-                expected_piper_tensor_count(assets->piper),
-                kWeightArenaBytes);
-        }
-    }
-
-    DurationGraph & duration_graph(int64_t token_count) {
-        if (auto * found = duration_graphs.find(token_count)) {
-            engine::debug::trace_log_scalar("sanotts.duration_graph.cache_hit", true);
-            return **found;
-        }
-        engine::debug::trace_log_scalar("sanotts.duration_graph.cache_hit", false);
-        const auto backend_value =
-            duration_backend.value != nullptr ? duration_backend.value : backend.value;
-        const auto graph_backend_type =
-            duration_backend.value != nullptr ? core::BackendType::Cpu : backend_type;
-        const auto & selected_weights =
-            duration_weights != nullptr ? duration_weights : weights;
-        duration_graphs.put(
-            token_count,
-            build_duration_graph(
-                *selected_weights,
-                assets->piper,
-                backend_value,
-                graph_backend_type,
-                token_count));
-        auto * created = duration_graphs.find(token_count);
-        if (created == nullptr) {
-            throw std::runtime_error("sanoTTS duration graph cache insert failed");
-        }
-        return **created;
-    }
-
-    TokenGraph & token_graph(int64_t token_count) {
-        if (auto * found = token_graphs.find(token_count)) {
-            engine::debug::trace_log_scalar("sanotts.token_graph.cache_hit", true);
-            return **found;
-        }
-        engine::debug::trace_log_scalar("sanotts.token_graph.cache_hit", false);
-        token_graphs.put(
-            token_count,
-            build_token_graph(
-                *weights,
-                assets->piper,
-                backend.value,
-                backend_type,
-                token_count));
-        auto * created = token_graphs.find(token_count);
-        if (created == nullptr) {
-            throw std::runtime_error("sanoTTS token graph cache insert failed");
-        }
-        return **created;
-    }
-
-    DecoderGraph & decoder_graph(int64_t frames) {
-        if (auto * found = decoder_graphs.find(frames)) {
-            engine::debug::trace_log_scalar("sanotts.decoder_graph.cache_hit", true);
-            return **found;
-        }
-        engine::debug::trace_log_scalar("sanotts.decoder_graph.cache_hit", false);
-        decoder_graphs.put(
-            frames,
-            build_decoder_graph(
-                *weights,
-                assets->piper,
-                backend.value,
-                backend_type,
-                frames));
-        auto * created = decoder_graphs.find(frames);
-        if (created == nullptr) {
-            throw std::runtime_error("sanoTTS decoder graph cache insert failed");
-        }
-        return **created;
-    }
-
-    std::shared_ptr<const SanoTtsAssets> assets;
-    int threads = 1;
-    core::BackendType backend_type = core::BackendType::Cpu;
-    BackendOwner backend;
-    std::shared_ptr<const SanoTtsBackendWeights> weights;
-    BackendOwner duration_backend;
-    std::shared_ptr<const SanoTtsBackendWeights> duration_weights;
-    runtime::CacheSlots<int64_t, std::unique_ptr<DurationGraph>> duration_graphs{4};
-    runtime::CacheSlots<int64_t, std::unique_ptr<TokenGraph>> token_graphs{4};
+    runtime::CacheSlots<int64_t, std::unique_ptr<FrontGraph>> duration_graphs{4};
+    runtime::CacheSlots<int64_t, std::unique_ptr<FrontGraph>> token_graphs{4};
     runtime::CacheSlots<int64_t, std::unique_ptr<DecoderGraph>> decoder_graphs{2};
 };
 
@@ -716,141 +423,82 @@ runtime::AudioBuffer SanoTtsPiperRuntime::synthesize(
 
     // -- durations ---------------------------------------------------------
     const auto duration_start = std::chrono::steady_clock::now();
-    auto & duration = state_->duration_graph(token_count);
-    core::write_tensor_i32(
-        core::wrap_tensor(
-            duration.tokens,
-            core::TensorShape::from_dims({1, token_count}),
-            GGML_TYPE_I32),
+    auto & duration = cached_graph(
+        state_->duration_graphs,
+        token_count,
+        "sanotts.duration_graph.cache_hit",
+        [&] {
+            return build_front_graph(
+                state_->duration_weights_ref(),
+                duration_stage_spec(
+                    config.duration_vocab,
+                    config.duration_hidden,
+                    config.duration_depth,
+                    config.duration_kernel),
+                state_->duration_backend_value(),
+                state_->duration_backend_type(),
+                token_count,
+                kIoArenaBytes,
+                kGraphArenaBytes);
+        });
+    write_i32_input(
+        duration.tokens,
+        core::TensorShape::from_dims({1, token_count}),
         clamp_ids_to_vocab(token_ids, config.duration_vocab));
-    {
-        // [positions, length_hint, valid=1] rows; hints computed in double
-        // and cast, matching the reference implementation.
-        std::vector<float> feats(static_cast<size_t>(3 * token_count));
-        linspace01(feats.data(), token_count);
-        const auto length_hint = static_cast<float>(
-            std::log1p(static_cast<double>(token_count)) /
-            std::log1p(static_cast<double>(config.duration_max_tokens)));
-        std::fill_n(feats.begin() + token_count, token_count, length_hint);
-        std::fill_n(feats.begin() + 2 * token_count, token_count, 1.0F);
-        core::write_tensor_f32(
-            core::wrap_tensor(
-                duration.feats,
-                core::TensorShape::from_dims({1, 3, token_count}),
-                GGML_TYPE_F32),
-            feats);
-    }
+    write_f32_input(
+        duration.feats,
+        core::TensorShape::from_dims({1, 3, token_count}),
+        duration_features(token_count, config.duration_max_tokens));
     compute_graph(duration, "sanoTTS piper duration");
-    const auto log_duration = core::read_tensor_f32(duration.log_duration);
+    const auto log_duration = core::read_tensor_f32(duration.output);
     if (static_cast<int64_t>(log_duration.size()) != token_count) {
         throw std::runtime_error("sanoTTS duration graph returned invalid output");
     }
-    // exp -> clamp_min(1) -> *scale -> round (ties to even) -> clamp, in
-    // double, exactly as the reference computes it.
-    const double scale = config.duration_length_scale *
-                         static_cast<double>(options.speaking_rate);
-    std::vector<int64_t> durations(static_cast<size_t>(token_count));
+    // The user's speaking_rate multiplies the voice's tuned length scale.
     int64_t frames = 0;
-    for (int64_t token = 0; token < token_count; ++token) {
-        double value = std::exp(
-            static_cast<double>(log_duration[static_cast<size_t>(token)]));
-        if (!std::isfinite(value)) {
-            throw std::runtime_error("sanoTTS duration predictor produced a non-finite duration");
-        }
-        if (value < 1.0) {
-            value = 1.0;
-        }
-        value = std::rint(value * scale);
-        if (value < 1.0) {
-            value = 1.0;
-        }
-        if (value > static_cast<double>(config.duration_max_frames)) {
-            value = static_cast<double>(config.duration_max_frames);
-        }
-        durations[static_cast<size_t>(token)] = static_cast<int64_t>(value);
-        frames += durations[static_cast<size_t>(token)];
-    }
-    const int64_t max_frames = config.duration_max_tokens * config.duration_max_frames;
-    if (frames < 1 || frames > max_frames) {
-        throw std::runtime_error(
-            "sanoTTS expanded to " + std::to_string(frames) +
-            " frames, outside the supported range");
-    }
+    const auto durations = round_durations(
+        log_duration,
+        config.duration_length_scale * static_cast<double>(options.speaking_rate),
+        config.duration_max_frames,
+        config.duration_max_tokens * config.duration_max_frames,
+        frames);
     engine::debug::timing_log_scalar(
         "sanotts.duration_ms",
         engine::debug::elapsed_ms(duration_start));
 
     // -- token-stage acoustic context --------------------------------------
     const auto acoustic_start = std::chrono::steady_clock::now();
-    auto & token_graph = state_->token_graph(token_count);
-    core::write_tensor_i32(
-        core::wrap_tensor(
-            token_graph.tokens,
-            core::TensorShape::from_dims({1, token_count}),
-            GGML_TYPE_I32),
+    auto & token_graph = cached_graph(
+        state_->token_graphs,
+        token_count,
+        "sanotts.token_graph.cache_hit",
+        [&] {
+            return build_front_graph(
+                *state_->weights,
+                token_stage_spec(
+                    config.acoustic_vocab,
+                    config.acoustic_hidden,
+                    config.acoustic_token_depth,
+                    config.acoustic_kernel),
+                state_->backend.value,
+                state_->backend_type,
+                token_count,
+                kIoArenaBytes,
+                kGraphArenaBytes);
+        });
+    write_i32_input(
+        token_graph.tokens,
+        core::TensorShape::from_dims({1, token_count}),
         clamp_ids_to_vocab(token_ids, config.acoustic_vocab));
-    {
-        std::vector<float> feats(static_cast<size_t>(2 * token_count));
-        linspace01(feats.data(), token_count);
-        double max_duration = 1.0;
-        for (int64_t token = 0; token < token_count; ++token) {
-            max_duration = std::max(
-                max_duration,
-                static_cast<double>(durations[static_cast<size_t>(token)]));
-        }
-        const double log_max_duration = std::log1p(max_duration);
-        for (int64_t token = 0; token < token_count; ++token) {
-            feats[static_cast<size_t>(token_count + token)] = static_cast<float>(
-                std::log1p(static_cast<double>(durations[static_cast<size_t>(token)])) /
-                log_max_duration);
-        }
-        core::write_tensor_f32(
-            core::wrap_tensor(
-                token_graph.feats,
-                core::TensorShape::from_dims({1, 2, token_count}),
-                GGML_TYPE_F32),
-            feats);
-    }
+    write_f32_input(
+        token_graph.feats,
+        core::TensorShape::from_dims({1, 2, token_count}),
+        token_features(token_count, durations));
     compute_graph(token_graph, "sanoTTS piper token context");
-    const auto token_context = core::read_tensor_f32(token_graph.context);
+    const auto token_context = core::read_tensor_f32(token_graph.output);
     if (static_cast<int64_t>(token_context.size()) !=
         config.acoustic_hidden * token_count) {
         throw std::runtime_error("sanoTTS token graph returned invalid output");
-    }
-
-    // -- expand to frames --------------------------------------------------
-    std::vector<float> expanded(static_cast<size_t>(config.acoustic_hidden * frames));
-    for (int64_t channel = 0; channel < config.acoustic_hidden; ++channel) {
-        const float * row = token_context.data() + channel * token_count;
-        float * out_row = expanded.data() + channel * frames;
-        int64_t at = 0;
-        for (int64_t token = 0; token < token_count; ++token) {
-            const float value = row[token];
-            for (int64_t j = 0; j < durations[static_cast<size_t>(token)]; ++j) {
-                out_row[at++] = value;
-            }
-        }
-    }
-    std::vector<float> frame_feats(static_cast<size_t>(3 * frames));
-    linspace01(frame_feats.data(), frames);
-    {
-        const int64_t denominator = token_count > 1 ? token_count - 1 : 1;
-        float * token_pos = frame_feats.data() + frames;
-        float * duration_pos = frame_feats.data() + 2 * frames;
-        int64_t at = 0;
-        for (int64_t token = 0; token < token_count; ++token) {
-            const int64_t count = durations[static_cast<size_t>(token)];
-            const auto position = static_cast<float>(
-                static_cast<double>(token) / static_cast<double>(denominator));
-            for (int64_t j = 0; j < count; ++j) {
-                token_pos[at] = position;
-                duration_pos[at] = count == 1
-                    ? 0.0F
-                    : static_cast<float>(
-                          static_cast<double>(j) / static_cast<double>(count - 1));
-                ++at;
-            }
-        }
     }
     engine::debug::timing_log_scalar(
         "sanotts.acoustic_ms",
@@ -858,19 +506,26 @@ runtime::AudioBuffer SanoTtsPiperRuntime::synthesize(
 
     // -- frame stage + decoder ---------------------------------------------
     const auto decoder_start = std::chrono::steady_clock::now();
-    auto & decoder = state_->decoder_graph(frames);
-    core::write_tensor_f32(
-        core::wrap_tensor(
-            decoder.context,
-            core::TensorShape::from_dims({1, config.acoustic_hidden, frames}),
-            GGML_TYPE_F32),
-        expanded);
-    core::write_tensor_f32(
-        core::wrap_tensor(
-            decoder.feats,
-            core::TensorShape::from_dims({1, 3, frames}),
-            GGML_TYPE_F32),
-        frame_feats);
+    auto & decoder = cached_graph(
+        state_->decoder_graphs,
+        frames,
+        "sanotts.decoder_graph.cache_hit",
+        [&] {
+            return build_decoder_graph(
+                *state_->weights,
+                config,
+                state_->backend.value,
+                state_->backend_type,
+                frames);
+        });
+    write_f32_input(
+        decoder.context,
+        core::TensorShape::from_dims({1, config.acoustic_hidden, frames}),
+        expand_context(token_context, durations, config.acoustic_hidden, token_count, frames));
+    write_f32_input(
+        decoder.feats,
+        core::TensorShape::from_dims({1, 3, frames}),
+        frame_features(token_count, durations, frames));
     compute_graph(decoder, "sanoTTS piper decoder");
     runtime::AudioBuffer out;
     out.sample_rate = static_cast<int>(config.sample_rate);

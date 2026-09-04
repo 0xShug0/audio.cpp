@@ -2,32 +2,19 @@
 
 #include "graph_common.h"
 
-#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/istft_graph.h"
-#include "engine/framework/core/backend.h"
-#include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
-#include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/framework/modules/primitive_modules.h"
-#include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/runtime/cache_slots.h"
-
-#include "ggml-alloc.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -42,8 +29,17 @@ constexpr size_t kIoArenaBytes = 8ULL * 1024ULL * 1024ULL;
 constexpr size_t kGraphArenaBytes = 128ULL * 1024ULL * 1024ULL;
 constexpr size_t kWeightArenaBytes = 32ULL * 1024ULL * 1024ULL;
 
-/** Tensor count implied by the config -- 103 for heart-nano, 115 for heart.
- *  Kept in lockstep with the inventory validate_tensors() builds. */
+// The decoder's norms are nn.LayerNorm(eps=1e-6), NOT torch's 1e-5 default.
+// The difference compounds through the ConvNeXt blocks and is then amplified
+// by the exp() in the magnitude head; the reference implementations document
+// losing 0.06 of correlation and a third of the output amplitude to exactly
+// this constant.
+constexpr float kLayerNormEps = 1.0e-6F;
+constexpr float kDcBlockPole = 0.9973F;
+constexpr double kPi = 3.14159265358979323846;
+
+/** Tensor count implied by the config -- 103 for heart-nano, 117 for heart.
+ *  Kept in lockstep with the inventory validate_nano_tensors() builds. */
 size_t expected_tensor_count(const SanoTtsConfig & config) {
     const auto duration = 5 + 5 * config.duration_depth;
     const auto acoustic =
@@ -51,21 +47,6 @@ size_t expected_tensor_count(const SanoTtsConfig & config) {
     const auto decoder = 10 + 9 * config.blocks;
     return static_cast<size_t>(duration + acoustic + decoder);
 }
-
-// The decoder's norms are nn.LayerNorm(eps=1e-6), NOT torch's 1e-5 default.
-// The difference compounds through the four ConvNeXt blocks and is then
-// amplified by the exp() in the magnitude head; the reference implementations
-// document losing 0.06 of correlation and a third of the output amplitude to
-// exactly this constant.
-constexpr float kLayerNormEps = 1.0e-6F;
-constexpr float kDcBlockPole = 0.9973F;
-constexpr double kPi = 3.14159265358979323846;
-
-// ---- graph builders ------------------------------------------------------
-//
-// Values are carried channel-major as [1, C, T] (ggml ne0 = T) through the
-// convolutional front ends, and channel-last as [1, T, C] through the
-// ConvNeXt decoder blocks, matching the PyTorch modules they reproduce.
 
 core::TensorValue channel_last_layer_norm(
     core::ModuleBuildContext & ctx,
@@ -187,164 +168,7 @@ std::vector<float> seeded_noise(uint64_t seed, int64_t channels, int64_t frames)
     return out;
 }
 
-// ---- graphs --------------------------------------------------------------
-
-struct DurationGraph : GraphResources {
-    int64_t token_count = 0;
-    ggml_tensor * tokens = nullptr;
-    ggml_tensor * feats = nullptr;
-    ggml_tensor * log_duration = nullptr;
-};
-
-std::unique_ptr<DurationGraph> build_duration_graph(
-    const SanoTtsBackendWeights & weights,
-    const SanoTtsConfig & config,
-    ggml_backend_t backend,
-    core::BackendType backend_type,
-    int64_t token_count) {
-    auto out = std::make_unique<DurationGraph>();
-    out->backend = backend;
-    out->token_count = token_count;
-    out->io_context.reset(ggml_init({kIoArenaBytes, nullptr, true}));
-    out->graph_context.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
-    if (out->io_context == nullptr || out->graph_context == nullptr) {
-        throw std::runtime_error("sanoTTS failed to create duration graph contexts");
-    }
-    core::ModuleBuildContext io_ctx{
-        out->io_context.get(),
-        "sanotts.duration.io",
-        backend_type,
-    };
-    core::ModuleBuildContext ctx{
-        out->graph_context.get(),
-        "sanotts.duration",
-        backend_type,
-    };
-    auto tokens = core::make_tensor(
-        io_ctx,
-        GGML_TYPE_I32,
-        core::TensorShape::from_dims({1, token_count}));
-    auto feats = core::make_tensor(
-        io_ctx,
-        GGML_TYPE_F32,
-        core::TensorShape::from_dims({1, 3, token_count}));
-    ggml_set_input(tokens.tensor);
-    ggml_set_input(feats.tensor);
-
-    auto hidden = embed_tokens(
-        ctx,
-        weights,
-        tokens,
-        "duration.embedding.weight",
-        config.vocab_size,
-        config.duration_hidden);
-    hidden = modules::ConcatModule({1}).build(ctx, hidden, feats);
-    hidden = conv1d(
-        ctx,
-        weights,
-        hidden,
-        "duration.input_proj",
-        config.duration_hidden,
-        1,
-        0);
-    for (int64_t block = 0; block < config.duration_depth; ++block) {
-        hidden = residual_block(
-            ctx,
-            weights,
-            hidden,
-            "duration.blocks." + std::to_string(block),
-            config.duration_hidden,
-            config.duration_kernel);
-    }
-    auto log_duration = conv1d(ctx, weights, hidden, "duration.output", 1, 1, 0);
-    log_duration = contiguous(ctx, log_duration);
-    out->tokens = tokens.tensor;
-    out->feats = feats.tensor;
-    out->log_duration = log_duration.tensor;
-    ggml_set_output(out->log_duration);
-    out->graph = ggml_new_graph_custom(ctx.ggml, 16384, false);
-    ggml_build_forward_expand(out->graph, out->log_duration);
-    allocate_graph(*out);
-    return out;
-}
-
-struct TokenGraph : GraphResources {
-    int64_t token_count = 0;
-    ggml_tensor * tokens = nullptr;
-    ggml_tensor * feats = nullptr;
-    ggml_tensor * context = nullptr;
-};
-
-std::unique_ptr<TokenGraph> build_token_graph(
-    const SanoTtsBackendWeights & weights,
-    const SanoTtsConfig & config,
-    ggml_backend_t backend,
-    core::BackendType backend_type,
-    int64_t token_count) {
-    auto out = std::make_unique<TokenGraph>();
-    out->backend = backend;
-    out->token_count = token_count;
-    out->io_context.reset(ggml_init({kIoArenaBytes, nullptr, true}));
-    out->graph_context.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
-    if (out->io_context == nullptr || out->graph_context == nullptr) {
-        throw std::runtime_error("sanoTTS failed to create token graph contexts");
-    }
-    core::ModuleBuildContext io_ctx{
-        out->io_context.get(),
-        "sanotts.token.io",
-        backend_type,
-    };
-    core::ModuleBuildContext ctx{
-        out->graph_context.get(),
-        "sanotts.token",
-        backend_type,
-    };
-    auto tokens = core::make_tensor(
-        io_ctx,
-        GGML_TYPE_I32,
-        core::TensorShape::from_dims({1, token_count}));
-    auto feats = core::make_tensor(
-        io_ctx,
-        GGML_TYPE_F32,
-        core::TensorShape::from_dims({1, 2, token_count}));
-    ggml_set_input(tokens.tensor);
-    ggml_set_input(feats.tensor);
-
-    auto hidden = embed_tokens(
-        ctx,
-        weights,
-        tokens,
-        "acoustic.embedding.weight",
-        config.vocab_size,
-        config.acoustic_hidden);
-    hidden = modules::ConcatModule({1}).build(ctx, hidden, feats);
-    hidden = conv1d(
-        ctx,
-        weights,
-        hidden,
-        "acoustic.token_input_proj",
-        config.acoustic_hidden,
-        1,
-        0);
-    for (int64_t block = 0; block < config.acoustic_token_depth; ++block) {
-        hidden = residual_block(
-            ctx,
-            weights,
-            hidden,
-            "acoustic.token_blocks." + std::to_string(block),
-            config.acoustic_hidden,
-            config.acoustic_kernel);
-    }
-    hidden = contiguous(ctx, hidden);
-    out->tokens = tokens.tensor;
-    out->feats = feats.tensor;
-    out->context = hidden.tensor;
-    ggml_set_output(out->context);
-    out->graph = ggml_new_graph_custom(ctx.ggml, 16384, false);
-    ggml_build_forward_expand(out->graph, out->context);
-    allocate_graph(*out);
-    return out;
-}
+// ---- decoder graph -------------------------------------------------------
 
 struct DecoderGraph : GraphResources {
     int64_t frames = 0;
@@ -396,26 +220,15 @@ std::unique_ptr<DecoderGraph> build_decoder_graph(
     ggml_set_input(feats.tensor);
     ggml_set_input(noise.tensor);
 
-    // Acoustic frame stage: expanded token context + positional features.
-    auto hidden = modules::ConcatModule({1}).build(ctx, context, feats);
-    hidden = conv1d(
+    auto mel = acoustic_frame_stage(
         ctx,
         weights,
-        hidden,
-        "acoustic.frame_input_proj",
+        context,
+        feats,
         config.acoustic_hidden,
-        1,
-        0);
-    for (int64_t block = 0; block < config.acoustic_depth; ++block) {
-        hidden = residual_block(
-            ctx,
-            weights,
-            hidden,
-            "acoustic.frame_blocks." + std::to_string(block),
-            config.acoustic_hidden,
-            config.acoustic_kernel);
-    }
-    auto mel = conv1d(ctx, weights, hidden, "acoustic.output", config.mels, 1, 0);
+        config.acoustic_depth,
+        config.acoustic_kernel,
+        config.mels);
 
     // ConvNeXt decoder. Noise-fed: the noise adapter's output is added to the
     // mel embedding before the first norm.
@@ -643,132 +456,17 @@ uint64_t sanotts_text_seed(const std::string & text) {
     return (static_cast<uint64_t>(h[0]) << 32) | static_cast<uint64_t>(h[1]);
 }
 
-struct SanoTtsNativeRuntime::State {
-    struct BackendOwner {
-        ggml_backend_t value = nullptr;
-        ~BackendOwner() {
-            if (value != nullptr) {
-                ggml_backend_free(value);
-            }
-        }
-    };
+struct SanoTtsNativeRuntime::State : BackendState {
+    State(const std::shared_ptr<const SanoTtsAssets> & assets_in,
+          core::BackendConfig backend_config)
+        : BackendState(
+              assets_in,
+              backend_config,
+              assets_in == nullptr ? 0 : expected_tensor_count(assets_in->config),
+              kWeightArenaBytes) {}
 
-    State(
-        std::shared_ptr<const SanoTtsAssets> assets_in,
-        core::BackendConfig backend_config)
-        : assets(std::move(assets_in)),
-          threads(std::max(1, backend_config.threads)) {
-        if (assets == nullptr) {
-            throw std::runtime_error("sanoTTS native runtime requires assets");
-        }
-        backend_config.threads = threads;
-        backend.value = core::init_backend(backend_config);
-        backend_type = core::backend_type(backend.value);
-        core::set_backend_threads(backend.value, threads);
-        weights = load_weights(
-            assets,
-            backend.value,
-            backend_type,
-            expected_tensor_count(assets->config),
-            kWeightArenaBytes);
-        if (backend_type == core::BackendType::Cuda) {
-            // Durations round to integers and gate the whole frame layout, so
-            // small TF32 differences would move frame counts. Keep the tiny
-            // duration model on the host; the decoder stays on CUDA.
-            core::BackendConfig duration_config{
-                core::BackendType::Cpu,
-                0,
-                threads,
-            };
-            duration_backend.value = core::init_backend(duration_config);
-            core::set_backend_threads(duration_backend.value, threads);
-            duration_weights = load_weights(
-                assets,
-                duration_backend.value,
-                core::BackendType::Cpu,
-                expected_tensor_count(assets->config),
-                kWeightArenaBytes);
-        }
-    }
-
-    DurationGraph & duration_graph(int64_t token_count) {
-        if (auto * found = duration_graphs.find(token_count)) {
-            engine::debug::trace_log_scalar("sanotts.duration_graph.cache_hit", true);
-            return **found;
-        }
-        engine::debug::trace_log_scalar("sanotts.duration_graph.cache_hit", false);
-        const auto backend_value =
-            duration_backend.value != nullptr ? duration_backend.value : backend.value;
-        const auto graph_backend_type =
-            duration_backend.value != nullptr ? core::BackendType::Cpu : backend_type;
-        const auto & selected_weights =
-            duration_weights != nullptr ? duration_weights : weights;
-        duration_graphs.put(
-            token_count,
-            build_duration_graph(
-                *selected_weights,
-                assets->config,
-                backend_value,
-                graph_backend_type,
-                token_count));
-        auto * created = duration_graphs.find(token_count);
-        if (created == nullptr) {
-            throw std::runtime_error("sanoTTS duration graph cache insert failed");
-        }
-        return **created;
-    }
-
-    TokenGraph & token_graph(int64_t token_count) {
-        if (auto * found = token_graphs.find(token_count)) {
-            engine::debug::trace_log_scalar("sanotts.token_graph.cache_hit", true);
-            return **found;
-        }
-        engine::debug::trace_log_scalar("sanotts.token_graph.cache_hit", false);
-        token_graphs.put(
-            token_count,
-            build_token_graph(
-                *weights,
-                assets->config,
-                backend.value,
-                backend_type,
-                token_count));
-        auto * created = token_graphs.find(token_count);
-        if (created == nullptr) {
-            throw std::runtime_error("sanoTTS token graph cache insert failed");
-        }
-        return **created;
-    }
-
-    DecoderGraph & decoder_graph(int64_t frames) {
-        if (auto * found = decoder_graphs.find(frames)) {
-            engine::debug::trace_log_scalar("sanotts.decoder_graph.cache_hit", true);
-            return **found;
-        }
-        engine::debug::trace_log_scalar("sanotts.decoder_graph.cache_hit", false);
-        decoder_graphs.put(
-            frames,
-            build_decoder_graph(
-                *weights,
-                assets->config,
-                backend.value,
-                backend_type,
-                frames));
-        auto * created = decoder_graphs.find(frames);
-        if (created == nullptr) {
-            throw std::runtime_error("sanoTTS decoder graph cache insert failed");
-        }
-        return **created;
-    }
-
-    std::shared_ptr<const SanoTtsAssets> assets;
-    int threads = 1;
-    core::BackendType backend_type = core::BackendType::Cpu;
-    BackendOwner backend;
-    std::shared_ptr<const SanoTtsBackendWeights> weights;
-    BackendOwner duration_backend;
-    std::shared_ptr<const SanoTtsBackendWeights> duration_weights;
-    runtime::CacheSlots<int64_t, std::unique_ptr<DurationGraph>> duration_graphs{4};
-    runtime::CacheSlots<int64_t, std::unique_ptr<TokenGraph>> token_graphs{4};
+    runtime::CacheSlots<int64_t, std::unique_ptr<FrontGraph>> duration_graphs{4};
+    runtime::CacheSlots<int64_t, std::unique_ptr<FrontGraph>> token_graphs{4};
     runtime::CacheSlots<int64_t, std::unique_ptr<DecoderGraph>> decoder_graphs{2};
 };
 
@@ -791,62 +489,44 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
 
     // -- durations ---------------------------------------------------------
     const auto duration_start = std::chrono::steady_clock::now();
-    auto & duration = state_->duration_graph(token_count);
-    core::write_tensor_i32(
-        core::wrap_tensor(
-            duration.tokens,
-            core::TensorShape::from_dims({1, token_count}),
-            GGML_TYPE_I32),
-        token_ids);
-    {
-        // [positions, length_hint, valid=1] rows, the exact float semantics
-        // of the reference front end (mcu/src/snt_front_f32.c).
-        std::vector<float> feats(static_cast<size_t>(3 * token_count));
-        linspace01(feats.data(), token_count);
-        const float length_hint =
-            std::log1p(static_cast<float>(token_count)) /
-            static_cast<float>(std::log1p(static_cast<double>(config.duration_max_tokens)));
-        std::fill_n(feats.begin() + token_count, token_count, length_hint);
-        std::fill_n(feats.begin() + 2 * token_count, token_count, 1.0F);
-        core::write_tensor_f32(
-            core::wrap_tensor(
-                duration.feats,
-                core::TensorShape::from_dims({1, 3, token_count}),
-                GGML_TYPE_F32),
-            feats);
-    }
+    auto & duration = cached_graph(
+        state_->duration_graphs,
+        token_count,
+        "sanotts.duration_graph.cache_hit",
+        [&] {
+            return build_front_graph(
+                state_->duration_weights_ref(),
+                duration_stage_spec(
+                    config.vocab_size,
+                    config.duration_hidden,
+                    config.duration_depth,
+                    config.duration_kernel),
+                state_->duration_backend_value(),
+                state_->duration_backend_type(),
+                token_count,
+                kIoArenaBytes,
+                kGraphArenaBytes);
+        });
+    write_i32_input(
+        duration.tokens, core::TensorShape::from_dims({1, token_count}), token_ids);
+    write_f32_input(
+        duration.feats,
+        core::TensorShape::from_dims({1, 3, token_count}),
+        duration_features(token_count, config.duration_max_tokens));
     compute_graph(duration, "sanoTTS duration");
-    const auto log_duration = core::read_tensor_f32(duration.log_duration);
+    const auto log_duration = core::read_tensor_f32(duration.output);
     if (static_cast<int64_t>(log_duration.size()) != token_count) {
         throw std::runtime_error("sanoTTS duration graph returned invalid output");
     }
-    // predict_durations: exp -> clamp_min(1) -> *scale -> round -> clamp.
-    // rintf under the default FE_TONEAREST matches torch.round's ties-to-even.
-    std::vector<int64_t> durations(static_cast<size_t>(token_count));
     int64_t frames = 0;
-    for (int64_t token = 0; token < token_count; ++token) {
-        float value = std::exp(log_duration[static_cast<size_t>(token)]);
-        if (!std::isfinite(value)) {
-            throw std::runtime_error("sanoTTS duration predictor produced a non-finite duration");
-        }
-        if (value < 1.0F) {
-            value = 1.0F;
-        }
-        value = std::rint(value * options.speaking_rate);
-        if (value < 1.0F) {
-            value = 1.0F;
-        }
-        if (value > static_cast<float>(config.duration_max_frames)) {
-            value = static_cast<float>(config.duration_max_frames);
-        }
-        durations[static_cast<size_t>(token)] = static_cast<int64_t>(value);
-        frames += durations[static_cast<size_t>(token)];
-    }
-    const int64_t max_frames = config.duration_max_tokens * config.duration_max_frames;
-    if (frames < 2 || frames > max_frames) {
-        throw std::runtime_error(
-            "sanoTTS expanded to " + std::to_string(frames) +
-            " frames, outside the supported range");
+    const auto durations = round_durations(
+        log_duration,
+        static_cast<double>(options.speaking_rate),
+        config.duration_max_frames,
+        config.duration_max_tokens * config.duration_max_frames,
+        frames);
+    if (frames < 2) {
+        throw std::runtime_error("sanoTTS duration predictor produced too few frames");
     }
     engine::debug::timing_log_scalar(
         "sanotts.duration_ms",
@@ -854,77 +534,35 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
 
     // -- token-stage acoustic context --------------------------------------
     const auto acoustic_start = std::chrono::steady_clock::now();
-    auto & token_graph = state_->token_graph(token_count);
-    core::write_tensor_i32(
-        core::wrap_tensor(
-            token_graph.tokens,
-            core::TensorShape::from_dims({1, token_count}),
-            GGML_TYPE_I32),
-        token_ids);
-    {
-        // [token_pos, duration_hint] rows.
-        std::vector<float> feats(static_cast<size_t>(2 * token_count));
-        linspace01(feats.data(), token_count);
-        float max_duration = 1.0F;
-        for (int64_t token = 0; token < token_count; ++token) {
-            max_duration = std::max(
-                max_duration,
-                static_cast<float>(durations[static_cast<size_t>(token)]));
-        }
-        const float log_max_duration = std::log1p(max_duration);
-        for (int64_t token = 0; token < token_count; ++token) {
-            feats[static_cast<size_t>(token_count + token)] =
-                std::log1p(static_cast<float>(durations[static_cast<size_t>(token)])) /
-                log_max_duration;
-        }
-        core::write_tensor_f32(
-            core::wrap_tensor(
-                token_graph.feats,
-                core::TensorShape::from_dims({1, 2, token_count}),
-                GGML_TYPE_F32),
-            feats);
-    }
+    auto & token_graph = cached_graph(
+        state_->token_graphs,
+        token_count,
+        "sanotts.token_graph.cache_hit",
+        [&] {
+            return build_front_graph(
+                *state_->weights,
+                token_stage_spec(
+                    config.vocab_size,
+                    config.acoustic_hidden,
+                    config.acoustic_token_depth,
+                    config.acoustic_kernel),
+                state_->backend.value,
+                state_->backend_type,
+                token_count,
+                kIoArenaBytes,
+                kGraphArenaBytes);
+        });
+    write_i32_input(
+        token_graph.tokens, core::TensorShape::from_dims({1, token_count}), token_ids);
+    write_f32_input(
+        token_graph.feats,
+        core::TensorShape::from_dims({1, 2, token_count}),
+        token_features(token_count, durations));
     compute_graph(token_graph, "sanoTTS token context");
-    const auto token_context = core::read_tensor_f32(token_graph.context);
+    const auto token_context = core::read_tensor_f32(token_graph.output);
     if (static_cast<int64_t>(token_context.size()) !=
         config.acoustic_hidden * token_count) {
         throw std::runtime_error("sanoTTS token graph returned invalid output");
-    }
-
-    // -- expand to frames (host: pure copies plus the documented float
-    //    semantics of expand_features: doubles cast to fp32) ---------------
-    std::vector<float> expanded(static_cast<size_t>(config.acoustic_hidden * frames));
-    for (int64_t channel = 0; channel < config.acoustic_hidden; ++channel) {
-        const float * row = token_context.data() + channel * token_count;
-        float * out_row = expanded.data() + channel * frames;
-        int64_t at = 0;
-        for (int64_t token = 0; token < token_count; ++token) {
-            const float value = row[token];
-            for (int64_t j = 0; j < durations[static_cast<size_t>(token)]; ++j) {
-                out_row[at++] = value;
-            }
-        }
-    }
-    std::vector<float> frame_feats(static_cast<size_t>(3 * frames));
-    linspace01(frame_feats.data(), frames);
-    {
-        const int64_t denominator = token_count > 1 ? token_count - 1 : 1;
-        float * token_pos = frame_feats.data() + frames;
-        float * duration_pos = frame_feats.data() + 2 * frames;
-        int64_t at = 0;
-        for (int64_t token = 0; token < token_count; ++token) {
-            const int64_t count = durations[static_cast<size_t>(token)];
-            const auto position = static_cast<float>(
-                static_cast<double>(token) / static_cast<double>(denominator));
-            for (int64_t j = 0; j < count; ++j) {
-                token_pos[at] = position;
-                duration_pos[at] = count == 1
-                    ? 0.0F
-                    : static_cast<float>(
-                          static_cast<double>(j) / static_cast<double>(count - 1));
-                ++at;
-            }
-        }
     }
     const auto noise = seeded_noise(options.seed, config.noise_channels, frames);
     engine::debug::timing_log_scalar(
@@ -933,24 +571,29 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
 
     // -- frame stage + decoder ---------------------------------------------
     const auto decoder_start = std::chrono::steady_clock::now();
-    auto & decoder = state_->decoder_graph(frames);
-    core::write_tensor_f32(
-        core::wrap_tensor(
-            decoder.context,
-            core::TensorShape::from_dims({1, config.acoustic_hidden, frames}),
-            GGML_TYPE_F32),
-        expanded);
-    core::write_tensor_f32(
-        core::wrap_tensor(
-            decoder.feats,
-            core::TensorShape::from_dims({1, 3, frames}),
-            GGML_TYPE_F32),
-        frame_feats);
-    core::write_tensor_f32(
-        core::wrap_tensor(
-            decoder.noise,
-            core::TensorShape::from_dims({1, config.noise_channels, frames}),
-            GGML_TYPE_F32),
+    auto & decoder = cached_graph(
+        state_->decoder_graphs,
+        frames,
+        "sanotts.decoder_graph.cache_hit",
+        [&] {
+            return build_decoder_graph(
+                *state_->weights,
+                config,
+                state_->backend.value,
+                state_->backend_type,
+                frames);
+        });
+    write_f32_input(
+        decoder.context,
+        core::TensorShape::from_dims({1, config.acoustic_hidden, frames}),
+        expand_context(token_context, durations, config.acoustic_hidden, token_count, frames));
+    write_f32_input(
+        decoder.feats,
+        core::TensorShape::from_dims({1, 3, frames}),
+        frame_features(token_count, durations, frames));
+    write_f32_input(
+        decoder.noise,
+        core::TensorShape::from_dims({1, config.noise_channels, frames}),
         noise);
     compute_graph(decoder, "sanoTTS decoder");
     auto spectrum = core::read_tensor_f32(decoder.spectrum);
