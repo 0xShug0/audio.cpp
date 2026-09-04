@@ -1636,6 +1636,48 @@ audiocpp_add_model(firered_audio
         engine::models::firered_audio::make_firered_audio_loader
 )
 
+audiocpp_add_model(cosyvoice3
+    SOURCES
+        src/models/cosyvoice3/ar.cpp
+        src/models/cosyvoice3/assets.cpp
+        src/models/cosyvoice3/flow.cpp
+        src/models/cosyvoice3/frontend.cpp
+        src/models/cosyvoice3/hift.cpp
+        src/models/cosyvoice3/session.cpp
+        src/models/cosyvoice3/tokenizer_text.cpp
+    INCLUDES
+        engine/models/cosyvoice3/ar.h
+        engine/models/cosyvoice3/assets.h
+        engine/models/cosyvoice3/flow.h
+        engine/models/cosyvoice3/frontend.h
+        engine/models/cosyvoice3/hift.h
+        engine/models/cosyvoice3/session.h
+        engine/models/cosyvoice3/tokenizer_text.h
+    LOADERS
+        engine::models::cosyvoice3::make_cosyvoice3_loader
+)
+
+audiocpp_add_model(breeze_tts
+    SOURCES
+        src/models/breeze_tts/assets.cpp
+        src/models/breeze_tts/generator.cpp
+        src/models/breeze_tts/session.cpp
+        src/models/breeze_tts/speech_decoder.cpp
+        src/models/breeze_tts/speech_encoder.cpp
+        src/models/breeze_tts/text_encoder.cpp
+        src/models/breeze_tts/tokenizer_text.cpp
+    INCLUDES
+        engine/models/breeze_tts/assets.h
+        engine/models/breeze_tts/generator.h
+        engine/models/breeze_tts/session.h
+        engine/models/breeze_tts/speech_decoder.h
+        engine/models/breeze_tts/speech_encoder.h
+        engine/models/breeze_tts/text_encoder.h
+        engine/models/breeze_tts/tokenizer_text.h
+    LOADERS
+        engine::models::breeze_tts::make_breeze_tts_loader
+)
+
 set(AUDIOCPP_ENABLED_MODELS "")
 if (AUDIOCPP_MODEL_SET STREQUAL "full")
     set(AUDIOCPP_ENABLED_MODELS ${AUDIOCPP_MODEL_TARGETS})

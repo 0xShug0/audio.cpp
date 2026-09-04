@@ -1,0 +1,23 @@
+#version 450
+
+#include "types.glsl"
+#include "generic_unary_head.glsl"
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    const uint idx = get_idx();
+
+    if (idx >= p.ne) {
+        return;
+    }
+
+#if defined(DATA_A_BF16)
+    const float x = bf16_to_fp32(uint32_t(data_a[get_aoffset() + src0_idx(idx)]));
+#else
+    const float x = float(data_a[get_aoffset() + src0_idx(idx)]);
+#endif
+    // Round to bf16 precision and widen back to f32, matching the
+    // f32 -> bf16 -> f32 cast round trip.
+    data_d[get_doffset() + dst_idx(idx)] = D_TYPE(bf16_to_fp32(fp32_to_bf16(x)));
+}

@@ -10068,6 +10068,10 @@ void ggml_compute_forward_unary(
             {
                 ggml_compute_forward_trunc(params, dst);
             } break;
+        case GGML_UNARY_OP_ROUND_BF16:
+            {
+                ggml_compute_forward_round_bf16(params, dst);
+            } break;
         case GGML_UNARY_OP_XIELU:
             {
                 ggml_compute_forward_xielu(params, dst);
