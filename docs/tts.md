@@ -29,6 +29,7 @@
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
+| sanoTTS heart-nano | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VieNeu-TTS | `vietneu_tts` | `tts`, `clon` | [VieNeu-TTS](community_models/vietneu_tts.md) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
@@ -767,6 +768,26 @@ audiocpp_cli --task tts --family inflect_v2 \
 See the [Inflect v2 community model guide](community_models/inflect_v2.md) for
 eSpeak-ng paths, long-form behavior, source/conversion instructions, and
 limitations.
+
+## sanoTTS
+
+sanoTTS heart-nano is a 294,279-parameter English offline TTS model with a
+native GGML runtime, small enough that the same weights also run on
+microcontrollers. The GGUF package is standalone and downloads from Hugging
+Face. sanoTTS requires an external eSpeak-ng installation:
+
+```bash
+python3 tools/model_manager_v2.py install sanotts_heart_nano_orig --models-root models
+
+audiocpp_cli --task tts --family sanotts \
+  --model models/sanoTTS-heart-nano-GGUF --backend cpu \
+  --text "Hello from sano T T S, a very small neural text to speech model." \
+  --request-option speaking_rate=1.0 \
+  --out sanotts.wav
+```
+
+See the [sanoTTS community model guide](community_models/sanotts.md) for
+eSpeak-ng paths, seed semantics, parity evidence, and performance numbers.
 
 ## Supertonic
 

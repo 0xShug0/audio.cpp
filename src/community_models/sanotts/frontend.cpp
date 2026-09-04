@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
@@ -21,9 +22,10 @@ using TerminateFn = int (*)();
 
 constexpr int kEspeakSynchronous = 2;
 constexpr int kEspeakCharsUtf8 = 1;
-// IPA, plus 0x10 for tie characters: the E2M table below matches on ties
-// ("a͡ɪ" -> "I"), so phonemes must be emitted with them.
-constexpr int kEspeakPhonemesIpaTie = 2 | 0x10;
+// IPA output (0x02), tie flag (bit 7), and U+0361 COMBINING DOUBLE INVERTED
+// BREVE in bits 8..23 as the tie character -- exactly the phonemes_mode
+// phonemizer computes, so the E2M diphthong patterns ("a͡ɪ" -> "I") can match.
+constexpr int kEspeakPhonemesIpaTie = 0x02 | (0x01 << 7) | (0x0361 << 8);
 
 constexpr std::string_view kTieDefault = "͡";   // COMBINING DOUBLE INVERTED BREVE
 constexpr std::string_view kTieMisaki = "^";
@@ -125,6 +127,257 @@ std::string apply_e2m(std::string ps) {
     replace_all(ps, "ʔ", "t");
     replace_all(ps, "^", "");
     return ps;
+}
+
+
+// ---- phonemizer-fork punctuation preserve/restore ------------------------
+//
+// The reference front ends run eSpeak through phonemizer with
+// preserve_punctuation=True: punctuation is cut out before phonemization and
+// spliced back afterwards, so marks like "," and "." survive as tokens (the
+// model was trained with them). This reproduces phonemizer's Punctuation
+// class for the fixed marks and separator this model uses.
+
+constexpr std::string_view kPunctuationMarks = "!'(),-.:;?\"";
+
+bool is_punctuation_mark(char ch) {
+    return kPunctuationMarks.find(ch) != std::string_view::npos;
+}
+
+bool is_ascii_space(char ch) {
+    return std::isspace(static_cast<unsigned char>(ch)) != 0;
+}
+
+struct MarkIndex {
+    std::string mark;
+    char position = 'I';   // B(egin), E(nd), I(nside), A(lone)
+};
+
+/** Matches of phonemizer's (\s*[marks]+\s*)+ -- maximal runs of spaces and
+ *  marks that contain at least one mark. */
+std::vector<std::pair<size_t, size_t>> find_mark_runs(const std::string & line) {
+    std::vector<std::pair<size_t, size_t>> runs;
+    size_t i = 0;
+    while (i < line.size()) {
+        if (!is_ascii_space(line[i]) && !is_punctuation_mark(line[i])) {
+            ++i;
+            continue;
+        }
+        size_t end = i;
+        bool has_mark = false;
+        while (end < line.size() &&
+               (is_ascii_space(line[end]) || is_punctuation_mark(line[end]))) {
+            has_mark = has_mark || is_punctuation_mark(line[end]);
+            ++end;
+        }
+        if (has_mark) {
+            runs.emplace_back(i, end);
+        }
+        i = end;
+    }
+    return runs;
+}
+
+/** Punctuation._preserve_line: chunks without punctuation + ordered marks.
+ *  Empty chunks are filtered, as Punctuation.preserve() does. */
+std::pair<std::vector<std::string>, std::vector<MarkIndex>> preserve_punctuation(
+    const std::string & line) {
+    const auto runs = find_mark_runs(line);
+    if (runs.empty()) {
+        return {{line}, {}};
+    }
+    if (runs.size() == 1 && runs[0].first == 0 && runs[0].second == line.size()) {
+        return {{}, {{line, 'A'}}};
+    }
+    std::vector<MarkIndex> marks;
+    marks.reserve(runs.size());
+    for (size_t index = 0; index < runs.size(); ++index) {
+        const auto & run = runs[index];
+        char position = 'I';
+        if (index == 0 && run.first == 0) {
+            position = 'B';
+        } else if (index + 1 == runs.size() && run.second == line.size()) {
+            position = 'E';
+        }
+        marks.push_back({line.substr(run.first, run.second - run.first), position});
+    }
+    // The find-first split dance, exactly as the Python does it.
+    std::vector<std::string> chunks;
+    std::string rest = line;
+    for (const auto & mark : marks) {
+        const size_t at = rest.find(mark.mark);
+        if (at == std::string::npos) {
+            chunks.push_back(rest);
+            rest.clear();
+            continue;
+        }
+        chunks.push_back(rest.substr(0, at));
+        rest.erase(0, at + mark.mark.size());
+    }
+    chunks.push_back(rest);
+    chunks.erase(
+        std::remove_if(chunks.begin(), chunks.end(),
+                       [](const std::string & chunk) { return chunk.empty(); }),
+        chunks.end());
+    return {std::move(chunks), std::move(marks)};
+}
+
+/** Punctuation.restore for a single line, sep.word = " ", strip = False. */
+std::string restore_punctuation(
+    std::vector<std::string> chunk_phonemes,
+    std::vector<MarkIndex> marks) {
+    std::deque<std::string> text(chunk_phonemes.begin(), chunk_phonemes.end());
+    std::deque<MarkIndex> pending(marks.begin(), marks.end());
+    std::vector<std::string> out;
+    size_t pos = 0;
+    while (!text.empty() || !pending.empty()) {
+        if (pending.empty()) {
+            for (auto & line : text) {
+                if (line.empty() || line.back() != ' ') {
+                    line.push_back(' ');
+                }
+                out.push_back(std::move(line));
+            }
+            text.clear();
+        } else if (text.empty()) {
+            std::string joined;
+            for (const auto & mark : pending) {
+                joined += mark.mark;
+            }
+            out.push_back(std::move(joined));
+            pending.clear();
+        } else if (pos == 0) {   // single line: every mark carries index 0
+            const auto current = pending.front();
+            pending.pop_front();
+            if (!text.front().empty() && text.front().back() == ' ') {
+                text.front().pop_back();
+            }
+            const bool mark_ends_with_sep =
+                !current.mark.empty() && current.mark.back() == ' ';
+            if (current.position == 'B') {
+                text.front() = current.mark + text.front();
+            } else if (current.position == 'E') {
+                out.push_back(text.front() + current.mark + (mark_ends_with_sep ? "" : " "));
+                text.pop_front();
+                ++pos;
+            } else if (current.position == 'A') {
+                out.push_back(current.mark + (mark_ends_with_sep ? "" : " "));
+                ++pos;
+            } else {   // 'I'
+                if (text.size() == 1) {
+                    text.front() += current.mark;
+                } else {
+                    auto first = std::move(text.front());
+                    text.pop_front();
+                    text.front() = first + current.mark + text.front();
+                }
+            }
+        } else {
+            auto & line = text.front();
+            if (line.empty() || line.back() != ' ') {
+                line.push_back(' ');
+            }
+            out.push_back(std::move(line));
+            text.pop_front();
+            ++pos;
+        }
+    }
+    // phonemizer would return these as separate lines and the reference
+    // takes the first; a single input line produces one in practice.
+    std::string result;
+    for (const auto & line : out) {
+        result += line;
+    }
+    return result;
+}
+
+/** phonemizer EspeakBackend._postprocess_line with tie enabled,
+ *  with_stress=True, strip=False, word separator " ", phone separator "". */
+std::string postprocess_espeak_line(std::string line) {
+    const auto not_space = [](unsigned char ch) { return std::isspace(ch) == 0; };
+    line.erase(line.begin(), std::find_if(line.begin(), line.end(), not_space));
+    line.erase(std::find_if(line.rbegin(), line.rend(), not_space).base(), line.end());
+    std::replace(line.begin(), line.end(), '\n', ' ');
+    replace_all(line, "  ", " ");
+    // espeak-ng#694: stray '_' separators at word ends
+    std::string squeezed;
+    squeezed.reserve(line.size());
+    for (const char ch : line) {
+        if (ch == '_' && !squeezed.empty() && squeezed.back() == '_') {
+            continue;
+        }
+        squeezed.push_back(ch);
+    }
+    line = std::move(squeezed);
+    replace_all(line, "_ ", " ");
+    // language_switch="remove-flags": strip espeak's (lang) switch flags
+    if (line.find('(') != std::string::npos) {
+        std::string unflagged;
+        size_t at = 0;
+        while (at < line.size()) {
+            if (line[at] == '(') {
+                const size_t close = line.find(')', at + 1);
+                if (close != std::string::npos) {
+                    at = close + 1;
+                    continue;
+                }
+            }
+            unflagged.push_back(line[at++]);
+        }
+        line = std::move(unflagged);
+    }
+    if (line.empty()) {
+        return line;
+    }
+    // per word: strip, drop in-word '_' (phone separator is empty), append " "
+    std::string out;
+    size_t start = 0;
+    while (start <= line.size()) {
+        size_t end = line.find(' ', start);
+        if (end == std::string::npos) {
+            end = line.size();
+        }
+        std::string word = line.substr(start, end - start);
+        word.erase(std::remove(word.begin(), word.end(), '_'), word.end());
+        out += word;
+        out.push_back(' ');
+        if (end == line.size()) {
+            break;
+        }
+        start = end + 1;
+    }
+    return out;
+}
+
+/** The reference front end's own line post-processing: rewrite eSpeak's tie
+ *  to '^' per word so the E2M diphthong patterns can match. */
+std::string rewrite_ties_per_word(const std::string & line_in) {
+    std::string line = line_in;
+    const auto not_space = [](unsigned char ch) { return std::isspace(ch) == 0; };
+    line.erase(line.begin(), std::find_if(line.begin(), line.end(), not_space));
+    line.erase(std::find_if(line.rbegin(), line.rend(), not_space).base(), line.end());
+    std::replace(line.begin(), line.end(), '\n', ' ');
+    replace_all(line, "  ", " ");
+    if (line.empty()) {
+        return line;
+    }
+    std::string out;
+    size_t start = 0;
+    while (start <= line.size()) {
+        size_t end = line.find(' ', start);
+        if (end == std::string::npos) {
+            end = line.size();
+        }
+        std::string word = line.substr(start, end - start);
+        replace_all(word, kTieDefault, kTieMisaki);
+        out += word;
+        out.push_back(' ');
+        if (end == line.size()) {
+            break;
+        }
+        start = end + 1;
+    }
+    return out;
 }
 
 struct EspeakApi {
@@ -243,8 +496,17 @@ SanoTtsFrontend::SanoTtsFrontend(
 SanoTtsFrontend::~SanoTtsFrontend() = default;
 
 SanoTtsEncoded SanoTtsFrontend::encode(const std::string & text) const {
-    std::string ipa = apply_e2m(impl_->espeak.phonemize(text));
-    replace_all(ipa, kTieDefault, kTieMisaki);
+    auto [chunks, marks] = preserve_punctuation(text);
+    std::vector<std::string> chunk_phonemes;
+    chunk_phonemes.reserve(chunks.size());
+    for (const auto & chunk : chunks) {
+        chunk_phonemes.push_back(postprocess_espeak_line(impl_->espeak.phonemize(chunk)));
+    }
+    const std::string restored =
+        restore_punctuation(std::move(chunk_phonemes), std::move(marks));
+    // Ties become '^' BEFORE E2M runs: every diphthong pattern in the table
+    // ("o^ʊ" -> "O", "t^ʃ" -> "ʧ", ...) matches on the rewritten form.
+    std::string ipa = apply_e2m(rewrite_ties_per_word(restored));
 
     const auto & vocab = vocabulary();
     SanoTtsEncoded out;

@@ -89,20 +89,31 @@
   "packages": [
     {
       "id": "sanotts_heart_nano_orig",
-      "display_name": "sanoTTS heart-nano 294k GGUF",
+      "display_name": "sanoTTS heart-nano 294k FP32 GGUF",
       "default": true,
       "format": "gguf",
       "precision": "orig",
       "target_directory": "sanoTTS-heart-nano-GGUF",
       "files": [
-        "gguf/heart-nano.gguf",
+        "gguf/heart-nano-f32.gguf",
         "gguf/config.json"
       ],
       "strip_prefix": "gguf"
     }
   ],
   "dependencies": [],
-  "ui": {},
+  "ui": {
+    "recommended_package": "sanotts_heart_nano_orig",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/community_models/sanotts.md",
+      "docs/gguf.md"
+    ]
+  },
   "sources": [
     {
       "format": "gguf",
@@ -114,10 +125,7 @@
         "config": "model:config.json"
       },
       "tensors": {
-        "weights": {
-          "source": "weights:",
-          "prefix": "weights"
-        }
+        "weights": "weights:"
       }
     }
   ]
