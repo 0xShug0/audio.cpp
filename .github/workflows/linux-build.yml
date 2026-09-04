@@ -48,7 +48,12 @@ jobs:
           sudo apt-get install -y gcc-13 g++-13 cmake make glslc libvulkan-dev spirv-headers
           # Software Vulkan (lavapipe) so the Vulkan matrix can actually register
           # the backend; without an ICD the utility tests that request Vulkan fail.
-          sudo apt-get install -y mesa-vulkan-drivers
+          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+          # The loader does not always auto-discover the lavapipe ICD on the
+          # runner; point it explicitly and fail loudly if the package is off.
+          ls /usr/share/vulkan/icd.d/
+          echo "VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lhasa_icd.x86_64.json 2>/dev/null || ls /usr/share/vulkan/icd.d/*.json | head -1)" >> "$GITHUB_ENV"
+          vulkaninfo --summary 2>&1 | grep -A4 "Devices" || true
 
       - name: Configure
         run: |
