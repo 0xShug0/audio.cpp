@@ -18,6 +18,9 @@
       "session_options": {
         "fireredtts3.reference_cache_slots": "8",
         "fireredtts3.chunk_sizes": "3,12,12,12,12,12,12,12,12,12,12,12,12,12,12,12"
+      },
+      "default_request_options": {
+        "num_inference_steps": "5"
       }
     }
   ]

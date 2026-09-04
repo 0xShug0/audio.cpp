@@ -135,6 +135,8 @@ public:
               weight_context_bytes, storage_type, false)),
           redae_(std::make_unique<FireRedRedAeRuntime>(
               assets_, execution_, graph_arena_bytes, weight_context_bytes, storage_type)),
+          // flow 图按需重建（batch 变则 rebuild）。曾试过 fixed-capacity + 零填充复用，
+          // 但 padding 破坏 DiT 输出（单路 MD5 就变），故保持每轮实际 batch 建图。
           flow_(std::make_unique<FireRedFlowRuntime>(
               assets_, execution_, graph_arena_bytes, weight_context_bytes, storage_type, false)),
           reference_voice_cache_(
@@ -556,7 +558,18 @@ private:
         ar_->start_decode_embeddings_batched(state, kMaxDecodeCacheSteps);
     }
 
-    // 一次 batched decode 推进本轮所有活跃行（非活跃行 inert）。
+    // 一次 batched decode 推进本轮所有活跃行，并把 flow（DiT denoise）也跨 slot batch。
+    // 两阶段：
+    //   A. per-slot AR 后处理（stop 判定 / backbone_cond / dit_cond3）——host 计算，逐 slot。
+    //   B. 对存活 slot 同步做 flow denoise：所有 slot 的同一 denoise 步拼一次大 batch
+    //      flow.run（行 = 各 slot 的 cfg_batch 行首尾相接），输出按 slot 拆回各自 CFG 合并。
+    //      DiT 每行独立 attend，故与各 slot 单独跑逐位一致。异构 steps 则逐个单跑（回退）。
+    //   C. per-slot：patch_encode -> next_input，累加 latents/chunk，chunk 边界 redae。
+    struct FlowSurvivor {
+        int64_t id;
+        int64_t cfg_batch;              // guidance_scale>0 ? 2 : 1
+        std::vector<float> dit_cond3;   // [history_patches+1, dit_hidden]
+    };
     void decode_round_step_locked(const std::vector<int64_t> & active) {
         const int64_t hidden = assets_->base.hidden_size;
         std::vector<float> embeddings(static_cast<size_t>(max_batch_ * hidden), 0.0F);
@@ -567,7 +580,10 @@ private:
                       embeddings.begin() + static_cast<std::ptrdiff_t>(i * hidden));
             active_mask[static_cast<size_t>(i)] = 1;
         }
+        auto t_dec0 = std::chrono::steady_clock::now();
         auto out = ar_->decode_embeddings_batched(embeddings, max_batch_, active_mask);
+        prof_.ar_decode_ms += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t_dec0).count();
         if (diag_enabled()) {
             for (int64_t i : active) {
                 const size_t base = static_cast<size_t>(i) * static_cast<size_t>(hidden);
@@ -586,6 +602,9 @@ private:
                 }
             }
         }
+        // ---- 阶段 A：per-slot AR 后处理 + stop 判定，收集存活 slot ----
+        std::vector<FlowSurvivor> survivors;
+        survivors.reserve(active.size());
         for (int64_t i : active) {
             auto & slot = slots_[static_cast<size_t>(i)];
             if (slot.state != Slot::State::Active || !slot.prefill_done || slot.step < 1) {
@@ -594,7 +613,172 @@ private:
             std::vector<float> row(
                 out.hidden.begin() + static_cast<std::ptrdiff_t>(i * hidden),
                 out.hidden.begin() + static_cast<std::ptrdiff_t>((i + 1) * hidden));
-            advance_slot_locked(i, row);
+            if (slot.step >= kMaxArSteps) {
+                slot.state = Slot::State::Dead;
+                continue;
+            }
+            const float stop = ar_->stop(row);
+            if (stop >= slot.request.stop_threshold && slot.step >= 6) {
+                slot.state = Slot::State::Dead;
+                continue;
+            }
+            slot.backbone_cond.insert(slot.backbone_cond.end(), row.begin(), row.end());
+            const int64_t cond_rows = static_cast<int64_t>(slot.backbone_cond.size()) / hidden;
+            auto cond3 = last_rows(slot.backbone_cond, cond_rows, hidden, assets_->base.history_patches + 1);
+            FlowSurvivor m;
+            m.id = i;
+            m.cfg_batch = slot.request.guidance_scale > 0.0F ? 2 : 1;
+            m.dit_cond3 = ar_->dit_head(cond3, assets_->base.history_patches + 1);
+            survivors.push_back(std::move(m));
+        }
+        if (survivors.empty()) {
+            return;
+        }
+        // ---- 阶段 B/C：flow denoise（batch 或逐 slot）+ per-slot 收尾 ----
+        const size_t s0_steps = slots_[static_cast<size_t>(survivors[0].id)].schedule.size();
+        const bool same_steps = std::all_of(survivors.begin(), survivors.end(), [&](const FlowSurvivor & m) {
+            return slots_[static_cast<size_t>(m.id)].schedule.size() == s0_steps;
+        });
+        if (same_steps && survivors.size() > 1) {
+            auto latents = batched_flow_latents_locked(survivors);
+            for (size_t s = 0; s < survivors.size(); ++s) {
+                finish_slot_patch_locked(survivors[s].id, std::move(latents[s]));
+            }
+        } else {
+            for (const FlowSurvivor & m : survivors) {
+                auto & slot = slots_[static_cast<size_t>(m.id)];
+                auto latent = flow_one_patch_locked(slot, m.dit_cond3, static_cast<uint64_t>(slot.step));
+                finish_slot_patch_locked(m.id, std::move(latent));
+            }
+        }
+    }
+
+    // 多 slot 同步 flow denoise，返回每 slot 的 next_latent（[patch, redae_dim]）。
+    // pred 布局：flow 输出每行 = [patch, redae_dim]（graph 已 slice 掉 history token），
+    // 行 stride = patch*redae_dim；行按 slot 的 cfg_batch 首尾相接。
+    std::vector<std::vector<float>> batched_flow_latents_locked(const std::vector<FlowSurvivor> & survivors) {
+        const int64_t history_tokens = assets_->base.history_patches * assets_->base.patch_size;
+        const int64_t tokens = history_tokens + assets_->base.patch_size;
+        const int64_t in_channels = assets_->base.redae_dim + assets_->base.dit_hidden_size + assets_->base.speaker_dim;
+        const int64_t patch = assets_->base.patch_size;
+        const int64_t redae_dim = assets_->base.redae_dim;
+        const int64_t n = static_cast<int64_t>(survivors.size());
+        std::vector<std::vector<float>> history(n);
+        std::vector<std::vector<float>> current(n);
+        std::vector<int64_t> base_row(n);
+        int64_t total_batch = 0;
+        for (int64_t s = 0; s < n; ++s) {
+            auto & slot = slots_[static_cast<size_t>(survivors[s].id)];
+            history[s] = last_rows(
+                slot.latents_gen,
+                static_cast<int64_t>(slot.latents_gen.size()) / redae_dim,
+                redae_dim,
+                history_tokens);
+            const uint64_t noise_offset =
+                sampling::torch_cuda_tensor_iterator_offset_blocks(
+                    static_cast<uint64_t>(patch * redae_dim),
+                    sampling_policy_) *
+                static_cast<uint64_t>(slot.step);
+            current[s] = sampling::generate_torch_cuda_tensor_iterator_randn(
+                static_cast<size_t>(patch * redae_dim),
+                slot.request.seed,
+                noise_offset,
+                sampling_policy_,
+                sampling::TorchRandnPrecision::Float32);
+            base_row[s] = total_batch;
+            total_batch += survivors[s].cfg_batch;
+        }
+        const auto & schedule = slots_[static_cast<size_t>(survivors[0].id)].schedule;
+        for (size_t i = 0; i + 1 < schedule.size(); ++i) {
+            std::vector<float> x_in(static_cast<size_t>(total_batch * tokens * in_channels), 0.0F);
+            std::vector<float> time_all(static_cast<size_t>(total_batch * 256), 0.0F);
+            const auto te = firered_timestep_embedding(schedule[i]);
+            for (int64_t s = 0; s < n; ++s) {
+                auto & slot = slots_[static_cast<size_t>(survivors[s].id)];
+                const int64_t b0 = base_row[s];
+                const int64_t cfg = survivors[s].cfg_batch;
+                for (int64_t b = 0; b < cfg; ++b) {
+                    const int64_t g = b0 + b;
+                    std::copy(te.begin(), te.end(),
+                              time_all.begin() + static_cast<std::ptrdiff_t>(g * 256));
+                    for (int64_t t = 0; t < tokens; ++t) {
+                        float * row = x_in.data() + static_cast<size_t>((g * tokens + t) * in_channels);
+                        if (t < history_tokens) {
+                            std::copy(
+                                history[s].begin() + static_cast<std::ptrdiff_t>(t * redae_dim),
+                                history[s].begin() + static_cast<std::ptrdiff_t>((t + 1) * redae_dim),
+                                row);
+                        } else {
+                            const int64_t local = t - history_tokens;
+                            std::copy(
+                                current[s].begin() + static_cast<std::ptrdiff_t>(local * redae_dim),
+                                current[s].begin() + static_cast<std::ptrdiff_t>((local + 1) * redae_dim),
+                                row);
+                        }
+                        if (b == 0) {
+                            const int64_t cond_row = t / patch;
+                            std::copy(
+                                survivors[s].dit_cond3.begin() + static_cast<std::ptrdiff_t>(cond_row * assets_->base.dit_hidden_size),
+                                survivors[s].dit_cond3.begin() + static_cast<std::ptrdiff_t>((cond_row + 1) * assets_->base.dit_hidden_size),
+                                row + redae_dim);
+                            std::copy(slot.spk_dit.begin(), slot.spk_dit.end(),
+                                      row + redae_dim + assets_->base.dit_hidden_size);
+                        }
+                    }
+                }
+            }
+            auto t_fl0 = std::chrono::steady_clock::now();
+            auto pred = flow_->run(x_in, time_all, total_batch);
+            prof_.flow_ms += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t_fl0).count();
+            const float dt = schedule[i + 1] - schedule[i];
+            const int64_t row_elems = patch * redae_dim;
+            for (int64_t s = 0; s < n; ++s) {
+                auto & slot = slots_[static_cast<size_t>(survivors[s].id)];
+                const int64_t b0 = base_row[s];
+                const int64_t cfg = survivors[s].cfg_batch;
+                for (int64_t t = 0; t < patch; ++t) {
+                    for (int64_t c = 0; c < redae_dim; ++c) {
+                        const size_t idx = static_cast<size_t>(t * redae_dim + c);
+                        const size_t cond_off = static_cast<size_t>(b0 * row_elems + idx);
+                        float vt = pred[cond_off];
+                        if (cfg == 2) {
+                            const float uncond = pred[static_cast<size_t>((b0 + 1) * row_elems + idx)];
+                            vt = (1.0F + slot.request.guidance_scale) * vt - slot.request.guidance_scale * uncond;
+                        }
+                        current[s][idx] += dt * vt;
+                    }
+                }
+            }
+        }
+        return current;
+    }
+
+    // 阶段 C：一个 slot 的 AR patch 收尾（flow 产出 next_latent 后）。
+    void finish_slot_patch_locked(int64_t slot_id, std::vector<float> next_latent) {
+        auto & slot = slots_[static_cast<size_t>(slot_id)];
+        slot.latents_gen.insert(slot.latents_gen.end(), next_latent.begin(), next_latent.end());
+        slot.next_input = ar_->patch_encode(next_latent);
+        slot.chunk_latents.insert(slot.chunk_latents.end(), next_latent.begin(), next_latent.end());
+        slot.generated_patches++;
+        slot.step++;
+        prof_.n_steps++;
+        prof_.n_patches++;
+        if (slot.generated_patches >= slot.chunk_target && slot.chunk_index < slot.chunks.size()) {
+            auto t_red0 = std::chrono::steady_clock::now();
+            auto audio = redae_->decode_incremental(slot.redae_state, slot.chunk_latents);
+            prof_.redae_ms += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t_red0).count();
+            prof_.n_redae++;
+            slot.chunk_latents.clear();
+            slot.chunk_index++;
+            if (slot.chunk_index < slot.chunks.size()) {
+                slot.chunk_target += slot.chunks[slot.chunk_index];
+            }
+            if (!audio.samples.empty()) {
+                slot.chunk_queue.push_back(std::move(audio));
+                cv_.notify_all();
+            }
         }
     }
 
@@ -625,48 +809,6 @@ private:
         slot.chunk_latents.insert(slot.chunk_latents.end(), next_latent.begin(), next_latent.end());
         slot.generated_patches++;
         slot.step = 1;
-    }
-
-    // 单 slot 一步 AR（step>=1：hidden 来自一次 batched decode）。
-    void advance_slot_locked(int64_t slot_id, const std::vector<float> & hidden_row) {
-        auto & slot = slots_[static_cast<size_t>(slot_id)];
-        const int64_t hidden = assets_->base.hidden_size;
-
-        // AR 步数上限（与 pipeline.cpp 的 max_steps=400 一致）：stop 未触发时强制结束。
-        if (slot.step >= kMaxArSteps) {
-            slot.state = Slot::State::Dead;
-            return;
-        }
-        const float stop = ar_->stop(hidden_row);
-        if (stop >= slot.request.stop_threshold && slot.step >= 6) {
-            slot.state = Slot::State::Dead;
-            return;
-        }
-
-        slot.backbone_cond.insert(slot.backbone_cond.end(), hidden_row.begin(), hidden_row.end());
-        const int64_t cond_rows = static_cast<int64_t>(slot.backbone_cond.size()) / hidden;
-        auto cond3 = last_rows(slot.backbone_cond, cond_rows, hidden, assets_->base.history_patches + 1);
-        auto dit_cond3 = ar_->dit_head(cond3, assets_->base.history_patches + 1);
-        const auto next_latent = flow_one_patch_locked(slot, dit_cond3, static_cast<uint64_t>(slot.step));
-        slot.latents_gen.insert(slot.latents_gen.end(), next_latent.begin(), next_latent.end());
-        slot.next_input = ar_->patch_encode(next_latent);
-        slot.chunk_latents.insert(slot.chunk_latents.end(), next_latent.begin(), next_latent.end());
-        slot.generated_patches++;
-        slot.step++;
-
-        // chunk 边界（与 pipeline.cpp 相同）
-        if (slot.generated_patches >= slot.chunk_target && slot.chunk_index < slot.chunks.size()) {
-            auto audio = redae_->decode_incremental(slot.redae_state, slot.chunk_latents);
-            slot.chunk_latents.clear();
-            slot.chunk_index++;
-            if (slot.chunk_index < slot.chunks.size()) {
-                slot.chunk_target += slot.chunks[slot.chunk_index];
-            }
-            if (!audio.samples.empty()) {
-                slot.chunk_queue.push_back(std::move(audio));
-                cv_.notify_all();  // 唤醒等待该 slot 的 next_chunk
-            }
-        }
     }
 
     // flow + CFG 单 patch（与 pipeline.cpp 的 flow_one_patch 一致，但使用 slot 状态）。
@@ -756,13 +898,21 @@ private:
             // 有剩余 chunk_latents → decode_incremental 输出 tail（含 istft 尾部）；
             // 无剩余 → flush_incremental 输出尾部。二选一，避免 decode + flush 双输出。
             if (!slot.chunk_latents.empty() && slot.generated_patches > 0) {
+                auto t_red0 = std::chrono::steady_clock::now();
                 auto audio = redae_->decode_incremental(slot.redae_state, slot.chunk_latents);
+                prof_.redae_ms += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - t_red0).count();
+                prof_.n_redae++;
                 slot.chunk_latents.clear();
                 if (!audio.samples.empty()) {
                     slot.chunk_queue.push_back(std::move(audio));
                 }
             } else {
+                auto t_red0 = std::chrono::steady_clock::now();
                 auto flush = redae_->flush_incremental(slot.redae_state);
+                prof_.redae_ms += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - t_red0).count();
+                prof_.n_redae++;
                 if (!flush.samples.empty()) {
                     slot.chunk_queue.push_back(std::move(flush));
                 }
@@ -773,6 +923,25 @@ private:
         slot.finished = true;
         // 该 slot 的 GPU 行内容由下一轮全量 import 清零；期间它不在 active（active_mask
         // 置 0 → 整行 -inf 且不 advance），绝不参与 decode、绝不污染其他行。
+        // [PROF] 打印自上次 finish 以来的分项累计（单路时即该请求自身）
+        const double d_ar = prof_.ar_decode_ms - prof_last_.ar_decode_ms;
+        const double d_flow = prof_.flow_ms - prof_last_.flow_ms;
+        const double d_red = prof_.redae_ms - prof_last_.redae_ms;
+        fprintf(stderr,
+                "[PROF] slot=%ld steps=%lld patches=%lld redae=%lld | AR_decode=%.1fms flow=%.1fms "
+                "redae=%.1fms | ar%%=%.0f flow%%=%.0f redae%%=%.0f | per_patch_ar=%.2fms per_patch_flow=%.2fms\n",
+                slot_id,
+                (long long)(prof_.n_steps - prof_last_.n_steps),
+                (long long)(prof_.n_patches - prof_last_.n_patches),
+                (long long)(prof_.n_redae - prof_last_.n_redae),
+                d_ar, d_flow, d_red,
+                d_ar + d_flow + d_red > 0 ? 100.0 * d_ar / (d_ar + d_flow + d_red) : 0,
+                d_ar + d_flow + d_red > 0 ? 100.0 * d_flow / (d_ar + d_flow + d_red) : 0,
+                d_ar + d_flow + d_red > 0 ? 100.0 * d_red / (d_ar + d_flow + d_red) : 0,
+                prof_.n_patches - prof_last_.n_patches > 0 ? d_ar / (prof_.n_patches - prof_last_.n_patches) : 0,
+                prof_.n_patches - prof_last_.n_patches > 0 ? d_flow / (prof_.n_patches - prof_last_.n_patches) : 0);
+        fflush(stderr);
+        prof_last_ = prof_;
         cv_.notify_all();
     }
 
@@ -791,11 +960,40 @@ private:
         return false;
     }
 
+    // 开轮收集窗口：pending 有待启动请求、且当前无任何 round 参与者在跑时，说明
+    // "下一轮即将开始"。此时若立刻 tick，第一个请求会单独 prefill 成一轮（round
+    // 拆轮 —— 同一瞬间到达的其余请求被 gate 挡到整轮跑完才并下一轮，flow batch
+    // 因而失效）。解法：短暂等待，让同刻到达的请求在 pending 里聚集，再一次性开轮。
+    // 已攒满（pending 能占满空闲 slot）则不等直接开。
+    bool should_collect_for_round_locked() const {
+        if (pending_.empty()) {
+            return false;
+        }
+        if (any_round_participant_locked()) {
+            return false;  // 已有轮在跑，无需收集（新 pending 等本轮 drain）
+        }
+        // pending 已占满 max_batch → 一轮已能打满，不必再等。
+        return static_cast<int64_t>(pending_.size()) < max_batch_;
+    }
+
     // 专用调度线程主循环（唯一 GPU decode 线程）。
     // 持锁跑 tick（一次 batched decode 推进所有活跃行），无工作/无 pending 时等待。
     void scheduler_loop() {
         std::unique_lock<std::mutex> lock(mu_);
+        constexpr auto kRoundCollectWindow = std::chrono::microseconds(8000);
         while (!stop_) {
+            // 开轮前收集：若下一轮即将开始且还没攒满，等一小段让同刻请求加入同一轮，
+            // 避免 round 拆轮。collect_started_ 防连续多个 1.5ms 空等（攒满/超时即开）。
+            if (should_collect_for_round_locked() && !collect_started_) {
+                collect_started_ = true;
+                fprintf(stderr, "[COLLECT] t=%lld pend=%zu free=%zu waiting %dus\n",
+                        (long long)tick_count_, pending_.size(), free_slots_.size(),
+                        (int)std::chrono::duration_cast<std::chrono::microseconds>(kRoundCollectWindow).count());
+                fflush(stderr);
+                cv_wake_.wait_for(lock, kRoundCollectWindow);
+                collect_started_ = false;
+                // wait_for 醒来即继续到 tick —— pending 已尽量聚集，本轮一并 prefill
+            }
             // 记录 tick 前各 slot 的已产出 chunk 数
             size_t chunks_before = 0;
             for (int64_t i = 0; i < max_batch_; ++i) {
@@ -854,6 +1052,32 @@ private:
     bool stop_ = false;
     std::thread scheduler_thread_;
     int64_t tick_count_ = 0;  // [DIAG]
+    bool collect_started_ = false;  // 开轮收集窗口进行中（防连续空等）
+
+    // [PROF] 各组件累计耗时（单调度线程，串行累计；finish_slot 时打印分项）
+    struct ProfAccum {
+        double ar_decode_ms = 0;    // batched AR decode（图前 + 图后 readback）
+        double flow_ms = 0;         // flow_one_patch_locked（整函数，含 dit_head? 不含，dit_head 单独在 advance）
+        double redae_ms = 0;        // RedAE decode_incremental / flush
+        double other_ms = 0;        // 其余（advance 的 stop/dit_head/patch_encode/backbone 等）
+        int64_t n_steps = 0;        // AR step 数
+        int64_t n_patches = 0;      // generated patches
+        int64_t n_redae = 0;        // redae 调用次数
+    } prof_;
+    ProfAccum prof_last_;  // [PROF] 上次打印时的累计快照
+    // 一段代码的计时 RAII：析构时把 elapsed_ms 累加到 acc
+    struct ProfScoped {
+        ProfAccum & acc;
+        double & slot;
+        std::chrono::steady_clock::time_point t0;
+        ProfScoped(ProfAccum & a, double & target) : acc(a), slot(target) {
+            (void)acc;
+            t0 = std::chrono::steady_clock::now();
+        }
+        ~ProfScoped() {
+            slot += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        }
+    };
 };
 
 FireRedTTS3BatchScheduler::FireRedTTS3BatchScheduler(
