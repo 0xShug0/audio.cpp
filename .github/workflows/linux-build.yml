@@ -77,9 +77,12 @@ jobs:
         run: |
           cmake --build "$BUILD_DIR" --parallel "$(nproc)"
           # ctest -E replaces (not unions) on repeat: pass one regex.
+          # Keep the regex bare in the variable — embedded quotes survive
+          # word-splitting and turn the pattern into a literal that matches
+          # nothing.
           if [ "${{ matrix.enable_vulkan }}" = "ON" ]; then
-            EXCLUDE="-E \"audio_utility_api_test|rnnoise_utility_test|zipenhancer_utility_test\""
+            EXCLUDE="audio_utility_api_test|rnnoise_utility_test|zipenhancer_utility_test"
           else
-            EXCLUDE="-E audio_utility_api_test"
+            EXCLUDE="audio_utility_api_test"
           fi
-          ctest --test-dir "$BUILD_DIR" --output-on-failure --parallel 4 $EXCLUDE
+          ctest --test-dir "$BUILD_DIR" --output-on-failure --parallel 4 -E "$EXCLUDE"
