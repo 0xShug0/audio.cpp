@@ -100,6 +100,52 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 | `--max-tokens` | integer | `1000` | Maximum generated T3 tokens per chunk. |
 | `--do-sample` | `true`, `false` | `true` | Enable stochastic T3 sampling. |
 
+## Chatterbox Turbo
+
+Chatterbox Turbo is a [community model](community_models/chatterbox_turbo.md): Resemble AI's
+distilled 350M-parameter sibling of Chatterbox, with a GPT2-style T3 backbone (vs. the base
+model's 0.5B Llama-style backbone), a GPT2 BPE tokenizer with 19 built-in emotion/style tags
+(`[laugh]`, `[sigh]`, ...), and a 2-step meanflow-distilled S3Gen decoder (vs. the base model's
+10-step CFG decoder) for substantially faster built-in-voice TTS. It is English-only.
+
+`chatterbox_turbo` is a separate model family from `chatterbox` (not a variant selectable within
+it): its T3 backbone and tokenizer differ from the base model's, and it reuses base Chatterbox's
+own S3Gen/HiFT-vocoder loader code for the flow decoder and vocoder half.
+
+The package is one self-contained, audio.cpp-native GGUF produced by repacking Resemble AI's
+weights (via the third-party `cstr/chatterbox-turbo-GGUF` conversion published for the CrispASR
+project, MIT-relicensed) with
+[`tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py`](../tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py)
+— see that model's community doc for details.
+
+**Current limitations:** only the built-in default voice baked into the package is supported.
+Custom voice cloning is not supported; `--voice-ref` is rejected with an explicit error rather
+than silently ignored.
+
+| Field | Value |
+|---|---|
+| Family | `chatterbox_turbo` |
+| Model directory | `Chatterbox-Turbo-GGUF/chatterbox-turbo-{q8_0,f16}.gguf` (single self-contained file) |
+| Tasks | `tts` |
+| Modes | `offline` |
+| Languages | `en` |
+| Voice input | Not supported — omit `--voice-ref` to use the built-in voice |
+| Built-in voices | One, embedded in the package |
+
+```bash
+audiocpp_cli --task tts --family chatterbox_turbo --model models/Chatterbox-Turbo-GGUF/chatterbox-turbo-q8_0.gguf --backend cuda --text "Hello from Chatterbox Turbo." --out out.wav
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--temperature` | float | `0.8` | T3 sampling temperature. |
+| `--top-p` | float | `0.95` | T3 nucleus sampling limit. |
+| `top_k` (session option) | integer | `1000` | T3 top-k sampling limit. |
+| `--repetition-penalty` | float | `1.2` | T3 repetition penalty. |
+| `--max-tokens` | integer | `1000` | Maximum generated T3 tokens. |
+
+`--guidance-scale`/exaggeration/min_p have no effect on Turbo (it was distilled without CFG) and are accepted but ignored, matching upstream's own behavior.
+
 ## Confucius4-TTS
 
 Confucius4-TTS is an experimental multilingual voice-cloning TTS model packaged as a standalone GGUF bundle. It supports offline generation and streaming text input, using reference speech, language-aware text normalization, T2S semantic generation, S2A flow matching, style encoding, semantic audio features, and BigVGAN vocoding.

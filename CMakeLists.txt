@@ -1469,6 +1469,24 @@ audiocpp_add_model(chatterbox
         engine::models::chatterbox::make_chatterbox_loader
 )
 
+audiocpp_add_model(chatterbox_turbo
+    SOURCES
+        src/community_models/chatterbox_turbo/t3_turbo_weights.cpp
+        src/community_models/chatterbox_turbo/t3_turbo_component.cpp
+        src/community_models/chatterbox_turbo/s3gen_turbo.cpp
+        src/community_models/chatterbox_turbo/text_tokenizer_turbo.cpp
+        src/community_models/chatterbox_turbo/assets.cpp
+        src/community_models/chatterbox_turbo/loader.cpp
+        src/community_models/chatterbox_turbo/session.cpp
+        src/community_models/chatterbox_turbo/tts.cpp
+    INCLUDES
+        engine/community_models/chatterbox_turbo/loader.h
+    LOADERS
+        engine::community_models::chatterbox_turbo::make_chatterbox_turbo_loader
+    DEPENDS
+        chatterbox
+)
+
 audiocpp_add_model(ace_step
     SOURCES
         src/models/ace_step/assets.cpp

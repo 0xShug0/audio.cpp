@@ -6,6 +6,10 @@
 
 Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
 
+Huggingface main repo: https://huggingface.co/audio-cpp/audio.cpp-gguf
+
+ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gguf
+
 > [!IMPORTANT]
 >
 > **2026-08-28 - Dev testing:** Fun-CozyVoice3 and BreezeTTS 2 are available for testing on the `dev` branch.
@@ -144,7 +148,10 @@ Community model ports live under `community_models` to make the ownership bounda
 
 | Family | Task | Lang | Runtime | Contributor | What They Added |
 |---|---|---|---|---|---|
-| **audio8_asr** | ASR | en, zh, yue, ja, ko, fr, de | GGUF Q8, Safetensors | [@0xShug0](https://github.com/0xShug0) | [Audio8-ASR-0.1B](docs/community_models/audio8_asr.md) compact multilingual autoregressive ASR reusing the Qwen3-ASR encoder with an MLP-tower adapter and an 8-layer Qwen2-style decoder (CC-BY-NC, local conversion only) |
+| **audio8_asr** | ASR | en, zh, yue, ja, ko, fr, de | GGUF Q8, Safetensors | [@gqf2008](https://github.com/gqf2008) | [Audio8-ASR-0.1B](docs/community_models/audio8_asr.md) compact multilingual autoregressive ASR reusing the Qwen3-ASR encoder with an MLP-tower adapter and an 8-layer Qwen2-style decoder (CC-BY-NC, local conversion only) |
+| **audio8_tts** | TTS, Clone | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es | GGUF Q8, Stream | [@jasonchen31](https://github.com/jasonchen31) | [Audio8 TTS Preview 0.6B](docs/community_models/audio8_tts.md) DualAR multilingual TTS and zero-shot voice cloning with a Qwen backbone and neural codec |
+| **chatterbox_turbo** | TTS (testing) | en | GGUF 16/Q8 | [@pannagaps](https://github.com/pannagaps) | [Chatterbox Turbo](docs/community_models/chatterbox_turbo.md) distilled 350M GPT2 T3 backbone + 2-step meanflow S3Gen decoder; built-in voice |
+| **echo_tts** | Clone | en | GGUF 16/Q8 | [@5uck1ess](https://github.com/5uck1ess) | [Echo-TTS](docs/community_models/echo_tts.md) 44.1 kHz zero-shot voice cloning with EchoDiT latents and Fish S1-DAC decoding |
 | **f5_tts** | TTS, Clone | en, ar (Habibi) | GGUF | [@tareko](https://github.com/tareko) | [F5-TTS](docs/community_models/f5_tts.md) flow-matching DiT synthesis and voice cloning, with Habibi Arabic aliases `habibi`/`habibi_tts` |
 | **glm_tts** | TTS, Clone | zh, en | GGUF | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](docs/community_models/glm_tts.md) zero-shot synthesis and voice cloning support |
 | **granite5asr** | ASR | en | GGUF Q8 | [@ampersandru](https://github.com/ampersandru) | [IBM Granite Speech 5.0 470M TurboCTC](docs/community_models/granite5asr.md) ultra-fast Conformer-CTC ASR with Shaw relative positional embeddings and ByteLevel BPE |
@@ -161,6 +168,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **soprano_tts** | TTS | en | GGUF Q8, Stream | [@WalkingCat](https://github.com/WalkingCat) | [Soprano-1.1-80M](https://huggingface.co/WalkingCat/Soprano-1.1-80M-GGUF) ultra-lightweight TTS with Qwen3 LM + Vocos decoder |
 | **vietneu_tts** | TTS, Clone | vi, en | GGUF | Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS-v3-Turbo](docs/community_models/vietneu_tts.md) TTS and voice cloning support |
 | **vibeasr** | ASR (encoder only) | n/a | GGUF I8_S | [@XsquirrelC](https://github.com/XsquirrelC) | [VibeASR VAE encoder](docs/community_models/vibeasr.md) INT8-weight and INT8-activation port of the VibeVoice acoustic/semantic tokenizers from [VibeASR.cpp](https://github.com/microsoft/VibeASR.cpp); encoder only, the ternary I2_S decoder is not ported yet |
+| **voxcpm1** | TTS, Clone | zh, en, ja, ko | GGUF Q8, Stream | [@jasonchen31](https://github.com/jasonchen31) | [VoxCPM1](docs/community_models/voxcpm1.md) tokenizer-free 0.5B TTS with 16 kHz output, streaming, and continuation-mode voice cloning |
 
 ## Docker
 

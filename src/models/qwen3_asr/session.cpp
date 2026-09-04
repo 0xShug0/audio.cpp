@@ -88,6 +88,15 @@ bool request_clamp_timestamps_to_audio(const runtime::TaskRequest & request) {
     return false;
 }
 
+bool request_preserve_punctuation(const runtime::TaskRequest & request) {
+    if (const auto value = runtime::find_option(
+            request.options,
+            {"qwen3_asr.preserve_punctuation", "preserve_punctuation"})) {
+        return runtime::parse_bool_option(*value, "qwen3_asr.preserve_punctuation");
+    }
+    return false;
+}
+
 void log_chunk_word_diagnostics(
     int64_t chunk_index,
     int64_t chunk_count,
@@ -345,7 +354,8 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
             assets_->config.sample_rate);
     }
     if (merged.text_output.has_value()) {
-        if (request_return_timestamps(request) && !merged.word_timestamps.empty()) {
+        if (request_return_timestamps(request) && !merged.word_timestamps.empty() &&
+            !request_preserve_punctuation(request)) {
             std::ostringstream word_text;
             for (const auto & word : merged.word_timestamps) {
                 if (word_text.tellp() > 0) {
