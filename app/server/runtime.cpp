@@ -1766,6 +1766,13 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
     // free_sessions 出现重复索引 —— 并发请求全部借到同一 session 下标，共享一个
     // session 的 scheduler slot 与 chunk 队列，造成跨请求串音/截断。
     std::unique_lock<std::mutex> load_lock(model_load_mutex_);
+    // 二次检查（经典双重检查锁）：拿到锁后必须再看一眼 loaded。否则并发首请求
+    // 都在锁外看到 loaded=false，排队拿锁后各自又完整加载一遍 —— 每次都 clear()+
+    // 重建 session 池，多个请求各自借到新池的 index 0（全绑同一 session），造成
+    // 跨请求串音 + double free。二次检查让只有第一个请求真正加载，其余直接返回。
+    if (model.loaded.load(std::memory_order_acquire)) {
+        return;
+    }
     if (config_.max_loaded_models > 0) {
         evict_for_model_limit(model);
         // Note: if ensure_model_fits_memory() below then refuses the load, the
@@ -2039,16 +2046,16 @@ struct ServerState::TimedTaskResult {
 };
 
 ServerState::SessionPoolLock::SessionPoolLock(ServerState::LoadedModel & model, size_t index)
-    : model_(&model), index_(index) {}
+    : model_(&model), index(index) {}
 
 ServerState::SessionPoolLock::SessionPoolLock(SessionPoolLock && other) noexcept
-    : model_(other.model_), index_(other.index_) { other.model_ = nullptr; }
+    : model_(other.model_), index(other.index) { other.model_ = nullptr; }
 
 ServerState::SessionPoolLock & ServerState::SessionPoolLock::operator=(SessionPoolLock && other) noexcept {
     if (this != &other) {
         release();
         model_ = other.model_;
-        index_ = other.index_;
+        index = other.index;
         other.model_ = nullptr;
     }
     return *this;
@@ -2059,7 +2066,7 @@ ServerState::SessionPoolLock::~SessionPoolLock() { release(); }
 void ServerState::SessionPoolLock::release() {
     if (model_ != nullptr) {
         std::lock_guard<std::mutex> lock(model_->pool_mutex);
-        model_->free_sessions.push_back(index_);
+        model_->free_sessions.push_back(index);
         model_ = nullptr;
     }
 }

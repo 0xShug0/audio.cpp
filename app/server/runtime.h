@@ -61,12 +61,15 @@ private:
         SessionPoolLock & operator=(const SessionPoolLock &) = delete;
         ~SessionPoolLock();
 
+        // 借到的 session 下标。public 且是唯一存储：构造函数/move/赋值都写这里，
+        // release() 也读这里归还。曾有个 private index_ 与 public index 并存，
+        // 构造函数只写 index_ 而调用处全读 public index → 恒为 0 → 所有并发请求
+        // 都绑 session 0（跨请求串音/截断/double free 根因）。
         size_t index = 0;
 
     private:
         void release();
         LoadedModel * model_ = nullptr;
-        size_t index_ = 0;
     };
 
     struct LoadedModel {
