@@ -43,6 +43,13 @@ void ggml_vec_dot_f32(int n, float * GGML_RESTRICT s, size_t bs, const float * G
 void ggml_vec_dot_bf16(int n, float * GGML_RESTRICT s, size_t bs, ggml_bf16_t * GGML_RESTRICT x, size_t bx, ggml_bf16_t * GGML_RESTRICT y, size_t by, int nrc);
 void ggml_vec_dot_f16(int n, float * GGML_RESTRICT s, size_t bs, ggml_fp16_t * GGML_RESTRICT x, size_t bx, ggml_fp16_t * GGML_RESTRICT y, size_t by, int nrc);
 
+// int8 x int8 dot products accumulating in int32, for the GGML_TYPE_I8_S ops.
+// The scale is per-tensor and cancels out of the contraction, so these stay
+// integral and the caller applies it once. nrc rows of x, each bx bytes apart,
+// are contracted against the single row y; result row stride is bs int32s.
+// n is arbitrary: whatever the vector width does not cover is done scalar.
+void ggml_vec_dot_i8_i8(int n, int32_t * GGML_RESTRICT s, size_t bs, const int8_t * GGML_RESTRICT x, size_t bx, const int8_t * GGML_RESTRICT y, int nrc);
+
 void ggml_vec_silu_f32(const int n, float * y, const float * x);
 ggml_float ggml_vec_cvar_f32(const int n, float * y, const float * x, const float mean); //it will also center y ( y = y - mean )
 ggml_float ggml_vec_soft_max_f32(const int n, float * y, const float * x, float max);
