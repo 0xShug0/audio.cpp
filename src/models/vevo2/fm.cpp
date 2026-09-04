@@ -696,6 +696,7 @@ struct Vevo2FMGraph {
     }
 
     ~Vevo2FMGraph() {
+        engine::core::release_backend_graph_resources(backend, graph, true);
         if (gallocr != nullptr) {
             ggml_gallocr_free(gallocr);
             gallocr = nullptr;
@@ -757,39 +758,45 @@ struct Vevo2FMStepGraph {
         if (config.hidden_size % config.num_heads != 0) {
             throw std::runtime_error("Vevo2 FM hidden_size must be divisible by num_heads");
         }
+        ggml_init_params input_params{ggml_tensor_overhead() * 64, nullptr, true};
+        input_ctx.reset(ggml_init(input_params));
+        if (input_ctx == nullptr) {
+            throw std::runtime_error("failed to initialize Vevo2 FM step input context");
+        }
         ggml_init_params params{graph_context_bytes, nullptr, true};
         ctx.reset(ggml_init(params));
         if (ctx == nullptr) {
             throw std::runtime_error("failed to initialize Vevo2 FM step graph context");
         }
 
+        engine::core::ModuleBuildContext input_build_ctx{input_ctx.get(), "vevo2.fm.step.input", backend_type};
         engine::core::ModuleBuildContext build_ctx{ctx.get(), "vevo2.fm.step", backend_type};
         prompt_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, prompt_frames, config.mel_dim})).tensor;
         xt_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, target_frames, config.mel_dim})).tensor;
         cond_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, cond_frames, config.hidden_size})).tensor;
         uncond_cond_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, target_frames, config.hidden_size})).tensor;
         timestep_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, config.hidden_size})).tensor;
         cond_position_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_I32,
             engine::core::TensorShape::from_dims({cond_frames})).tensor;
         uncond_position_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_I32,
             engine::core::TensorShape::from_dims({target_frames})).tensor;
         ggml_set_input(prompt_input);
@@ -878,8 +885,11 @@ struct Vevo2FMStepGraph {
 
         graph = ggml_new_graph_custom(ctx.get(), 524288, false);
         ggml_build_forward_expand(graph, output);
-        buffer = ggml_backend_alloc_ctx_tensors(ctx.get(), backend);
-        if (buffer == nullptr) {
+        input_buffer = ggml_backend_alloc_ctx_tensors(input_ctx.get(), backend);
+        gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (input_buffer == nullptr || gallocr == nullptr ||
+            !ggml_gallocr_reserve(gallocr, graph) ||
+            !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 FM step graph");
         }
 
@@ -904,9 +914,14 @@ struct Vevo2FMStepGraph {
     }
 
     ~Vevo2FMStepGraph() {
-        if (buffer != nullptr) {
-            ggml_backend_buffer_free(buffer);
-            buffer = nullptr;
+        engine::core::release_backend_graph_resources(backend, graph, true);
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+            gallocr = nullptr;
+        }
+        if (input_buffer != nullptr) {
+            ggml_backend_buffer_free(input_buffer);
+            input_buffer = nullptr;
         }
     }
 
@@ -966,6 +981,7 @@ struct Vevo2FMStepGraph {
     int64_t cond_frames = 0;
     int64_t prompt_frames = 0;
     int64_t target_frames = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
     ggml_tensor * prompt_input = nullptr;
     ggml_tensor * xt_input = nullptr;
@@ -976,7 +992,8 @@ struct Vevo2FMStepGraph {
     ggml_tensor * uncond_position_input = nullptr;
     ggml_tensor * output = nullptr;
     ggml_cgraph * graph = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    ggml_backend_buffer_t input_buffer = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
 };
 
 Vevo2FlowMatchingRuntime::Vevo2FlowMatchingRuntime(
@@ -1064,6 +1081,8 @@ Vevo2MelSequence Vevo2FlowMatchingRuntime::generate_mel(
     const auto cond_run_start = Clock::now();
     const auto diffusion_cond = graph_->run_conditioning(diffusion_tokens, config_);
     const double cond_run_ms = engine::debug::elapsed_ms(cond_run_start);
+    graph_.reset();
+    engine::core::trim_backend_pools(execution_context_.backend());
     const int64_t cond_frames = static_cast<int64_t>(diffusion_cond.size()) / config_.hidden_size;
     if (cond_frames * config_.hidden_size != static_cast<int64_t>(diffusion_cond.size())) {
         throw std::runtime_error("Vevo2 FM conditioning output shape mismatch");
@@ -1123,6 +1142,8 @@ Vevo2MelSequence Vevo2FlowMatchingRuntime::generate_mel(
     const auto read_start = Clock::now();
     out.values = step_graph_->read_output(config_);
     const double final_read_ms = engine::debug::elapsed_ms(read_start);
+    step_graph_.reset();
+    engine::core::trim_backend_pools(execution_context_.backend());
     engine::debug::timing_log_scalar("vevo2.fm.timbre_mel_ms", timbre_mel_ms);
     engine::debug::timing_log_scalar("vevo2.fm.cond.graph.build_ms", cond_graph_build_ms);
     engine::debug::timing_log_scalar("vevo2.fm.cond_run_ms", cond_run_ms);
