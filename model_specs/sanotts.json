@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "sanotts",
   "display_name": "sanoTTS Nano",
-  "description": "Very small English text-to-speech: a duration student, a contextual acoustic student producing mel-100, and a ConvNeXt-1D decoder with an iSTFT head. 294,279 parameters at 24 kHz. Uses an external eSpeak-ng phonemizer.",
+  "description": "Very small English text-to-speech: a duration student, a contextual acoustic student producing mel-100, and a ConvNeXt-1D decoder with an iSTFT head. Two voices: heart (2.27M parameters, higher quality) and heart-nano (294k parameters, also runs on microcontrollers). 24 kHz output. Uses an external eSpeak-ng phonemizer.",
   "category": "tts",
   "status": "community",
   "tasks": [
@@ -99,6 +99,19 @@
         "gguf/config.json"
       ],
       "strip_prefix": "gguf"
+    },
+    {
+      "id": "sanotts_heart_orig",
+      "display_name": "sanoTTS heart 2.27M FP32 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-heart-GGUF",
+      "files": [
+        "gguf/heart/heart-f32.gguf",
+        "gguf/heart/config.json"
+      ],
+      "strip_prefix": "gguf/heart"
     }
   ],
   "dependencies": [],

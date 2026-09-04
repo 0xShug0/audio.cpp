@@ -37,8 +37,17 @@ namespace modules = engine::modules;
 
 constexpr size_t kIoArenaBytes = 8ULL * 1024ULL * 1024ULL;
 constexpr size_t kGraphArenaBytes = 128ULL * 1024ULL * 1024ULL;
-constexpr size_t kWeightArenaBytes = 8ULL * 1024ULL * 1024ULL;
-constexpr size_t kExpectedTensors = 103;
+constexpr size_t kWeightArenaBytes = 32ULL * 1024ULL * 1024ULL;
+
+/** Tensor count implied by the config -- 103 for heart-nano, 115 for heart.
+ *  Kept in lockstep with the inventory validate_tensors() builds. */
+size_t expected_tensor_count(const SanoTtsConfig & config) {
+    const auto duration = 5 + 5 * config.duration_depth;
+    const auto acoustic =
+        7 + 5 * (config.acoustic_token_depth + config.acoustic_depth);
+    const auto decoder = 10 + 9 * config.blocks;
+    return static_cast<size_t>(duration + acoustic + decoder);
+}
 
 // The decoder's norms are nn.LayerNorm(eps=1e-6), NOT torch's 1e-5 default.
 // The difference compounds through the four ConvNeXt blocks and is then
@@ -102,10 +111,11 @@ std::shared_ptr<const SanoTtsBackendWeights> load_weights(
         "sanotts.weights",
         kWeightArenaBytes);
     const auto metadata = assets->weights->tensors();
-    if (metadata.size() != kExpectedTensors) {
+    const size_t expected = expected_tensor_count(assets->config);
+    if (metadata.size() != expected) {
         throw std::runtime_error(
-            "sanoTTS expects exactly " + std::to_string(kExpectedTensors) +
-            " tensors, found " + std::to_string(metadata.size()));
+            "sanoTTS expects exactly " + std::to_string(expected) +
+            " tensors for this config, found " + std::to_string(metadata.size()));
     }
     out->tensors.reserve(metadata.size());
     for (const auto & tensor : metadata) {

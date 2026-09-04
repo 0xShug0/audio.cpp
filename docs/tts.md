@@ -29,7 +29,7 @@
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
-| sanoTTS heart-nano | `sanotts` | `tts` | [sanoTTS](#sanotts) |
+| sanoTTS heart / heart-nano | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VieNeu-TTS | `vietneu_tts` | `tts`, `clon` | [VieNeu-TTS](community_models/vietneu_tts.md) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |

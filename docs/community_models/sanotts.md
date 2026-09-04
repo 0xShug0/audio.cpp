@@ -1,12 +1,14 @@
-# sanoTTS heart-nano
+# sanoTTS heart and heart-nano
 
-`sanotts` provides native GGML inference for
-[sanoTTS](https://github.com/Ampixa/sanoTTS) **heart-nano**, a
-294,279-parameter English text-to-speech model that also runs on
-microcontrollers. The graph is a duration student, a contextual acoustic
-student producing a mel-100 spectrogram, and a noise-fed ConvNeXt-1D decoder
-whose [log-magnitude | phase] head feeds an inverse STFT. Output is 24 kHz
-mono. Offline FP32 inference only.
+`sanotts` provides native GGML inference for the
+[sanoTTS](https://github.com/Ampixa/sanoTTS) nano lineage: **heart**
+(2,272,145 parameters, the higher-quality voice) and **heart-nano**
+(294,279 parameters, small enough that the same weights also run on
+microcontrollers). Both share one graph -- a duration student, a contextual
+acoustic student producing a mel-100 spectrogram, and a noise-fed
+ConvNeXt-1D decoder whose [log-magnitude | phase] head feeds an inverse
+STFT -- differing only in width and depth, which the runtime reads from the
+package config. Output is 24 kHz mono. Offline FP32 inference only.
 
 The GGUF is published on Hugging Face at
 [ampixa/sanoTTS](https://huggingface.co/ampixa/sanoTTS) under `gguf/`: the
@@ -38,10 +40,12 @@ python tools/model_manager_v2.py install sanotts_heart_nano_orig --models-root m
 
 ```bash
 audiocpp_cli --task tts --family sanotts \
-  --model models/sanoTTS-heart-nano-GGUF --backend cpu \
+  --model models/sanoTTS-heart-GGUF --backend cpu \
   --text "Hello from sano T T S, a very small neural text to speech model." \
   --out sanotts.wav
 ```
+
+Use `--model models/sanoTTS-heart-nano-GGUF` for the 294k voice.
 
 eSpeak-ng is loaded dynamically at runtime, never linked. If it is not on the
 default library path:
@@ -79,9 +83,10 @@ The runtime reproduces the reference implementations' exact semantics:
   DC-blocking filter `H(z) = (1 - z^-1)/(1 - 0.9973 z^-1)`.
 
 Measured against the project's numpy reference (same text, same seed, same
-eSpeak-ng build): correlation **0.999999985**, max sample delta 1.7e-05
-(the WAV's own int16 quantisation), identical sample count. The numpy
-reference is itself gated at 0.987–1.000 against the float PyTorch model.
+eSpeak-ng build), both voices: correlation **0.999999985**, max sample delta
+1.7e-05 (the WAV's own int16 quantisation), identical sample count. The
+numpy reference is itself gated at 0.987–1.000 against the float PyTorch
+model.
 
 ## Performance
 
