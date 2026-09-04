@@ -400,7 +400,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions/details \
     {"word": "the", "start_sample": 3200, "end_sample": 6400, "confidence": 0.98}
   ],
   "sample_rate": 16000,
-  "timing": { "wall_ms": 412.7, "audio_seconds": 2.4, "rtf": 0.17 }
+  "timing": { "wall_ms": 412.7, "audio_duration_ms": 2400.0, "rtf": 0.17 }
 }
 ```
 
