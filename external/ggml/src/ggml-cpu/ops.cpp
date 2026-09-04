@@ -11637,3 +11637,410 @@ void ggml_compute_forward_fwht(const ggml_compute_params * params, ggml_tensor *
             }
     }
 }
+
+// VibeASR CPU INT8 pipeline
+//
+// Scalar reference implementations of the five fused I8_S ops. They are written
+// to be obviously correct rather than fast: the vectorized kernels live with the
+// other SIMD code under arch/, and dispatch to them replaces the inner loops
+// here without changing the surrounding structure.
+//
+// Four of the five produce I8_S, and all four share one shape:
+//
+//   1. compute the result in F32 into params->wdata, tracking this thread's absmax
+//   2. barrier, reduce the per-thread absmaxes to a tensor-wide absmax
+//   3. quantize this thread's slice into dst; thread 0 writes the output scale
+//
+// Step 2 is why these are fused ops at all. The output scale cannot be known
+// before the whole output has been computed, so an unfused chain would have to
+// materialize each intermediate in F32, rescan it, and write it again.
+//
+// wdata layout, shared by all four:
+//
+//   [0, n_stage)                F32 staging for the result
+//   [n_stage, n_stage + nth)    per-thread absmax
+//   [n_stage + nth, ...)        op-specific scratch (int32 accumulators)
+
+// Steps 2 and 3. The thread's slice of the output is the rectangle
+// {row*row_stride + col : row < n_rows, col0 <= col < col1}; contiguous callers
+// pass n_rows = 1, row_stride = 0. Both `stage` and dst use the same indexing.
+//
+// `relu` clamps after rounding rather than before the absmax scan, so the
+// negatives that are about to be zeroed still widen the scale: an output
+// spanning [-10, +5] scales by 10, leaving the surviving positives to reach 63
+// of the available 127. That is what the reference implementation does, and
+// matching it is what makes a layer-by-layer comparison meaningful, so it is
+// reproduced here deliberately rather than improved in passing.
+static void ggml_i8_s_requantize(
+        const ggml_compute_params * params,
+        ggml_tensor * dst,
+        const float * stage,
+        float * thread_max,
+        int64_t row_stride,
+        int64_t n_rows,
+        int64_t col0,
+        int64_t col1,
+        float local_absmax,
+        bool relu) {
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    thread_max[ith] = local_absmax;
+
+    ggml_barrier(params->threadpool);
+
+    if (ith == 0) {
+        float global_max = 0.0f;
+        for (int t = 0; t < nth; t++) {
+            if (thread_max[t] > global_max) global_max = thread_max[t];
+        }
+        thread_max[0] = global_max;
+    }
+
+    ggml_barrier(params->threadpool);
+
+    const float global_max = thread_max[0];
+    const float id = global_max != 0.0f ? 127.0f / global_max : 0.0f;
+
+    int8_t * dst_data = (int8_t *) dst->data;
+
+    for (int64_t row = 0; row < n_rows; row++) {
+        for (int64_t col = col0; col < col1; col++) {
+            const int64_t i = row*row_stride + col;
+
+            float v = stage[i] * id;
+            v = v < -127.0f ? -127.0f : (v > 127.0f ? 127.0f : v);
+
+            int8_t q = (int8_t) roundf(v);
+            dst_data[i] = relu && q < 0 ? 0 : q;
+        }
+    }
+
+    if (ith == 0) {
+        // Multiplier, so that dequantizing is q * scale like every other ggml
+        // quantized type -- see ggml_i8_s_to_float.
+        *ggml_inband_scale(dst) = global_max != 0.0f ? global_max / 127.0f : 0.0f;
+    }
+}
+
+// ggml_compute_forward_add_scaled
+
+void ggml_compute_forward_add_scaled(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];  // a     (I8_S)
+    const ggml_tensor * src1 = dst->src[1];  // b     (I8_S)
+    const ggml_tensor * src2 = dst->src[2];  // scale (F32, per channel)
+
+    GGML_ASSERT(src0->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(src1->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(dst->type  == GGML_TYPE_I8_S);
+    GGML_ASSERT(ggml_are_same_shape(src0, src1));
+    GGML_ASSERT(ggml_are_same_shape(src0, dst));
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(src1));
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t n   = ggml_nelements(src0);
+    const int64_t ne0 = src0->ne[0];
+
+    const int8_t * a = (const int8_t *) src0->data;
+    const int8_t * b = (const int8_t *) src1->data;
+
+    const float a_d = *ggml_inband_scale_const(src0);
+    const float b_d = *ggml_inband_scale_const(src1);
+
+    // Channel index is i % ne0: the graph is channel-major, so ne[0] is the
+    // channel axis and one coefficient covers every position of that channel.
+    const float * gamma = (const float *) src2->data;
+
+    float * stage      = (float *) params->wdata;
+    float * thread_max = stage + n;
+
+    const int64_t dr = (n + nth - 1)/nth;
+    const int64_t i0 = dr*ith;
+    const int64_t i1 = MIN(i0 + dr, n);
+
+    float local_absmax = 0.0f;
+
+    for (int64_t i = i0; i < i1; i++) {
+        const float v = (float) a[i] * a_d * gamma[i % ne0] + (float) b[i] * b_d;
+
+        stage[i] = v;
+
+        const float av = fabsf(v);
+        if (av > local_absmax) local_absmax = av;
+    }
+
+    ggml_i8_s_requantize(params, dst, stage, thread_max, 0, 1, i0, i1, local_absmax, false);
+}
+
+// ggml_compute_forward_rms_norm_scaled
+
+void ggml_compute_forward_rms_norm_scaled(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];  // a     (I8_S)
+    const ggml_tensor * src1 = dst->src[1];  // scale (F32, per channel)
+
+    GGML_ASSERT(src0->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(dst->type  == GGML_TYPE_I8_S);
+    GGML_ASSERT(ggml_are_same_shape(src0, dst));
+    GGML_ASSERT(ggml_is_contiguous(src0));
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t ne00 = src0->ne[0];
+    const int64_t n    = ggml_nelements(src0);
+    const int64_t nr   = n / ne00;
+
+    float eps;
+    memcpy(&eps, dst->op_params, sizeof(float));
+
+    const int8_t * x     = (const int8_t *) src0->data;
+    const float  * gamma = (const float  *) src1->data;
+
+    const float x_d = *ggml_inband_scale_const(src0);
+
+    // The normalization is scale-invariant, so the input scale cancels between
+    // numerator and denominator and never has to be applied to the int8 values:
+    //
+    //   real[i] = q[i] * x_d
+    //   out[i]  = real[i] / sqrt(mean(real^2) + eps) * gamma[i]
+    //           = q[i]    / sqrt(mean(q^2) + eps/x_d^2) * gamma[i]
+    //
+    // which keeps the sum of squares in exact int64 arithmetic. Only eps has to
+    // move into the int8 domain.
+    const float eps_q = (float) ((double) eps / ((double) x_d * (double) x_d));
+
+    float * stage      = (float *) params->wdata;
+    float * thread_max = stage + n;
+
+    const int64_t dr  = (nr + nth - 1)/nth;
+    const int64_t ir0 = dr*ith;
+    const int64_t ir1 = MIN(ir0 + dr, nr);
+
+    float local_absmax = 0.0f;
+
+    for (int64_t ir = ir0; ir < ir1; ir++) {
+        const int8_t * x_row     = x     + ir*ne00;
+        float        * stage_row = stage + ir*ne00;
+
+        int64_t sum_sq = 0;
+        for (int64_t i = 0; i < ne00; i++) {
+            sum_sq += (int32_t) x_row[i] * (int32_t) x_row[i];
+        }
+
+        const float rms_inv = 1.0f/sqrtf((float) sum_sq/(float) ne00 + eps_q);
+
+        for (int64_t i = 0; i < ne00; i++) {
+            const float v = (float) x_row[i] * rms_inv * gamma[i];
+
+            stage_row[i] = v;
+
+            const float av = fabsf(v);
+            if (av > local_absmax) local_absmax = av;
+        }
+    }
+
+    ggml_i8_s_requantize(params, dst, stage, thread_max, 0, 1, ir0*ne00, ir1*ne00, local_absmax, false);
+}
+
+// ggml_compute_forward_mul_mat_add
+
+// Shared by GGML_OP_MUL_MAT_ADD and GGML_OP_MUL_MAT_ADD_RELU.
+//
+// Two shapes are handled. When src0 is [K, 1, C] the op is depthwise: C
+// independent length-K dot products per position, with src1 laid out
+// [K, N, C] and the output [C, N] channel-major. Otherwise src0 is an ordinary
+// [IC, OC] weight matrix, src1 is [IC, N], and the output is [OC, N].
+static void ggml_compute_forward_mul_mat_add_impl(
+        const ggml_compute_params * params,
+        ggml_tensor * dst,
+        bool relu) {
+
+    const ggml_tensor * src0 = dst->src[0];  // weight (I8_S)
+    const ggml_tensor * src1 = dst->src[1];  // input  (I8_S)
+    const ggml_tensor * src2 = dst->src[2];  // bias   (F32)
+
+    GGML_ASSERT(src0->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(src1->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(dst->type  == GGML_TYPE_I8_S);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(src1));
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t ne00 = src0->ne[0];  // IC, or K in the depthwise case
+    const int64_t ne01 = src0->ne[1];  // OC, or 1
+    const int64_t ne02 = src0->ne[2];  // 1,  or C
+    const int64_t ne11 = src1->ne[1];  // N
+
+    const float * bias = (const float *) src2->data;
+
+    // Both scales are multipliers, so they combine by multiplication and the
+    // int32 accumulator only has to be scaled once.
+    const float combined_d = *ggml_inband_scale_const(src0) * *ggml_inband_scale_const(src1);
+
+    const int8_t * w = (const int8_t *) src0->data;
+    const int8_t * x = (const int8_t *) src1->data;
+
+    const bool depthwise = ne01 == 1 && ne02 > 1;
+
+    // Output channel count, and the number of outputs per column.
+    const int64_t OC = depthwise ? ne02 : ne01;
+
+    // The loops below walk a single batch. Batched matmul has no caller in the
+    // VibeASR graphs, so refuse it here rather than silently leaving
+    // dst->ne[2]/ne[3] beyond the first as uninitialized garbage. In the
+    // depthwise case ne[2] is the channel axis, which is handled.
+    GGML_ASSERT(dst->ne[3] == 1);
+    GGML_ASSERT(depthwise || dst->ne[2] == 1);
+    GGML_ASSERT(ne11*OC == ggml_nelements(dst));
+
+    float * stage      = (float *) params->wdata;
+    float * thread_max = stage + ne11*OC;
+
+    // Split over columns: every thread owns whole columns of the output, so the
+    // int32 accumulators need no cross-thread coordination.
+    const int64_t dr   = (ne11 + nth - 1)/nth;
+    const int64_t col0 = dr*ith;
+    const int64_t col1 = MIN(col0 + dr, ne11);
+
+    float local_absmax = 0.0f;
+
+    if (depthwise) {
+        // stage/dst index is ch*ne11 + col, so each channel is a row of length
+        // ne11 and this thread owns the [col0, col1) band of every row.
+        for (int64_t ch = 0; ch < ne02; ch++) {
+            const int8_t * w_ch = w + ch*ne00;
+
+            for (int64_t col = col0; col < col1; col++) {
+                // src1 is [K, N, C]: the channel stride is ne11*ne00.
+                const int8_t * x_col = x + ch*ne11*ne00 + col*ne00;
+
+                int32_t acc = 0;
+                for (int64_t k = 0; k < ne00; k++) {
+                    acc += (int32_t) w_ch[k] * (int32_t) x_col[k];
+                }
+
+                const float v = (float) acc * combined_d + bias[ch];
+
+                stage[ch*ne11 + col] = v;
+
+                const float av = fabsf(v);
+                if (av > local_absmax) local_absmax = av;
+            }
+        }
+
+        ggml_i8_s_requantize(params, dst, stage, thread_max, ne11, ne02, col0, col1, local_absmax, relu);
+    } else {
+        // stage/dst index is col*ne01 + oc, so this thread owns the contiguous
+        // block [col0*ne01, col1*ne01).
+        const size_t nb11 = src1->nb[1];
+
+        for (int64_t col = col0; col < col1; col++) {
+            const int8_t * x_col = (const int8_t *) ((const char *) src1->data + col*nb11);
+
+            for (int64_t oc = 0; oc < ne01; oc++) {
+                const int8_t * w_row = w + oc*ne00;
+
+                int32_t acc = 0;
+                for (int64_t k = 0; k < ne00; k++) {
+                    acc += (int32_t) w_row[k] * (int32_t) x_col[k];
+                }
+
+                const float v = (float) acc * combined_d + bias[oc];
+
+                stage[col*ne01 + oc] = v;
+
+                const float av = fabsf(v);
+                if (av > local_absmax) local_absmax = av;
+            }
+        }
+
+        ggml_i8_s_requantize(params, dst, stage, thread_max, 0, 1, col0*ne01, col1*ne01, local_absmax, relu);
+    }
+}
+
+void ggml_compute_forward_mul_mat_add(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    ggml_compute_forward_mul_mat_add_impl(params, dst, false);
+}
+
+void ggml_compute_forward_mul_mat_add_relu(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    ggml_compute_forward_mul_mat_add_impl(params, dst, true);
+}
+
+// ggml_compute_forward_im2col_asym
+
+void ggml_compute_forward_im2col_asym(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];  // kernel, for its shape only
+    const ggml_tensor * src1 = dst->src[1];  // input (I8_S)
+
+    GGML_ASSERT(src1->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(dst->type  == GGML_TYPE_I8_S);
+
+    const int32_t s0     = ggml_get_op_params_i32(dst, 0);
+    const int32_t lp0    = ggml_get_op_params_i32(dst, 2);
+    const int32_t d0     = ggml_get_op_params_i32(dst, 4);
+    const bool    is_2D  = ggml_get_op_params_i32(dst, 6) == 1;
+
+    // 1D only. The 2D case has no caller, and guessing at its indexing would
+    // mean shipping an untested path.
+    GGML_ASSERT(!is_2D && "ggml_im2col_asym: only the 1D case is implemented");
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t IC = src0->ne[1];
+    const int64_t KW = src0->ne[0];
+    const int64_t IW = src1->ne[0];
+    const int64_t N  = src1->ne[2];
+    const int64_t OW = dst->ne[1];
+
+    const int64_t total      = N*OW;
+    const int64_t per_thread = (total + nth - 1)/nth;
+    const int64_t start      = per_thread*ith;
+    const int64_t end        = MIN(start + per_thread, total);
+
+    int8_t * dst_data = (int8_t *) dst->data;
+
+    for (int64_t idx = start; idx < end; idx++) {
+        const int64_t in  = idx/OW;
+        const int64_t iow = idx%OW;
+
+        int8_t * dst_col = dst_data + idx*(IC*KW);
+
+        for (int64_t iic = 0; iic < IC; iic++) {
+            const int8_t * src_ch = (const int8_t *) ((const char *) src1->data +
+                iic*src1->nb[1] + in*src1->nb[2]);
+
+            for (int64_t ikw = 0; ikw < KW; ikw++) {
+                const int64_t iiw = iow*s0 + ikw*d0 - lp0;
+
+                // Zero is exact in both directions, so padding needs no
+                // special handling when the scale is applied later.
+                dst_col[iic*KW + ikw] = (iiw < 0 || iiw >= IW) ? 0 : src_ch[iiw];
+            }
+        }
+    }
+
+    if (ith == 0) {
+        // Pure rearrangement: no value changes, so the scale carries over.
+        *ggml_inband_scale(dst) = *ggml_inband_scale_const(src1);
+    }
+}
