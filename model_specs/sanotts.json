@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "sanotts",
   "display_name": "sanoTTS Nano",
-  "description": "Very small English text-to-speech: a duration student, a contextual acoustic student producing mel-100, and a ConvNeXt-1D decoder with an iSTFT head. 294k parameters at 24 kHz, with a 2.27M variant. Uses an external eSpeak-ng phonemizer.",
+  "description": "Very small English text-to-speech: a duration student, a contextual acoustic student producing mel-100, and a ConvNeXt-1D decoder with an iSTFT head. 294,279 parameters at 24 kHz. Uses an external eSpeak-ng phonemizer.",
   "category": "tts",
   "status": "community",
   "tasks": [
@@ -95,19 +95,8 @@
       "precision": "orig",
       "target_directory": "sanoTTS-heart-nano-GGUF",
       "files": [
-        "gguf/heart-nano.gguf"
-      ],
-      "strip_prefix": "gguf"
-    },
-    {
-      "id": "sanotts_heart_orig",
-      "display_name": "sanoTTS heart 2.27M GGUF",
-      "default": false,
-      "format": "gguf",
-      "precision": "orig",
-      "target_directory": "sanoTTS-heart-GGUF",
-      "files": [
-        "gguf/heart.gguf"
+        "gguf/heart-nano.gguf",
+        "gguf/config.json"
       ],
       "strip_prefix": "gguf"
     }
@@ -120,6 +109,9 @@
       "roots": {
         "model": ".",
         "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
       },
       "tensors": {
         "weights": {
